@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## Forward result convention (effective 2026-07-27)
+
+Code disposition and campaign output are separate:
+
+- `result_class=campaign-win` means the actual host-glibc legacy incumbent ran side-by-side in the
+  same invocation, with interposition-proof provenance, and FrankenLibC's incumbent-ratio bootstrap
+  median CI is entirely below 1.0 and clears the A/A null margin.
+- `result_class=self-speedup` means FrankenLibC before versus FrankenLibC after. The row is
+  **maintenance**, even when the code ships. Its heading must say `MAINTENANCE`, and its self-ratio
+  must never be presented as a competitive claim or campaign output.
+
+Every new or modified timed positive row records exactly one of those machine-readable classes.
+Both classes still require behavior proof, an in-process executing-ELF SHA-256, a numeric
+same-invocation A/A, and nearby null/effect bootstrap median CIs. A campaign win additionally
+records `legacy_incumbent=host-glibc`, `incumbent_provenance=dlmopen-lmid-newlm` (or a proven
+uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
+`incumbent_bootstrap_median_ci`, and `null_bootstrap_median_ci`.
+
 ## 2026-07-16 (cod / codex-root) — REJECTED: fused BSD IPv4 component scan regressed `inet_addr` (`bd-us7dho`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
@@ -22590,7 +22608,10 @@ item retains every later colon by construction, exactly matching the former `fie
   10-90x), THEN the incremental-parse refactor gated on `scanf_*_differential` conformance. Filed as a
   scoped follow-on; NOT shipped (architectural, not a cell-cache one-liner). [[stdio-mt-swing-inprogress]].
 
-## 2026-07-25 (cc_fl / MagentaCondor) — WIN (SHIPPED): PCC gate hot/cold split — the one-shot SHA-256 verifier was inlined into the hot check, giving every gated call a 376-byte frame; deployed malloc+free 0.9463x, control arm null (cc-pcc-gate-split-2026-07-25)
+## 2026-07-25 (cc_fl / MagentaCondor) — MAINTENANCE (SHIPPED SELF-SPEEDUP): PCC gate hot/cold split — the one-shot SHA-256 verifier was inlined into the hot check, giving every gated call a 376-byte frame; deployed malloc+free 0.9463x, control arm null (cc-pcc-gate-split-2026-07-25)
+
+- **RESULT CLASS:** `result_class=self-speedup`. This is FrankenLibC before versus FrankenLibC
+  after: maintenance evidence, not campaign output or a competitive claim.
 
 - **LEDGER-FIRST.** Grepped this ledger for `ffi_pcc`, `proof_carried`, `PCC`, `runtime_policy`,
   `ensure_ffi_pcc`, `hot/cold`, `cold split`, and `inline(always)`. No prior row touches the FFI
@@ -22913,12 +22934,20 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   and none is claimed. Evidence is the matched-settings capture named above plus the two `perf
   annotate` instruction-level reads quoted inline.
 
-## 2026-07-25 (cod / SwiftCastle) — WIN (SHIPPED): VOID resurrection #1, exact `strftime("%A")` leaf clears the bootstrap median-CI gate (`bd-agegst`)
+## 2026-07-25 (cod / SwiftCastle) — CAMPAIGN WIN (SHIPPED): exact `strftime("%A")` leaf clears the bootstrap median-CI gate (`bd-agegst`)
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.540615`;
+  `incumbent_bootstrap_median_ci=[0.537130,0.549644]`;
+  `null_bootstrap_median_ci=[0.983412,1.009033]`;
+  `bench_elf_sha256=949b2064f8802edb0a17284fc52cbf0fea12bf2eb68f1070be570c4763cbd67c`.
 
 - **NEGATIVE-EVIDENCE FIRST.** This reopens L21341 exactly as ranked by
   `docs/LEDGER_RESURRECTION.md`. The 2026-07-22 candidate had already produced FL/glibc paired
   medians **0.5705** and **0.5415**, with FL/FL null medians **0.9982** and **1.0181**, but was
-  rejected because a null-control CV was 5.10%. The campaign rule makes CV descriptive only.
+  rejected because a null-control CV was 5.10% (`historical_cv_gate=true`, `cv_used=false` for this
+  result). The current gate makes CV descriptive only.
 - **LEVER.** The strict ABI path recognizes the exact three-byte `%A\0` format before the generic
   C-string scan and full `tm` projection. A safe core leaf maps the finite C-locale weekday state to
   its immutable byte string and preserves the generic formatter's malformed-weekday `"?"` behavior
@@ -22940,12 +22969,16 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   null-half-width margin, or when non-C locale support makes the finite English table semantically
   incomplete.
 
-## 2026-07-25 (cod / SwiftCastle) — WIN (SHIPPED): VOID resurrection #2, append-only release/acquire publication removes the `textdomain(NULL)` mutex (`bd-bl39l2`)
+## 2026-07-25 (cod / SwiftCastle) — MAINTENANCE (SHIPPED SELF-SPEEDUP): append-only release/acquire publication removes the `textdomain(NULL)` mutex (`bd-bl39l2`)
+
+- **RESULT CLASS:** `result_class=self-speedup`. This is FrankenLibC before versus FrankenLibC
+  after: maintenance evidence. The same-invocation host arm remains 1.192201x slower than glibc, so
+  this row is not campaign output or a competitive claim.
 
 - **NEGATIVE-EVIDENCE FIRST.** This reopens L21570. The old row measured a decisive **5.5969×**
-  FL/glibc query gap with a **1.0016** FL/FL null, then rejected the surface because raw-arm CVs
-  exceeded 5%. The current contract gates only bootstrap median CIs relative to the same-invocation
-  null.
+  FL/glibc query gap with a **1.0016** FL/FL null, then the historical row rejected the surface on
+  raw-arm CVs (`historical_cv_gate=true`, `cv_used=false` for this result) above 5%. The current
+  contract gates only bootstrap median CIs relative to the same-invocation null.
 - **LEVER AND SAFETY INVARIANT.** Writers still serialize through `TextDomainState`, allocate an
   immutable `CString`, retain it permanently in the state's append-only pool, then publish its
   pointer with `AtomicPtr::store(Release)`. A null query performs one `load(Acquire)` and never
@@ -23078,7 +23111,14 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   `vmi1264463` result alone does not qualify — first establish why that host is 2x slower for identical
   binaries, because until that is explained its ratios measure something the other hosts do not have.
 
-## 2026-07-25 (cod / SwiftCastle) — VOID resurrection rank 4 KEEP: exact `%FT%T` `wcsftime` alias reuses the fixed ISO-T emitter (`bd-vihwy9`)
+## 2026-07-25 (cod / SwiftCastle) — CAMPAIGN WIN (SHIPPED): exact `%FT%T` `wcsftime` alias reuses the fixed ISO-T emitter (`bd-vihwy9`)
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.111264`;
+  `incumbent_bootstrap_median_ci=[0.106929,0.116409]`;
+  `null_bootstrap_median_ci=[0.959509,1.077104]`;
+  `bench_elf_sha256=c77816cc2d38dfe27a27641f06a70dfad97a3835965bd7ce01d0c344169aa342`.
 
 - **NEGATIVE-EVIDENCE FIRST / RETRY PREDICATE SATISFIED.** The complete L21545 row and all
   `wcsftime`, `%FT%T`, alias, and exact-wide-format ledger hits were read before editing. The old
@@ -23104,9 +23144,10 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   fallback are unchanged. No new parser or state machine was added.
 - **SAME-WORKER KEEP PROOF.** The candidate measured **17.10 ns/call**, reconstructed general
   original **253.67 ns/call**, and host glibc **152.55 ns/call**. Candidate/original median was
-  **0.067613** (14.79x faster), CI **[0.064222, 0.070854]**. The same-invocation null was
-  **1.021089**, CI **[0.959509, 1.077104]**, giving null half-width **0.077104**; the effect's
-  distance from 1.0 clears twice that floor. Candidate/glibc was **0.111264**, CI
+  **0.067613** (14.79x faster), bootstrap median 95% CI **[0.064222, 0.070854]**. The
+  same-invocation null was **1.021089**, bootstrap median 95% CI
+  **[0.959509, 1.077104]**, giving null half-width **0.077104**; the effect's distance from 1.0
+  clears twice that floor. Candidate/glibc was **0.111264**, bootstrap median 95% CI
   **[0.106929, 0.116409]**. The null ratio CV (**16.211%**) and raw CVs are descriptive only and
   do not override the decisive median-CI result.
 - **BEHAVIOR PROOF.** The harness matched host glibc across capacities, valid extrema, and the
@@ -23118,7 +23159,11 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   `%F`/`%T` semantics are introduced, or a differential oracle produces an input for which the
   alias and its expanded ISO-T form diverge.
 
-## 2026-07-25 (cod / SwiftCastle) — VOID resurrection rank 5 KEEP at scanner boundary: in-memory hosts lookup proves the borrowed walk (`bd-9x1jcx`)
+## 2026-07-25 (cod / SwiftCastle) — MAINTENANCE SELF-SPEEDUP EVIDENCE: in-memory hosts lookup proves the borrowed walk (`bd-9x1jcx`)
+
+- **RESULT CLASS:** `result_class=self-speedup`. This is an isolated FrankenLibC
+  allocating-original versus allocation-free-candidate comparison with no legacy-incumbent arm;
+  maintenance evidence, not campaign output or a competitive claim.
 
 - **NEGATIVE-EVIDENCE FIRST / DIFFERENT WORKLOAD.** The complete L21131 and L21277 rows and all
   `hosts_lookup`, `hosts_reverse`, `hostent_iter`, `/etc/hosts`, and resolver ledger hits were read
@@ -23139,10 +23184,12 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   measured candidate/candidate A/A before candidate/original A/B. Bootstrap median CIs and the 2x
   null-half-width rule decide the row; CV remains descriptive only.
 - **RESULT / KEEP.** Allocating original measured **1852.71 ns/lookup**; allocation-free candidate
-  measured **781.64 ns/lookup**. Candidate/original median was **0.428468** (2.33x faster), CI
-  **[0.411170, 0.444882]**. The same-invocation null was **0.994113**, CI
-  **[0.952074, 1.043635]**, for null half-width **0.047926**; the effect clears twice that floor.
-  Null/effect CVs (**13.410% / 11.849%**) are reported but do not gate the median-CI verdict.
+  measured **781.64 ns/lookup**. Candidate/original median was **0.428468** (2.33x faster),
+  bootstrap median 95% CI **[0.411170, 0.444882]**. The same-invocation null was **0.994113**,
+  bootstrap median 95% CI **[0.952074, 1.043635]**, for null half-width **0.047926**; the effect
+  clears twice that floor.
+  Null/effect CVs (**13.410% / 11.849%**) are provenance only (`cv_used=false`) and do not gate the
+  median-CI verdict.
 - **BOUNDARY / CONCRETE RETRY PREDICATE.** KEEP the historical allocation-free scanner lever; this
   result does not relabel the file-backed `gethostbyname`, `gethostbyaddr`, or iterator rows.
   Do not rerun the isolated scanner unless its implementation or parser fixture semantics change.
@@ -23307,11 +23354,14 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   `bd-q7b7xf` now agree.
 - **FORWARD GATE.** `scripts/check_perf_ledger_integrity.py` now refuses a new or modified
   undecidable REJECT, future or negated evidence masquerading as completed evidence, bare mechanism
-  nouns, positive CV gates, adjacent hashes, timed KEEPs without both null/effect bootstrap median
-  CIs, and timed KEEPs without an in-process executing-ELF SHA-256. Preflight requires a proposed
-  mechanism and target surface, prints the concrete prior retry predicate, and exits 2 when the
-  surface is covered. The staged hook delegates to this tracked policy. Its offline self-test
-  exercises 32 accept/refuse cases.
+  nouns, positive CV gates, adjacent hashes, timed positives without both null/effect bootstrap median
+  CIs, and timed positives without an in-process executing-ELF SHA-256. Preflight requires a
+  proposed mechanism, target surface, and `legacy-incumbent` or `self` comparison class; it prints
+  the concrete prior retry predicate and exits 2 when the surface is covered. Timed positives
+  require `result_class=campaign-win|self-speedup`; campaign wins require the structured
+  same-invocation actual-incumbent bundle and self-speedups require a `MAINTENANCE` heading. The
+  staged hook delegates to this tracked policy. Its offline self-test exercises 40 accept/refuse
+  cases.
 - **CONCRETE RETRY PREDICATES.** Reopen the audit only if the pinned ledger object or one of the
   130 manifest anchors is shown to be wrong; rerun the mechanical screen, then hand-read every
   affected section before changing a class. Reopen `bd-ummyux` if an authorized production-preload
@@ -23319,4 +23369,5 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   quiescence, if created-minus-released grows with completed churn, or if the fixed table refuses
   an allocation while fewer than 4,096 overflow mappings are simultaneously live. Reopen the gate
   if a self-test or staged fixture demonstrates that an undecidable REJECT, a CV-decided row, or a
-  timed KEEP missing its executing-ELF/A/A/median-CI bundle can commit without exit 2.
+  timed positive missing its executing-ELF/A/A/median-CI/result-class bundle can commit without
+  exit 2, or if a self-speedup can be presented as campaign output.

@@ -8,14 +8,17 @@ the thing that stops the void population regrowing.
 
 Five modes, all cheap and offline (no build, no worker):
 
-  preflight  Before you touch source for a perf lever, name both the proposed
-             mechanism and the target surface. Exit 2 = BLOCKED when a prior REJECT
-             covers that surface, and print its concrete retry predicate.
+  preflight  Before you touch source for a perf lever, name the proposed mechanism,
+             target surface, and intended comparison class. Exit 2 = BLOCKED when a
+             prior REJECT covers that surface or the comparison class is invalid,
+             and print its concrete retry predicate.
 
   lint       Refuse a new or modified REJECT that records neither a counted mechanism
              nor a numeric same-invocation A/A plus bootstrap median CI. Refuse a
-             timed KEEP without null/effect bootstrap median CIs, that A/A witness,
-             or an in-process executing-ELF SHA-256.
+             timed positive without null/effect bootstrap median CIs, that A/A
+             witness, an in-process executing-ELF SHA-256, or an exact result class.
+             Refuse a campaign win without an actual same-invocation legacy arm and
+             refuse a self-speedup presented as a win.
              Refuse every positive CV gate. Policy failures exit 2; infrastructure
              failures exit 64.
 
@@ -33,7 +36,8 @@ VALID-AB / VOID-CV / VOID-ZEROSELF / VOID-NONULL. Screening is triage; every
 row in the audit document is hand-adjudicated before it enters the queue.
 
   scripts/check_perf_ledger_integrity.py preflight \
-      --lever "pcmpistri span scan" --surface "strspn span_pshufb_ascii"
+      --lever "pcmpistri span scan" --surface "strspn span_pshufb_ascii" \
+      --comparison legacy-incumbent --incumbent host-glibc
   scripts/check_perf_ledger_integrity.py lint --since origin/main
   scripts/check_perf_ledger_integrity.py report
   scripts/check_perf_ledger_integrity.py self-test
@@ -53,6 +57,7 @@ REPO = Path(__file__).resolve().parent.parent
 LEDGER = REPO / "docs" / "NEGATIVE_EVIDENCE.md"
 AUDIT = REPO / "docs" / "LEDGER_RESURRECTION.md"
 FRONTIER = REPO / "docs" / "PERF_FRONTIER_FINAL.md"
+METHOD = REPO / "docs" / "LEDGER_RESURRECTION_METHOD.md"
 RUNTIME_POLICY = REPO / "crates" / "frankenlibc-abi" / "src" / "runtime_policy.rs"
 BEADS = REPO / ".beads" / "issues.jsonl"
 
@@ -135,10 +140,12 @@ EXECUTING_ELF_SHA256 = re.compile(
     re.I,
 )
 CONTRACT_NULL_VALUE = re.compile(
-    r"(?:A/A(?:/B)?|null(?:[- ]control| floor)|null_median_ratio)"
+    r"(?:A/A(?:/B)?|FL/FL|same[- ]invocation null|"
+    r"null(?:[- ]control| floor)|null_median_ratio)"
     r"[^|\n]{0,120}(?:0|1|2)\.\d+(?:\s*(?:x|×))?"
     r"|(?:0|1|2)\.\d+(?:\s*(?:x|×))?[^|\n]{0,120}"
-    r"(?:A/A(?:/B)?|null(?:[- ]control| floor)|null_median_ratio)",
+    r"(?:A/A(?:/B)?|FL/FL|same[- ]invocation null|"
+    r"null(?:[- ]control| floor)|null_median_ratio)",
     re.I,
 )
 EFFECT_VALUE = re.compile(
@@ -160,6 +167,7 @@ CONFIDENCE_INTERVAL = re.compile(r"\bCI\b|\bconfidence interval\b", re.I)
 CV_MENTION = re.compile(r"\bCVs?\b|\bcoefficients? of variation\b", re.I)
 CV_DISCLAIMER = re.compile(
     r"\bcv_used\s*=\s*false\b|"
+    r"\bCVs?\b[^.;|\n]{0,64}\b(?:descriptive|provenance)\s+only\b|"
     r"\b(?:no|not an?|without an?)\s+"
     r"(?:CVs?|coefficients? of variation)\s+"
     r"(?:gate|threshold|decision|input)\b|"
@@ -203,30 +211,63 @@ ZERO_GAIN = re.compile(
 # only 3 vs-incumbent wins, and all 3 came from repos with a live incumbent arm — so
 # the distinction is the difference between output and motion.
 #
-# For this repo the incumbent is host glibc, and the only interposition-proof way to
-# hold it side-by-side is dlmopen(LM_ID_NEWLM) (see the abi-bench interposition
-# hazard) — a plain `extern "C"` symbol in an abi-bench binary resolves to OUR
-# no_mangle export, which would silently measure fl against fl.
-# Interposition-proof: a fresh-namespace handle cannot resolve back to our own
-# no_mangle exports. This is the only form that PROVES the incumbent was measured.
-INCUMBENT_ARM_VERIFIED = re.compile(
-    r"dlmopen|LM_ID_NEWLM|side[- ]by[- ]side|same invocation.{0,40}glibc|"
-    r"glibc.{0,40}same invocation",
+# For this repo the incumbent is host glibc. The existing side-by-side harnesses use
+# dlmopen(LM_ID_NEWLM) to make that arm interposition-proof (see the abi-bench
+# interposition hazard); an explicitly uninterposed host-only link is also admissible.
+# A plain `extern "C"` symbol in an abi-bench binary resolves to OUR no_mangle export,
+# which would silently measure fl against fl.
+# Loose prose such as "vs glibc" is intentionally insufficient. A competitive
+# claim needs structured evidence naming the actual incumbent, how interposition
+# was excluded, and the incumbent ratio's own interval.
+RESULT_CLASS = re.compile(
+    r"\bresult_class\s*[:=]\s*`?(campaign-win|self-speedup)\b",
     re.I,
 )
-# Weaker: the row quotes a glibc-relative number but does not evidence how the
-# incumbent was held. In an abi-bench binary a plain `extern "C"` symbol resolves to
-# OUR export, so these cannot be trusted as competitive claims without reading the row.
-INCUMBENT_ARM_CLAIMED = re.compile(
-    r"host[- ]glibc|vs\.? glibc|glibc arm|fl/glibc|FL/glibc|candidate/host|"
-    r"cand/glibc|incumbent arm",
+LEGACY_INCUMBENT = re.compile(
+    r"\blegacy_incumbent\s*[:=]\s*`?(?:host[- ]glibc|glibc)\b",
     re.I,
 )
-SELF_SPEEDUP_LABEL = re.compile(
-    r"self[- ]speedup|self[- ]speed[- ]up|maintenance only|not a competitive claim|"
-    r"cand/base only|own-code before[- ]vs[- ]after|no incumbent arm",
+INCUMBENT_PROVENANCE = re.compile(
+    r"\bincumbent_provenance\s*[:=]\s*`?"
+    r"(?:dlmopen-lmid-newlm|uninterposed-host-link)\b",
     re.I,
 )
+SAME_INVOCATION_FIELD = re.compile(
+    r"\bsame_invocation\s*[:=]\s*`?true\b",
+    re.I,
+)
+INCUMBENT_RATIO_FIELD = re.compile(
+    r"\bincumbent_ratio\s*[:=]\s*`?(\d+(?:\.\d+)?)\b",
+    re.I,
+)
+INCUMBENT_CI_FIELD = re.compile(
+    r"\bincumbent_bootstrap_median_ci\s*[:=]\s*`?"
+    r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]",
+    re.I,
+)
+NULL_CI_FIELD = re.compile(
+    r"\bnull_bootstrap_median_ci\s*[:=]\s*`?"
+    r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]",
+    re.I,
+)
+MAINTENANCE_TITLE = re.compile(r"\bMAINTENANCE\b", re.I)
+CAMPAIGN_WIN_TITLE = re.compile(r"\bCAMPAIGN WIN\b", re.I)
+PUBLIC_RETRACTION_NARRATIVE = re.compile(
+    r"\bRETRACT(?:ED|ION)?\b|\bWITHDRAW(?:N|AL)?\b|"
+    r"\bpreviously[- ]claimed\b|\bwe (?:once )?claimed\b|\bwrong figure\b|"
+    r"\b(?:old|former|historical|original) claim\b|\bwas wrong\b|"
+    r"\bmisinformation\b|\breasoning failure\b|"
+    r"\bmodel[- ]integrity (?:incident|remediation|audit)\b",
+    re.I,
+)
+
+# These artifact-backed rows predate the result-class schema. They are
+# grandfathered only for the exact classification-only downgrade named here;
+# this is not a forward evidence escape.
+HISTORICAL_CLASSIFICATION_ONLY: dict[str, str] = {
+    "cc-pcc-gate-split-2026-07-25": "self-speedup",
+    "bd-bl39l2": "self-speedup",
+}
 
 
 def decision_evidence(text: str) -> str:
@@ -287,38 +328,83 @@ class Row:
             return True
         return bool(re.search(r"\b(?:KEEP|SHIPPED|LANDED|WIN)\b", h))
 
-    def has_incumbent_arm(self, verified_only: bool = False) -> bool:
-        """Did this row measure the real incumbent side-by-side in the same invocation?
+    def result_class(self) -> str:
+        """Return the exact machine-readable positive-result class."""
+        values = {
+            match.group(1).lower()
+            for match in RESULT_CLASS.finditer(self.completed_run_evidence())
+        }
+        if len(values) == 1:
+            return values.pop()
+        return "ambiguous" if values else ""
 
-        Policy 2: only such a ratio is a campaign win. Scans the whole row rather than
-        just the completed-run window, because the harness description that names the
-        `dlmopen` arm usually sits in the method paragraph.
+    def is_positive_result(self) -> bool:
+        return self.is_keep() or bool(self.result_class())
 
-        `verified_only` demands an interposition-proof marker. A row that merely quotes
-        an `fl/glibc` number has not shown HOW it held the incumbent, and in an
-        abi-bench binary a plain `extern "C"` symbol resolves to our own export — so
-        the loose form is a triage signal, not proof.
-        """
-        blob = self.title + "\n" + self.text
-        if INCUMBENT_ARM_VERIFIED.search(blob):
-            return True
-        return not verified_only and bool(INCUMBENT_ARM_CLAIMED.search(blob))
+    def historical_classification_marker(self) -> str:
+        """Return the exact pre-schema artifact marker, if this is that row."""
+        for marker, expected in HISTORICAL_CLASSIFICATION_ONLY.items():
+            if (
+                marker in self.title
+                and self.date == "2026-07-25"
+                and self.result_class() == expected
+            ):
+                return marker
+        return ""
 
-    def declares_self_speedup(self) -> bool:
-        """Does the row explicitly label itself maintenance rather than a win?"""
-        return bool(SELF_SPEEDUP_LABEL.search(self.title + "\n" + self.text))
+    def is_historical_classification_only(self) -> bool:
+        return bool(self.historical_classification_marker())
 
     def win_kind(self) -> str:
-        """`vs-incumbent` | `self-speedup` | `unlabelled` for a KEEP row."""
-        if not self.is_keep():
+        """Campaign-output classification for report mode."""
+        if not self.is_positive_result():
             return ""
-        if self.has_incumbent_arm(verified_only=True):
-            return "vs-incumbent"
-        if self.declares_self_speedup():
-            return "self-speedup"
-        if self.has_incumbent_arm():
-            return "incumbent-claimed"
-        return "unlabelled"
+        return self.result_class() or "unlabelled"
+
+    def campaign_contract_violations(self) -> list[str]:
+        """Validate the structured same-invocation legacy-incumbent bundle."""
+        evidence = self.completed_run_evidence()
+        bad: list[str] = []
+        if not CAMPAIGN_WIN_TITLE.search(self.title):
+            bad.append("result_class=campaign-win requires CAMPAIGN WIN in the heading")
+        if not LEGACY_INCUMBENT.search(evidence):
+            bad.append("campaign win lacks legacy_incumbent=host-glibc")
+        if not INCUMBENT_PROVENANCE.search(evidence):
+            bad.append(
+                "campaign win lacks interposition-proof incumbent_provenance"
+            )
+        if not SAME_INVOCATION_FIELD.search(evidence):
+            bad.append("campaign win lacks same_invocation=true")
+
+        ratio_match = INCUMBENT_RATIO_FIELD.search(evidence)
+        ci_match = INCUMBENT_CI_FIELD.search(evidence)
+        null_ci_match = NULL_CI_FIELD.search(evidence)
+        if not ratio_match:
+            bad.append("campaign win lacks incumbent_ratio")
+        if not ci_match:
+            bad.append("campaign win lacks incumbent_bootstrap_median_ci")
+        if not null_ci_match:
+            bad.append("campaign win lacks null_bootstrap_median_ci")
+        if ratio_match and ci_match and null_ci_match:
+            ratio = float(ratio_match.group(1))
+            low = float(ci_match.group(1))
+            high = float(ci_match.group(2))
+            null_low = float(null_ci_match.group(1))
+            null_high = float(null_ci_match.group(2))
+            if not (0.0 < low <= ratio <= high < 1.0):
+                bad.append(
+                    "campaign win requires 0 < CI-low <= incumbent_ratio <= "
+                    "CI-high < 1.0"
+                )
+            if not (0.0 < null_low <= null_high):
+                bad.append("campaign win's null CI is malformed")
+            else:
+                null_half_width = max(abs(null_low - 1.0), abs(null_high - 1.0))
+                if 1.0 - ratio <= 2.0 * null_half_width:
+                    bad.append(
+                        "campaign win does not clear 2x the A/A null-CI half-width"
+                    )
+        return bad
 
     def completed_run_evidence(self) -> str:
         return decision_evidence(self.text)
@@ -410,24 +496,46 @@ class Row:
                 bad.append("no counted mechanism and no numeric same-invocation A/A null")
             elif not self.has_null_bootstrap_median_ci():
                 bad.append("numeric same-invocation A/A has no nearby bootstrap median CI")
-        elif self.is_keep():
-            # Policy 2: a KEEP either measured the incumbent side-by-side in the same
-            # invocation (a campaign win) or it is a self-speedup and must say so.
-            # Refusing the unlabelled middle is what stops maintenance being quoted as
-            # a competitive claim later, when the row's context is gone.
-            if not self.has_incumbent_arm() and not self.declares_self_speedup():
+        elif self.is_positive_result():
+            result_class = self.result_class()
+            if result_class not in {"campaign-win", "self-speedup"}:
                 bad.append(
-                    "KEEP has no same-invocation incumbent arm and is not labelled a "
-                    "self-speedup (Policy 2: only vs-incumbent ratios are campaign wins)"
+                    "timed positive lacks exactly one result_class=campaign-win or "
+                    "result_class=self-speedup"
                 )
+            elif result_class == "campaign-win":
+                bad.extend(self.campaign_contract_violations())
+            else:
+                if not MAINTENANCE_TITLE.search(self.title):
+                    bad.append(
+                        "result_class=self-speedup requires MAINTENANCE in the heading"
+                    )
+                if CAMPAIGN_WIN_TITLE.search(self.title) or self.title.upper().startswith(
+                    "WIN"
+                ):
+                    bad.append("a self-speedup must not be presented as a win")
+
+            # Two pre-schema artifacts are being downgraded from WIN to maintenance.
+            # Their existing artifact adjudication stands; the exception is exact and
+            # cannot admit a new row on another surface.
+            if self.is_historical_classification_only():
+                return bad
+
             if not self.has_executing_elf_sha256():
                 bad.append("no in-process self-report of the executing ELF's SHA-256")
             if not self.has_same_invocation_null_control():
-                bad.append("timed KEEP has no numeric same-invocation A/A null")
+                bad.append("timed positive has no numeric same-invocation A/A null")
             elif not self.has_null_bootstrap_median_ci():
-                bad.append("timed KEEP's A/A null has no nearby bootstrap median CI")
-            if not self.has_effect_bootstrap_median_ci():
-                bad.append("timed KEEP's effect has no nearby bootstrap median CI")
+                bad.append(
+                    "timed positive's A/A null has no nearby bootstrap median CI"
+                )
+            if (
+                result_class != "campaign-win"
+                and not self.has_effect_bootstrap_median_ci()
+            ):
+                bad.append(
+                    "timed positive's self effect has no nearby bootstrap median CI"
+                )
         return bad
 
     def classify(self) -> str:
@@ -549,8 +657,40 @@ def _candidate_match(
     return 100 * len(surface_hits) + len(all_hits), surface_hits, lever_hits
 
 
+def _preflight_result_class(args: argparse.Namespace) -> str | None:
+    comparison = getattr(args, "comparison", "")
+    incumbent = (getattr(args, "incumbent", None) or "").strip().lower()
+    incumbent = incumbent.replace("_", "-")
+    if comparison == "legacy-incumbent":
+        if incumbent not in {"glibc", "host-glibc", "host glibc"}:
+            print(
+                "PREFLIGHT BLOCKED — legacy-incumbent comparison requires "
+                "--incumbent host-glibc.",
+                file=sys.stderr,
+            )
+            return None
+        return "campaign-win"
+    if comparison == "self":
+        if incumbent:
+            print(
+                "PREFLIGHT BLOCKED — --comparison self must not name an incumbent.",
+                file=sys.stderr,
+            )
+            return None
+        return "self-speedup"
+    print(
+        "PREFLIGHT BLOCKED — choose --comparison legacy-incumbent or self.",
+        file=sys.stderr,
+    )
+    return None
+
+
 def cmd_preflight(args: argparse.Namespace) -> int:
     """Block a proposal whose target surface already has a REJECT row."""
+    result_class = _preflight_result_class(args)
+    if result_class is None:
+        return EXIT_BLOCKED
+
     lever_terms = _terms(args.lever)
     surface_terms = _terms(args.surface)
     if not lever_terms or not surface_terms:
@@ -574,12 +714,31 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             "PREFLIGHT OK — no prior REJECT covers "
             f"surface={surface_terms[:6]} proposal={lever_terms[:6]}."
         )
-        print("  Record an A/A null control or a counted mechanism when you write the result,")
-        print("  or `lint` will refuse the row.")
+        if result_class == "campaign-win":
+            print(
+                "  Intended result_class=campaign-win: run actual host glibc "
+                "side-by-side in the same invocation."
+            )
+        else:
+            print(
+                "  Intended result_class=self-speedup: maintenance only, "
+                "never campaign output or a competitive claim."
+            )
+        print(
+            "  Record the executing ELF, same-invocation A/A, and bootstrap "
+            "median CIs, or `lint` will refuse a positive row."
+        )
+        print(
+            "  A REJECT may substitute a counted mechanism or valid profile basis "
+            "under the six-class contract."
+        )
         return EXIT_OK
 
     hits.sort(key=lambda hit: -hit[0])
-    print("PREFLIGHT BLOCKED — a prior REJECT covers this target surface.\n")
+    print(
+        "PREFLIGHT BLOCKED — a prior REJECT covers this target surface "
+        f"(intended result_class={result_class}).\n"
+    )
     for _, surface_hits, lever_hits, row in hits[:5]:
         print(f"  docs/NEGATIVE_EVIDENCE.md:{row.line}  [{row.cls}]")
         print(f"    target matches: {', '.join(surface_hits[:8])}")
@@ -673,15 +832,32 @@ def cmd_lint(args: argparse.Namespace) -> int:
             else None
         )
         text = _ledger_text(staged=args.staged, at_head=args.since is not None)
-        rows = parse_text(text)
+        all_rows = parse_text(text)
     except (OSError, RuntimeError) as exc:
         print(f"lint: infrastructure failure: {exc}", file=sys.stderr)
         return EXIT_INFRA
 
+    grandfather_counts = {
+        marker: sum(
+            row.historical_classification_marker() == marker for row in all_rows
+        )
+        for marker in HISTORICAL_CLASSIFICATION_ONLY
+    }
+    rows = all_rows
     if touched is not None:
         rows = [row for row in rows if touched.intersection(_row_line_span(row))]
-    decisions = [row for row in rows if row.is_reject() or row.is_keep()]
-    bad = [(row, row.contract_violations()) for row in decisions]
+    decisions = [row for row in rows if row.is_reject() or row.is_positive_result()]
+
+    def violations_for(row: Row) -> list[str]:
+        violations = row.contract_violations()
+        marker = row.historical_classification_marker()
+        if marker and grandfather_counts.get(marker) != 1:
+            violations.append(
+                "historical classification grandfather marker is not unique"
+            )
+        return violations
+
+    bad = [(row, violations_for(row)) for row in decisions]
     bad = [(row, why) for row, why in bad if why]
 
     scope = (
@@ -695,10 +871,11 @@ def cmd_lint(args: argparse.Namespace) -> int:
             print(f"         {violation}")
 
     reject_count = sum(row.is_reject() for row in decisions)
-    keep_count = sum(row.is_keep() for row in decisions)
+    positive_count = sum(row.is_positive_result() for row in decisions)
     print()
     print(
-        f"LINT: {reject_count} REJECT row(s), {keep_count} KEEP row(s) in {scope}; "
+        f"LINT: {reject_count} REJECT row(s), {positive_count} timed positive row(s) "
+        f"in {scope}; "
         f"{len(bad)} refused."
     )
     if bad:
@@ -711,9 +888,11 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print("    - a named non-zero profile frame plus computed Amdahl ceiling")
         print("      when the lever was rejected before editing source.")
         print("  A near-1.0 wall ratio on its own is not evidence — it is an unmeasured claim.")
-        print("  A timed KEEP must record numeric same-invocation A/A, nearby")
-        print("  null/effect bootstrap median CIs, and the executing ELF's")
-        print("  in-process self-reported 64-hex SHA-256.")
+        print("  A timed positive must record numeric same-invocation A/A, nearby")
+        print("  null/effect bootstrap median CIs, the executing ELF's in-process")
+        print("  self-reported 64-hex SHA-256, and exactly one result_class.")
+        print("  campaign-win additionally requires the structured actual-incumbent")
+        print("  bundle; self-speedup must be titled MAINTENANCE.")
         print("  CV may be provenance, but it must never be a decision gate.")
         return EXIT_BLOCKED
     return EXIT_OK
@@ -754,19 +933,15 @@ def cmd_report(args: argparse.Namespace) -> int:
     )
 
     # Policy 2 census: only vs-incumbent ratios are campaign output.
-    keeps = [r for r in all_rows if r.is_keep()]
+    keeps = [r for r in all_rows if r.is_positive_result()]
     kinds: dict[str, int] = {}
     for r in keeps:
         kinds[r.win_kind()] = kinds.get(r.win_kind(), 0) + 1
     print()
-    print(f"KEEP rows:       {len(keeps)}")
+    print(f"positive rows:   {len(keeps)}")
     print(
-        f"  vs-incumbent      {kinds.get('vs-incumbent', 0)}"
-        "   <- campaign wins (interposition-proof incumbent arm)"
-    )
-    print(
-        f"  incumbent-claimed {kinds.get('incumbent-claimed', 0)}"
-        "   <- quotes a glibc ratio but does not evidence the arm; read before quoting"
+        f"  campaign-win      {kinds.get('campaign-win', 0)}"
+        "   <- same-invocation actual legacy incumbent"
     )
     print(
         f"  self-speedup      {kinds.get('self-speedup', 0)}"
@@ -792,8 +967,8 @@ def cmd_self_test(args: argparse.Namespace) -> int:
     """Exercise the forward policy without Cargo, git mutation, or fixtures."""
     sha = "a" * 64
 
-    def row(title: str, body: str = "") -> Row:
-        item = Row(1, "2026-07-27", "self-test", title, f"## 2026-07-27 — {title}")
+    def row(title: str, body: str = "", date: str = "2026-07-27") -> Row:
+        item = Row(1, date, "self-test", title, f"## {date} — {title}")
         item.body = body.splitlines()
         item.cls = item.classify()
         return item
@@ -948,23 +1123,26 @@ def cmd_self_test(args: argparse.Namespace) -> int:
             ),
         ),
         (
-            "KEEP with self-hash, A/A CI, effect CI, and a dlmopen incumbent arm is admitted",
+            "structured same-invocation incumbent win is admitted",
             not row(
-                "KEEP: win",
-                f"bench_elf_sha256={sha}; host glibc held via dlmopen(LM_ID_NEWLM) in "
-                "the same invocation; A/A null control 1.004x in the same "
+                "CAMPAIGN WIN (SHIPPED): exact leaf",
+                f"result_class=campaign-win; legacy_incumbent=host-glibc; "
+                "incumbent_provenance=dlmopen-lmid-newlm; same_invocation=true; "
+                "incumbent_ratio=0.900; "
+                "incumbent_bootstrap_median_ci=[0.88,0.92]; "
+                "null_bootstrap_median_ci=[0.99,1.01]; "
+                f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
                 "invocation with deterministic bootstrap median 95% CI "
-                "[0.998, 1.009]; candidate/original 0.900x with deterministic "
-                "bootstrap median 95% CI [0.88, 0.92].",
+                "[0.998, 1.009].",
             ).contract_violations(),
         ),
-        # Policy 2 (2026-07-27): only a vs-incumbent ratio is a campaign win.
+        # Policy 2 (2026-07-27): only an actual incumbent ratio is a campaign win.
         (
-            "KEEP with full statistics but NO incumbent arm and no label is refused",
+            "positive with full statistics but no result_class is refused",
             any(
-                "Policy 2" in v
-                for v in row(
-                    "KEEP: win",
+                "result_class" in violation
+                for violation in row(
+                    "KEEP: unclassified",
                     f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
                     "invocation with deterministic bootstrap median 95% CI "
                     "[0.998, 1.009]; candidate/original 0.900x with deterministic "
@@ -973,23 +1151,103 @@ def cmd_self_test(args: argparse.Namespace) -> int:
             ),
         ),
         (
-            "KEEP labelled a self-speedup is admitted without an incumbent arm",
+            "maintenance self-speedup with the full evidence bundle is admitted",
             not row(
-                "KEEP: win",
-                f"bench_elf_sha256={sha}; self-speedup (maintenance only, not a "
-                "competitive claim); A/A null control 1.004x in the same invocation "
-                "with deterministic bootstrap median 95% CI [0.998, 1.009]; "
-                "candidate/original 0.900x with deterministic bootstrap median 95% "
-                "CI [0.88, 0.92].",
+                "MAINTENANCE (SHIPPED SELF-SPEEDUP): exact leaf",
+                f"result_class=self-speedup; bench_elf_sha256={sha}; "
+                "A/A null control 1.004x in the same invocation with deterministic "
+                "bootstrap median 95% CI [0.998, 1.009]; candidate/original "
+                "0.900x with deterministic bootstrap median 95% CI [0.88, 0.92].",
             ).contract_violations(),
         ),
         (
-            "win_kind separates a dlmopen arm from a bare glibc mention",
-            row("KEEP: win", "held via dlmopen in the same invocation").win_kind()
-            == "vs-incumbent"
-            and row("KEEP: win", "still 10x vs glibc").win_kind() == "incumbent-claimed"
-            and row("KEEP: win", "self-speedup only").win_kind() == "self-speedup"
-            and row("KEEP: win", "nothing said").win_kind() == "unlabelled",
+            "self-speedup presented as a win is refused",
+            any(
+                "must not be presented as a win" in violation
+                or "MAINTENANCE" in violation
+                for violation in row(
+                    "WIN (SHIPPED): own-code delta",
+                    f"result_class=self-speedup; bench_elf_sha256={sha}; "
+                    "A/A null control 1.004x in the same invocation with deterministic "
+                    "bootstrap median 95% CI [0.998, 1.009]; candidate/original "
+                    "0.900x with deterministic bootstrap median 95% CI [0.88, 0.92].",
+                ).contract_violations()
+            ),
+        ),
+        (
+            "campaign-win needs structured incumbent provenance",
+            any(
+                "incumbent_provenance" in violation
+                for violation in row(
+                    "CAMPAIGN WIN (SHIPPED): loose glibc mention",
+                    f"result_class=campaign-win; legacy_incumbent=host-glibc; "
+                    "same_invocation=true; incumbent_ratio=0.900; "
+                    "incumbent_bootstrap_median_ci=[0.88,0.92]; "
+                    "null_bootstrap_median_ci=[0.99,1.01]; "
+                    f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
+                    "invocation with deterministic bootstrap median 95% CI "
+                    "[0.998, 1.009].",
+                ).contract_violations()
+            ),
+        ),
+        (
+            "campaign-win CI must remain entirely below one",
+            any(
+                "CI-high < 1.0" in violation
+                for violation in row(
+                    "CAMPAIGN WIN (SHIPPED): crossing interval",
+                    f"result_class=campaign-win; legacy_incumbent=host-glibc; "
+                    "incumbent_provenance=dlmopen-lmid-newlm; same_invocation=true; "
+                    "incumbent_ratio=0.990; "
+                    "incumbent_bootstrap_median_ci=[0.96,1.02]; "
+                    "null_bootstrap_median_ci=[0.99,1.01]; "
+                    f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
+                    "invocation with deterministic bootstrap median 95% CI "
+                    "[0.998, 1.009].",
+                ).contract_violations()
+            ),
+        ),
+        (
+            "campaign-win must clear twice the null-CI half-width",
+            any(
+                "2x the A/A" in violation
+                for violation in row(
+                    "CAMPAIGN WIN (SHIPPED): sub-margin",
+                    f"result_class=campaign-win; legacy_incumbent=host-glibc; "
+                    "incumbent_provenance=dlmopen-lmid-newlm; same_invocation=true; "
+                    "incumbent_ratio=0.980; "
+                    "incumbent_bootstrap_median_ci=[0.97,0.99]; "
+                    "null_bootstrap_median_ci=[0.98,1.02]; "
+                    f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
+                    "invocation with deterministic bootstrap median 95% CI "
+                    "[0.98, 1.02].",
+                ).contract_violations()
+            ),
+        ),
+        (
+            "win_kind reads only exact result_class fields",
+            row("CAMPAIGN WIN (SHIPPED): x", "result_class=campaign-win").win_kind()
+            == "campaign-win"
+            and row(
+                "MAINTENANCE (SHIPPED): x", "result_class=self-speedup"
+            ).win_kind()
+            == "self-speedup"
+            and row("KEEP: x", "still 10x vs glibc").win_kind() == "unlabelled",
+        ),
+        (
+            "historical classification grandfather is exact, not date-wide",
+            not row(
+                "MAINTENANCE (SHIPPED SELF-SPEEDUP): "
+                "cc-pcc-gate-split-2026-07-25",
+                "result_class=self-speedup",
+                "2026-07-25",
+            ).contract_violations()
+            and bool(
+                row(
+                    "MAINTENANCE (SHIPPED SELF-SPEEDUP): unrelated",
+                    "result_class=self-speedup",
+                ).contract_violations()
+            ),
         ),
         (
             "positive CV gate is refused",
@@ -1089,6 +1347,7 @@ def cmd_ledger_self_check(args: argparse.Namespace) -> int:
         ledger_text = LEDGER.read_text(encoding="utf-8", errors="replace")
         audit_text = AUDIT.read_text(encoding="utf-8", errors="replace")
         frontier_text = FRONTIER.read_text(encoding="utf-8", errors="replace")
+        method_text = METHOD.read_text(encoding="utf-8", errors="replace")
         runtime_policy_text = RUNTIME_POLICY.read_text(
             encoding="utf-8", errors="replace"
         )
@@ -1103,7 +1362,7 @@ def cmd_ledger_self_check(args: argparse.Namespace) -> int:
         return EXIT_INFRA
 
     rows = parse_text(ledger_text)
-    decisions = [row for row in rows if row.is_reject() or row.is_keep()]
+    decisions = [row for row in rows if row.is_reject() or row.is_positive_result()]
     refused = [
         (row, violations)
         for row in decisions
@@ -1119,13 +1378,22 @@ def cmd_ledger_self_check(args: argparse.Namespace) -> int:
         (
             row
             for row in decisions
-            if row.is_keep()
+            if row.is_positive_result()
             and SHA256_VALUE.search(row.completed_run_evidence())
             and not row.has_executing_elf_sha256()
         ),
         None,
     )
     entrypoint = unique_row("cc-entrypoint-scope-split-2026-07-25")
+    pcc = unique_row("cc-pcc-gate-split-2026-07-25")
+    strftime_win = unique_row('CAMPAIGN WIN (SHIPPED): exact `strftime("%A")`')
+    textdomain = unique_row(
+        "MAINTENANCE (SHIPPED SELF-SPEEDUP): append-only"
+    )
+    wcsftime_win = unique_row("CAMPAIGN WIN (SHIPPED): exact `%FT%T`")
+    hosts_scanner = unique_row(
+        "MAINTENANCE SELF-SPEEDUP EVIDENCE: in-memory"
+    )
 
     manifest_match = re.search(
         r"### Complete hand manifest\n(?P<body>.*?)"
@@ -1278,10 +1546,33 @@ def cmd_ledger_self_check(args: argparse.Namespace) -> int:
             reconciliation_ok,
         ),
         (
-            "39-of-93 census is quarantined and frontier is corrected",
-            "RETRACTED CENSUS" in ledger_text
-            and "39 of 93 REJECT rows decided INSIDE" not in frontier_text
-            and "VOID-NONULL 29" in frontier_text,
+            "public campaign docs contain current claims without retraction prose",
+            not PUBLIC_RETRACTION_NARRATIVE.search(frontier_text)
+            and not PUBLIC_RETRACTION_NARRATIVE.search(method_text)
+            and "0.540615" in frontier_text
+            and "0.111264" in frontier_text
+            and "Maintenance self-speedups" in frontier_text,
+        ),
+        (
+            "current campaign rows distinguish two wins from three maintenance results",
+            bool(
+                strftime_win
+                and strftime_win.result_class() == "campaign-win"
+                and not strftime_win.contract_violations()
+                and wcsftime_win
+                and wcsftime_win.result_class() == "campaign-win"
+                and not wcsftime_win.contract_violations()
+                and pcc
+                and pcc.result_class() == "self-speedup"
+                and MAINTENANCE_TITLE.search(pcc.title)
+                and textdomain
+                and textdomain.result_class() == "self-speedup"
+                and MAINTENANCE_TITLE.search(textdomain.title)
+                and hosts_scanner
+                and hosts_scanner.result_class() == "self-speedup"
+                and MAINTENANCE_TITLE.search(hosts_scanner.title)
+                and not hosts_scanner.contract_violations()
+            ),
         ),
         (
             "6-to-1 conclusion is quarantined",
@@ -1332,6 +1623,8 @@ def cmd_ledger_self_check(args: argparse.Namespace) -> int:
         argparse.Namespace(
             lever="hot cold split",
             surface="entrypoint_scope",
+            comparison="self",
+            incumbent=None,
             threshold=2,
         )
     )
@@ -1367,6 +1660,16 @@ def main() -> int:
     p = sub.add_parser("preflight", help="block a lever whose surface has a prior REJECT")
     p.add_argument("--lever", required=True, help="proposed mechanism")
     p.add_argument("--surface", required=True, help="target function/module/benchmark surface")
+    p.add_argument(
+        "--comparison",
+        required=True,
+        choices=("legacy-incumbent", "self"),
+        help="intended evidence class: actual legacy incumbent or own-code maintenance",
+    )
+    p.add_argument(
+        "--incumbent",
+        help="actual legacy incumbent; required as host-glibc for legacy-incumbent",
+    )
     p.add_argument(
         "--threshold",
         type=int,

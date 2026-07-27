@@ -80,6 +80,22 @@ family and shipped the per-thread segment-magazine composition. Lane B therefore
 those benchmarks. This satisfies the queue by adjudicating the superseding evidence rather than
 manufacturing five duplicate runs.
 
+### Current campaign-output classification
+
+The same-invocation legacy-incumbent rule yields two campaign wins. The other positive measurements
+are maintenance self-speedups:
+
+| Commit | Result class | Decision ratio | Incumbent boundary |
+|---|---|---:|---|
+| `ac74b07bc` exact `strftime("%A")` | `campaign-win` | FrankenLibC / host glibc **0.540615**, CI **[0.537130, 0.549644]** | host glibc via `dlmopen(LM_ID_NEWLM)`, same invocation |
+| `3c03993b1` exact `%FT%T` `wcsftime` | `campaign-win` | FrankenLibC / host glibc **0.111264**, CI **[0.106929, 0.116409]** | host glibc via `dlmopen(LM_ID_NEWLM)`, same invocation |
+| `7c9d0d8c2` PCC hot/cold split | `self-speedup` | candidate / original **0.9463** | maintenance; current FrankenLibC / glibc **10.010** |
+| `8320a0b4a` `textdomain(NULL)` publication | `self-speedup` | candidate / original **0.228** | maintenance; current FrankenLibC / glibc **1.192201** |
+| `3aedb3f69` in-memory hosts scanner | `self-speedup` | candidate / original **0.428468**, CI **[0.411170, 0.444882]** | maintenance; no legacy-incumbent arm |
+
+A source keep and a campaign win are independent decisions. The three self-speedups remain valid
+maintenance evidence and are not competitive claims.
+
 ### 23-commit model-integrity audit
 
 Window: 2026-07-25 20:40 through 2026-07-26 00:35 America/New_York. Artifact-backed timing and
@@ -89,20 +105,20 @@ own-number justification, and uncovered code quality.
 | Commit | Verdict | Fresh audit |
 |---|---|---|
 | `858dc7ae4` | **RETRACTED** | initial 131-row/V1-V5 audit forced provenance defects into verdicts |
-| `7c9d0d8c2` | **CORRECTED** | PCC hot/cold code and KEEP stand; its original 22.18% profile narrative was a DWARF artifact |
+| `7c9d0d8c2` | **CORRECTED** | PCC hot/cold code and maintenance self-speedup stand; its original 22.18% profile narrative was a DWARF artifact |
 | `1aa78d173` | **SOUND** | executing-ELF report, same-invocation A/A, bootstrap median-CI contract, CV descriptive |
 | `529df86c0` | **RETRACTED** | “framing-bound / 6:1” conclusion reversed under matched no-call-graph profiling |
 | `b5de2730a` | **RETRACTED** | literal 130/131 VOID rule is not the frankenfs taxonomy |
 | `40ad31ad2` | **SOUND** | matched-settings correction reconciles 6.68% PCC share with the measured 5.4% effect |
 | `ac74b07bc` | **SOUND** | exact `%A` route, capacities, invalid weekday, 200k differential, ELF/A/A/CI all align |
 | `bd8a65351` | **CORRECTED** | production pair has three locked RMWs, not two: entry CAS on malloc, entry CAS on free, slot swap on free |
-| `8320a0b4a` | **SOUND** | append-only lifetime plus release/acquire publication makes lock-free readers sound |
+| `8320a0b4a` | **SOUND** | append-only lifetime plus release/acquire publication makes lock-free readers sound; the measured result is maintenance |
 | `77e305c6f` | **CORRECTED** | the two KEEPs stand; their old V1-V5 “VOID resurrection” accounting does not |
 | `049bd34a0` | **SOUND** | one anomalous host did not reproduce on two peers; rejection is justified by its own replication |
 | `46a783ea0` | **CORRECTED** | four artifact-backed results stand; old queue/yield classification is superseded |
 | `a7b93d691` | **SOUND** | exact/literal and mixed general-loop workloads are separated; no production KEEP is overclaimed |
 | `3c03993b1` | **SOUND** | exact `%FT%T` alias is behavior-identical to the proven ISO emitter; 200k differential and CI clear |
-| `3aedb3f69` | **SOUND** | immutable hosts snapshot executes the production scanner mechanism and states its boundary |
+| `3aedb3f69` | **SOUND** | immutable hosts snapshot executes the production scanner mechanism and states its no-incumbent maintenance boundary |
 | `fb9086de9` | **SOUND** | no-call-graph profile routes through `format_strftime`; unmeasured candidate was reverted |
 | `9ab364ffa` | **CORRECTED** | original regex gate admitted negations, bare nouns, adjacent hashes, modified-row escapes, and false KEEP titles |
 | `0c3c12e29` | **CORRECTED** | reclaiming overflow lifecycle is sound and now strict-remote tested; fixed table bounds simultaneous live mappings, not one allocation per thread |
@@ -123,7 +139,7 @@ that a later note merely promised the work.
 | Commit | Verdict | Fix artifact | Status |
 |---|---|---|---|
 | `858dc7ae4` | RETRACTED | authoritative six-class census/manifest here; stale `39/93` claims quarantined in `NEGATIVE_EVIDENCE.md`, replaced in `PERF_FRONTIER_FINAL.md`, and removed from `bd-3ollh0` | **LANDED** |
-| `7c9d0d8c2` | CORRECTED | matched 6.68% correction row and `runtime_policy.rs`; `bd-q7b7xf` carries the same correction while the historical KEEP remains artifact evidence | **LANDED** |
+| `7c9d0d8c2` | CORRECTED | matched 6.68% correction row and `runtime_policy.rs`; `bd-q7b7xf` carries the same correction while the maintenance self-speedup remains artifact evidence | **LANDED** |
 | `529df86c0` | RETRACTED | original ledger section is explicitly quarantined; matched 30.28%/33.96% reversal is authoritative and `bd-9j6h0d` no longer carries the old body | **LANDED** |
 | `b5de2730a` | RETRACTED | literal V1-V5/130-of-131 method moved below retraction markers in both resurrection documents; all live census summaries use six classes | **LANDED** |
 | `bd8a65351` | CORRECTED | structural ledger row and `bd-65p87u` state two RMW sites executed three times per ordinary pair and separate the contracts | **LANDED** |
@@ -144,7 +160,8 @@ window.**
 - The allocator structural note is corrected from two to three locked RMWs per malloc/free pair.
 - The overflow registry comment now states the honest 4,096 simultaneous-live-mapping bound.
 - The gate refuses negated/future evidence, a bare mechanism noun, an adjacent digest, CV gates,
-  missing effect/null median CIs, and modified historical-row escapes.
+  missing effect/null median CIs, modified historical-row escapes, unclassified timed positives,
+  self-speedups presented as wins, and incumbent wins without a live same-invocation legacy arm.
 - `bd-ummyux` remains closed on strict-remote focused tests; the original production fmemopen
   causal link remains an explicit reopen predicate because Lane B forbids benchmarking.
 - `bd-3ollh0` is closed only by this corrected hand census and published method.
