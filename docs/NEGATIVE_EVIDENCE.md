@@ -23255,3 +23255,50 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   and bootstrap CI, and the final decision is derived only from
   `all_size_median_ci_gate_pass`. Reopen the harness immediately if either null arm is missing,
   the null and claim operation counts differ, or changing any CV alone can change the verdict.
+
+## 2026-07-27 (cod / codex-root) — MODEL-INTEGRITY CORRECTION: fallback-window audit, allocator proof boundary, and ledger gate
+
+- **SCOPE / RESULT.** All 23 commits authored between 2026-07-25 20:40 and 2026-07-26 00:35
+  America/New_York were reread for workload routing, proof soundness, own-number justification,
+  and code quality outside the mechanical gates. Artifact-backed timing and byte-identity results
+  were not rerun. The authoritative per-commit table in `docs/LEDGER_RESURRECTION.md` records
+  **10 SOUND, 10 CORRECTED, and 3 RETRACTED**. The retractions are the original V1-V5 census, its
+  allocator “framing-bound / 6:1” conclusion, and the literal 130/131 VOID rule; none retracts a
+  measured production KEEP.
+- **SIX-CLASS HAND AUDIT.** The target was pinned at commit
+  `0bad50199470b42c15fcc0d35bef8b4fdf6dd9ad`, file SHA-256
+  `b5dcc5c4c798a98d949fbb2b1a7ef82dae7c269d7bcb154d90d871be300ac49f`. All 130 mechanically
+  selected sections were read through their next peer heading. Forty-seven are experiments that
+  honestly fit frankenfs's six definitions: 0 `VALID-PROFILE`, 1 `VALID-MECHANISM`, 9 `VALID-AB`,
+  8 `VOID-CV`, 0 `VOID-ZEROSELF`, and 29 `VOID-NONULL`. Thus 37/47 classifiable experiments are
+  VOID, with `VOID-NONULL` 29/37 (78.4%) of the void set. Twenty-nine other hits are not rejection
+  experiments; 54 decisive, mixed, correctness-failing, or substrate-invalid rows remain triage
+  unresolved rather than being forced into a seventh class.
+- **QUEUE ADJUDICATION.** The true top five by recorded target-frame self-time are L17797
+  (99.56%), L17758 (98.83%), L17903 (96.67%), L18455 (20.23%), and L18406 (19.75%). They are one
+  allocator family, and later corrected evidence already reran the membership primitive and
+  shipped the per-thread segment-magazine composition. Lane B therefore did not manufacture five
+  duplicate benchmark runs.
+- **ALLOCATOR PROOF CORRECTIONS.** The structural ledger claim is three locked RMWs per ordinary
+  malloc/free pair—not two: malloc entry CAS, free entry CAS, and segment-slot swap on free. The
+  `bd-ummyux` reclaiming overflow lifecycle remains sound, but its 4,096-slot fixed registry bounds
+  simultaneously live overflow mappings rather than one allocation per thread. A new focused
+  strict-remote test retained 64 overflow mappings from one thread simultaneously, verified the
+  live peak, freed all mappings, and observed matched created/released deltas with zero failures.
+  The prior strict-remote lifecycle, realloc, host-pointer, and 8-thread 5,120-lifecycle churn tests
+  also remain green. No benchmark was run.
+- **FORWARD GATE.** `scripts/check_perf_ledger_integrity.py` now refuses a new or modified
+  undecidable REJECT, future or negated evidence masquerading as completed evidence, bare mechanism
+  nouns, positive CV gates, adjacent hashes, timed KEEPs without both null/effect bootstrap median
+  CIs, and timed KEEPs without an in-process executing-ELF SHA-256. Preflight requires a proposed
+  mechanism and target surface, prints the concrete prior retry predicate, and exits 2 when the
+  surface is covered. The staged hook delegates to this tracked policy. Its offline self-test
+  exercises 32 accept/refuse cases.
+- **CONCRETE RETRY PREDICATES.** Reopen the audit only if the pinned ledger object or one of the
+  130 manifest anchors is shown to be wrong; rerun the mechanical screen, then hand-read every
+  affected section before changing a class. Reopen `bd-ummyux` if an authorized production-preload
+  8-thread `fmemopen` churn still aborts, if overflow live mappings fail to return to baseline after
+  quiescence, if created-minus-released grows with completed churn, or if the fixed table refuses
+  an allocation while fewer than 4,096 overflow mappings are simultaneously live. Reopen the gate
+  if a self-test or staged fixture demonstrates that an undecidable REJECT, a CV-decided row, or a
+  timed KEEP missing its executing-ELF/A/A/median-CI bundle can commit without exit 2.

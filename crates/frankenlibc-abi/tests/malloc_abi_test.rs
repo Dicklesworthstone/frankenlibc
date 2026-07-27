@@ -1267,6 +1267,42 @@ fn bump_overflow_lifecycle_is_owned_sized_aligned_and_reclaimed() {
     assert_eq!(after.failures, before.failures);
 }
 
+/// Registry capacity is a simultaneous-live-mapping bound, not a
+/// one-overflow-allocation-per-thread assumption.
+#[test]
+fn bump_overflow_allows_multiple_live_mappings_from_one_thread() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    const LIVE: usize = 64;
+    let before = malloc_bump_overflow_stats();
+    let mut pointers = Vec::with_capacity(LIVE);
+
+    for index in 0..LIVE {
+        let request = 2048 + index;
+        // SAFETY: direct test hook for a live overflow mapping retained below.
+        let pointer = unsafe { malloc_bump_overflow_alloc_for_tests(request, 16) };
+        assert!(
+            !pointer.is_null(),
+            "overflow allocation {index} returned NULL with {index} already live"
+        );
+        assert!(malloc_is_bump_ptr_for_tests(pointer));
+        pointers.push(pointer);
+    }
+
+    let at_peak = malloc_bump_overflow_stats();
+    assert_eq!(at_peak.live_mappings - before.live_mappings, LIVE);
+
+    for pointer in pointers {
+        // SAFETY: each pointer is a distinct live mapping retained above.
+        unsafe { free(pointer) };
+    }
+
+    let after = malloc_bump_overflow_stats();
+    assert_eq!(after.mappings_created - before.mappings_created, LIVE);
+    assert_eq!(after.mappings_released - before.mappings_released, LIVE);
+    assert_eq!(after.live_mappings, before.live_mappings);
+    assert_eq!(after.failures, before.failures);
+}
+
 /// `realloc` must copy the old payload and retire the old mapping only after the
 /// replacement allocation succeeds.
 #[test]

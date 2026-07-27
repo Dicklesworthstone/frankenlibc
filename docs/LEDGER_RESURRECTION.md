@@ -1,5 +1,136 @@
 # FrankenLibC Ledger Resurrection Audit
 
+## 2026-07-27 model-integrity correction — authoritative result
+
+This section supersedes every census, queue, and V1-V5 conclusion below it. The older material is
+retained only as incident evidence. Do not copy its `130/131`, `V1-V5`, `93 VOID-NONULL`, proxy
+ranking, or six-of-seven yield claims.
+
+### Pinned target and population
+
+| Field | Value |
+|---|---|
+| ledger | `docs/NEGATIVE_EVIDENCE.md` |
+| source commit | `0bad50199470b42c15fcc0d35bef8b4fdf6dd9ad` |
+| file SHA-256 | `b5dcc5c4c798a98d949fbb2b1a7ef82dae7c269d7bcb154d90d871be300ac49f` |
+| parsed dated entries | 527 |
+| mechanical heading candidates | 130 |
+| hand-read sections | **130 / 130** |
+
+The screen uses heading tokens only to find candidates. Every candidate was read from its `##`
+heading through the next peer heading. Regex output is triage, not a verdict.
+
+### Six-class hand census
+
+The definitions are frankenfs's, verbatim:
+
+| Class | Definition | Hand count |
+|---|---|---:|
+| `VALID-PROFILE` | Rejected before any source edit on a named frame with non-zero self-time plus a computed Amdahl ceiling. | 0 |
+| `VALID-MECHANISM` | No A/A null, but refuted on counted instructions, cycles, syscalls, allocations, or faults. | 1 |
+| `VALID-AB` | A/B with a recorded A/A null and the effect inside it. | 9 |
+| `VOID-CV` | Killed only by a `cv < 5` gate. | 8 |
+| `VOID-ZEROSELF` | Target frame had approximately zero self-time in the profile the benchmark actually ran. | 0 |
+| `VOID-NONULL` | Near-1.0 A/B wall result with no A/A null and no counted mechanism. | 29 |
+
+Of the 47 actual experiments that fit a definition, 37 are VOID. `VOID-NONULL` is **29/37 =
+78.4%** of that void set; CV is not the dominant defect.
+
+The other 83 screen hits were not forced into fake verdicts:
+
+- 29 are not rejection experiments: no timed candidate, audit/method sections, surfaces, blockers,
+  or design scopes.
+- 54 contain a decisive/mixed wall A/B, correctness failure, or inadmissible substrate but lack the
+  exact evidence required by any valid class. They remain **triage unresolved**. This is a screen
+  state, not a seventh class.
+
+### Complete hand manifest
+
+Every one of the 130 anchors appears exactly once below.
+
+| Disposition | Anchors |
+|---|---|
+| `VALID-PROFILE` | none |
+| `VALID-MECHANISM` | L3137 |
+| `VALID-AB` | L152, L203, L260, L518, L611, L682, L1470, L21545, L22998 |
+| `VOID-CV` | L17758, L17797, L17903, L18406, L18455, L18490, L21277, L21341 |
+| `VOID-ZEROSELF` | none |
+| `VOID-NONULL` | L56, L1439, L1818, L1849, L1939, L1983, L2184, L2338, L2462, L3426, L4169, L5463, L5720, L6150, L6172, L6261, L6341, L6388, L6460, L6975, L8062, L8244, L16210, L16421, L16527, L16566, L16575, L17275, L18828 |
+| not a rejection experiment | L1227, L1269, L1307, L1342, L1377, L1408, L1913, L3663, L3795, L4387, L4745, L5792, L7616, L8200, L8354, L16447, L17605, L18097, L18159, L18230, L18322, L18570, L18616, L18995, L19416, L21131, L21165, L21479, L21570 |
+| triage unresolved | L9, L872, L1159, L1606, L1706, L1882, L2496, L2855, L2881, L3047, L3329, L3715, L4072, L4202, L4841, L4870, L5297, L5350, L5599, L5675, L5828, L5846, L5992, L6007, L6089, L6123, L6225, L6302, L6619, L6645, L6659, L7127, L7182, L7204, L7385, L7407, L7465, L7901, L7933, L8333, L8370, L8382, L8415, L8430, L8454, L16179, L16194, L16227, L16345, L16468, L16471, L16477, L16497, L16803 |
+
+The strict provenance pass finds 13/130 rows containing a 64-hex digest, but only L22998 explicitly
+records that the compared binaries self-reported the executing ELF. An adjacent hash does not prove
+which process executed.
+
+### Corrected top-five resurrection queue
+
+Ranking is by recorded target-frame self-time, not quoted operation latency:
+
+| Rank | Anchor | Target self-time | Hand class | Disposition |
+|---:|---|---:|---|---|
+| 1 | L17797 | 99.56% | `VOID-CV` | superseded by the later corrected segment-membership sequence |
+| 2 | L17758 | 98.83% | `VOID-CV` | superseded by the later corrected segment-membership sequence |
+| 3 | L17903 | 96.67% | `VOID-CV` | median result clears; old all-CV closure is void |
+| 4 | L18455 | 20.23% | `VOID-CV` | corrected paired gate led to the shipped per-thread segment composition |
+| 5 | L18406 | 19.75% | `VOID-CV` | same family and superseded by that shipped composition |
+
+These are five historical rows but one allocator family. Later corrected evidence already reran the
+family and shipped the per-thread segment-magazine composition. Lane B therefore does not repeat
+those benchmarks. This satisfies the queue by adjudicating the superseding evidence rather than
+manufacturing five duplicate runs.
+
+### 23-commit model-integrity audit
+
+Window: 2026-07-25 20:40 through 2026-07-26 00:35 America/New_York. Artifact-backed timing and
+byte-identity results were not rerun. Each commit was reread for workload routing, proof soundness,
+own-number justification, and uncovered code quality.
+
+| Commit | Verdict | Fresh audit |
+|---|---|---|
+| `858dc7ae4` | **RETRACTED** | initial 131-row/V1-V5 audit forced provenance defects into verdicts |
+| `7c9d0d8c2` | **CORRECTED** | PCC hot/cold code and KEEP stand; its original 22.18% profile narrative was a DWARF artifact |
+| `1aa78d173` | **SOUND** | executing-ELF report, same-invocation A/A, bootstrap median-CI contract, CV descriptive |
+| `529df86c0` | **RETRACTED** | “framing-bound / 6:1” conclusion reversed under matched no-call-graph profiling |
+| `b5de2730a` | **RETRACTED** | literal 130/131 VOID rule is not the frankenfs taxonomy |
+| `40ad31ad2` | **SOUND** | matched-settings correction reconciles 6.68% PCC share with the measured 5.4% effect |
+| `ac74b07bc` | **SOUND** | exact `%A` route, capacities, invalid weekday, 200k differential, ELF/A/A/CI all align |
+| `bd8a65351` | **CORRECTED** | production pair has three locked RMWs, not two: entry CAS on malloc, entry CAS on free, slot swap on free |
+| `8320a0b4a` | **SOUND** | append-only lifetime plus release/acquire publication makes lock-free readers sound |
+| `77e305c6f` | **CORRECTED** | the two KEEPs stand; their old V1-V5 “VOID resurrection” accounting does not |
+| `049bd34a0` | **SOUND** | one anomalous host did not reproduce on two peers; rejection is justified by its own replication |
+| `46a783ea0` | **CORRECTED** | four artifact-backed results stand; old queue/yield classification is superseded |
+| `a7b93d691` | **SOUND** | exact/literal and mixed general-loop workloads are separated; no production KEEP is overclaimed |
+| `3c03993b1` | **SOUND** | exact `%FT%T` alias is behavior-identical to the proven ISO emitter; 200k differential and CI clear |
+| `3aedb3f69` | **SOUND** | immutable hosts snapshot executes the production scanner mechanism and states its boundary |
+| `fb9086de9` | **SOUND** | no-call-graph profile routes through `format_strftime`; unmeasured candidate was reverted |
+| `9ab364ffa` | **CORRECTED** | original regex gate admitted negations, bare nouns, adjacent hashes, modified-row escapes, and false KEEP titles |
+| `0c3c12e29` | **CORRECTED** | reclaiming overflow lifecycle is sound and now strict-remote tested; fixed table bounds simultaneous live mappings, not one allocation per thread |
+| `c8775a018` | **CORRECTED** | bead closure now records focused strict-remote tests and keeps the fmemopen causal link explicit |
+| `83b760709` | **CORRECTED** | published method replaced by the six-class procedure above |
+| `09b4ff404` | **CORRECTED** | obsolete queue closure was reopened and is closed only by this corrected hand audit |
+| `0bad50199` | **SOUND** | malloc harness applies the canonical point-effect versus bootstrap null-CI margin; it does not gate on CV |
+| `8412380e1` | **CORRECTED** | forward gate now checks real evidence, modified staged rows, exact target surfaces, effect/null CIs, and exit 2/64 |
+
+Result: **10 SOUND, 10 CORRECTED, 3 RETRACTED**.
+
+### Corrections banked by this turn
+
+- The allocator structural note is corrected from two to three locked RMWs per malloc/free pair.
+- The overflow registry comment now states the honest 4,096 simultaneous-live-mapping bound.
+- The gate refuses negated/future evidence, a bare mechanism noun, an adjacent digest, CV gates,
+  missing effect/null median CIs, and modified historical-row escapes.
+- `bd-ummyux` remains closed on strict-remote focused tests; the original production fmemopen
+  causal link remains an explicit reopen predicate because Lane B forbids benchmarking.
+- `bd-3ollh0` is closed only by this corrected hand census and published method.
+
+---
+
+## RETRACTED historical audit material
+
+Everything below this marker is retained to show how the bad census was produced. It is not current
+guidance.
+
 Fleet campaign 2026-07-25, Meta-Lever #1. **cc lane deliverable.**
 
 ## 2026-07-26 fleet correction — frankenfs taxonomy adopted verbatim

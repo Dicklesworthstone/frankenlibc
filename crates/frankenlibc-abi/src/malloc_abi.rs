@@ -1417,9 +1417,10 @@ const BUMP_MMAP_HEADER_WORDS: usize = 4;
 const BUMP_MMAP_HEADER_SIZE: usize = std::mem::size_of::<usize>() * BUMP_MMAP_HEADER_WORDS;
 const BUMP_MMAP_MAGIC: usize = 0x4652_414E_4B4D_4D50;
 
-// One slot per allocator reentry slot is enough for one live nested allocation
-// per concurrently active allocator thread. A full registry is an honest bound
-// on simultaneous live demand, not a failure accumulated from historical churn.
+// This fixed table bounds the overflow path at 4,096 simultaneously live
+// mappings. It is deliberately a live-set bound, not a one-allocation-per-thread
+// claim: one thread may retain many overflow allocations. Historical churn
+// cannot consume capacity after those mappings are freed and tombstoned.
 const BUMP_MMAP_RECORD_SLOTS: usize = ALLOCATOR_REENTRY_SLOT_COUNT;
 const BUMP_MMAP_RECORD_MASK: usize = BUMP_MMAP_RECORD_SLOTS - 1;
 const BUMP_MMAP_RECORD_EMPTY: usize = 0;
