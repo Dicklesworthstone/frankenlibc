@@ -293,6 +293,17 @@ const STRFTIME_FORMATS: &[&[u8]] = &[
     b"%I:%M %p",          // 12-hour clock
     b"%%",                // literal percent
     b"static text only",  // no conversions
+    // C-standard whole-format aliases. These are normalized to their defining
+    // expansions before exact-leaf dispatch (ISO C 7.27.3.5 makes that an identity),
+    // so they must stay byte-identical to glibc — including the embedded forms, which
+    // deliberately do NOT take the rewrite and still go through the general loop.
+    b"%T",       // == %H:%M:%S
+    b"%F",       // == %Y-%m-%d
+    b"%R",       // == %H:%M
+    b"%D",       // == %m/%d/%y, intentionally not rewritten
+    b"[%T]",     // alias embedded in literals -> general loop
+    b"%F %T",    // two aliases, not a whole-format alias
+    b"%d/%m/%Y", // European ordering; only %m/%d/%Y has a leaf
     // Year-format specifiers — exercise the no-width contract that fl
     // previously violated by zero-padding.
     b"%c",    // preferred date/time (uses %Y bare)

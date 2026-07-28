@@ -514,6 +514,20 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         buf[fmt.len()] = 0;
         return fmt.len();
     }
+    // Alias normalization before leaf dispatch. Every exact leaf below matches on
+    // literal byte equality of the WHOLE format (`fmt != b"%H:%M:%S"` and friends),
+    // so the C-standard aliases were invisible to all of them and fell through to
+    // the general loop — which then re-expanded them via `push_composite!` and
+    // re-walked the result. Measured: `%T` was 3.46x SLOWER than glibc while
+    // `%H:%M:%S`, which produces byte-identical output, was 1.69x FASTER; `%F` was
+    // 3.44x slower against `%Y-%m-%d`'s 2.22x faster. Rewriting the alias to its
+    // expansion is a definitional identity — ISO C 7.27.3.5 defines `%T` as
+    // "equivalent to %H:%M:%S", `%F` as `%Y-%m-%d`, `%R` as `%H:%M` — not a
+    // semantic change, so the existing differential gates over the expansions
+    // already cover it. Out-of-range fields still make the leaf return None and
+    // fall through to the general loop, exactly as the expansion would.
+    let fmt = strftime_alias_expansion(fmt).unwrap_or(fmt);
+
     if let Some(n) = format_strftime_hms(fmt, bd, buf) {
         return n;
     }
@@ -1090,6 +1104,24 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
 }
 
 #[inline]
+/// Map a bare C-standard alias format to its defining expansion.
+///
+/// ISO C 7.27.3.5 specifies these as exact equivalents, so this is a definitional
+/// rewrite rather than a behavioural one. Only whole-format aliases are mapped: an
+/// alias embedded in a larger format (`"[%T]"`) still goes to the general loop,
+/// which expands it via `push_composite!` as before.
+///
+/// `%D` is deliberately absent — its expansion `%m/%d/%y` has no leaf, so rewriting
+/// it would move work without removing any.
+fn strftime_alias_expansion(fmt: &[u8]) -> Option<&'static [u8]> {
+    match fmt {
+        b"%T" => Some(b"%H:%M:%S"),
+        b"%F" => Some(b"%Y-%m-%d"),
+        b"%R" => Some(b"%H:%M"),
+        _ => None,
+    }
+}
+
 fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
     if fmt != b"%H:%M:%S" {
         return None;

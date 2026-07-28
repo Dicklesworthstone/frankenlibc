@@ -72,6 +72,10 @@ const CASES: &[Case] = &[
         format: b"%T\0",
     },
     Case {
+        label: "alias_R",
+        format: b"%R\0",
+    },
+    Case {
         label: "date_slash_dmy",
         format: b"%d/%m/%Y\0",
     },
