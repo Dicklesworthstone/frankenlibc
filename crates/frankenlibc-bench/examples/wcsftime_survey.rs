@@ -1,4 +1,4 @@
-//! Same-worker, paired `%A` strftime profiler against host glibc.
+//! Same-worker, paired `%j` strftime profiler against host glibc.
 //!
 //! The source-identical FL/FL null control is measured once per paired sample and
 //! assigned opposite labels on alternating samples. The FL/glibc pair is likewise
@@ -114,9 +114,9 @@ fn run_host(host: StrftimeFn, out: *mut c_char, fmt: *const c_char, tm: *const l
 
 fn verify(host: StrftimeFn, fmt: *const c_char) {
     use frankenlibc_abi::time_abi as fl;
-    for wday in 0..=6 {
+    for yday in 0..=365 {
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        tm.tm_wday = wday;
+        tm.tm_yday = yday;
         for capacity in 1usize..=64 {
             let mut a = [0x55 as c_char; 64];
             let mut b = [0x55 as c_char; 64];
@@ -124,18 +124,18 @@ fn verify(host: StrftimeFn, fmt: *const c_char) {
             let host_n = unsafe { host(b.as_mut_ptr(), capacity, fmt, &tm) };
             assert_eq!(
                 fl_n, host_n,
-                "length mismatch for tm_wday={wday}, cap={capacity}"
+                "length mismatch for tm_yday={yday}, cap={capacity}"
             );
             if fl_n != 0 {
                 assert_eq!(
                     &a[..=fl_n],
                     &b[..=host_n],
-                    "output mismatch for tm_wday={wday}, cap={capacity}"
+                    "output mismatch for tm_yday={yday}, cap={capacity}"
                 );
             }
         }
     }
-    println!("verify: OK (FL == host glibc for every valid %A weekday and capacity 1..=64)");
+    println!("verify: OK (FL == host glibc for tm_yday 0..=365 and capacity 1..=64)");
 }
 
 fn main() {
@@ -158,11 +158,11 @@ fn main() {
         assert!(!symbol.is_null());
         std::mem::transmute(symbol)
     };
-    let fmt = c"%A";
+    let fmt = c"%j";
     verify(host, fmt.as_ptr());
 
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    tm.tm_wday = 3;
+    tm.tm_yday = 171;
     let tm_ptr = &tm;
     let mut fl_out = [0 as c_char; 64];
     let mut host_out = [0 as c_char; 64];
@@ -239,7 +239,7 @@ fn main() {
     };
 
     println!(
-        "STRFTIME_FULL_WEEKDAY_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
+        "STRFTIME_YDAY_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
         fl.len()
     );
     println!(

@@ -23444,3 +23444,56 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   text get no leaf. A general-loop improvement, or leaf coverage for `literal + one directive +
   literal`, is the next question on this surface — and it is a much larger frame (227 ns) than
   anything the exact leaves touch.
+
+## 2026-07-27 (cod / codex-root) — CAMPAIGN WIN (SHIPPED): exact `strftime("%j")` finite transducer measures 0.381437x vs host glibc
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.381437`;
+  `incumbent_bootstrap_median_ci=[0.377160,0.383330]`;
+  `null_bootstrap_median_ci=[0.996300,1.010495]`;
+  `bench_elf_sha256=2f15facdaa05fa69a0ad64846d7848eb3cb81031dc0c9271940010fad03988ba`.
+  `cv_used=false` (CV is descriptive telemetry only).
+
+- **SAME-INVOCATION A/A NULL AND INCUMBENT EFFECT.** The release harness ran 41 retained paired
+  samples with 250,000 calls per arm, alternated pair order, and resolved host glibc through
+  `dlmopen(LM_ID_NEWLM)` in the benchmark process:
+  - same-invocation A/A null control median 1.002079, bootstrap median CI [0.996300, 1.010495]
+  - FL/glibc effect median 0.381437, bootstrap median CI [0.377160, 0.383330]
+  - FL median 5.04 ns; host-glibc median 13.12 ns; equivalent incumbent speedup 2.62x
+  - wider A/A null half-width 0.010495; effect deviation 0.618563 = 29.47x the mandatory 2x rule
+
+- **NEGATIVE-EVIDENCE FIRST / RESURRECTION BASIS.** Preflight for lever `bounded exact percent-j
+  day-of-year emitter` on surface `strftime exact percent-j tm_yday` returned clear. The historical
+  exact-`%j` attempts at L21621 and L22185 were unmeasured because their remote-build admission
+  failed; they did not refute the lever. The nearby deployed general formatter was the relevant
+  structural weakness: normalized `%j` has only 366 outputs, while the generic path still scanned
+  and interpreted a format program.
+
+- **MECHANISM AND FALLBACK.** The strict ABI recognizes only the byte-exact C format `%j\0`, reads
+  only `tm_yday`, and delegates to a safe core emitter that writes the three decimal digits and NUL
+  directly. Its normalized domain is exactly `tm_yday in 0..=365`. A non-exact format or
+  out-of-domain field falls through to the unchanged general formatter; insufficient capacity
+  returns 0 without modifying the buffer. Ordering and tie behavior are not applicable, and the
+  numeric transform is exact integer decimal decomposition without floating-point approximation.
+
+- **BEHAVIOR PROOF.** Before every timed run, the same binary compared FrankenLibC with live host
+  glibc for every `tm_yday` in 0..=365 and every capacity in 1..=64: 23,424 cases with identical
+  lengths and, on success, identical bytes including NUL. The focused core test exhausts all 366
+  normalized states plus short-buffer and invalid-field boundaries. ABI differential suites
+  `diff_strftime` (3 tests) and `strftime_specifier_differential_fuzz` (200,000 comparisons) pass
+  with zero divergences.
+
+- **BASELINE SHAPE, NOT A CROSS-WORKER SPEEDUP CLAIM.** Before the source edit, a separate strict
+  remote invocation measured FL/glibc 17.776333, bootstrap median CI [16.396270, 18.150773], with
+  FL 298.52 ns and glibc 16.54 ns; its in-process ELF was
+  `b6476fd3743e80efd54968c096189b6a94906d8304dae6a4b0a0e4beeca4e1fa`. Baseline and candidate
+  landed on different workers, so their quotient is not used as campaign evidence. The campaign
+  claim is solely the candidate's same-invocation 0.381437x ratio against the actual incumbent.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the exact `%j` fast path as a class-2
+  generality-tax win. Reopen if a live-glibc comparison finds any mismatch over normalized
+  `tm_yday` states or capacity boundaries, if the exact recognizer broadens beyond `%j\0`, if
+  non-normalized input stops reaching the generic fallback, or if a repeat's FL/glibc bootstrap
+  median CI no longer lies below 1.0 by more than twice the wider same-invocation A/A null-CI
+  half-width. Never reopen or reject from CV alone.

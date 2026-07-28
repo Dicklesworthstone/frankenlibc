@@ -535,6 +535,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_simple_numeric(fmt, bd, buf) {
         return n;
     }
+    if fmt == b"%j"
+        && let Some(n) = format_strftime_day_of_year(bd.tm_yday, buf)
+    {
+        return n;
+    }
     if fmt == b"%A" {
         return format_strftime_full_weekday(bd.tm_wday, buf);
     }
@@ -1133,6 +1138,30 @@ pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
     buf[..name.len()].copy_from_slice(name);
     buf[name.len()] = 0;
     name.len()
+}
+
+/// Emit the exact `%j` day-of-year leaf for its POSIX normalized domain.
+#[inline]
+pub fn format_strftime_day_of_year(yday: i32, buf: &mut [u8]) -> Option<usize> {
+    // POSIX `tm_yday` is zero-based. On the normalized 0..=365 domain `%j`
+    // therefore has exactly 366 states and always emits three decimal digits.
+    // Out-of-range fields return `None` so the existing general formatter keeps
+    // its historical behavior for non-normalized caller input.
+    if !(0..=365).contains(&yday) {
+        return None;
+    }
+
+    const OUT_LEN: usize = 3;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    let day = (yday + 1) as u32;
+    buf[0] = b'0' + (day / 100) as u8;
+    buf[1] = b'0' + ((day / 10) % 10) as u8;
+    buf[2] = b'0' + (day % 10) as u8;
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
 }
 
 #[inline]
@@ -1751,6 +1780,28 @@ mod tests {
         let mut short = [0x55u8; 5];
         assert_eq!(format_strftime(b"%A", &bd, &mut short), 0);
         assert_eq!(&short, b"WednU");
+    }
+
+    #[test]
+    fn strftime_day_of_year_exact_all_states_and_boundaries() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        for yday in 0..=365 {
+            bd.tm_yday = yday;
+            let mut buf = [0x55u8; 4];
+            let n = format_strftime(b"%j", &bd, &mut buf);
+            let day = yday + 1;
+            assert_eq!(n, 3);
+            assert_eq!(buf[0], b'0' + (day / 100) as u8);
+            assert_eq!(buf[1], b'0' + ((day / 10) % 10) as u8);
+            assert_eq!(buf[2], b'0' + (day % 10) as u8);
+            assert_eq!(buf[3], 0);
+        }
+
+        let mut short = [0x55u8; 3];
+        assert_eq!(format_strftime(b"%j", &bd, &mut short), 0);
+        assert_eq!(short, [0x55u8; 3]);
+        assert_eq!(format_strftime_day_of_year(-1, &mut short), None);
+        assert_eq!(format_strftime_day_of_year(366, &mut short), None);
     }
 
     #[test]

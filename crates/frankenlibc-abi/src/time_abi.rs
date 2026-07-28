@@ -1207,6 +1207,24 @@ pub unsafe extern "C" fn strftime(
             let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
             return time_core::format_strftime_full_weekday(wday, buf);
         }
+        // Exact `%j\0` is another three-byte finite transducer leaf. Its
+        // normalized domain is the 366 possible `tm_yday` states, so bypass the
+        // generic format scan and full `tm` projection. Non-normalized fields
+        // deliberately fall through to the unchanged general formatter.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'j'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let yday = unsafe { (*tm).tm_yday };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_day_of_year(yday, buf) {
+                return n;
+            }
+        }
         // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
         let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
         if !terminated {
