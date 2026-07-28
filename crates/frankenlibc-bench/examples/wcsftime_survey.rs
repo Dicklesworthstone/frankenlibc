@@ -1,4 +1,4 @@
-//! Same-worker, paired `%B` strftime profiler against host glibc.
+//! Same-worker, paired `%b` strftime profiler against host glibc.
 //!
 //! The source-identical FL/FL null control is measured once per paired sample and
 //! assigned opposite labels on alternating samples. The FL/glibc pair is likewise
@@ -158,7 +158,7 @@ fn main() {
         assert!(!symbol.is_null());
         std::mem::transmute(symbol)
     };
-    let fmt = c"%B";
+    let fmt = c"%b";
     verify(host, fmt.as_ptr());
 
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -239,7 +239,7 @@ fn main() {
     };
 
     println!(
-        "STRFTIME_FULL_MONTH_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
+        "STRFTIME_ABBREV_MONTH_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
         fl.len()
     );
     println!(

@@ -554,6 +554,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     {
         return n;
     }
+    if fmt == b"%b" {
+        return format_strftime_abbrev_month(bd.tm_mon, buf);
+    }
     if fmt == b"%B" {
         return format_strftime_full_month(bd.tm_mon, buf);
     }
@@ -1166,6 +1169,28 @@ pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
     if name.len() >= buf.len() {
         // Preserve the general path's observable partial-write behavior even
         // though POSIX leaves the buffer unspecified when strftime returns zero.
+        let prefix_len = buf.len().saturating_sub(1);
+        buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
+        return 0;
+    }
+    buf[..name.len()].copy_from_slice(name);
+    buf[name.len()] = 0;
+    name.len()
+}
+
+/// Emit one C-locale abbreviated month name for the exact `%b` transducer leaf.
+#[inline]
+pub fn format_strftime_abbrev_month(month: i32, buf: &mut [u8]) -> usize {
+    // The normalized `%b` domain is a 12-state finite transducer with a
+    // fixed three-byte output. Flags, width, case, modifiers, `%h`, and mixed
+    // formats stay on the general parser because dispatch requires exact `%b`.
+    let name: &[u8] = if (0..=11).contains(&month) {
+        MON_NAMES[month as usize]
+    } else {
+        b"?"
+    };
+    if name.len() >= buf.len() {
+        // Match the generic path's partial-prefix behavior on zero return.
         let prefix_len = buf.len().saturating_sub(1);
         buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
         return 0;
@@ -1875,6 +1900,43 @@ mod tests {
         let mut short = [0x55u8; 5];
         assert_eq!(format_strftime(b"%B", &bd, &mut short), 0);
         assert_eq!(&short, b"SeptU");
+    }
+
+    #[test]
+    fn strftime_abbrev_month_exact_all_states_and_boundaries() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        let expected = [
+            b"Jan".as_slice(),
+            b"Feb",
+            b"Mar",
+            b"Apr",
+            b"May",
+            b"Jun",
+            b"Jul",
+            b"Aug",
+            b"Sep",
+            b"Oct",
+            b"Nov",
+            b"Dec",
+        ];
+        for (month, name) in expected.into_iter().enumerate() {
+            bd.tm_mon = month as i32;
+            let mut buf = [0x55u8; 4];
+            let n = format_strftime(b"%b", &bd, &mut buf);
+            assert_eq!(n, name.len());
+            assert_eq!(&buf[..n], name);
+            assert_eq!(buf[n], 0);
+        }
+
+        bd.tm_mon = -1;
+        let mut malformed = [0x55u8; 2];
+        assert_eq!(format_strftime(b"%b", &bd, &mut malformed), 1);
+        assert_eq!(&malformed, b"?\0");
+
+        bd.tm_mon = 8;
+        let mut short = [0x55u8; 3];
+        assert_eq!(format_strftime(b"%b", &bd, &mut short), 0);
+        assert_eq!(&short, b"SeU");
     }
 
     #[test]
