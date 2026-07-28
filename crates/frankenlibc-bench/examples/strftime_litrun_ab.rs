@@ -58,6 +58,37 @@ const CASES: &[Case] = &[
         label: "mixed_general",
         format: b"prefix %A suffix\0",
     },
+    // Real-world shapes. The exact-leaf family already beats glibc (0.448-0.675) while
+    // `mixed_general` — one directive wrapped in literal text — loses 11.7x on a 227 ns
+    // frame. These probe where the boundary actually falls for formats people write:
+    // aliases, all-directive runs with no literal, and the two most common
+    // literal-interleaved timestamps in production code.
+    Case {
+        label: "alias_F",
+        format: b"%F\0",
+    },
+    Case {
+        label: "alias_T",
+        format: b"%T\0",
+    },
+    Case {
+        label: "date_slash_dmy",
+        format: b"%d/%m/%Y\0",
+    },
+    Case {
+        label: "compact_14",
+        format: b"%Y%m%d%H%M%S\0",
+    },
+    // syslog RFC 3164 timestamp
+    Case {
+        label: "syslog_ts",
+        format: b"%b %e %H:%M:%S\0",
+    },
+    // HTTP-date, RFC 7231 section 7.1.1.1 — emitted on essentially every response
+    Case {
+        label: "http_date",
+        format: b"%a, %d %b %Y %H:%M:%S GMT\0",
+    },
 ];
 
 fn self_identity() -> String {
