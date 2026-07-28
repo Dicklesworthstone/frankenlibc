@@ -33,6 +33,19 @@ const CASES: &[Case] = &[
         label: "hm_exact",
         format: b"%H:%M\0",
     },
+    // Bare `%H:%M:%S` — the most common timestamp format there is, and the exact
+    // surface REJECTED at docs/NEGATIVE_EVIDENCE.md:7465 (2026-06-26) on a Criterion
+    // abi-bench gate reading 1.33-1.38x LOSS, while that row's own direct release
+    // examples read 0.178-0.221x WIN. The Criterion arm predates the quantified
+    // abi-bench interposition hazard (referencing frankenlibc_abi::* links our
+    // no_mangle allocator and interposes malloc process-wide), and the tell is in its
+    // numbers: between harnesses the fl arm inflated ~3x while the glibc arm got
+    // FASTER. `format_strftime_hms` is in core today; this case measures whether the
+    // deployed ABI path actually reaches it.
+    Case {
+        label: "hms_exact",
+        format: b"%H:%M:%S\0",
+    },
     Case {
         label: "literal_long",
         format: b"a longer literal string of text with no percent directives at all here\0",
