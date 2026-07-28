@@ -23497,3 +23497,69 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   non-normalized input stops reaching the generic fallback, or if a repeat's FL/glibc bootstrap
   median CI no longer lies below 1.0 by more than twice the wider same-invocation A/A null-CI
   half-width. Never reopen or reject from CV alone.
+
+## 2026-07-28 (cc_fl / MagentaCondor) — CAMPAIGN WIN (SHIPPED) + 12-format vs-glibc surface map: exact leaves reach 0.4496x, but the C-standard ALIASES miss every leaf and lose 3.44-3.46x — alias normalization is the next lever
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.449639`;
+  `incumbent_bootstrap_median_ci=[0.449170,0.451561]`;
+  `null_bootstrap_median_ci=[0.999978,1.004237]`;
+  `bench_elf_sha256=05d0aa210039b82e7ab4a5bedb8f7fc65a798a1665895945be0de4414d77db2d`.
+  `cv_used=false` (CV printed as telemetry only). Headline case `numeric_19`
+  (`%Y-%m-%d %H:%M:%S`): same-invocation A/A null control median 1.001867, bootstrap median CI
+  [0.999978, 1.004237]; FL/glibc effect median 0.449639, bootstrap median CI
+  [0.449170, 0.451561]; null half-width 0.004237, effect deviation 0.550361 = 130x the 2x rule.
+
+- **HARNESS / PROVENANCE.** `strftime_litrun_ab`, worker `hz2`, 33 retained samples, 150,000
+  reps/arm, source-identical FL/FL null and FL/glibc effect pairs interleaved in the SAME
+  invocation with pair order alternating by sample, host glibc held through
+  `dlmopen(LM_ID_NEWLM)`, binary self-reporting its executing ELF SHA-256. Bootstrap median CIs;
+  `cv_used=false`. Every row below has `clears_2x_null=true`, so each is decidable in its own right.
+
+- **THE MAP.** FL/glibc median, <1.0 = FrankenLibC faster:
+
+  | case | format | FL/glibc | CI95 | verdict |
+  |---|---|---:|---|---|
+  | `numeric_19` | `%Y-%m-%d %H:%M:%S` | **0.4496** | [0.44917, 0.45156] | FL 2.22x faster |
+  | `literal_long` | 69-byte literal | **0.4505** | [0.44942, 0.45164] | FL 2.22x faster |
+  | `hms_exact` | `%H:%M:%S` | **0.5921** | [0.58918, 0.59452] | FL 1.69x faster |
+  | `hm_exact` | `%H:%M` | **0.7006** | [0.69341, 0.70413] | FL 1.43x faster |
+  | `compact_14` | `%Y%m%d%H%M%S` | **0.7127** | [0.69806, 0.71761] | FL 1.40x faster |
+  | `literal_short` | 23-byte literal | 0.9444 | [0.93782, 0.94965] | FL 1.06x faster |
+  | `date_slash_dmy` | `%d/%m/%Y` | 1.0393 | [1.03374, 1.04162] | FL 1.04x slower |
+  | **`alias_F`** | **`%F`** | **3.4407** | [3.41194, 3.46266] | **FL 3.44x SLOWER** |
+  | **`alias_T`** | **`%T`** | **3.4647** | [3.44991, 3.47988] | **FL 3.46x SLOWER** |
+  | **`http_date`** | **`%a, %d %b %Y %H:%M:%S GMT`** | **3.7091** | [3.68539, 3.73579] | **FL 3.71x SLOWER** |
+  | **`syslog_ts`** | **`%b %e %H:%M:%S`** | **5.0074** | [4.95138, 5.03146] | **FL 5.01x SLOWER** |
+  | `mixed_general` | `prefix %A suffix` | 11.7319 | [11.70101, 11.75094] | FL 11.73x slower |
+
+- **THE ALIAS DEFECT (mechanism, read from source and confirmed by the numbers).** Every exact leaf
+  matches on literal byte equality of the WHOLE format: `format_strftime_hms` tests
+  `fmt != b"%H:%M:%S"`, `format_strftime_ymd` tests `fmt != b"%Y-%m-%d"`, `format_strftime_mdy`
+  tests `fmt != b"%m/%d/%Y"`, and so on. The C-standard aliases are therefore invisible to all of
+  them and fall into the general loop, where `b'T' => push_composite!(b"%H:%M:%S")` re-expands them
+  and re-walks the result.
+  **`%T` and `%H:%M:%S` produce byte-identical output, yet `%T` is 3.46x SLOWER than glibc while
+  `%H:%M:%S` is 1.69x FASTER — a 5.85x penalty for writing the standard short form.** `%F` vs
+  `%Y-%m-%d` is the same story at 3.44x. `%D` and `%R` are unmeasured but structurally identical.
+  `%d/%m/%Y` at 1.0393 is the same defect in another dress: only the US `%m/%d/%Y` has a leaf, so
+  the European ordering misses.
+
+- **THE NEXT LEVER (specific, cheap, provably behavior-preserving).** Normalize alias formats to
+  their standard expansions BEFORE leaf dispatch — `%T`->`%H:%M:%S`, `%F`->`%Y-%m-%d`,
+  `%R`->`%H:%M`, `%D`->`%m/%d/%y` — and add a `%d/%m/%Y` leaf. ISO C defines these as exact
+  equivalents, so the rewrite is a definitional identity, not a semantic change, and the existing
+  differential gates already cover the expansions. Expected: 3.44-3.46x LOSS -> 0.45-0.59x WIN,
+  a ~6x swing on the most idiomatic spellings of the two most common timestamp formats.
+
+- **THE SECOND, LARGER GAP.** Literal-interleaved formats have no leaf at all and lose big:
+  syslog RFC 3164 `%b %e %H:%M:%S` at **5.01x** and HTTP-date RFC 7231
+  `%a, %d %b %Y %H:%M:%S GMT` at **3.71x** — the two most-emitted timestamp formats in production
+  code. `mixed_general` bounds the general loop's cost at 11.73x on a 227 ns frame. This is a bigger
+  frame than every exact leaf combined and wants a general-loop fix rather than more literal leaves.
+
+- **HONEST READING.** Six of twelve formats beat glibc and six lose; the surface is NOT uniformly
+  won. The wins are concentrated exactly where a whole-format leaf exists, and the losses exactly
+  where one does not. That is the class-2 generality tax measured in both directions on one surface
+  in one invocation, and it says the remaining value here is in leaf COVERAGE, not leaf speed.
