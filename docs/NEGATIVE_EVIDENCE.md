@@ -23676,3 +23676,51 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
 - **BEHAVIOR GATE.** `conformance_diff_time diff_strftime_cases` 1 passed / 0 failed on `hz2` with
   seven added cases — `%T`, `%F`, `%R`, `%D`, `[%T]`, `%F %T`, `%d/%m/%Y` — byte-identical to glibc
   across the existing tm matrix, including the embedded forms that must NOT take the rewrite.
+
+## 2026-07-28 (cod / codex-root) — CAMPAIGN WIN (SHIPPED): exact `strftime("%b")` finite transducer measures 0.658430x vs host glibc
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.658430`;
+  `incumbent_bootstrap_median_ci=[0.651264,0.664454]`;
+  `null_bootstrap_median_ci=[0.989206,1.007174]`;
+  `bench_elf_sha256=f05a33493fb1986e6072e0945f2f9d6387511596797386a3a78a1393bdf37179`;
+  `cv_used=false` (CV is descriptive telemetry only).
+
+- **SAME-INVOCATION A/A NULL AND INCUMBENT EFFECT.** Commit `e4274f8db` was built from an isolated
+  clean worktree and measured on strict-remote worker `hz2`. The release harness ran 41 retained
+  paired samples with 250,000 calls per arm, alternated pair order, and resolved host glibc through
+  `dlmopen(LM_ID_NEWLM)` inside the benchmark process:
+  - same-invocation A/A null control median 1.000906, bootstrap median CI [0.989206, 1.007174]
+  - FL/glibc effect median 0.658430, bootstrap median CI [0.651264, 0.664454]
+  - FL median 7.55 ns; host-glibc median 11.46 ns; equivalent incumbent speedup 1.52x
+  - wider A/A null half-width 0.010794; effect deviation 0.341570 = 15.82x the mandatory 2x rule
+  - `clears_2x_null=true`
+
+- **NEGATIVE-EVIDENCE FIRST.** Preflight for lever `exact percent-b abbreviated-month finite
+  transducer` on surface `strftime exact percent-b tm_mon abbreviated month` returned clear. The
+  existing `%b` result was for wide `wcsftime`, a different ABI and representation; the narrow
+  exact leaf had no prior keep or counted rejection. The neighboring exact `%B` row established
+  the finite-transducer mechanism but did not establish this directive's incumbent ratio.
+
+- **MECHANISM AND FALLBACK.** The strict ABI recognizes only byte-exact `%b\0`, reads only
+  `tm_mon`, and delegates to a safe 12-state, fixed-three-byte C-locale emitter. This removes the
+  format scan, full `tm` projection, directive parser, and padding/case machinery. `%h`, flags,
+  widths, modifiers, and mixed formats remain on the unchanged generic formatter. Invalid month
+  fields retain `?`; insufficient capacity retains the generic partial-prefix and zero-return
+  behavior. Ordering, ties, and floating-point approximation are not applicable.
+
+- **BEHAVIOR PROOF.** Before timing, the same executable compared FrankenLibC with live host glibc
+  for all 12 normalized month states and capacities 1..=64: 768 return/output comparisons matched.
+  The focused core test exhausts all names plus malformed and short-buffer boundaries. On the exact
+  committed source, all 12 `conformance_diff_time` tests passed with 469 live-glibc differential
+  calls and zero divergences, and `strftime_specifier_differential_fuzz` passed 200,000 comparisons
+  with zero divergences. Parent correction `e5fd65425` also makes the `%Z` copy guard recognize
+  valid `%EZ` and `%OZ`, the unrelated conformance defect exposed while closing this lever.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP as a class-2 generality-tax win. Reopen if a
+  live-glibc comparison finds a mismatch over normalized month states or capacity boundaries; if
+  the recognizer broadens beyond exact `%b\0`; if locale support changes this leaf's semantics; if
+  malformed or short-buffer behavior changes; or if a repeat's FL/glibc bootstrap median CI no
+  longer lies below 1.0 by more than twice the wider same-invocation A/A null-CI half-width. Never
+  reopen, keep, or reject from CV alone.
