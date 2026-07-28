@@ -23620,3 +23620,59 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   changes the exact directive's semantics, if malformed or short-buffer behavior changes, or if a
   repeat's FL/glibc bootstrap median CI no longer lies below 1.0 by more than twice the wider
   same-invocation A/A null-CI half-width. Never reopen or reject from CV alone.
+
+## 2026-07-28 (cc_fl / MagentaCondor) — CAMPAIGN WIN (SHIPPED): whole-format strftime alias normalization turns `%T` 3.4647x LOSS into 0.3025x WIN — an 11.45x swing from a definitional identity
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.302539`;
+  `incumbent_bootstrap_median_ci=[0.301662,0.304756]`;
+  `null_bootstrap_median_ci=[0.998031,1.002018]`;
+  `bench_elf_sha256=0d0a456a067be4964c263bbdbcbfdfa9ae1ab43790bae6c520809fee1078f318`.
+  `cv_used=false` (CV printed as telemetry only). Headline case `alias_T` (`%T`):
+  same-invocation A/A null control median 1.000633, bootstrap median CI [0.998031, 1.002018];
+  FL/glibc effect median 0.302539, bootstrap median CI [0.301662, 0.304756]; null half-width
+  0.002018, effect deviation 0.697461 = 345x the mandatory 2x rule.
+
+- **SHIPPED IN** `85535c77d` (`strftime_alias_expansion`, core `time/mod.rs`).
+
+- **THE DEFECT.** Every exact leaf matched literal byte equality of the WHOLE format
+  (`format_strftime_hms` tests `fmt != b"%H:%M:%S"`, `ymd` tests `b"%Y-%m-%d"`, `hm` tests
+  `b"%H:%M"`), so the C-standard aliases were invisible to all of them and fell through to the
+  general loop, which re-expanded them via `push_composite!` and re-walked the result.
+
+- **THE FIX.** `%T -> %H:%M:%S`, `%F -> %Y-%m-%d`, `%R -> %H:%M` before the leaf chain. ISO C
+  7.27.3.5 defines these as exact equivalents, so it is a definitional rewrite that strictly removes
+  work. `%D` is deliberately unmapped (its `%m/%d/%y` expansion has no leaf). Only WHOLE-format
+  aliases are rewritten; `[%T]` and `%F %T` still take the general loop.
+
+- **MEASURED (before -> after, same harness, same contract, `dlmopen` glibc arm in-invocation).**
+
+  | case | format | before | after | swing | after, absolute |
+  |---|---|---:|---:|---:|---|
+  | `alias_T` | `%T` | 3.4647 | **0.302539** | **11.45x** | fl 23.939 ns vs glibc 79.229 ns |
+  | `alias_F` | `%F` | 3.4407 | **0.304919** | **11.28x** | fl 24.221 ns vs glibc 79.727 ns |
+  | `alias_R` | `%R` | (not measured before) | **0.359100** | — | fl 19.824 ns vs glibc 55.284 ns |
+
+  All three clear 2x null; nulls 1.000633 / 1.000555 / 0.999655.
+
+- **THE ALIASES ARE NOW THE FASTEST CASES ON THE SURFACE, AND THAT IS NOT A MISTAKE.** `%T` at
+  0.3025 beats its own expansion `%H:%M:%S` at 0.5913. The ratio improves on both sides: fl now
+  reaches a leaf from a 2-byte format, while glibc must still expand the alias before formatting it.
+  So the alias is genuinely cheaper for us and genuinely dearer for glibc — the generality tax is
+  larger on the short spelling than on the long one.
+
+- **CONTROLS — no regression elsewhere.** `hms_exact` 0.5921 -> 0.5913, `numeric_19` 0.4496 ->
+  0.4489, `hm_exact` 0.7006 -> 0.7122, `literal_short` 0.9444 -> 0.9309, `compact_14` 0.7127 ->
+  0.7706, `mixed_general` 11.7319 -> 11.5439. The unchanged cases move only within run-to-run
+  spread, as expected from a change that touches one dispatch decision.
+
+- **STILL LOSING, UNCHANGED BY THIS LEVER.** `syslog_ts` (`%b %e %H:%M:%S`, RFC 3164) 5.0031x and
+  `http_date` (`%a, %d %b %Y %H:%M:%S GMT`, RFC 7231) 3.9151x — literal-interleaved formats with no
+  leaf at all, and the two most-emitted timestamps in production code. `date_slash_dmy` (`%d/%m/%Y`)
+  1.0629x: only the US `%m/%d/%Y` ordering has a leaf. `mixed_general` 11.5439x bounds the general
+  loop on a 227 ns frame. Leaf COVERAGE remains the open lever on this surface, not leaf speed.
+
+- **BEHAVIOR GATE.** `conformance_diff_time diff_strftime_cases` 1 passed / 0 failed on `hz2` with
+  seven added cases — `%T`, `%F`, `%R`, `%D`, `[%T]`, `%F %T`, `%d/%m/%Y` — byte-identical to glibc
+  across the existing tm matrix, including the embedded forms that must NOT take the rewrite.
