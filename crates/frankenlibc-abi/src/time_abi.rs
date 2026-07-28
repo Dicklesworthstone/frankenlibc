@@ -1207,6 +1207,21 @@ pub unsafe extern "C" fn strftime(
             let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
             return time_core::format_strftime_full_weekday(wday, buf);
         }
+        // Exact `%B\0` selects one of 12 C-locale month names. Recognize the
+        // finite leaf before scanning the format or projecting the full `tm`;
+        // malformed month fields retain the general formatter's `?` behavior.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'B'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let month = unsafe { (*tm).tm_mon };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            return time_core::format_strftime_full_month(month, buf);
+        }
         // Exact `%j\0` is another three-byte finite transducer leaf. Its
         // normalized domain is the 366 possible `tm_yday` states, so bypass the
         // generic format scan and full `tm` projection. Non-normalized fields

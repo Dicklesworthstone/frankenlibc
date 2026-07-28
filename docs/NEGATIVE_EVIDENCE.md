@@ -23563,3 +23563,60 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   won. The wins are concentrated exactly where a whole-format leaf exists, and the losses exactly
   where one does not. That is the class-2 generality tax measured in both directions on one surface
   in one invocation, and it says the remaining value here is in leaf COVERAGE, not leaf speed.
+
+## 2026-07-28 (cod / codex-root) — CAMPAIGN WIN (SHIPPED): exact `strftime("%B")` finite transducer measures 0.598129x vs host glibc
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.598129`;
+  `incumbent_bootstrap_median_ci=[0.597790,0.599996]`;
+  `null_bootstrap_median_ci=[0.996728,1.001549]`;
+  `bench_elf_sha256=92808dd809f53e8abe70e46befdd6ef12e9e8361aa4f0608ce5d8ff060d60f7f`.
+  `cv_used=false` (CV is descriptive telemetry only).
+
+- **SAME-INVOCATION A/A NULL AND INCUMBENT EFFECT.** The release harness ran 41 retained paired
+  samples with 250,000 calls per arm, alternated pair order, and resolved host glibc through
+  `dlmopen(LM_ID_NEWLM)` in the benchmark process:
+  - same-invocation A/A null control median 1.000399, bootstrap median CI [0.996728, 1.001549]
+  - FL/glibc effect median 0.598129, bootstrap median CI [0.597790, 0.599996]
+  - FL median 9.41 ns; host-glibc median 15.73 ns; equivalent incumbent speedup 1.67x
+  - wider A/A null half-width 0.003272; effect deviation 0.401871 = 61.41x the mandatory 2x rule
+  - `clears_2x_null=true`
+
+- **NEGATIVE-EVIDENCE FIRST / RESURRECTION BASIS.** Preflight for lever `exact percent-B full-month
+  finite transducer` on surface `strftime exact percent-B tm_mon full month` returned clear. The
+  wide `wcsftime` exact-name row covers a different ABI and representation. The narrow mixed-name
+  row at L23200 had attributed 85.45% self-time to `format_strftime`, but its finite name-family
+  candidate was never timed after Lane B superseded its measurement window. Its concrete retry
+  predicate required a reopened measurement window, closure of `bd-ummyux`, the full differential
+  suite, and an effect clearing twice the A/A null width; those conditions are now met for the
+  single exact `%B` leaf.
+
+- **MECHANISM AND FALLBACK.** The strict ABI recognizes only the byte-exact C format `%B\0`, reads
+  only `tm_mon`, and delegates to a safe 12-state C-locale emitter. It avoids the generic format
+  scan, full `tm` projection, directive parser, and field-padding machinery. Non-exact formats
+  continue through the unchanged generic formatter. Invalid month fields retain its `?` output,
+  and insufficient capacity retains its partial-prefix plus zero-return behavior. Ordering, ties,
+  and floating-point approximation are not applicable.
+
+- **BEHAVIOR PROOF.** Before timing, the same binary compared FrankenLibC with live host glibc for
+  every normalized `tm_mon` in 0..=11 and every capacity in 1..=64: all 768 length results and all
+  successful output bytes including NUL matched. The focused core test exhausts all 12 month names
+  plus invalid-field and short-buffer behavior. Strict-remote ABI verification passed all 12
+  `conformance_diff_time` tests (326 reported differential calls, zero divergences), and
+  `strftime_specifier_differential_fuzz` passed 200,000 comparisons against host glibc with zero
+  divergences.
+
+- **BASELINE SHAPE, NOT THE CAMPAIGN CLAIM.** Before the source edit, the same `hz1` worker measured
+  FL/glibc 17.180166, bootstrap median CI [16.889165, 17.269763], with FL 275.19 ns and glibc
+  16.00 ns. Its in-process ELF was
+  `866a5829a1660b05681dcde65587ed7eb6c4c73fb0baf131fbe5145d86fb2f1c`. That separate
+  before/after comparison is maintenance evidence only. The campaign claim is solely the
+  candidate ELF's same-invocation 0.598129x ratio against the actual host-glibc incumbent.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the exact `%B` fast path as a class-2
+  generality-tax win. Reopen if a live-glibc comparison finds a mismatch over normalized month
+  states or capacity boundaries, if the exact recognizer broadens beyond `%B\0`, if locale support
+  changes the exact directive's semantics, if malformed or short-buffer behavior changes, or if a
+  repeat's FL/glibc bootstrap median CI no longer lies below 1.0 by more than twice the wider
+  same-invocation A/A null-CI half-width. Never reopen or reject from CV alone.

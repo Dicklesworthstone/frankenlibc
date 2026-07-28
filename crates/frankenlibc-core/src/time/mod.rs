@@ -540,6 +540,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     {
         return n;
     }
+    if fmt == b"%B" {
+        return format_strftime_full_month(bd.tm_mon, buf);
+    }
     if fmt == b"%A" {
         return format_strftime_full_weekday(bd.tm_wday, buf);
     }
@@ -1125,6 +1128,29 @@ pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
     // exact format. Map the seven weekday states directly to their C-locale names.
     let name = if (0..=6).contains(&wday) {
         WDAY_FULL_NAMES[wday as usize].as_bytes()
+    } else {
+        b"?"
+    };
+    if name.len() >= buf.len() {
+        // Preserve the general path's observable partial-write behavior even
+        // though POSIX leaves the buffer unspecified when strftime returns zero.
+        let prefix_len = buf.len().saturating_sub(1);
+        buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
+        return 0;
+    }
+    buf[..name.len()].copy_from_slice(name);
+    buf[name.len()] = 0;
+    name.len()
+}
+
+/// Emit one C-locale full month name for the exact `%B` transducer leaf.
+#[inline]
+pub fn format_strftime_full_month(month: i32, buf: &mut [u8]) -> usize {
+    // The normalized `%B` domain is a 12-state finite transducer. Exact-format
+    // dispatch makes flags, width, case, modifiers, and mixed literal handling
+    // impossible here; all non-exact formats stay on the general parser.
+    let name = if (0..=11).contains(&month) {
+        MON_FULL_NAMES[month as usize].as_bytes()
     } else {
         b"?"
     };
@@ -1780,6 +1806,43 @@ mod tests {
         let mut short = [0x55u8; 5];
         assert_eq!(format_strftime(b"%A", &bd, &mut short), 0);
         assert_eq!(&short, b"WednU");
+    }
+
+    #[test]
+    fn strftime_full_month_exact_all_states_and_boundaries() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        let expected = [
+            b"January".as_slice(),
+            b"February",
+            b"March",
+            b"April",
+            b"May",
+            b"June",
+            b"July",
+            b"August",
+            b"September",
+            b"October",
+            b"November",
+            b"December",
+        ];
+        for (month, name) in expected.into_iter().enumerate() {
+            bd.tm_mon = month as i32;
+            let mut buf = [0x55u8; 16];
+            let n = format_strftime(b"%B", &bd, &mut buf);
+            assert_eq!(n, name.len());
+            assert_eq!(&buf[..n], name);
+            assert_eq!(buf[n], 0);
+        }
+
+        bd.tm_mon = 12;
+        let mut malformed = [0x55u8; 2];
+        assert_eq!(format_strftime(b"%B", &bd, &mut malformed), 1);
+        assert_eq!(&malformed, b"?\0");
+
+        bd.tm_mon = 8;
+        let mut short = [0x55u8; 5];
+        assert_eq!(format_strftime(b"%B", &bd, &mut short), 0);
+        assert_eq!(&short, b"SeptU");
     }
 
     #[test]
