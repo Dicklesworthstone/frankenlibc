@@ -725,15 +725,39 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
 /// Copy the caller's `tm_zone` C string into a `BrokenDownTime.zone` buffer for
 /// `strftime` `%Z`. Reads at most 15 bytes (NUL-terminated). A NULL pointer
 /// leaves the zone unset (so `%Z` falls back to "UTC").
-/// Does this format contain `%Z` (zone NAME), the only directive that reads `bd.zone`?
+/// Does this format contain a `%Z` zone-name directive, the only directive that
+/// reads `bd.zone`?
 ///
-/// Scans for the two-byte sequence rather than parsing: a false positive only costs
-/// the copy we would otherwise have done unconditionally, and a false negative is
-/// impossible because `%Z` cannot be written any other way. `%%Z` is a literal `%`
-/// followed by a literal `Z` and matches here — harmless over-approximation.
+/// Match the formatter's `flags -> width -> optional E/O modifier -> specifier`
+/// grammar. In particular, `%EZ` and `%OZ` are valid in the C locale and must not
+/// be mistaken for formats that cannot observe `tm_zone`.
 #[inline]
 fn fmt_has_zone_directive(fmt: &[u8]) -> bool {
-    fmt.windows(2).any(|w| w == b"%Z")
+    let mut i = 0;
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= fmt.len() {
+            break;
+        }
+        while i < fmt.len() && b"-_0^#".contains(&fmt[i]) {
+            i += 1;
+        }
+        while i < fmt.len() && fmt[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i < fmt.len() && (fmt[i] == b'E' || fmt[i] == b'O') {
+            i += 1;
+        }
+        if i < fmt.len() && fmt[i] == b'Z' {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) {

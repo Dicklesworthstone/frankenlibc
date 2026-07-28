@@ -304,11 +304,13 @@ const STRFTIME_FORMATS: &[&[u8]] = &[
     b"[%T]",     // alias embedded in literals -> general loop
     b"%F %T",    // two aliases, not a whole-format alias
     b"%d/%m/%Y", // European ordering; only %m/%d/%Y has a leaf
-    // Zone directives. `read_tm_zone` is now guarded on the format containing %Z, so
-    // these pin both sides of that guard: %Z must still echo the caller's zone, and
-    // %z must be unaffected (it formats tm_gmtoff, not tm_zone).
-    b"%Z", // zone name — REQUIRES the guarded copy to have run
-    b"%z", // numeric offset — must not depend on the zone copy
+    // Zone directives. `read_tm_zone` is guarded on the parsed %Z directive, so
+    // these pin both sides of that guard: bare and modified %Z must still echo
+    // the caller's zone, while %z must not depend on the zone copy.
+    b"%Z",  // zone name — REQUIRES the guarded copy to have run
+    b"%EZ", // C-locale E modifier is accepted for %Z
+    b"%OZ", // C-locale O modifier is accepted for %Z
+    b"%z",  // numeric offset — must not depend on the zone copy
     b"%Y-%m-%d %H:%M:%S %Z",
     b"%H:%M:%S %z",
     // Year-format specifiers — exercise the no-width contract that fl
