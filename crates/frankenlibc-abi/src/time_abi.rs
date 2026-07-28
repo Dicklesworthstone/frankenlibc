@@ -725,6 +725,17 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
 /// Copy the caller's `tm_zone` C string into a `BrokenDownTime.zone` buffer for
 /// `strftime` `%Z`. Reads at most 15 bytes (NUL-terminated). A NULL pointer
 /// leaves the zone unset (so `%Z` falls back to "UTC").
+/// Does this format contain `%Z` (zone NAME), the only directive that reads `bd.zone`?
+///
+/// Scans for the two-byte sequence rather than parsing: a false positive only costs
+/// the copy we would otherwise have done unconditionally, and a false negative is
+/// impossible because `%Z` cannot be written any other way. `%%Z` is a literal `%`
+/// followed by a literal `Z` and matches here — harmless over-approximation.
+#[inline]
+fn fmt_has_zone_directive(fmt: &[u8]) -> bool {
+    fmt.windows(2).any(|w| w == b"%Z")
+}
+
 unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) {
     let zp = unsafe { (*tm).tm_zone };
     if zp.is_null() {
@@ -1260,7 +1271,16 @@ pub unsafe extern "C" fn strftime(
             return fmt_len;
         }
         let mut bd = unsafe { read_tm(tm) };
-        unsafe { read_tm_zone(tm, &mut bd) };
+        // `bd.zone` is a [u8; 16] and `read_tm_zone` fills it with a 15-iteration
+        // byte copy from the caller's `tm_zone`. That buffer is consumed by exactly
+        // one directive — `%Z` — so for every other format the copy is work whose
+        // result is never observed. Guarding on the directive is behavior-preserving
+        // by construction: if the format cannot emit the zone, the bytes cannot be
+        // read. `%z` is unaffected — it formats `tm_gmtoff`, which `read_tm` already
+        // carries.
+        if fmt_has_zone_directive(fmt) {
+            unsafe { read_tm_zone(tm, &mut bd) };
+        }
         // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
         let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
         return time_core::format_strftime(fmt, &bd, buf);
