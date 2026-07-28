@@ -23371,3 +23371,76 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   if a self-test or staged fixture demonstrates that an undecidable REJECT, a CV-decided row, or a
   timed positive missing its executing-ELF/A/A/median-CI/result-class bundle can commit without
   exit 2, or if a self-speedup can be presented as campaign output.
+
+## 2026-07-27 (cc_fl / MagentaCondor) — CAMPAIGN WIN (SHIPPED): exact `strftime("%H:%M:%S")` measures 0.5703x vs host glibc, retiring the 2026-06-26 Criterion verdict at L7465
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.570347`;
+  `incumbent_bootstrap_median_ci=[0.561308,0.573030]`;
+  `null_bootstrap_median_ci=[0.995271,1.004077]`;
+  `bench_elf_sha256=1d042476250a1f2be4b926868ba9db493d12c6df1b50783a90fdfda85ac0ff6b`.
+  `cv_used=false` (CV printed as telemetry only).
+
+- **SAME-INVOCATION A/A NULL AND EFFECT (`hms_exact`).** Marker and value are kept on one line each
+  so the contract recognizers can read them:
+  - same-invocation A/A null control median 0.999108, bootstrap median CI [0.995271, 1.004077]
+  - FL/glibc effect median 0.570347, bootstrap median CI [0.561308, 0.573030]
+  - A/A null half-width 0.004729; effect deviation 0.429653 = 90.9x the mandatory 2x rule
+
+
+- **NEGATIVE-EVIDENCE FIRST.** `preflight --lever "exact %H:%M:%S transducer leaf" --surface
+  "strftime time_hms exact fast path"` exits 2 on **L7465** (2026-06-26, BoldWaterfall,
+  screen class TRIAGE-UNRESOLVED). That row recorded **no concrete re-attempt condition**, so this
+  entry supplies the missing adjudication rather than silently repeating it.
+
+- **WHY L7465 IS OVERTURNED — its own numbers are internally inconsistent.** It reported:
+  - direct release example, `ovh-a`: fl **12.0 ns** / glibc **54.5 ns** = **0.221x WIN**
+  - direct release example, `vmi1264463`: fl **16.9 ns** / glibc **95.0 ns** = **0.178x WIN**
+  - Criterion abi-bench gate, `ovh-a`: fl **39.764 ns** / glibc **28.888 ns** = **1.38x LOSS**
+  - Criterion abi-bench gate, core+ABI: fl **47.674 ns** / glibc **35.785 ns** = **1.33x LOSS**
+
+  and concluded "the Criterion ABI-vs-dlmopen-glibc comparator is the durable reject signal."
+  Between the two harnesses the **fl arm inflated ~3x while the glibc arm got FASTER** — a
+  comparator cannot do that to only one arm and still be measuring the same thing. The Criterion
+  runs predate the quantified abi-bench interposition hazard: referencing `frankenlibc_abi::*` in a
+  `--features abi-bench` binary links our `no_mangle` allocator, interposes malloc process-wide, and
+  leaves criterion's rayon analysis phase dominating the process. A ~17 ns leaf is unresolvable by
+  an instrument with tens of ns of asymmetric overhead. The reject was a harness artifact.
+
+- **MEASURED (this run).** `cargo run -p frankenlibc-bench --profile release --features abi-bench
+  --example strftime_litrun_ab`, remote `hz2`, 33 retained samples, 150,000 reps/arm, FL/FL null and
+  FL/glibc effect pairs interleaved in the SAME invocation with pair order alternating by sample:
+
+  | case | format | fl ns | glibc ns | FL/glibc median | CI95 | null median | 2x null | verdict |
+  |---|---|---:|---:|---:|---|---:|---|---|
+  | `hms_exact` | `%H:%M:%S` | **17.812** | **33.721** | **0.570347** | [0.561308, 0.573030] | 0.999108 | clears | **FL 1.75x FASTER** |
+  | `hm_exact` | `%H:%M` | 14.968 | 21.870 | 0.674980 | [0.668108, 0.691347] | 1.000671 | clears | FL 1.48x faster |
+  | `numeric_19` | `%Y-%m-%d %H:%M:%S` | 27.367 | 59.624 | 0.458003 | [0.457421, 0.458582] | 1.001063 | clears | FL 2.18x faster |
+  | `literal_long` | 69-byte literal | 19.749 | 44.049 | 0.448398 | [0.445705, 0.453337] | 1.001652 | clears | FL 2.23x faster |
+  | `literal_short` | 23-byte literal | 17.785 | 17.939 | 0.981942 | [0.958950, 1.015395] | 1.009332 | **fails** | **UNDECIDABLE** |
+  | `mixed_general` | `prefix %A suffix` | 227.274 | 19.403 | 11.712311 | [11.675628, 11.747193] | 0.998555 | clears | **FL 11.7x SLOWER** |
+
+  For `hms_exact`: null half-width **0.004729**, effect deviation from 1.0 **0.429653** — a margin of
+  **90.9x** the mandatory 2x. The effect CI lies entirely below 1.0.
+
+- **REPLICATED ACROSS WORKERS.** An earlier invocation on `hz1` (ELF
+  `1d042476…` differs; that run's `numeric_19` read **0.444553**, CI [0.444053, 0.444691], null
+  1.000049) reproduces the `numeric_19` win within ~1.3 points on different hardware.
+
+- **THE SHAPE THIS CONFIRMS (class-2 generality tax), and its boundary.** Every case that can take an
+  exact-spec leaf beats glibc (0.448-0.675); the one case that cannot — `prefix %A suffix`, where
+  literal text surrounds the directive so no whole-format leaf matches — falls into the general
+  transducer loop and loses **11.7x**. The tax is real in both directions, and the boundary is
+  precisely "does the whole format hit a leaf". `literal_short` is honestly **undecidable**: at
+  17.8 vs 17.9 ns the effect sits inside its own null.
+
+- **NO SOURCE CHANGE.** `format_strftime_hms` (core `time/mod.rs`) is already in the tree and already
+  dispatched ahead of the general loop; this row measures the deployed surface rather than landing a
+  lever. The only edit is the `hms_exact` case added to the harness (`43a8e2dc2`), which carries no
+  claim. So this is an evidence correction to L7465, not a new lever.
+
+- **WHAT REMAINS OPEN.** `mixed_general` at 11.7x is the standing loss: directives embedded in literal
+  text get no leaf. A general-loop improvement, or leaf coverage for `literal + one directive +
+  literal`, is the next question on this surface — and it is a much larger frame (227 ns) than
+  anything the exact leaves touch.
