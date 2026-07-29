@@ -23724,3 +23724,156 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   malformed or short-buffer behavior changes; or if a repeat's FL/glibc bootstrap median CI no
   longer lies below 1.0 by more than twice the wider same-invocation A/A null-CI half-width. Never
   reopen, keep, or reject from CV alone.
+
+## 2026-07-29 (cod / codex-root) — CORRECTNESS FINDING: realistic preload client exposed and fixed the missing `fgets` export
+
+- **END-TO-END FINDING.** The first realistic-workload smoke invocation reached Apache-log parsing,
+  then the FrankenLibC arm crashed in glibc `_IO_fgets`: the client had received FrankenLibC's
+  opaque `FILE *` token from the exported `fopen`, but `fgets` had resolved to host glibc. `nm -D`
+  confirmed that the release ELF did not export `fgets`. GDB attribution on the same strict-remote
+  worker showed the invalid cross-implementation stream crossing, rather than an input-generator
+  or allocator failure.
+
+- **ROOT CAUSE / FIX.** A refactor had left
+  `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]` on private helper `fgets_fill_stream`
+  instead of public ABI function `fgets`. Commit `a1c7b1666` moved the export attribute to the
+  public entry point. The workload identity gate now resolves and hashes `malloc`, `fopen`,
+  `fgets`, and `strftime` inside every child; a mixed provider is a hard harness failure.
+
+- **PROOF.** The corrected release smoke ran all four whole jobs through the actual preload path
+  with `fopen` and `fgets` resolving to the same FrankenLibC ELF, and every host/FrankenLibC output
+  comparison was byte-identical. The full 15-sample invocation below independently repeated that
+  identity proof before admitting any timing.
+
+- **CONCRETE RETRY PREDICATE.** Reopen if a release `nm -D` no longer exposes `fgets`, if any
+  preload workload resolves one of the four gated symbols to a different ELF than its arm, or if a
+  host-owned `FILE *` reaches FrankenLibC (or a FrankenLibC token reaches glibc) in a future
+  integration trace.
+
+## 2026-07-29 (cod / codex-root) — CAMPAIGN WIN (SHIPPED): realistic RFC3164 normalization job measures 0.622917x vs host glibc
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.622917`;
+  `incumbent_bootstrap_median_ci=[0.576114,0.669909]`;
+  `null_bootstrap_median_ci=[0.921290,1.045587]`;
+  `bench_elf_sha256=e0209a827651b1c0433fb81955974c74f7bc2140148847f16ae3a101e682c9e3`;
+  `cv_used=false` (CV is descriptive telemetry only).
+
+- **REALISTIC WHOLE JOB.** `flc_e2e_rfc3164_v1` reads 160,000 RFC3164 records
+  (17,192,932 input bytes), parses timestamps and routing fields, converts each timestamp to
+  ISO-8601 with `strftime`, and serializes every normalized record (17,992,932 output bytes).
+  Hosts follow a Zipf distribution, services are mixed, and input generation is outside the timed
+  region. The fixed input SHA-256 is
+  `62f2d41452c96312e053dd2fe7da2d32714d1e8b181227dd35c61ac02551d083`.
+
+- **SAME-INVOCATION INCUMBENT / A/A CONTRACT.** Commit `c88f679a5` ran 15 retained samples after
+  two warmups on strict-remote worker `hz2`. One controller invocation rotated host/host,
+  FrankenLibC/FrankenLibC, and FrankenLibC/glibc pairs, alternating order. The host arm was an
+  ordinary uninterposed dynamic link; the challenger used `LD_PRELOAD`. Each child reported
+  `/proc/self/exe` and `dladdr` provider hashes in process:
+  - workload ELF SHA-256
+    `174eb5ebde90627887362f891ce026ac9ac3baccf7befd20b6c1313ac497c9d4`
+  - host glibc ELF SHA-256
+    `a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`
+  - FrankenLibC ELF SHA-256
+    `5f4d6299acfd11982a62d9716012de8550cb4adb33161f94a65c57be030bd5c4`
+  - host A/A null median 1.027933, bootstrap median CI [0.921290, 1.045587]
+  - FrankenLibC A/A null median 1.004986, bootstrap median CI [0.942219, 1.050098]
+  - FL/glibc effect median 0.622917, bootstrap median CI [0.576114, 0.669909]
+  - host median 173.781704 ms; FrankenLibC median 109.407672 ms; equivalent speedup 1.61x
+  - wider null half-width 0.078710; effect deviation 0.377083 clears the mandatory 2x rule
+
+- **BEHAVIOR / MATCHED-CONFIG PROOF.** Both arms ran with `LC_ALL=C`, `LANG=C`, and `TZ=UTC`.
+  Every timed execution's complete stdout matched SHA-256
+  `c1f5eece2d86f5f051056e1183ad2837d94a8aefb2150e43bd0d0c7a46217552`;
+  the complete serialized normalized file matched SHA-256
+  `3988aa72e405887af90af5d6c7dd50fbfb2f7d0733085b644ce15dd79f65926f`.
+  No digest-only shortcut, sampled-output comparison, or client-side timing was admitted.
+
+- **USER MEANING.** For this production-shaped syslog normalization and serialization job, the
+  application finishes in about 62.3% of glibc's time under the matched C-locale configuration.
+  This whole-job result, not an accessor microbenchmark, is the competitive claim.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the harness and this job-level incumbent win.
+  Reopen if either full-output hash diverges, a gated symbol resolves outside its arm's exact ELF,
+  the dataset or workload version changes, or a repeat's FL/glibc bootstrap median CI no longer
+  lies below 1.0 by more than twice the wider per-arm A/A null-CI half-width. Never reopen or
+  reject from CV alone.
+
+## 2026-07-29 (cod / codex-root) — UNDECIDABLE: realistic Apache combined-log analytics trends 0.553366x vs host glibc but fails its A/A null gate
+
+- **REALISTIC WHOLE JOB.** `flc_e2e_apache_v1` parses, aggregates, sorts, and reports 120,000
+  Apache combined-log records (17,927,711 bytes) with Zipf-distributed paths (s=1.08) and clients
+  (s=1.04). Input SHA-256 is
+  `d250d2b03f750db020ed4edab6610c1792ac3925bebb7fb95839f3121e025286`.
+
+- **SAME-INVOCATION EVIDENCE.** The same committed controller invocation, matched configuration,
+  interleaving, and three in-process ELF hashes recorded for the RFC3164 row apply. Complete output
+  parity matched SHA-256
+  `f5ed3ecb5086dea8597e1ae56acefca89c6e353012178a7d0d0402aa83ee5d81`
+  (1,618 bytes). Host median was 106.767452 ms and FrankenLibC median was 63.597972 ms:
+  - host A/A null median 1.088786, bootstrap median CI [0.996360, 1.230721]
+  - FrankenLibC A/A null median 0.897579, bootstrap median CI [0.778816, 1.383960]
+  - FL/glibc effect median 0.553366, bootstrap median CI [0.470789, 0.614481]
+  - wider null half-width 0.383960; `clears_2x_null=false`; `cv_used=false`
+
+- **USER MEANING / DISPOSITION.** The favorable direction is not a claim: worker variance was wide
+  enough that the actual incumbent effect did not clear twice the A/A envelope. This job is
+  evidence-only and undecidable, not a win or a rejection.
+
+- **CONCRETE RETRY PREDICATE.** Rerun this exact content-addressed job only on an idle or
+  CPU-isolated strict-remote worker where both per-arm A/A bootstrap median CIs fit within +/-0.10
+  of 1.0. Keep or reject only if the FL/glibc median CI also clears twice the wider null half-width;
+  never decide from the current favorable point estimate or from CV.
+
+## 2026-07-29 (cod / codex-root) — UNDECIDABLE: realistic Zipf text-corpus analysis measures 1.035100x vs host glibc
+
+- **REALISTIC WHOLE JOB.** `flc_e2e_zipf_corpus_v1` tokenizes, counts, sorts, and reports a
+  1,500,000-token corpus (10,872,563 bytes) drawn from a 30,000-word Zipf(s=1.07) vocabulary.
+  Input SHA-256 is
+  `9fb7b4da597e495d41ecc1a3d67f52d09b1ea3fe8040a996bf275afb6ab30134`.
+
+- **SAME-INVOCATION EVIDENCE.** The same committed controller invocation, matched configuration,
+  interleaving, and three in-process ELF hashes recorded for the RFC3164 row apply. Complete output
+  parity matched SHA-256
+  `81678c5c4b2bd1e9a8cd3c2ba3e91ba2833267892f8bfbae0d5d5df759fc646d`
+  (957 bytes). Host median was 77.075708 ms and FrankenLibC median was 83.270154 ms:
+  - host A/A null median 0.994645, bootstrap median CI [0.931740, 1.143867]
+  - FrankenLibC A/A null median 1.073938, bootstrap median CI [0.967433, 1.223898]
+  - FL/glibc effect median 1.035100, bootstrap median CI [0.959523, 1.178695]
+  - wider null half-width 0.223898; `clears_2x_null=false`; `cv_used=false`
+
+- **USER MEANING / DISPOSITION.** At whole-job scale this corpus pipeline is statistically
+  indistinguishable from glibc under the current run: the effect interval crosses 1.0 and is inside
+  the null envelope. Record it as undecidable, not as either a loss or a competitive claim.
+
+- **CONCRETE RETRY PREDICATE.** Reopen only after a counted profile attributes non-zero job time to
+  a concrete libc mechanism worth changing, or on an idle/isolated worker where both A/A bootstrap
+  median CIs fit within +/-0.05 of 1.0. A new verdict still requires the effect CI to clear twice
+  the wider null half-width; never gate on CV.
+
+## 2026-07-29 (cod / codex-root) — UNDECIDABLE: realistic Zipf CSV aggregation trends 0.870951x vs host glibc but remains inside the A/A envelope
+
+- **REALISTIC WHOLE JOB.** `flc_e2e_zipf_csv_v1` parses, aggregates, sorts, and reports 400,000 CSV
+  rows (16,659,896 bytes), with Zipf-distributed categories and mixed-scale numeric values plus
+  outliers. Input SHA-256 is
+  `c5bea82bcaef1820f167b47af44fe34397db452cb16d38d388151bca48e3db7b`.
+
+- **SAME-INVOCATION EVIDENCE.** The same committed controller invocation, matched configuration,
+  interleaving, and three in-process ELF hashes recorded for the RFC3164 row apply. Complete output
+  parity matched SHA-256
+  `9fb3e917346d1a9a1821eb014539f2971983ba2be383a4b7a82cc51a865888c8`
+  (21,899 bytes). Host median was 51.533757 ms and FrankenLibC median was 45.656609 ms:
+  - host A/A null median 0.941048, bootstrap median CI [0.886512, 1.030776]
+  - FrankenLibC A/A null median 0.995381, bootstrap median CI [0.950039, 1.027476]
+  - FL/glibc effect median 0.870951, bootstrap median CI [0.827956, 0.993184]
+  - wider null half-width 0.113488; `clears_2x_null=false`; `cv_used=false`
+
+- **USER MEANING / DISPOSITION.** Even though the effect CI is below 1.0, it does not clear twice
+  the wider null envelope. The job is therefore evidence-only and undecidable, not a campaign win.
+
+- **CONCRETE RETRY PREDICATE.** Rerun the identical fixed-input job only on an idle or isolated
+  strict-remote worker where both A/A bootstrap median CIs fit within +/-0.05 of 1.0. Accept a
+  competitive verdict only when the effect CI clears twice the wider null half-width; never promote
+  the current point estimate or CV telemetry.
