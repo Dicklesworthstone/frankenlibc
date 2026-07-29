@@ -661,6 +661,35 @@ const STRPTIME_CASES: &[StrptimeCase] = &[
         fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
         expect_failure: false,
     },
+    // --- composite specifiers, NON-CANONICAL inputs ---
+    // An alias is routed to its expansion's exact-numeric leaf, so these pin the
+    // fallthrough: unpadded fields and out-of-range values must still reach the
+    // general parser (which does numeric backoff and observable partial writes)
+    // and must not be captured by the leaf.
+    StrptimeCase {
+        fmt: b"%T",
+        input: b"8:15:30",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%T",
+        input: b"12:60:00",
+        fields: 0,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%F",
+        input: b"2024-1-5",
+        fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%R",
+        input: b"8:15",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
     // --- whitespace and literal directives ---
     StrptimeCase {
         fmt: b"%Y%n%m",
