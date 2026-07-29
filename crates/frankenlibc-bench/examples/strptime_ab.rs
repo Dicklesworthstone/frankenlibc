@@ -107,6 +107,13 @@ const CASES: &[Case] = &[
         input: b"Nov 14 22:13:20\0",
         format: b"%b %e %H:%M:%S\0",
     },
+    // Timestamp prefix from Apache's Combined Log Format. This adds the
+    // month-name and numeric-zone genericity taxes to a complete real format.
+    Case {
+        label: "apache_combined_log",
+        input: b"[14/Nov/2023:22:13:20 +0000]\0",
+        format: b"[%d/%b/%Y:%H:%M:%S %z]\0",
+    },
 ];
 
 fn self_identity() -> String {
@@ -239,6 +246,11 @@ fn verify(host: StrptimeFn, case: &Case) {
         ] {
             assert_eq!(a, b, "{}: {name} differs (fl {a} vs glibc {b})", case.label);
         }
+        assert_eq!(
+            fl_tm.tm_gmtoff, host_tm.tm_gmtoff,
+            "{}: tm_gmtoff differs (fl {} vs glibc {})",
+            case.label, fl_tm.tm_gmtoff, host_tm.tm_gmtoff
+        );
     }
 }
 
@@ -348,6 +360,25 @@ fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
     let host_guard = host_wide_guard();
     require_host_wide_quiet(&host_guard, "startup");
+    let requested_case = std::env::args().nth(1);
+    let selected_cases = CASES
+        .iter()
+        .filter(|case| {
+            requested_case
+                .as_deref()
+                .is_none_or(|requested| requested == case.label)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !selected_cases.is_empty(),
+        "unknown case {:?}; expected one of {}",
+        requested_case,
+        CASES
+            .iter()
+            .map(|case| case.label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -365,11 +396,11 @@ fn main() {
     assert!(!sym.is_null(), "dlsym(strptime) failed");
     let host: StrptimeFn = unsafe { std::mem::transmute(sym) };
 
-    for case in CASES {
+    for case in &selected_cases {
         verify(host, case);
     }
     println!("verify: OK (end pointer and every parsed tm field match host glibc)");
-    for case in CASES {
+    for case in selected_cases {
         let pre_measurement = format!("pre_measurement_{}", case.label);
         require_host_wide_quiet(&host_guard, &pre_measurement);
         measure_case(host, case);

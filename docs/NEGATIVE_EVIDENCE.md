@@ -24216,3 +24216,45 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   bootstrap median CI no longer lies below 1.0 by more than twice its same-invocation A/A
   null-CI half-width. A future direct-wide emitter is a separate maintenance lever and cannot be
   promoted to a competitive claim unless its own actual-glibc arm independently clears this rule.
+
+## 2026-07-29 (cod / IvoryBridge) — CAMPAIGN WIN (KEEP): deployed Apache Combined Log `strptime` measures 0.229930x vs host glibc
+
+- **RESULT CLASS / EXECUTABLE IDENTITY:** `result_class=campaign-win`;
+  `legacy_incumbent=host-glibc`; `incumbent_provenance=dlmopen-lmid-newlm`;
+  `same_invocation=true`; `incumbent_ratio=0.229930`;
+  `incumbent_bootstrap_median_ci=[0.214470,0.240459]`;
+  `null_median_ratio=0.995549`;
+  `null_bootstrap_median_ci=[0.966168,1.040449]`;
+  `bench_elf_sha256=882a0f9a3d9e3ae71bd500c1e75faf08d56eb2b77ca99036411ee09d8e31619d`;
+  `cv_used=false`. The exact-surface preflight for `strptime_apache_combined_log_v1` returned
+  clear. This is a measurement of the deployed parser, not a source-edit or before/after claim.
+
+- **RIGHT ROUTE / BEHAVIOR PROOF.** The selected case parses
+  `"[14/Nov/2023:22:13:20 +0000]"` with the real Combined Log timestamp format
+  `"[%d/%b/%Y:%H:%M:%S %z]"`. Before timing, FrankenLibC and the fresh-namespace host glibc
+  symbol agreed on returned-pointer nullness and consumed-prefix offset, all eight calendar/time
+  fields checked by the existing harness, and the numeric-zone `tm_gmtoff` added for this case.
+  The month-name, literal, numeric-field, and timezone paths therefore all executed under the
+  exact workload being claimed.
+
+- **SAME-INVOCATION INCUMBENT RESULT.** Strict-remote worker `vmi1293453` retained 33
+  interleaved samples after four warmups and ran 150,000 calls per arm per sample. FrankenLibC
+  measured 129.790 ns/call versus 568.544 ns/call for host glibc. The FL/glibc median ratio
+  0.229930 has bootstrap median CI [0.214470, 0.240459]; the source-identical FL/FL A/A median
+  0.995549 has CI [0.966168, 1.040449]. The 0.770070 effect distance exceeds twice the wider
+  0.040449 null half-width, so the deployed parser is **4.35x faster** by the median-CI gate.
+  CV was recorded as provenance only and did not participate in the verdict.
+
+- **HOST-WIDE EXCLUSIVITY.** Startup, immediately-pre-measurement, and
+  immediately-post-measurement `/proc/stat` samples all covered affinity mask `ff` / CPUs
+  0 through 7 on host `vmi1293453`; their maximum observed busy fractions were 0.032, 0.032,
+  and 0.000 against the fail-closed 0.200 threshold. Earlier attempts on `ovh-a` and
+  `vmi1149989` exited 2 before timing when this same gate observed contaminated CPUs; neither
+  blocked invocation contributed evidence.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP this deployed Apache-log parse as a class-2
+  glibc-generality win. Reopen only if C-locale month matching, `%z` offset parsing, literal
+  dispatch, or parsed-field post-processing changes; if live-glibc end-pointer/field parity
+  diverges; or if a repeat's FL/glibc bootstrap median CI no longer lies below 1.0 by more than
+  twice its same-invocation A/A null-CI half-width. Every retry must retain the in-process ELF
+  hash, actual host-glibc arm, field/offset proof, and all three host-wide quiescence checks.
