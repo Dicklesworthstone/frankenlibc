@@ -24321,3 +24321,30 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   diverges; or if a repeat's FL/glibc bootstrap median CI no longer lies below 1.0 by more than
   twice its same-invocation A/A null-CI half-width. Every retry must retain the in-process ELF
   hash, actual host-glibc arm, field/offset proof, and all three host-wide quiescence checks.
+
+## 2026-07-29 (cod / IvoryBridge) — HARNESS FIX / UNTIMED: cross-engine rows bind CPU governor, topology, RAM, NUMA, and ISA provenance
+
+- **RESULT CLASS / SCOPE.** Harness maintenance only; no source optimization, timing ratio, or
+  campaign win is claimed. Negative-evidence preflight found no prior rejection covering
+  `HostWideBenchmarkGuard` CPU-policy provenance.
+
+- **FAIL-CLOSED PLATFORM CONTRACT.** Every host-wide quiescence row now records host identity,
+  physical cores, allowed logical threads, RAM bytes, NUMA-node count, runtime-detected ISA,
+  affinity mask/list, cpufreq driver, scaling governor, and energy-performance preference beside
+  the existing `/proc/stat` exclusivity sample. CPU-policy attributes must be visible on either
+  every allowed CPU or none; partial visibility and heterogeneous values block the harness.
+  Re-reading the full platform contract before every timed phase also blocks a governor or
+  topology change during the invocation. Hosts without a cpufreq interface report
+  `unavailable` explicitly rather than silently implying `performance`.
+
+- **BEHAVIOR-PRESERVATION PROOF.** The change only reads Linux provenance before the existing
+  quiescence sample and extends its machine-readable line. It does not alter arm order, workload,
+  timed-region boundaries, bootstrap logic, null controls, libc routing, or output parity.
+  Strict-remote benchmark-library tests cover uniform, unavailable, partial, and heterogeneous
+  policy states plus the complete rendered contract.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the provenance hardening. Reopen immediately
+  if an admitted cross-engine row omits host/core/thread/RAM/NUMA/ISA/governor fields, if a policy
+  visible on only part of the cpuset is accepted, if a policy change between phases does not exit
+  2, or if the added reads enter a timed region. Do not infer a `performance` governor from an
+  unavailable cpufreq interface.
