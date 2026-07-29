@@ -23877,3 +23877,117 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   strict-remote worker where both A/A bootstrap median CIs fit within +/-0.05 of 1.0. Accept a
   competitive verdict only when the effect CI clears twice the wider null half-width; never promote
   the current point estimate or CV telemetry.
+
+## 2026-07-29 (cod / codex-root) — CAMPAIGN WIN (KEEP): exact RFC3164 `strftime` finite transducer measures 0.244240x vs host glibc
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.244240`;
+  `incumbent_bootstrap_median_ci=[0.240874,0.245919]`;
+  `null_median_ratio=1.010131`;
+  `null_bootstrap_median_ci=[0.987982,1.036277]`;
+  `bench_elf_sha256=9709f6d013e63368120e0026b7a3aa8244eb1f38e76f01a28cf78db892a3d2b8`;
+  `cv_used=false` (CV is descriptive telemetry only). The same-invocation A/A null control median
+  was 1.010131, bootstrap median CI [0.987982, 1.036277].
+
+- **NEGATIVE-EVIDENCE FIRST / TARGET.** Preflight for lever
+  `exact RFC3164 strftime finite transducer` on surface
+  `strftime exact percent-b percent-e percent-H percent-M percent-S syslog_ts RFC3164` returned
+  clear. The live surface map had measured this exact format at 5.01x slower and explicitly left
+  exact-leaf coverage open. The nearest named-frame profile attributed 85.45% self-time to
+  `frankenlibc_core::time::format_strftime` on the same generic-loop harness family, but its
+  profiled format was `prefix %A suffix`; it is supporting attribution, not a workload-matched
+  Amdahl claim for this row.
+
+- **BASELINE SHAPE LOCALIZES PER-UNIT WORK.** Before the source edit, strict-remote worker `hz2`
+  measured the untouched RFC3164 path at 257.768 ns versus glibc 47.591 ns over 1,000-call batches:
+  FL/glibc 5.415784, CI [5.381797, 5.422015], null CI [0.999725, 1.026225], executing ELF
+  `12b8e9074aa0df7d9d583023a25200fd6bd386d7b98f455ec8009ae24137d1dc`. The independent
+  150,000-call baseline measured 258.187 ns versus 48.952 ns: ratio 5.262060, CI
+  [5.205789, 5.271173], null CI [0.988672, 1.012709], ELF
+  `c552f3f02aa843dbaf39100e3d328082e5d0f356cfd1656b077c1505da7cc831`.
+  The nearly constant gap from 1,000 through 150,000 calls is the fleet's flat-shape signature:
+  fixed per-record formatting work, not batching or coordination.
+
+- **MECHANISM / BEHAVIOR-PRESERVATION PROOF.** The exact C-locale format
+  `%b %e %H:%M:%S` now recognizes one complete byte language before the generic format scan,
+  projects only month/day/hour/minute/second, and writes the fixed 15-byte result plus NUL.
+  Non-exact formats, out-of-range referenced fields, and short buffers decline the leaf and retain
+  the existing generic path. This is sound under FrankenLibC's current C/POSIX-only locale
+  contract. The same benchmark ELF compared the live glibc arm over a 576-state normalized
+  boundary product plus the fixed fixture, every capacity 1..=128, and asserted both arms left
+  their `const struct tm` fields unchanged. Every defined-domain length and successful output,
+  including NUL, matched.
+
+- **SAME-INVOCATION INCUMBENT / A/A GATE AND SHAPE.** One invocation retained 33 paired samples
+  after four warmups at each batch size, alternated pair order, ran source-identical FL/FL null
+  pairs and FL/glibc effect pairs, and self-reported its executing ELF:
+
+  | calls/arm | FL ns | glibc ns | FL/glibc median | bootstrap median CI | null CI | verdict |
+  |---:|---:|---:|---:|---|---|---|
+  | 1,000 | 11.677 | 47.411 | 0.245998 | [0.245923, 0.246392] | [0.999229, 1.000857] | FL faster |
+  | 10,000 | 11.957 | 48.976 | 0.241577 | [0.237739, 0.246910] | [0.983619, 1.009714] | FL faster |
+  | 50,000 | 12.076 | 50.050 | 0.240765 | [0.238458, 0.243527] | [0.987561, 1.017241] | FL faster |
+  | 150,000 | 12.166 | 50.085 | 0.244240 | [0.240874, 0.245919] | [0.987982, 1.036277] | FL faster |
+
+  The candidate ratio is flat at 0.241-0.246 across the 150x batch range. At the headline batch,
+  the wider null half-width is 0.036277 and the effect deviation is 0.755760, so the effect clears
+  the mandatory 2x-null rule. The equivalent actual-incumbent speedup is 4.09x (speedup CI
+  4.07x-4.15x). The separate 21.22x before/after self-speedup is maintenance evidence only and is
+  not the campaign claim.
+
+- **VALIDATION.** Strict-remote focused core tests passed 2/2, covering the normalized boundary
+  product, every short capacity, non-exact formats, and fallback ownership. Live-glibc
+  `conformance_diff_time::diff_strftime_cases` passed 1/1 after adding the RFC3164 format. The
+  realistic C client compiled with `-O3 -Wall -Wextra -Werror`, and both its smoke and full runs
+  passed provider identity and complete-output parity before timing.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the exact leaf as a class-2 glibc-generality
+  win. Reopen if FrankenLibC accepts a non-C `LC_TIME` locale, the exact recognizer broadens beyond
+  `%b %e %H:%M:%S\0`, a normalized-state/capacity differential diverges, the fallback behavior
+  changes, or a repeat's FL/glibc bootstrap median CI no longer lies below 1.0 by more than twice
+  the same-invocation A/A null-CI half-width. Never reopen or reject from CV.
+
+## 2026-07-29 (cod / codex-root) — UNDECIDABLE: 160k-record ISO-8601-to-RFC3164 program measures 0.974244x vs host glibc
+
+- **RESULT CLASS / REALISTIC JOB:** `result_class=undecidable`;
+  `legacy_incumbent=host-glibc`; `same_invocation=true`; `incumbent_ratio=0.974244`;
+  `incumbent_bootstrap_median_ci=[0.891690,1.176872]`; `cv_used=false`.
+  `flc_e2e_iso_to_rfc3164_v1` reads 160,000 ISO-8601 service-log records (17,992,932 bytes),
+  parses each timestamp with `strptime`, emits exact RFC3164 with `strftime`, and serializes the
+  complete transformed record stream (17,192,932 bytes). Hosts follow Zipf(s=1.10); services,
+  severities, and messages are mixed. Input generation is outside the timed region.
+
+- **RIGHT-ROUTE / EXECUTABLE IDENTITY GATE.** One controller invocation rotated host/host,
+  FrankenLibC/FrankenLibC, and FrankenLibC/glibc pairs for 15 retained samples after two warmups.
+  Before timing, every child identified its executable and the loaded providers for `malloc`,
+  `fopen`, `fgets`, `strptime`, and `strftime`; a mixed provider is a hard failure:
+  - controller ELF SHA-256
+    `df37face13b2665dbbeafdea7e9eedd399fcbc6aab3d472bb0302d7bb5f2b251`
+  - workload ELF SHA-256
+    `478e5cad18ee3ccd20d2c8760bfd76c0398f1b0d9fe07c893d9b2e27aa5824f3`
+  - host glibc ELF SHA-256
+    `a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`
+  - FrankenLibC ELF SHA-256
+    `f4230e849a598e7096ae0163a38bcb779f631cd07a73555cf2ad34674f1afe90`
+
+- **PARITY / NULL / EFFECT.** Both arms ran with `LC_ALL=C`, `LANG=C`, and `TZ=UTC`. Complete
+  stdout matched SHA-256
+  `70d1c04b0c505de83832c4b47dd5821964e318f5112511f1db132054cc3615d7`; every serialized
+  byte matched SHA-256
+  `62f2d41452c96312e053dd2fe7da2d32714d1e8b181227dd35c61ac02551d083`.
+  The host median was 81.130662 ms and FrankenLibC median was 82.963015 ms:
+  - host A/A null median 0.997950, bootstrap median CI [0.875995, 1.082786]
+  - FrankenLibC A/A null median 1.032790, bootstrap median CI [0.963743, 1.085580]
+  - FL/glibc effect median 0.974244, bootstrap median CI [0.891690, 1.176872]
+  - wider null half-width 0.124005; `clears_2x_null=false`
+
+- **USER MEANING / DISPOSITION.** The exact symbol win survives as a competitive micro-result, but
+  this whole program is statistically indistinguishable from glibc: the effect interval crosses
+  1.0 and remains inside the A/A envelope. It is not a whole-job win or loss.
+
+- **CONCRETE RETRY PREDICATE.** Rerun this exact content-addressed job only on an idle or
+  CPU-isolated strict-remote worker where both per-arm A/A bootstrap median CIs fit within +/-0.05
+  of 1.0, or after the harness gains a fixed 1x/4x/16x record-count sweep that can distinguish a
+  flat per-record gap from startup/I/O coordination. A verdict still requires the FL/glibc effect
+  CI to clear twice the wider null half-width; never decide from the current point estimate or CV.

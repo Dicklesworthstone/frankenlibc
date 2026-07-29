@@ -164,9 +164,9 @@ fn bootstrap_median_ci95(xs: &[f64]) -> (f64, f64) {
 }
 
 #[inline(never)]
-fn run_fl(out: *mut c_char, fmt: *const c_char, tm: *const libc::tm) -> usize {
+fn run_fl(out: *mut c_char, fmt: *const c_char, tm: *const libc::tm, repetitions: usize) -> usize {
     let mut total = 0usize;
-    for _ in 0..REPS {
+    for _ in 0..repetitions {
         total = total.wrapping_add(black_box(unsafe {
             frankenlibc_abi::time_abi::strftime(black_box(out), 128, black_box(fmt), black_box(tm))
         }));
@@ -175,9 +175,15 @@ fn run_fl(out: *mut c_char, fmt: *const c_char, tm: *const libc::tm) -> usize {
 }
 
 #[inline(never)]
-fn run_host(host: StrftimeFn, out: *mut c_char, fmt: *const c_char, tm: *const libc::tm) -> usize {
+fn run_host(
+    host: StrftimeFn,
+    out: *mut c_char,
+    fmt: *const c_char,
+    tm: *const libc::tm,
+    repetitions: usize,
+) -> usize {
     let mut total = 0usize;
-    for _ in 0..REPS {
+    for _ in 0..repetitions {
         total = total.wrapping_add(black_box(unsafe {
             host(black_box(out), 128, black_box(fmt), black_box(tm))
         }));
@@ -185,18 +191,72 @@ fn run_host(host: StrftimeFn, out: *mut c_char, fmt: *const c_char, tm: *const l
     black_box(total)
 }
 
-fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
+fn tm_observable_fields(tm: &libc::tm) -> (i32, i32, i32, i32, i32, i32, i32, i32, i32, i64) {
+    (
+        tm.tm_sec,
+        tm.tm_min,
+        tm.tm_hour,
+        tm.tm_mday,
+        tm.tm_mon,
+        tm.tm_year,
+        tm.tm_wday,
+        tm.tm_yday,
+        tm.tm_isdst,
+        tm.tm_gmtoff,
+    )
+}
+
+fn verify_one(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     let fmt = case.format.as_ptr().cast();
+    let expected_tm = tm_observable_fields(tm);
     for capacity in 1usize..=128 {
+        assert_eq!(
+            tm_observable_fields(tm),
+            expected_tm,
+            "{} shared fixture changed before capacity {capacity}",
+            case.label,
+        );
         let mut fl = [0x55 as c_char; 128];
         let mut glibc = [0x55 as c_char; 128];
+        let fl_tm = *tm;
+        let glibc_tm = *tm;
+        assert_eq!(
+            tm_observable_fields(tm),
+            expected_tm,
+            "{} shared fixture changed while copying capacity {capacity}",
+            case.label,
+        );
         let fl_n =
-            unsafe { frankenlibc_abi::time_abi::strftime(fl.as_mut_ptr(), capacity, fmt, tm) };
-        let glibc_n = unsafe { host(glibc.as_mut_ptr(), capacity, fmt, tm) };
+            unsafe { frankenlibc_abi::time_abi::strftime(fl.as_mut_ptr(), capacity, fmt, &fl_tm) };
+        assert_eq!(
+            tm_observable_fields(&fl_tm),
+            expected_tm,
+            "{} FrankenLibC arm mutated its const tm at capacity {capacity}",
+            case.label,
+        );
+        assert_eq!(
+            tm_observable_fields(tm),
+            expected_tm,
+            "{} FrankenLibC arm corrupted shared fixture at capacity {capacity}",
+            case.label,
+        );
+        let glibc_n = unsafe { host(glibc.as_mut_ptr(), capacity, fmt, &glibc_tm) };
+        assert_eq!(
+            tm_observable_fields(&glibc_tm),
+            expected_tm,
+            "{} glibc arm mutated its const tm at capacity {capacity}",
+            case.label,
+        );
+        assert_eq!(
+            tm_observable_fields(tm),
+            expected_tm,
+            "{} glibc arm corrupted shared fixture at capacity {capacity}",
+            case.label,
+        );
         assert_eq!(
             fl_n, glibc_n,
-            "{} length mismatch at capacity {capacity}",
-            case.label
+            "{} length mismatch at capacity {capacity}; tm_mon={} tm_mday={} tm_hour={} tm_min={} tm_sec={}",
+            case.label, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
         );
         if fl_n != 0 {
             assert_eq!(
@@ -209,10 +269,43 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     }
 }
 
-fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm) {
+fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
+    verify_one(host, case, tm);
+    if case.label != "syslog_ts" {
+        return;
+    }
+
+    for month in 0..=11 {
+        for day in [1, 9, 10, 31] {
+            for hour in [0, 23] {
+                for minute in [0, 59] {
+                    for second in [0, 59, 60] {
+                        let mut probe = *tm;
+                        probe.tm_mon = month;
+                        probe.tm_mday = day;
+                        probe.tm_hour = hour;
+                        probe.tm_min = minute;
+                        probe.tm_sec = second;
+                        verify_one(host, case, &probe);
+                    }
+                }
+            }
+        }
+    }
+
+    // POSIX leaves the stored characters unspecified when a conversion's
+    // referenced `tm` field is outside its normal range. The core unit test
+    // proves those inputs decline this finite leaf; they are deliberately not
+    // differential claims against one particular glibc behavior.
+}
+
+fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm, repetitions: usize) {
     let fmt = case.format.as_ptr().cast();
     let mut fl_out = [0 as c_char; 128];
     let mut host_out = [0 as c_char; 128];
+    let fl_tm = *tm;
+    let host_tm = *tm;
+    let expected_tm = tm_observable_fields(tm);
     let mut fl = Vec::with_capacity(SAMPLES - WARMUP);
     let mut glibc = Vec::with_capacity(SAMPLES - WARMUP);
     let mut null_a = Vec::with_capacity(SAMPLES - WARMUP);
@@ -221,43 +314,67 @@ fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     for sample in 0..SAMPLES {
         let (null_a_elapsed, null_b_elapsed) = if sample % 2 == 0 {
             let start = Instant::now();
-            black_box(run_fl(fl_out.as_mut_ptr(), fmt, tm));
+            black_box(run_fl(fl_out.as_mut_ptr(), fmt, &fl_tm, repetitions));
             let a = start.elapsed();
             let start = Instant::now();
-            black_box(run_fl(fl_out.as_mut_ptr(), fmt, tm));
+            black_box(run_fl(fl_out.as_mut_ptr(), fmt, &fl_tm, repetitions));
             (a, start.elapsed())
         } else {
             let start = Instant::now();
-            black_box(run_fl(fl_out.as_mut_ptr(), fmt, tm));
+            black_box(run_fl(fl_out.as_mut_ptr(), fmt, &fl_tm, repetitions));
             let b = start.elapsed();
             let start = Instant::now();
-            black_box(run_fl(fl_out.as_mut_ptr(), fmt, tm));
+            black_box(run_fl(fl_out.as_mut_ptr(), fmt, &fl_tm, repetitions));
             (start.elapsed(), b)
         };
         let (fl_elapsed, glibc_elapsed) = if sample % 2 == 0 {
             let start = Instant::now();
-            black_box(run_fl(fl_out.as_mut_ptr(), fmt, tm));
+            black_box(run_fl(fl_out.as_mut_ptr(), fmt, &fl_tm, repetitions));
             let a = start.elapsed();
             let start = Instant::now();
-            black_box(run_host(host, host_out.as_mut_ptr(), fmt, tm));
+            black_box(run_host(
+                host,
+                host_out.as_mut_ptr(),
+                fmt,
+                &host_tm,
+                repetitions,
+            ));
             (a, start.elapsed())
         } else {
             let start = Instant::now();
-            black_box(run_host(host, host_out.as_mut_ptr(), fmt, tm));
+            black_box(run_host(
+                host,
+                host_out.as_mut_ptr(),
+                fmt,
+                &host_tm,
+                repetitions,
+            ));
             let b = start.elapsed();
             let start = Instant::now();
-            black_box(run_fl(fl_out.as_mut_ptr(), fmt, tm));
+            black_box(run_fl(fl_out.as_mut_ptr(), fmt, &fl_tm, repetitions));
             (start.elapsed(), b)
         };
 
         if sample >= WARMUP {
-            let scale = REPS as f64;
+            let scale = repetitions as f64;
             fl.push(fl_elapsed.as_nanos() as f64 / scale);
             glibc.push(glibc_elapsed.as_nanos() as f64 / scale);
             null_a.push(null_a_elapsed.as_nanos() as f64 / scale);
             null_b.push(null_b_elapsed.as_nanos() as f64 / scale);
         }
     }
+    assert_eq!(
+        tm_observable_fields(&fl_tm),
+        expected_tm,
+        "{} FrankenLibC timing arm mutated its const tm",
+        case.label,
+    );
+    assert_eq!(
+        tm_observable_fields(&host_tm),
+        expected_tm,
+        "{} glibc timing arm mutated its const tm",
+        case.label,
+    );
 
     let effect = fl
         .iter()
@@ -285,7 +402,7 @@ fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     };
 
     println!(
-        "STRFTIME_FIXED_FLOOR case={} samples={} reps/arm={REPS} fl_median_ns={:.3} \
+        "STRFTIME_FIXED_FLOOR case={} samples={} reps/arm={repetitions} fl_median_ns={:.3} \
          glibc_median_ns={:.3}",
         case.label,
         fl.len(),
@@ -329,16 +446,70 @@ fn main() {
     let host: StrftimeFn =
         unsafe { std::mem::transmute(libc::dlsym(handle, c"strftime".as_ptr())) };
 
-    let epoch = 1_700_000_000i64;
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe {
-        frankenlibc_abi::time_abi::gmtime_r(&epoch, &mut tm);
+    let mut selected_case = None;
+    let mut repetition_counts = vec![REPS];
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--case" => {
+                selected_case = Some(args.next().expect("--case requires a label"));
+            }
+            "--reps" => {
+                let values = args
+                    .next()
+                    .expect("--reps requires one or more comma-separated positive integers");
+                repetition_counts = values
+                    .split(',')
+                    .map(|value| {
+                        let parsed = value
+                            .parse()
+                            .expect("--reps values must be positive integers");
+                        assert!(parsed > 0, "--reps values must be positive");
+                        parsed
+                    })
+                    .collect();
+            }
+            _ => panic!("unknown argument: {arg}"),
+        }
     }
-    for case in CASES {
+    let cases = CASES
+        .iter()
+        .filter(|case| {
+            selected_case
+                .as_deref()
+                .is_none_or(|label| case.label == label)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !cases.is_empty(),
+        "no benchmark case matched {:?}",
+        selected_case
+    );
+
+    // Fixed 2023-11-14 22:13:20 UTC fixture. Construct it directly so this
+    // strftime harness does not route fixture setup through either gmtime arm.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_sec = 20;
+    tm.tm_min = 13;
+    tm.tm_hour = 22;
+    tm.tm_mday = 14;
+    tm.tm_mon = 10;
+    tm.tm_year = 123;
+    tm.tm_wday = 2;
+    tm.tm_yday = 317;
+    tm.tm_isdst = 0;
+    tm.tm_gmtoff = 0;
+    tm.tm_zone = c"UTC".as_ptr();
+    for case in &cases {
         verify(host, case, &tm);
     }
-    println!("verify: OK (all cases and capacities 1..=128 match host glibc)");
-    for case in CASES {
-        measure_case(host, case, &tm);
+    println!(
+        "verify: OK ({} case(s) and capacities 1..=128 match host glibc)",
+        cases.len()
+    );
+    for repetitions in repetition_counts {
+        for case in &cases {
+            measure_case(host, case, &tm, repetitions);
+        }
     }
 }

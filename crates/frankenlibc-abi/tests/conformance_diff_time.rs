@@ -280,6 +280,7 @@ fn diff_difftime_cases() {
 const STRFTIME_FORMATS: &[&[u8]] = &[
     b"%Y-%m-%d",          // ISO date
     b"%H:%M:%S",          // 24-hour time
+    b"%b %e %H:%M:%S",    // RFC3164 syslog timestamp
     b"%Y-%m-%dT%H:%M:%S", // ISO 8601
     b"%a",                // abbreviated weekday
     b"%A",                // full weekday

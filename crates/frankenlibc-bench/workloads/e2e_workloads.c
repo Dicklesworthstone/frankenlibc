@@ -217,6 +217,7 @@ static int run_identity(void) {
     report_loaded_symbol("MALLOC_ELF", (void *)malloc);
     report_loaded_symbol("FOPEN_ELF", (void *)fopen);
     report_loaded_symbol("FGETS_ELF", (void *)fgets);
+    report_loaded_symbol("STRPTIME_ELF", (void *)strptime);
     report_loaded_symbol("STRFTIME_ELF", (void *)strftime);
     return 0;
 }
@@ -468,10 +469,13 @@ static int run_logparse(const char *path) {
 }
 
 /* ------------------------------------------------------------------------- */
-/* Workload 2: RFC3164-to-ISO8601 log normalization and serialization.       */
+/* Workloads 2/3: timestamp normalization and full-record serialization.     */
 /* ------------------------------------------------------------------------- */
 
-static int run_tsreformat(const char *path, const char *output_path) {
+static int run_timestamp_reformat(const char *path, const char *output_path,
+                                  const char *input_format,
+                                  const char *output_format,
+                                  int default_year) {
     FILE *f = open_or_die(path, "r");
     FILE *outf = open_or_die(output_path, "w");
     char line[2048];
@@ -488,10 +492,9 @@ static int run_tsreformat(const char *path, const char *output_path) {
         }
         struct tm tmv;
         memset(&tmv, 0, sizeof(tmv));
-        tmv.tm_year = 123;
-        char *rest = strptime(line, "%b %e %H:%M:%S", &tmv);
-        if (!rest ||
-            strftime(out, sizeof(out), "%Y-%m-%dT%H:%M:%SZ", &tmv) == 0) {
+        tmv.tm_year = default_year;
+        char *rest = strptime(line, input_format, &tmv);
+        if (!rest || strftime(out, sizeof(out), output_format, &tmv) == 0) {
             skipped++;
             continue;
         }
@@ -523,7 +526,7 @@ static int run_tsreformat(const char *path, const char *output_path) {
 }
 
 /* ------------------------------------------------------------------------- */
-/* Workload 3: Zipf-skewed corpus word-frequency report.                     */
+/* Workload 4: Zipf-skewed corpus word-frequency report.                     */
 /* ------------------------------------------------------------------------- */
 
 static int run_wordfreq(const char *path) {
@@ -574,7 +577,7 @@ static int run_wordfreq(const char *path) {
 }
 
 /* ------------------------------------------------------------------------- */
-/* Workload 4: skewed-category CSV numeric aggregation and report.           */
+/* Workload 5: skewed-category CSV numeric aggregation and report.           */
 /* ------------------------------------------------------------------------- */
 
 static int run_csvstat(const char *path) {
@@ -641,7 +644,8 @@ int main(int argc, char **argv) {
     }
     if (argc < 3) {
         fprintf(stderr,
-                "usage: %s <logparse|tsreformat|wordfreq|csvstat> <input> "
+                "usage: %s "
+                "<logparse|tsreformat|legacylog|wordfreq|csvstat> <input> "
                 "[output]\n",
                 argv[0]);
         return 2;
@@ -654,7 +658,18 @@ int main(int argc, char **argv) {
             fprintf(stderr, "tsreformat requires an output path\n");
             return 2;
         }
-        return run_tsreformat(argv[2], argv[3]);
+        return run_timestamp_reformat(argv[2], argv[3],
+                                      "%b %e %H:%M:%S",
+                                      "%Y-%m-%dT%H:%M:%SZ", 123);
+    }
+    if (strcmp(argv[1], "legacylog") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "legacylog requires an output path\n");
+            return 2;
+        }
+        return run_timestamp_reformat(argv[2], argv[3],
+                                      "%Y-%m-%dT%H:%M:%SZ",
+                                      "%b %e %H:%M:%S", 0);
     }
     if (strcmp(argv[1], "wordfreq") == 0) {
         return run_wordfreq(argv[2]);

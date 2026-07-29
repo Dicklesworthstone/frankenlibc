@@ -537,6 +537,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_rfc3164(
+        fmt, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+    ) {
+        return n;
+    }
     if let Some(n) = format_strftime_ymdhm(fmt, bd, buf) {
         return n;
     }
@@ -1151,6 +1156,60 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     write_two_digits(&mut buf[3..5], minute);
     buf[5] = b':';
     write_two_digits(&mut buf[6..8], second);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+/// Emit the exact C-locale RFC3164 timestamp `%b %e %H:%M:%S`.
+///
+/// The exact format and normalized field domains form a bounded deterministic
+/// transducer: 12 months, 31 days, 24 hours, 60 minutes, and 61 seconds.
+/// Non-exact formats and non-normalized fields return `None` so the general
+/// formatter retains its existing flags, locale, and malformed-field behavior.
+#[inline]
+pub fn format_strftime_rfc3164(
+    fmt: &[u8],
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if fmt != b"%b %e %H:%M:%S"
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 15;
+    if buf.len() <= OUT_LEN {
+        // Preserve the existing general loop's short-buffer writes without
+        // routing this exact leaf through an interposable memory primitive.
+        return None;
+    }
+
+    let month_name = MON_NAMES[month as usize];
+    buf[0] = month_name[0];
+    buf[1] = month_name[1];
+    buf[2] = month_name[2];
+    buf[3] = b' ';
+    if day < 10 {
+        buf[4] = b' ';
+        buf[5] = b'0' + day as u8;
+    } else {
+        write_two_digits(&mut buf[4..6], day as u32);
+    }
+    buf[6] = b' ';
+    write_two_digits(&mut buf[7..9], hour as u32);
+    buf[9] = b':';
+    write_two_digits(&mut buf[10..12], minute as u32);
+    buf[12] = b':';
+    write_two_digits(&mut buf[13..15], second as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -1937,6 +1996,111 @@ mod tests {
         let mut short = [0x55u8; 3];
         assert_eq!(format_strftime(b"%b", &bd, &mut short), 0);
         assert_eq!(&short, b"SeU");
+    }
+
+    #[test]
+    fn strftime_rfc3164_exact_boundary_product_and_capacity_boundaries() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        let months = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        for (month, month_name) in months.into_iter().enumerate() {
+            for day in [1, 9, 10, 31] {
+                for hour in [0, 23] {
+                    for minute in [0, 59] {
+                        for second in [0, 59, 60] {
+                            bd.tm_mon = month as i32;
+                            bd.tm_mday = day;
+                            bd.tm_hour = hour;
+                            bd.tm_min = minute;
+                            bd.tm_sec = second;
+                            let mut buf = [0x55u8; 16];
+                            let n = format_strftime(b"%b %e %H:%M:%S", &bd, &mut buf);
+                            let expected =
+                                format!("{month_name} {day:>2} {hour:02}:{minute:02}:{second:02}");
+                            assert_eq!(n, 15);
+                            assert_eq!(&buf[..n], expected.as_bytes());
+                            assert_eq!(buf[n], 0);
+                        }
+                    }
+                }
+            }
+        }
+
+        bd.tm_mon = 0;
+        bd.tm_mday = 1;
+        bd.tm_hour = 0;
+        bd.tm_min = 0;
+        bd.tm_sec = 0;
+        let expected = b"Jan  1 00:00:00";
+        let mut direct_short = [0x55u8; 15];
+        assert_eq!(
+            format_strftime_rfc3164(
+                b"%b %e %H:%M:%S",
+                bd.tm_mon,
+                bd.tm_mday,
+                bd.tm_hour,
+                bd.tm_min,
+                bd.tm_sec,
+                &mut direct_short,
+            ),
+            None
+        );
+        assert_eq!(direct_short, [0x55; 15]);
+        for capacity in 0usize..=15 {
+            let mut buf = [0x55u8; 16];
+            let n = format_strftime(b"%b %e %H:%M:%S", &bd, &mut buf[..capacity]);
+            assert_eq!(n, 0);
+            let prefix_len = capacity.saturating_sub(1);
+            assert_eq!(&buf[..prefix_len], &expected[..prefix_len]);
+            assert!(buf[prefix_len..].iter().all(|byte| *byte == 0x55));
+        }
+    }
+
+    #[test]
+    fn strftime_rfc3164_nonexact_and_malformed_inputs_fall_back() {
+        let mut buf = [0x55u8; 64];
+        for format in [
+            b"[%b %e %H:%M:%S]".as_slice(),
+            b"%h %e %H:%M:%S",
+            b"%b %d %H:%M:%S",
+            b"%b %e %H:%M:%S ",
+        ] {
+            assert_eq!(
+                format_strftime_rfc3164(format, 0, 1, 0, 0, 0, &mut buf),
+                None
+            );
+        }
+        for (month, day, hour, minute, second) in [
+            (-1, 1, 0, 0, 0),
+            (12, 1, 0, 0, 0),
+            (0, 0, 0, 0, 0),
+            (0, 32, 0, 0, 0),
+            (0, 1, -1, 0, 0),
+            (0, 1, 24, 0, 0),
+            (0, 1, 0, -1, 0),
+            (0, 1, 0, 60, 0),
+            (0, 1, 0, 0, -1),
+            (0, 1, 0, 0, 61),
+        ] {
+            assert_eq!(
+                format_strftime_rfc3164(
+                    b"%b %e %H:%M:%S",
+                    month,
+                    day,
+                    hour,
+                    minute,
+                    second,
+                    &mut buf,
+                ),
+                None
+            );
+        }
+
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 99;
+        let n = format_strftime(b"%b %e %H:%M:%S", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"Jan  1 99:00:00");
     }
 
     #[test]

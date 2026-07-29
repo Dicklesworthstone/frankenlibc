@@ -49,6 +49,7 @@ impl Arm {
 enum Workload {
     Apache,
     Syslog,
+    LegacySyslog,
     WordFrequency,
     CsvStatistics,
 }
@@ -58,6 +59,7 @@ impl Workload {
         match self {
             Self::Apache => "flc_e2e_apache_v1",
             Self::Syslog => "flc_e2e_rfc3164_v1",
+            Self::LegacySyslog => "flc_e2e_iso_to_rfc3164_v1",
             Self::WordFrequency => "flc_e2e_zipf_corpus_v1",
             Self::CsvStatistics => "flc_e2e_zipf_csv_v1",
         }
@@ -67,6 +69,7 @@ impl Workload {
         match self {
             Self::Apache => "logparse",
             Self::Syslog => "tsreformat",
+            Self::LegacySyslog => "legacylog",
             Self::WordFrequency => "wordfreq",
             Self::CsvStatistics => "csvstat",
         }
@@ -79,6 +82,9 @@ impl Workload {
             }
             Self::Syslog => {
                 "normalize an RFC3164 syslog export to ISO-8601 and serialize every record"
+            }
+            Self::LegacySyslog => {
+                "convert an ISO-8601 service-log export to RFC3164 for a legacy syslog sink"
             }
             Self::WordFrequency => {
                 "scan a Zipf-skewed text corpus and emit a sorted word-frequency report"
@@ -326,7 +332,16 @@ fn generate_apache(writer: &mut BufWriter<File>) -> Result<(), String> {
     Ok(())
 }
 
-fn generate_syslog(writer: &mut BufWriter<File>) -> Result<(), String> {
+#[derive(Clone, Copy)]
+enum SyslogTimestamp {
+    Rfc3164,
+    Iso8601,
+}
+
+fn generate_syslog_with_timestamp(
+    writer: &mut BufWriter<File>,
+    timestamp_style: SyslogTimestamp,
+) -> Result<(), String> {
     let mut rng = XorShift64::new(0x5a51_06e2_6072_8002);
     let hosts = ZipfSampler::new(256, 1.10);
     let services = [
@@ -363,15 +378,31 @@ fn generate_syslog(writer: &mut BufWriter<File>) -> Result<(), String> {
         } else {
             "warning"
         };
+        let timestamp = match timestamp_style {
+            SyslogTimestamp::Rfc3164 => {
+                format!("Jul {day:2} {hour:02}:{minute:02}:{second:02}")
+            }
+            SyslogTimestamp::Iso8601 => {
+                format!("2023-07-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+            }
+        };
         writeln!(
             writer,
-            "Jul {day:2} {hour:02}:{minute:02}:{second:02} node-{host:03} \
-             {service}[{}]: severity={severity} {message} request_id={row:08x}",
+            "{timestamp} node-{host:03} {service}[{}]: severity={severity} {message} \
+             request_id={row:08x}",
             1000 + rng.range(55_000),
         )
         .map_err(|error| format!("write syslog dataset: {error}"))?;
     }
     Ok(())
+}
+
+fn generate_syslog(writer: &mut BufWriter<File>) -> Result<(), String> {
+    generate_syslog_with_timestamp(writer, SyslogTimestamp::Rfc3164)
+}
+
+fn generate_iso8601_syslog(writer: &mut BufWriter<File>) -> Result<(), String> {
+    generate_syslog_with_timestamp(writer, SyslogTimestamp::Iso8601)
 }
 
 fn alphabetic_word(rank: usize) -> String {
@@ -466,6 +497,13 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
         "Zipf(s=1.10) hosts; mixed services, severities, and message templates",
         generate_syslog,
     )?;
+    let iso8601_syslog = ensure_dataset(
+        &root.join("iso8601-syslog-160k.log"),
+        SYSLOG_ROWS,
+        SYSLOG_ROWS,
+        "Zipf(s=1.10) hosts; mixed services, severities, and message templates",
+        generate_iso8601_syslog,
+    )?;
     let corpus_lines = CORPUS_TOKENS / CORPUS_WORDS_PER_LINE;
     let corpus = ensure_dataset(
         &root.join("zipf-corpus-1m5.txt"),
@@ -491,6 +529,11 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
             workload: Workload::Syslog,
             dataset: syslog,
             output_path: Some(root.join("rfc3164-normalized.out")),
+        },
+        Job {
+            workload: Workload::LegacySyslog,
+            dataset: iso8601_syslog,
+            output_path: Some(root.join("iso8601-to-rfc3164.out")),
         },
         Job {
             workload: Workload::WordFrequency,
@@ -771,6 +814,7 @@ fn verify_identity(
         "MALLOC_ELF_SHA256",
         "FOPEN_ELF_SHA256",
         "FGETS_ELF_SHA256",
+        "STRPTIME_ELF_SHA256",
         "STRFTIME_ELF_SHA256",
     ] {
         let reported = identity_field(franken, symbol)?;
@@ -784,6 +828,7 @@ fn verify_identity(
     for symbol in [
         "FOPEN_ELF_SHA256",
         "FGETS_ELF_SHA256",
+        "STRPTIME_ELF_SHA256",
         "STRFTIME_ELF_SHA256",
     ] {
         let reported = identity_field(host, symbol)?;
@@ -1114,21 +1159,23 @@ fn run() -> Result<(), String> {
     );
     println!(
         "E2E_INCUMBENT version={:?} malloc_path={} fopen_path={} fgets_path={} \
-         strftime_path={} sha256={}",
+         strptime_path={} strftime_path={} sha256={}",
         ldd_version()?,
         identity_field(&host_identity, "MALLOC_ELF_PATH")?,
         identity_field(&host_identity, "FOPEN_ELF_PATH")?,
         identity_field(&host_identity, "FGETS_ELF_PATH")?,
+        identity_field(&host_identity, "STRPTIME_ELF_PATH")?,
         identity_field(&host_identity, "STRFTIME_ELF_PATH")?,
         identity_field(&host_identity, "MALLOC_ELF_SHA256")?,
     );
     println!(
         "E2E_CHALLENGER mode=strict preload_path={} malloc_path={} fopen_path={} fgets_path={} \
-         strftime_path={} sha256={}",
+         strptime_path={} strftime_path={} sha256={}",
         frankenlibc.display(),
         identity_field(&franken_identity, "MALLOC_ELF_PATH")?,
         identity_field(&franken_identity, "FOPEN_ELF_PATH")?,
         identity_field(&franken_identity, "FGETS_ELF_PATH")?,
+        identity_field(&franken_identity, "STRPTIME_ELF_PATH")?,
         identity_field(&franken_identity, "STRFTIME_ELF_PATH")?,
         frankenlibc_sha,
     );

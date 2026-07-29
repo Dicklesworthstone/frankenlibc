@@ -1226,6 +1226,53 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
+        // Exact RFC3164 timestamps are a bounded C-locale transducer. Recognize
+        // the complete `%b %e %H:%M:%S\0` language before the generic C-string
+        // scan and full `tm` projection. The `&&` chain is intentionally
+        // left-to-right: a shorter C string stops at its NUL before the next byte
+        // is read. Non-normalized fields fall through to the unchanged formatter.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'b'
+                && *format.cast::<u8>().add(2) == b' '
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'e'
+                && *format.cast::<u8>().add(5) == b' '
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'H'
+                && *format.cast::<u8>().add(8) == b':'
+                && *format.cast::<u8>().add(9) == b'%'
+                && *format.cast::<u8>().add(10) == b'M'
+                && *format.cast::<u8>().add(11) == b':'
+                && *format.cast::<u8>().add(12) == b'%'
+                && *format.cast::<u8>().add(13) == b'S'
+                && *format.cast::<u8>().add(14) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (month, day, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_rfc3164(
+                b"%b %e %H:%M:%S",
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                buf,
+            ) {
+                return n;
+            }
+        }
         // Exact `%A\0` is a three-byte C-format transducer leaf. Recognize it
         // before the generic NUL scan so this common one-directive format pays
         // neither a scan nor full `tm` materialization. Short-circuiting means
