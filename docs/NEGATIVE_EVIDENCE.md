@@ -24155,3 +24155,64 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   Retry `iso_datetime` only when the same-invocation A/A null CI lies within +/-0.02 of 1.0. Every
   rerun still requires the actual incumbent, self-reported ELF hash, field/offset parity, and
   the bootstrap median-CI 2x-null rule.
+
+## 2026-07-29 (cod / codex-root) — CAMPAIGN WIN (KEEP): deployed exact HTTP-date `wcsftime` measures 0.696248x vs host glibc
+
+- **RESULT CLASS / EXECUTABLE IDENTITY:** `result_class=campaign-win`;
+  `legacy_incumbent=host-glibc`; `incumbent_provenance=dlmopen-lmid-newlm`;
+  `same_invocation=true`;
+  `incumbent_ratio=0.696248`;
+  `incumbent_bootstrap_median_ci=[0.668552,0.731111]`;
+  `null_median_ratio=1.028758`;
+  `null_bootstrap_median_ci=[0.935251,1.068024]`;
+  `bench_elf_sha256=41de8cd405565387f9f327d7bc36348d3265038aa1f97bd2facfe1b403e60492`;
+  `cv_used=false`. Preflight for `exact HTTP-date wcsftime finite transducer` on the exact wide
+  RFC7231 surface returned clear. No production implementation was changed: this measures the
+  deployed wide bridge over the already-landed narrow HTTP-date leaf.
+
+- **HARNESS CONTRACT CORRECTION.** The reusable `wcsftime_ab` harness retained its historical
+  `%FT%T` mode and gained an `http_date` selector. It already self-reported its executing ELF,
+  resolved real glibc `wcsftime` through a fresh `dlmopen(LM_ID_NEWLM)` namespace, and ran an
+  in-invocation candidate/candidate A/A. This change applies the bootstrap median-CI plus 2x-null
+  rule to the actual candidate/glibc arm as well as the candidate/reconstructed-bridge maintenance
+  arm, preventing a self-speedup verdict from being quoted as competitive evidence.
+
+- **RIGHT-ROUTE / BEHAVIOR PROOF.** Before timing, the selected exact wide format
+  `%a, %d %b %Y %H:%M:%S GMT` matched host glibc on return length, all successful wide output
+  characters, and the terminating wide NUL across capacities 1..=34. The rotating 32-element
+  batch exercises all seven weekdays, all twelve months, distinct days and years, every hour,
+  minute variation, and leap-second 60. Valid field extrema match glibc; malformed field fallback
+  remains byte-identical to the reconstructed deployed general bridge.
+
+- **SAME-INVOCATION INCUMBENT RESULT.** Strict-remote worker `vmi1293453` retained 33 samples
+  after four warmups, executed 1,000,000 calls per arm per sample over rotating timestamps and
+  output slots, and alternated arm order:
+  - reconstructed general wide bridge: 75.71 ns/call
+  - deployed FrankenLibC: 75.67 ns/call
+  - host glibc: 109.71 ns/call
+  - deployed/reconstructed maintenance ratio 0.988894, CI [0.969258, 1.033339],
+    `clears_2x_null=false`, so the self-speedup result is **UNDECIDABLE**
+  - deployed/glibc ratio 0.696248, CI [0.668552, 0.731111], against the A/A null CI
+    [0.935251, 1.068024], `clears_2x_null=true`
+
+  The actual-incumbent result is 1.44x faster (speedup CI 1.37x-1.50x). The effect's 0.303752
+  distance from 1.0 exceeds twice the 0.068024 null half-width. CV is descriptive telemetry only.
+  A pre-lint executable
+  (`ee2cbfa57f2f6393bc2f785a7f132c37bafb905de8ef3f297a14b3e2c7fadcdc`) independently
+  measured 0.681428, CI [0.666414, 0.719888], against null CI [0.933425, 1.051646]; a mechanical
+  lint edit changed the ELF, so that earlier run is replication evidence rather than the claim.
+
+- **PRESERVED `%FT%T` MODE.** A second strict-remote invocation of the harness's historical
+  default mode self-reported ELF SHA-256
+  `e1510ddc0142e716ee0e8a3d19be4b1238588d09d21c88c8f0dd6bb81ba92ad3`, passed the same
+  capacity/field/rotating-batch oracle, and replicated its existing incumbent win at 0.111566,
+  CI [0.108073, 0.114113], against A/A CI [0.958100, 1.041002]. This is compatibility validation
+  for the harness refactor, not a new campaign claim.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the deployed exact wide HTTP-date result as a
+  class-2 glibc-generality win and keep the maintenance comparison undecidable. Reopen if the
+  `wcsftime` wide-to-narrow bridge, the exact narrow HTTP-date leaf, C-locale name semantics, or
+  exact format changes; if the capacity/field differential diverges; or if a repeat's FL/glibc
+  bootstrap median CI no longer lies below 1.0 by more than twice its same-invocation A/A
+  null-CI half-width. A future direct-wide emitter is a separate maintenance lever and cannot be
+  promoted to a competitive claim unless its own actual-glibc arm independently clears this rule.

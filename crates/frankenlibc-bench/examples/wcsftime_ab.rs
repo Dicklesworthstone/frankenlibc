@@ -1,11 +1,11 @@
-//! Same-worker interleaved A/B for exact `%FT%T` `wcsftime`.
+//! Same-worker interleaved A/B for exact-format `wcsftime`.
 //!
 //! `orig_wcsftime` reconstructs the deployed general wide->narrow->wide bridge.
 //! The candidate is the deployed symbol. The workload rotates through a batch
 //! of distinct timestamps and output slots rather than repeating one value.
 //! A source-identical candidate/candidate NULL control is timed in every sample.
-//! Bootstrap median CIs and the 2x null-half-width rule decide the result; CV
-//! is descriptive only.
+//! The self-speedup and actual-glibc arms are both decided by bootstrap median
+//! CIs plus the 2x null-half-width rule; CV is descriptive only.
 
 use std::ffi::{c_char, c_void};
 use std::fmt::Write as _;
@@ -22,7 +22,28 @@ const REPS: usize = 1_000_000;
 const BATCH: usize = 32;
 const OUT_CAP: usize = 64;
 const BOOTSTRAP_RESAMPLES: usize = 4096;
-const FORMAT: &str = "%FT%T";
+
+struct Case {
+    label: &'static str,
+    format: &'static str,
+    output_len: usize,
+}
+
+fn selected_case() -> Case {
+    match std::env::args().nth(1).as_deref() {
+        None | Some("ft_t") => Case {
+            label: "ft_t",
+            format: "%FT%T",
+            output_len: 19,
+        },
+        Some("http_date") => Case {
+            label: "http_date",
+            format: "%a, %d %b %Y %H:%M:%S GMT",
+            output_len: 29,
+        },
+        Some(other) => panic!("unknown case {other:?}; expected ft_t or http_date"),
+    }
+}
 
 type WcsftimeFn =
     unsafe extern "C" fn(*mut libc::wchar_t, usize, *const libc::wchar_t, *const libc::tm) -> usize;
@@ -31,7 +52,7 @@ fn median(xs: &[f64]) -> f64 {
     let mut values = xs.to_vec();
     values.sort_by(f64::total_cmp);
     let mid = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]
@@ -333,15 +354,16 @@ fn assert_case(
     }
 }
 
-fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> Vec<libc::tm> {
+fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t, case: &Case) -> Vec<libc::tm> {
     let mut valid: libc::tm = unsafe { std::mem::zeroed() };
     valid.tm_year = 123;
     valid.tm_mon = 10;
     valid.tm_mday = 14;
+    valid.tm_wday = 2;
     valid.tm_hour = 22;
     valid.tm_min = 13;
     valid.tm_sec = 20;
-    for capacity in 1..=24 {
+    for capacity in 1..=case.output_len + 5 {
         assert_case(host, fmt, &valid, capacity, true);
     }
     for (field, value) in [
@@ -408,6 +430,7 @@ fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> Vec<libc::tm> {
         tm.tm_year = 100 + (index % 24) as i32;
         tm.tm_mon = (index % 12) as i32;
         tm.tm_mday = 1 + (index % 28) as i32;
+        tm.tm_wday = (index % 7) as i32;
         tm.tm_hour = (index % 24) as i32;
         tm.tm_min = ((index * 7) % 60) as i32;
         tm.tm_sec = ((index * 11) % 61) as i32;
@@ -415,13 +438,15 @@ fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> Vec<libc::tm> {
         batch.push(tm);
     }
     println!(
-        "verify: OK (candidate == host glibc for valid %FT%T boundaries and rotating batch; candidate == ORIG for invalid-field fallbacks)"
+        "verify: OK (case={} candidate == host glibc for valid boundaries and rotating batch; candidate == ORIG for invalid-field fallbacks)",
+        case.label
     );
     batch
 }
 
 fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
+    let case = selected_case();
     let libc_handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -435,9 +460,9 @@ fn main() {
         assert!(!symbol.is_null());
         std::mem::transmute(symbol)
     };
-    let format = wide_cstr(FORMAT);
+    let format = wide_cstr(case.format);
     let fmt = format.as_ptr();
-    let tms = verify(host, fmt);
+    let tms = verify(host, fmt, &case);
     let tm_ptr = tms.as_ptr();
 
     let mut orig_out = vec![0 as libc::wchar_t; BATCH * OUT_CAP];
@@ -501,16 +526,26 @@ fn main() {
     let null_half_width = (1.0 - null_low).abs().max((null_high - 1.0).abs());
     let paired_clears_null = (paired_median - 1.0).abs() > 2.0 * null_half_width;
     let paired_excludes_one = paired_high < 1.0 || paired_low > 1.0;
-    let verdict = if paired_clears_null && paired_excludes_one && paired_median < 1.0 {
+    let self_verdict = if paired_clears_null && paired_excludes_one && paired_median < 1.0 {
         "KEEP"
     } else if paired_clears_null && paired_excludes_one {
         "REJECT"
     } else {
         "UNDECIDABLE"
     };
+    let host_clears_null = (host_median - 1.0).abs() > 2.0 * null_half_width;
+    let host_excludes_one = host_high < 1.0 || host_low > 1.0;
+    let incumbent_comparison = if host_clears_null && host_excludes_one && host_median < 1.0 {
+        "FL_FASTER"
+    } else if host_clears_null && host_excludes_one {
+        "FL_SLOWER"
+    } else {
+        "UNDECIDABLE"
+    };
     println!(
-        "WCSFTIME_FT_T_BATCH_AB samples={} reps/arm={REPS} batch={BATCH} \
+        "WCSFTIME_BATCH_AB case={} samples={} reps/arm={REPS} batch={BATCH} \
          (rotating timestamps/outputs, interleaved, order alternated)",
+        case.label,
         orig.len()
     );
     println!(
@@ -532,24 +567,28 @@ fn main() {
         cv_pct(&glibc)
     );
     println!(
-        "WCSFTIME_FT_T_BATCH_CONTRACT kind=null_candidate_candidate \
+        "WCSFTIME_BATCH_CONTRACT case={} kind=null_candidate_candidate \
          ratio_median={null_median:.6} ratio_ci95=[{null_low:.6},{null_high:.6}] \
          ratio_cv_pct={:.3} ratio_mad={:.6}",
+        case.label,
         cv_pct(&null_paired),
         median_absolute_deviation(&null_paired, null_median),
     );
     println!(
-        "WCSFTIME_FT_T_BATCH_CONTRACT kind=candidate_orig \
+        "WCSFTIME_BATCH_CONTRACT case={} kind=candidate_orig \
          ratio_median={paired_median:.6} ratio_ci95=[{paired_low:.6},{paired_high:.6}] \
          ratio_cv_pct={:.3} ratio_mad={:.6} null_half_width={null_half_width:.6} \
-         clears_2x_null={paired_clears_null} verdict={verdict}",
+         clears_2x_null={paired_clears_null} result_class=self-speedup verdict={self_verdict}",
+        case.label,
         cv_pct(&paired),
         median_absolute_deviation(&paired, paired_median),
     );
     println!(
-        "WCSFTIME_FT_T_BATCH_CONTRACT kind=candidate_glibc \
+        "WCSFTIME_BATCH_CONTRACT case={} kind=candidate_glibc \
          ratio_median={host_median:.6} ratio_ci95=[{host_low:.6},{host_high:.6}] \
-         ratio_cv_pct={:.3} ratio_mad={:.6}",
+         ratio_cv_pct={:.3} ratio_mad={:.6} null_half_width={null_half_width:.6} \
+         clears_2x_null={host_clears_null} comparison={incumbent_comparison}",
+        case.label,
         cv_pct(&host_paired),
         median_absolute_deviation(&host_paired, host_median),
     );
