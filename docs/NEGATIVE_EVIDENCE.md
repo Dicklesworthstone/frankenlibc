@@ -24348,3 +24348,57 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   visible on only part of the cpuset is accepted, if a policy change between phases does not exit
   2, or if the added reads enter a timed region. Do not infer a `performance` governor from an
   unavailable cpufreq interface.
+
+## 2026-07-29 (cod / IvoryBridge) — CAMPAIGN WIN (KEEP): deployed exact RFC3164 `wcsftime` measures 0.932962x vs host glibc
+
+- **RESULT CLASS / EXECUTABLE IDENTITY:** `result_class=campaign-win`;
+  `legacy_incumbent=host-glibc`; `incumbent_provenance=dlmopen-lmid-newlm`;
+  `same_invocation=true`; `incumbent_ratio=0.932962`;
+  `incumbent_bootstrap_median_ci=[0.930733,0.934628]`;
+  `null_median_ratio=0.999577`;
+  `null_bootstrap_median_ci=[0.996957,1.004640]`;
+  `bench_elf_sha256=383565fe3d1b86169e9b9189a396162a58fab64904f4fad357b7015d455542b5`;
+  `cv_used=false`. Mechanical preflight surfaced the old generic `strftime` literal-loop row, the
+  exact `%A` `strftime` row, and the exact `%FT%T` `wcsftime` row. Hand adjudication found no prior
+  row that measured the deployed wide RFC3164 surface. The existing narrow RFC3164 `strftime` win
+  and wide HTTP-date win are positive route precedents, not duplicate measurements. No production
+  implementation changed for this row.
+
+- **RIGHT ROUTE / BEHAVIOR PROOF.** The actual ABI `wcsftime` entrypoint converted the exact wide
+  `%b %e %H:%M:%S` format through its deployed stack bridge and routed the narrow format through
+  the deployed exact RFC3164 `strftime` leaf. Before timing, candidate and fresh-namespace host
+  glibc agreed on return length, every successful output code point, and terminating wide NUL for
+  capacities 1 through 20; valid year/month/day/hour/minute/second extrema and a rotating
+  32-timestamp batch also matched. Invalid field fallbacks remained identical to the reconstructed
+  deployed general bridge.
+
+- **SAME-INVOCATION INCUMBENT RESULT.** Strict-remote worker `ovh-a` retained 33 samples after
+  four warmups, executed 1,000,000 calls per arm per sample over rotating timestamps and outputs,
+  and alternated arm order. Deployed FrankenLibC measured 45.46 ns/call versus 48.78 ns/call for
+  host glibc. The paired FL/glibc median ratio 0.932962 has bootstrap median CI
+  [0.930733, 0.934628]; the source-identical FL/FL A/A median 0.999577 has CI
+  [0.996957, 1.004640]. The 0.067038 effect distance exceeds twice the 0.004640 null half-width,
+  so the deployed wide formatter is **1.072x faster** on this recorded host (speedup CI
+  1.070x-1.074x). CV was provenance only. The reconstructed-bridge maintenance comparison was a
+  separate REJECT at 1.188505, CI [1.181212, 1.191377]; it is not the competitive claim.
+
+- **HOST / GOVERNOR / EXCLUSIVITY.** Host `fixmydocuments` exposed 8 physical cores, 16 allowed
+  logical threads, 67,307,249,664 RAM bytes, one NUMA node, affinity mask `ffff`, and runtime ISA
+  `x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`. Its `amd-pstate-epp` policy reported
+  `governor=powersave` and `energy_performance_preference=balance_performance`; those values are
+  part of the claim rather than an inferred performance policy. The copied FrankenFS admission
+  contract required five consecutive one-second samples with every allowed CPU at or below 20%
+  busy, waiting at most 300 seconds. Startup needed 147 samples and admitted a final clear-window
+  maximum of 0.153; pre- and post-measurement each needed five samples and observed maxima of
+  0.040. Earlier invocations that could not establish a clear window exited 2 before timing and
+  contributed no result.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP this deployed exact wide RFC3164 result as a
+  class-2 glibc-generality win on the fully recorded powersave-governor host. Reopen if the
+  `wcsftime` wide bridge, exact narrow RFC3164 leaf, C-locale abbreviated-month semantics, field
+  fallback, or format changes; if capacity/field differential parity diverges; or if a repeat's
+  FL/glibc bootstrap median CI no longer lies below 1.0 by more than twice its same-invocation A/A
+  null-CI half-width. Require a performance-governor replication before promoting the number to a
+  hardware-agnostic public claim. If a reopened profile is dominated by a libc leaf, resolve its
+  sampled addresses with inlined `addr2line` frames to specific callers before proposing a lever;
+  do not stop at the leaf-family label.

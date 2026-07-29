@@ -8,7 +8,7 @@ use std::fs::{File, create_dir_all};
 use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const METADATA_BENCH_SCHEMA_VERSION: &str = "v1";
 pub const METADATA_BENCH_BEAD_ID: &str = "bd-3aof.3";
@@ -16,8 +16,10 @@ pub const GLIBC_BASELINE_SCHEMA_VERSION: &str = "v1";
 pub const GLIBC_BASELINE_BEAD_ID: &str = "bd-bp8fl.8.3";
 pub const STRICT_HARDENED_OVERHEAD_SCHEMA_VERSION: &str = "v1";
 pub const STRICT_HARDENED_OVERHEAD_BEAD_ID: &str = "bd-wpr1n";
-pub const HOST_WIDE_CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(300);
+pub const HOST_WIDE_CPU_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 pub const HOST_WIDE_MAX_BUSY_FRACTION: f64 = 0.20;
+pub const HOST_WIDE_REQUIRED_CLEAR_SAMPLES: usize = 5;
+pub const HOST_WIDE_QUIET_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Copy, Debug)]
 struct HostCpuTicks {
@@ -43,8 +45,8 @@ struct HostPlatformProvenance {
 /// Constructing the token does not claim that a host is quiet. Call
 /// [`Self::check_quiet`] immediately before every timed measurement phase. The
 /// check fails closed if the process affinity changes, a CPU disappears, or
-/// any allowed CPU exceeds the fleet's 20% busy threshold during the 300 ms
-/// observation window.
+/// the allowed cpuset does not produce five consecutive one-second samples
+/// below the fleet's 20% busy threshold within five minutes.
 #[derive(Debug)]
 pub struct HostWideBenchmarkGuard {
     hostname: String,
@@ -61,6 +63,8 @@ pub struct HostWideQuiescenceEvidence {
     affinity_mask: String,
     platform: HostPlatformProvenance,
     maximum_observed_busy_fraction: f64,
+    samples_observed: usize,
+    wait_ms: u64,
 }
 
 impl HostWideQuiescenceEvidence {
@@ -72,7 +76,8 @@ impl HostWideQuiescenceEvidence {
              physical_cores={} logical_threads={} ram_bytes={} numa_nodes={} isa={} \
              cpufreq_driver={} governor={} energy_performance_preference={} \
              allowed_cpu_count={} allowed_cpus={} affinity_mask={} sample_ms={} \
-             maximum_busy_fraction={:.3} observed_maximum_busy_fraction={:.3} \
+             required_consecutive_clear_samples={} samples_observed={} wait_ms={} \
+             timeout_ms={} maximum_busy_fraction={:.3} observed_maximum_busy_fraction={:.3} \
              busy_cpu_count_above_limit=0 verdict=clear",
             self.hostname,
             self.platform.physical_cores,
@@ -87,6 +92,10 @@ impl HostWideQuiescenceEvidence {
             format_cpu_list(&self.allowed_cpus),
             self.affinity_mask,
             HOST_WIDE_CPU_SAMPLE_INTERVAL.as_millis(),
+            HOST_WIDE_REQUIRED_CLEAR_SAMPLES,
+            self.samples_observed,
+            self.wait_ms,
+            HOST_WIDE_QUIET_TIMEOUT.as_millis(),
             HOST_WIDE_MAX_BUSY_FRACTION,
             self.maximum_observed_busy_fraction,
         )
@@ -116,44 +125,83 @@ impl HostWideBenchmarkGuard {
 
     /// Require the entire allowed cpuset to be quiet before measurement.
     ///
-    /// This deliberately mirrors FrankenFS's host-wide harness gate: two
-    /// `/proc/stat` snapshots 300 ms apart, every allowed CPU accounted for,
-    /// and no allowed CPU above 20% busy. Callers must treat `Err` as BLOCKED
-    /// and exit 2 rather than emitting timing evidence.
+    /// This deliberately mirrors FrankenFS's host-wide harness gate: require
+    /// five consecutive one-second `/proc/stat` samples with every allowed CPU
+    /// accounted for and no allowed CPU above 20% busy. A contaminated sample
+    /// resets the clear streak. Callers must treat `Err` as BLOCKED and exit 2
+    /// rather than emitting timing evidence.
     pub fn check_quiet(&self) -> Result<HostWideQuiescenceEvidence, String> {
-        let (current_allowed_cpus, current_affinity_mask) = self_cpu_affinity()?;
-        if current_allowed_cpus != self.allowed_cpus || current_affinity_mask != self.affinity_mask
-        {
-            return Err(format!(
-                "process CPU affinity changed: expected cpus={} mask={}, observed cpus={} mask={}",
-                format_cpu_list(&self.allowed_cpus),
-                self.affinity_mask,
-                format_cpu_list(&current_allowed_cpus),
-                current_affinity_mask,
-            ));
-        }
-        let current_platform = host_platform_provenance(&current_allowed_cpus)?;
-        if current_platform != self.platform {
-            return Err(format!(
-                "host platform policy changed: expected {:?}, observed {:?}",
-                self.platform, current_platform,
-            ));
-        }
+        let started = Instant::now();
+        let mut samples_observed = 0;
+        let mut consecutive_clear_samples = 0;
+        let mut clear_window_maximum = 0.0_f64;
+        let mut last_busy_cpus = Vec::new();
 
-        let before = read_cpu_ticks()?;
-        thread::sleep(HOST_WIDE_CPU_SAMPLE_INTERVAL);
-        let after = read_cpu_ticks()?;
-        let busy = calculate_cpu_busy(&before, &after)?;
-        let maximum_observed_busy_fraction =
-            validate_host_wide_quiescence(&self.allowed_cpus, &busy)?;
+        loop {
+            let (current_allowed_cpus, current_affinity_mask) = self_cpu_affinity()?;
+            if current_allowed_cpus != self.allowed_cpus
+                || current_affinity_mask != self.affinity_mask
+            {
+                return Err(format!(
+                    "process CPU affinity changed: expected cpus={} mask={}, observed cpus={} mask={}",
+                    format_cpu_list(&self.allowed_cpus),
+                    self.affinity_mask,
+                    format_cpu_list(&current_allowed_cpus),
+                    current_affinity_mask,
+                ));
+            }
+            let current_platform = host_platform_provenance(&current_allowed_cpus)?;
+            if current_platform != self.platform {
+                return Err(format!(
+                    "host platform policy changed: expected {:?}, observed {:?}",
+                    self.platform, current_platform,
+                ));
+            }
 
-        Ok(HostWideQuiescenceEvidence {
-            hostname: self.hostname.clone(),
-            allowed_cpus: self.allowed_cpus.clone(),
-            affinity_mask: self.affinity_mask.clone(),
-            platform: self.platform.clone(),
-            maximum_observed_busy_fraction,
-        })
+            let before = read_cpu_ticks()?;
+            thread::sleep(HOST_WIDE_CPU_SAMPLE_INTERVAL);
+            let after = read_cpu_ticks()?;
+            let busy = calculate_cpu_busy(&before, &after)?;
+            let (sample_maximum, busy_cpus) =
+                inspect_host_wide_quiescence(&self.allowed_cpus, &busy)?;
+            samples_observed += 1;
+
+            if busy_cpus.is_empty() {
+                consecutive_clear_samples += 1;
+                clear_window_maximum = clear_window_maximum.max(sample_maximum);
+                if consecutive_clear_samples >= HOST_WIDE_REQUIRED_CLEAR_SAMPLES {
+                    return Ok(HostWideQuiescenceEvidence {
+                        hostname: self.hostname.clone(),
+                        allowed_cpus: self.allowed_cpus.clone(),
+                        affinity_mask: self.affinity_mask.clone(),
+                        platform: self.platform.clone(),
+                        maximum_observed_busy_fraction: clear_window_maximum,
+                        samples_observed,
+                        wait_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    });
+                }
+            } else {
+                consecutive_clear_samples = 0;
+                clear_window_maximum = 0.0;
+                last_busy_cpus = busy_cpus;
+            }
+
+            if started.elapsed() >= HOST_WIDE_QUIET_TIMEOUT {
+                let last_busy = if last_busy_cpus.is_empty() {
+                    "none".to_owned()
+                } else {
+                    last_busy_cpus.join(",")
+                };
+                return Err(format!(
+                    "host-wide benchmark did not obtain {} consecutive clear samples within {} ms after {} samples; last CPUs above {:.1}% busy: {}",
+                    HOST_WIDE_REQUIRED_CLEAR_SAMPLES,
+                    HOST_WIDE_QUIET_TIMEOUT.as_millis(),
+                    samples_observed,
+                    HOST_WIDE_MAX_BUSY_FRACTION * 100.0,
+                    last_busy,
+                ));
+            }
+        }
     }
 }
 
@@ -449,10 +497,26 @@ fn calculate_cpu_busy(
     Ok(busy)
 }
 
+#[cfg(test)]
 fn validate_host_wide_quiescence(
     allowed_cpus: &BTreeSet<usize>,
     busy: &BTreeMap<usize, f64>,
 ) -> Result<f64, String> {
+    let (maximum, busy_cpus) = inspect_host_wide_quiescence(allowed_cpus, busy)?;
+    if !busy_cpus.is_empty() {
+        return Err(format!(
+            "host-wide benchmark requires an exclusive quiet cpuset; CPUs above {:.1}% busy: {}",
+            HOST_WIDE_MAX_BUSY_FRACTION * 100.0,
+            busy_cpus.join(","),
+        ));
+    }
+    Ok(maximum)
+}
+
+fn inspect_host_wide_quiescence(
+    allowed_cpus: &BTreeSet<usize>,
+    busy: &BTreeMap<usize, f64>,
+) -> Result<(f64, Vec<String>), String> {
     let mut maximum = 0.0_f64;
     let mut busy_cpus = Vec::new();
     for cpu in allowed_cpus {
@@ -470,14 +534,7 @@ fn validate_host_wide_quiescence(
             busy_cpus.push(format!("cpu{cpu}={:.1}%", fraction * 100.0));
         }
     }
-    if !busy_cpus.is_empty() {
-        return Err(format!(
-            "host-wide benchmark requires an exclusive quiet cpuset; CPUs above {:.1}% busy: {}",
-            HOST_WIDE_MAX_BUSY_FRACTION * 100.0,
-            busy_cpus.join(","),
-        ));
-    }
-    Ok(maximum)
+    Ok((maximum, busy_cpus))
 }
 
 /// Concrete implementation under comparison for metadata-read benchmarks.
@@ -1555,6 +1612,8 @@ mod tests {
                 energy_performance_preference: "balance_performance".to_owned(),
             },
             maximum_observed_busy_fraction: 0.125,
+            samples_observed: 7,
+            wait_ms: 7_043,
         };
         let contract = evidence.contract_line("baseline");
         for required in [
@@ -1567,6 +1626,11 @@ mod tests {
             "governor=powersave",
             "energy_performance_preference=balance_performance",
             "affinity_mask=f",
+            "sample_ms=1000",
+            "required_consecutive_clear_samples=5",
+            "samples_observed=7",
+            "wait_ms=7043",
+            "timeout_ms=300000",
             "verdict=clear",
         ] {
             assert!(

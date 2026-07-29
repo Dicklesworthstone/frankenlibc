@@ -42,7 +42,12 @@ fn selected_case() -> Case {
             format: "%a, %d %b %Y %H:%M:%S GMT",
             output_len: 29,
         },
-        Some(other) => panic!("unknown case {other:?}; expected ft_t or http_date"),
+        Some("rfc3164") => Case {
+            label: "rfc3164",
+            format: "%b %e %H:%M:%S",
+            output_len: 15,
+        },
+        Some(other) => panic!("unknown case {other:?}; expected ft_t, http_date, or rfc3164"),
     }
 }
 
