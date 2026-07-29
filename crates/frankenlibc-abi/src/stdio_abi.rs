@@ -3118,7 +3118,6 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
 // ---------------------------------------------------------------------------
 
 /// POSIX `fgets`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// Shared fgets fill loop: read from `s` into `dst` until '\n' (inclusive), `dst` full, EOF,
 /// or error. Returns `(bytes_written, had_error)`. Scans the stream buffer for '\n' via
 /// `read_into_slice` (bulk, no per-char Vec) and refills the fd as needed. Sound whether the
@@ -3283,6 +3282,7 @@ pub(crate) unsafe fn read_cached_ascii_line_wide(
     }
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
     if buf.is_null() || size <= 0 {
         return std::ptr::null_mut();
