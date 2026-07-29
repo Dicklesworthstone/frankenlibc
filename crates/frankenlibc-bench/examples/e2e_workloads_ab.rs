@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
+use frankenlibc_bench::HostWideBenchmarkGuard;
 use sha2::{Digest, Sha256};
 
 const DEFAULT_SAMPLES: usize = 15;
@@ -29,6 +30,23 @@ const SYSLOG_ROWS: usize = 160_000;
 const CORPUS_TOKENS: usize = 1_500_000;
 const CORPUS_WORDS_PER_LINE: usize = 50;
 const CSV_ROWS: usize = 400_000;
+
+fn host_wide_guard() -> HostWideBenchmarkGuard {
+    HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("BENCH_HOST_WIDE_EXCLUSIVITY phase=initialize verdict=BLOCKED reason={error:?}");
+        std::process::exit(2);
+    })
+}
+
+fn require_host_wide_quiet(guard: &HostWideBenchmarkGuard, phase: &str) {
+    match guard.check_quiet() {
+        Ok(evidence) => println!("{}", evidence.contract_line(phase)),
+        Err(error) => {
+            eprintln!("BENCH_HOST_WIDE_EXCLUSIVITY phase={phase} verdict=BLOCKED reason={error:?}");
+            std::process::exit(2);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Arm {
@@ -1122,6 +1140,8 @@ fn run() -> Result<(), String> {
     if samples < 3 {
         return Err("FLC_E2E_SAMPLES must be at least 3 for a median CI".to_owned());
     }
+    let host_guard = host_wide_guard();
+    require_host_wide_quiet(&host_guard, "startup");
 
     let root = PathBuf::from(DATA_ROOT);
     fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
@@ -1204,6 +1224,8 @@ fn run() -> Result<(), String> {
                 .as_deref()
                 .unwrap_or("not_applicable"),
         );
+        let pre_measurement = format!("pre_measurement_{}", job.workload.id());
+        require_host_wide_quiet(&host_guard, &pre_measurement);
         let measurements = measure_job(
             &workload_executable,
             &frankenlibc,
@@ -1212,6 +1234,8 @@ fn run() -> Result<(), String> {
             samples,
             warmups,
         )?;
+        let post_measurement = format!("post_measurement_{}", job.workload.id());
+        require_host_wide_quiet(&host_guard, &post_measurement);
         print_contract(&job, &golden, &measurements);
     }
     if jobs_run == 0 {

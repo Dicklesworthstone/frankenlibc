@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, create_dir_all};
 use std::io::{self, Write};
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 pub const METADATA_BENCH_SCHEMA_VERSION: &str = "v1";
 pub const METADATA_BENCH_BEAD_ID: &str = "bd-3aof.3";
@@ -14,6 +16,276 @@ pub const GLIBC_BASELINE_SCHEMA_VERSION: &str = "v1";
 pub const GLIBC_BASELINE_BEAD_ID: &str = "bd-bp8fl.8.3";
 pub const STRICT_HARDENED_OVERHEAD_SCHEMA_VERSION: &str = "v1";
 pub const STRICT_HARDENED_OVERHEAD_BEAD_ID: &str = "bd-wpr1n";
+pub const HOST_WIDE_CPU_SAMPLE_INTERVAL: Duration = Duration::from_millis(300);
+pub const HOST_WIDE_MAX_BUSY_FRACTION: f64 = 0.20;
+
+#[derive(Clone, Copy, Debug)]
+struct HostCpuTicks {
+    total: u64,
+    idle: u64,
+}
+
+/// Proof token for the cpuset whose host-wide quiescence is checked before a
+/// benchmark proceeds.
+///
+/// Constructing the token does not claim that a host is quiet. Call
+/// [`Self::check_quiet`] immediately before every timed measurement phase. The
+/// check fails closed if the process affinity changes, a CPU disappears, or
+/// any allowed CPU exceeds the fleet's 20% busy threshold during the 300 ms
+/// observation window.
+#[derive(Debug)]
+pub struct HostWideBenchmarkGuard {
+    hostname: String,
+    allowed_cpus: BTreeSet<usize>,
+    affinity_mask: String,
+}
+
+/// Auditable evidence from one host-wide quiescence check.
+#[derive(Debug)]
+pub struct HostWideQuiescenceEvidence {
+    hostname: String,
+    allowed_cpus: BTreeSet<usize>,
+    affinity_mask: String,
+    maximum_observed_busy_fraction: f64,
+}
+
+impl HostWideQuiescenceEvidence {
+    /// Render one stable, machine-readable provenance row.
+    #[must_use]
+    pub fn contract_line(&self, phase: &str) -> String {
+        format!(
+            "BENCH_HOST_WIDE_EXCLUSIVITY phase={phase} host={} \
+             allowed_cpu_count={} allowed_cpus={} affinity_mask={} sample_ms={} \
+             maximum_busy_fraction={:.3} observed_maximum_busy_fraction={:.3} \
+             busy_cpu_count_above_limit=0 verdict=clear",
+            self.hostname,
+            self.allowed_cpus.len(),
+            format_cpu_list(&self.allowed_cpus),
+            self.affinity_mask,
+            HOST_WIDE_CPU_SAMPLE_INTERVAL.as_millis(),
+            HOST_WIDE_MAX_BUSY_FRACTION,
+            self.maximum_observed_busy_fraction,
+        )
+    }
+}
+
+impl HostWideBenchmarkGuard {
+    /// Capture the process's allowed cpuset. This is the identity against which
+    /// every subsequent quiet-host check is validated.
+    pub fn new() -> Result<Self, String> {
+        let (allowed_cpus, affinity_mask) = self_cpu_affinity()?;
+        let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .map_err(|error| format!("read host identity: {error}"))?
+            .trim()
+            .to_owned();
+        if hostname.is_empty() {
+            return Err("host identity is empty".to_owned());
+        }
+        Ok(Self {
+            hostname,
+            allowed_cpus,
+            affinity_mask,
+        })
+    }
+
+    /// Require the entire allowed cpuset to be quiet before measurement.
+    ///
+    /// This deliberately mirrors FrankenFS's host-wide harness gate: two
+    /// `/proc/stat` snapshots 300 ms apart, every allowed CPU accounted for,
+    /// and no allowed CPU above 20% busy. Callers must treat `Err` as BLOCKED
+    /// and exit 2 rather than emitting timing evidence.
+    pub fn check_quiet(&self) -> Result<HostWideQuiescenceEvidence, String> {
+        let (current_allowed_cpus, current_affinity_mask) = self_cpu_affinity()?;
+        if current_allowed_cpus != self.allowed_cpus || current_affinity_mask != self.affinity_mask
+        {
+            return Err(format!(
+                "process CPU affinity changed: expected cpus={} mask={}, observed cpus={} mask={}",
+                format_cpu_list(&self.allowed_cpus),
+                self.affinity_mask,
+                format_cpu_list(&current_allowed_cpus),
+                current_affinity_mask,
+            ));
+        }
+
+        let before = read_cpu_ticks()?;
+        thread::sleep(HOST_WIDE_CPU_SAMPLE_INTERVAL);
+        let after = read_cpu_ticks()?;
+        let busy = calculate_cpu_busy(&before, &after)?;
+        let maximum_observed_busy_fraction =
+            validate_host_wide_quiescence(&self.allowed_cpus, &busy)?;
+
+        Ok(HostWideQuiescenceEvidence {
+            hostname: self.hostname.clone(),
+            allowed_cpus: self.allowed_cpus.clone(),
+            affinity_mask: self.affinity_mask.clone(),
+            maximum_observed_busy_fraction,
+        })
+    }
+}
+
+fn parse_cpu_list(value: &str) -> Result<BTreeSet<usize>, String> {
+    let mut cpus = BTreeSet::new();
+    for range in value.trim().split(',').filter(|part| !part.is_empty()) {
+        if let Some((start, end)) = range.split_once('-') {
+            let start = start
+                .parse::<usize>()
+                .map_err(|error| format!("parse CPU range start {start:?}: {error}"))?;
+            let end = end
+                .parse::<usize>()
+                .map_err(|error| format!("parse CPU range end {end:?}: {error}"))?;
+            if start > end {
+                return Err(format!("descending CPU range {range:?}"));
+            }
+            cpus.extend(start..=end);
+        } else {
+            cpus.insert(
+                range
+                    .parse::<usize>()
+                    .map_err(|error| format!("parse CPU index {range:?}: {error}"))?,
+            );
+        }
+    }
+    if cpus.is_empty() {
+        return Err("CPU list is empty".to_owned());
+    }
+    Ok(cpus)
+}
+
+fn format_cpu_list(cpus: &BTreeSet<usize>) -> String {
+    cpus.iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn self_cpu_affinity() -> Result<(BTreeSet<usize>, String), String> {
+    let status = std::fs::read_to_string("/proc/self/status")
+        .map_err(|error| format!("read /proc/self/status: {error}"))?;
+    let allowed_list = status
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            (key.trim() == "Cpus_allowed_list").then(|| value.trim())
+        })
+        .ok_or_else(|| "Cpus_allowed_list missing from /proc/self/status".to_owned())?;
+    let affinity_mask = status
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            (key.trim() == "Cpus_allowed").then(|| value.trim().to_owned())
+        })
+        .ok_or_else(|| "Cpus_allowed missing from /proc/self/status".to_owned())?;
+    Ok((parse_cpu_list(allowed_list)?, affinity_mask))
+}
+
+fn parse_cpu_ticks(stat: &str) -> Result<BTreeMap<usize, HostCpuTicks>, String> {
+    let mut cpus = BTreeMap::new();
+    for line in stat.lines() {
+        let mut fields = line.split_ascii_whitespace();
+        let Some(label) = fields.next() else {
+            continue;
+        };
+        let Some(suffix) = label.strip_prefix("cpu") else {
+            continue;
+        };
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cpu = suffix
+            .parse::<usize>()
+            .map_err(|error| format!("parse CPU index {suffix:?}: {error}"))?;
+        let ticks = fields
+            .map(|value| {
+                value.parse::<u64>().map_err(|error| {
+                    format!("parse /proc/stat ticks for cpu{cpu} value {value:?}: {error}")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if ticks.len() < 5 {
+            return Err(format!("cpu{cpu} /proc/stat row is too short"));
+        }
+        let total = ticks.iter().try_fold(0_u64, |sum, value| {
+            sum.checked_add(*value)
+                .ok_or_else(|| format!("cpu{cpu} total tick count overflow"))
+        })?;
+        let idle = ticks[3]
+            .checked_add(ticks[4])
+            .ok_or_else(|| format!("cpu{cpu} idle tick count overflow"))?;
+        cpus.insert(cpu, HostCpuTicks { total, idle });
+    }
+    if cpus.is_empty() {
+        return Err("no per-CPU rows in /proc/stat".to_owned());
+    }
+    Ok(cpus)
+}
+
+fn read_cpu_ticks() -> Result<BTreeMap<usize, HostCpuTicks>, String> {
+    let stat = std::fs::read_to_string("/proc/stat")
+        .map_err(|error| format!("read /proc/stat: {error}"))?;
+    parse_cpu_ticks(&stat)
+}
+
+fn calculate_cpu_busy(
+    before: &BTreeMap<usize, HostCpuTicks>,
+    after: &BTreeMap<usize, HostCpuTicks>,
+) -> Result<BTreeMap<usize, f64>, String> {
+    let mut busy = BTreeMap::new();
+    for (cpu, start) in before {
+        let end = after
+            .get(cpu)
+            .ok_or_else(|| format!("cpu{cpu} disappeared during load sample"))?;
+        let total = end
+            .total
+            .checked_sub(start.total)
+            .ok_or_else(|| format!("cpu{cpu} total ticks moved backwards"))?;
+        let idle = end
+            .idle
+            .checked_sub(start.idle)
+            .ok_or_else(|| format!("cpu{cpu} idle ticks moved backwards"))?;
+        let fraction = if total == 0 {
+            1.0
+        } else {
+            total
+                .checked_sub(idle)
+                .ok_or_else(|| format!("cpu{cpu} idle delta exceeds total delta"))?
+                as f64
+                / total as f64
+        };
+        busy.insert(*cpu, fraction);
+    }
+    Ok(busy)
+}
+
+fn validate_host_wide_quiescence(
+    allowed_cpus: &BTreeSet<usize>,
+    busy: &BTreeMap<usize, f64>,
+) -> Result<f64, String> {
+    let mut maximum = 0.0_f64;
+    let mut busy_cpus = Vec::new();
+    for cpu in allowed_cpus {
+        let fraction = busy
+            .get(cpu)
+            .copied()
+            .ok_or_else(|| format!("allowed cpu{cpu} was not sampled"))?;
+        if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+            return Err(format!(
+                "cpu{cpu} produced invalid busy fraction {fraction}"
+            ));
+        }
+        maximum = maximum.max(fraction);
+        if fraction > HOST_WIDE_MAX_BUSY_FRACTION {
+            busy_cpus.push(format!("cpu{cpu}={:.1}%", fraction * 100.0));
+        }
+    }
+    if !busy_cpus.is_empty() {
+        return Err(format!(
+            "host-wide benchmark requires an exclusive quiet cpuset; CPUs above {:.1}% busy: {}",
+            HOST_WIDE_MAX_BUSY_FRACTION * 100.0,
+            busy_cpus.join(","),
+        ));
+    }
+    Ok(maximum)
+}
 
 /// Concrete implementation under comparison for metadata-read benchmarks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -998,6 +1270,43 @@ fn json_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_wide_cpu_list_parser_accepts_ranges_and_singletons() {
+        assert_eq!(
+            parse_cpu_list("0-2,5,8-9").expect("valid CPU list"),
+            BTreeSet::from([0, 1, 2, 5, 8, 9])
+        );
+    }
+
+    #[test]
+    fn host_wide_busy_fraction_and_threshold_are_fail_closed() {
+        let before = parse_cpu_ticks("cpu 0 0 0 0 0\ncpu0 10 0 10 80 0\ncpu1 20 0 10 70 0\n")
+            .expect("valid starting ticks");
+        let after = parse_cpu_ticks("cpu 0 0 0 0 0\ncpu0 15 0 15 170 0\ncpu1 35 0 15 150 0\n")
+            .expect("valid ending ticks");
+        let busy = calculate_cpu_busy(&before, &after).expect("monotonic CPU ticks");
+        assert!((busy[&0] - 0.10).abs() < f64::EPSILON);
+        assert!((busy[&1] - 0.20).abs() < f64::EPSILON);
+        assert_eq!(
+            validate_host_wide_quiescence(&BTreeSet::from([0, 1]), &busy).expect("20% is admitted"),
+            0.20
+        );
+
+        let mut contaminated = busy;
+        contaminated.insert(1, 0.21);
+        let error = validate_host_wide_quiescence(&BTreeSet::from([0, 1]), &contaminated)
+            .expect_err("greater than 20% must be blocked");
+        assert!(error.contains("cpu1=21.0%"));
+    }
+
+    #[test]
+    fn host_wide_quiescence_rejects_an_unobserved_allowed_cpu() {
+        let error =
+            validate_host_wide_quiescence(&BTreeSet::from([0, 1]), &BTreeMap::from([(0, 0.0)]))
+                .expect_err("missing allowed CPU must fail closed");
+        assert!(error.contains("allowed cpu1 was not sampled"));
+    }
 
     fn sample_records() -> Vec<MetadataBenchRecord> {
         vec![

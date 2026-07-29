@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Instant;
 
+use frankenlibc_bench::HostWideBenchmarkGuard;
 use sha2::{Digest, Sha256};
 
 const SAMPLES: usize = 37;
@@ -18,6 +19,23 @@ const REPS: usize = 150_000;
 const BOOTSTRAP_RESAMPLES: usize = 4096;
 
 type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
+
+fn host_wide_guard() -> HostWideBenchmarkGuard {
+    HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("BENCH_HOST_WIDE_EXCLUSIVITY phase=initialize verdict=BLOCKED reason={error:?}");
+        std::process::exit(2);
+    })
+}
+
+fn require_host_wide_quiet(guard: &HostWideBenchmarkGuard, phase: &str) {
+    match guard.check_quiet() {
+        Ok(evidence) => println!("{}", evidence.contract_line(phase)),
+        Err(error) => {
+            eprintln!("BENCH_HOST_WIDE_EXCLUSIVITY phase={phase} verdict=BLOCKED reason={error:?}");
+            std::process::exit(2);
+        }
+    }
+}
 
 struct Case {
     label: &'static str,
@@ -115,7 +133,7 @@ fn median(xs: &[f64]) -> f64 {
     let mut values = xs.to_vec();
     values.sort_by(f64::total_cmp);
     let mid = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]
@@ -454,6 +472,8 @@ fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm, repetitions: usize
 
 fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
+    let host_guard = host_wide_guard();
+    require_host_wide_quiet(&host_guard, "startup");
     let handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -533,7 +553,11 @@ fn main() {
     );
     for repetitions in repetition_counts {
         for case in &cases {
+            let pre_measurement = format!("pre_measurement_{}_{}", case.label, repetitions);
+            require_host_wide_quiet(&host_guard, &pre_measurement);
             measure_case(host, case, &tm, repetitions);
+            let post_measurement = format!("post_measurement_{}_{}", case.label, repetitions);
+            require_host_wide_quiet(&host_guard, &post_measurement);
         }
     }
 }

@@ -13,6 +13,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use frankenlibc_abi::{time_abi, wchar_abi};
+use frankenlibc_bench::HostWideBenchmarkGuard;
 use frankenlibc_core::string::wchar as wchar_core;
 use sha2::{Digest, Sha256};
 
@@ -47,6 +48,23 @@ fn selected_case() -> Case {
 
 type WcsftimeFn =
     unsafe extern "C" fn(*mut libc::wchar_t, usize, *const libc::wchar_t, *const libc::tm) -> usize;
+
+fn host_wide_guard() -> HostWideBenchmarkGuard {
+    HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("BENCH_HOST_WIDE_EXCLUSIVITY phase=initialize verdict=BLOCKED reason={error:?}");
+        std::process::exit(2);
+    })
+}
+
+fn require_host_wide_quiet(guard: &HostWideBenchmarkGuard, phase: &str) {
+    match guard.check_quiet() {
+        Ok(evidence) => println!("{}", evidence.contract_line(phase)),
+        Err(error) => {
+            eprintln!("BENCH_HOST_WIDE_EXCLUSIVITY phase={phase} verdict=BLOCKED reason={error:?}");
+            std::process::exit(2);
+        }
+    }
+}
 
 fn median(xs: &[f64]) -> f64 {
     let mut values = xs.to_vec();
@@ -446,6 +464,8 @@ fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t, case: &Case) -> Vec<libc:
 
 fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
+    let host_guard = host_wide_guard();
+    require_host_wide_quiet(&host_guard, "startup");
     let case = selected_case();
     let libc_handle = unsafe {
         libc::dlmopen(
@@ -464,6 +484,7 @@ fn main() {
     let fmt = format.as_ptr();
     let tms = verify(host, fmt, &case);
     let tm_ptr = tms.as_ptr();
+    require_host_wide_quiet(&host_guard, "pre_measurement");
 
     let mut orig_out = vec![0 as libc::wchar_t; BATCH * OUT_CAP];
     let mut candidate_out = vec![0 as libc::wchar_t; BATCH * OUT_CAP];
@@ -592,4 +613,5 @@ fn main() {
         cv_pct(&host_paired),
         median_absolute_deviation(&host_paired, host_median),
     );
+    require_host_wide_quiet(&host_guard, "post_measurement");
 }
