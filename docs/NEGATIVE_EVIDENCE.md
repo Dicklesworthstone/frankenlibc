@@ -24106,3 +24106,52 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   within +/-0.05 of 1.0. Classify a flat gap as per-record work and a narrowing gap as startup/I/O
   coordination; accept a loss only if the effect CI clears twice the wider null half-width at the
   relevant sizes. Never decide from either point estimate or CV.
+
+## 2026-07-29 (cod / codex-root) — CAMPAIGN WIN (KEEP): deployed exact HTTP-date `strptime` measures 0.203028x vs host glibc
+
+- **RESULT CLASS / EXECUTABLE IDENTITY:** `result_class=campaign-win`;
+  `legacy_incumbent=host-glibc`; `incumbent_provenance=dlmopen-lmid-newlm`;
+  `same_invocation=true`;
+  `incumbent_ratio=0.203028`;
+  `incumbent_bootstrap_median_ci=[0.197854,0.216117]`;
+  `null_median_ratio=0.979774`;
+  `null_bootstrap_median_ci=[0.924425,1.050648]`;
+  `bench_elf_sha256=7b4d2a3b2669783081ac7376e13b16c30de0a1ef337bd059b9a68447a30db99d`;
+  `cv_used=false`. Preflight for `exact HTTP-date strptime finite transducer` on the exact RFC7231
+  surface returned clear. This is a measurement of the deployed parser, not a before/after
+  self-speedup and not a source-edit claim.
+
+- **RIGHT-ROUTE / PARITY / CONTRACT.** Strict-remote worker `vmi1293453` built and executed the
+  self-identifying binary. A fresh `dlmopen(LM_ID_NEWLM)` namespace resolved the actual host
+  `libc.so.6` `strptime`, while the FrankenLibC arm called its ABI implementation directly. Before
+  timing, every case matched glibc on returned-pointer nullness, consumed-prefix offset, and all
+  eight parsed `tm` fields. One invocation retained 33 paired samples after four warmups, alternated
+  pair order, ran source-identical FL/FL A/A pairs and FL/glibc effect pairs, and classified only
+  from bootstrap median CIs plus the mandatory 2x-null margin.
+
+  | case | exact format | FL ns | glibc ns | FL/glibc median | bootstrap median CI | A/A null CI | verdict |
+  |---|---|---:|---:|---:|---|---|---|
+  | `iso_date` | `%Y-%m-%d` | 55.132 | 26.384 | 2.096628 | [1.923454, 2.195376] | [0.925913, 1.076168] | FL slower |
+  | `hms` | `%H:%M:%S` | 31.586 | 18.528 | 1.732276 | [1.682343, 1.959215] | [0.980983, 1.018755] | FL slower |
+  | `iso_datetime` | `%Y-%m-%d %H:%M:%S` | 38.976 | 39.809 | 1.070107 | [1.021335, 1.131804] | [0.955372, 1.036098] | undecidable: misses 2x null |
+  | `alias_T` | `%T` | 38.963 | 31.369 | 1.138800 | [1.113411, 1.191780] | [0.986890, 1.001759] | FL slower |
+  | `alias_F` | `%F` | 96.401 | 39.483 | 2.368474 | [2.203772, 2.437355] | [0.923884, 1.061800] | FL slower |
+  | `month_name` | `%b %d %Y` | 99.397 | 530.933 | 0.191924 | [0.181254, 0.204433] | [0.965955, 1.085115] | **FL 5.21x faster** |
+  | `http_date` | `%a, %d %b %Y %H:%M:%S GMT` | 142.344 | 683.504 | 0.203028 | [0.197854, 0.216117] | [0.924425, 1.050648] | **FL 4.93x faster** |
+  | `syslog_ts` | `%b %e %H:%M:%S` | 106.090 | 513.143 | 0.205512 | [0.195553, 0.215536] | [0.937270, 1.022217] | **FL 4.87x faster** |
+
+- **SHAPE / DISPOSITION.** KEEP the three deployed name-heavy exact-format results as class-2
+  glibc-generality wins; no implementation edit is justified because the untouched code already
+  wins decisively. The four numeric/alias losses are current incumbent gaps, not rejected
+  optimization levers. The mixed ISO datetime point remains undecidable because its 0.070107
+  deviation does not clear twice the 0.044628 A/A half-width. CV is provenance only.
+
+- **CONCRETE RETRY PREDICATES.** Reopen a name-heavy win only if C-locale name matching, literal
+  handling, or parsed-field post-processing changes; live-glibc parity diverges; or a repeat's
+  FL/glibc bootstrap median CI no longer lies below 1.0 by more than twice its same-invocation A/A
+  null-CI half-width. Do not retry the numeric/alias gaps with another speculative dispatch or
+  bounds-elision edit: first obtain a case-matched profile of the current executable that attributes
+  at least 15% self-time to a named removable mechanism and yields an Amdahl ceiling above 1.15x.
+  Retry `iso_datetime` only when the same-invocation A/A null CI lies within +/-0.02 of 1.0. Every
+  rerun still requires the actual incumbent, self-reported ELF hash, field/offset parity, and
+  the bootstrap median-CI 2x-null rule.
