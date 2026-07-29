@@ -30,6 +30,7 @@ const SYSLOG_ROWS: usize = 160_000;
 const CORPUS_TOKENS: usize = 1_500_000;
 const CORPUS_WORDS_PER_LINE: usize = 50;
 const CSV_ROWS: usize = 400_000;
+const LEGACY_SYSLOG_SWEEP_MULTIPLIERS: [usize; 3] = [1, 4, 16];
 
 fn host_wide_guard() -> HostWideBenchmarkGuard {
     HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
@@ -117,6 +118,7 @@ impl Workload {
 struct Dataset {
     path: PathBuf,
     records: usize,
+    size_multiplier: usize,
     bytes: u64,
     sha256: String,
     distribution: &'static str,
@@ -252,6 +254,7 @@ fn file_line_count(path: &Path) -> Result<usize, String> {
 fn ensure_dataset(
     path: &Path,
     records: usize,
+    size_multiplier: usize,
     expected_lines: usize,
     distribution: &'static str,
     generate: impl FnOnce(&mut BufWriter<File>) -> Result<(), String>,
@@ -288,6 +291,7 @@ fn ensure_dataset(
     Ok(Dataset {
         path: path.to_path_buf(),
         records,
+        size_multiplier,
         bytes,
         sha256,
         distribution,
@@ -359,6 +363,7 @@ enum SyslogTimestamp {
 fn generate_syslog_with_timestamp(
     writer: &mut BufWriter<File>,
     timestamp_style: SyslogTimestamp,
+    rows: usize,
 ) -> Result<(), String> {
     let mut rng = XorShift64::new(0x5a51_06e2_6072_8002);
     let hosts = ZipfSampler::new(256, 1.10);
@@ -382,7 +387,7 @@ fn generate_syslog_with_timestamp(
         "health probe succeeded",
         "rotated application log segment",
     ];
-    for row in 0..SYSLOG_ROWS {
+    for row in 0..rows {
         let second = row % (28 * 86_400);
         let day = 1 + second / 86_400;
         let hour = (second / 3600) % 24;
@@ -416,11 +421,11 @@ fn generate_syslog_with_timestamp(
 }
 
 fn generate_syslog(writer: &mut BufWriter<File>) -> Result<(), String> {
-    generate_syslog_with_timestamp(writer, SyslogTimestamp::Rfc3164)
+    generate_syslog_with_timestamp(writer, SyslogTimestamp::Rfc3164, SYSLOG_ROWS)
 }
 
 fn generate_iso8601_syslog(writer: &mut BufWriter<File>) -> Result<(), String> {
-    generate_syslog_with_timestamp(writer, SyslogTimestamp::Iso8601)
+    generate_syslog_with_timestamp(writer, SyslogTimestamp::Iso8601, SYSLOG_ROWS)
 }
 
 fn alphabetic_word(rank: usize) -> String {
@@ -504,6 +509,7 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
     let apache = ensure_dataset(
         &root.join("apache-combined-120k.log"),
         APACHE_ROWS,
+        1,
         APACHE_ROWS,
         "Zipf(s=1.08) paths; Zipf(s=1.04) clients; production-like status and size mix",
         generate_apache,
@@ -511,6 +517,7 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
     let syslog = ensure_dataset(
         &root.join("rfc3164-160k.log"),
         SYSLOG_ROWS,
+        1,
         SYSLOG_ROWS,
         "Zipf(s=1.10) hosts; mixed services, severities, and message templates",
         generate_syslog,
@@ -518,6 +525,7 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
     let iso8601_syslog = ensure_dataset(
         &root.join("iso8601-syslog-160k.log"),
         SYSLOG_ROWS,
+        1,
         SYSLOG_ROWS,
         "Zipf(s=1.10) hosts; mixed services, severities, and message templates",
         generate_iso8601_syslog,
@@ -526,6 +534,7 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
     let corpus = ensure_dataset(
         &root.join("zipf-corpus-1m5.txt"),
         CORPUS_TOKENS,
+        1,
         corpus_lines,
         "1.5M tokens from a 30k-word Zipf(s=1.07) vocabulary with case and punctuation",
         generate_corpus,
@@ -533,6 +542,7 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
     let csv = ensure_dataset(
         &root.join("analytical-400k.csv"),
         CSV_ROWS,
+        1,
         CSV_ROWS + 1,
         "Zipf(s=1.08) categories; mixed-scale approximately normal values plus 0.5% outliers",
         generate_csv,
@@ -564,6 +574,41 @@ fn prepare_jobs(root: &Path) -> Result<Vec<Job>, String> {
             output_path: None,
         },
     ])
+}
+
+fn prepare_legacy_syslog_sweep(root: &Path) -> Result<Vec<Job>, String> {
+    fs::create_dir_all(root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    LEGACY_SYSLOG_SWEEP_MULTIPLIERS
+        .into_iter()
+        .map(|size_multiplier| {
+            let records = SYSLOG_ROWS
+                .checked_mul(size_multiplier)
+                .ok_or_else(|| format!("{size_multiplier}x record count overflow"))?;
+            let input_name = if size_multiplier == 1 {
+                "iso8601-syslog-160k.log".to_owned()
+            } else {
+                format!("iso8601-syslog-{size_multiplier}x.log")
+            };
+            let output_name = if size_multiplier == 1 {
+                "iso8601-to-rfc3164.out".to_owned()
+            } else {
+                format!("iso8601-to-rfc3164-{size_multiplier}x.out")
+            };
+            let dataset = ensure_dataset(
+                &root.join(input_name),
+                records,
+                size_multiplier,
+                records,
+                "Zipf(s=1.10) hosts; mixed services, severities, and message templates",
+                |writer| generate_syslog_with_timestamp(writer, SyslogTimestamp::Iso8601, records),
+            )?;
+            Ok(Job {
+                workload: Workload::LegacySyslog,
+                dataset,
+                output_path: Some(root.join(output_name)),
+            })
+        })
+        .collect()
 }
 
 fn command_output(mut command: Command, context: &str) -> Result<Output, String> {
@@ -972,8 +1017,9 @@ fn measure_job(
             measurements.effect_ratios.push(franken_ms / host_ms);
         }
         eprintln!(
-            "E2E_PROGRESS workload={} round={}/{} retained={}",
+            "E2E_PROGRESS workload={} size_multiplier={} round={}/{} retained={}",
             job.workload.id(),
+            job.dataset.size_multiplier,
             round + 1,
             warmups + samples,
             if round >= warmups {
@@ -1053,9 +1099,10 @@ fn print_contract(job: &Job, golden: &GoldenOutput, measurements: &Measurements)
         "UNDECIDABLE"
     };
     println!(
-        "E2E_WORKLOAD workload={} meaning={:?} records={} input_bytes={} input_sha256={} \
-         distribution={:?} output_bytes={} output_sha256={}",
+        "E2E_WORKLOAD workload={} size_multiplier={} meaning={:?} records={} input_bytes={} \
+         input_sha256={} distribution={:?} output_bytes={} output_sha256={}",
         job.workload.id(),
+        job.dataset.size_multiplier,
         job.workload.meaning(),
         job.dataset.records,
         job.dataset.bytes,
@@ -1065,7 +1112,7 @@ fn print_contract(job: &Job, golden: &GoldenOutput, measurements: &Measurements)
         golden.serialized_sha256.as_deref().unwrap_or("stdout"),
     );
     println!(
-        "E2E_BENCH_CONTRACT workload={} samples={} host_median_ms={:.6} \
+        "E2E_BENCH_CONTRACT workload={} size_multiplier={} samples={} host_median_ms={:.6} \
          franken_median_ms={:.6} host_null_median={host_null_median:.6} \
          host_null_ci95=[{host_null_low:.6},{host_null_high:.6}] \
          franken_null_median={franken_null_median:.6} \
@@ -1076,6 +1123,7 @@ fn print_contract(job: &Job, golden: &GoldenOutput, measurements: &Measurements)
          verdict={verdict} host_cv_pct={:.3} franken_cv_pct={:.3} effect_cv_pct={:.3} \
          cv_role=telemetry_only gate=paired_bootstrap_median_ci95_and_2x_null",
         job.workload.id(),
+        job.dataset.size_multiplier,
         measurements.effect_ratios.len(),
         median(&measurements.host_ms),
         median(&measurements.franken_ms),
@@ -1100,10 +1148,11 @@ fn environment_usize(name: &str, default: usize) -> Result<usize, String> {
     Ok(parsed)
 }
 
-fn run_configuration() -> Result<(usize, usize, Option<String>), String> {
+fn run_configuration() -> Result<(usize, usize, Option<String>, bool), String> {
     let mut samples = environment_usize("FLC_E2E_SAMPLES", DEFAULT_SAMPLES)?;
     let mut warmups = environment_usize("FLC_E2E_WARMUPS", DEFAULT_WARMUPS)?;
     let mut only = None;
+    let mut legacy_size_sweep = false;
     let mut arguments = env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -1118,10 +1167,13 @@ fn run_configuration() -> Result<(usize, usize, Option<String>), String> {
                         .ok_or_else(|| "--only requires a workload id".to_owned())?,
                 );
             }
+            "--legacy-size-sweep" => {
+                legacy_size_sweep = true;
+            }
             _ => return Err(format!("unknown harness argument {argument:?}")),
         }
     }
-    Ok((samples, warmups, only))
+    Ok((samples, warmups, only, legacy_size_sweep))
 }
 
 fn ldd_version() -> Result<String, String> {
@@ -1136,7 +1188,7 @@ fn ldd_version() -> Result<String, String> {
 }
 
 fn run() -> Result<(), String> {
-    let (samples, warmups, only) = run_configuration()?;
+    let (samples, warmups, only, legacy_size_sweep) = run_configuration()?;
     if samples < 3 {
         return Err("FLC_E2E_SAMPLES must be at least 3 for a median CI".to_owned());
     }
@@ -1202,11 +1254,16 @@ fn run() -> Result<(), String> {
     println!(
         "E2E_HARNESS samples={} warmups={} interleaving=rotating_3_pair \
          nulls=host_host_and_franken_franken gate=paired_bootstrap_median_ci95_and_2x_null \
-         cv_role=telemetry_only locale=C timezone=UTC",
-        samples, warmups,
+         cv_role=telemetry_only locale=C timezone=UTC legacy_size_sweep={} \
+         size_multipliers={:?}",
+        samples, warmups, legacy_size_sweep, LEGACY_SYSLOG_SWEEP_MULTIPLIERS,
     );
 
-    let jobs = prepare_jobs(&root)?;
+    let jobs = if legacy_size_sweep {
+        prepare_legacy_syslog_sweep(&root)?
+    } else {
+        prepare_jobs(&root)?
+    };
     let mut jobs_run = 0;
     for job in jobs {
         if only.as_deref().is_some_and(|id| id != job.workload.id()) {
@@ -1216,15 +1273,21 @@ fn run() -> Result<(), String> {
         eprintln!("E2E_PARITY workload={} status=begin", job.workload.id());
         let golden = verify_parity(&workload_executable, &frankenlibc, &job)?;
         println!(
-            "E2E_PARITY workload={} stdout_sha256={} serialized_sha256={} status=PASS",
+            "E2E_PARITY workload={} size_multiplier={} stdout_sha256={} \
+             serialized_sha256={} status=PASS",
             job.workload.id(),
+            job.dataset.size_multiplier,
             sha256_bytes(&golden.stdout),
             golden
                 .serialized_sha256
                 .as_deref()
                 .unwrap_or("not_applicable"),
         );
-        let pre_measurement = format!("pre_measurement_{}", job.workload.id());
+        let pre_measurement = format!(
+            "pre_measurement_{}_{}x",
+            job.workload.id(),
+            job.dataset.size_multiplier
+        );
         require_host_wide_quiet(&host_guard, &pre_measurement);
         let measurements = measure_job(
             &workload_executable,
@@ -1234,7 +1297,11 @@ fn run() -> Result<(), String> {
             samples,
             warmups,
         )?;
-        let post_measurement = format!("post_measurement_{}", job.workload.id());
+        let post_measurement = format!(
+            "post_measurement_{}_{}x",
+            job.workload.id(),
+            job.dataset.size_multiplier
+        );
         require_host_wide_quiet(&host_guard, &post_measurement);
         print_contract(&job, &golden, &measurements);
     }

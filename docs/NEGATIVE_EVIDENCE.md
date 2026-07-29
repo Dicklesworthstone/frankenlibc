@@ -24107,6 +24107,69 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   coordination; accept a loss only if the effect CI clears twice the wider null half-width at the
   relevant sizes. Never decide from either point estimate or CV.
 
+## 2026-07-29 (cod / codex-root) — UNDECIDABLE SIZE SWEEP: realistic ISO-8601-to-RFC3164 program narrows from 1.138962x to 1.073594x vs host glibc
+
+- **RESULT CLASS / REALISTIC JOB:** `result_class=undecidable`;
+  `legacy_incumbent=host-glibc`; `same_invocation=true`; `cv_used=false`. The fixed
+  `flc_e2e_iso_to_rfc3164_v1` sweep closes the two prior rows' retry predicate in one controller
+  invocation: 1x/4x/16x realistic jobs process 160,000/640,000/2,560,000 records and
+  17,992,932/71,952,443/287,811,948 input bytes. Every timed child includes process startup,
+  file I/O, allocation, `strptime`, `strftime`, complete output serialization, and teardown.
+  Hosts retain Zipf(s=1.10); services, severities, and message templates retain the same mixed
+  distribution at every size. Input generation remains outside the timed region.
+
+- **RIGHT ROUTE / EXECUTABLE IDENTITY / HOST EXCLUSIVITY.** Strict-remote worker `vmi1149989`
+  was the first of three placements to clear the new fail-closed host-wide gate. The two blocked
+  placements exited 2 before timing; no samples from them were retained. The admitted invocation
+  self-reported:
+  - controller ELF SHA-256
+    `ec8e1b8f29f88301c6d157386a3e8b8a3f77023eb035ae2ca0248d84734d3469`
+  - workload ELF SHA-256
+    `779e4654e67f517a4401836a7c0bf41a4e6f7dbb8d01aa570110b80d388ae236`
+  - host glibc ELF SHA-256
+    `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`
+  - FrankenLibC ELF SHA-256
+    `2a0313c507f3b2a6798379f83bd986e76c9f38a52577946b5e77841eeacc6ceb`
+
+  All 10 allowed CPUs were sampled from `/proc/stat` for 300 ms at controller startup and before
+  and after every size. Every sample stayed below the 20% busy ceiling: startup maximum 3.2%;
+  1x pre/post 3.3%/0.0%; 4x 0.0%/0.0%; 16x 0.0%/3.3%. The recorded affinity mask was `3ff`.
+  A busy CPU makes the harness exit 2, so host-wide exclusivity is a measurement precondition
+  rather than an operator convention.
+
+- **COMPLETE PARITY.** Both arms ran with `LC_ALL=C`, `LANG=C`, and `TZ=UTC`; every child proved
+  that `malloc`, `fopen`, `fgets`, `strptime`, and `strftime` came entirely from its selected
+  provider. Complete serialized-output SHA-256s matched between glibc and LD_PRELOAD:
+  1x `62f2d41452c96312e053dd2fe7da2d32714d1e8b181227dd35c61ac02551d083`,
+  4x `9888d4fb7c1ea482b3806f7c83da9474794690a839f69c921f02b546b725044f`, and
+  16x `31fe68ebb3f47103a7b9c98b2a42b5a92d5e3e3038ca50e2b16310ad5e8c16cb`.
+
+- **SAME-INVOCATION INCUMBENT / TWO A/A CONTROLS.** Each size retained 15 samples after two
+  warmups while rotating host/host, FrankenLibC/FrankenLibC, and FrankenLibC/glibc pair order:
+
+  | size | records | glibc ms | FL ms | FL/glibc median | effect bootstrap median CI | glibc A/A CI | FL A/A CI | verdict |
+  |---:|---:|---:|---:|---:|---|---|---|---|
+  | 1x | 160,000 | 67.105050 | 70.720466 | 1.138962 | [1.033933, 1.183960] | [0.905790, 1.093505] | [0.991425, 1.050029] | UNDECIDABLE |
+  | 4x | 640,000 | 251.947598 | 274.700848 | 1.092713 | [1.042639, 1.139157] | [0.941460, 1.008930] | [0.918547, 1.120802] | UNDECIDABLE |
+  | 16x | 2,560,000 | 963.438517 | 1,029.063490 | 1.073594 | [1.038769, 1.123730] | [0.933293, 1.008634] | [0.949162, 1.039892] | UNDECIDABLE |
+
+  Wider null half-widths were 0.094210, 0.120802, and 0.066707. No effect cleared twice its
+  same-size null margin, so none is an admissible loss. CV was 6.323%-12.685% and is provenance
+  only.
+
+- **SHAPE / DISPOSITION.** The point estimate narrows monotonically as the job grows
+  (1.138962x -> 1.092713x -> 1.073594x). That is diagnostic evidence for fixed startup,
+  process-launch, or I/O coordination cost rather than a flat per-record deficit, but the wide
+  nulls make the shape non-verdict evidence. KEEP the fixed sweep and host-exclusivity gate as
+  harness maintenance; claim no whole-job win or loss.
+
+- **CONCRETE RETRY PREDICATE.** Do not rerun the 160k job alone. Rerun this exact fixed
+  1x/4x/16x sweep only with at least 33 retained samples on a host that clears every exclusivity
+  check and where both per-arm A/A bootstrap median CIs at every size fit within +/-0.05 of 1.0.
+  Classify narrowing versus flat only after those null gates hold, and accept a competitive
+  verdict only when the effect CI clears twice the wider same-size null half-width. Never decide
+  from these point estimates or CV.
+
 ## 2026-07-29 (cod / codex-root) — CAMPAIGN WIN (KEEP): deployed exact HTTP-date `strptime` measures 0.203028x vs host glibc
 
 - **RESULT CLASS / EXECUTABLE IDENTITY:** `result_class=campaign-win`;
