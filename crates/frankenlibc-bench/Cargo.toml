@@ -83,6 +83,11 @@ name = "getaddrinfo_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "e2e_workloads_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "hosts_lookup_ab"
 path = "examples/hosts_lookup_ab.rs"
