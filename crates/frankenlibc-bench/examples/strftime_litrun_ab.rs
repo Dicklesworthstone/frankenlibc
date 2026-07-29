@@ -271,22 +271,46 @@ fn verify_one(host: StrftimeFn, case: &Case, tm: &libc::tm) {
 
 fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     verify_one(host, case, tm);
-    if case.label != "syslog_ts" {
-        return;
+    if case.label == "syslog_ts" {
+        for month in 0..=11 {
+            for day in [1, 9, 10, 31] {
+                for hour in [0, 23] {
+                    for minute in [0, 59] {
+                        for second in [0, 59, 60] {
+                            let mut probe = *tm;
+                            probe.tm_mon = month;
+                            probe.tm_mday = day;
+                            probe.tm_hour = hour;
+                            probe.tm_min = minute;
+                            probe.tm_sec = second;
+                            verify_one(host, case, &probe);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    for month in 0..=11 {
-        for day in [1, 9, 10, 31] {
-            for hour in [0, 23] {
-                for minute in [0, 59] {
-                    for second in [0, 59, 60] {
-                        let mut probe = *tm;
-                        probe.tm_mon = month;
-                        probe.tm_mday = day;
-                        probe.tm_hour = hour;
-                        probe.tm_min = minute;
-                        probe.tm_sec = second;
-                        verify_one(host, case, &probe);
+    if case.label == "http_date" {
+        for weekday in 0..=6 {
+            for month in 0..=11 {
+                for day in [1, 9, 10, 31] {
+                    for year in [1000, 9999] {
+                        for hour in [0, 23] {
+                            for minute in [0, 59] {
+                                for second in [0, 59, 60] {
+                                    let mut probe = *tm;
+                                    probe.tm_wday = weekday;
+                                    probe.tm_mon = month;
+                                    probe.tm_mday = day;
+                                    probe.tm_year = year - 1900;
+                                    probe.tm_hour = hour;
+                                    probe.tm_min = minute;
+                                    probe.tm_sec = second;
+                                    verify_one(host, case, &probe);
+                                }
+                            }
+                        }
                     }
                 }
             }

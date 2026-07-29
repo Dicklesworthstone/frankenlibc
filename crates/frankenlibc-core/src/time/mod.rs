@@ -542,6 +542,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     ) {
         return n;
     }
+    if let Some(n) = format_strftime_http_date(
+        fmt, bd.tm_wday, bd.tm_mday, bd.tm_mon, bd.tm_year, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+    ) {
+        return n;
+    }
     if let Some(n) = format_strftime_ymdhm(fmt, bd, buf) {
         return n;
     }
@@ -1210,6 +1215,68 @@ pub fn format_strftime_rfc3164(
     write_two_digits(&mut buf[10..12], minute as u32);
     buf[12] = b':';
     write_two_digits(&mut buf[13..15], second as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+/// Emit the exact C-locale HTTP-date `%a, %d %b %Y %H:%M:%S GMT`.
+///
+/// Exact-format dispatch makes this a finite transducer over the normalized
+/// weekday, calendar-field, and clock-field domains. Non-exact formats,
+/// non-normalized referenced fields, and short buffers return `None` so the
+/// general formatter retains its existing behavior.
+#[allow(clippy::too_many_arguments)] // Scalar-only ABI projection is the fast-path invariant.
+#[inline]
+pub fn format_strftime_http_date(
+    fmt: &[u8],
+    weekday: i32,
+    day: i32,
+    month: i32,
+    year_since_1900: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = year_since_1900 as i64 + 1900;
+    if fmt != b"%a, %d %b %Y %H:%M:%S GMT"
+        || !(0..=6).contains(&weekday)
+        || !(1..=31).contains(&day)
+        || !(0..=11).contains(&month)
+        || !(1000..=9999).contains(&year)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 29;
+    if buf.len() <= OUT_LEN {
+        return None;
+    }
+
+    let weekday_name = WDAY_NAMES[weekday as usize];
+    let month_name = MON_NAMES[month as usize];
+    buf[0..3].copy_from_slice(weekday_name);
+    buf[3] = b',';
+    buf[4] = b' ';
+    write_two_digits(&mut buf[5..7], day as u32);
+    buf[7] = b' ';
+    buf[8..11].copy_from_slice(month_name);
+    buf[11] = b' ';
+    let year = year as u32;
+    buf[12] = b'0' + ((year / 1000) % 10) as u8;
+    buf[13] = b'0' + ((year / 100) % 10) as u8;
+    buf[14] = b'0' + ((year / 10) % 10) as u8;
+    buf[15] = b'0' + (year % 10) as u8;
+    buf[16] = b' ';
+    write_two_digits(&mut buf[17..19], hour as u32);
+    buf[19] = b':';
+    write_two_digits(&mut buf[20..22], minute as u32);
+    buf[22] = b':';
+    write_two_digits(&mut buf[23..25], second as u32);
+    buf[25..29].copy_from_slice(b" GMT");
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -2101,6 +2168,134 @@ mod tests {
         bd.tm_hour = 99;
         let n = format_strftime(b"%b %e %H:%M:%S", &bd, &mut buf);
         assert_eq!(&buf[..n], b"Jan  1 99:00:00");
+    }
+
+    #[test]
+    fn strftime_http_date_exact_boundary_product_and_capacity_boundaries() {
+        let mut bd = epoch_to_broken_down(1_700_000_000);
+        let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        let months = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        for (weekday, weekday_name) in weekdays.into_iter().enumerate() {
+            for (month, month_name) in months.into_iter().enumerate() {
+                for day in [1, 9, 10, 31] {
+                    for year in [1000, 9999] {
+                        for hour in [0, 23] {
+                            for minute in [0, 59] {
+                                for second in [0, 59, 60] {
+                                    bd.tm_wday = weekday as i32;
+                                    bd.tm_mday = day;
+                                    bd.tm_mon = month as i32;
+                                    bd.tm_year = year - 1900;
+                                    bd.tm_hour = hour;
+                                    bd.tm_min = minute;
+                                    bd.tm_sec = second;
+                                    let mut buf = [0x55u8; 30];
+                                    let n = format_strftime(
+                                        b"%a, %d %b %Y %H:%M:%S GMT",
+                                        &bd,
+                                        &mut buf,
+                                    );
+                                    let expected = format!(
+                                        "{weekday_name}, {day:02} {month_name} {year:04} \
+                                         {hour:02}:{minute:02}:{second:02} GMT"
+                                    );
+                                    assert_eq!(n, 29);
+                                    assert_eq!(&buf[..n], expected.as_bytes());
+                                    assert_eq!(buf[n], 0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        bd.tm_wday = 2;
+        bd.tm_mday = 14;
+        bd.tm_mon = 10;
+        bd.tm_year = 123;
+        bd.tm_hour = 22;
+        bd.tm_min = 13;
+        bd.tm_sec = 20;
+        let expected = b"Tue, 14 Nov 2023 22:13:20 GMT";
+        let mut direct_short = [0x55u8; 29];
+        assert_eq!(
+            format_strftime_http_date(
+                b"%a, %d %b %Y %H:%M:%S GMT",
+                bd.tm_wday,
+                bd.tm_mday,
+                bd.tm_mon,
+                bd.tm_year,
+                bd.tm_hour,
+                bd.tm_min,
+                bd.tm_sec,
+                &mut direct_short,
+            ),
+            None
+        );
+        assert_eq!(direct_short, [0x55; 29]);
+        for capacity in 0usize..=29 {
+            let mut buf = [0x55u8; 30];
+            let n = format_strftime(b"%a, %d %b %Y %H:%M:%S GMT", &bd, &mut buf[..capacity]);
+            assert_eq!(n, 0);
+            let prefix_len = capacity.saturating_sub(1);
+            assert_eq!(&buf[..prefix_len], &expected[..prefix_len]);
+            assert!(buf[prefix_len..].iter().all(|byte| *byte == 0x55));
+        }
+    }
+
+    #[test]
+    fn strftime_http_date_nonexact_and_malformed_inputs_fall_back() {
+        let mut buf = [0x55u8; 64];
+        for format in [
+            b"[%a, %d %b %Y %H:%M:%S GMT]".as_slice(),
+            b"%A, %d %b %Y %H:%M:%S GMT",
+            b"%a, %e %b %Y %H:%M:%S GMT",
+            b"%a, %d %b %Y %H:%M:%S UTC",
+        ] {
+            assert_eq!(
+                format_strftime_http_date(format, 2, 14, 10, 123, 22, 13, 20, &mut buf),
+                None
+            );
+        }
+        for (weekday, day, month, year, hour, minute, second) in [
+            (-1, 14, 10, 123, 22, 13, 20),
+            (7, 14, 10, 123, 22, 13, 20),
+            (2, 0, 10, 123, 22, 13, 20),
+            (2, 32, 10, 123, 22, 13, 20),
+            (2, 14, -1, 123, 22, 13, 20),
+            (2, 14, 12, 123, 22, 13, 20),
+            (2, 14, 10, -901, 22, 13, 20),
+            (2, 14, 10, 8100, 22, 13, 20),
+            (2, 14, 10, 123, -1, 13, 20),
+            (2, 14, 10, 123, 24, 13, 20),
+            (2, 14, 10, 123, 22, -1, 20),
+            (2, 14, 10, 123, 22, 60, 20),
+            (2, 14, 10, 123, 22, 13, -1),
+            (2, 14, 10, 123, 22, 13, 61),
+        ] {
+            assert_eq!(
+                format_strftime_http_date(
+                    b"%a, %d %b %Y %H:%M:%S GMT",
+                    weekday,
+                    day,
+                    month,
+                    year,
+                    hour,
+                    minute,
+                    second,
+                    &mut buf,
+                ),
+                None
+            );
+        }
+
+        let mut bd = epoch_to_broken_down(1_700_000_000);
+        bd.tm_hour = 99;
+        let n = format_strftime(b"%a, %d %b %Y %H:%M:%S GMT", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"Tue, 14 Nov 2023 99:13:20 GMT");
     }
 
     #[test]

@@ -1226,6 +1226,68 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
+        // Exact HTTP-date is a bounded C-locale transducer. Match the complete
+        // `%a, %d %b %Y %H:%M:%S GMT\0` format before the generic C-string
+        // scan and full `tm` projection. The left-to-right `&&` chain stops at
+        // the first mismatch or earlier NUL, so shorter valid strings do not
+        // read the next byte.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'a'
+                && *format.cast::<u8>().add(2) == b','
+                && *format.cast::<u8>().add(3) == b' '
+                && *format.cast::<u8>().add(4) == b'%'
+                && *format.cast::<u8>().add(5) == b'd'
+                && *format.cast::<u8>().add(6) == b' '
+                && *format.cast::<u8>().add(7) == b'%'
+                && *format.cast::<u8>().add(8) == b'b'
+                && *format.cast::<u8>().add(9) == b' '
+                && *format.cast::<u8>().add(10) == b'%'
+                && *format.cast::<u8>().add(11) == b'Y'
+                && *format.cast::<u8>().add(12) == b' '
+                && *format.cast::<u8>().add(13) == b'%'
+                && *format.cast::<u8>().add(14) == b'H'
+                && *format.cast::<u8>().add(15) == b':'
+                && *format.cast::<u8>().add(16) == b'%'
+                && *format.cast::<u8>().add(17) == b'M'
+                && *format.cast::<u8>().add(18) == b':'
+                && *format.cast::<u8>().add(19) == b'%'
+                && *format.cast::<u8>().add(20) == b'S'
+                && *format.cast::<u8>().add(21) == b' '
+                && *format.cast::<u8>().add(22) == b'G'
+                && *format.cast::<u8>().add(23) == b'M'
+                && *format.cast::<u8>().add(24) == b'T'
+                && *format.cast::<u8>().add(25) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (weekday, day, month, year, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_wday,
+                    (*tm).tm_mday,
+                    (*tm).tm_mon,
+                    (*tm).tm_year,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_http_date(
+                b"%a, %d %b %Y %H:%M:%S GMT",
+                weekday,
+                day,
+                month,
+                year,
+                hour,
+                minute,
+                second,
+                buf,
+            ) {
+                return n;
+            }
+        }
         // Exact RFC3164 timestamps are a bounded C-locale transducer. Recognize
         // the complete `%b %e %H:%M:%S\0` language before the generic C-string
         // scan and full `tm` projection. The `&&` chain is intentionally

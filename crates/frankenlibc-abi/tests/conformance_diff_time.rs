@@ -278,22 +278,23 @@ fn diff_difftime_cases() {
 // ===========================================================================
 
 const STRFTIME_FORMATS: &[&[u8]] = &[
-    b"%Y-%m-%d",          // ISO date
-    b"%H:%M:%S",          // 24-hour time
-    b"%b %e %H:%M:%S",    // RFC3164 syslog timestamp
-    b"%Y-%m-%dT%H:%M:%S", // ISO 8601
-    b"%a",                // abbreviated weekday
-    b"%A",                // full weekday
-    b"%b",                // abbreviated month
-    b"%B",                // full month
-    b"%j",                // day of year
-    b"%w",                // weekday number
-    b"%U",                // week of year (Sunday-start)
-    b"%W",                // week of year (Monday-start)
-    b"%p",                // AM/PM
-    b"%I:%M %p",          // 12-hour clock
-    b"%%",                // literal percent
-    b"static text only",  // no conversions
+    b"%Y-%m-%d",                  // ISO date
+    b"%H:%M:%S",                  // 24-hour time
+    b"%b %e %H:%M:%S",            // RFC3164 syslog timestamp
+    b"%a, %d %b %Y %H:%M:%S GMT", // HTTP-date
+    b"%Y-%m-%dT%H:%M:%S",         // ISO 8601
+    b"%a",                        // abbreviated weekday
+    b"%A",                        // full weekday
+    b"%b",                        // abbreviated month
+    b"%B",                        // full month
+    b"%j",                        // day of year
+    b"%w",                        // weekday number
+    b"%U",                        // week of year (Sunday-start)
+    b"%W",                        // week of year (Monday-start)
+    b"%p",                        // AM/PM
+    b"%I:%M %p",                  // 12-hour clock
+    b"%%",                        // literal percent
+    b"static text only",          // no conversions
     // C-standard whole-format aliases. These are normalized to their defining
     // expansions before exact-leaf dispatch (ISO C 7.27.3.5 makes that an identity),
     // so they must stay byte-identical to glibc — including the embedded forms, which

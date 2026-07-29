@@ -23991,3 +23991,118 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   of 1.0, or after the harness gains a fixed 1x/4x/16x record-count sweep that can distinguish a
   flat per-record gap from startup/I/O coordination. A verdict still requires the FL/glibc effect
   CI to clear twice the wider null half-width; never decide from the current point estimate or CV.
+
+## 2026-07-29 (cod / codex-root) — CAMPAIGN WIN (KEEP): exact HTTP-date `strftime` finite transducer measures 0.164300x vs host glibc
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.164300`;
+  `incumbent_bootstrap_median_ci=[0.151491,0.179731]`;
+  `null_median_ratio=0.992703`;
+  `null_bootstrap_median_ci=[0.975502,1.025124]`;
+  `bench_elf_sha256=59669c9d99f2ea2e5b38bd99de9e1d8d1aa25e2a1c80a473cc716966ebaef495`;
+  `cv_used=false` (CV is descriptive telemetry only).
+
+- **NEGATIVE-EVIDENCE FIRST / RIGHT-ROUTE PROFILE.** Preflight for lever
+  `exact HTTP-date strftime finite transducer` on surface
+  `strftime exact percent-a comma percent-d percent-b percent-Y percent-H percent-M percent-S GMT
+  http_date RFC7231` returned clear. Existing ledger rows measured this exact format at 3.7091x
+  and 3.9151x slower and explicitly left exact-leaf coverage open. A workload-matched `perf`
+  recording of the untouched benchmark executable
+  (`4494e3f274cdd3be5693a40f710da7032159f503c8e9c1c322682251b75e170c`) collected 3,956
+  samples with zero lost and attributed 78.40% self-time to
+  `frankenlibc_core::time::format_strftime`. Its aggregate Amdahl ceiling is 4.63x for the
+  profiled mixed-arm invocation. This proves that the workload routes through the edited frame;
+  the profile is attribution, not the competitive timing claim.
+
+- **UNTOUCHED BASELINE SHAPE.** Before the source edit, strict-remote worker `vmi1293453` ran
+  executable `6e6e5f8e7f92516cdfb7ac689157d46913a0c6586512c890c3462732d5150851`.
+  Across 1,000, 10,000, 50,000, and 150,000 calls per arm, FL/glibc medians were respectively
+  3.530411, 3.380970, 3.471344, and 3.616923. At 150,000 calls FrankenLibC measured 320.187 ns
+  versus glibc 92.780 ns, effect CI [3.272241, 3.833104], null CI [0.964619, 1.032882].
+  The nearly flat 3.38-3.62x gap over a 150x batch span localizes fixed per-call formatter work,
+  not coordination or batching.
+
+- **MECHANISM / BEHAVIOR-PRESERVATION PROOF.** The strict ABI now recognizes only the complete
+  byte language `%a, %d %b %Y %H:%M:%S GMT\0`, projects only its seven referenced `tm` fields,
+  and delegates to a safe fixed-29-byte C-locale transducer. Non-exact formats, non-normalized
+  referenced fields, and short buffers decline the leaf and retain the generic formatter. The
+  benchmark exhausts 8,064 normalized boundary states (all weekdays and months; representative
+  day, year, hour, minute, and leap-second boundaries) at every capacity 1..=128, checks const
+  `tm` preservation, and compares all defined return values and successful bytes including NUL
+  against live glibc. Focused core tests additionally prove every short capacity, malformed-field
+  fallback, and non-exact-format ownership. Live-glibc
+  `conformance_diff_time::diff_strftime_cases` passed 1/1 with the new format in its matrix.
+
+- **SAME-INVOCATION INCUMBENT / A/A GATE AND SHAPE.** One invocation retained 33 paired samples
+  after four warmups at each batch size, alternated pair order, ran source-identical FL/FL null
+  pairs and FL/glibc effect pairs, and self-reported its executing ELF:
+
+  | calls/arm | FL ns | glibc ns | FL/glibc median | bootstrap median CI | null CI | verdict |
+  |---:|---:|---:|---:|---|---|---|
+  | 1,000 | 18.758 | 107.570 | 0.175730 | [0.172165, 0.179746] | [0.985643, 1.012265] | FL faster |
+  | 10,000 | 18.398 | 104.639 | 0.176077 | [0.173472, 0.179399] | [0.988756, 1.030016] | FL faster |
+  | 50,000 | 12.741 | 74.042 | 0.173728 | [0.156699, 0.182839] | [0.982463, 1.018396] | FL faster |
+  | 150,000 | 12.904 | 80.851 | 0.164300 | [0.151491, 0.179731] | [0.975502, 1.025124] | FL faster |
+
+  At the headline batch, the wider null half-width is 0.025124 and the effect deviation is
+  0.835700, clearing the mandatory 2x-null margin by 16.63x. The equivalent actual-incumbent
+  speedup is 6.09x (speedup CI 5.56x-6.60x). The separate 24.81x before/after self-speedup is
+  maintenance evidence only and is not the campaign claim.
+
+  An independent pre-lint build of the same implementation, ELF
+  `4d0984c210aabde0815e42f587be0e0b7748a0aa2de27912f9318a787cc4efbb`, measured a
+  0.161220 median ratio with effect CI [0.152379, 0.169721] and A/A CI
+  [0.990248, 1.017829] at 150,000 calls. A justified lint annotation changed the executable hash,
+  so that run is replication evidence only; the final-source ELF and numbers above are the claim.
+
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP the exact leaf as a class-2 glibc-generality
+  win. Reopen if FrankenLibC accepts a non-C `LC_TIME` locale, the exact recognizer broadens beyond
+  `%a, %d %b %Y %H:%M:%S GMT\0`, a normalized-state/capacity differential diverges, malformed or
+  short-buffer fallback changes, or a repeat's FL/glibc bootstrap median CI no longer lies below
+  1.0 by more than twice the same-invocation A/A null-CI half-width. Never reopen, keep, or reject
+  from CV.
+
+## 2026-07-29 (cod / codex-root) — UNDECIDABLE RERUN: 160k-record ISO-8601-to-RFC3164 program measures 1.153970x vs host glibc
+
+- **RESULT CLASS / REALISTIC JOB:** `result_class=undecidable`;
+  `legacy_incumbent=host-glibc`; `same_invocation=true`; `incumbent_ratio=1.153970`;
+  `incumbent_bootstrap_median_ci=[1.046397,1.212377]`; `cv_used=false`. This is the unchanged
+  `flc_e2e_iso_to_rfc3164_v1` whole program: 160,000 Zipf-skewed service-log records, 17,992,932
+  input bytes, startup, file I/O, allocation, `strptime`, `strftime`, complete serialization, and
+  teardown under the timed child. It is a loss-shaped point, not a loss verdict.
+
+- **RIGHT-ROUTE / COMPLETE-PARITY PROOF.** One strict-remote controller invocation on
+  `vmi1293453` rotated host/host, FrankenLibC/FrankenLibC, and FrankenLibC/glibc pairs for 15
+  retained samples after two warmups. Every child identified the loaded providers for `malloc`,
+  `fopen`, `fgets`, `strptime`, and `strftime`; mixed providers are a hard harness failure:
+  - controller ELF SHA-256
+    `14072686245271a1328ad63333b62aded66a1c55988788c1e8cde9be0301d7f8`
+  - workload ELF SHA-256
+    `779e4654e67f517a4401836a7c0bf41a4e6f7dbb8d01aa570110b80d388ae236`
+  - host glibc ELF SHA-256
+    `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`
+  - FrankenLibC ELF SHA-256
+    `423ae35db33d037727a1ae19efa4d537077349f7dfef14902fc24d3affd2a5cb`
+
+  Both arms ran with `LC_ALL=C`, `LANG=C`, and `TZ=UTC`. Complete stdout matched SHA-256
+  `70d1c04b0c505de83832c4b47dd5821964e318f5112511f1db132054cc3615d7`; all 17,192,932
+  serialized bytes matched SHA-256
+  `62f2d41452c96312e053dd2fe7da2d32714d1e8b181227dd35c61ac02551d083`.
+
+- **NULL / EFFECT GATE.** Host median was 65.662107 ms and FrankenLibC median was 73.182178 ms:
+  - host A/A null median 1.071889, bootstrap median CI [0.936819, 1.181241]
+  - FrankenLibC A/A null median 0.999005, bootstrap median CI [0.874549, 1.081107]
+  - FL/glibc effect median 1.153970, bootstrap median CI [1.046397, 1.212377]
+  - wider null half-width 0.181241; `clears_2x_null=false`
+
+  The effect interval is above 1.0, but its deviation is smaller than twice the observed A/A
+  envelope. The direction also differs from the prior 0.974244x undecidable point, exactly the
+  instability the null control is meant to expose. No competitive loss or win follows from it.
+
+- **CONCRETE RETRY PREDICATE.** Do not repeat the same single-size job on another ordinary shared
+  worker. Add the fixed 1x/4x/16x record-count sweep already named by the prior row, then rerun on
+  an idle or CPU-isolated strict-remote worker where both per-arm A/A bootstrap median CIs fit
+  within +/-0.05 of 1.0. Classify a flat gap as per-record work and a narrowing gap as startup/I/O
+  coordination; accept a loss only if the effect CI clears twice the wider null half-width at the
+  relevant sizes. Never decide from either point estimate or CV.
