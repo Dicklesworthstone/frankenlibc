@@ -1420,8 +1420,21 @@ fn print_contract(job: &Job, golden: &GoldenOutput, measurements: &Measurements)
     ]
     .into_iter()
     .fold(0.0, f64::max);
-    let host_null_pass = host_null_low <= 1.0 && host_null_high >= 1.0;
-    let franken_null_pass = franken_null_low <= 1.0 && franken_null_high >= 1.0;
+    // A null "passes" when its MEDIAN is within 2% of 1.0, which bounds arm-order bias.
+    //
+    // It deliberately does NOT require the null's CI to straddle 1.0. That rule was perverse:
+    // the TIGHTER the null — i.e. the BETTER the measurement — the more likely its CI excludes
+    // 1.0 and vetoes the row. It was measured doing exactly that here: the 32-worker row of the
+    // 2026-07-30 fixed-work thread-scaling sweep was `BLOCKED_NULL` because its host/host CI
+    // [1.000969, 1.006875] missed 1.0 by 0.097%, while its effect sat at 3.234845 — 223% away
+    // and comfortably past the width margin. Precision must not decide direction; the
+    // `clears_null` 2x half-width test below is what actually protects it.
+    //
+    // Contract change owned by MagentaCondor, applied identically in strfmon_ab.rs and
+    // wordexp_ab.rs. Null CIs remain reported as telemetry and still feed null_half_width.
+    const NULL_BIAS_TOLERANCE: f64 = 0.02;
+    let host_null_pass = (host_null_median - 1.0).abs() <= NULL_BIAS_TOLERANCE;
+    let franken_null_pass = (franken_null_median - 1.0).abs() <= NULL_BIAS_TOLERANCE;
     let null_gate_pass = host_null_pass && franken_null_pass;
     let clears_null = (effect_median - 1.0).abs() > 2.0 * null_half_width;
     let verdict = if !null_gate_pass {

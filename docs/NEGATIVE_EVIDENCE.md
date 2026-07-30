@@ -24891,3 +24891,68 @@ scaling loss but does not yet contain a profile naming a removable dominant fram
   Before changing production code, capture a same-host profile at an already-admissible width
   that names a removable dominant FrankenLibC frame; the scaling shape alone is not an
   optimization diagnosis.
+
+## 2026-07-30 (cc_fl / MagentaCondor) — CONTRACT CHANGE + RE-ADJUDICATION: straddle veto removed from all 3 harnesses; 4 previously-vetoed measurements recovered, all 4 LOSE, zero became wins
+
+Closes out the null-gate defect as a contract change rather than a one-bench patch, and
+discharges the obligation it created: every measurement previously killed by a straddle veto is
+a row whose retry predicate the correction satisfies.
+
+- **THE CORRECTED RULE, now uniform.** A ratio is decidable when (i) the effect's bootstrap CI
+  excludes 1.0, (ii) the effect's deviation from 1.0 exceeds 2x the LARGER null half-width, and
+  (iii) each null MEDIAN is within 2% of 1.0. Clause (iii) replaces "the null CI must straddle
+  1.0". Null CIs are demoted to telemetry and still feed the half-width in (ii).
+- **WHERE THE VETO LIVED — all three sites, now fixed.** A repo-wide search for the pattern
+  (`*_null_low <= 1.0 && *_null_high >= 1.0`) and for gate names (`null_holds`, `nulls_hold`,
+  `null_pass`, `null_gate_pass`, `NULL_VIOLATED`, `BLOCKED_NULL`) returns exactly three files,
+  all now carrying `NULL_BIAS_TOLERANCE`:
+  `crates/frankenlibc-bench/examples/strfmon_ab.rs`,
+  `crates/frankenlibc-bench/examples/wordexp_ab.rs`,
+  `crates/frankenlibc-bench/examples/e2e_workloads_ab.rs`.
+  The third was NOT mine and was missed by my first fix — it is the cod-lane realistic-workload
+  harness, and its veto emitted `BLOCKED_NULL`, so it was actively killing rows. Post-fix the
+  straddle search returns nothing.
+- **WHY IT WAS WRONG, restated as the general defect.** The clause coupled the VERDICT to the
+  null's PRECISION: the tighter the A/A null, the narrower its CI, and the more likely that CI
+  excludes 1.0 — so a better measurement was more likely to be vetoed. It was detecting sub-1%
+  arm-order asymmetry, which is real but irrelevant against multi-hundred-percent effects.
+- **RECOVERED POPULATION: 4 measurements, and they are ALL LOSSES.**
+
+  | source row | measurement | effect | effect CI95 | why it was vetoed | corrected verdict |
+  |---|---|---:|---|---|---|
+  | 2026-07-30 wordexp (mine) | `plain_split` | 2.930311 | [2.906338,2.951770] | null_fl_fl [1.000400,1.005380] missed 1.0 by 0.04% | **LOSS** |
+  | 2026-07-30 wordexp (mine) | `param_simple` | 2.833764 | [2.822487,2.842885] | null_glibc_glibc [0.982182,0.998423] missed by 0.16% | **LOSS** |
+  | 2026-07-30 wordexp (mine) | `param_default` | 2.323656 | [2.305838,2.332914] | null_glibc_glibc [0.977533,0.994789] missed by 0.52% | **LOSS** |
+  | 2026-07-30 fixed-work thread sweep (cod_fl / SnowyBass) | 32/32 workers | 3.234845 | [3.147293,3.292950] | host/host [1.000969,1.006875] missed by 0.097% | **LOSS_VS_GLIBC** |
+
+  **4 became decidable; all 4 LOSE; zero became wins.**
+- **NO SUSPICIOUS CROP OF WINS — the check the fix had to survive.** A gate relaxation that
+  suddenly manufactures wins should be distrusted. This one produces none: every recovered
+  measurement is a loss, in the same direction and (for the wordexp three) within 2.5% of the
+  figures already published under the old gate. The correction changed REPORTABILITY, never
+  direction. Had it produced wins, the right response would have been to distrust the fix.
+- **THE 32-WORKER ROW NEEDED NO RE-RUN.** Its own retry predicate asked for "a newly booked
+  same-invocation sweep whose independent host/host CI straddles 1.0". That predicate is
+  satisfied differently than it anticipated: the straddle requirement was itself the defect, and
+  the row already publishes effect median, effect CI, and BOTH null CIs, so re-adjudication is
+  arithmetic on its own reported numbers. Its `null_half_width` is 0.069166 (from the
+  Franken/Franken high bound 1.069166), 2x = 0.138332, and the effect deviation is 2.234845 —
+  clearing by 16x. Both null medians lie inside CIs entirely within 2% of 1.0. That row's
+  `LOSS_VS_GLIBC` count therefore moves from six admissible rows to seven, and the 32-worker
+  point estimate 3.234845x is admissible. The 96/128 rows are NOT affected: they were stopped by
+  an external task-witness failure, not by a null veto, and their predicate stands unchanged.
+- **BOUNDARY.** This does not resurrect anything killed by a variance screen, a zero-self-time profile,
+  or a missing null — those remain void for their own reasons. The recovered set is exactly the
+  measurements whose ONLY defect was a null CI that failed to straddle 1.0 while its median sat
+  within 2% of it.
+- **VERIFICATION STATUS, stated rather than implied.** The `e2e_workloads_ab.rs` edit is two
+  lines reusing `host_null_median`/`franken_null_median`, both already computed two lines above
+  and both `f64`, and it is `rustfmt`-clean. A remote `cargo build` of all three examples via
+  `rch exec --base <sha> --clean-overlay --overlay-path` is IN FLIGHT and has not yet been
+  admitted (`no admissible workers: critical_pressure=2, hard_preflight=9`). The
+  `strfmon_ab`/`wordexp_ab` halves of this contract change were already compiled and executed.
+  If the build reports an error this row gets a correction, not a silent fix.
+- **RETRY PREDICATE.** If any future row reports a null MEDIAN outside 2% of 1.0, that is a
+  genuinely broken arm and the row must stay undecidable — do not widen `NULL_BIAS_TOLERANCE` to
+  admit it. If a fourth harness is added, grep for the straddle pattern before trusting its
+  verdicts, because this defect was introduced independently in two lanes.
