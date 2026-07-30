@@ -24524,3 +24524,42 @@ is no ratio in this row because no measurement ran; nothing here is a performanc
   form of the mechanism, and record that the mechanism needs a second condition — that the
   per-call interpretation not already be hoisted by the incumbent — rather than quietly
   re-aiming at another family.
+
+## 2026-07-29 (cc_fl / MagentaCondor) — INTEGRITY: 24% of ledger headings were invisible to the ledger gate; parser widened and the remainder pinned as a ratchet
+
+Found while the gate refused two rows I had just written: my headings used the slug-first
+convention, did not parse, and were silently absorbed into the PRECEDING row — which then
+carried two conflicting `result_class` values. The absorption is the tell: a heading that
+does not parse does not merely go unchecked, it corrupts its neighbour's evidence window.
+
+- **MEASURED HOLE.** 730 `## ` headings in `docs/NEGATIVE_EVIDENCE.md`; only 552 parsed as
+  rows. **178 (24%) were invisible to every check in the gate, and 86 of those carried a
+  verdict token** (REJECT/WIN/KEEP/SHIPPED/LANDED/SURFACE/MAINTENANCE). An invisible row
+  reads as adjudicated to a human and is unadjudicable by the gate, so `lint` could never
+  refuse it and `report` never counted it. This also means the §1 Ledger Resurrection audit
+  population (131 REJECT rows) was measured over a parser that could not see all of them.
+- **CAUSE, narrower than it looks.** `HEADING` required a `-`/`—` separator or an
+  `(agent)` group IMMEDIATELY after the date, so every row written as
+  `## <date> <prose> — <title>` failed to match despite starting with a date.
+- **FIX 1, parser widened.** The separator is now optional. Recovers **64 rows (24
+  verdict-bearing)** and provably changes the parsed groups of **ZERO** rows that already
+  matched — verified by diffing `OLD.match(l).groups()` against `NEW.match(l).groups()`
+  across all 730 headings. Effect on the forward contract: historical decisions refused by
+  `ledger-self-check` moved **434 -> 463**, i.e. 29 rows that could not previously be
+  adjudicated now are. `self-test` 40 -> 42 checks, both new ones asserting the widening
+  (a date heading without a separator parses; `## Method` / `## Results` still do not).
+- **FIX 2, the remainder is a RATCHET, not a rewrite.** 62 verdict-bearing headings remain
+  unparseable under two older conventions — slug-first (`## cc-iconv-euckr-simd-2026-07-11
+  — WIN (SHIPPED ...)`) and prose-first (`## memmem CERTIFIED 404x faster than glibc ...`).
+  Rewriting them would churn other agents' rows for no evidentiary gain, so the count is
+  pinned as `LEDGER_HEADING_DEBT = 62` and `ledger-self-check` now BLOCKS if it rises.
+  Verified: measured debt 62 == pinned 62, and debt+1 blocks. The debt may only shrink.
+- **WHY THIS IS THE SAME LESSON AS THE FLEET'S.** frankensearch shipped ~90 commits behind
+  ten gates that all read unmeasured. This is the ledger analogue: 86 rows that LOOKED
+  adjudicated were structurally unreadable by the thing meant to adjudicate them. Making a
+  new invisible row impossible is the institutional form of that lesson, per the standing
+  order to make a bad row impossible rather than merely discouraged.
+- **RETRY CONDITION.** If a future audit reports a REJECT population materially different
+  from a prior one over the same ledger, re-run `_heading_coverage_debt()` FIRST and compare
+  parser coverage before concluding the population itself changed; a coverage change and a
+  population change are indistinguishable in the count alone.

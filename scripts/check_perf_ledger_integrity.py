@@ -72,7 +72,24 @@ NULL_LO, NULL_HI = 0.905, 1.105
 # The ledger uses dated `##` headings with `###` evidence subsections. Subsections
 # stay attached to their parent row; splitting them loses the evidence that makes a
 # rejection admissible.
-HEADING = re.compile(r"^## (\d{4}-\d{2}-\d{2})\s*(?:\(([^)]*)\))?\s*[-—]+\s*(.*)$")
+# The separator after the date is OPTIONAL. Requiring it silently hid every row
+# written as `## <date> <prose> — <title>` from this gate: such a row parsed as no row
+# at all, so lint could never refuse it and `report` never counted it. Making the
+# separator optional recovers 64 rows (24 of them verdict-bearing) and provably does
+# not change the parsed groups of any row that already matched — see
+# `_heading_coverage_debt` and the LEDGER_HEADING_DEBT ratchet below.
+HEADING = re.compile(r"^## (\d{4}-\d{2}-\d{2})\s*(?:\(([^)]*)\))?\s*(?:[-—]+\s*)?(.*)$")
+
+# A `## ` heading that carries a verdict token but does NOT parse as a row is invisible
+# evidence: it looks adjudicated to a human reader and is unadjudicable by this gate.
+# Two older conventions produce it — slug-first (`## cc-foo-2026-07-11 — WIN (...)`) and
+# prose-first (`## memmem CERTIFIED ... — ...`). Rewriting 62 historical headings would
+# churn other agents' rows, so instead the count is pinned here and may only DECREASE.
+# Raise nothing; lower it when a heading is converted to `## <date> — <title>`.
+VERDICT_TOKEN = re.compile(
+    r"\b(REJECT|WIN|KEEP|SHIPPED|LANDED|SURFACE|MAINTENANCE)\b", re.I
+)
+LEDGER_HEADING_DEBT = 62
 
 # Word-boundary matching matters: "fast-reject" contains "REJECT" and was pulling
 # LANDED WIN rows into the reject population.
@@ -268,6 +285,27 @@ HISTORICAL_CLASSIFICATION_ONLY: dict[str, str] = {
     "cc-pcc-gate-split-2026-07-25": "self-speedup",
     "bd-bl39l2": "self-speedup",
 }
+
+
+def _heading_coverage_debt() -> tuple[int, list[tuple[int, str]]]:
+    """Count verdict-bearing `## ` headings that do NOT parse as rows.
+
+    Such a heading reads as an adjudicated result to a human but is invisible to every
+    check here, so it can never be refused. Returns the count and the offending lines.
+    """
+    try:
+        text = LEDGER.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0, []
+    offenders: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.split("\n"), 1):
+        if not line.startswith("## "):
+            continue
+        if HEADING.match(line):
+            continue
+        if VERDICT_TOKEN.search(line):
+            offenders.append((line_no, line))
+    return len(offenders), offenders
 
 
 def decision_evidence(text: str) -> str:
@@ -1318,6 +1356,20 @@ def cmd_self_test(args: argparse.Namespace) -> int:
             list(_row_line_span(row("KEEP: win", "one\nsecond"))) == [1, 2, 3],
         )
     )
+    checks.append(
+        (
+            "a date heading without a separator still parses as a row",
+            HEADING.match("## 2026-06-19 deployed calloc hunt — table RULED OUT")
+            is not None,
+        )
+    )
+    checks.append(
+        (
+            "a non-row section heading still does not parse as a row",
+            HEADING.match("## Method") is None
+            and HEADING.match("## Results") is None,
+        )
+    )
     retry = row(
         "REJECT: retry extraction",
         "Do not repeat the old shape.\n\n"
@@ -1615,6 +1667,22 @@ def cmd_ledger_self_check(args: argparse.Namespace) -> int:
             f"  real decisions refused by forward contract: {len(refused)}",
             file=sys.stderr,
         )
+        return EXIT_BLOCKED
+
+    # Heading coverage: a verdict-bearing `## ` heading that this gate cannot parse is
+    # invisible evidence — adjudicated to a reader, unadjudicable here. The debt is
+    # pinned and may only shrink, so a new invisible row fails the check immediately.
+    debt, examples = _heading_coverage_debt()
+    if debt > LEDGER_HEADING_DEBT:
+        print(
+            f"LEDGER SELF-CHECK BLOCKED: {debt} verdict-bearing headings are invisible "
+            f"to this gate, above the pinned debt of {LEDGER_HEADING_DEBT}. A row whose "
+            "heading does not parse can never be refused. Write the heading as "
+            "`## <YYYY-MM-DD> — <title>`.",
+            file=sys.stderr,
+        )
+        for line_no, text in examples[:5]:
+            print(f"  docs/NEGATIVE_EVIDENCE.md:{line_no}  {text[:96]}", file=sys.stderr)
         return EXIT_BLOCKED
 
     # Exercise the public preflight path last. A real prior row must produce the
