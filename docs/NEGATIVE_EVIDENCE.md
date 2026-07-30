@@ -24402,3 +24402,66 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   hardware-agnostic public claim. If a reopened profile is dominated by a libc leaf, resolve its
   sampled addresses with inlined `addr2line` frames to specific callers before proposing a lever;
   do not stop at the leaf-family label.
+## 2026-07-28 (cc_fl / MagentaCondor) — CAMPAIGN WIN: name-bearing `strptime` is 5.6-6.4x faster than host glibc
+
+First measurement of `strptime` under the campaign harness contract, and the first ever on
+NAME-bearing formats. The 2026-07-12 bench measured only `%a %b %d %Y`, and recorded it as a
+control rather than as a result, so the size of this surface was never claimed or checked.
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.155529`;
+  `incumbent_bootstrap_median_ci=[0.148876,0.164524]`;
+  `null_bootstrap_median_ci=[0.972460,1.057913]`;
+  `bench_elf_sha256=fa1aabae60540a2971fd2e94c4dc22d92126b071a7a790c41d1f2f52c9a40878`.
+  `cv_used=false` (CV printed as telemetry only). Headline case `month_name` (`%b %d %Y`):
+  same-invocation A/A null control median 1.006831, bootstrap median CI [0.972460, 1.057913];
+  FL/glibc effect median 0.155529, bootstrap median CI [0.148876, 0.164524]; null half-width
+  0.057913, effect deviation 0.844471 = 7.3x the mandatory 2x rule.
+  **FrankenLibC 6.43x faster than host glibc**; fl 219.033 ns vs glibc 1362.316 ns.
+- **THE OTHER TWO WINS, both production-shaped.** `syslog_ts` (`%b %e %H:%M:%S`, RFC 3164)
+  ratio 0.177270, CI [0.168544,0.178055], null CI [0.962882,1.031655] — **5.64x faster**,
+  fl 237.681 vs glibc 1397.897 ns. `http_date` (`%a, %d %b %Y %H:%M:%S GMT`, RFC 7231)
+  ratio 0.178716, CI [0.169267,0.194061], null CI [0.932375,1.052263] — **5.60x faster**,
+  fl 334.459 vs glibc 1821.870 ns. These are the two most-executed strptime formats in
+  production code (syslog ingest and HTTP `Date:` header parsing).
+- **THE MIXED-FORMAT ANSWER.** `http_date` was the genuinely unknown case: it carries name
+  fields (which we win) AND numeric fields (which we lose). The name-lookup advantage
+  dominates decisively — a format holding four numeric fields still lands at 0.179x. glibc's
+  per-name locale walk costs more than its numeric dispatch saves.
+- **THE LOSSES, recorded in full.** Numeric-only formats still lose, consistent with
+  `cc-strptime-numeric-2026-07-12`: `%Y-%m-%d %H:%M:%S` 1.270176x, `%H:%M:%S` 1.763596x,
+  `%Y-%m-%d` 2.534185x. All three clear their nulls; these are real losses, not noise.
+- **HARNESS.** `crates/frankenlibc-bench/examples/strptime_ab.rs`, executing
+  BENCH_ELF_SHA256 `fa1aabae60540a2971fd2e94c4dc22d92126b071a7a790c41d1f2f52c9a40878`
+  (21548808 bytes), worker `vmi1153651`. SAMPLES=37 WARMUP=4 REPS=150000
+  BOOTSTRAP_RESAMPLES=4096; source-identical FL/FL null pair and FL/glibc effect pair in the
+  same invocation, pair order alternating by sample; `setlocale(LC_ALL,"C")` on the incumbent
+  namespace. Byte-identity proven BEFORE timing: returned end-pointer offset and every parsed
+  `tm` field compared against the dlmopen'd host for all 8 cases — `verify: OK`.
+  CV printed as telemetry only and never gated.
+
+## 2026-07-28 (cc_fl / MagentaCondor) — SURFACE: parse-side `%T`/`%F`/`%R` miss their own exact leaf; fix applied, perf re-measure PENDING
+
+The parse-side twin of the emit-side alias defect corrected in `85535c77d`.
+`parse_exact_numeric_strptime` matches on whole-format byte equality, and the C-standard
+aliases were absent from the table, so `%T` fell to the general per-directive dispatch loop.
+- **CLASSIFICATION.** The DEFECT below is measured; the EFFECT of the fix is NOT yet measured,
+  so this row claims no speedup of any kind. When re-measured it can at best narrow a loss
+  toward the expansions' ratios (1.763596x for `%T`, 2.534185x for `%F`) — it cannot cross 1.0,
+  so it will be a self-speedup and never a competitive claim.
+- **THE DEFECT, measured.** Parsing `%T` cost **143.143 ns** while parsing its own ISO C
+  expansion `%H:%M:%S` cost **65.910 ns** — a **2.17x penalty for spelling the identical
+  format shorter**. `%F` 213.053 ns vs `%Y-%m-%d` 124.540 ns = 1.71x. glibc pays a smaller
+  alias tax on the same pair (61.378 vs 36.559 ns = 1.68x), so this was ours, not inherent.
+- **THE FIX.** `strptime_alias_expansion` maps `%T`->`%H:%M:%S`, `%F`->`%Y-%m-%d`,
+  `%R`->`%H:%M` before leaf selection only; a non-canonical input still falls through to the
+  general parser holding the caller's ORIGINAL format. `%D` is deliberately excluded: POSIX
+  defines it as `%m/%d/%y` with a two-digit year, which is not the `%m/%d/%Y` leaf.
+- **BEHAVIOR GATE.** `conformance_diff_time diff_strptime_cases` 1 passed / 0 failed against
+  live glibc, with four added non-canonical cases pinning the fallthrough: `%T`+`8:15:30`,
+  `%T`+`12:60:00` (the numeric-backoff boundary named in `cod-strptime-exact-numeric-dispatch`),
+  `%F`+`2024-1-5`, `%R`+`8:15`.
+- **RETRY PREDICATE.** Re-open if a post-fix `strptime_ab` run does not move `alias_T` below
+  1.9x and `alias_F` below 2.7x vs host glibc; that would mean the aliases are missing the leaf
+  for a second, unfound reason rather than for the table-absence one.
