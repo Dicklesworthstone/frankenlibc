@@ -24771,3 +24771,77 @@ second time and identifies the missing third condition.
   SELF-speedup attacking per-word allocation in the word-vector growth path, justified by the
   `many_fields` 3.650892 vs `param_default` 2.275282 gradient. Do NOT re-open it as a
   generality-tax claim: condition (c) fails and glibc is simply better here.
+
+## 2026-07-30 (cod_fl / SnowyBass) — LOSS: fixed-work threaded ISO-8601 → RFC3164 transform falls from 1.04x to 4.33x glibc; sweep stops fail-closed at 96 workers
+
+This is the first fixed-work, same-ELF thread-scaling comparison of FrankenLibC strict mode
+against the live host-glibc incumbent for the realistic log-transform workload. It is an
+evidence-only closeout: no production optimization was attempted because the run names a
+scaling loss but does not yet contain a profile naming a removable dominant frame.
+
+- **RESULT.** Six rows are admissible `LOSS_VS_GLIBC` results. The 32-worker point estimate is
+  excluded because its host/host null CI does not straddle 1.0. The run then stopped
+  fail-closed during retained round 2 at 96 requested workers because the external
+  `/proc/<pid>/task` sampler observed only 96 total tasks rather than the required main thread
+  plus 96 workers. There was no retry; 96 has no result and 128 was not run.
+
+  | requested/actual workers | host ms | Franken ms | Franken/host median | effect CI95 | host/host CI95 | Franken/Franken CI95 | effect CV | verdict |
+  |---:|---:|---:|---:|---|---|---|---:|---|
+  | 1/1 | 102.244962 | 106.310541 | **1.044899** | [1.036723, 1.050094] | [0.996326, 1.013228] | [0.999632, 1.006291] | 1.423% | `LOSS_VS_GLIBC` |
+  | 2/2 | 88.670137 | 105.982286 | **1.199329** | [1.186637, 1.208330] | [0.998510, 1.005392] | [0.993449, 1.005836] | 1.975% | `LOSS_VS_GLIBC` |
+  | 4/4 | 86.753500 | 104.677244 | **1.205753** | [1.196248, 1.221243] | [0.998787, 1.010298] | [0.989265, 1.005150] | 2.217% | `LOSS_VS_GLIBC` |
+  | 8/8 | 80.917769 | 101.809908 | **1.261528** | [1.250014, 1.274965] | [0.987616, 1.004148] | [0.985099, 1.004541] | 1.946% | `LOSS_VS_GLIBC` |
+  | 16/16 | 77.953170 | 160.162946 | **2.041673** | [2.003541, 2.072363] | [0.985641, 1.000196] | [0.979369, 1.025197] | 5.740% | `LOSS_VS_GLIBC` |
+  | 32/32 | 76.781668 | 247.065917 | 3.234845 | [3.147293, 3.292950] | **[1.000969, 1.006875]** | [0.997061, 1.069166] | 4.752% | `BLOCKED_NULL` |
+  | 64/64 | 76.948750 | 334.031844 | **4.329387** | [4.301603, 4.347645] | [0.993929, 1.004003] | [0.994721, 1.004780] | 1.385% | `LOSS_VS_GLIBC` |
+  | 96/no row | — | — | — | — | — | — | — | external task witness stopped run |
+  | 128/not run | — | — | — | — | — | — | — | upstream terminal stop |
+
+- **GATING.** Every admissible row has independent host/host and Franken/Franken A/A in the
+  same invocation, both bootstrap-median CIs straddling 1.0, and an effect CI clearing twice
+  the widest null half-width. The 32-worker effect also clears the width margin, but that does
+  not rescue a failed null arm. CV is telemetry only and never selected a verdict.
+- **SAME WORK, PROVED TWICE.** Every completed row transforms exactly 160,000 records and
+  17,992,932 input bytes into the same 17,192,932 output bytes
+  (`output_sha256=62f2d41452c96312e053dd2fe7da2d32714d1e8b181227dd35c61ac02551d083`).
+  Each arm reports 160,000 worker iterations, 160,000 `strptime` calls, 160,000 `strftime`
+  calls, one output write, exact partition-byte conservation, and all requested workers
+  started/joined/work-bearing/peak-active. Independently, the controller collected 99 task
+  observations per runtime per completed row, with observed worker min=max=requested. Thus the
+  widening loss is not iteration-, record-, byte-, or call-count-shaped; the named
+  high-level work is identical. It still needs a profile before attribution to a lower-level
+  frame.
+- **INCUMBENT AND ARTIFACT IDENTITY.** Both runtimes execute workload ELF
+  `5508e3d0563be459ff129208ee7f596718fe350313357780e3148b39b7aae9d0`
+  (39,136 bytes), compiled once from source
+  `c8959ef17c92919f5af73829309483443af9c94c3c50ef0c7023b4eb16a8bc45`
+  with Ubuntu `cc 15.2.0`. The incumbent is live host glibc 2.42,
+  `/lib/x86_64-linux-gnu/libc.so.6`,
+  `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+  The challenger is strict-mode
+  `libfrankenlibc_abi.so`,
+  `sha256=84a5b1f84bc3fce22d6ccd1ac2135defe47dc1d7129a08218fb4d24d3fd5dc25`.
+  The controller is
+  `sha256=00fec4c78d8d6d543163605e7c4ca55bbc1fb20078e2613a26eea240480140bb`.
+  Both Rust artifacts were built by RCH worker `hz2` from clean base
+  `b45aefe6d347b8d319054a690bb804fc35edafce` plus only
+  `e2e_workloads_ab.rs` and `e2e_workloads.c`.
+- **HOST PROVENANCE.** Exclusive host `threadripperje`: AMD Ryzen Threadripper PRO 5995WX,
+  64 physical cores / 128 logical threads, 536,069,869,568 RAM bytes, one NUMA node, allowed
+  CPUs 0-127, `amd-pstate-epp`, governor=`performance`, EPP=`performance`, and runtime
+  ISA positives `sse4.2,avx,avx2,fma,bmi1,bmi2`. Startup and every completed row passed
+  five-consecutive-sample pre/post host-wide quiescence guards.
+- **RAW EVIDENCE.** Remote log
+  `/data/tmp/frankenlibc-thread-scaling-bd-4u31vg-00fec4c7-84a5b1f8/full-run.log`;
+  retrieved copy
+  `/data/tmp/frankenlibc-trj-artifacts-bd-4u31vg/full-run-20260729.log`,
+  `sha256=9417ef3454da902b82717bb5549633629ac75567734a4748ec128639a27a6665`.
+- **RETRY PREDICATE.** Do not rerun the six admissible rows merely to rediscover the loss.
+  Re-open 32 only in a newly booked same-invocation sweep whose independent host/host CI
+  straddles 1.0. Re-open 96/128 only after the harness has an untimed, signalable
+  controller-to-workload start gate: all workers must remain alive until the controller
+  witnesses `requested + 1` tasks, and timed work must begin only after that acknowledgement.
+  A fixed sleep inside the measured interval and weakening the task witness are both invalid.
+  Before changing production code, capture a same-host profile at an already-admissible width
+  that names a removable dominant FrankenLibC frame; the scaling shape alone is not an
+  optimization diagnosis.
