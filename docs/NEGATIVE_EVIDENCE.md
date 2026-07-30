@@ -24500,14 +24500,26 @@ is no ratio in this row because no measurement ran; nothing here is a performanc
   Conformance precedes timing: identical return value AND identical output bytes for 7 cases
   plus truncation caps 1..=24, and a mismatch aborts rather than reporting, since a faster
   formatter that disagrees on grouping, sign placement or truncation is a bug and not a win.
-- **WHY THERE IS NO NUMBER.** Four `rch` submissions were refused over ~1.5 h with
+- **WHY THERE IS NO NUMBER.** Six `rch` submissions were refused over ~2.5 h with
   `remote required; refusing local fallback (no admissible workers:
-  critical_pressure=1, insufficient_slots=1, hard_preflight=9, active_project_exclusion=1)`.
-  Pool posture `degraded`: worker `hz2` at 0.0 GB free, `vmi1293453` at 4.0 GB, 9 of 12
-  failing hard preflight. Local builds are prohibited by standing order, so the correct
-  outcome was to not fabricate a number. The strict-remote gate behaved exactly as designed.
-- **RETRY CONDITION.** Re-run the harness unchanged as soon as `rch status` reports posture
-  `remote-ready` with no worker in `disk_free_below_critical_gb`. Ledger whatever it returns,
+  critical_pressure=1, insufficient_slots=1, hard_preflight=9)`. Local builds are prohibited
+  by standing order, so the correct outcome was to not fabricate a number. The strict-remote
+  gate behaved exactly as designed.
+- **THE BINDING CONSTRAINT IS TOOLCHAIN SKEW, NOT DISK.** Disk was the first hypothesis and
+  it is WRONG: `vmi1293453` came out of `disk_free_below_critical_gb` (4.0 -> healthy) and
+  `hz2` improved 0.0 -> 6.3 GB, yet `hard_preflight=9` did not move by even one worker across
+  all six attempts. `rch workers capabilities --refresh` shows the term that does span the
+  pool: **local `rustc 1.97.0-nightly (52b6e2c20 2026-04-27)` versus `1.99.0-nightly` on all
+  11 healthy workers**, plus `ovh-b` missing a Rust runtime entirely. This repo pins
+  `nightly-2026-04-28` in `rust-toolchain.toml` and that toolchain IS installed and active
+  locally, so the skew is on the worker side. Attribution caveat: the count does not line up
+  exactly (11 mismatched workers vs a constant `hard_preflight=9`), so the mismatch is the
+  well-supported cause and not a proven one. Shrinking the slot ask is what previously bought
+  admission — the one submission admitted today was `-j 1` — but `-j 4` was refused, so slot
+  size alone no longer clears it.
+- **RETRY CONDITION.** Re-run the harness unchanged once `rch status` reports posture
+  `remote-ready` AND `rch workers capabilities` shows no Rust-version mismatch against the
+  local pinned toolchain. Ledger whatever it returns,
   win or loss. Treat ratio >= 1.0 with both nulls holding as REFUTING the configurability
   form of the mechanism, and record that the mechanism needs a second condition — that the
   per-call interpretation not already be hoisted by the incumbent — rather than quietly
