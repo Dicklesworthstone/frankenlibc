@@ -24629,3 +24629,55 @@ refutation condition was written down BEFORE the measurement.
   overhead — justified by `two_values` 2.119660 vs `width_16` 3.868436 — and only if a profile
   names a non-zero frame outside the digit conversion itself. Do NOT re-open it as a
   generality-tax claim: that hypothesis is closed by the `%^n` control.
+
+## 2026-07-30 (cc_fl / MagentaCondor) — ISA RE-TEST TRIAGE: the fleet SSE2 pin most likely never reached this repo; 5 floor rows HOLD pending a blocked confirmation
+
+Fleet directive: the single non-AVX2 worker (`ovh-b`, Intel Xeon E3-1245 V2, Ivy Bridge 2012)
+was pinning fleet benchmark binaries to an SSE2 baseline; it is now tagged `no-avx2` and
+excluded from the rust pool. Every ISA-bound row is therefore re-testable rather than closed.
+This row triages which of ours actually qualify, and reaches a NEGATIVE answer with a
+mechanism rather than churning five rows on a premise that may not apply here.
+
+- **THE FIVE CANDIDATE ROWS** whose verdict rests on being at the SIMD floor, i.e. whose
+  conclusion is only meaningful if fl was compiled WITH AVX2:
+  `2026-06-25 str/mem/wide SCAN+COMPARE family at the portable_simd floor — REJECT` (L8218);
+  `2026-07-03 strcasecmp/strncasecmp same class as memcmp (floor + asm-bound)` (L16322);
+  `2026-07-04 top scanners at the portable-SIMD-vs-asm ceiling` (L16492);
+  `2026-07-04 wcsrchr 128B combined-mask tier ~0-gain (wide-SIMD ceiling)` (L16545);
+  `2026-07-11 fresh glibc-2.42 in-process STRING survey — every above-floor loss is the
+  maxed-SIMD/safe-Rust floor` (L18760, 15 ranked ratios: strcmp 3.25x, strspn 2.6-1.5x,
+  strrchr 2.47x, memrchr 2.45x, wcschr 2.33x, ... memcmp 1.30x, wcsstr 1.24x).
+- **WHY A SILENT SSE2 DOWNGRADE CANNOT HAPPEN HERE — the mechanism, not an appeal to age.**
+  `.cargo/config.toml` sets `[build] rustflags = ["-Ctarget-feature=+avx2,+fma"]`
+  UNCONDITIONALLY. A forced `+avx2` does not degrade gracefully on a non-AVX2 build host: it
+  emits AVX2 regardless, and such a binary SIGILLs when executed on Ivy Bridge rather than
+  silently running an SSE2 path. Silent downgrade needs one of two things, and this repo has
+  neither: (1) `-Ctarget-cpu=native`, which the fleet directive states NO repo sets; or (2) an
+  env `RUSTFLAGS` override, which beats `[build] rustflags` in precedence.
+- **(2) WAS DIRECTLY CHECKED AT THE ARTIFACT.** `2026-07-10 REJECT (codegen-verified, no room)`
+  (L3155) built the shipped cdylib on rch (worker `vmi1149989`), retrieved
+  `libfrankenlibc_abi.so`
+  (sha256 `d9b20fe250b7ae30e8eb6dc1b97743c77a24c837e66f76fff3d93b2caabf8483`) and disassembled
+  it: **22,216 `%ymm` uses, 4,605 AVX2-only mnemonics** (`vpcmpeqb`/`vpmovmskb`/`vperm2i128`),
+  424 FMA, and it recorded explicitly that there was **no remote `RUSTFLAGS` override, unlike
+  frankenscipy**. That is artifact-level evidence that rch's remote build honours our `+avx2`.
+  frankenscipy — which DID get 1.745x from a build fix — is the repo that lacked the pin.
+- **VERDICT: the five rows HOLD.** Their premise is confirmed by disassembly, so re-measuring
+  them would re-derive a floor the L18760 row explicitly says not to re-derive. Re-running them
+  on an unchanged premise would burn a saturated pool and produce five rows of motion.
+- **CONFIDENCE AND WHAT WOULD CHANGE IT.** The disassembly is 19 days old, so this is
+  strongly-evidenced rather than proven-today. To make it self-checking rather than
+  argued, `strfmon_ab.rs` now emits `ISA_PROVENANCE built_avx2=/built_fma=/built_sse42=`
+  from `cfg!(target_feature = ...)` — a COMPILE-TIME fact about the executing artifact, the
+  only thing that reveals a RUSTFLAGS override from the binary itself — alongside
+  `cpu_avx2=/cpu_avx512f=` from `is_x86_feature_detected!` for the executing host. Every
+  future perf row in this repo carries its own ISA provenance.
+- **CONFIRMATION IS BLOCKED, and cannot be routed around locally.** The probe needs a REMOTE
+  build, because the question is what the WORKER's build receives; a local build would show
+  `built_avx2=true` from our own `config.toml` and prove nothing about rch. rch refused with
+  `no admissible workers: critical_pressure=1, insufficient_slots=1, hard_preflight=9`.
+- **RETRY PREDICATE.** On the next admitted remote build, read `ISA_PROVENANCE`. If
+  `built_avx2=false`, this triage is WRONG: reopen all five rows, re-measure every ratio in the
+  L18760 table, and treat its floor attribution as void, because a half-width fl kernel against
+  glibc's AVX2 ifunc is not a floor, it is a build defect. If `built_avx2=true`, mark this
+  triage confirmed and leave the five rows closed.

@@ -418,6 +418,22 @@ fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
     println!("HOST_IDENTITY {}", host_identity());
 
+    // ISA provenance. `cfg!` is a COMPILE-TIME fact about this binary, so it reports what the
+    // build actually received — an env `RUSTFLAGS` from the build orchestrator overrides
+    // `.cargo/config.toml`'s `[build] rustflags` silently, and this is the only way to see
+    // that from the artifact. `is_x86_feature_detected!` is the EXECUTING cpu. A row whose
+    // conclusion is "we are at the SIMD floor" is only meaningful if built_avx2=true.
+    println!(
+        "ISA_PROVENANCE built_avx2={} built_fma={} built_sse42={} \
+         cpu_avx2={} cpu_avx512f={} cpu_sse42={}",
+        cfg!(target_feature = "avx2"),
+        cfg!(target_feature = "fma"),
+        cfg!(target_feature = "sse4.2"),
+        std::arch::is_x86_feature_detected!("avx2"),
+        std::arch::is_x86_feature_detected!("avx512f"),
+        std::arch::is_x86_feature_detected!("sse4.2"),
+    );
+
     let handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
