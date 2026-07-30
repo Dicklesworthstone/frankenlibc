@@ -24593,6 +24593,16 @@ refutation condition was written down BEFORE the measurement.
   (glibc/glibc, so the incumbent arm carries its own null); FL/glibc effect median 2.658383,
   bootstrap median CI [2.643917, 2.701185]; null half-width 0.023708, effect deviation
   1.658383 = 70x the mandatory 2x rule. Both nulls straddle 1.0, so the ratio is decidable.
+- **REPLICATED ON A SECOND HOST AND A SECOND PROFILE (2026-07-30).** Re-run under the corrected
+  decidability rule (see the `wordexp` row) on `thinkstation1`, profile `release-perf`,
+  `taskset`-pinned: `two_values` 1.803079, `no_grouping` 2.063007, `national` 2.091950,
+  `paren_negative` 2.380865, `precision_2` 3.038303, `width_16` 3.246481, all 7 decidable and
+  all 7 FL_SLOWER, `verify: OK`. Absolute ratios run lower than the `hz2`/`release` figures
+  above, but BOTH load-bearing inferences reproduce exactly: (1) `no_grouping`
+  [2.034626,2.090460] and `national` [2.074032,2.105002] OVERLAP, so suppressing grouping still
+  does not move glibc and the hoisting conclusion holds on a second host; (2) `two_values`
+  remains the LOWEST ratio and `width_16` the highest, so the fixed-per-call-overhead
+  characterization holds too. The verdict is unchanged by the gate correction.
 - **WHY IT IS REFUTED, from INSIDE the data.** `%^n` suppresses grouping entirely and lands at
   **2.650343** against `%n`'s **2.658383** — indistinguishable. If glibc were paying per call
   for its grouping vector and monetary locale indirection, removing that work would move its
@@ -24719,12 +24729,47 @@ second time and identifies the missing third condition.
   (glibc/glibc, incumbent carries its own null); FL/glibc effect median 3.650892, bootstrap
   median CI [3.646401, 3.664446]; null half-width 0.004840, effect deviation 2.650892 = 547x
   the mandatory 2x rule. Both nulls straddle 1.0, so the ratio is decidable.
-- **THREE CASES ARE NOT REPORTED, BY MY OWN GATE.** `plain_split` (2.947767), `quoted_mix`
-  (3.967911) and `param_simple` (2.789310) all returned `nulls_hold=false` — the host was at
-  `loadavg 24.33` and their glibc-side A/A null did not straddle 1.0. Their point estimates sit
-  inside the same 2.3-4.0x band as the decidable four, so the DIRECTION is not in doubt, but
-  they are excluded rather than quoted. This is the second null earning its place: a
-  single-null harness would have reported all seven without noticing.
+- **REPLICATED ON A SECOND RUN, AND THE REPLICATION EXPOSED A DEFECT IN MY OWN GATE.** Re-ran
+  the same ELF pinned to a separately-sampled idlest core (25) at `loadavg 17.36`. Every ratio
+  reproduced within 2.5%: `plain_split` 2.947767->2.930311, `quoted_mix` 3.967911->3.951984,
+  `param_simple` 2.789310->2.833764, `param_braced` 3.332632->3.416667, `param_default`
+  2.275282->2.323656, `escapes` 3.002840->2.963092, `many_fields` 3.650892->3.643581. But
+  WHICH cases passed `nulls_hold` changed almost at random between runs (run 1 passed
+  param_braced/param_default/escapes/many_fields; run 2 passed
+  quoted_mix/param_braced/escapes). Reproducible effects with a randomly-moving gate verdict
+  means the GATE is wrong, not the data.
+- **THE GATE DEFECT, quantified.** My `nulls_hold` clause required the A/A bootstrap CI to
+  straddle 1.0 exactly. In every "violation" the null CI misses 1.0 by **0.04% to 0.5%** while
+  the effect sits **130% to 265%** away from it: `plain_split` null_fl_fl [1.000400,1.005380]
+  (low end 0.04% high), `many_fields` null_fl_fl [0.990393,0.998880] (high end 0.11% low),
+  `param_default` null_glibc_glibc [0.977533,0.994789] (0.5% low), `param_simple`
+  null_glibc_glibc [0.982182,0.998423] (0.16% low). The clause is PERVERSE: as the null gets
+  TIGHTER — a better measurement — it becomes MORE likely to exclude 1.0 and veto the row. It
+  was detecting a sub-1% systematic arm-order asymmetry, which is real but irrelevant against a
+  2.3-4.0x effect. Every case clears the 2x-null-half-width rule by 50-500x.
+- **CORRECTED DECIDABILITY RULE (not a loosening — a fix to a mis-implementation).** A ratio is
+  decidable when (i) the effect's bootstrap CI excludes 1.0, (ii) the effect's deviation from
+  1.0 exceeds 2x the LARGER null half-width, and (iii) each null MEDIAN is within 2% of 1.0,
+  which bounds arm-order bias without coupling the verdict to the null's precision. Clause
+  (iii) replaces "the null CI must straddle 1.0". Under the corrected rule **all 7 cases are
+  decidable and all 7 are FL_SLOWER.** All runs are retained as independent replication rather
+  than any being discarded.
+- **TRIPLE-REPLICATED (run 3 = the corrected rule, executing, on core 25).** Every case is now
+  decidable and every case loses, with the ratio stable to within 4.2% across three runs:
+
+  | case | run 1 | run 2 | run 3 | spread |
+  |---|---:|---:|---:|---:|
+  | `param_default` | 2.275282 | 2.323656 | 2.290981 | 2.1% |
+  | `param_simple` | 2.789310 | 2.833764 | 2.819354 | 1.6% |
+  | `plain_split` | 2.947767 | 2.930311 | 2.952753 | 0.8% |
+  | `escapes` | 3.002840 | 2.963092 | 2.970757 | 1.3% |
+  | `param_braced` | 3.332632 | 3.416667 | 3.337460 | 2.5% |
+  | `many_fields` | 3.650892 | 3.643581 | 3.497505 | 4.2% |
+  | `quoted_mix` | 3.967911 | 3.951984 | 4.020980 | 1.7% |
+
+  Three independent runs on two different cores at different host loads, one ELF per rule
+  version, agreeing to within 4.2%. The verdict — `wordexp` loses 2.28-4.02x to host glibc —
+  does not depend on the gate change; the gate change only stopped it discarding valid rows.
 - **WHAT THIS REFUTES — the mechanism needs a THIRD condition.** After strfmon the predicate
   was: a specialization wins where the incumbent's per-call interpretation is (a) present and
   (b) not already hoisted. `wordexp` satisfies (a) and (b) about as perfectly as any libc call
@@ -24765,9 +24810,10 @@ second time and identifies the missing third condition.
   built_fma=true built_sse42=true cpu_avx2=true cpu_sse42=true`. `INCUMBENT_OBJECT
   /lib/x86_64-linux-gnu/libc.so.6`, `FL_OBJECT` the executable, asserted distinct.
   SAMPLES=37 WARMUP=4 REPS=20000 BOOTSTRAP_RESAMPLES=4096. CV telemetry only.
-- **RETRY PREDICATE.** Re-run on a host under `loadavg 4` to recover the three null-violated
-  cases; that changes their reportability, NOT the verdict, since the decidable four already
-  span 2.28-3.65x with CIs three orders of magnitude clear of 1.0. Re-open `wordexp` only as a
+- **RETRY PREDICATE.** The original predicate here said "re-run under `loadavg 4`". That was
+  WRONG twice over and is superseded: `loadavg 4` is meaningless on a 64-core host (load must be
+  read per core), and load was not the cause at all — the gate's straddle clause was. Both runs
+  are now reported. The standing predicate is instead: re-open `wordexp` only as a
   SELF-speedup attacking per-word allocation in the word-vector growth path, justified by the
   `many_fields` 3.650892 vs `param_default` 2.275282 gradient. Do NOT re-open it as a
   generality-tax claim: condition (c) fails and glibc is simply better here.
