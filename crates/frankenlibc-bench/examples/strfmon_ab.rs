@@ -46,6 +46,22 @@ const BOOTSTRAP_RESAMPLES: usize = 4096;
 const BUF: usize = 256;
 
 type StrfmonFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> isize;
+
+// The FL arm goes through an extern declaration rather than a direct path call, because
+// `unistd_abi::strfmon` is a Rust-DEFINED C-variadic function and Rust cannot call one of
+// those by name. In an `abi-bench` binary this declaration binds to our own `no_mangle`
+// export (active because we build `--profile release`, so `not(debug_assertions)` holds),
+// which is the same mechanism `frankenlibc-abi/examples/sscanf_bench.rs` relies on.
+//
+// That mechanism is normally the abi-bench interposition HAZARD — an `extern "C"` symbol
+// silently resolving to our export when the incumbent was wanted. Here it is deliberate
+// for the FL arm only, and `main` proves the binding both ways with `dladdr`: the FL
+// symbol must resolve inside this executable, and the incumbent must resolve inside
+// libc.so.6 in a separate link-map namespace. If either check fails the run aborts rather
+// than reporting a ratio, because fl-vs-fl and glibc-vs-glibc both look like clean data.
+unsafe extern "C" {
+    fn strfmon(s: *mut c_char, maxsize: usize, format: *const c_char, ...) -> isize;
+}
 type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
 
 struct Case {
@@ -167,7 +183,7 @@ fn run_fl(buf: *mut c_char, fmt: *const c_char, value: f64) -> isize {
     let mut acc = 0isize;
     for _ in 0..REPS {
         let n = black_box(unsafe {
-            frankenlibc_abi::unistd_abi::strfmon(
+            strfmon(
                 black_box(buf),
                 black_box(BUF),
                 black_box(fmt),
@@ -204,8 +220,7 @@ fn verify(host: StrfmonFn, case: &Case) {
     let mut host_buf = [0i8; BUF];
     let fmt = case.format.as_ptr().cast::<c_char>();
 
-    let fl_n =
-        unsafe { frankenlibc_abi::unistd_abi::strfmon(fl_buf.as_mut_ptr(), BUF, fmt, case.value) };
+    let fl_n = unsafe { strfmon(fl_buf.as_mut_ptr(), BUF, fmt, case.value) };
     let host_n = unsafe { host(host_buf.as_mut_ptr(), BUF, fmt, case.value) };
 
     assert_eq!(
@@ -234,9 +249,7 @@ fn verify_truncation(host: StrfmonFn) {
     for cap in 1..=24usize {
         let mut fl_buf = [0i8; BUF];
         let mut host_buf = [0i8; BUF];
-        let fl_n = unsafe {
-            frankenlibc_abi::unistd_abi::strfmon(fl_buf.as_mut_ptr(), cap, fmt, 1_234_567.891f64)
-        };
+        let fl_n = unsafe { strfmon(fl_buf.as_mut_ptr(), cap, fmt, 1_234_567.891f64) };
         let host_n = unsafe { host(host_buf.as_mut_ptr(), cap, fmt, 1_234_567.891f64) };
         assert_eq!(
             fl_n, host_n,
@@ -442,6 +455,39 @@ fn main() {
         "unresolved".into()
     };
     println!("INCUMBENT_OBJECT {host_label}");
+
+    // Prove the FL arm is NOT the incumbent. `strfmon` here is the extern declaration,
+    // which must have bound to our own export inside this executable. If it instead
+    // resolved into libc.so.6 we would be timing glibc against glibc and every ratio
+    // would sit at ~1.0 while looking perfectly well-behaved, so this aborts.
+    // Coerce the variadic fn ITEM to a fn POINTER first: a fn item is not castable to a
+    // data pointer directly, only a fn pointer is.
+    let fl_fn: StrfmonFn = strfmon;
+    let mut fl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    let fl_label = if unsafe { libc::dladdr(fl_fn as *const c_void, &mut fl_info) } != 0
+        && !fl_info.dli_fname.is_null()
+    {
+        unsafe { std::ffi::CStr::from_ptr(fl_info.dli_fname) }
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        "unresolved".into()
+    };
+    println!("FL_OBJECT {fl_label}");
+    assert!(
+        !fl_label.contains("libc.so"),
+        "FL arm bound into {fl_label}: the extern declaration resolved to the host libc, \
+         so this would measure glibc against glibc"
+    );
+    assert!(
+        host_label.contains("libc.so"),
+        "incumbent arm resolved to {host_label}, not a host libc object: this would \
+         measure fl against fl"
+    );
+    assert_ne!(
+        fl_label, host_label,
+        "both arms resolved to the same object {fl_label}"
+    );
 
     for case in CASES {
         verify(host, case);
