@@ -24465,3 +24465,50 @@ aliases were absent from the table, so `%T` fell to the general per-directive di
 - **RETRY PREDICATE.** Re-open if a post-fix `strptime_ab` run does not move `alias_T` below
   1.9x and `alias_F` below 2.7x vs host glibc; that would mean the aliases are missing the leaf
   for a second, unfound reason rather than for the table-absence one.
+
+## 2026-07-29 (cc_fl / MagentaCondor) — BLOCKED: `strfmon` mechanism test built and gated, UNMEASURED (no admissible rch worker)
+
+Names the mechanism behind the four banked time/locale incumbent wins, states the
+prediction it makes about a DIFFERENT family, and carries the harness that tests it. There
+is no ratio in this row because no measurement ran; nothing here is a performance claim.
+
+- **THE MECHANISM, in one sentence.** glibc re-interprets a caller-supplied SPECIFICATION —
+  a format string, a locale, a charset — element-by-element through a generic table-driven
+  engine on EVERY call, while a specialized path can match the whole specification once
+  against a closed set of canonical shapes and run straight-line code; the tax is
+  proportional to how much per-call interpretation the API forces glibc to redo.
+- **WHY THE FOUR WINS FIT IT.** strftime `%A` 1.85x, wcsftime `%FT%T` 8.99x, strftime
+  `%H:%M:%S` 1.75x and name-bearing strptime 5.6-6.4x are all cases where glibc walked a
+  format and/or a locale name table per call and we matched the whole format to one leaf.
+  The strptime numbers isolate it cleanly: glibc spent 1362-1822 ns on NAME-bearing formats
+  versus 37-83 ns on numeric-only ones, so the cost tracks locale-table indirection, not
+  digit conversion.
+- **THE PREDICTION (falsifiable, different family).** `strfmon` is the most per-call
+  configurable formatter in libc: each call interprets a format string AND performs full
+  locale monetary indirection — currency symbol, decimal point, thousands separator, the
+  grouping vector, sign position, local-vs-international — before formatting a digit. If the
+  mechanism generalizes on configurability alone, the win here should be large. If glibc
+  hoists or cheaply caches its monetary locale lookup, the ratio sits at or above 1.0 and the
+  mechanism does NOT generalize on configurability alone — a real limit, not a null.
+- **HARNESS, in the same shape as the winning ones, and strengthened.**
+  `crates/frankenlibc-bench/examples/strfmon_ab.rs`: in-process ELF SHA-256 self-report;
+  incumbent via `dlmopen(LM_ID_NEWLM)` with `dladdr` printing the object that actually served
+  the symbol; BOTH namespaces pinned to `LC_ALL=C` (matched configuration); TWO nulls per case
+  — source-identical FL/FL and glibc/glibc — so a ratio is decisive only when both straddle
+  1.0; effect must clear 2x the LARGER null half-width and exclude 1.0; host identity, cpu
+  count, loadavg and thread count on every row; CV telemetry only, never a gate.
+  Conformance precedes timing: identical return value AND identical output bytes for 7 cases
+  plus truncation caps 1..=24, and a mismatch aborts rather than reporting, since a faster
+  formatter that disagrees on grouping, sign placement or truncation is a bug and not a win.
+- **WHY THERE IS NO NUMBER.** Four `rch` submissions were refused over ~1.5 h with
+  `remote required; refusing local fallback (no admissible workers:
+  critical_pressure=1, insufficient_slots=1, hard_preflight=9, active_project_exclusion=1)`.
+  Pool posture `degraded`: worker `hz2` at 0.0 GB free, `vmi1293453` at 4.0 GB, 9 of 12
+  failing hard preflight. Local builds are prohibited by standing order, so the correct
+  outcome was to not fabricate a number. The strict-remote gate behaved exactly as designed.
+- **RETRY CONDITION.** Re-run the harness unchanged as soon as `rch status` reports posture
+  `remote-ready` with no worker in `disk_free_below_critical_gb`. Ledger whatever it returns,
+  win or loss. Treat ratio >= 1.0 with both nulls holding as REFUTING the configurability
+  form of the mechanism, and record that the mechanism needs a second condition — that the
+  per-call interpretation not already be hoisted by the incumbent — rather than quietly
+  re-aiming at another family.
