@@ -24958,3 +24958,80 @@ a row whose retry predicate the correction satisfies.
   genuinely broken arm and the row must stay undecidable — do not widen `NULL_BIAS_TOLERANCE` to
   admit it. If a fourth harness is added, grep for the straddle pattern before trusting its
   verdicts, because this defect was introduced independently in two lanes.
+
+## 2026-07-30 (cod_fl / SnowyBass) — MECHANISM CONFIRMED: closed `rpmatch` leaf is 15.73-32.30x faster than live glibc's cached-regex dispatch
+
+Two honest refutations forced the original "generality tax" claim to become a falsifiable
+three-condition mechanism. This is an evidence/harness closeout only; no production optimization
+was attempted.
+
+- **THE SHARP MECHANISM.** A FrankenLibC specialization advantage is predicted only when
+  (a) the claimed semantic slice is closed and full-domain equivalence is proved, (b) glibc still
+  dispatches a data-driven interpreter on every call after all legitimate caching/hoisting, and
+  (c) the deployed FrankenLibC path is already a bounded, allocation-free decision procedure
+  rather than a second general interpreter. This version fits every result: the time/locale wins
+  satisfy all three; `strfmon` fails (b) because its locale lookup is hoisted while formatting
+  remains general on both sides; `wordexp` fails (c) because FrankenLibC is another general
+  interpreter with per-word allocation rather than a cheaper leaf.
+- **NEXT FAMILY AND PRE-REGISTERED PREDICTION.** The next predicted glibc family was GNU
+  `stdlib`'s locale-response/regex bridge, symbol `rpmatch`, restricted to the C locale. Live
+  glibc 2.42 caches the compiled `YESEXPR` and `NOEXPR` regexes, but still performs one cached
+  `regexec` for yes and two for no/invalid; FrankenLibC performs a null check plus a closed
+  first-byte match. Before timing, the prediction was: every conformant case has an effect CI
+  wholly below 1, and glibc's no and invalid absolute times both exceed yes. Any valid contrary
+  row or shape failure would refute the mechanism. Disassembly corrected an earlier, untimed
+  claim that glibc recompiles the regex on every call; compilation is cached, execution is not.
+- **RESULT: CONFIRMED.** All four rows pass the corrected contract. Ratios are
+  FrankenLibC/glibc, so lower is faster.
+
+  | case | FrankenLibC ns | glibc ns | FL/glibc median | effect CI95 | FL/FL median (CI95) | glibc/glibc median (CI95) | widest null distance | verdict |
+  |---|---:|---:|---:|---|---|---|---:|---|
+  | `yes` | 2.429 | 38.151 | **0.063574** (15.73x) | [0.063547,0.063689] | 1.000000 [1.000000,1.000206] | 0.999882 [0.999345,1.000407] | 0.000655 | `FL_FASTER` |
+  | `no` | 2.650 | 66.639 | **0.039717** (25.18x) | [0.039576,0.039733] | 1.000000 [1.000000,1.000000] | 0.999925 [0.994160,1.000225] | 0.005840 | `FL_FASTER` |
+  | `invalid` | 2.209 | 59.050 | **0.037402** (26.74x) | [0.037279,0.037453] | 1.000000 [0.999774,1.000000] | 1.000076 [0.999737,1.000339] | 0.000339 | `FL_FASTER` |
+  | `empty` | 2.209 | 71.353 | **0.030956** (32.30x) | [0.030794,0.030989] | 1.000000 [0.999774,1.000000] | 0.999993 [0.994254,1.000912] | 0.005746 | `FL_FASTER` |
+
+  Every null median is within 2% of 1.0, every effect CI excludes 1.0, and every effect
+  deviation clears twice the widest null-CI distance. CV is telemetry only. The registered
+  internal shape also holds: glibc no=66.639 ns and invalid=59.050 ns both exceed yes=38.151 ns.
+  The harness emitted
+  `RPMATCH_PREDICTION verdict=CONFIRMED every_case_faster=true second_regex_shape=true`.
+- **CONFORMANCE FOR EVERY CLAIMED SYMBOL.** `rpmatch` is the only claimed symbol. Before timing,
+  the same process compared directly linked live glibc with the explicitly loaded strict
+  FrankenLibC object over empty input, every non-NUL leading byte 1..255, all 255 leading bytes
+  with arbitrary non-NUL tails, and eight curated responses: **519/519 comparisons passed**.
+  The existing release differential artifact independently passed **200,033/200,033**
+  live-glibc comparisons.
+- **LIVE INCUMBENT AND ARTIFACT IDENTITY.** The benchmark directly links and calls
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`,
+  SHA-256 `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`,
+  in the same invocation as strict-mode `libfrankenlibc_abi.so`, loaded with
+  `RTLD_NOW|RTLD_LOCAL`, SHA-256
+  `84a5b1f84bc3fce22d6ccd1ac2135defe47dc1d7129a08218fb4d24d3fd5dc25`.
+  `dladdr` proves distinct serving objects and addresses. Benchmark ELF
+  `crates/frankenlibc-bench/examples/rpmatch_ab.rs` has SHA-256
+  `9928af498322578fac44de2e056baba729ab7b5b4171fbbb9c6bc295964a7a3e`,
+  Build ID `9050c04203372ae9a46580d820905dae05b84791`.
+- **MEASUREMENT CONTRACT AND HOST.** One booked invocation on `threadripperje`, AMD Ryzen
+  Threadripper PRO 5995WX: 64 physical cores, 128 logical threads, **one thread actually used**,
+  536,069,869,568 RAM bytes, one NUMA node, allowed CPUs 0-127, `amd-pstate-epp`,
+  governor=`performance`, EPP=`performance`, runtime ISA
+  `sse4.2,avx,avx2,fma,bmi1,bmi2`. Pre/post host-wide guards each cleared on their first five
+  one-second samples, with maximum observed busy fractions 0.071 and 0.139. Each row used 37
+  samples, four warmups, 33 retained samples, 2,000 calls per arm, and 4,096 bootstrap resamples.
+- **ADMISSION HISTORY, RETAINED RATHER THAN CROPPED.** Claim 6991 passed identity and all 519
+  conformance comparisons but emitted no timing rows: its pre-guard timed out after 298 samples
+  with cpu38 at 100%; log SHA-256
+  `7ff38d741c1f027d2ebe344fc65947de6b21c665c88840a462e046f0fba337b5`.
+  Claim 7003 was released before invocation when its census found an unrelated `git fsck` at
+  100% on cpu97. Only claim 7008 admitted and produced the table above. No failed admission was
+  used as timing evidence and no peer process was killed.
+- **RAW EVIDENCE.** Retrieved complete valid log
+  `/data/tmp/frankenlibc-rpmatch-result-9928af49-5gg9jm-retry2/full-run.log`,
+  SHA-256 `d03e6a31c1b48f4e3b982ed721371cc26ade9da79bfc92c538c49781c579992a`.
+- **DECISION / RETRY PREDICATE.** The sharpened mechanism survives this prediction; the broader
+  "configurable API" and "cannot-hoist API" forms remain refuted. Do not rerun these four C-locale
+  rows merely to rediscover the win. Re-open `rpmatch` only if glibc's residual dispatch changes,
+  FrankenLibC ceases to be the bounded leaf measured here, or a different locale slice first
+  receives full-domain conformance. Test further generalization only on a newly pre-registered
+  family that independently satisfies (a), (b), and (c).
