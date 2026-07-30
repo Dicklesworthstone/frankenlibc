@@ -24563,3 +24563,69 @@ does not parse does not merely go unchecked, it corrupts its neighbour's evidenc
   from a prior one over the same ledger, re-run `_heading_coverage_debt()` FIRST and compare
   parser coverage before concluding the population itself changed; a coverage change and a
   population change are indistinguishable in the count alone.
+
+## 2026-07-30 (cc_fl / MagentaCondor) — REJECT (prediction REFUTED, pre-registered): `strfmon` loses 2.12-3.87x to host glibc; per-call CONFIGURABILITY does not predict a generality-tax win
+
+The mechanism test from the previous row, run and answered. The prediction was that
+`strfmon` — the most per-call configurable formatter in libc — would show the largest
+generality-tax win outside time/locale. It does the opposite, decisively, and the
+refutation condition was written down BEFORE the measurement.
+
+- **RESULT: all 7 cases FL_SLOWER, every null holding.** legacy_incumbent=host-glibc;
+  incumbent_provenance=dlmopen-lmid-newlm; same_invocation=true. No result_class: this is a
+  loss, not campaign output.
+
+  | case | format | fl ns | glibc ns | ratio | ratio CI95 | null FL/FL | null gl/gl |
+  |---|---|---:|---:|---:|---|---|---|
+  | `two_values` | `%n %n` | 302.1 | 142.5 | **2.119660** | [2.100137,2.158684] | 0.999 | 1.001 |
+  | `international` | `%i` | 428.7 | 161.7 | **2.636762** | [2.610538,2.660799] | 0.998046 | 1.005585 |
+  | `no_grouping` | `%^n` | 431.9 | 163.0 | **2.650343** | [2.642986,2.657781] | 1.000 | 0.999 |
+  | `national` | `%n` | 437.7 | 162.9 | **2.658383** | [2.643917,2.701185] | 1.000704 | 0.999293 |
+  | `paren_negative` | `%(n` | 322.6 | 115.2 | **2.799670** | [2.762028,2.822258] | 1.000 | 0.998879 |
+  | `precision_2` | `%.2n` | 464.0 | 139.3 | **3.313141** | [3.300926,3.331643] | 0.998954 | 0.993595 |
+  | `width_16` | `%16n` | 451.5 | 115.2 | **3.868436** | [3.856034,3.903986] | 1.001038 | 0.998168 |
+
+  Every case: `nulls_hold=true`, `clears_2x_null=true`. Null half-widths 0.0066-0.0239, so
+  each effect clears its null by two orders of magnitude. CV 5.7-14.6%, telemetry only.
+- **NULL CONTROLS, headline case `national` (`%n`).** same-invocation A/A null control median
+  1.000704, bootstrap median CI [0.987961, 1.023708] (FL/FL, source-identical arms); second
+  same-invocation A/A null control median 0.999293, bootstrap median CI [0.981163, 1.003199]
+  (glibc/glibc, so the incumbent arm carries its own null); FL/glibc effect median 2.658383,
+  bootstrap median CI [2.643917, 2.701185]; null half-width 0.023708, effect deviation
+  1.658383 = 70x the mandatory 2x rule. Both nulls straddle 1.0, so the ratio is decidable.
+- **WHY IT IS REFUTED, from INSIDE the data.** `%^n` suppresses grouping entirely and lands at
+  **2.650343** against `%n`'s **2.658383** — indistinguishable. If glibc were paying per call
+  for its grouping vector and monetary locale indirection, removing that work would move its
+  side; it does not move at all. **glibc has already hoisted the locale-monetary lookup.**
+  Configurability is therefore NOT sufficient to predict a generality-tax win.
+- **THE MECHANISM NEEDS A SECOND CONDITION, exactly as pre-registered.** A specialization wins
+  only where the incumbent's per-call interpretation is (a) present AND (b) NOT already
+  hoisted or cached. The time/locale wins satisfied both: glibc's month/weekday NAME lookup is
+  a genuine per-call locale-table walk (1362-1822 ns on name-bearing strptime vs 37-83 ns on
+  numeric-only). `strfmon` satisfies (a) and fails (b).
+- **WHAT THE LOSS ACTUALLY IS (ours, not glibc's).** `two_values` (two conversions in one
+  call) has the LOWEST ratio at 2.119660 while single-conversion cases sit at 2.64-3.87. A
+  second directive amortises rather than doubling the gap, so our cost is dominated by FIXED
+  per-call overhead, not per-directive work. `width_16` being the worst (3.868436) points at
+  padding/width handling specifically.
+- **CONFORMANCE, before timing.** 7 cases byte-identical to the live incumbent on BOTH return
+  value and output bytes, plus truncation caps 1..=24. `verify: OK`. A mismatch aborts the run.
+- **INTERPOSITION PROVEN BOTH WAYS.** `FL_OBJECT` = the executable
+  (`.rch-target-hz2-pool-*/release/examples/strfmon_ab`), `INCUMBENT_OBJECT` =
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`, asserted distinct. This matters because fl-vs-fl and
+  glibc-vs-glibc both produce well-behaved ratios near 1.0 and would have looked like a clean
+  null result — i.e. like a *weaker* version of this same refutation.
+- **PROVENANCE.** `crates/frankenlibc-bench/examples/strfmon_ab.rs`, executing
+  `bench_elf_sha256=6ceea860a3494248dde5f45eb39c4eaea73afb2f5ad2be67ae44be3b99842418`
+  (21581832 bytes). Built AND executed on worker `hz2` / `hetzner2`, cpus=16,
+  loadavg 7.87/7.11/5.65, threads=1. Deterministic build per the overlay policy:
+  `rch exec --base <sha> --clean-overlay --no-overlay`. SAMPLES=37 WARMUP=4 REPS=100000
+  BOOTSTRAP_RESAMPLES=4096; both namespaces pinned `LC_ALL=C`.
+- **DO NOT re-aim this at another "configurable API" without checking (b) first.** The cheap
+  pre-test is the one this row used: find a flag that REMOVES the suspected per-call work
+  (here `%^`) and confirm the incumbent's time actually moves. If it does not move, there is
+  no tax to harvest and the lever is dead before any code is written.
+- **RETRY PREDICATE.** Re-open `strfmon` only as a SELF-speedup targeting fixed per-call
+  overhead — justified by `two_values` 2.119660 vs `width_16` 3.868436 — and only if a profile
+  names a non-zero frame outside the digit conversion itself. Do NOT re-open it as a
+  generality-tax claim: that hypothesis is closed by the `%^n` control.
