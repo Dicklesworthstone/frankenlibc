@@ -24945,13 +24945,15 @@ a row whose retry predicate the correction satisfies.
   or a missing null — those remain void for their own reasons. The recovered set is exactly the
   measurements whose ONLY defect was a null CI that failed to straddle 1.0 while its median sat
   within 2% of it.
-- **VERIFICATION STATUS, stated rather than implied.** The `e2e_workloads_ab.rs` edit is two
-  lines reusing `host_null_median`/`franken_null_median`, both already computed two lines above
-  and both `f64`, and it is `rustfmt`-clean. A remote `cargo build` of all three examples via
-  `rch exec --base <sha> --clean-overlay --overlay-path` is IN FLIGHT and has not yet been
-  admitted (`no admissible workers: critical_pressure=2, hard_preflight=9`). The
-  `strfmon_ab`/`wordexp_ab` halves of this contract change were already compiled and executed.
-  If the build reports an error this row gets a correction, not a silent fix.
+- **VERIFICATION: BUILD GREEN.** All three examples compile clean —
+  `cargo build -p frankenlibc-bench --profile release --features abi-bench --example
+  e2e_workloads_ab --example strfmon_ab --example wordexp_ab` via
+  `rch exec --base 3cd1846f0 --clean-overlay --no-overlay`:
+  **0 error lines, `Finished release profile [optimized] target(s) in 48.00s`.**
+  The `strfmon_ab`/`wordexp_ab` halves were additionally compiled AND executed, producing the
+  recovered verdicts tabulated above. Admission needed a bounded patient retry (5 refusals with
+  `critical_pressure=2, hard_preflight=9`, admitted on the 6th) — the refusal is intermittent
+  contention, not a wall.
 - **RETRY PREDICATE.** If any future row reports a null MEDIAN outside 2% of 1.0, that is a
   genuinely broken arm and the row must stay undecidable — do not widen `NULL_BIAS_TOLERANCE` to
   admit it. If a fourth harness is added, grep for the straddle pattern before trusting its
