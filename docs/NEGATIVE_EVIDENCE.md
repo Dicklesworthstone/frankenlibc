@@ -24630,7 +24630,7 @@ refutation condition was written down BEFORE the measurement.
   names a non-zero frame outside the digit conversion itself. Do NOT re-open it as a
   generality-tax claim: that hypothesis is closed by the `%^n` control.
 
-## 2026-07-30 (cc_fl / MagentaCondor) — ISA RE-TEST TRIAGE: the fleet SSE2 pin most likely never reached this repo; 5 floor rows HOLD pending a blocked confirmation
+## 2026-07-30 (cc_fl / MagentaCondor) — ISA RE-TEST TRIAGE, CONFIRMED BY MEASUREMENT: the fleet SSE2 pin never reached this repo; 5 floor rows HOLD
 
 Fleet directive: the single non-AVX2 worker (`ovh-b`, Intel Xeon E3-1245 V2, Ivy Bridge 2012)
 was pinning fleet benchmark binaries to an SSE2 baseline; it is now tagged `no-avx2` and
@@ -24672,12 +24672,25 @@ mechanism rather than churning five rows on a premise that may not apply here.
   only thing that reveals a RUSTFLAGS override from the binary itself — alongside
   `cpu_avx2=/cpu_avx512f=` from `is_x86_feature_detected!` for the executing host. Every
   future perf row in this repo carries its own ISA provenance.
-- **CONFIRMATION IS BLOCKED, and cannot be routed around locally.** The probe needs a REMOTE
-  build, because the question is what the WORKER's build receives; a local build would show
-  `built_avx2=true` from our own `config.toml` and prove nothing about rch. rch refused with
-  `no admissible workers: critical_pressure=1, insufficient_slots=1, hard_preflight=9`.
-- **RETRY PREDICATE.** On the next admitted remote build, read `ISA_PROVENANCE`. If
-  `built_avx2=false`, this triage is WRONG: reopen all five rows, re-measure every ratio in the
-  L18760 table, and treat its floor attribution as void, because a half-width fl kernel against
-  glibc's AVX2 ifunc is not a floor, it is a build defect. If `built_avx2=true`, mark this
-  triage confirmed and leave the five rows closed.
+- **CONFIRMED BY MEASUREMENT (2026-07-30, worker `hz1`).** The retry predicate below is now
+  SATISFIED, not pending. A fresh remote build reports:
+  `ISA_PROVENANCE built_avx2=true built_fma=true built_sse42=true cpu_avx2=true
+  cpu_avx512f=false cpu_sse42=true`, executing
+  `bench_elf_sha256=40f43a4da9e7779895c51d3b0e36b961fa7cdc10a81f90818d28bbdd1d5bbb65`
+  (21582184 bytes), `HOST_IDENTITY hetzner1 cpus=8 loadavg=10.82,9.95,7.20`. So rch's remote
+  build DOES receive our `+avx2,+fma`: there is no env `RUSTFLAGS` override, the artifact is
+  AVX2, and the 19-day-old disassembly is corroborated by a compile-time fact measured today.
+  **Verdict: the five floor rows HOLD and are NOT reopened.** Note the probe could only be
+  answered remotely — a local build would have reported `built_avx2=true` from our own
+  `config.toml` regardless of what the worker received, so it would have proven nothing.
+  Admission took a bounded patient retry (refused on attempt 1, admitted on attempt 2);
+  the pool refusal `critical_pressure=1, insufficient_slots=1, hard_preflight=9` is
+  intermittent contention, not a wall.
+- **CAVEAT KEPT HONEST.** This confirms the ISA premise; it does NOT confirm the earlier guess
+  that toolchain skew causes `hard_preflight=9`. `hz2` served an admitted build while carrying
+  the same Rust-version mismatch, so that inference does not hold and remains unproven.
+- **RETRY PREDICATE (satisfied; retained for the inverse case).** Read `ISA_PROVENANCE` on any
+  future row. If `built_avx2=false` ever appears, this triage is WRONG for that build: reopen
+  all five rows, re-measure every ratio in the L18760 table, and treat its floor attribution as
+  void, because a half-width fl kernel against glibc's AVX2 ifunc is not a floor, it is a build
+  defect.
