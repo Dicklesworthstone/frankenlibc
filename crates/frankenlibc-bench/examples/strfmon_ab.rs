@@ -349,8 +349,15 @@ fn measure_case(host: StrfmonFn, case: &Case, host_label: &str) {
     let null_half_width = fl_hw.max(gl_hw);
     // Both nulls must themselves straddle 1.0, else neither arm is stable enough
     // to carry a ratio and the row is reported as null-violating.
-    let fl_null_holds = fl_null_low <= 1.0 && fl_null_high >= 1.0;
-    let gl_null_holds = gl_null_low <= 1.0 && gl_null_high >= 1.0;
+    // A null "holds" when its MEDIAN is within 2% of 1.0, bounding arm-order bias. It does NOT
+    // require the null CI to straddle 1.0: that rule was perverse, because a tighter (better)
+    // null is MORE likely to exclude 1.0 and veto the row. See the wordexp_ab note and the
+    // 2026-07-30 wordexp ledger row, where two runs of one ELF reproduced every ratio within
+    // 2.5% while the straddle verdict moved almost at random. The 2x half-width margin below
+    // is what actually protects the direction.
+    const NULL_BIAS_TOLERANCE: f64 = 0.02;
+    let fl_null_holds = (fl_null_median - 1.0).abs() <= NULL_BIAS_TOLERANCE;
+    let gl_null_holds = (gl_null_median - 1.0).abs() <= NULL_BIAS_TOLERANCE;
     let nulls_hold = fl_null_holds && gl_null_holds;
     let clears_null = (effect_median - 1.0).abs() > 2.0 * null_half_width;
     let excludes_one = effect_high < 1.0 || effect_low > 1.0;

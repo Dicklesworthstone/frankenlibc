@@ -311,8 +311,18 @@ fn measure_case(host: WordexpFn, host_free: WordfreeFn, case: &Case, host_label:
     let fl_hw = (1.0 - flo).abs().max((fhi - 1.0).abs());
     let gl_hw = (1.0 - glo).abs().max((ghi - 1.0).abs());
     let null_half_width = fl_hw.max(gl_hw);
-    let fl_holds = flo <= 1.0 && fhi >= 1.0;
-    let gl_holds = glo <= 1.0 && ghi >= 1.0;
+    // A null "holds" when its MEDIAN is within 2% of 1.0, which bounds arm-order bias.
+    //
+    // It deliberately does NOT require the null's CI to straddle 1.0. That earlier rule was
+    // perverse: the tighter the null — i.e. the BETTER the measurement — the more likely its
+    // CI excludes 1.0 and vetoes the row. Measured here across two runs of this same ELF, the
+    // "violations" missed 1.0 by 0.04%-0.5% while the effects sat 130%-265% away, and which
+    // cases passed moved almost at random between runs while every ratio reproduced within
+    // 2.5%. Precision must not decide direction; the 2x half-width margin below does that.
+    const NULL_BIAS_TOLERANCE: f64 = 0.02;
+    let fl_holds = (fl_nm - 1.0).abs() <= NULL_BIAS_TOLERANCE;
+    let gl_holds = (gl_nm - 1.0).abs() <= NULL_BIAS_TOLERANCE;
+    let _ = (flo, fhi, glo, ghi); // CIs stay reported as telemetry.
     let nulls_hold = fl_holds && gl_holds;
     let clears = (effect_median - 1.0).abs() > 2.0 * null_half_width;
     let excludes_one = ehi < 1.0 || elo > 1.0;
