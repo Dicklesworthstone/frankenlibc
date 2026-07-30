@@ -12,11 +12,19 @@
 #define _GNU_SOURCE
 
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -217,8 +225,13 @@ static int run_identity(void) {
     report_loaded_symbol("MALLOC_ELF", (void *)malloc);
     report_loaded_symbol("FOPEN_ELF", (void *)fopen);
     report_loaded_symbol("FGETS_ELF", (void *)fgets);
+    report_loaded_symbol("FWRITE_ELF", (void *)fwrite);
     report_loaded_symbol("STRPTIME_ELF", (void *)strptime);
     report_loaded_symbol("STRFTIME_ELF", (void *)strftime);
+    report_loaded_symbol("PTHREAD_CREATE_ELF", (void *)pthread_create);
+    report_loaded_symbol("PTHREAD_JOIN_ELF", (void *)pthread_join);
+    report_loaded_symbol("MMAP_ELF", (void *)mmap);
+    report_loaded_symbol("MUNMAP_ELF", (void *)munmap);
     return 0;
 }
 
@@ -525,6 +538,370 @@ static int run_timestamp_reformat(const char *path, const char *output_path,
     return 0;
 }
 
+/*
+ * Fixed-work threaded variant used by the exclusive-host scaling sweep.
+ *
+ * The main thread maps and partitions the input once. Workers transform
+ * disjoint record ranges directly into disjoint offsets of one output buffer;
+ * the final output is written with one fwrite regardless of worker count.
+ * Thus records, input bytes, transformed bytes, and output-write count stay
+ * constant across the sweep. Only worker lifecycle and coordination vary.
+ */
+
+typedef struct {
+    _Atomic size_t ready;
+    _Atomic size_t go;
+    _Atomic size_t abort;
+    _Atomic size_t active_ready;
+    _Atomic size_t active;
+    _Atomic size_t peak_active;
+    size_t requested_workers;
+} TransformStartGate;
+
+typedef struct {
+    const char *input;
+    const size_t *offsets;
+    char *output;
+    size_t begin_record;
+    size_t end_record;
+    TransformStartGate *gate;
+    size_t records_seen;
+    size_t input_bytes_seen;
+    size_t output_bytes_written;
+    int failed;
+} TransformWorker;
+
+static void note_peak_active(TransformStartGate *gate, size_t active) {
+    size_t observed =
+        atomic_load_explicit(&gate->peak_active, memory_order_relaxed);
+    while (active > observed &&
+           !atomic_compare_exchange_weak_explicit(
+               &gate->peak_active, &observed, active, memory_order_relaxed,
+               memory_order_relaxed)) {
+    }
+}
+
+static void *run_timestamp_transform_worker(void *opaque) {
+    TransformWorker *worker = (TransformWorker *)opaque;
+    atomic_fetch_add_explicit(&worker->gate->ready, 1, memory_order_release);
+    while (atomic_load_explicit(&worker->gate->go, memory_order_acquire) == 0) {
+        sched_yield();
+    }
+    if (atomic_load_explicit(&worker->gate->abort, memory_order_acquire) != 0) {
+        return NULL;
+    }
+
+    size_t active =
+        atomic_fetch_add_explicit(&worker->gate->active, 1,
+                                  memory_order_acq_rel) +
+        1;
+    note_peak_active(worker->gate, active);
+    atomic_fetch_add_explicit(&worker->gate->active_ready, 1,
+                              memory_order_release);
+    while (atomic_load_explicit(&worker->gate->active_ready,
+                                memory_order_acquire) !=
+           worker->gate->requested_workers) {
+        sched_yield();
+    }
+
+    for (size_t record = worker->begin_record;
+         record < worker->end_record; record++) {
+        size_t begin = worker->offsets[record];
+        size_t end = worker->offsets[record + 1];
+        if (end <= begin || worker->input[end - 1] != '\n') {
+            worker->failed = 1;
+            break;
+        }
+
+        size_t input_bytes = end - begin;
+        size_t line_len = input_bytes - 1;
+        char line[2048];
+        if (line_len + 1 > sizeof(line)) {
+            worker->failed = 1;
+            break;
+        }
+        memcpy(line, worker->input + begin, line_len);
+        line[line_len] = '\0';
+
+        struct tm tmv;
+        memset(&tmv, 0, sizeof(tmv));
+        char *rest = strptime(line, "%Y-%m-%dT%H:%M:%SZ", &tmv);
+        char formatted[64];
+        size_t formatted_len =
+            rest ? strftime(formatted, sizeof(formatted), "%b %e %H:%M:%S",
+                            &tmv)
+                 : 0;
+        if (!rest || formatted_len == 0) {
+            worker->failed = 1;
+            break;
+        }
+
+        size_t rest_len = strlen(rest);
+        size_t output_bytes = formatted_len + rest_len + 1;
+        if (input_bytes < 5 || output_bytes != input_bytes - 5 ||
+            begin < record * 5) {
+            worker->failed = 1;
+            break;
+        }
+        size_t output_offset = begin - record * 5;
+        memcpy(worker->output + output_offset, formatted, formatted_len);
+        memcpy(worker->output + output_offset + formatted_len, rest, rest_len);
+        worker->output[output_offset + formatted_len + rest_len] = '\n';
+
+        worker->records_seen++;
+        worker->input_bytes_seen += input_bytes;
+        worker->output_bytes_written += output_bytes;
+    }
+
+    atomic_fetch_sub_explicit(&worker->gate->active, 1, memory_order_acq_rel);
+    return NULL;
+}
+
+static int run_timestamp_reformat_mt(const char *path, const char *output_path,
+                                     size_t requested_workers) {
+    int result = 1;
+    int fd = -1;
+    char *input = MAP_FAILED;
+    size_t input_bytes = 0;
+    size_t *offsets = NULL;
+    char *output = NULL;
+    pthread_t *threads = NULL;
+    TransformWorker *workers = NULL;
+    FILE *outf = NULL;
+
+    if (requested_workers == 0) {
+        fprintf(stderr, "worker count must be positive\n");
+        return 2;
+    }
+
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "cannot open %s\n", path);
+        goto cleanup;
+    }
+    struct stat statbuf;
+    if (fstat(fd, &statbuf) != 0 || statbuf.st_size <= 0 ||
+        (uintmax_t)statbuf.st_size > SIZE_MAX) {
+        fprintf(stderr, "cannot stat non-empty input %s\n", path);
+        goto cleanup;
+    }
+    input_bytes = (size_t)statbuf.st_size;
+    input = mmap(NULL, input_bytes, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (input == MAP_FAILED) {
+        fprintf(stderr, "cannot mmap %s\n", path);
+        goto cleanup;
+    }
+    if (close(fd) != 0) {
+        fprintf(stderr, "cannot close input fd\n");
+        fd = -1;
+        goto cleanup;
+    }
+    fd = -1;
+
+    size_t records = 0;
+    for (size_t offset = 0; offset < input_bytes; offset++) {
+        records += input[offset] == '\n';
+    }
+    if (records == 0 || input[input_bytes - 1] != '\n' ||
+        requested_workers > records) {
+        fprintf(stderr,
+                "input must be newline-terminated and contain at least one "
+                "record per worker\n");
+        goto cleanup;
+    }
+    if (records > (SIZE_MAX / sizeof(size_t)) - 1) {
+        fprintf(stderr, "record-offset allocation overflow\n");
+        goto cleanup;
+    }
+    offsets = malloc((records + 1) * sizeof(*offsets));
+    if (!offsets) {
+        fprintf(stderr, "cannot allocate record offsets\n");
+        goto cleanup;
+    }
+    size_t next_record = 0;
+    offsets[next_record++] = 0;
+    for (size_t offset = 0; offset < input_bytes; offset++) {
+        if (input[offset] == '\n') {
+            offsets[next_record++] = offset + 1;
+        }
+    }
+    if (next_record != records + 1 || records > input_bytes / 5) {
+        fprintf(stderr, "record-offset conservation failure\n");
+        goto cleanup;
+    }
+
+    size_t expected_output_bytes = input_bytes - records * 5;
+    output = malloc(expected_output_bytes);
+    threads = calloc(requested_workers, sizeof(*threads));
+    workers = calloc(requested_workers, sizeof(*workers));
+    if (!output || !threads || !workers) {
+        fprintf(stderr, "cannot allocate threaded transform state\n");
+        goto cleanup;
+    }
+
+    TransformStartGate gate;
+    atomic_init(&gate.ready, 0);
+    atomic_init(&gate.go, 0);
+    atomic_init(&gate.abort, 0);
+    atomic_init(&gate.active_ready, 0);
+    atomic_init(&gate.active, 0);
+    atomic_init(&gate.peak_active, 0);
+    gate.requested_workers = requested_workers;
+
+    size_t created_workers = 0;
+    size_t records_per_worker = records / requested_workers;
+    size_t workers_with_extra_record = records % requested_workers;
+    for (size_t worker = 0; worker < requested_workers; worker++) {
+        workers[worker].input = input;
+        workers[worker].offsets = offsets;
+        workers[worker].output = output;
+        workers[worker].begin_record =
+            records_per_worker * worker +
+            (worker < workers_with_extra_record ? worker
+                                                : workers_with_extra_record);
+        size_t next_worker = worker + 1;
+        workers[worker].end_record =
+            records_per_worker * next_worker +
+            (next_worker < workers_with_extra_record
+                 ? next_worker
+                 : workers_with_extra_record);
+        workers[worker].gate = &gate;
+        int create_rc =
+            pthread_create(&threads[worker], NULL,
+                           run_timestamp_transform_worker, &workers[worker]);
+        if (create_rc != 0) {
+            fprintf(stderr, "pthread_create worker=%zu rc=%d\n", worker,
+                    create_rc);
+            break;
+        }
+        created_workers++;
+    }
+    if (created_workers != requested_workers) {
+        atomic_store_explicit(&gate.abort, 1, memory_order_release);
+        atomic_store_explicit(&gate.go, 1, memory_order_release);
+        for (size_t worker = 0; worker < created_workers; worker++) {
+            if (pthread_join(threads[worker], NULL) != 0) {
+                fflush(stderr);
+                _Exit(1);
+            }
+        }
+        goto cleanup;
+    }
+
+    while (atomic_load_explicit(&gate.ready, memory_order_acquire) !=
+           requested_workers) {
+        sched_yield();
+    }
+    atomic_store_explicit(&gate.go, 1, memory_order_release);
+
+    size_t joined_workers = 0;
+    for (size_t worker = 0; worker < requested_workers; worker++) {
+        int join_rc = pthread_join(threads[worker], NULL);
+        if (join_rc != 0) {
+            fprintf(stderr, "pthread_join worker=%zu rc=%d\n", worker,
+                    join_rc);
+            fflush(stderr);
+            _Exit(1);
+        } else {
+            joined_workers++;
+        }
+    }
+
+    size_t records_seen = 0;
+    size_t input_bytes_seen = 0;
+    size_t output_bytes_written = 0;
+    size_t workers_with_records = 0;
+    size_t min_records = SIZE_MAX;
+    size_t max_records = 0;
+    int worker_failed = 0;
+    for (size_t worker = 0; worker < requested_workers; worker++) {
+        records_seen += workers[worker].records_seen;
+        input_bytes_seen += workers[worker].input_bytes_seen;
+        output_bytes_written += workers[worker].output_bytes_written;
+        worker_failed |= workers[worker].failed;
+        if (workers[worker].records_seen > 0) {
+            workers_with_records++;
+        }
+        if (workers[worker].records_seen < min_records) {
+            min_records = workers[worker].records_seen;
+        }
+        if (workers[worker].records_seen > max_records) {
+            max_records = workers[worker].records_seen;
+        }
+    }
+    size_t started_workers =
+        atomic_load_explicit(&gate.ready, memory_order_acquire);
+    size_t peak_active_workers =
+        atomic_load_explicit(&gate.peak_active, memory_order_acquire);
+    if (worker_failed || started_workers != requested_workers ||
+        joined_workers != requested_workers ||
+        workers_with_records != requested_workers || records_seen != records ||
+        input_bytes_seen != input_bytes ||
+        output_bytes_written != expected_output_bytes ||
+        peak_active_workers != requested_workers ||
+        max_records - min_records > 1) {
+        fprintf(stderr,
+                "threaded work conservation failed: requested=%zu started=%zu "
+                "joined=%zu workers_with_records=%zu records=%zu/%zu "
+                "input_bytes=%zu/%zu output_bytes=%zu/%zu min=%zu max=%zu\n",
+                requested_workers, started_workers, joined_workers,
+                workers_with_records, records_seen, records, input_bytes_seen,
+                input_bytes, output_bytes_written, expected_output_bytes,
+                min_records, max_records);
+        goto cleanup;
+    }
+
+    outf = fopen(output_path, "w");
+    if (!outf) {
+        fprintf(stderr, "threaded output open failed\n");
+        goto cleanup;
+    }
+    if (fwrite(output, 1, expected_output_bytes, outf) !=
+        expected_output_bytes) {
+        fprintf(stderr, "threaded output write failed\n");
+        goto cleanup;
+    }
+    if (fclose(outf) != 0) {
+        fprintf(stderr, "threaded output close failed\n");
+        outf = NULL;
+        goto cleanup;
+    }
+    outf = NULL;
+
+    uint64_t checksum = 0;
+    for (size_t offset = 0; offset < expected_output_bytes; offset++) {
+        checksum = checksum * UINT64_C(131) + (unsigned char)output[offset];
+    }
+    printf("requested_workers=%zu started_workers=%zu joined_workers=%zu "
+           "workers_with_records=%zu peak_active_workers=%zu "
+           "records=%zu worker_iterations=%zu strptime_calls=%zu "
+           "strftime_calls=%zu input_bytes=%zu "
+           "partition_bytes=%zu output_bytes=%zu output_write_calls=1 "
+           "min_records_per_worker=%zu max_records_per_worker=%zu "
+           "checksum=%" PRIu64 "\n",
+           requested_workers, started_workers, joined_workers,
+           workers_with_records, peak_active_workers, records, records_seen,
+           records_seen, records_seen, input_bytes_seen, input_bytes,
+           output_bytes_written, min_records, max_records, checksum);
+    result = 0;
+
+cleanup:
+    if (outf) {
+        fclose(outf);
+    }
+    free(workers);
+    free(threads);
+    free(output);
+    free(offsets);
+    if (input != MAP_FAILED) {
+        munmap(input, input_bytes);
+    }
+    if (fd >= 0) {
+        close(fd);
+    }
+    return result;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Workload 4: Zipf-skewed corpus word-frequency report.                     */
 /* ------------------------------------------------------------------------- */
@@ -645,8 +1022,8 @@ int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr,
                 "usage: %s "
-                "<logparse|tsreformat|legacylog|wordfreq|csvstat> <input> "
-                "[output]\n",
+                "<logparse|tsreformat|legacylog|legacylog_mt|wordfreq|csvstat> "
+                "<input> [output] [workers]\n",
                 argv[0]);
         return 2;
     }
@@ -670,6 +1047,22 @@ int main(int argc, char **argv) {
         return run_timestamp_reformat(argv[2], argv[3],
                                       "%Y-%m-%dT%H:%M:%SZ",
                                       "%b %e %H:%M:%S", 0);
+    }
+    if (strcmp(argv[1], "legacylog_mt") == 0) {
+        if (argc != 5) {
+            fprintf(stderr,
+                    "legacylog_mt requires an output path and worker count\n");
+            return 2;
+        }
+        errno = 0;
+        char *endp = NULL;
+        uintmax_t workers = strtoumax(argv[4], &endp, 10);
+        if (errno != 0 || endp == argv[4] || *endp != '\0' || workers == 0 ||
+            workers > SIZE_MAX) {
+            fprintf(stderr, "invalid worker count %s\n", argv[4]);
+            return 2;
+        }
+        return run_timestamp_reformat_mt(argv[2], argv[3], (size_t)workers);
     }
     if (strcmp(argv[1], "wordfreq") == 0) {
         return run_wordfreq(argv[2]);
