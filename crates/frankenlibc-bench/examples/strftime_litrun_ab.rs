@@ -472,6 +472,33 @@ fn measure_case(host: StrftimeFn, case: &Case, tm: &libc::tm, repetitions: usize
 
 fn main() {
     println!("BENCH_ELF_SHA256 {}", self_identity());
+    // ISA + host provenance. `cfg!` is a COMPILE-TIME fact about this binary, so it reports
+    // what the build actually received: an env `RUSTFLAGS` from the build orchestrator
+    // overrides `.cargo/config.toml`'s `[build] rustflags` silently, and this is the only way
+    // to see that from the artifact. A row concluding "we are at the SIMD floor" is only
+    // meaningful if built_avx2=true. `is_x86_feature_detected!` is the EXECUTING cpu.
+    println!(
+        "ISA_PROVENANCE built_avx2={} built_fma={} built_sse42={} \
+         cpu_avx2={} cpu_avx512f={} cpu_sse42={}",
+        cfg!(target_feature = "avx2"),
+        cfg!(target_feature = "fma"),
+        cfg!(target_feature = "sse4.2"),
+        std::arch::is_x86_feature_detected!("avx2"),
+        std::arch::is_x86_feature_detected!("avx512f"),
+        std::arch::is_x86_feature_detected!("sse4.2"),
+    );
+    println!(
+        "HOST_IDENTITY {} cpus={} loadavg={}",
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "unknown".into()),
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0),
+        std::fs::read_to_string("/proc/loadavg")
+            .map(|s| s.split_whitespace().take(3).collect::<Vec<_>>().join(","))
+            .unwrap_or_else(|_| "unknown".into()),
+    );
     let host_guard = host_wide_guard();
     require_host_wide_quiet(&host_guard, "startup");
     let handle = unsafe {
