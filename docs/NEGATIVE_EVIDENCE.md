@@ -24694,3 +24694,80 @@ mechanism rather than churning five rows on a premise that may not apply here.
   all five rows, re-measure every ratio in the L18760 table, and treat its floor attribution as
   void, because a half-width fl kernel against glibc's AVX2 ifunc is not a floor, it is a build
   defect.
+
+## 2026-07-30 (cc_fl / MagentaCondor) — REJECT: `wordexp` loses 2.28-3.65x to host glibc; "incumbent cannot hoist" is NECESSARY but NOT SUFFICIENT
+
+Second mechanism test, on the surface that satisfies the strfmon-corrected predicate most
+cleanly. `wordexp` has ZERO prior perf coverage in this repo (0 ledger mentions, no bench) and
+sits outside the time/locale family. Result: we lose decisively, which bounds the mechanism a
+second time and identifies the missing third condition.
+
+- **RESULT: 4 of 7 cases decidable, ALL FL_SLOWER.** legacy_incumbent=host-glibc;
+  incumbent_provenance=uninterposed-host-link (dlmopen LM_ID_NEWLM); same_invocation=true.
+  No result_class: this is a loss, not campaign output.
+
+  | case | words | fl ns | glibc ns | ratio | ratio CI95 | null hw |
+  |---|---|---:|---:|---:|---|---|
+  | `param_default` | `${VAR:-fallback}` | 1205.286 | 532.852 | **2.275282** | [2.265920,2.293479] | 0.009458 |
+  | `escapes` | `a\ b c\ d literal` | 1133.483 | 378.469 | **3.002840** | [2.968124,3.029737] | 0.014656 |
+  | `param_braced` | `${VAR}/suffix` | 1400.866 | 402.425 | **3.332632** | [3.281174,3.452302] | 0.006864 |
+  | `many_fields` | 16 fields | 6624.554 | 1815.517 | **3.650892** | [3.646401,3.664446] | 0.004840 |
+
+- **NULL CONTROLS, headline case `many_fields`.** same-invocation A/A null control median
+  1.000378, bootstrap median CI [0.998811, 1.002439] (FL/FL, source-identical arms); second
+  same-invocation A/A null control median 0.996956, bootstrap median CI [0.995160, 1.000700]
+  (glibc/glibc, incumbent carries its own null); FL/glibc effect median 3.650892, bootstrap
+  median CI [3.646401, 3.664446]; null half-width 0.004840, effect deviation 2.650892 = 547x
+  the mandatory 2x rule. Both nulls straddle 1.0, so the ratio is decidable.
+- **THREE CASES ARE NOT REPORTED, BY MY OWN GATE.** `plain_split` (2.947767), `quoted_mix`
+  (3.967911) and `param_simple` (2.789310) all returned `nulls_hold=false` — the host was at
+  `loadavg 24.33` and their glibc-side A/A null did not straddle 1.0. Their point estimates sit
+  inside the same 2.3-4.0x band as the decidable four, so the DIRECTION is not in doubt, but
+  they are excluded rather than quoted. This is the second null earning its place: a
+  single-null harness would have reported all seven without noticing.
+- **WHAT THIS REFUTES — the mechanism needs a THIRD condition.** After strfmon the predicate
+  was: a specialization wins where the incumbent's per-call interpretation is (a) present and
+  (b) not already hoisted. `wordexp` satisfies (a) and (b) about as perfectly as any libc call
+  can — the WORD is a different string every call, so tilde expansion, parameter expansion,
+  field splitting and quote removal must be re-derived per call and there is literally no state
+  to cache. We still lose 2.3-3.7x. Therefore **(c) our own specialized path must actually be
+  cheaper than the incumbent's general one**, and for `wordexp` it is not: glibc's mature C
+  expander beats ours outright.
+- **THE FRONTIER, NOW BOUNDED BY THREE MEASUREMENTS RATHER THAN BY ARGUMENT.**
+  time/locale satisfied (a)+(b)+(c) — that is why it yielded four wins (strftime `%A` 1.85x,
+  wcsftime `%FT%T` 8.99x, strftime `%H:%M:%S` 1.75x, name-bearing strptime 5.6-6.4x).
+  `strfmon` fails (b): glibc's monetary locale lookup is hoisted, proven by `%^n` costing it
+  the same as `%n`. `wordexp` fails (c). The generality tax is real but NARROW: it required
+  glibc doing a genuine per-call LOCALE NAME-TABLE walk (1362-1822 ns) against a cheap exact
+  leaf of ours. Do not expect it to generalize to "configurable API" or "un-hoistable API"
+  alone; both weaker forms are now measured and refuted.
+- **OUR LOSS IS CHARACTERIZED (a self-speedup lever, not campaign output).** The ratio is WORST
+  on `many_fields` at 3.650892 with fl 6624.554 ns against glibc 1815.517 ns, i.e. it grows
+  with field count, so the cost is the per-field word-vector growth path rather than fixed
+  setup — the opposite shape to strfmon, whose `two_values` case showed fixed overhead. Each
+  word is a separate allocation through the interposed allocator, which is the known
+  hidden cost on this codebase.
+- **CONFORMANCE, before timing.** 7 cases: identical return code, identical `we_wordc`, and
+  every `we_wordv[i]` byte-identical to the live incumbent. `verify: OK`. Each arm frees with
+  ITS OWN `wordfree`, since the words were allocated by that implementation's allocator and
+  crossing them would be a cross-allocator free.
+- **SCOPE, chosen so the number means something.** `WRDE_NOCMD` on every case, because glibc
+  forks `/bin/sh` for command substitution and a fork measures process spawn, not
+  interpretation; words carry no glob metacharacters so pathname expansion does not turn this
+  into a filesystem benchmark; both arms run identical words on the same filesystem in the same
+  invocation, so residual FS cost is matched.
+- **PROVENANCE.** `crates/frankenlibc-bench/examples/wordexp_ab.rs`,
+  `bench_elf_sha256=c0693db7771da8e077ec5fd4e0e5676f702fe0ea7fad42167321d753d0f84a4d`
+  (41865560 bytes), **profile `release-perf`** (labelled deliberately: this is a LOCAL build
+  executed on this host under the reinstated Part B route, one reused repo target dir, df
+  precheck 458G), `taskset`-pinned. `HOST_IDENTITY thinkstation1 loadavg=24.33,16.51,35.31`
+  (`cpus=1` reflects the taskset pin, not the machine). `ISA_PROVENANCE built_avx2=true
+  built_fma=true built_sse42=true cpu_avx2=true cpu_sse42=true`. `INCUMBENT_OBJECT
+  /lib/x86_64-linux-gnu/libc.so.6`, `FL_OBJECT` the executable, asserted distinct.
+  SAMPLES=37 WARMUP=4 REPS=20000 BOOTSTRAP_RESAMPLES=4096. CV telemetry only.
+- **RETRY PREDICATE.** Re-run on a host under `loadavg 4` to recover the three null-violated
+  cases; that changes their reportability, NOT the verdict, since the decidable four already
+  span 2.28-3.65x with CIs three orders of magnitude clear of 1.0. Re-open `wordexp` only as a
+  SELF-speedup attacking per-word allocation in the word-vector growth path, justified by the
+  `many_fields` 3.650892 vs `param_default` 2.275282 gradient. Do NOT re-open it as a
+  generality-tax claim: condition (c) fails and glibc is simply better here.
