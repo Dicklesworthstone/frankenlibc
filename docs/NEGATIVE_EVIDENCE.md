@@ -11001,6 +11001,43 @@ path's codegen. (And the near-0 sinhf band is not worth it: sinhf already wins.)
 The f64 `erfc`-from-`erf` complement is separately a documented reject
 (special.rs: ">4 ULP in dense replay").
 
+## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE: live-libm conversion for `sinhf` / `coshf`
+
+- **COMPETITIVE SCOPE / APPARATUS.** The correction above remains a historical
+  FrankenLibC-versus-glibc claim without a modern same-invocation identity or null bundle. The shared
+  `incumbent_coverage_ab` harness now exposes `--family sinhf_coshf`: direct-process host-libm
+  `sinhf`/`coshf` versus the two symbols from an explicitly `RTLD_NOW | RTLD_LOCAL`-loaded
+  FrankenLibC object. Each symbol measures the historical 64-point positive sweep from 0.5 through
+  6.8 with 40 balanced samples (4 warm-ups, 36 retained), provider-specific A/A controls, and the
+  corrected gate: effect CI excluding 1, effect distance beyond twice the widest null-CI half-width,
+  both null medians within 2% of 1, no null-straddle veto, and CV as telemetry only.
+- **VERIFY-ONLY CONTRACT PASSED.** Strict-remote
+  `rch exec --base 11f350e52 --clean-overlay` on `vmi1264463` proved distinct symbol addresses and
+  serving objects, then passed **282 comparisons** before any timer: the existing 13 special values
+  bit-for-bit (NaN-aware) for both functions and both signs of all 64 sweep values within 4 ULP.
+  Observed worst error was **0 ULP for `sinhf` and 1 ULP for `coshf`**. The process reported
+  **1 actually observed thread**.
+- **IN-PROCESS IDENTITY / SINGLE TARGET.** Benchmark ELF SHA-256 was
+  `4bfd5b498a2c3dccc3d5b9e8b00cec3276775d06bae4a49ba8f96d80fde36436`; live host
+  `/usr/lib/x86_64-linux-gnu/libm.so.6` was
+  `ff06daa44363e14ff00c80e28d87a281447f23599bf47c72f4fef0028bc41795`; FrankenLibC was
+  `feae9431aadd0697cc3afb95b8b985e277d057f873046f87ea06dcd32d852667`. All hashes were
+  self-reported from inside the measuring process. Both compile and full attempts reused only
+  `/data/tmp/cargo-target-frankenlibc`; worker inspection confirmed that as rustc's output path.
+- **ZERO-SAMPLE OUTCOME.** The full clean-overlay process repeated all identity, linkage,
+  conformance, and thread observations, then failed closed in the pre-measurement host-wide gate.
+  Across the complete 300-second window it obtained 296 guard samples but never five consecutive
+  clear samples. The final sample had every allowed CPU above the 20% ceiling:
+  `cpu0=100.0%`, `cpu1=100.0%`, `cpu2=97.8%`, `cpu3=100.0%`, `cpu4=100.0%`,
+  `cpu5=100.0%`, `cpu6=98.9%`, `cpu7=99.0%`. No effect or null arm ran:
+  **0 rows decidable, 0 WIN, 0 LOSE**.
+- **DISPOSITION / RETRY PREDICATE.** Neither historical win is retracted or promoted; both remain
+  maintenance evidence. Retry the identical full command (RCH checkout hash `228c3d6089ddcbca`)
+  only after the two long-running co-tenant workloads observed on `vmi1264463` have exited, or on
+  another topology-valid AVX2 host whose pre-gate obtains five consecutive one-second samples with
+  every allowed CPU at or below 20% busy. Require the post-gate, stable observed-thread count, both
+  provider nulls, and a decisive live-libm ratio for each symbol before reclassification.
+
 ## 2026-06-20 strtod/strtof membrane fast-path — simple-case loss cut ~0.4-0.6x (bd-n40in2 sibling)
 
 A dlmopen strtod survey found fl WINS the hard cases (subnormal 0.53x, 1.79e308
