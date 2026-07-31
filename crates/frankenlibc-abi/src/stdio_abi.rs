@@ -6471,6 +6471,317 @@ pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
     true
 }
 
+// ---------------------------------------------------------------------------
+// Fused multi-directive emitter.
+//
+// The exact leaves above each handle ONE bare directive. Real traffic is not
+// one directive: it is `"%s[%d]: %s\n"`, `"%s=%s"`, `"%02x"`-free log lines and
+// key/value joins. Every one of those falls past the leaves into the membrane
+// decide plus the generic segment renderer, which is precisely the
+// configurability indirection glibc also pays -- so on the shapes that actually
+// dominate, we were racing glibc's generic engine with a generic engine.
+//
+// This path renders a whole mixed format in ONE pass with no segment vector, no
+// allocation, and no membrane decide. Admissibility is decided from the format
+// alone BEFORE the first argument is read, because a va_list cannot be rewound:
+// once we take an argument we are committed, so a mid-render bail is not
+// expressible. Anything with flags, width, precision, positional arguments, or
+// a floating conversion is rejected wholesale and falls through unchanged.
+// ---------------------------------------------------------------------------
+
+/// Bounded output cursor implementing snprintf's exact contract: count what
+/// WOULD be written, write only what fits, terminate once at the end.
+struct FusedOut {
+    dst: *mut u8,
+    cap: usize,
+    pos: usize,
+    total: usize,
+}
+
+impl FusedOut {
+    #[inline]
+    fn push(&mut self, src: &[u8]) {
+        self.total = self.total.saturating_add(src.len());
+        if self.dst.is_null() || self.pos >= self.cap {
+            return;
+        }
+        let n = src.len().min(self.cap - self.pos);
+        // SAFETY: `n <= cap - pos` and the caller guaranteed `cap + 1` writable
+        // bytes at `dst`, so this write stays inside the caller's buffer.
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.dst.add(self.pos), n) };
+        self.pos += n;
+    }
+
+    #[inline]
+    fn push_byte(&mut self, byte: u8) {
+        self.push(std::slice::from_ref(&byte));
+    }
+}
+
+#[inline]
+fn fused_render_u64(mut value: u64, out: &mut [u8; 20]) -> usize {
+    let mut start = out.len();
+    loop {
+        start -= 1;
+        out[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            return start;
+        }
+    }
+}
+
+#[inline]
+fn fused_render_i64(value: i64, out: &mut [u8; 20]) -> usize {
+    let mut start = fused_render_u64(value.unsigned_abs(), out);
+    if value < 0 {
+        start -= 1;
+        out[start] = b'-';
+    }
+    start
+}
+
+#[inline]
+fn fused_render_hex(mut value: u64, upper: bool, out: &mut [u8; 16]) -> usize {
+    let alphabet: &[u8; 16] = if upper {
+        b"0123456789ABCDEF"
+    } else {
+        b"0123456789abcdef"
+    };
+    let mut start = out.len();
+    loop {
+        start -= 1;
+        out[start] = alphabet[(value & 0xf) as usize];
+        value >>= 4;
+        if value == 0 {
+            return start;
+        }
+    }
+}
+
+/// One parsed directive: how wide the argument is and how to render it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FusedKind {
+    Str,
+    Char,
+    SignedInt,
+    SignedLong,
+    UnsignedInt,
+    UnsignedLong,
+    HexInt,
+    HexLong,
+    HexIntUpper,
+    HexLongUpper,
+}
+
+/// Parse the directive that begins at `f[i]` (the byte after `%`).
+///
+/// Returns the kind and the index just past the conversion character, or `None`
+/// for anything this emitter does not render byte-identically. Rejecting is
+/// always safe: the caller falls through to the unchanged generic path.
+#[inline]
+unsafe fn fused_parse_directive(f: *const u8, mut i: usize) -> Option<(FusedKind, usize)> {
+    // No flags, width, precision, or positional arguments: `%-8s`, `%02x` and
+    // `%.3s` all pad or truncate, and none of that is expressible here.
+    let mut long = false;
+    loop {
+        match unsafe { *f.add(i) } {
+            b'l' => {
+                // `l` and `ll` are both 64-bit on LP64.
+                long = true;
+                i += 1;
+            }
+            b'z' => {
+                long = true;
+                i += 1;
+            }
+            _ => break,
+        }
+    }
+    let kind = match unsafe { *f.add(i) } {
+        b's' if !long => FusedKind::Str,
+        b'c' if !long => FusedKind::Char,
+        b'd' | b'i' => {
+            if long {
+                FusedKind::SignedLong
+            } else {
+                FusedKind::SignedInt
+            }
+        }
+        b'u' => {
+            if long {
+                FusedKind::UnsignedLong
+            } else {
+                FusedKind::UnsignedInt
+            }
+        }
+        b'x' => {
+            if long {
+                FusedKind::HexLong
+            } else {
+                FusedKind::HexInt
+            }
+        }
+        b'X' => {
+            if long {
+                FusedKind::HexLongUpper
+            } else {
+                FusedKind::HexIntUpper
+            }
+        }
+        _ => return None,
+    };
+    Some((kind, i + 1))
+}
+
+/// Decide admissibility from the format ALONE and return the argument count.
+///
+/// `None` means "not this path" and is always safe. Requires at least two
+/// conversions so the tuned single-directive leaves above keep their traffic.
+#[inline]
+unsafe fn fused_format_arg_count(format: *const c_char) -> Option<usize> {
+    let f = format.cast::<u8>();
+    let mut i = 0usize;
+    let mut args = 0usize;
+    loop {
+        let byte = unsafe { *f.add(i) };
+        if byte == 0 {
+            break;
+        }
+        if byte != b'%' {
+            i += 1;
+            continue;
+        }
+        if unsafe { *f.add(i + 1) } == b'%' {
+            i += 2;
+            continue;
+        }
+        let (_, next) = unsafe { fused_parse_directive(f, i + 1) }?;
+        args += 1;
+        if args > MAX_VA_ARGS {
+            return None;
+        }
+        i = next;
+    }
+    if args >= 2 { Some(args) } else { None }
+}
+
+/// Render `format` against already-extracted general-purpose arguments.
+///
+/// Every admissible directive passes its argument in a GP register slot, so the
+/// caller extracts them uniformly as `u64` -- the same idiom `extract_va_args`
+/// uses -- and this function never touches a `va_list`.
+unsafe fn strict_direct_snprintf_fused(
+    str_buf: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    args: &[u64],
+) -> c_int {
+    let writable = size > 0 && !str_buf.is_null();
+    let mut out = FusedOut {
+        dst: if writable {
+            str_buf.cast::<u8>()
+        } else {
+            std::ptr::null_mut()
+        },
+        cap: if writable { size - 1 } else { 0 },
+        pos: 0,
+        total: 0,
+    };
+
+    let f = format.cast::<u8>();
+    let mut i = 0usize;
+    let mut arg = 0usize;
+    loop {
+        // Emit the literal run up to the next `%` (or the NUL) in one push.
+        let run_start = i;
+        loop {
+            let byte = unsafe { *f.add(i) };
+            if byte == 0 || byte == b'%' {
+                break;
+            }
+            i += 1;
+        }
+        if i > run_start {
+            // SAFETY: bytes `run_start..i` were just scanned inside the format.
+            let run = unsafe { std::slice::from_raw_parts(f.add(run_start), i - run_start) };
+            out.push(run);
+        }
+        if unsafe { *f.add(i) } == 0 {
+            break;
+        }
+        // At a `%`.
+        if unsafe { *f.add(i + 1) } == b'%' {
+            out.push_byte(b'%');
+            i += 2;
+            continue;
+        }
+        let (kind, next) = match unsafe { fused_parse_directive(f, i + 1) } {
+            Some(parsed) => parsed,
+            // Unreachable: `fused_format_arg_count` already validated every
+            // directive. Emit nothing rather than risk a desynchronised render.
+            None => break,
+        };
+        let raw = args[arg];
+        arg += 1;
+        i = next;
+
+        match kind {
+            FusedKind::Str => {
+                let pointer = raw as *const c_char;
+                if pointer.is_null() {
+                    out.push(b"(null)");
+                } else {
+                    let (len, _) = unsafe { super::string_abi::scan_c_string(pointer, None) };
+                    // SAFETY: `scan_c_string` scanned to the first NUL.
+                    out.push(unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), len) });
+                }
+            }
+            FusedKind::Char => out.push_byte(raw as u8),
+            FusedKind::SignedInt => {
+                let mut buffer = [0u8; 20];
+                let start = fused_render_i64(i64::from(raw as u32 as i32), &mut buffer);
+                out.push(&buffer[start..]);
+            }
+            FusedKind::SignedLong => {
+                let mut buffer = [0u8; 20];
+                let start = fused_render_i64(raw as i64, &mut buffer);
+                out.push(&buffer[start..]);
+            }
+            FusedKind::UnsignedInt => {
+                let mut buffer = [0u8; 20];
+                let start = fused_render_u64(u64::from(raw as u32), &mut buffer);
+                out.push(&buffer[start..]);
+            }
+            FusedKind::UnsignedLong => {
+                let mut buffer = [0u8; 20];
+                let start = fused_render_u64(raw, &mut buffer);
+                out.push(&buffer[start..]);
+            }
+            FusedKind::HexInt | FusedKind::HexIntUpper => {
+                let mut buffer = [0u8; 16];
+                let start = fused_render_hex(
+                    u64::from(raw as u32),
+                    kind == FusedKind::HexIntUpper,
+                    &mut buffer,
+                );
+                out.push(&buffer[start..]);
+            }
+            FusedKind::HexLong | FusedKind::HexLongUpper => {
+                let mut buffer = [0u8; 16];
+                let start = fused_render_hex(raw, kind == FusedKind::HexLongUpper, &mut buffer);
+                out.push(&buffer[start..]);
+            }
+        }
+    }
+
+    if writable {
+        // SAFETY: `pos <= cap == size - 1`, so the terminator is in bounds.
+        unsafe { *out.dst.add(out.pos) = 0 };
+    }
+    printf_result_to_c_int(out.total)
+}
+
 /// POSIX `snprintf` — format at most `size` bytes into `str`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn snprintf(
@@ -6549,6 +6860,23 @@ pub unsafe extern "C" fn snprintf(
         // SAFETY: snprintf's C contract supplies `size` writable bytes when
         // `size > 0`; the helper bounds every write to that region.
         return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
+    }
+    // Multi-directive formats: decided from the format alone, before any
+    // argument is consumed, because a va_list cannot be rewound.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(count) = unsafe { fused_format_arg_count(format) }
+    {
+        let mut extracted = [0u64; MAX_VA_ARGS];
+        // SAFETY: every admissible directive passes its argument in a GP
+        // register slot, so each is readable as `u64` -- the same extraction
+        // `extract_va_args` performs for `ValueArgKind::Gp`. `count` is exactly
+        // the number of conversions the format validated.
+        for slot in extracted.iter_mut().take(count) {
+            *slot = unsafe { args.next_arg::<u64>() };
+        }
+        return unsafe {
+            strict_direct_snprintf_fused(str_buf, size, format, &extracted[..count])
+        };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");

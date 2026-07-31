@@ -4,7 +4,8 @@
 //! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, waiter-aware
 //! `sem_post`, inlined `thrd_current`, strict `mtx_trylock`, and hosts-backed
 //! `getaddrinfo`, `gethostbyaddr`, and `gethostbyname`, the coupled f32
-//! `sinhf`/`coshf` paths, and the exact `snprintf` `%u`/`%p`/`%c` emitters.
+//! `sinhf`/`coshf` paths, the exact `snprintf` `%u`/`%p`/`%c` emitters, and
+//! `wcsnrtombs` count mode.
 //! Their historical rows proved FrankenLibC self-speedups, but did not time
 //! live glibc in the same invocation -- or, for `snprintf`, quoted a glibc
 //! number from an `abi-bench` Criterion binary whose interposed allocator and
@@ -34,7 +35,7 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf`
+//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -71,9 +72,12 @@ const F32_HYPERBOLIC_REPS: usize = 1_000_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
 const GETHOSTBYNAME_REPS: usize = 5_000;
 const SNPRINTF_REPS: usize = 200_000;
+const WCSNRTOMBS_CODEPOINTS_PER_ARM: usize = 20_000_000;
+const WCSNRTOMBS_MIN_REPS: usize = 2_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 const IPV4_LOOPBACK: [u8; 4] = [127, 0, 0, 1];
+const WCSNRTOMBS_OUTPUT_SENTINEL: u8 = 0xa5;
 
 type NlLanginfoFn = unsafe extern "C" fn(libc::nl_item) -> *const c_char;
 type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
@@ -105,6 +109,14 @@ type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent
 /// two arms could diverge on register-save work that has nothing to do with the
 /// formatter under test. The variadic type makes both arms use the real ABI.
 type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type WcsnrtombsFn = unsafe extern "C" fn(
+    *mut c_char,
+    *mut *const libc::wchar_t,
+    usize,
+    usize,
+    *mut libc::mbstate_t,
+) -> usize;
+type MbsinitFn = unsafe extern "C" fn(*const libc::mbstate_t) -> c_int;
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -163,6 +175,16 @@ unsafe extern "C" {
         format: *const c_char,
         ...
     ) -> c_int;
+    #[link_name = "wcsnrtombs"]
+    fn linked_host_wcsnrtombs(
+        destination: *mut c_char,
+        source: *mut *const libc::wchar_t,
+        max_wide_characters: usize,
+        length: usize,
+        state: *mut libc::mbstate_t,
+    ) -> usize;
+    #[link_name = "mbsinit"]
+    fn linked_host_mbsinit(state: *const libc::mbstate_t) -> c_int;
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -314,6 +336,8 @@ enum Family {
     Gethostbyaddr,
     Gethostbyname,
     Snprintf,
+    SnprintfFused,
+    Wcsnrtombs,
 }
 
 struct Case {
@@ -333,6 +357,31 @@ struct GetauxvalCase {
     label: &'static str,
     type_: c_ulong,
     note: &'static str,
+}
+
+struct WcsnrtombsCase {
+    label: &'static str,
+    wide: Vec<libc::wchar_t>,
+    note: &'static str,
+}
+
+impl WcsnrtombsCase {
+    fn codepoints(&self) -> usize {
+        self.wide.len() - 1
+    }
+
+    fn reps(&self) -> usize {
+        (WCSNRTOMBS_CODEPOINTS_PER_ARM / self.codepoints().max(1)).max(WCSNRTOMBS_MIN_REPS)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WcsnrtombsObservation {
+    result: usize,
+    source_offset: Option<usize>,
+    output: Vec<u8>,
+    errno: c_int,
+    state_is_initial: bool,
 }
 
 const CASES: &[Case] = &[
@@ -564,10 +613,12 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("gethostbyaddr") => Family::Gethostbyaddr,
                 Some(value) if value == OsStr::new("gethostbyname") => Family::Gethostbyname,
                 Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
+                Some(value) if value == OsStr::new("snprintf_fused") => Family::SnprintfFused,
+                Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
                      sem_post, thrd_current, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
-                     gethostbyaddr, gethostbyname, or snprintf"
+                     gethostbyaddr, gethostbyname, snprintf, or wcsnrtombs"
                 ),
             };
         } else {
@@ -577,7 +628,8 @@ fn parse_args() -> Config {
                  [--families a,b,c] \
                  [--family \
                   nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf]"
+                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
+                  wcsnrtombs]"
             );
         }
     }
@@ -2037,6 +2089,499 @@ fn measure_f32_unary_case(
         label,
         note,
         F32_HYPERBOLIC_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+fn make_wide(text: &str) -> Vec<libc::wchar_t> {
+    text.chars()
+        .map(|character| character as libc::wchar_t)
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn wcsnrtombs_timing_cases() -> Vec<WcsnrtombsCase> {
+    vec![WcsnrtombsCase {
+        label: "ascii",
+        wide: make_wide(&"The quick brown fox jumps over the lazy dog. ".repeat(30)),
+        note: "historical long all-ASCII count fixture under shared C locale",
+    }]
+}
+
+fn wcsnrtombs_incomparable_cases() -> Vec<WcsnrtombsCase> {
+    let cyrillic = (0..300)
+        .map(|index| char::from_u32(0x0410 + (index % 0x40)).expect("valid Cyrillic scalar"))
+        .collect::<String>();
+    let cjk = (0..300)
+        .map(|index| char::from_u32(0x4e00 + (index % 0x400)).expect("valid CJK scalar"))
+        .collect::<String>();
+    vec![
+        WcsnrtombsCase {
+            label: "mixed",
+            wide: make_wide(&"café résumé naïve façade ".repeat(40)),
+            note: "historical Latin mixed-width fixture requires UTF-8 locale",
+        },
+        WcsnrtombsCase {
+            label: "cyrillic",
+            wide: make_wide(&cyrillic),
+            note: "historical Cyrillic fixture requires UTF-8 locale",
+        },
+        WcsnrtombsCase {
+            label: "cjk",
+            wide: make_wide(&cjk),
+            note: "historical CJK fixture requires UTF-8 locale",
+        },
+    ]
+}
+
+fn wcsnrtombs_source_offset(
+    input: &[libc::wchar_t],
+    source: *const libc::wchar_t,
+) -> Option<usize> {
+    if source.is_null() {
+        return None;
+    }
+    let start = input.as_ptr() as usize;
+    let address = source as usize;
+    let byte_len = input.len() * std::mem::size_of::<libc::wchar_t>();
+    assert!(
+        (start..=start + byte_len).contains(&address),
+        "wcsnrtombs returned a source pointer outside the input"
+    );
+    let displacement = address - start;
+    assert_eq!(
+        displacement % std::mem::size_of::<libc::wchar_t>(),
+        0,
+        "wcsnrtombs returned a misaligned source pointer"
+    );
+    Some(displacement / std::mem::size_of::<libc::wchar_t>())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_wcsnrtombs(
+    function: WcsnrtombsFn,
+    errno_location: ErrnoLocationFn,
+    mbsinit: MbsinitFn,
+    input: &[libc::wchar_t],
+    max_wide_characters: usize,
+    output_capacity: Option<usize>,
+    explicit_state: bool,
+) -> WcsnrtombsObservation {
+    let mut output = output_capacity
+        .map(|capacity| vec![WCSNRTOMBS_OUTPUT_SENTINEL; capacity])
+        .unwrap_or_default();
+    let destination = if output_capacity.is_some() {
+        output.as_mut_ptr().cast::<c_char>()
+    } else {
+        std::ptr::null_mut()
+    };
+    let mut source = input.as_ptr();
+    let mut state: libc::mbstate_t = unsafe { std::mem::zeroed() };
+    let state_pointer = if explicit_state {
+        &mut state
+    } else {
+        std::ptr::null_mut()
+    };
+    unsafe { *errno_location() = libc::EBUSY };
+    let result = unsafe {
+        function(
+            destination,
+            &mut source,
+            max_wide_characters,
+            output_capacity.unwrap_or(0),
+            state_pointer,
+        )
+    };
+    WcsnrtombsObservation {
+        result,
+        source_offset: wcsnrtombs_source_offset(input, source),
+        output,
+        errno: unsafe { *errno_location() },
+        state_is_initial: unsafe { mbsinit(&state) != 0 },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_wcsnrtombs_observation(
+    host: WcsnrtombsFn,
+    fl: WcsnrtombsFn,
+    host_errno: ErrnoLocationFn,
+    fl_errno: ErrnoLocationFn,
+    host_mbsinit: MbsinitFn,
+    fl_mbsinit: MbsinitFn,
+    input: &[libc::wchar_t],
+    max_wide_characters: usize,
+    output_capacity: Option<usize>,
+    explicit_state: bool,
+    label: &str,
+) -> WcsnrtombsObservation {
+    let host_observation = observe_wcsnrtombs(
+        host,
+        host_errno,
+        host_mbsinit,
+        input,
+        max_wide_characters,
+        output_capacity,
+        explicit_state,
+    );
+    let fl_observation = observe_wcsnrtombs(
+        fl,
+        fl_errno,
+        fl_mbsinit,
+        input,
+        max_wide_characters,
+        output_capacity,
+        explicit_state,
+    );
+    assert_eq!(
+        fl_observation, host_observation,
+        "wcsnrtombs conformance mismatch for {label}"
+    );
+    host_observation
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_wcsnrtombs_success_case(
+    host: WcsnrtombsFn,
+    fl: WcsnrtombsFn,
+    host_errno: ErrnoLocationFn,
+    fl_errno: ErrnoLocationFn,
+    host_mbsinit: MbsinitFn,
+    fl_mbsinit: MbsinitFn,
+    case: &WcsnrtombsCase,
+) -> usize {
+    let full_nwc = case.wide.len();
+    let count = compare_wcsnrtombs_observation(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &case.wide,
+        full_nwc,
+        None,
+        true,
+        &format!("{}/count_explicit_state", case.label),
+    );
+    assert_ne!(
+        count.result,
+        usize::MAX,
+        "successful case {} was not representable",
+        case.label
+    );
+    compare_wcsnrtombs_observation(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &case.wide,
+        full_nwc,
+        None,
+        false,
+        &format!("{}/count_internal_state", case.label),
+    );
+    let bounded_nwc = (case.codepoints() / 2).max(1);
+    compare_wcsnrtombs_observation(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &case.wide,
+        bounded_nwc,
+        None,
+        true,
+        &format!("{}/count_nwc_bounded", case.label),
+    );
+    compare_wcsnrtombs_observation(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &case.wide,
+        full_nwc,
+        Some(count.result + 1),
+        true,
+        &format!("{}/full_write", case.label),
+    );
+    compare_wcsnrtombs_observation(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &case.wide,
+        bounded_nwc,
+        Some(count.result + 1),
+        true,
+        &format!("{}/nwc_bounded_write", case.label),
+    );
+    compare_wcsnrtombs_observation(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &case.wide,
+        full_nwc,
+        Some((count.result / 2).max(1)),
+        true,
+        &format!("{}/byte_bounded_write", case.label),
+    );
+    count.result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_wcsnrtombs_conformance(
+    host: WcsnrtombsFn,
+    fl: WcsnrtombsFn,
+    host_errno: ErrnoLocationFn,
+    fl_errno: ErrnoLocationFn,
+    host_mbsinit: MbsinitFn,
+    fl_mbsinit: MbsinitFn,
+    cases: &[WcsnrtombsCase],
+) -> (Vec<usize>, usize) {
+    let expected_counts = cases
+        .iter()
+        .map(|case| {
+            verify_wcsnrtombs_success_case(
+                host,
+                fl,
+                host_errno,
+                fl_errno,
+                host_mbsinit,
+                fl_mbsinit,
+                case,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut comparisons = cases.len() * 6;
+
+    let empty = [0 as libc::wchar_t];
+    for (label, output_capacity) in [("empty/count", None), ("empty/write", Some(1))] {
+        let observation = compare_wcsnrtombs_observation(
+            host,
+            fl,
+            host_errno,
+            fl_errno,
+            host_mbsinit,
+            fl_mbsinit,
+            &empty,
+            empty.len(),
+            output_capacity,
+            true,
+            label,
+        );
+        assert_eq!(observation.result, 0, "empty input must convert zero bytes");
+        comparisons += 1;
+    }
+
+    let invalid = [0xd800 as libc::wchar_t, 0];
+    for (label, max_wide_characters, output_capacity, expected) in [
+        ("invalid/count", invalid.len(), None, usize::MAX),
+        ("invalid/write", invalid.len(), Some(16), usize::MAX),
+        ("invalid/nwc_zero", 0, None, 0),
+    ] {
+        let observation = compare_wcsnrtombs_observation(
+            host,
+            fl,
+            host_errno,
+            fl_errno,
+            host_mbsinit,
+            fl_mbsinit,
+            &invalid,
+            max_wide_characters,
+            output_capacity,
+            true,
+            label,
+        );
+        assert_eq!(
+            observation.result, expected,
+            "invalid-scalar contract mismatch for {label}"
+        );
+        comparisons += 1;
+    }
+
+    (expected_counts, comparisons)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_wcsnrtombs_incomparable_cases(
+    host: WcsnrtombsFn,
+    fl: WcsnrtombsFn,
+    host_errno: ErrnoLocationFn,
+    fl_errno: ErrnoLocationFn,
+    host_mbsinit: MbsinitFn,
+    fl_mbsinit: MbsinitFn,
+    cases: &[WcsnrtombsCase],
+) -> usize {
+    for case in cases {
+        let host_observation = observe_wcsnrtombs(
+            host,
+            host_errno,
+            host_mbsinit,
+            &case.wide,
+            case.wide.len(),
+            None,
+            true,
+        );
+        let fl_observation = observe_wcsnrtombs(
+            fl,
+            fl_errno,
+            fl_mbsinit,
+            &case.wide,
+            case.wide.len(),
+            None,
+            true,
+        );
+        assert_eq!(
+            host_observation.result,
+            usize::MAX,
+            "host C locale unexpectedly represented non-ASCII case {}",
+            case.label
+        );
+        assert_ne!(
+            fl_observation.result,
+            usize::MAX,
+            "FrankenLibC C locale unexpectedly rejected non-ASCII case {}",
+            case.label
+        );
+        println!(
+            "WCSNRTOMBS_INCOMPARABLE symbol=wcsnrtombs case={} \
+             reason=no_common_utf8_locale host_locale=C host_result=size_t_max \
+             host_errno={} fl_locale=C fl_result={} fl_errno={} note={:?}",
+            case.label,
+            host_observation.errno,
+            fl_observation.result,
+            fl_observation.errno,
+            case.note,
+        );
+    }
+    cases.len()
+}
+
+#[inline(never)]
+fn run_wcsnrtombs_count_batch(
+    function: WcsnrtombsFn,
+    input: &[libc::wchar_t],
+    reps: usize,
+) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..reps {
+        let mut source = black_box(input.as_ptr());
+        let result = unsafe {
+            function(
+                std::ptr::null_mut(),
+                black_box(&mut source),
+                input.len(),
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        accumulator = accumulator.wrapping_add(black_box(result));
+        black_box(source);
+    }
+    black_box(accumulator)
+}
+
+fn time_wcsnrtombs_count_batch(
+    function: WcsnrtombsFn,
+    case: &WcsnrtombsCase,
+    expected: usize,
+    reps: usize,
+) -> f64 {
+    let started = Instant::now();
+    let total = run_wcsnrtombs_count_batch(function, &case.wide, reps);
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / reps as f64;
+    assert_eq!(
+        total,
+        expected.wrapping_mul(reps),
+        "wcsnrtombs timed batch returned an error for {}",
+        case.label,
+    );
+    elapsed
+}
+
+fn measure_wcsnrtombs_case(
+    host: WcsnrtombsFn,
+    fl: WcsnrtombsFn,
+    case: &WcsnrtombsCase,
+    expected: usize,
+) -> CaseResult {
+    let reps = case.reps();
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_wcsnrtombs_count_batch(fl, case, expected, reps);
+                    fb = time_wcsnrtombs_count_batch(fl, case, expected, reps);
+                }
+                0 => {
+                    fb = time_wcsnrtombs_count_batch(fl, case, expected, reps);
+                    fa = time_wcsnrtombs_count_batch(fl, case, expected, reps);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_wcsnrtombs_count_batch(host, case, expected, reps);
+                    gb = time_wcsnrtombs_count_batch(host, case, expected, reps);
+                }
+                1 => {
+                    gb = time_wcsnrtombs_count_batch(host, case, expected, reps);
+                    ga = time_wcsnrtombs_count_batch(host, case, expected, reps);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_wcsnrtombs_count_batch(fl, case, expected, reps);
+                    effect_glibc = time_wcsnrtombs_count_batch(host, case, expected, reps);
+                }
+                2 => {
+                    effect_glibc = time_wcsnrtombs_count_batch(host, case, expected, reps);
+                    effect_fl = time_wcsnrtombs_count_batch(fl, case, expected, reps);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        reps,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -4102,6 +4647,369 @@ const SNPRINTF_S_VALUES: [&CStr; 8] = [
 /// nine would put a division in both arms and dilute the ratio under test.
 const SNPRINTF_U_TIMING: [c_uint; 8] = [0, 9, 10, 99, 100, 999, 65_535, u32::MAX];
 
+/// Destination for the multi-directive job cases, which render whole log lines
+/// rather than one conversion.
+const FUSED_BUF: usize = 128;
+/// Sizes spanning zero, deep truncation, one-past-fit, and comfortable fit.
+const FUSED_SIZES: [usize; 9] = [0, 1, 2, 3, 8, 16, 32, 64, 128];
+
+fn fused_probe(
+    call: impl Fn(*mut c_char, usize) -> c_int,
+    size: usize,
+) -> (c_int, [u8; FUSED_BUF]) {
+    assert!(size <= FUSED_BUF, "probe size {size} exceeds destination");
+    let mut buffer = [SNPRINTF_CANARY; FUSED_BUF];
+    let returned = call(buffer.as_mut_ptr().cast(), size);
+    (returned, buffer)
+}
+
+/// Compare both providers on return value AND the complete destination array.
+fn compare_fused_probe(
+    case: &str,
+    host_call: impl Fn(*mut c_char, usize) -> c_int,
+    fl_call: impl Fn(*mut c_char, usize) -> c_int,
+) -> usize {
+    let mut mismatches = 0usize;
+    for &size in &FUSED_SIZES {
+        let (host_returned, host_bytes) = fused_probe(&host_call, size);
+        let (fl_returned, fl_bytes) = fused_probe(&fl_call, size);
+        if host_returned == fl_returned && host_bytes == fl_bytes {
+            continue;
+        }
+        mismatches += 1;
+        println!(
+            "INCUMBENT_COVERAGE_CONFORMANCE_MISMATCH symbol=snprintf_fused case={case} \
+             size={size} glibc_return={host_returned} fl_return={fl_returned} \
+             glibc_bytes={:?} fl_bytes={:?}",
+            String::from_utf8_lossy(&host_bytes[..size.min(FUSED_BUF)]),
+            String::from_utf8_lossy(&fl_bytes[..size.min(FUSED_BUF)]),
+        );
+    }
+    mismatches
+}
+
+fn check_fused_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize) {
+    let ident = c"frankenlibc";
+    let msg = c"connection established from peer";
+    let key = c"level";
+    let value = c"info";
+    let method = c"GET";
+    let path = c"/api/v1/resource";
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+
+    macro_rules! case {
+        ($label:expr, $($call:tt)*) => {{
+            comparisons += FUSED_SIZES.len();
+            mismatches += compare_fused_probe(
+                $label,
+                |p, n| unsafe { host(p, n, $($call)*) },
+                |p, n| unsafe { fl(p, n, $($call)*) },
+            );
+        }};
+    }
+
+    // The canonical syslog shape, the target of this lever.
+    case!("syslog_line", c"%s[%d]: %s".as_ptr(), ident.as_ptr(), 4321i32, msg.as_ptr());
+    case!(
+        "http_log",
+        c"%s %s %d %lu".as_ptr(),
+        method.as_ptr(),
+        path.as_ptr(),
+        200i32,
+        1_048_576u64
+    );
+    case!(
+        "kv_join",
+        c"%s=%s %s=%s".as_ptr(),
+        key.as_ptr(),
+        value.as_ptr(),
+        method.as_ptr(),
+        path.as_ptr()
+    );
+    // `%%` inside a multi-directive format.
+    case!("percent_literal", c"%s: %d%%".as_ptr(), key.as_ptr(), 97i32);
+    // Mixed integer widths and both hex cases.
+    case!(
+        "mixed_int",
+        c"%d/%u/%x/%lX".as_ptr(),
+        -7i32,
+        4_000_000_000u32,
+        0xdead_beefu32,
+        0xfeed_face_dead_beefu64
+    );
+    // A NULL `%s` argument inside a fused format.
+    case!(
+        "null_string",
+        c"%s|%s".as_ptr(),
+        std::ptr::null::<c_char>(),
+        ident.as_ptr()
+    );
+    case!("char_pair", c"%c%c%s%d".as_ptr(), 0x5bi32, 0x5di32, ident.as_ptr(), 9i32);
+    // MUST be rejected by the fused path (width) and fall through unchanged.
+    case!("rejected_width", c"%5d %s".as_ptr(), 42i32, ident.as_ptr());
+    // MUST be rejected (precision).
+    case!("rejected_precision", c"%.3s %d".as_ptr(), msg.as_ptr(), 1i32);
+    // MUST be rejected (floating conversion).
+    case!("rejected_float", c"%s %f".as_ptr(), key.as_ptr(), 1.5f64);
+    // Single directive: keeps using the tuned leaf, not the fused path.
+    case!("single_directive", c"%d".as_ptr(), 12345i32);
+
+    (comparisons, mismatches)
+}
+
+#[inline(never)]
+fn run_fused_syslog_batch(function: SnprintfFn) -> u64 {
+    let format = c"%s[%d]: %s";
+    let ident = c"frankenlibc";
+    let msg = c"connection established from peer";
+    let mut buffer = [0u8; FUSED_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(FUSED_BUF),
+                black_box(format.as_ptr()),
+                black_box(ident.as_ptr()),
+                black_box(index as c_int),
+                black_box(msg.as_ptr()),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_fused_http_batch(function: SnprintfFn) -> u64 {
+    let format = c"%s %s %d %lu";
+    let method = c"GET";
+    let path = c"/api/v1/resource";
+    let mut buffer = [0u8; FUSED_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(FUSED_BUF),
+                black_box(format.as_ptr()),
+                black_box(method.as_ptr()),
+                black_box(path.as_ptr()),
+                black_box(200i32 + (index & 7) as c_int),
+                black_box(1_048_576u64 + index as u64),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_fused_kv_batch(function: SnprintfFn) -> u64 {
+    let format = c"%s=%s %s=%s";
+    let key = c"level";
+    let value = c"info";
+    let method = c"GET";
+    let path = c"/api/v1/resource";
+    let mut buffer = [0u8; FUSED_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for _ in 0..SNPRINTF_REPS {
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(FUSED_BUF),
+                black_box(format.as_ptr()),
+                black_box(key.as_ptr()),
+                black_box(value.as_ptr()),
+                black_box(method.as_ptr()),
+                black_box(path.as_ptr()),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+fn time_fused_syslog_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_syslog_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_http_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_http_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_kv_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_kv_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn run_snprintf_fused(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_symbol = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC snprintf")
+    );
+
+    let host: SnprintfFn = linked_host_snprintf;
+    let fl: SnprintfFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host snprintf object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC snprintf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=snprintf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=snprintf");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both snprintf arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=snprintf_fused incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    let (comparisons, mismatches) = check_fused_conformance(host, fl);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_fused shapes=11 \
+         destination_sizes=9 destination_bytes={FUSED_BUF} comparisons={comparisons} \
+         mismatches={mismatches} compared=return_value_and_full_destination \
+         includes_rejected_shapes=width,precision,float,single_directive \
+         verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=snprintf_fused phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!(
+            "INCUMBENT_COVERAGE_VERIFY_ONLY symbol=snprintf_fused verdict={conformance_verdict}"
+        );
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(
+        mismatches, 0,
+        "fused snprintf arms are not observationally equivalent; refusing to time them"
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+
+    let results = [
+        measure_snprintf_case(
+            "syslog_line",
+            "whole-job: \"%s[%d]: %s\" -- the canonical syslog shape",
+            host,
+            fl,
+            time_fused_syslog_batch,
+        ),
+        measure_snprintf_case(
+            "http_log",
+            "whole-job: \"%s %s %d %lu\" -- access-log shape",
+            host,
+            fl,
+            time_fused_http_batch,
+        ),
+        measure_snprintf_case(
+            "kv_join",
+            "whole-job: \"%s=%s %s=%s\" -- structured key/value shape",
+            host,
+            fl,
+            time_fused_kv_batch,
+        ),
+    ];
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "snprintf_fused observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print(
+            "snprintf_fused",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "syslog_line")
+        .expect("missing syslog_line result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=snprintf_fused verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=syslog_line headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+    );
+
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn snprintf_probe(
     call: impl Fn(*mut c_char, usize) -> c_int,
     size: usize,
@@ -4664,5 +5572,16 @@ fn main() {
         Family::Gethostbyaddr => run_gethostbyaddr(&config),
         Family::Gethostbyname => run_gethostbyname(&config),
         Family::Snprintf => run_snprintf(&config),
+        Family::SnprintfFused => run_snprintf_fused(&config),
+        // Peer-owned family (WildRaven): the variant and its batch helper have
+        // landed but the top-level runner has not. This arm only keeps the
+        // shared example compiling for every other family; replace it with the
+        // real runner rather than building on it.
+        Family::Wcsnrtombs => {
+            eprintln!(
+                "INCUMBENT_COVERAGE_BLOCKED family=wcsnrtombs reason=runner_not_yet_implemented"
+            );
+            std::process::exit(2);
+        }
     }
 }

@@ -26521,3 +26521,60 @@ failed. Evidence and harness only; no production optimization attempted.
   narrower, not wider: more reps have been tried and did not decide them, so do
   not simply raise reps again — either find a structural difference or leave
   both classified as parity.
+
+## 2026-07-31 (cc_fl / BlackThrush) — CAMPAIGN WIN (SHIPPED, MODEST): fused multi-directive `snprintf` emitter measures 0.788267x vs live glibc on the access-log shape; format parsing is NOT the bottleneck
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.788267`
+  `incumbent_bootstrap_median_ci=[0.763049,0.812113]`
+  `null_bootstrap_median_ci=[0.970097,1.032097]`
+  `bench_elf_sha256=c351f4b8c8beb0d89948a9704675d91719428a60d84ce7c64825ff9dac336a91`,
+  self-reported in-process by the executing ELF on host `frankenlibc-test`
+  (`allowed_cpus` narrowed to 2 via `--pin-quietest`, gate unchanged). Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`. FrankenLibC 91.853 ns vs live glibc 118.108 ns for case
+  `http_log`.
+  The same-invocation A/A null control measured FL/FL ratio_median 1.005207 with a bootstrap median CI of [0.970097,1.032097] over 4096 resamples.
+  The A/B effect (FL/glibc) measured 0.788267 with a bootstrap median CI of [0.763049,0.812113]. cv_used=false.
+- **THE LEVER.** Every exact `snprintf` leaf shipped so far handles ONE bare
+  directive. Real traffic is `"%s[%d]: %s"`, `"%s %s %d %lu"`, `"%s=%s %s=%s"`,
+  all of which fell past the leaves into the membrane decide plus the generic
+  segment renderer — so on the shapes that actually dominate we were racing
+  glibc's generic engine with a generic engine. Added
+  `strict_direct_snprintf_fused`: one pass, no segment vector, no allocation, no
+  membrane decide. Admissibility is decided from the format ALONE before the
+  first argument is read, because a `va_list` cannot be rewound and a mid-render
+  bail is therefore not expressible; flags, width, precision, positional
+  arguments and every floating conversion are rejected wholesale and fall
+  through unchanged.
+- **EQUIVALENCE ORACLE.** 99 comparisons over 11 format shapes x 9 destination
+  sizes (0..128), each checking the return value AND all 128 destination bytes.
+  **0 mismatches.** The shapes deliberately include four the fused path must
+  REJECT — `%5d` (width), `%.3s` (precision), `%f` (floating), and a
+  single-directive `%d` that must keep using its tuned leaf — proving the
+  reject path still produces byte-identical output.
+- **RESULT — a real win, but percentages, not multiples.** `http_log`
+  **0.788267x** [0.763049,0.812113] clears 2x the null: **FL_FASTER**,
+  the only decidable case. `syslog_line` **0.913037x** [0.886973,0.948452] and
+  `kv_join` **0.846196x** [0.797334,0.886759] are both favourable but do NOT
+  clear 2x their null half-width: **UNDECIDABLE**. All three nulls hold.
+  Verdict `INCOMPLETE`, 3 cases, 1 win, 0 losses, 2 undecidable.
+- **MECHANISM FINDING — THIS IS THE PART THAT MATTERS.** Removing the entire
+  generic-renderer and membrane-decide path bought only ~12-21%. Therefore
+  **format parsing and dispatch are NOT the bottleneck in a realistic log
+  line** — the dominant term is the `%s` argument work: `scan_c_string` to
+  length each string plus the byte copy. glibc pays exactly the same two costs
+  and its implementations of them are tuned, so we are at parity on the term
+  that dominates. The 2.7-3.0x seen on bare `%u`/`%d`/`%c` comes from those
+  shapes having NO string argument, so the fixed dispatch overhead is the whole
+  job there and nearly none of it here.
+- **DISPOSITION / WHERE THE MULTIPLES ARE NOT.** Kept: it is strictly better
+  than the generic path it replaces, it only engages on formats it has already
+  validated, and it carries a live same-invocation ratio. But **do not spend
+  another turn seeking a multiple in `snprintf` string-bearing shapes** — the
+  floor is `strlen` + `memcpy` on the caller's data and neither side can skip
+  it. A multiple would require changing what the CALLER does (a precompiled
+  format handle, or an interface that passes lengths), not what `snprintf`
+  does internally. Integer-only multi-directive shapes are the one remaining
+  place this lever could still pay off and were not measured.
