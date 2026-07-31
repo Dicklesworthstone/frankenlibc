@@ -337,6 +337,7 @@ enum Family {
     Gethostbyname,
     Snprintf,
     SnprintfFused,
+    SnprintfFloat,
     Wcsnrtombs,
 }
 
@@ -614,6 +615,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("gethostbyname") => Family::Gethostbyname,
                 Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
                 Some(value) if value == OsStr::new("snprintf_fused") => Family::SnprintfFused,
+                Some(value) if value == OsStr::new("snprintf_float") => Family::SnprintfFloat,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
@@ -4855,6 +4857,258 @@ fn time_fused_kv_batch(function: SnprintfFn) -> f64 {
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
+/// Values chosen to exercise the fast kernel AND the cases it declines:
+/// signed zero, subnormal, tiny, typical money/metric magnitudes, the u64
+/// scaled-overflow boundary, huge finite, and the non-finite triple.
+const FLOAT_VALUES: [f64; 16] = [
+    0.0,
+    -0.0,
+    1.0,
+    -1.0,
+    0.5,
+    2.675,
+    3.14159265358979,
+    -12345.6789,
+    0.1,
+    1e-7,
+    5e-324,
+    1.7976931348623157e308,
+    1e18,
+    1e19,
+    f64::NAN,
+    f64::INFINITY,
+];
+/// Timing set: ordinary finite magnitudes, the shapes real callers format.
+const FLOAT_TIMING: [f64; 8] = [
+    0.0,
+    1.0,
+    2.675,
+    -12345.6789,
+    3.14159265358979,
+    99.99,
+    0.125,
+    -0.5,
+];
+
+fn check_float_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize) {
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+    // Bare "%f" (precision 6) plus every single-digit "%.Nf".
+    let formats: [&CStr; 10] = [
+        c"%f", c"%.0f", c"%.1f", c"%.2f", c"%.3f", c"%.4f", c"%.5f", c"%.6f", c"%.8f", c"%.9f",
+    ];
+    for format in formats {
+        for &value in &FLOAT_VALUES {
+            for &size in &FUSED_SIZES {
+                comparisons += 1;
+                let (host_returned, host_bytes) = fused_probe(
+                    |pointer, n| unsafe { host(pointer, n, format.as_ptr(), value) },
+                    size,
+                );
+                let (fl_returned, fl_bytes) = fused_probe(
+                    |pointer, n| unsafe { fl(pointer, n, format.as_ptr(), value) },
+                    size,
+                );
+                if host_returned == fl_returned && host_bytes == fl_bytes {
+                    continue;
+                }
+                mismatches += 1;
+                println!(
+                    "INCUMBENT_COVERAGE_CONFORMANCE_MISMATCH symbol=snprintf_float \
+                     format={:?} value={value:e} size={size} glibc_return={host_returned} \
+                     fl_return={fl_returned} glibc={:?} fl={:?}",
+                    format.to_string_lossy(),
+                    String::from_utf8_lossy(&host_bytes[..size.min(FUSED_BUF)]),
+                    String::from_utf8_lossy(&fl_bytes[..size.min(FUSED_BUF)]),
+                );
+            }
+        }
+    }
+    (comparisons, mismatches)
+}
+
+#[inline(never)]
+fn run_float_batch(function: SnprintfFn, format: &CStr) -> u64 {
+    let mut buffer = [0u8; FUSED_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = FLOAT_TIMING[index & (FLOAT_TIMING.len() - 1)];
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(FUSED_BUF),
+                black_box(format.as_ptr()),
+                black_box(value),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+fn time_float_2f_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_float_batch(function, c"%.2f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_float_6f_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_float_batch(function, c"%f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_float_4f_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_float_batch(function, c"%.4f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn run_snprintf_float(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_symbol = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC snprintf")
+    );
+
+    let host: SnprintfFn = linked_host_snprintf;
+    let fl: SnprintfFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host snprintf object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC snprintf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=snprintf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=snprintf");
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both snprintf arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=snprintf_float incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    let (comparisons, mismatches) = check_float_conformance(host, fl);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_float formats=10 values=16 \
+         destination_sizes=9 comparisons={comparisons} mismatches={mismatches} \
+         compared=return_value_and_full_destination \
+         covers=signed_zero,subnormal,u64_scale_overflow,huge_finite,nan,inf \
+         verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=snprintf_float phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!(
+            "INCUMBENT_COVERAGE_VERIFY_ONLY symbol=snprintf_float verdict={conformance_verdict}"
+        );
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(
+        mismatches, 0,
+        "float arms are not observationally equivalent; refusing to time them"
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+
+    let results = [
+        measure_snprintf_case(
+            "fixed_2dp",
+            "\"%.2f\" -- money/metric shape, the highest-traffic float format",
+            host,
+            fl,
+            time_float_2f_batch,
+        ),
+        measure_snprintf_case(
+            "fixed_4dp",
+            "\"%.4f\" -- mid precision",
+            host,
+            fl,
+            time_float_4f_batch,
+        ),
+        measure_snprintf_case(
+            "default_6dp",
+            "bare \"%f\" -- C's default precision 6",
+            host,
+            fl,
+            time_float_6f_batch,
+        ),
+    ];
+
+    let threads_post = observed_threads();
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print(
+            "snprintf_float",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let headline = results
+        .iter()
+        .find(|result| result.label == "fixed_2dp")
+        .expect("missing fixed_2dp result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=snprintf_float verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={} \
+         headline_case=fixed_2dp headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        results.len() - wins - losses,
+        headline.effect_median,
+    );
+
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn run_snprintf_fused(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
@@ -5573,6 +5827,7 @@ fn main() {
         Family::Gethostbyname => run_gethostbyname(&config),
         Family::Snprintf => run_snprintf(&config),
         Family::SnprintfFused => run_snprintf_fused(&config),
+        Family::SnprintfFloat => run_snprintf_float(&config),
         // Peer-owned family (WildRaven): the variant and its batch helper have
         // landed but the top-level runner has not. This arm only keeps the
         // shared example compiling for every other family; replace it with the
