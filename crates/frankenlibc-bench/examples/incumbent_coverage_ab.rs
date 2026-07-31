@@ -1,13 +1,15 @@
 //! Machine-checkable incumbent conversion for held FrankenLibC performance claims.
 //!
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
-//! lookup, `getrandom` syscall wrapper, and `getauxval` snapshot. Their historical rows proved
-//! FrankenLibC self-speedups, but did not time live glibc in the same invocation.
-//! This harness closes those evidence gaps without changing production code.
+//! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, and waiter-aware
+//! `sem_post`. Their historical rows proved FrankenLibC self-speedups, but did
+//! not time live glibc in the same invocation. This harness closes those
+//! evidence gaps without changing production code.
 //!
 //! Contract:
 //! - host glibc is linked normally and FrankenLibC is loaded from the release
-//!   artifact under `CARGO_TARGET_DIR` (or an explicit `--fl-so`);
+//!   artifact under `FRANKENLIBC_BENCH_TARGET_DIR`, `CARGO_TARGET_DIR`, or an
+//!   explicit `--fl-so`, in that precedence order;
 //! - the benchmark and both serving ELF objects self-report SHA-256;
 //! - all arms are proved to resolve to distinct objects and addresses;
 //! - each family runs its complete pre-timing conformance contract;
@@ -20,8 +22,12 @@
 //! Build and run only from a clean committed base plus explicit overlays:
 //! `RCH_REQUIRE_REMOTE=1 rch exec --base <commit> --clean-overlay \
 //!  --overlay-path crates/frankenlibc-bench/examples/incumbent_coverage_ab.rs -- \
-//!  cargo run -j2 --profile release -p frankenlibc-bench --features abi-bench \
-//!  --example incumbent_coverage_ab -- --family nl_langinfo|getrandom|getauxval`
+//!  env -u CARGO_TARGET_DIR \
+//!  FRANKENLIBC_BENCH_TARGET_DIR=/data/tmp/cargo-target-frankenlibc \
+//!  cargo --config 'build.target-dir="/data/tmp/cargo-target-frankenlibc"' \
+//!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
+//!  --example incumbent_coverage_ab -- \
+//!  --family nl_langinfo|getrandom|getauxval|sem_post`
 
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
@@ -39,6 +45,7 @@ const WARMUPS: usize = 4;
 const NLLANGINFO_REPS: usize = 2_000_000;
 const GETRANDOM_REPS: usize = 50_000;
 const GETAUXVAL_REPS: usize = 2_000_000;
+const SEM_POST_REPS: usize = 1_000_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 
@@ -47,6 +54,10 @@ type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
 type GetrandomFn = unsafe extern "C" fn(*mut c_void, usize, c_uint) -> isize;
 type GetauxvalFn = unsafe extern "C" fn(c_ulong) -> c_ulong;
 type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+type SemInitFn = unsafe extern "C" fn(*mut libc::sem_t, c_int, c_uint) -> c_int;
+type SemDestroyFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
+type SemPostFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
+type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -59,6 +70,14 @@ unsafe extern "C" {
     fn linked_host_getauxval(type_: c_ulong) -> c_ulong;
     #[link_name = "__errno_location"]
     fn linked_host_errno_location() -> *mut c_int;
+    #[link_name = "sem_init"]
+    fn linked_host_sem_init(sem: *mut libc::sem_t, pshared: c_int, value: c_uint) -> c_int;
+    #[link_name = "sem_destroy"]
+    fn linked_host_sem_destroy(sem: *mut libc::sem_t) -> c_int;
+    #[link_name = "sem_post"]
+    fn linked_host_sem_post(sem: *mut libc::sem_t) -> c_int;
+    #[link_name = "sem_trywait"]
+    fn linked_host_sem_trywait(sem: *mut libc::sem_t) -> c_int;
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -159,6 +178,7 @@ const FULL_TABLE_CYCLE: &[libc::nl_item] = &[
 
 struct Config {
     fl_so: PathBuf,
+    target_dir: PathBuf,
     verify_only: bool,
     build_fl_if_missing: bool,
     family: Family,
@@ -169,6 +189,7 @@ enum Family {
     NlLanginfo,
     Getrandom,
     Getauxval,
+    SemPost,
 }
 
 struct Case {
@@ -393,26 +414,29 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
                 Some(value) if value == OsStr::new("getrandom") => Family::Getrandom,
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
+                Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 value => panic!(
-                    "unknown family {value:?}; expected nl_langinfo, getrandom, or getauxval"
+                    "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
+                     or sem_post"
                 ),
             };
         } else {
             panic!(
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
                  [--fl-so PATH] [--verify-only] \
-                 [--family nl_langinfo|getrandom|getauxval]"
+                 [--family nl_langinfo|getrandom|getauxval|sem_post]"
             );
         }
     }
     let build_fl_if_missing = fl_so.is_none();
+    let target_dir = std::env::var_os("FRANKENLIBC_BENCH_TARGET_DIR")
+        .or_else(|| std::env::var_os("CARGO_TARGET_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target"));
+    let fl_so = fl_so.unwrap_or_else(|| target_dir.join("release/libfrankenlibc_abi.so"));
     Config {
-        fl_so: fl_so.unwrap_or_else(|| {
-            std::env::var_os("CARGO_TARGET_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("target"))
-                .join("release/libfrankenlibc_abi.so")
-        }),
+        fl_so,
+        target_dir,
         verify_only,
         build_fl_if_missing,
         family,
@@ -444,6 +468,7 @@ fn ensure_fl_shared_object(config: &Config) {
             .trim(),
     );
     let build = Command::new(&cargo)
+        .env("CARGO_TARGET_DIR", &config.target_dir)
         .args([
             "build",
             "--quiet",
@@ -467,8 +492,9 @@ fn ensure_fl_shared_object(config: &Config) {
         config.fl_so.display()
     );
     println!(
-        "FL_BUILD source=clean_overlay_runtime_cargo builder={} artifact={}",
+        "FL_BUILD source=clean_overlay_runtime_cargo builder={} target_dir={} artifact={}",
         cargo.display(),
+        config.target_dir.display(),
         config.fl_so.display()
     );
 }
@@ -930,6 +956,107 @@ fn measure_getauxval_case(host: GetauxvalFn, fl: GetauxvalFn, case: &GetauxvalCa
         case.label,
         case.note,
         GETAUXVAL_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+#[inline(never)]
+fn run_sem_post_batch(post: SemPostFn, trywait: SemTrywaitFn, sem: *mut libc::sem_t) -> i64 {
+    let mut total = 0i64;
+    for _ in 0..SEM_POST_REPS {
+        let post_result = unsafe { post(black_box(sem)) };
+        let trywait_result = unsafe { trywait(black_box(sem)) };
+        total = total
+            .wrapping_add(black_box(post_result) as i64)
+            .wrapping_add(black_box(trywait_result) as i64);
+    }
+    black_box(total)
+}
+
+fn time_sem_post_batch(post: SemPostFn, trywait: SemTrywaitFn, sem: *mut libc::sem_t) -> f64 {
+    let started = Instant::now();
+    let total = run_sem_post_batch(post, trywait, sem);
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / SEM_POST_REPS as f64;
+    assert_eq!(
+        total, 0,
+        "sem_post + sem_trywait timed cycle returned an error"
+    );
+    elapsed
+}
+
+fn measure_sem_post_case(
+    host_post: SemPostFn,
+    host_trywait: SemTrywaitFn,
+    host_sem: *mut libc::sem_t,
+    fl_post: SemPostFn,
+    fl_trywait: SemTrywaitFn,
+    fl_sem: *mut libc::sem_t,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_sem_post_batch(fl_post, fl_trywait, fl_sem);
+                    fb = time_sem_post_batch(fl_post, fl_trywait, fl_sem);
+                }
+                0 => {
+                    fb = time_sem_post_batch(fl_post, fl_trywait, fl_sem);
+                    fa = time_sem_post_batch(fl_post, fl_trywait, fl_sem);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_sem_post_batch(host_post, host_trywait, host_sem);
+                    gb = time_sem_post_batch(host_post, host_trywait, host_sem);
+                }
+                1 => {
+                    gb = time_sem_post_batch(host_post, host_trywait, host_sem);
+                    ga = time_sem_post_batch(host_post, host_trywait, host_sem);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_sem_post_batch(fl_post, fl_trywait, fl_sem);
+                    effect_glibc = time_sem_post_batch(host_post, host_trywait, host_sem);
+                }
+                2 => {
+                    effect_glibc = time_sem_post_batch(host_post, host_trywait, host_sem);
+                    effect_fl = time_sem_post_batch(fl_post, fl_trywait, fl_sem);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        "uncontended_cycle",
+        "historical sem_post plus sem_trywait token round trip",
+        SEM_POST_REPS,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -1479,6 +1606,246 @@ fn run_getauxval(config: &Config) {
     }
 }
 
+fn run_sem_post(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+
+    let fl_init_symbol = unsafe { libc::dlsym(handle, c"sem_init".as_ptr()) };
+    assert!(
+        !fl_init_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC sem_init")
+    );
+    let fl_destroy_symbol = unsafe { libc::dlsym(handle, c"sem_destroy".as_ptr()) };
+    assert!(
+        !fl_destroy_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC sem_destroy")
+    );
+    let fl_post_symbol = unsafe { libc::dlsym(handle, c"sem_post".as_ptr()) };
+    assert!(
+        !fl_post_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC sem_post")
+    );
+    let fl_trywait_symbol = unsafe { libc::dlsym(handle, c"sem_trywait".as_ptr()) };
+    assert!(
+        !fl_trywait_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC sem_trywait")
+    );
+    let fl_errno_symbol = unsafe { libc::dlsym(handle, c"__errno_location".as_ptr()) };
+    assert!(
+        !fl_errno_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __errno_location")
+    );
+
+    let host_init: SemInitFn = linked_host_sem_init;
+    let host_destroy: SemDestroyFn = linked_host_sem_destroy;
+    let host_post: SemPostFn = linked_host_sem_post;
+    let host_trywait: SemTrywaitFn = linked_host_sem_trywait;
+    let host_errno: ErrnoLocationFn = linked_host_errno_location;
+    let fl_init: SemInitFn = unsafe { std::mem::transmute(fl_init_symbol) };
+    let fl_destroy: SemDestroyFn = unsafe { std::mem::transmute(fl_destroy_symbol) };
+    let fl_post: SemPostFn = unsafe { std::mem::transmute(fl_post_symbol) };
+    let fl_trywait: SemTrywaitFn = unsafe { std::mem::transmute(fl_trywait_symbol) };
+    let fl_errno: ErrnoLocationFn = unsafe { std::mem::transmute(fl_errno_symbol) };
+
+    let incumbent_identity = symbol_object(host_post as *const () as *const c_void)
+        .expect("identify host sem_post object");
+    let fl_identity =
+        symbol_object(fl_post_symbol.cast_const()).expect("identify FrankenLibC sem_post object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=sem_post");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=sem_post");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_post as usize, fl_post as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=sem_post incumbent_address={:#x} fl_address={:#x}",
+        host_post as usize, fl_post as usize,
+    );
+
+    let mut host_sem: libc::sem_t = unsafe { std::mem::zeroed() };
+    let mut fl_sem: libc::sem_t = unsafe { std::mem::zeroed() };
+    let host_sem_ptr = &mut host_sem;
+    let fl_sem_ptr = &mut fl_sem;
+    assert_eq!(
+        unsafe { host_init(host_sem_ptr, 0, 0) },
+        0,
+        "host sem_init failed"
+    );
+    assert_eq!(
+        unsafe { fl_init(fl_sem_ptr, 0, 0) },
+        0,
+        "FrankenLibC sem_init failed"
+    );
+
+    unsafe { *host_errno() = libc::EBUSY };
+    let host_empty_result = unsafe { host_trywait(host_sem_ptr) };
+    let host_empty_errno = unsafe { *host_errno() };
+    unsafe { *fl_errno() = libc::EBUSY };
+    let fl_empty_result = unsafe { fl_trywait(fl_sem_ptr) };
+    let fl_empty_errno = unsafe { *fl_errno() };
+    assert_eq!(
+        (fl_empty_result, fl_empty_errno),
+        (host_empty_result, host_empty_errno),
+        "empty sem_trywait result or errno diverged"
+    );
+    assert_eq!(
+        (host_empty_result, host_empty_errno),
+        (-1, libc::EAGAIN),
+        "host empty sem_trywait contract changed"
+    );
+
+    for cycle in 0..4 {
+        unsafe { *host_errno() = libc::EBUSY };
+        let host_post_result = unsafe { host_post(host_sem_ptr) };
+        let host_post_errno = unsafe { *host_errno() };
+        unsafe { *fl_errno() = libc::EBUSY };
+        let fl_post_result = unsafe { fl_post(fl_sem_ptr) };
+        let fl_post_errno = unsafe { *fl_errno() };
+        assert_eq!(
+            (fl_post_result, fl_post_errno),
+            (host_post_result, host_post_errno),
+            "sem_post result or errno diverged in conformance cycle {cycle}"
+        );
+
+        unsafe { *host_errno() = libc::EBUSY };
+        let host_trywait_result = unsafe { host_trywait(host_sem_ptr) };
+        let host_trywait_errno = unsafe { *host_errno() };
+        unsafe { *fl_errno() = libc::EBUSY };
+        let fl_trywait_result = unsafe { fl_trywait(fl_sem_ptr) };
+        let fl_trywait_errno = unsafe { *fl_errno() };
+        assert_eq!(
+            (fl_trywait_result, fl_trywait_errno),
+            (host_trywait_result, host_trywait_errno),
+            "successful sem_trywait result or errno diverged in conformance cycle {cycle}"
+        );
+        assert_eq!(
+            (host_post_result, host_trywait_result),
+            (0, 0),
+            "host semaphore cycle failed in conformance cycle {cycle}"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=sem_post comparisons=18 \
+         result_and_errno_verdict=pass pshared=0 initial_value=0"
+    );
+
+    if config.verify_only {
+        assert_eq!(
+            unsafe { host_destroy(host_sem_ptr) },
+            0,
+            "host sem_destroy failed"
+        );
+        assert_eq!(
+            unsafe { fl_destroy(fl_sem_ptr) },
+            0,
+            "FrankenLibC sem_destroy failed"
+        );
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=sem_post verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, 1,
+        "sem_post benchmark requires one actually observed process thread"
+    );
+
+    let result = measure_sem_post_case(
+        host_post,
+        host_trywait,
+        host_sem_ptr,
+        fl_post,
+        fl_trywait,
+        fl_sem_ptr,
+    );
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, 1,
+        "sem_post benchmark requires one actually observed process thread"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "sem_post",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let wins = usize::from(result.comparison == "FL_FASTER");
+    let losses = usize::from(result.comparison == "FL_SLOWER");
+    let undecidable = 1 - wins - losses;
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=sem_post verdict={verdict} \
+         cases=1 wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=uncontended_cycle headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        result.effect_median, result.comparison,
+    );
+
+    assert_eq!(
+        unsafe { host_destroy(host_sem_ptr) },
+        0,
+        "host sem_destroy failed"
+    );
+    assert_eq!(
+        unsafe { fl_destroy(fl_sem_ptr) },
+        0,
+        "FrankenLibC sem_destroy failed"
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
@@ -1510,5 +1877,6 @@ fn main() {
         Family::NlLanginfo => run_nl_langinfo(&config),
         Family::Getrandom => run_getrandom(&config),
         Family::Getauxval => run_getauxval(&config),
+        Family::SemPost => run_sem_post(&config),
     }
 }

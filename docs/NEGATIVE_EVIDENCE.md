@@ -668,7 +668,45 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   warnings in untouched files. No stash was modified, no local Cargo fallback or
   timeout-based verdict occurred, and no source change remains to validate.
 
-## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: waiter registration skips uncontended `sem_post` futex wakes (`bd-dy770g`)
+## 2026-07-15 (cod / BlackThrush) — MAINTENANCE (SHIPPED SELF-SPEEDUP; COMPETITIVE LOSS): waiter registration skips uncontended `sem_post` futex wakes (`bd-dy770g`)
+
+- **RESULT CLASS / 2026-07-31 LIVE-INCUMBENT ADJUDICATION:**
+  `result_class=self-speedup`. The shipped **8.23x** before/after FrankenLibC
+  speedup remains maintenance evidence; it is not a campaign win. The deployed
+  uncontended `sem_post` + `sem_trywait` cycle is **1.079190x slower** than
+  actual host glibc in the same invocation (bootstrap median 95% CI
+  **[1.064948, 1.090717]**): **0 WIN, 1 LOSE, 0 undecidable**.
+- **CORRECTED NULL GATE.** FrankenLibC/FrankenLibC A/A has median
+  **1.000488** with bootstrap median CI **[0.975852, 1.012416]**;
+  glibc/glibc A/A has median **0.995604** with CI
+  **[0.989933, 1.004683]**. Both medians satisfy the corrected ±2% clause.
+  The wider null half-width is **0.024148**, while the FL/glibc effect's
+  **0.079190** distance from parity clears the mandatory 2× margin. CV is
+  telemetry only (`cv_used=false`).
+- **BEHAVIOR / IDENTITY / ROUTING.** Before timing, the same release process
+  compared **18** `sem_init`, empty/successful `sem_trywait`, `sem_post`, and
+  errno observations exactly. It directly linked the uninterposed host symbol,
+  explicitly `dlopen`ed FrankenLibC, and proved distinct provider objects and
+  addresses. The process self-reported host `vmi1156319`, one actual thread
+  before and after timing, benchmark ELF SHA-256
+  **`06b0e93ff86d6ed7cf1507e26569bdec3a9edf58ab1e00ed80bfc1db56001f19`**,
+  glibc SHA-256
+  **`6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`**,
+  and FrankenLibC SHA-256
+  **`c52f79417d6cdfa74feffe9e2dbff095c5d9554d9a8a8bcffd05d33ddee0b6e7`**.
+  Host-wide 8-core guards passed before timing (81 samples, maximum busy
+  fraction **0.192**) and after timing (33 samples, maximum **0.080**).
+  `rch exec --base be138c260 --clean-overlay` admitted only the harness
+  overlay; `env -u CARGO_TARGET_DIR` plus Cargo's explicit configuration
+  routed the outer and nested builds into the single reused
+  `/data/tmp/cargo-target-frankenlibc` directory. No local Cargo fallback or
+  per-run Cargo target participated.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** Keep the production optimization
+  as maintenance and retire the competitive claim. Reopen the live-incumbent
+  cycle only if `sem_post` or `sem_trywait` production code changes, or a
+  no-call-graph profile of this exact deployed cycle assigns at least **3%**
+  self-time to one named FrankenLibC-only frame; any new win must again clear
+  the corrected same-invocation null and 2× margin gates.
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
   exposed broad correctness work and peer-owned performance lanes. Recent string,
