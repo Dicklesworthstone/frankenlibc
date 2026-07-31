@@ -19244,6 +19244,12 @@ pub unsafe extern "C" fn wctrans(property: *const c_char) -> WctransT {
     if property.is_null() {
         return 0;
     }
+    if runtime_policy::strict_passthrough_active() {
+        // SAFETY: strict libc semantics require `property` to be a valid C
+        // string. The closed C/POSIX classifier reads through the required NUL
+        // only and performs no allocation or general locale lookup.
+        return unsafe { crate::wchar_abi::c_locale_wctrans_descriptor(property.cast::<u8>()) };
+    }
     let Some(property_bytes) = (unsafe { read_c_string_bytes(property) }) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         return 0;
@@ -19264,11 +19270,7 @@ pub unsafe extern "C" fn wctrans(property: *const c_char) -> WctransT {
 /// instead of the correct U+0410 for Cyrillic.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towctrans(wc: c_uint, desc: WctransT) -> c_uint {
-    match desc {
-        1 => unsafe { crate::wchar_abi::towupper(wc) },
-        2 => unsafe { crate::wchar_abi::towlower(wc) },
-        _ => wc,
-    }
+    crate::wchar_abi::apply_wctrans_descriptor(wc, desc)
 }
 
 // ===========================================================================

@@ -6479,8 +6479,258 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
 /// We encode POSIX character classes as small integers.
 type WctypeT = usize;
 
+const WCTYPE_ALNUM: WctypeT = 1 << 0;
+const WCTYPE_ALPHA: WctypeT = 1 << 1;
+const WCTYPE_BLANK: WctypeT = 1 << 2;
+const WCTYPE_CNTRL: WctypeT = 1 << 3;
+const WCTYPE_DIGIT: WctypeT = 1 << 4;
+const WCTYPE_GRAPH: WctypeT = 1 << 5;
+const WCTYPE_LOWER: WctypeT = 1 << 6;
+const WCTYPE_PRINT: WctypeT = 1 << 7;
+const WCTYPE_PUNCT: WctypeT = 1 << 8;
+const WCTYPE_SPACE: WctypeT = 1 << 9;
+const WCTYPE_UPPER: WctypeT = 1 << 10;
+const WCTYPE_XDIGIT: WctypeT = 1 << 11;
+
 /// Wide character transformation descriptor (matches glibc c_ulong).
 type WctransT = std::ffi::c_ulong;
+
+/// Compare a valid C string against one short, fixed C-locale name after the
+/// caller has already matched its first byte.
+///
+/// Unlike a word-sized load, this never reads beyond the first mismatch or the
+/// candidate's required NUL terminator. That keeps the strict fast path valid
+/// even when the caller's string ends at the final byte of a mapped page.
+///
+/// # Safety
+///
+/// `name` must point to a valid NUL-terminated C string and its first byte must
+/// already equal `expected[0]`.
+#[inline(always)]
+unsafe fn c_locale_name_eq<const N: usize>(name: *const u8, expected: &[u8; N]) -> bool {
+    let mut index = 1;
+    while index < N {
+        // SAFETY: the caller guarantees a valid C string. A shorter string
+        // yields a readable NUL mismatch here and returns before another read.
+        if unsafe { *name.add(index) } != expected[index] {
+            return false;
+        }
+        index += 1;
+    }
+    // SAFETY: all N expected bytes matched, so a valid C string has a readable
+    // byte at N; it must be NUL for an exact name match.
+    unsafe { *name.add(N) == 0 }
+}
+
+/// Closed C/POSIX-locale classifier for the twelve standard wide-character
+/// class names. This is the strict-mode leaf: one first-byte dispatch followed
+/// by at most six byte comparisons, with no allocation, length scan, registry
+/// lookup, or locale-table walk.
+///
+/// # Safety
+///
+/// A non-null `name` must point to a valid NUL-terminated C string, as required
+/// by the `wctype` contract.
+#[inline(always)]
+unsafe fn c_locale_wctype_descriptor(name: *const u8) -> WctypeT {
+    if name.is_null() {
+        return 0;
+    }
+    // SAFETY: null was rejected and the caller guarantees a valid C string.
+    match unsafe { *name } {
+        b'a' => {
+            // SAFETY: the first byte matches both candidate names.
+            if unsafe { c_locale_name_eq(name, b"alnum") } {
+                WCTYPE_ALNUM
+            // SAFETY: the first byte matches the candidate name.
+            } else if unsafe { c_locale_name_eq(name, b"alpha") } {
+                WCTYPE_ALPHA
+            } else {
+                0
+            }
+        }
+        // SAFETY: each arm's first byte matches its candidate name.
+        b'b' if unsafe { c_locale_name_eq(name, b"blank") } => WCTYPE_BLANK,
+        b'c' if unsafe { c_locale_name_eq(name, b"cntrl") } => WCTYPE_CNTRL,
+        b'd' if unsafe { c_locale_name_eq(name, b"digit") } => WCTYPE_DIGIT,
+        b'g' if unsafe { c_locale_name_eq(name, b"graph") } => WCTYPE_GRAPH,
+        b'l' if unsafe { c_locale_name_eq(name, b"lower") } => WCTYPE_LOWER,
+        b'p' => {
+            // SAFETY: the first byte matches both candidate names.
+            if unsafe { c_locale_name_eq(name, b"print") } {
+                WCTYPE_PRINT
+            // SAFETY: the first byte matches the candidate name.
+            } else if unsafe { c_locale_name_eq(name, b"punct") } {
+                WCTYPE_PUNCT
+            } else {
+                0
+            }
+        }
+        // SAFETY: each arm's first byte matches its candidate name.
+        b's' if unsafe { c_locale_name_eq(name, b"space") } => WCTYPE_SPACE,
+        b'u' if unsafe { c_locale_name_eq(name, b"upper") } => WCTYPE_UPPER,
+        b'x' if unsafe { c_locale_name_eq(name, b"xdigit") } => WCTYPE_XDIGIT,
+        _ => 0,
+    }
+}
+
+/// Closed C/POSIX-locale classifier shared by `wctrans` and `wctrans_l`.
+///
+/// # Safety
+///
+/// A non-null `property` must point to a valid NUL-terminated C string.
+#[inline(always)]
+pub(crate) unsafe fn c_locale_wctrans_descriptor(property: *const u8) -> WctransT {
+    if property.is_null() {
+        return 0;
+    }
+    // SAFETY: null was rejected and the caller guarantees a valid C string.
+    match unsafe { *property } {
+        // SAFETY: each arm's first byte matches its candidate name.
+        b't' if unsafe { c_locale_name_eq(property, b"toupper") } => 1,
+        b't' if unsafe { c_locale_name_eq(property, b"tolower") } => 2,
+        _ => 0,
+    }
+}
+
+const fn c_locale_ascii_class_mask(wc: usize) -> u16 {
+    let is_lower = wc >= 0x61 && wc <= 0x7a;
+    let is_upper = wc >= 0x41 && wc <= 0x5a;
+    let is_alpha = is_lower || is_upper;
+    let is_digit = wc >= 0x30 && wc <= 0x39;
+    let is_alnum = is_alpha || is_digit;
+    let is_graph = wc >= 0x21 && wc <= 0x7e;
+    let mut mask = 0u16;
+    if is_alnum {
+        mask |= 1 << 0;
+    }
+    if is_alpha {
+        mask |= 1 << 1;
+    }
+    if wc == 0x20 || wc == 0x09 {
+        mask |= 1 << 2;
+    }
+    if wc < 0x20 || wc == 0x7f {
+        mask |= 1 << 3;
+    }
+    if is_digit {
+        mask |= 1 << 4;
+    }
+    if is_graph {
+        mask |= 1 << 5;
+    }
+    if is_lower {
+        mask |= 1 << 6;
+    }
+    if wc >= 0x20 && wc <= 0x7e {
+        mask |= 1 << 7;
+    }
+    if is_graph && !is_alnum {
+        mask |= 1 << 8;
+    }
+    if wc == 0x20 || (wc >= 0x09 && wc <= 0x0d) {
+        mask |= 1 << 9;
+    }
+    if is_upper {
+        mask |= 1 << 10;
+    }
+    if is_digit || (wc >= 0x61 && wc <= 0x66) || (wc >= 0x41 && wc <= 0x46) {
+        mask |= 1 << 11;
+    }
+    mask
+}
+
+const fn make_c_locale_ascii_class_masks() -> [u16; 128] {
+    let mut masks = [0u16; 128];
+    let mut wc = 0;
+    while wc < masks.len() {
+        masks[wc] = c_locale_ascii_class_mask(wc);
+        wc += 1;
+    }
+    masks
+}
+
+static C_LOCALE_ASCII_CLASS_MASKS: [u16; 128] = make_c_locale_ascii_class_masks();
+
+const fn make_c_locale_ascii_case_maps() -> [[u8; 128]; 2] {
+    let mut maps = [[0u8; 128]; 2];
+    let mut wc = 0;
+    while wc < 128 {
+        maps[0][wc] = if wc >= 0x61 && wc <= 0x7a {
+            (wc - 0x20) as u8
+        } else {
+            wc as u8
+        };
+        maps[1][wc] = if wc >= 0x41 && wc <= 0x5a {
+            (wc + 0x20) as u8
+        } else {
+            wc as u8
+        };
+        wc += 1;
+    }
+    maps
+}
+
+static C_LOCALE_ASCII_CASE_MAPS: [[u8; 128]; 2] = make_c_locale_ascii_case_maps();
+
+#[cold]
+#[inline(never)]
+fn unicode_iswctype(wc: u32, desc: WctypeT) -> i32 {
+    // SAFETY: every callee accepts the complete scalar `wint_t` domain and
+    // performs no pointer dereference. The descriptor selects one such callee.
+    unsafe {
+        match desc {
+            WCTYPE_ALNUM => iswalnum(wc),
+            WCTYPE_ALPHA => iswalpha(wc),
+            WCTYPE_BLANK => iswblank(wc),
+            WCTYPE_CNTRL => iswcntrl(wc),
+            WCTYPE_DIGIT => iswdigit(wc),
+            WCTYPE_GRAPH => iswgraph(wc),
+            WCTYPE_LOWER => iswlower(wc),
+            WCTYPE_PRINT => iswprint(wc),
+            WCTYPE_PUNCT => iswpunct(wc),
+            WCTYPE_SPACE => iswspace(wc),
+            WCTYPE_UPPER => iswupper(wc),
+            WCTYPE_XDIGIT => iswxdigit(wc),
+            _ => 0,
+        }
+    }
+}
+
+#[inline(always)]
+fn apply_wctype_descriptor(wc: u32, desc: WctypeT) -> i32 {
+    if wc <= 0x7f {
+        let mask = C_LOCALE_ASCII_CLASS_MASKS[wc as usize];
+        return i32::from(usize::from(mask) & desc != 0);
+    }
+    unicode_iswctype(wc, desc)
+}
+
+#[cold]
+#[inline(never)]
+fn unicode_towctrans(wc: u32, desc: WctransT) -> u32 {
+    // SAFETY: both callees accept the complete scalar `wint_t` domain and
+    // perform no pointer dereference.
+    unsafe {
+        match desc {
+            1 => towupper(wc),
+            2 => towlower(wc),
+            _ => wc,
+        }
+    }
+}
+
+#[inline(always)]
+pub(crate) fn apply_wctrans_descriptor(wc: u32, desc: std::ffi::c_ulong) -> u32 {
+    if wc <= 0x7f {
+        let map = desc.wrapping_sub(1);
+        if map < 2 {
+            return u32::from(C_LOCALE_ASCII_CASE_MAPS[map as usize][wc as usize]);
+        }
+        return wc;
+    }
+    unicode_towctrans(wc, desc)
+}
 
 /// `wctype_l` — get wide character class by name (locale variant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6491,22 +6741,27 @@ pub unsafe extern "C" fn wctype_l(name: *const u8, _locale: *mut std::ffi::c_voi
 /// `wctype` — get wide character class by name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wctype(name: *const u8) -> WctypeT {
+    if runtime_policy::strict_passthrough_active() {
+        // SAFETY: strict libc semantics require `name` to be a valid C string;
+        // null remains a defined zero-result extension.
+        return unsafe { c_locale_wctype_descriptor(name) };
+    }
     let Some(name) = (unsafe { bounded_cstr_bytes(name) }) else {
         return 0;
     };
     match name {
-        b"alnum" => 1,
-        b"alpha" => 2,
-        b"blank" => 3,
-        b"cntrl" => 4,
-        b"digit" => 5,
-        b"graph" => 6,
-        b"lower" => 7,
-        b"print" => 8,
-        b"punct" => 9,
-        b"space" => 10,
-        b"upper" => 11,
-        b"xdigit" => 12,
+        b"alnum" => WCTYPE_ALNUM,
+        b"alpha" => WCTYPE_ALPHA,
+        b"blank" => WCTYPE_BLANK,
+        b"cntrl" => WCTYPE_CNTRL,
+        b"digit" => WCTYPE_DIGIT,
+        b"graph" => WCTYPE_GRAPH,
+        b"lower" => WCTYPE_LOWER,
+        b"print" => WCTYPE_PRINT,
+        b"punct" => WCTYPE_PUNCT,
+        b"space" => WCTYPE_SPACE,
+        b"upper" => WCTYPE_UPPER,
+        b"xdigit" => WCTYPE_XDIGIT,
         _ => 0,
     }
 }
@@ -6525,21 +6780,7 @@ pub unsafe extern "C" fn iswctype_l(wc: u32, desc: WctypeT, _locale: *mut std::f
 /// `iswctype(wctype("alpha"), 0x4E00)` for CJK or other non-Latin letters.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswctype(wc: u32, desc: WctypeT) -> i32 {
-    match desc {
-        1 => unsafe { iswalnum(wc) },
-        2 => unsafe { iswalpha(wc) },
-        3 => unsafe { iswblank(wc) },
-        4 => unsafe { iswcntrl(wc) },
-        5 => unsafe { iswdigit(wc) },
-        6 => unsafe { iswgraph(wc) },
-        7 => unsafe { iswlower(wc) },
-        8 => unsafe { iswprint(wc) },
-        9 => unsafe { iswpunct(wc) },
-        10 => unsafe { iswspace(wc) },
-        11 => unsafe { iswupper(wc) },
-        12 => unsafe { iswxdigit(wc) },
-        _ => 0,
-    }
+    apply_wctype_descriptor(wc, desc)
 }
 
 /// `towupper_l` — convert wide character to uppercase (locale variant).
@@ -7498,6 +7739,11 @@ pub unsafe extern "C" fn iswxdigit_l(wc: u32, _l: *mut c_void) -> c_int {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wctrans_l(property: *const u8, _l: *mut c_void) -> WctransT {
+    if runtime_policy::strict_passthrough_active() {
+        // SAFETY: strict libc semantics require a valid C string; null remains
+        // a defined zero-result extension.
+        return unsafe { c_locale_wctrans_descriptor(property) };
+    }
     let Some(property) = (unsafe { bounded_cstr_bytes(property) }) else {
         return 0;
     };
@@ -7507,13 +7753,10 @@ pub unsafe extern "C" fn wctrans_l(property: *const u8, _l: *mut c_void) -> Wctr
         _ => 0,
     }
 }
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towctrans_l(wc: u32, desc: WctransT, _l: *mut c_void) -> u32 {
-    match desc {
-        1 => unsafe { towupper(wc) },
-        2 => unsafe { towlower(wc) },
-        _ => wc,
-    }
+    apply_wctrans_descriptor(wc, desc)
 }
 
 // ===========================================================================
