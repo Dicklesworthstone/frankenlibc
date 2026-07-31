@@ -25035,3 +25035,185 @@ was attempted.
   FrankenLibC ceases to be the bounded leaf measured here, or a different locale slice first
   receives full-domain conformance. Test further generalization only on a newly pre-registered
   family that independently satisfies (a), (b), and (c).
+
+## 2026-07-30 (cc_fl / BlackThrush) — MECHANISM REFUTED: the three conditions are NOT sufficient. Same symbol, same locale, same call: `wctype` wins 4.32x at the tail of glibc's table and LOSES 1.73x at its head
+
+The `rpmatch` closeout left a three-condition mechanism and an obligation to test it on a newly
+pre-registered family. This is that test. It refutes the mechanism as stated and replaces it with
+a four-condition version whose fourth condition is measured here, not asserted. Evidence and
+harness only; no production optimization was attempted.
+
+- **THE FAMILY AND WHY IT WAS CHOSEN.** The glibc `LC_CTYPE` name/descriptor bridge in
+  `<wctype.h>`: `wctype`, `wctrans`, `iswctype`, `towctrans`. It was picked because it splits
+  THREE ways on the three conditions inside one header, one locale and one invocation, so
+  conditions (b) and (c) each had to earn their place instead of riding along with (a).
+  `wctype` satisfied all three; `wctrans` satisfied (a) and (b) but failed (c) because
+  FrankenLibC reads its argument with `read_c_string_bytes`, which ends in `.to_vec()`;
+  `iswctype` satisfied (a) and (c) but failed (b) because glibc's `__iswctype` is a branchless
+  trie probe with no calls and no loop.
+- **CONDITION (b) WAS READ OFF THE SHIPPED BINARY BEFORE PREDICTING, NOT REMEMBERED.** glibc 2.42
+  `wctype` does, per call: one `strlen` of the argument, one TLS load of the current `LC_CTYPE`
+  locale, then a linear walk of the NUL-separated class-name table with one `strlen` per entry
+  and a `memcmp` whenever the entry length matches. The two per-entry PLT targets resolve to the
+  IFUNCs `strlen@GLIBC_2.2.5` (`0xbce80`) and `memcmp`/`bcmp@GLIBC_2.2.5` (`0xb9610`);
+  `wctrans`'s resolve to `strlen` and `strcmp@GLIBC_2.2.5` (`0xbb2c0`). None of it is hoistable —
+  the argument is a runtime string.
+- **PRE-REGISTERED, in `bd-wctype-name-bridge-mechanism-qyn6v9`, before any timing existed.**
+  P1: every `wctype` case FL_FASTER. P2/S1: glibc slower for `alnum` (index 11) than `upper`
+  (index 0). S2: glibc's unrecognised name at least as slow as its slowest recognised name.
+  S3: Spearman rho >= 0.9 of glibc time against table index over the ELEVEN five-byte names,
+  with `xdigit` excluded and predicted to sit BELOW trend because it is the only six-byte name
+  and the length pre-test skips the `memcmp` for every other entry. S4: FrankenLibC flat,
+  max/min <= 1.5. P3: no large `iswctype` win, "large" fixed in advance at 2x. P4: FrankenLibC's
+  best `wctrans` ratio worse than its worst `wctype` ratio.
+  The C-locale table order was read through the public `nl_langinfo` API before timing and
+  **asserted equal at runtime**, so the position shape is a prediction and not a description.
+- **RESULT: REFUTED — `WCTYPE_PREDICTION verdict=REFUTED wctype_all_faster=false`.** All 21 rows
+  decidable: every null median within 0.3% of 1.0, every effect CI excluding 1.0, every effect
+  clearing twice the widest null half-width. 11 `FL_FASTER`, 10 `FL_SLOWER`. Ratios are
+  FrankenLibC/glibc, so lower is faster.
+
+  | group | case | idx | FL ns | glibc ns | FL/glibc | effect CI95 | FL/FL null | glibc/glibc null | widest null half-width | verdict |
+  |---|---|---:|---:|---:|---:|---|---|---|---:|---|
+  | `wctype` | `upper` | 0 | 11.306 | 6.522 | **1.733384** | [1.732413,1.734511] | 0.999070 [0.997744,1.000886] | 0.999157 [0.998391,1.000690] | 0.002256 | `FL_SLOWER` |
+  | `wctype` | `lower` | 1 | 11.797 | 10.284 | **1.147265** | [1.144910,1.148580] | 1.000424 [0.997883,1.000890] | 0.998979 [0.998058,1.001409] | 0.002117 | `FL_SLOWER` |
+  | `wctype` | `alpha` | 2 | 12.553 | 13.806 | **0.909344** | [0.908225,0.910960] | 1.000399 [0.998009,1.000798] | 0.999638 [0.998190,1.001777] | 0.001991 | `FL_FASTER` |
+  | `wctype` | `digit` | 3 | 12.288 | 17.312 | **0.710521** | [0.709791,0.711382] | 0.998375 [0.998105,1.000814] | 1.000000 [0.999672,1.001157] | 0.001895 | `FL_FASTER` |
+  | `wctype` | `xdigit` | 4 | 10.144 | 12.709 | **0.798095** | [0.795278,0.799197] | 1.000000 [0.998523,1.000493] | 1.000824 [0.998863,1.001932] | 0.001932 | `FL_FASTER` |
+  | `wctype` | `space` | 5 | 10.816 | 19.631 | **0.550811** | [0.550557,0.551281] | 0.999121 [0.997688,1.000509] | 0.999771 [0.999720,1.000025] | 0.002312 | `FL_FASTER` |
+  | `wctype` | `print` | 6 | 11.036 | 22.718 | **0.485793** | [0.485353,0.486200] | 0.998233 [0.998143,1.000000] | 1.000000 [0.999560,1.000220] | 0.001857 | `FL_FASTER` |
+  | `wctype` | `graph` | 7 | 10.820 | 26.119 | **0.414285** | [0.413828,0.414608] | 1.000000 [0.998105,1.000880] | 1.000364 [0.999809,1.001172] | 0.001895 | `FL_FASTER` |
+  | `wctype` | `blank` | 8 | 10.820 | 30.352 | **0.356471** | [0.356294,0.356913] | 0.997968 [0.997563,0.998781] | 0.999835 [0.998845,1.000725] | 0.002437 | `FL_FASTER` |
+  | `wctype` | `cntrl` | 9 | 12.293 | 39.359 | **0.312533** | [0.312013,0.312709] | 1.000416 [0.998375,1.000814] | 0.999696 [0.999364,1.000495] | 0.001625 | `FL_FASTER` |
+  | `wctype` | `punct` | 10 | 12.293 | 43.782 | **0.280912** | [0.280535,0.281281] | 0.998781 [0.997968,1.001221] | 0.999782 [0.999439,1.000228] | 0.002032 | `FL_FASTER` |
+  | `wctype` | `alnum` | 11 | 11.040 | 42.410 | **0.260780** | [0.260540,0.261212] | 1.000399 [0.998143,1.000797] | 0.999894 [0.999633,1.000474] | 0.001857 | `FL_FASTER` |
+  | `wctype` | `unknown` | -- | 9.934 | 43.005 | **0.231349** | [0.231045,0.231422] | 1.000000 [0.997486,1.000886] | 1.000103 [0.999767,1.000233] | 0.002514 | `FL_FASTER` |
+  | `wctrans` | `toupper` | 0 | 19.917 | 4.268 | **4.605090** | [4.566426,4.675287] | 0.999974 [0.998997,1.000250] | 1.000117 [1.000000,1.001173] | 0.001173 | `FL_SLOWER` |
+  | `wctrans` | `tolower` | 1 | 19.637 | 7.529 | **2.602996** | [2.590577,2.652079] | 0.999488 [0.999025,0.999750] | 1.000665 [0.998008,1.001992] | 0.001992 | `FL_SLOWER` |
+  | `wctrans` | `unknown` | -- | 17.358 | 8.171 | **2.124825** | [2.123468,2.127223] | 0.999423 [0.998706,0.999747] | 0.998836 [0.997311,1.001780] | 0.002689 | `FL_SLOWER` |
+  | `iswctype` | `alpha_hit` | -- | 3.762 | 2.264 | **1.664090** | [1.663125,1.664970] | 1.001329 [1.000000,1.001329] | 1.001992 [1.000221,1.002429] | 0.002429 | `FL_SLOWER` |
+  | `iswctype` | `digit_hit` | -- | 4.263 | 2.260 | **1.885159** | [1.884743,1.887118] | 1.001173 [1.001172,1.002343] | 1.001987 [1.000221,1.002213] | 0.002343 | `FL_SLOWER` |
+  | `iswctype` | `upper_miss` | -- | 4.764 | 2.264 | **2.106218** | [2.103776,2.108431] | 1.002099 [1.001155,1.003149] | 1.001987 [1.000221,1.001992] | 0.003149 | `FL_SLOWER` |
+  | `towctrans` | `toupper_hit` | -- | 3.762 | 2.260 | **1.664090** | [1.663125,1.665339] | 1.000000 [0.999867,1.000000] | 1.000000 [0.999779,1.000221] | 0.000221 | `FL_SLOWER` |
+  | `towctrans` | `tolower_hit` | -- | 3.511 | 2.260 | **1.554105** | [1.552881,1.554449] | 1.000000 [0.998718,1.000000] | 0.999779 [0.999779,1.000221] | 0.001282 | `FL_SLOWER` |
+
+- **THE INCUMBENT MODEL WAS VALIDATED ALMOST PERFECTLY, WHICH IS WHY THE REFUTATION COUNTS.**
+  glibc's `wctype` fits **5.755 + 3.371 x table_index ns** by least squares over the eleven
+  five-byte names, with **Spearman rho 0.9909** against table index (S3 holds), and `alnum`
+  (42.410 ns) far above `upper` (6.522 ns) (S1 holds). The registered secondary prediction is the
+  sharpest single confirmation in the run: `xdigit` is the only six-byte name, so the length
+  pre-test skips the `memcmp` for every other entry, and it lands at **12.709 ns against a trend
+  value of 19.238 ns** for its index — predicted below trend, measured 34% below trend.
+  FrankenLibC is flat at **11.173 ns**, max/min **1.2375** (S4 holds). So "glibc walks a
+  NUL-separated table with a `strlen` per entry, and we do not" is now a measured fact.
+- **AND THE PREDICTION STILL FAILED.** Conditions (a), (b) and (c) were all satisfied and
+  FrankenLibC still loses at the head of the table: `upper` at index 0 is **1.733x SLOWER**,
+  `lower` at index 1 is **1.147x SLOWER**. It wins only from index 2 onward. Setting the fitted
+  incumbent line equal to our flat cost gives a **crossover at table index 1.61**, which is
+  exactly where the measured sign change happens. The reason is simple once seen and was
+  invisible from the source: **a data-driven walk is not uniformly expensive — it is cheap at the
+  head of its table.** glibc starts at 5.755 ns; we start at 11.173 ns and never move.
+- **S2 ALSO FAILED, NARROWLY, AND IS REPORTED RATHER THAN QUIETLY DROPPED.** The unrecognised name
+  was predicted to be glibc's slowest case because a miss cannot break out early. It is not:
+  `punct` 43.782 > `unknown` 43.005 > `alnum` 42.410, a 1.8% spread. The tail of the table
+  saturates and the last three cases are not separable in the way the prediction assumed. The
+  monotone trend over the table as a whole holds; the strict endpoint claim does not.
+- **OUR FLOOR IS DOMINATED BY THE BOUNDED-READ PATH, NOT THE DECISION PROCEDURE.** FrankenLibC
+  `iswctype` and `towctrans` take no string and sit at **3.5-4.8 ns**. FrankenLibC `wctype` runs
+  a closed twelve-literal match but must first read a name, and sits at **11.173 ns**. So roughly
+  **6-8 ns of our `wctype` cost is the bounded C-string read, not the classification** — the
+  entire decision the specialization exists to make is a minority of its own runtime. Structural
+  suspect, from source: `bounded_cstr_bytes` calls `known_remaining`, which runs
+  `bump_mmap_remaining` then `segment_remaining` then `fallback_remaining` on every call, in
+  strict mode too, by the first branch of that function. **That attribution is NOT isolated by
+  this run** — the delta also contains `scan_c_string` and a different dispatch shape, and
+  splitting it needs its own A/B. What IS established here is the size and the location of the
+  floor. The lesson for condition (c) stands either way: it was assessed from the SOURCE SHAPE
+  ("no allocation") and the source shape was not the cost.
+- **THE BOLD SUB-PREDICTION WAS CONFIRMED, INCLUDING THE HALF THAT PREDICTED WE WOULD LOSE.**
+  P4 holds: best `wctrans` ratio 2.124825 is worse than worst `wctype` ratio 1.733384. `wctrans`
+  loses **2.12-4.61x** even though glibc walks a table there too, because that table is two
+  entries deep — glibc's `toupper` case costs 4.268 ns. And the allocation is **not** optimized
+  away by LLVM, which was a real possibility worth checking: FrankenLibC `wctrans` costs
+  19.917 ns against `wctype`'s 11.306 ns for the same shape of bounded read plus closed match,
+  and an 8.6 ns residual cannot be explained by the two-byte difference in name length between
+  `toupper` and `upper`. P3 holds
+  too, more strongly than registered: `iswctype` is not merely "no large win", it is a
+  **1.66-2.11x LOSS** against glibc's branchless trie.
+- **THE SHARPENED MECHANISM — a fourth condition, and it is the one that decides.** A FrankenLibC
+  specialization beats glibc only when (a) the claimed semantic slice is closed and full-domain
+  equivalence is proved, (b) glibc still runs a data-driven interpretation on every call that it
+  cannot hoist, (c) the deployed FrankenLibC path is a bounded decision procedure rather than a
+  second interpreter, **and (d) the incumbent's per-call interpretation is DEEPER, AT THE ACTUAL
+  OPERATING POINT, than FrankenLibC's own fixed floor.** (d) is not implied by (b): "cannot
+  hoist" bounds nothing about magnitude. (d) must be measured on both sides — the incumbent's
+  depth at the inputs that actually occur, and our floor including the membrane, not the
+  algorithm. Under (d) the earlier results re-read cleanly: `rpmatch` won because glibc's
+  irreducible depth is a whole cached `regexec` (38-71 ns) against our ~2.4 ns leaf; the
+  time/locale wins had a 1362-1822 ns name walk against 37-83 ns; here the incumbent's depth at
+  index 0 is 6.5 ns and we cannot get under 11.
+- **CONFORMANCE FOR EVERY CLAIMED SYMBOL, AND THE SLICE WAS NARROWED TWICE BEFORE TIMING.**
+  `wctype_t`/`wctrans_t` are OPAQUE: glibc returns pointers into its locale table, FrankenLibC
+  returns small integers, so descriptor equality is NOT the contract and comparing return values
+  would have been wrong. The proved observables are the recognition decision and the COMPOSITION
+  `iswctype(wc, wctype(name))` / `towctrans(wc, wctrans(name))`, with each arm always applying the
+  descriptor minted by its own library. Second, FrankenLibC's wide ctype is locale-agnostic and
+  targets glibc's *C.UTF-8* classification while this run is in the C locale where glibc
+  classifies ASCII only, so the composition slice claimed here is ASCII `0x00..=0x7F`. In one
+  process, before timing: **130,758 recognition comparisons, 1,664 `iswctype` composition
+  comparisons and 256 `towctrans` composition comparisons, all pass.**
+- **A REGISTERED OBSERVATION THAT LANDED EXACTLY, AND IS A REAL DIVERGENCE.** The post-timing
+  C.UTF-8 census (printed, never a gate, run only after every measurement was complete) found
+  C.UTF-8 serving 14 class names and 3 map names, and FrankenLibC diverging on precisely the three
+  it does not implement: `combining`, `combining_level3`, `totitle` — glibc recognises each,
+  FrankenLibC returns 0. That is why the composition slice was restricted to the C locale and
+  ASCII in advance. **This is an unclaimed conformance gap in a non-C locale, not a perf finding.**
+- **LIVE INCUMBENT AND ARTIFACT IDENTITY.** The benchmark directly links and calls
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`, SHA-256
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, in the same invocation as
+  strict-mode `libfrankenlibc_abi.so`, loaded with `RTLD_NOW|RTLD_LOCAL`, SHA-256
+  `29ecf7b56818400fcc9cb4fd1d78e7a70e8e47ba96d9e7dad90a3269ba2bdf70`. Benchmark ELF
+  `crates/frankenlibc-bench/examples/wctype_ab.rs` has SHA-256
+  `87b5025322d3a91a5fc730ba27b40b9d14c3e804995b8c3063fd2548d4f5923f`, Build ID
+  `6d87cf080c34cdbc84b07ab4d3d253b51e37f8b3`. **All FOUR symbol pairs are asserted to distinct
+  addresses AND distinct serving objects** (`ARM_DISTINCT` rows), because any one of them
+  silently resolving to the same object would have measured fl against fl on that row alone.
+- **MEASUREMENT CONTRACT AND HOST.** One invocation on `threadripperje`, AMD Ryzen Threadripper
+  PRO 5995WX: 64 physical cores, 128 logical threads, **one thread actually used**,
+  536,069,869,568 RAM bytes, one NUMA node, allowed CPUs 0-127, `amd-pstate-epp`,
+  governor=`performance`, EPP=`performance`, runtime ISA `sse4.2,avx,avx2,fma,bmi1,bmi2`, and
+  `built_avx2=true built_fma=true built_sse42=true` (the measured artifact is built ON the
+  measurement host, bypassing the rch offload shim, so the ELF is native to the host it is timed
+  on). Pre/post host-wide guards each cleared on their first five one-second samples, maximum
+  observed busy fractions 0.170 and 0.140. Each row used 37 samples, four warmups, 33 retained
+  samples, 2,000 calls per arm, 4,096 bootstrap resamples, corrected null gate, CV telemetry only.
+  Admitted on the first attempt; no failed admission was used as timing evidence.
+  Independent compile check GREEN on hz1 via `RCH_REQUIRE_REMOTE=1 rch exec`: 0 errors,
+  `Finished release profile [optimized] target(s) in 2m 12s`.
+- **REPLICATION ATTEMPTED AND BLOCKED — recorded rather than cropped, and it bounds what may be
+  claimed.** hz2 (16 cores, **glibc 2.43**, a different incumbent version) was set up as the
+  replication host and its non-timing half LANDED: same C-locale table order, and the same
+  **130,758 + 1,664 + 256 conformance comparisons pass against glibc 2.43**, so the conformance
+  claim is cross-version. Its timing half did NOT land: the pre-measurement guard refused with
+  `WCTYPE_BLOCKED phase=pre_measurement ... last CPUs above 20.0% busy:
+  cpu2=25.7%,cpu3=24.8%,cpu7=23.0%,cpu8=25.0%` — hz2 is a shared `rch` worker and its `sbh`
+  daemon held ~75% of a core throughout. A second same-host invocation was also started and did
+  not produce rows before it was stopped. **No blocked attempt was used as timing evidence and no
+  peer process was killed to make room.** Consequence for the reader: the direction and size of
+  the losses at index 0 and 1 rest on ONE invocation on ONE host, and **the crossover index 1.61
+  is a single-host quantity — it is a ratio of our floor to glibc's per-entry slope and MUST NOT
+  be generalized.** What does not depend on replication is the shape of the refutation: (a), (b)
+  and (c) held and the sign was still wrong.
+- **RAW EVIDENCE.** Complete valid log
+  `/data/tmp/claude-1000/-data-projects-frankenlibc/2fef2532-af39-437f-8587-1eee7018b186/scratchpad/run-attempt1.log`,
+  SHA-256 `71cb8b0b06e87bc960c0f7fb5e5875d807335a260386486d24f37111165195b3`.
+- **DECISION / RETRY PREDICATE.** The three-condition mechanism is retired; use the four-condition
+  version. Do not re-run these rows to rediscover the `wctype` tail win — it is real but it is a
+  win against a linear scan we happen to be standing at the far end of. **Re-open this family only
+  for the floor, not the algorithm:** the actionable target is `known_remaining` in the bounded
+  C-string read path, which is ~7 ns of the 11.2 ns `wctype` cost and is paid by every
+  string-taking ABI entry point in the library, not just this one. Before any future row claims a
+  win from "glibc cannot hoist this", it must also show (d) — the incumbent's measured depth at
+  the inputs that occur, against our measured floor including the membrane. A prediction that
+  gets the incumbent right to rho 0.99 and still gets the sign wrong at the operating point is
+  the failure mode to watch for.
