@@ -1829,6 +1829,43 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   `parse_hosts_line`; IPv6 parsing, owned-field allocation, lookup caching, and other resolver rows
   need independent profiles and gates.
 
+## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE: live-`getaddrinfo` conversion for the IPv4 hosts-validator claim
+
+- **COMPETITIVE SCOPE.** The historical **1.20x** result above compares FrankenLibC's old and new
+  parser bodies, so it remains maintenance evidence rather than a campaign win. The new
+  `getaddrinfo_hosts` arm measures a recognizable whole job instead: resolve the measurement host's
+  own `/etc/hosts` identity with `getaddrinfo(AF_INET, SOCK_STREAM, IPPROTO_TCP, "80")`, consume the
+  returned address records, and release them with the same provider's `freeaddrinfo`. Host glibc is
+  called through the process link; FrankenLibC is loaded explicitly with `RTLD_NOW | RTLD_LOCAL`.
+- **FULL APPARATUS / CONFORMANCE.** The shared `incumbent_coverage_ab` harness now carries 40
+  order/phase-balanced samples (4 warm-ups, 36 retained), provider-specific A/A controls, and the
+  corrected null gate: the effect CI must exclude 1, the effect distance must clear twice the widest
+  null-CI half-width, and each null median must remain within 2% of 1. A null CI straddling 1 is not a
+  veto; CV is telemetry only. Before timing, both providers must return the same nonempty sorted
+  semantic address multiset for the actual host identity. That contract passed all five comparisons
+  on both `vmi1264463` and `vmi1156319`, with distinct symbol addresses and **1 actually observed
+  process thread** on each host.
+- **IN-PROCESS IDENTITY.** Both verify-only processes self-reported benchmark ELF SHA-256
+  `779aab31592b2c5cf1437a861f02929a2ad5a5182e2de09c41640da3694b8925` and live host-libc SHA-256
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`. FrankenLibC self-reported
+  `feae9431aadd0697cc3afb95b8b985e277d057f873046f87ea06dcd32d852667` on `vmi1264463` and
+  `c52f79417d6cdfa74feffe9e2dbff095c5d9554d9a8a8bcffd05d33ddee0b6e7` on `vmi1156319`.
+  Every invocation used strict-remote `rch exec --base 9d4a4e62c --clean-overlay` and the single
+  per-repository target `/data/tmp/cargo-target-frankenlibc`; worker inspection confirmed rustc's
+  output directory was that canonical target.
+- **ZERO-SAMPLE OUTCOME.** The timed `vmi1264463` request failed closed at scheduler admission with
+  `RCH-I001 queue_timeout`. The timed `vmi1156319` request passed the identity, linkage, conformance,
+  and observed-thread checks, then sampled the host-wide guard for the full 300 seconds without
+  obtaining five consecutive clear samples; the final obstruction was `cpu2=66.7%` and
+  `cpu7=68.4%` busy against the 20% ceiling. RCH also correctly rejected one attempted direct reuse
+  of the already verified binary as non-compilation command `RCH-E301`; it never executed and is not
+  evidence. No effect or null measurement ran: **0 rows decidable, 0 WIN, 0 LOSE**.
+- **DISPOSITION / RETRY PREDICATE.** The historical parser keep is neither retracted nor promoted.
+  Retry the whole-job comparison only when an eligible AVX2 worker admits the clean-overlay Cargo
+  command and its host-wide pre-gate obtains five consecutive one-second samples with every allowed
+  CPU at or below 20% busy. Then require the post-gate, stable observed-thread count, both provider
+  null medians, effect/null CIs, and the live FrankenLibC/glibc ratio before reclassifying the row.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): strict `bsearch` raw-pointer loop; **31.009 -> 24.035 ns (1.29x faster)** (`bd-6g91n6`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH STDLIB REGIME.** `bv --robot-triage`

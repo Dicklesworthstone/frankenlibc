@@ -2,10 +2,10 @@
 //!
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
 //! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, waiter-aware
-//! `sem_post`, inlined `thrd_current`, and strict `mtx_trylock`. Their
-//! historical rows proved FrankenLibC self-speedups, but did not time live
-//! glibc in the same invocation. This harness closes those evidence gaps
-//! without changing production code.
+//! `sem_post`, inlined `thrd_current`, strict `mtx_trylock`, and hosts-backed
+//! `getaddrinfo`. Their historical rows proved FrankenLibC self-speedups, but
+//! did not time live glibc in the same invocation. This harness closes those
+//! evidence gaps without changing production code.
 //!
 //! Contract:
 //! - host glibc is linked normally and FrankenLibC is loaded from the release
@@ -28,7 +28,8 @@
 //!  cargo --config 'build.target-dir="/data/tmp/cargo-target-frankenlibc"' \
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
-//!  --family nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock`
+//!  --family \
+//!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|getaddrinfo_hosts`
 
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
@@ -49,6 +50,7 @@ const GETAUXVAL_REPS: usize = 2_000_000;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
 const MTX_TRYLOCK_REPS: usize = 1_000_000;
+const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 
@@ -66,6 +68,13 @@ type MtxInitFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t, c_int) -> c_in
 type MtxTrylockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
 type MtxUnlockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
 type MtxDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t);
+type GetaddrinfoFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const libc::addrinfo,
+    *mut *mut libc::addrinfo,
+) -> c_int;
+type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -96,6 +105,15 @@ unsafe extern "C" {
     fn linked_host_mtx_unlock(mtx: *mut libc::pthread_mutex_t) -> c_int;
     #[link_name = "mtx_destroy"]
     fn linked_host_mtx_destroy(mtx: *mut libc::pthread_mutex_t);
+    #[link_name = "getaddrinfo"]
+    fn linked_host_getaddrinfo(
+        node: *const c_char,
+        service: *const c_char,
+        hints: *const libc::addrinfo,
+        result: *mut *mut libc::addrinfo,
+    ) -> c_int;
+    #[link_name = "freeaddrinfo"]
+    fn linked_host_freeaddrinfo(result: *mut libc::addrinfo);
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -210,6 +228,7 @@ enum Family {
     SemPost,
     ThrdCurrent,
     MtxTrylock,
+    GetaddrinfoHosts,
 }
 
 struct Case {
@@ -437,9 +456,10 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
                 Some(value) if value == OsStr::new("mtx_trylock") => Family::MtxTrylock,
+                Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
-                     sem_post, thrd_current, or mtx_trylock"
+                     sem_post, thrd_current, mtx_trylock, or getaddrinfo_hosts"
                 ),
             };
         } else {
@@ -447,7 +467,8 @@ fn parse_args() -> Config {
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
                  [--fl-so PATH] [--verify-only] \
                  [--family \
-                  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock]"
+                  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
+                  getaddrinfo_hosts]"
             );
         }
     }
@@ -1262,6 +1283,191 @@ fn measure_mtx_trylock_case(
         "already_owned_busy",
         "historical already-owned plain-mutex busy path",
         MTX_TRYLOCK_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+fn hosts_getaddrinfo_hints() -> libc::addrinfo {
+    let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    hints.ai_protocol = libc::IPPROTO_TCP;
+    hints.ai_flags = libc::AI_NUMERICSERV;
+    hints
+}
+
+fn consume_addrinfo(mut result: *mut libc::addrinfo) -> u64 {
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    while !result.is_null() {
+        let current = unsafe { &*result };
+        accumulator ^= current.ai_family as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+        accumulator ^= current.ai_socktype as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+        accumulator ^= current.ai_protocol as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+        if current.ai_family == libc::AF_INET && !current.ai_addr.is_null() {
+            let address = unsafe { &*current.ai_addr.cast::<libc::sockaddr_in>() };
+            accumulator ^= u64::from(address.sin_addr.s_addr);
+            accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+            accumulator ^= u64::from(address.sin_port);
+            accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        result = current.ai_next;
+    }
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_getaddrinfo_hosts_batch(
+    getaddrinfo: GetaddrinfoFn,
+    freeaddrinfo: FreeaddrinfoFn,
+    hints: &libc::addrinfo,
+    node: &CStr,
+) -> u64 {
+    let mut accumulator = 0u64;
+    for _ in 0..GETADDRINFO_HOSTS_REPS {
+        let mut result = std::ptr::null_mut();
+        let rc = unsafe {
+            black_box(getaddrinfo)(
+                black_box(node.as_ptr()),
+                black_box(c"80".as_ptr()),
+                black_box(hints),
+                black_box(&mut result),
+            )
+        };
+        assert_eq!(rc, 0, "hosts-backed getaddrinfo failed");
+        assert!(
+            !result.is_null(),
+            "hosts-backed getaddrinfo returned no result"
+        );
+        accumulator = accumulator.rotate_left(7) ^ consume_addrinfo(result);
+        unsafe { black_box(freeaddrinfo)(result) };
+    }
+    black_box(accumulator)
+}
+
+fn time_getaddrinfo_hosts_batch(
+    getaddrinfo: GetaddrinfoFn,
+    freeaddrinfo: FreeaddrinfoFn,
+    hints: &libc::addrinfo,
+    node: &CStr,
+) -> f64 {
+    let started = Instant::now();
+    black_box(run_getaddrinfo_hosts_batch(
+        getaddrinfo,
+        freeaddrinfo,
+        hints,
+        node,
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / GETADDRINFO_HOSTS_REPS as f64
+}
+
+fn measure_getaddrinfo_hosts_case(
+    host_getaddrinfo: GetaddrinfoFn,
+    host_freeaddrinfo: FreeaddrinfoFn,
+    fl_getaddrinfo: GetaddrinfoFn,
+    fl_freeaddrinfo: FreeaddrinfoFn,
+    hints: &libc::addrinfo,
+    node: &CStr,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_getaddrinfo_hosts_batch(fl_getaddrinfo, fl_freeaddrinfo, hints, node);
+                    fb = time_getaddrinfo_hosts_batch(fl_getaddrinfo, fl_freeaddrinfo, hints, node);
+                }
+                0 => {
+                    fb = time_getaddrinfo_hosts_batch(fl_getaddrinfo, fl_freeaddrinfo, hints, node);
+                    fa = time_getaddrinfo_hosts_batch(fl_getaddrinfo, fl_freeaddrinfo, hints, node);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_getaddrinfo_hosts_batch(
+                        host_getaddrinfo,
+                        host_freeaddrinfo,
+                        hints,
+                        node,
+                    );
+                    gb = time_getaddrinfo_hosts_batch(
+                        host_getaddrinfo,
+                        host_freeaddrinfo,
+                        hints,
+                        node,
+                    );
+                }
+                1 => {
+                    gb = time_getaddrinfo_hosts_batch(
+                        host_getaddrinfo,
+                        host_freeaddrinfo,
+                        hints,
+                        node,
+                    );
+                    ga = time_getaddrinfo_hosts_batch(
+                        host_getaddrinfo,
+                        host_freeaddrinfo,
+                        hints,
+                        node,
+                    );
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl =
+                        time_getaddrinfo_hosts_batch(fl_getaddrinfo, fl_freeaddrinfo, hints, node);
+                    effect_glibc = time_getaddrinfo_hosts_batch(
+                        host_getaddrinfo,
+                        host_freeaddrinfo,
+                        hints,
+                        node,
+                    );
+                }
+                2 => {
+                    effect_glibc = time_getaddrinfo_hosts_batch(
+                        host_getaddrinfo,
+                        host_freeaddrinfo,
+                        hints,
+                        node,
+                    );
+                    effect_fl =
+                        time_getaddrinfo_hosts_batch(fl_getaddrinfo, fl_freeaddrinfo, hints, node);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        "host_identity_ipv4_stream",
+        "resolve this host's IPv4 stream service 80 through the hosts database",
+        GETADDRINFO_HOSTS_REPS,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -2421,6 +2627,223 @@ fn run_mtx_trylock(config: &Config) {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct AddrinfoObservation {
+    family: c_int,
+    socktype: c_int,
+    protocol: c_int,
+    address: u32,
+    port: u16,
+}
+
+fn observe_addrinfo(mut result: *mut libc::addrinfo) -> Vec<AddrinfoObservation> {
+    let mut observations = Vec::new();
+    while !result.is_null() {
+        let current = unsafe { &*result };
+        assert_eq!(
+            current.ai_family,
+            libc::AF_INET,
+            "hosts-backed getaddrinfo returned a non-IPv4 row"
+        );
+        assert!(
+            !current.ai_addr.is_null(),
+            "hosts-backed getaddrinfo returned a null address"
+        );
+        assert!(
+            current.ai_addrlen as usize >= std::mem::size_of::<libc::sockaddr_in>(),
+            "hosts-backed getaddrinfo returned a short IPv4 address"
+        );
+        let address = unsafe { &*current.ai_addr.cast::<libc::sockaddr_in>() };
+        observations.push(AddrinfoObservation {
+            family: current.ai_family,
+            socktype: current.ai_socktype,
+            protocol: current.ai_protocol,
+            address: u32::from_be(address.sin_addr.s_addr),
+            port: u16::from_be(address.sin_port),
+        });
+        result = current.ai_next;
+    }
+    observations.sort();
+    observations
+}
+
+fn call_getaddrinfo_once(
+    getaddrinfo: GetaddrinfoFn,
+    freeaddrinfo: FreeaddrinfoFn,
+    hints: &libc::addrinfo,
+    node: &CStr,
+) -> Vec<AddrinfoObservation> {
+    let mut result = std::ptr::null_mut();
+    let rc = unsafe { getaddrinfo(node.as_ptr(), c"80".as_ptr(), hints, &mut result) };
+    assert_eq!(rc, 0, "hosts-backed getaddrinfo conformance call failed");
+    assert!(
+        !result.is_null(),
+        "hosts-backed getaddrinfo conformance call returned no result"
+    );
+    let observations = observe_addrinfo(result);
+    unsafe { freeaddrinfo(result) };
+    observations
+}
+
+fn run_getaddrinfo_hosts(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_getaddrinfo_symbol = unsafe { libc::dlsym(handle, c"getaddrinfo".as_ptr()) };
+    assert!(
+        !fl_getaddrinfo_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC getaddrinfo")
+    );
+    let fl_freeaddrinfo_symbol = unsafe { libc::dlsym(handle, c"freeaddrinfo".as_ptr()) };
+    assert!(
+        !fl_freeaddrinfo_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC freeaddrinfo")
+    );
+
+    let host_getaddrinfo: GetaddrinfoFn = linked_host_getaddrinfo;
+    let host_freeaddrinfo: FreeaddrinfoFn = linked_host_freeaddrinfo;
+    let fl_getaddrinfo: GetaddrinfoFn = unsafe { std::mem::transmute(fl_getaddrinfo_symbol) };
+    let fl_freeaddrinfo: FreeaddrinfoFn = unsafe { std::mem::transmute(fl_freeaddrinfo_symbol) };
+    let incumbent_identity = symbol_object(host_getaddrinfo as *const () as *const c_void)
+        .expect("identify host getaddrinfo object");
+    let fl_identity = symbol_object(fl_getaddrinfo_symbol.cast_const())
+        .expect("identify FrankenLibC getaddrinfo object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=getaddrinfo");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=getaddrinfo");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_getaddrinfo as usize, fl_getaddrinfo as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=getaddrinfo incumbent_address={:#x} fl_address={:#x}",
+        host_getaddrinfo as usize, fl_getaddrinfo as usize,
+    );
+
+    let hints = hosts_getaddrinfo_hints();
+    let host_name = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .expect("read host identity for hosts-backed getaddrinfo");
+    let host_name =
+        CString::new(host_name.trim()).expect("host identity contains an interior NUL byte");
+    let incumbent_observations =
+        call_getaddrinfo_once(host_getaddrinfo, host_freeaddrinfo, &hints, &host_name);
+    let fl_observations =
+        call_getaddrinfo_once(fl_getaddrinfo, fl_freeaddrinfo, &hints, &host_name);
+    assert_eq!(
+        fl_observations, incumbent_observations,
+        "hosts-backed getaddrinfo semantic results differ"
+    );
+    assert!(
+        !fl_observations.is_empty(),
+        "hosts-backed getaddrinfo conformance produced no rows"
+    );
+    assert!(
+        fl_observations
+            .iter()
+            .all(|row| row.address != 0 && row.port == 80),
+        "host-identity lookup returned an invalid address or service port"
+    );
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=getaddrinfo comparisons={} \
+         host_identity={} host_identity_ipv4_stream_rows={} \
+         exact_semantic_result_verdict=pass",
+        fl_observations.len() * 5,
+        host_name.to_string_lossy(),
+        fl_observations.len(),
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=getaddrinfo phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=getaddrinfo verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "getaddrinfo observed thread count changed between conformance and measurement"
+    );
+
+    let result = measure_getaddrinfo_hosts_case(
+        host_getaddrinfo,
+        host_freeaddrinfo,
+        fl_getaddrinfo,
+        fl_freeaddrinfo,
+        &hints,
+        &host_name,
+    );
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "getaddrinfo observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "getaddrinfo",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let wins = usize::from(result.comparison == "FL_FASTER");
+    let losses = usize::from(result.comparison == "FL_SLOWER");
+    let undecidable = 1 - wins - losses;
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=getaddrinfo verdict={verdict} \
+         cases=1 wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=host_identity_ipv4_stream headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        result.effect_median, result.comparison,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
@@ -2455,5 +2878,6 @@ fn main() {
         Family::SemPost => run_sem_post(&config),
         Family::ThrdCurrent => run_thrd_current(&config),
         Family::MtxTrylock => run_mtx_trylock(&config),
+        Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
     }
 }
