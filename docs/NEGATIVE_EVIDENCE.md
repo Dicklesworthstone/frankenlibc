@@ -25326,3 +25326,283 @@ by the retired null-CI-straddle rule.
   Reopen fresh `param_simple` only as part of one prospectively registered whole `wordexp`
   invocation on a booked/quiescent host; both null medians must remain within ±2%, and the
   existing valid replicated loss remains the incumbent result until such an invocation lands.
+
+## 2026-07-31 (cc_fl / BlackThrush) — INCUMBENT-COVERAGE AUDIT: 12 of 246 held claims (4.9%) carry a vs-incumbent ratio with the incumbent live in the same invocation. Zero are machine-checkable
+
+Fleet policy is that a perf KEEP requires a vs-incumbent ratio, because a self-speedup is
+maintenance and only an incumbent comparison is a campaign result. FrankenFS ran this audit on
+itself and found 67 of 186 KEEP claims unsupported, roughly a third. **Our number is worse.**
+Inventory only — nothing is deleted, retitled or weakened by this entry. Reproduce with
+`python3 scripts/audit_incumbent_coverage.py`.
+
+- **THE ONE LINE.** We hold **246** claims (headings marked WIN / KEEP / SHIPPED, with
+  `NOT SHIPPED` / `INVALID` / `REJECTED` / `REFUTED` / `WIN-PENDING` excluded).
+  **12 (4.9%) carry a vs-incumbent ratio measured with the incumbent live in the same
+  invocation. 234 (95.1%) do not.**
+- **THE LADDER, because a single number hides which failure it is.**
+
+  | tier | meaning | count | share |
+  |---|---|---:|---:|
+  | A | machine-checkable: incumbent identified from INSIDE the measuring process (`INCUMBENT_OBJECT`, `INCUMBENT_LINKAGE`, `kind=fl_glibc`, `glibc_median_ns`) | **0** | 0.0% |
+  | B | prose asserts the incumbent ran in the same invocation; nothing in the row lets a tool confirm it | 12 | 4.9% |
+  | C | a glibc number is quoted, provenance unstated | 202 | 82.1% |
+  | D | no incumbent reference at all | 32 | 13.0% |
+  | D1 | ...of which convertible, a glibc symbol exists | 18 | |
+  | D2 | ...of which **NO INCUMBENT ARM CAN EXIST** | 14 | |
+
+- **TIER A IS ZERO, AND THAT IS THE HEADLINE.** Every row in this ledger that carries the
+  structured in-process incumbent bundle is a mechanism test — `rpmatch`, `wctype`, `strfmon`,
+  `wordexp` — and those are refutations and closeouts, not claims we hold. **Not one claim we
+  stand behind is verifiable by a tool.** The 12 in tier B are the strongest claimed ground we
+  have and they rest on prose.
+- **TIER C IS THE DANGEROUS BUCKET, NOT THE HARMLESS ONE.** 202 rows quote a glibc ratio without
+  stating how the incumbent was obtained. That is precisely the provenance this campaign has
+  already been burned by: a cross-process or cross-run comparison is exactly what the
+  LTO-inlining artifact and the "in-invocation A/A is the wrong null for a two-binary A/B"
+  findings taught us to distrust. These rows are not presumed wrong — they are presumed
+  **unaudited**, and they are 82% of what we claim.
+- **D2 IS A DIFFERENT PROBLEM AND MUST NOT BE COUNTED AS BACKLOG.** 14 claims have no incumbent
+  arm because glibc has no such surface: PageOracle L1 XOR fold (L118), bandit profile-state
+  atom (L326), convex-safe approachability (L1210), `MetricRing` emission-counter RMW and
+  eviction, `SeqLock` write/read counters, BRAVO fast-path attempts and read diagnostics, EBR
+  reclaim counters, `decide()` and `observe()` fast paths. glibc has no SeqLock, no BRAVO, no
+  EBR, no membrane. These are real engineering — one is 30.61x on EBR pin/unpin — but the
+  multiple is against our own previous code and **there is nothing to convert them into.** The
+  correct disposition is to title them MAINTENANCE and never quote them competitively. Counting
+  them as "unmeasured" would imply a measurement exists to be taken; it does not.
+- **RANKED CONVERSION QUEUE for D1, ordered by public-doc exposure**, because an unsupported
+  claim a user might act on is worse than one buried in a ledger. Score 3 = named in
+  `README.md`; 2 = named in another public doc; 0 = ledger-only.
+
+  | rank | score | row | claim | exposed in |
+  |---:|---:|---|---|---|
+  | 1 | 3 | L381 | strict `nl_langinfo` reads the immutable C-locale table directly | README.md, CHANGELOG.md |
+  | 2 | 3 | L738 | strict `getrandom` bypasses redundant membrane bookkeeping | README.md, CHANGELOG.md |
+  | 3 | 3 | L815 | `fpclassify` classifies f64 from exponent/fraction bits | README.md, RELEASE_READINESS_SCORECARD.md |
+  | 4 | 2 | L776 | `fpclassifyf` classifies f32 from exponent/fraction bits | CHANGELOG.md |
+  | 5 | 2 | L1144 | `tdelete` removes the redundant lookup walk | CHANGELOG.md |
+  | 6 | 0 | L423 | `getauxval` publishes one bootstrap-safe auxv snapshot | — |
+  | 7 | 0 | L586 | waiter registration skips uncontended `sem_post` futex wakes | — |
+  | 8 | 0 | L666 | force-inline the `thrd_current` identity-cache path | — |
+  | 9 | 0 | L853 | strict `mtx_trylock` skips redundant allocation-bounds lookup | — |
+  | 10 | 0 | L1516 | byte-level IPv4 hosts validation | — |
+  | 11 | 0 | L10661 | `sinhf` / `coshf` codegen coupling | — |
+  | 12 | 0 | L16509 | `memrchr` 512B fold tier | — |
+  | 13 | 0 | L18132 | reverse-lookup IPv4 text formatter | — |
+  | 14 | 0 | L19789 | `wcsrtombs` count SIMD | — |
+
+  The top three are the ones that matter: they are named in `README.md`, so a user reading our
+  own documentation could act on them, and none has ever been measured against glibc.
+  `nl_langinfo`, `fpclassify`/`fpclassifyf`, `tdelete` and `memrchr` are all small enough to
+  share a single harness and a single booked quiet window.
+- **A CAVEAT ON THE CLASSIFIER, stated because it moves the number.** Two earlier passes of this
+  audit reported different figures and both were wrong in the flattering direction. The first
+  matched internal-machinery keywords against row BODIES, which misfiled `nl_langinfo` and
+  `getrandom` — real glibc symbols whose rows mention the membrane in passing — as
+  unconvertible, shrinking the visible backlog. The second counted `NOT SHIPPED` / `INVALID`
+  headings as held claims because they contain the token `SHIPPED`, inflating the total to 270.
+  Both are fixed; the classifier now matches machinery names against headings only and excludes
+  negated dispositions. Residual known limitation: tier C is assigned by the mere presence of
+  the word "glibc", so it is an upper bound on how much of C is genuinely comparative.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** Nothing is retracted here; this is an inventory and
+  retitling is a separate act that must be done per row with the row in front of you. Work the
+  D1 queue top-down in booked quiet windows under the modern contract, so converted rows land in
+  tier A rather than tier B. Re-run `scripts/audit_incumbent_coverage.py` after each batch: the
+  number that must move is **tier A, currently zero**. Do not spend a window on D2 — only check
+  each is titled MAINTENANCE. Tier C is the largest liability but the cheapest thing to do about
+  it is NOT to re-measure 202 rows; it is to stop adding to it, which the current harness
+  contract already enforces for new work.
+
+## 2026-07-31 (cc_fl / BlackThrush) — INCUMBENT-COVERAGE AUDIT: 12 of 246 held claims (4.9%) carry a vs-incumbent ratio with the incumbent live in the same invocation. Zero are machine-checkable
+
+Fleet policy is that a perf KEEP requires a vs-incumbent ratio, because a self-speedup is
+maintenance and only an incumbent comparison is a campaign result. FrankenFS ran this audit on
+itself and found 67 of 186 KEEP claims unsupported, roughly a third. **Our number is worse.**
+Inventory only — nothing is deleted, retitled or weakened by this entry. Reproduce with
+`python3 scripts/audit_incumbent_coverage.py`.
+
+- **THE ONE LINE.** We hold **246** claims (headings marked WIN / KEEP / SHIPPED, with
+  `NOT SHIPPED` / `INVALID` / `REJECTED` / `REFUTED` / `WIN-PENDING` excluded).
+  **12 (4.9%) carry a vs-incumbent ratio measured with the incumbent live in the same
+  invocation. 234 (95.1%) do not.**
+- **THE LADDER, because a single number hides which failure it is.**
+
+  | tier | meaning | count | share |
+  |---|---|---:|---:|
+  | A | machine-checkable: incumbent identified from INSIDE the measuring process (`INCUMBENT_OBJECT`, `INCUMBENT_LINKAGE`, `kind=fl_glibc`, `glibc_median_ns`) | **0** | 0.0% |
+  | B | prose asserts the incumbent ran in the same invocation; nothing in the row lets a tool confirm it | 12 | 4.9% |
+  | C | a glibc number is quoted, provenance unstated | 202 | 82.1% |
+  | D | no incumbent reference at all | 32 | 13.0% |
+  | D1 | ...of which convertible, a glibc symbol exists | 18 | |
+  | D2 | ...of which **NO INCUMBENT ARM CAN EXIST** | 14 | |
+
+- **TIER A IS ZERO, AND THAT IS THE HEADLINE.** Every row in this ledger that carries the
+  structured in-process incumbent bundle is a mechanism test — `rpmatch`, `wctype`, `strfmon`,
+  `wordexp` — and those are refutations and closeouts, not claims we hold. **Not one claim we
+  stand behind is verifiable by a tool.** The 12 in tier B are the strongest claimed ground we
+  have and they rest on prose.
+- **TIER C IS THE DANGEROUS BUCKET, NOT THE HARMLESS ONE.** 202 rows quote a glibc ratio without
+  stating how the incumbent was obtained. That is precisely the provenance this campaign has
+  already been burned by: a cross-process or cross-run comparison is exactly what the
+  LTO-inlining artifact and the "in-invocation A/A is the wrong null for a two-binary A/B"
+  findings taught us to distrust. These rows are not presumed wrong — they are presumed
+  **unaudited**, and they are 82% of what we claim.
+- **D2 IS A DIFFERENT PROBLEM AND MUST NOT BE COUNTED AS BACKLOG.** 14 claims have no incumbent
+  arm because glibc has no such surface: PageOracle L1 XOR fold (L118), bandit profile-state
+  atom (L326), convex-safe approachability (L1210), `MetricRing` emission-counter RMW and
+  eviction, `SeqLock` write/read counters, BRAVO fast-path attempts and read diagnostics, EBR
+  reclaim counters, `decide()` and `observe()` fast paths. glibc has no SeqLock, no BRAVO, no
+  EBR, no membrane. These are real engineering — one is 30.61x on EBR pin/unpin — but the
+  multiple is against our own previous code and **there is nothing to convert them into.** The
+  correct disposition is to title them MAINTENANCE and never quote them competitively. Counting
+  them as "unmeasured" would imply a measurement exists to be taken; it does not.
+- **RANKED CONVERSION QUEUE for D1, ordered by public-doc exposure**, because an unsupported
+  claim a user might act on is worse than one buried in a ledger. Score 3 = named in
+  `README.md`; 2 = named in another public doc; 0 = ledger-only.
+
+  | rank | score | row | claim | exposed in |
+  |---:|---:|---|---|---|
+  | 1 | 3 | L381 | strict `nl_langinfo` reads the immutable C-locale table directly | README.md, CHANGELOG.md |
+  | 2 | 3 | L738 | strict `getrandom` bypasses redundant membrane bookkeeping | README.md, CHANGELOG.md |
+  | 3 | 3 | L815 | `fpclassify` classifies f64 from exponent/fraction bits | README.md, RELEASE_READINESS_SCORECARD.md |
+  | 4 | 2 | L776 | `fpclassifyf` classifies f32 from exponent/fraction bits | CHANGELOG.md |
+  | 5 | 2 | L1144 | `tdelete` removes the redundant lookup walk | CHANGELOG.md |
+  | 6 | 0 | L423 | `getauxval` publishes one bootstrap-safe auxv snapshot | — |
+  | 7 | 0 | L586 | waiter registration skips uncontended `sem_post` futex wakes | — |
+  | 8 | 0 | L666 | force-inline the `thrd_current` identity-cache path | — |
+  | 9 | 0 | L853 | strict `mtx_trylock` skips redundant allocation-bounds lookup | — |
+  | 10 | 0 | L1516 | byte-level IPv4 hosts validation | — |
+  | 11 | 0 | L10661 | `sinhf` / `coshf` codegen coupling | — |
+  | 12 | 0 | L16509 | `memrchr` 512B fold tier | — |
+  | 13 | 0 | L18132 | reverse-lookup IPv4 text formatter | — |
+  | 14 | 0 | L19789 | `wcsrtombs` count SIMD | — |
+
+  The top three are the ones that matter: they are named in `README.md`, so a user reading our
+  own documentation could act on them, and none has ever been measured against glibc.
+  `nl_langinfo`, `fpclassify`/`fpclassifyf`, `tdelete` and `memrchr` are all small enough to
+  share a single harness and a single booked quiet window.
+- **A CAVEAT ON THE CLASSIFIER, stated because it moves the number.** Two earlier passes of this
+  audit reported different figures and both were wrong in the flattering direction. The first
+  matched internal-machinery keywords against row BODIES, which misfiled `nl_langinfo` and
+  `getrandom` — real glibc symbols whose rows mention the membrane in passing — as
+  unconvertible, shrinking the visible backlog. The second counted `NOT SHIPPED` / `INVALID`
+  headings as held claims because they contain the token `SHIPPED`, inflating the total to 270.
+  Both are fixed; the classifier now matches machinery names against headings only and excludes
+  negated dispositions. Residual known limitation: tier C is assigned by the mere presence of
+  the word "glibc", so it is an upper bound on how much of C is genuinely comparative.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** Nothing is retracted here; this is an inventory and
+  retitling is a separate act that must be done per row with the row in front of you. Work the
+  D1 queue top-down in booked quiet windows under the modern contract, so converted rows land in
+  tier A rather than tier B. Re-run `scripts/audit_incumbent_coverage.py` after each batch: the
+  number that must move is **tier A, currently zero**. Do not spend a window on D2 — only check
+  each is titled MAINTENANCE. Tier C is the largest liability but the cheapest thing to do about
+  it is NOT to re-measure 202 rows; it is to stop adding to it, which the current harness
+  contract already enforces for new work.
+
+## 2026-07-31 (cc_fl / BlackThrush) — CORRECTION + REFUTED: the membrane bounds lookup is NOT our string floor. It costs ~0 on a miss and +2.415 ns on a HIT, and the hit is the deployed case
+
+Pre-registered as `bd-strfloor-provenance-isolation-oie71t` before any timing. This discharges
+the obligation the 2026-07-30 `wctype` row created, and it **corrects that row**: it named
+`bounded_cstr_bytes` -> `known_remaining` as the structural suspect for our ~11 ns floor, flagged
+the attribution as not isolated, and pre-committed to correcting it if the isolation failed. It
+failed. Evidence and harness only; no production optimization attempted.
+
+- **THE LEVER, chosen so no source edit was needed and the deployed object is what gets measured.**
+  `known_remaining` is `bump_mmap_remaining` -> `segment_remaining` -> `fallback_remaining`, all
+  address-keyed. So the same function on the same bytes must cost different amounts depending
+  only on where the buffer came from — IF that chain is the floor. Four provenances, identical
+  bytes: stack, static (object data segment), `glibc_heap` (benchmark's `CString`), and
+  `fl_heap` (allocated through the dlsym'd FrankenLibC `malloc`, so it is registered in the very
+  tables `known_remaining` consults). Discriminating pair with opposite pre-registered
+  predictions: `wctype` calls `known_remaining` unconditionally, `strtol` carries the deployed
+  `stdlib_membrane_fastpath` bypass that skips it.
+- **THE CONTROL DID ITS JOB.** Different provenances sit at different addresses and so differ in
+  cache/page/TLB behaviour regardless of any registry. glibc has no registry, so glibc's own
+  spread over the same four buffers measures exactly that artifact: **1.0053 for `wctype`,
+  1.0006 for `strtol`** — i.e. essentially nothing. Any FrankenLibC spread above that is real.
+- **RESULT: `STRFLOOR_PREDICTION verdict=REFUTED p1_wctype_provenance_sensitive=false
+  p2_strtol_provenance_insensitive=true`.** All 8 rows decidable; every null median within 0.3%
+  of 1.0; every effect CI excludes 1.0 and clears twice the widest null half-width. Ratios are
+  FrankenLibC/glibc, so below 1.0 is FrankenLibC faster.
+
+  | symbol | provenance | FL ns | glibc ns | FL/glibc | effect CI95 | verdict |
+  |---|---|---:|---:|---:|---|---|
+  | `wctype` | stack | 9.938 | 42.104 | **0.236004** | [0.235868,0.236215] | `FL_FASTER` |
+  | `wctype` | static | 9.928 | 42.163 | **0.235473** | [0.235264,0.235895] | `FL_FASTER` |
+  | `wctype` | glibc_heap | 9.928 | 42.329 | **0.234567** | [0.234244,0.234726] | `FL_FASTER` |
+  | `wctype` | **fl_heap** | **12.343** | 42.179 | **0.292619** | [0.292411,0.292723] | `FL_FASTER` |
+  | `strtol` | stack | 5.295 | 8.601 | **0.615626** | [0.615045,0.616508] | `FL_FASTER` |
+  | `strtol` | static | 5.295 | 8.601 | **0.615590** | [0.615045,0.615984] | `FL_FASTER` |
+  | `strtol` | glibc_heap | 5.290 | 8.601 | **0.615309** | [0.615045,0.615984] | `FL_FASTER` |
+  | `strtol` | fl_heap | 5.295 | 8.596 | **0.615984** | [0.615045,0.615984] | `FL_FASTER` |
+
+- **THE CORRECTION, stated plainly.** Three of the four `wctype` provenances are
+  indistinguishable — 9.938, 9.928, 9.928 ns. For an untracked pointer all three probes
+  early-out and the bounds lookup is **free to measurement resolution**. The 2026-07-30 row's
+  structural suspect is therefore **wrong**: `known_remaining` is not what holds our `wctype`
+  floor up. That row already carried the caveat that the attribution was not isolated, and this
+  is the isolation; the suspect is withdrawn. What actually costs the ~10 ns is elsewhere in
+  `wctype`'s own path, and `strtol` proves the string read itself is cheap — `strtol` reads a
+  C string too and runs the whole call in 5.295 ns.
+- **BUT THE REGISTRY IS NOT FREE, AND THE EXPENSIVE CASE IS THE DEPLOYED ONE.** The one
+  provenance that moves is `fl_heap`: **12.343 ns against 9.928, i.e. 1.2433x, +2.415 ns**, on a
+  buffer FrankenLibC itself allocated. That is the probe chain HITTING rather than missing —
+  `segment_remaining` finds the tracked allocation and does the arithmetic. The direction is the
+  uncomfortable one: **we penalise exactly the pointers we own.** In a real program the strings
+  handed to libc mostly come from that program's `malloc`, which in a deployed FrankenLibC is
+  ours — so the 12.343 ns column is the realistic one and the 9.93 ns columns are the artifact
+  of a benchmark holding foreign memory. A 24% floor increase on the common path, invisible to
+  any harness that allocates its inputs with the incumbent's allocator. Registered as an
+  observation here, not as a lever; changing it is a separate, pre-registered piece of work.
+- **P2 CONFIRMED, tightly.** `strtol`'s FrankenLibC spread is **1.0009** against glibc's 1.0006 —
+  the bypass means there is no registry cost to expose, and the four rows agree to four decimal
+  places. A symbol with the fast path is flat; a symbol without it moves only when the probe
+  hits. Both halves of the mechanism behave as the source says they should.
+- **TWO TIER-A INCUMBENT RATIOS, which is the other reason this run exists.** Today's coverage
+  audit found **0** held claims carrying a machine-checkable same-invocation incumbent. These
+  rows carry the full bundle — `INCUMBENT_OBJECT`, `INCUMBENT_LINKAGE`, `kind=fl_glibc` — so
+  `wctype` (0.2346-0.2926x) and `strtol` (0.6156x, i.e. **1.62x faster than live glibc**) are
+  now measured against the actual incumbent in the same process.
+  **Do not generalise the `strtol` figure.** It is ONE input (`"12345"`, base 10) on ONE host.
+  The in-tree fast-path comment records `strtol("42")` at ~12 ns against glibc ~6 ns, and the
+  standing `strtol` note claims a 1.08-1.47x LOSS on short decimal/octal/hex. This run neither
+  reproduces nor refutes those: a 5-digit base-10 parse is not a 2-digit one, and no length or
+  base sweep was run. The discrepancy is flagged as **NEEDS ITS OWN SWEEP**, not resolved.
+- **CONFORMANCE PRECEDES TIMING.** 68 comparisons: `wctype` recognition across all four
+  provenances, `strtol` value AND `endptr` offset across all four provenances, plus 15 inputs
+  (including `""`, `"  "`, `"0x1f"`, `"-2147483648"`, `"9223372036854775807"`, `"12abc"`,
+  `"-0"`) crossed with bases 0, 8, 10, 16. All pass.
+- **ARTIFACT PROVENANCE, and one thing done differently from the request.** The compile check ran
+  under `rch exec --base cb7665a02 --clean-overlay --no-overlay` and was green. That path could
+  NOT be used for the measured artifacts: it retrieved the example binary but left a **stale
+  Jul-10 `libfrankenlibc_abi.so`** in the local target directory, which would have put an old
+  FrankenLibC object under a new harness without any error. So the measured artifacts were built
+  from `git archive` of the exact pinned commit `cb7665a027c97e6799585635f485e7c20b3c5c97`,
+  extracted to a fresh directory on the measurement host — no working tree, no overlay, nothing
+  but that commit's bytes, which is the same guarantee the request was asking for. The exported
+  harness hashes `092576ff0eb749bc678eaa652b9611ee9f530dafc1ed69ea763b975f9476aa3d`, identical
+  to `git show cb7665a02:...`.
+- **IDENTITY AND HOST.** Live glibc `/usr/lib/x86_64-linux-gnu/libc.so.6` SHA-256
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, called in the same
+  invocation as strict-mode `libfrankenlibc_abi.so` SHA-256
+  `c82c12819b07c33bf9f7c42ddd33e284ca5ecc04ae623a4676fde8f33e80b408` loaded with
+  `RTLD_NOW|RTLD_LOCAL`. Benchmark ELF SHA-256
+  `87bab99e1fd4ee0846d6283cf85453d92a729ce78103771ba74a315cacf524cf`, Build ID
+  `b0e2339d1808e43973a53d26b278853293b2bfd7`, self-reported from inside the process. Both symbol
+  pairs asserted to distinct addresses and distinct serving objects. Buffer addresses printed per
+  provenance. Host `threadripperje`, **`threads_observed=1` read from `/proc/self/task` at
+  measurement time, not the requested count**; ISA `built_avx2=true built_fma=true
+  built_sse42=true`, `cpu_avx512f=false`. Pre/post host-wide guards clear at maximum observed
+  busy 0.140 and 0.141. 37 samples, 4 warmups, 33 retained, 2000 calls per arm, 4096 bootstrap
+  resamples, corrected null gate with the median clause, CV telemetry only. Admitted first
+  attempt. Evidence log SHA-256
+  `7e33603b3d4629665d760bdcb844696fab8e86756835f6aa6782161d08d1cb9a`.
+- **DECISION / RETRY PREDICATE.** The `known_remaining`-as-floor hypothesis is closed as refuted;
+  do not re-open it for untracked pointers. **Re-open on the hit path instead**: the open question
+  is what the +2.415 ns `fl_heap` penalty is made of and whether `segment_remaining` can answer
+  from the pointer without the table walk, and any such work must be measured with inputs
+  allocated by FrankenLibC's own `malloc`, because a harness that allocates with the incumbent's
+  allocator cannot see this cost at all. The residual `wctype` floor (~10 ns with the probe
+  missing, against `strtol`'s 5.3 ns whole call) is unexplained and is the next thing to isolate;
+  do not attribute it to the bounded read, which this run rules out. `strtol` needs a length and
+  base sweep before any claim about short inputs is made in either direction.
