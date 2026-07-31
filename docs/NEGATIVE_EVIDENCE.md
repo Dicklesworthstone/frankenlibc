@@ -463,7 +463,49 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   overlays, `env -u CARGO_TARGET_DIR`, and the shared RCH target pool. No local
   Cargo or per-run target directory participated.
 
-## 2026-07-15 (cod / codex-root) — WIN / SHIPPED: `getauxval` publishes one bootstrap-safe auxv snapshot (`bd-92b6bz`)
+## 2026-07-15 (cod / codex-root) — CAMPAIGN WIN (SHIPPED): `getauxval` publishes one bootstrap-safe auxv snapshot (`bd-92b6bz`)
+
+- **RESULT CLASS / 2026-07-31 LIVE-INCUMBENT ADJUDICATION:**
+  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.684736`;
+  `incumbent_bootstrap_median_ci=[0.633910,0.707557]`;
+  `null_bootstrap_median_ci=[0.932502,1.062039]`;
+  `bench_elf_sha256=5d36e8f7a62306b4e18c515c613872383fe080f83b14fd1bf3a84740f63504bc`;
+  `cv_used=false`.
+- **COMPARABLE HEADLINE / CORRECTED NULL GATE.** The historical `AT_PAGESZ`
+  warm lookup now measures FrankenLibC **3.873 ns** versus live glibc
+  **6.050 ns** in the same process and same invocation: FL/glibc median **0.684736**
+  (bootstrap 95% CI **[0.633910, 0.707557]**), or **1.460x faster**. The
+  FL/FL null median is **1.010254** (CI **[0.959622, 1.026518]**) and the
+  glibc/glibc null median is **0.990610** (CI **[0.932502, 1.062039]**);
+  both medians satisfy the corrected ±2% clause. The wider null half-width
+  is **0.067498**, so the effect's **0.315264** distance from parity clears
+  the mandatory 2× null margin. CV remains telemetry only.
+- **SURFACE ADJUDICATION.** Of six exercised auxv forms, **4 became
+  decidable: 3 WIN, 1 LOSE**. `AT_PHNUM` wins at **0.438710**
+  (CI **[0.417906, 0.458206]**), `AT_RANDOM` wins at **0.275352**
+  (CI **[0.263046, 0.285292]**), while an absent cached key loses at
+  **3.909903** (CI **[3.732758, 4.055923]**). The `AT_UID` and
+  `AT_SECURE` present-zero forms remain undecidable despite large apparent
+  effects because one A/A median in each case missed the ±2% clause
+  (**0.959879** and **1.026220**, respectively). Re-adjudicate only in one
+  independent full-contract invocation whose two per-case null medians both
+  satisfy ±2%, and only after RCH can reuse one stable FrankenLibC target
+  rather than minting another hash-scoped build tree.
+- **BEHAVIOR / IDENTITY / ROUTING.** The same release process compared
+  **18** live auxv cases value-and-errno exactly; `AT_HWCAP` was excluded
+  because glibc applies startup masking. It directly linked the uninterposed
+  host `getauxval` and explicitly `dlopen`ed FrankenLibC, proved the symbol
+  addresses and provider objects distinct, and self-reported host
+  `vmi1156319`, one actual thread before and after timing, glibc SHA-256
+  **`6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`**,
+  and FrankenLibC SHA-256
+  **`392f11046c5dde04dcfed19bf95d313ce7b7ece845f2697563f7f73322505b5e`**.
+  Host-wide 8-core exclusivity guards passed before and after timing. The
+  fail-closed invocation used `rch exec --base bbcfd0efc --clean-overlay`
+  with only the harness as an explicit overlay; no local Cargo fallback
+  participated.
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
   surfaced broad correctness work, a peer-owned malloc swing, and resolver

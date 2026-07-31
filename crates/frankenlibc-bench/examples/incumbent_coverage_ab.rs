@@ -1,7 +1,7 @@
 //! Machine-checkable incumbent conversion for held FrankenLibC performance claims.
 //!
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
-//! lookup and `getrandom` syscall wrapper. Their historical rows proved
+//! lookup, `getrandom` syscall wrapper, and `getauxval` snapshot. Their historical rows proved
 //! FrankenLibC self-speedups, but did not time live glibc in the same invocation.
 //! This harness closes those evidence gaps without changing production code.
 //!
@@ -21,9 +21,9 @@
 //! `RCH_REQUIRE_REMOTE=1 rch exec --base <commit> --clean-overlay \
 //!  --overlay-path crates/frankenlibc-bench/examples/incumbent_coverage_ab.rs -- \
 //!  cargo run -j2 --profile release -p frankenlibc-bench --features abi-bench \
-//!  --example incumbent_coverage_ab -- --family nl_langinfo|getrandom`
+//!  --example incumbent_coverage_ab -- --family nl_langinfo|getrandom|getauxval`
 
-use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::os::unix::ffi::OsStrExt;
@@ -38,12 +38,15 @@ const SAMPLES: usize = 40;
 const WARMUPS: usize = 4;
 const NLLANGINFO_REPS: usize = 2_000_000;
 const GETRANDOM_REPS: usize = 50_000;
+const GETAUXVAL_REPS: usize = 2_000_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 
 type NlLanginfoFn = unsafe extern "C" fn(libc::nl_item) -> *const c_char;
 type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
 type GetrandomFn = unsafe extern "C" fn(*mut c_void, usize, c_uint) -> isize;
+type GetauxvalFn = unsafe extern "C" fn(c_ulong) -> c_ulong;
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -52,6 +55,10 @@ unsafe extern "C" {
     fn linked_host_setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
     #[link_name = "getrandom"]
     fn linked_host_getrandom(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize;
+    #[link_name = "getauxval"]
+    fn linked_host_getauxval(type_: c_ulong) -> c_ulong;
+    #[link_name = "__errno_location"]
+    fn linked_host_errno_location() -> *mut c_int;
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -161,6 +168,7 @@ struct Config {
 enum Family {
     NlLanginfo,
     Getrandom,
+    Getauxval,
 }
 
 struct Case {
@@ -173,6 +181,12 @@ struct GetrandomCase {
     label: &'static str,
     length: usize,
     flags: c_uint,
+    note: &'static str,
+}
+
+struct GetauxvalCase {
+    label: &'static str,
+    type_: c_ulong,
     note: &'static str,
 }
 
@@ -223,6 +237,39 @@ const GETRANDOM_CASES: &[GetrandomCase] = &[
         length: 256,
         flags: 0,
         note: "largest Linux request guaranteed not to short-read once initialized",
+    },
+];
+
+const GETAUXVAL_CASES: &[GetauxvalCase] = &[
+    GetauxvalCase {
+        label: "pagesz",
+        type_: libc::AT_PAGESZ as c_ulong,
+        note: "historical headline and warm present scalar",
+    },
+    GetauxvalCase {
+        label: "phnum",
+        type_: libc::AT_PHNUM as c_ulong,
+        note: "warm present scalar from the executable image",
+    },
+    GetauxvalCase {
+        label: "uid_present_zero",
+        type_: libc::AT_UID as c_ulong,
+        note: "warm present-zero scalar with errno preservation",
+    },
+    GetauxvalCase {
+        label: "secure_present_zero",
+        type_: libc::AT_SECURE as c_ulong,
+        note: "warm present-zero security flag with errno preservation",
+    },
+    GetauxvalCase {
+        label: "random_pointer",
+        type_: libc::AT_RANDOM as c_ulong,
+        note: "warm present pointer-valued entry",
+    },
+    GetauxvalCase {
+        label: "missing_cached",
+        type_: 63,
+        note: "warm absent key below the 64-slot cache boundary",
     },
 ];
 
@@ -345,13 +392,16 @@ fn parse_args() -> Config {
             family = match args.next().as_deref() {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
                 Some(value) if value == OsStr::new("getrandom") => Family::Getrandom,
-                value => panic!("unknown family {value:?}; expected nl_langinfo or getrandom"),
+                Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
+                value => panic!(
+                    "unknown family {value:?}; expected nl_langinfo, getrandom, or getauxval"
+                ),
             };
         } else {
             panic!(
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
                  [--fl-so PATH] [--verify-only] \
-                 [--family nl_langinfo|getrandom]"
+                 [--family nl_langinfo|getrandom|getauxval]"
             );
         }
     }
@@ -803,6 +853,92 @@ fn measure_getrandom_case(host: GetrandomFn, fl: GetrandomFn, case: &GetrandomCa
     )
 }
 
+#[inline(never)]
+fn run_getauxval_batch(function: GetauxvalFn, type_: c_ulong) -> c_ulong {
+    let mut total = 0 as c_ulong;
+    for _ in 0..GETAUXVAL_REPS {
+        let result = unsafe { function(black_box(type_)) };
+        total = total.wrapping_add(black_box(result));
+    }
+    black_box(total)
+}
+
+fn time_getauxval_batch(function: GetauxvalFn, case: &GetauxvalCase) -> f64 {
+    let started = Instant::now();
+    black_box(run_getauxval_batch(function, case.type_));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / GETAUXVAL_REPS as f64
+}
+
+fn measure_getauxval_case(host: GetauxvalFn, fl: GetauxvalFn, case: &GetauxvalCase) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_getauxval_batch(fl, case);
+                    fb = time_getauxval_batch(fl, case);
+                }
+                0 => {
+                    fb = time_getauxval_batch(fl, case);
+                    fa = time_getauxval_batch(fl, case);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_getauxval_batch(host, case);
+                    gb = time_getauxval_batch(host, case);
+                }
+                1 => {
+                    gb = time_getauxval_batch(host, case);
+                    ga = time_getauxval_batch(host, case);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_getauxval_batch(fl, case);
+                    effect_glibc = time_getauxval_batch(host, case);
+                }
+                2 => {
+                    effect_glibc = time_getauxval_batch(host, case);
+                    effect_fl = time_getauxval_batch(fl, case);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        GETAUXVAL_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
 fn run_nl_langinfo(config: &Config) {
     let host_locale = unsafe { linked_host_setlocale(libc::LC_ALL, c"C".as_ptr()) };
     assert!(!host_locale.is_null(), "host setlocale(LC_ALL, C) failed");
@@ -1165,6 +1301,184 @@ fn run_getrandom(config: &Config) {
     }
 }
 
+fn run_getauxval(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_symbol = unsafe { libc::dlsym(handle, c"getauxval".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC getauxval")
+    );
+    let fl_errno_symbol = unsafe { libc::dlsym(handle, c"__errno_location".as_ptr()) };
+    assert!(
+        !fl_errno_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __errno_location")
+    );
+
+    let host: GetauxvalFn = linked_host_getauxval;
+    let fl: GetauxvalFn = unsafe { std::mem::transmute(fl_symbol) };
+    let host_errno: ErrnoLocationFn = linked_host_errno_location;
+    let fl_errno: ErrnoLocationFn = unsafe { std::mem::transmute(fl_errno_symbol) };
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host getauxval object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC getauxval object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=getauxval");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=getauxval");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=getauxval incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    let conformance_types = [
+        (libc::AT_PHDR as c_ulong, "AT_PHDR"),
+        (libc::AT_PHENT as c_ulong, "AT_PHENT"),
+        (libc::AT_PHNUM as c_ulong, "AT_PHNUM"),
+        (libc::AT_PAGESZ as c_ulong, "AT_PAGESZ"),
+        (libc::AT_BASE as c_ulong, "AT_BASE"),
+        (libc::AT_ENTRY as c_ulong, "AT_ENTRY"),
+        (libc::AT_UID as c_ulong, "AT_UID"),
+        (libc::AT_EUID as c_ulong, "AT_EUID"),
+        (libc::AT_GID as c_ulong, "AT_GID"),
+        (libc::AT_EGID as c_ulong, "AT_EGID"),
+        (libc::AT_CLKTCK as c_ulong, "AT_CLKTCK"),
+        (libc::AT_SECURE as c_ulong, "AT_SECURE"),
+        (libc::AT_RANDOM as c_ulong, "AT_RANDOM"),
+        (libc::AT_HWCAP2 as c_ulong, "AT_HWCAP2"),
+        (libc::AT_EXECFN as c_ulong, "AT_EXECFN"),
+        (libc::AT_SYSINFO_EHDR as c_ulong, "AT_SYSINFO_EHDR"),
+        (63, "AT_MISSING_CACHED"),
+        (9_999, "AT_MISSING_UNCACHED"),
+    ];
+    for (type_, name) in conformance_types {
+        unsafe { *host_errno() = libc::EBUSY };
+        let host_value = unsafe { host(type_) };
+        let host_errno_after = unsafe { *host_errno() };
+        unsafe { *fl_errno() = libc::EBUSY };
+        let fl_value = unsafe { fl(type_) };
+        let fl_errno_after = unsafe { *fl_errno() };
+        assert_eq!(
+            fl_value, host_value,
+            "getauxval value mismatch for {name} ({type_})"
+        );
+        assert_eq!(
+            fl_errno_after, host_errno_after,
+            "getauxval errno mismatch for {name} ({type_})"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=getauxval comparisons={} \
+         value_and_errno_verdict=pass at_hwcap_excluded=true \
+         at_hwcap_reason=glibc_startup_masking",
+        conformance_types.len(),
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=getauxval verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, 1,
+        "getauxval benchmark requires one actually observed process thread"
+    );
+
+    let results = GETAUXVAL_CASES
+        .iter()
+        .map(|case| measure_getauxval_case(host, fl, case))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, 1,
+        "getauxval benchmark requires one actually observed process thread"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+
+    for result in &results {
+        result.print(
+            "getauxval",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "pagesz")
+        .expect("missing pagesz result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=getauxval verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=pagesz headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+        headline.comparison,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
@@ -1195,5 +1509,6 @@ fn main() {
     match config.family {
         Family::NlLanginfo => run_nl_langinfo(&config),
         Family::Getrandom => run_getrandom(&config),
+        Family::Getauxval => run_getauxval(&config),
     }
 }
