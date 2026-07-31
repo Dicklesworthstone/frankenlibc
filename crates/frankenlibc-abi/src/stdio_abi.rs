@@ -4795,7 +4795,9 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_core::stdio::{
-    FormatSegment, LengthMod, Precision, ValueArgKind, Width,
+    FormatFlags, FormatSegment, FormatSpec, LengthMod, Precision, ValueArgKind, Width,
+    format_float as core_format_float,
+    rounded_scaled_fixed as core_rounded_scaled_fixed,
     count_printf_args as core_count_printf_args, format_str, parse_format_string,
     positional_printf_arg_plan as core_positional_printf_arg_plan,
 };
@@ -6472,6 +6474,153 @@ pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Exact `%f` / `%.Nf` fixed-point leaf.
+//
+// glibc formats every floating conversion through `__printf_fp`, which runs
+// arbitrary-precision `mpn` arithmetic and allocates. That is the single
+// largest structural gap in its higher-level output path, and `%.2f` is
+// ubiquitous traffic: money, JSON, CSV, metrics, sensor logs.
+//
+// FrankenLibC already owns a correctly-rounded fixed-point kernel
+// (`rounded_scaled_fixed`: scale by 10^precision with round-half-to-even, in
+// u128, no allocation). It was reachable only through the generic segment
+// renderer, behind the membrane decide and a `Vec` render buffer. This leaf
+// wires it straight to the caller's destination.
+//
+// The kernel is partial by construction -- it declines precision 0 or >9,
+// non-finite values, and magnitudes whose scaled form exceeds `u64`. Those
+// cases still have to produce bytes, and a `va_list` cannot be rewound once
+// the argument is taken, so the fallback renders the SAME value through the
+// core float formatter rather than pretending the leaf can decline.
+// ---------------------------------------------------------------------------
+
+/// Match `"%f"` (precision 6, C's default) or `"%.Nf"` for a single-digit N.
+///
+/// Returns the precision. Width, flags, and `%.*f` are rejected: they change
+/// the output shape and belong to the generic renderer.
+#[inline]
+unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
+    let f = format.cast::<u8>();
+    if unsafe { *f } != b'%' {
+        return None;
+    }
+    match unsafe { *f.add(1) } {
+        b'f' if unsafe { *f.add(2) } == 0 => Some(6),
+        b'.' => {
+            let digit = unsafe { *f.add(2) };
+            if !digit.is_ascii_digit() {
+                return None;
+            }
+            if unsafe { *f.add(3) } != b'f' || unsafe { *f.add(4) } != 0 {
+                return None;
+            }
+            Some(usize::from(digit - b'0'))
+        }
+        _ => None,
+    }
+}
+
+/// Render `value` as fixed-point with `precision` fraction digits.
+unsafe fn strict_direct_snprintf_f(
+    str_buf: *mut c_char,
+    size: usize,
+    value: f64,
+    precision: usize,
+) -> c_int {
+    let negative = value.is_sign_negative();
+    let mut rendered = [0u8; 64];
+    let mut len = 0usize;
+
+    // Fast kernel: one u128 multiply-and-round, then digits. No allocation.
+    let fast = if value.is_finite() {
+        core_rounded_scaled_fixed(value, precision)
+    } else {
+        None
+    };
+
+    if let Some(scaled) = fast {
+        if negative {
+            rendered[len] = b'-';
+            len += 1;
+        }
+        // `rounded_scaled_fixed` only returns `Some` when the scaled value fits
+        // u64, so render with u64 arithmetic. Dividing the u128 by 10 per digit
+        // (as `decimal_digits_u128` does) compiles to a `__udivti3` libcall --
+        // tens of cycles each, up to 20 times -- and was measured to make this
+        // leaf 1.32-1.56x SLOWER than glibc.
+        let mut digits = [0u8; 20];
+        let mut value = scaled as u64;
+        let mut start = digits.len();
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        let ds = &digits[start..];
+        if ds.len() > precision {
+            let point = ds.len() - precision;
+            rendered[len..len + point].copy_from_slice(&ds[..point]);
+            len += point;
+            rendered[len] = b'.';
+            len += 1;
+            rendered[len..len + precision].copy_from_slice(&ds[point..]);
+            len += precision;
+        } else {
+            rendered[len] = b'0';
+            len += 1;
+            rendered[len] = b'.';
+            len += 1;
+            let zeros = precision - ds.len();
+            for slot in rendered.iter_mut().skip(len).take(zeros) {
+                *slot = b'0';
+            }
+            len += zeros;
+            rendered[len..len + ds.len()].copy_from_slice(ds);
+            len += ds.len();
+        }
+        // SAFETY: `len` bytes of `rendered` were just initialised.
+        return unsafe { fused_copy_out(str_buf, size, &rendered[..len]) };
+    }
+
+    // Partial-kernel fallback: same value, core's full formatter. Still skips
+    // the membrane decide and the format parse the generic path would redo.
+    let spec = FormatSpec::new(
+        FormatFlags::default(),
+        Width::None,
+        Precision::Fixed(precision),
+        LengthMod::None,
+        b'f',
+        None,
+    );
+    let mut buffer: Vec<u8> = Vec::with_capacity(64);
+    core_format_float(value, &spec, &mut buffer);
+    // SAFETY: `buffer` holds exactly the rendered bytes.
+    unsafe { fused_copy_out(str_buf, size, &buffer) }
+}
+
+/// snprintf's copy-out contract: write what fits, always terminate when there
+/// is room, and return the length that WOULD have been written.
+#[inline]
+unsafe fn fused_copy_out(str_buf: *mut c_char, size: usize, rendered: &[u8]) -> c_int {
+    let len = rendered.len();
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1`, which the caller guarantees is writable.
+            unsafe {
+                std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf.cast::<u8>(), copy_len)
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+// ---------------------------------------------------------------------------
 // Fused multi-directive emitter.
 //
 // The exact leaves above each handle ONE bare directive. Real traffic is not
@@ -6860,6 +7009,14 @@ pub unsafe extern "C" fn snprintf(
         // SAFETY: snprintf's C contract supplies `size` writable bytes when
         // `size > 0`; the helper bounds every write to that region.
         return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
+    }
+    // Exact `%f` / `%.Nf`: glibc runs arbitrary-precision `mpn` here.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: a floating conversion consumes one promoted `double`.
+        let value = unsafe { args.next_arg::<f64>() };
+        return unsafe { strict_direct_snprintf_f(str_buf, size, value, precision) };
     }
     // Multi-directive formats: decided from the format alone, before any
     // argument is consumed, because a va_list cannot be rewound.

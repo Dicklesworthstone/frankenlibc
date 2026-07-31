@@ -27117,6 +27117,31 @@ pub unsafe extern "C" fn getservent_r(
 // Misc string/format extras
 // ===========================================================================
 
+/// Recognize the closed C-locale default monetary formats.
+///
+/// # Safety
+///
+/// `format` must point to a valid C string.
+#[inline]
+unsafe fn is_exact_c_locale_default_monetary_format(format: *const c_char) -> bool {
+    let bytes = format.cast::<u8>();
+    // SAFETY: the caller contract says `format` is a valid C string. Each next
+    // byte is read only after the preceding byte proved non-NUL, so no read goes
+    // beyond the string's terminating byte.
+    unsafe {
+        if *bytes != b'%' {
+            return false;
+        }
+        match *bytes.add(1) {
+            b'n' | b'i' => *bytes.add(2) == 0,
+            b'.' => {
+                *bytes.add(2) == b'2' && matches!(*bytes.add(3), b'n' | b'i') && *bytes.add(4) == 0
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Shared backend for `strfmon`/`strfmon_l`/`__strfmon_l`: format `format`
 /// (pulling one `f64` per conversion from `pull`) into `s`/`maxsize` using the
 /// C/POSIX-locale monetary conventions implemented in
@@ -27132,12 +27157,40 @@ pub(crate) unsafe fn strfmon_emit(
     s: *mut c_char,
     maxsize: usize,
     format: *const c_char,
-    pull: impl FnMut() -> f64,
+    mut pull: impl FnMut() -> f64,
 ) -> isize {
     if s.is_null() || format.is_null() || maxsize == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
+
+    // Closed C-locale specialization. `%n` and `%i` are identical when the
+    // currency symbol/grouping tables are empty, and their implicit precision
+    // is two. Recognizing those exact formats deletes the generic grammar walk
+    // and all three heap allocations from the whole exported call.
+    if unsafe { is_exact_c_locale_default_monetary_format(format) } {
+        // IEEE-754 binary64 has at most 309 integral decimal digits. Sign,
+        // decimal point, and two fractional digits keep the fixed rendering
+        // below 384 bytes; non-finite spellings are shorter still.
+        let mut scratch = [0u8; 384];
+        let value = pull();
+        let Some(len) =
+            frankenlibc_core::locale::strfmon::strfmon_c_default_into(&mut scratch, value)
+        else {
+            unsafe { set_abi_errno(libc::E2BIG) };
+            return -1;
+        };
+        if len + 1 > maxsize {
+            unsafe { set_abi_errno(libc::E2BIG) };
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(scratch.as_ptr(), s.cast::<u8>(), len);
+            *s.add(len) = 0;
+        }
+        return len as isize;
+    }
+
     let fmt_bytes = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
     let Some(out) = frankenlibc_core::locale::strfmon::strfmon_c(fmt_bytes, pull) else {
         unsafe { set_abi_errno(libc::EINVAL) };

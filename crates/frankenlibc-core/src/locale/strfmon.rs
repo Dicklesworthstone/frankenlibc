@@ -24,7 +24,84 @@
 //! line up. Without `#`, only negatives emit a leading `-`.
 
 extern crate alloc;
+use core::fmt::{self, Write as _};
+
 use alloc::vec::Vec;
+
+/// Fixed-capacity formatting sink used by the exact C-locale monetary path.
+///
+/// Keeping the sink caller-owned lets the ABI format the overwhelmingly common
+/// `%n`/`%i` shape without constructing the general parser's output, field, and
+/// floating-point `String` allocations.
+struct FixedFormatBuffer<'a> {
+    bytes: &'a mut [u8],
+    len: usize,
+}
+
+impl fmt::Write for FixedFormatBuffer<'_> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let end = self.len.checked_add(text.len()).ok_or(fmt::Error)?;
+        let Some(dst) = self.bytes.get_mut(self.len..end) else {
+            return Err(fmt::Error);
+        };
+        dst.copy_from_slice(text.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+impl FixedFormatBuffer<'_> {
+    fn write_bytes(&mut self, bytes: &[u8]) -> fmt::Result {
+        let end = self.len.checked_add(bytes.len()).ok_or(fmt::Error)?;
+        let Some(dst) = self.bytes.get_mut(self.len..end) else {
+            return Err(fmt::Error);
+        };
+        dst.copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Render the C-locale default monetary number directly into `out`.
+///
+/// This is the closed specialization for `%n`, `%i`, `%.2n`, and `%.2i`:
+/// the C locale has no currency symbol or grouping and its default precision
+/// is exactly two fractional digits. `None` means the caller-provided scratch
+/// buffer was too small.
+pub fn strfmon_c_default_into(out: &mut [u8], value: f64) -> Option<usize> {
+    let mut writer = FixedFormatBuffer { bytes: out, len: 0 };
+    if value.is_nan() {
+        if value.is_sign_negative() {
+            writer.write_char('-').ok()?;
+        }
+        writer.write_str("nan").ok()?;
+    } else if let Some(scaled) = crate::stdio::printf::rounded_scaled_fixed(value, 2) {
+        // The printf engine's integer scaler computes
+        // round_ties_even(abs(value) * 100) exactly from the binary64 mantissa.
+        // Emit that integer with a decimal point two places from the right:
+        // no dtoa engine, parser, allocation, or intermediate String.
+        if value.is_sign_negative() {
+            writer.write_char('-').ok()?;
+        }
+        let mut digits_scratch = [0u8; 40];
+        let digits = crate::stdio::printf::decimal_digits_u128(scaled, &mut digits_scratch);
+        if digits.len() > 2 {
+            let point = digits.len() - 2;
+            writer.write_bytes(&digits[..point]).ok()?;
+            writer.write_char('.').ok()?;
+            writer.write_bytes(&digits[point..]).ok()?;
+        } else {
+            writer.write_str("0.").ok()?;
+            for _ in digits.len()..2 {
+                writer.write_char('0').ok()?;
+            }
+            writer.write_bytes(digits).ok()?;
+        }
+    } else {
+        core::write!(&mut writer, "{value:.2}").ok()?;
+    }
+    Some(writer.len)
+}
 
 /// Parsed pieces of one `%` directive.
 struct Spec {
@@ -313,5 +390,34 @@ mod tests {
         assert!(strfmon_c(b"%#n", || 0.0).is_none()); // '#' without digits
         assert!(strfmon_c(b"%+(n", || 0.0).is_none()); // '+' and '(' conflict
         assert!(strfmon_c(b"%(+n", || 0.0).is_none()); // order-independent
+    }
+
+    #[test]
+    fn exact_default_emitter_matches_general_formatter() {
+        let values = [
+            0.0,
+            -0.0,
+            0.005,
+            1_234_567.891,
+            -1_234.567,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            -f64::NAN,
+            f64::MAX,
+            f64::MIN,
+        ];
+        for value in values {
+            let expected = strfmon_c(b"%n", || value).unwrap();
+            let mut out = [0u8; 384];
+            let len = strfmon_c_default_into(&mut out, value).unwrap();
+            assert_eq!(&out[..len], expected, "value={value:?}");
+        }
+    }
+
+    #[test]
+    fn exact_default_emitter_reports_small_output() {
+        let mut out = [0u8; 3];
+        assert_eq!(strfmon_c_default_into(&mut out, 12.0), None);
     }
 }
