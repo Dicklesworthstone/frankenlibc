@@ -1,10 +1,11 @@
 //! Machine-checkable incumbent conversion for held FrankenLibC performance claims.
 //!
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
-//! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, and waiter-aware
-//! `sem_post`. Their historical rows proved FrankenLibC self-speedups, but did
-//! not time live glibc in the same invocation. This harness closes those
-//! evidence gaps without changing production code.
+//! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, waiter-aware
+//! `sem_post`, and inlined `thrd_current`. Their historical rows proved
+//! FrankenLibC self-speedups, but did not time live glibc in the same
+//! invocation. This harness closes those evidence gaps without changing
+//! production code.
 //!
 //! Contract:
 //! - host glibc is linked normally and FrankenLibC is loaded from the release
@@ -27,7 +28,7 @@
 //!  cargo --config 'build.target-dir="/data/tmp/cargo-target-frankenlibc"' \
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
-//!  --family nl_langinfo|getrandom|getauxval|sem_post`
+//!  --family nl_langinfo|getrandom|getauxval|sem_post|thrd_current`
 
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
@@ -46,6 +47,7 @@ const NLLANGINFO_REPS: usize = 2_000_000;
 const GETRANDOM_REPS: usize = 50_000;
 const GETAUXVAL_REPS: usize = 2_000_000;
 const SEM_POST_REPS: usize = 1_000_000;
+const THRD_CURRENT_REPS: usize = 4_000_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 
@@ -58,6 +60,7 @@ type SemInitFn = unsafe extern "C" fn(*mut libc::sem_t, c_int, c_uint) -> c_int;
 type SemDestroyFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemPostFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
+type ThrdCurrentFn = unsafe extern "C" fn() -> libc::pthread_t;
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -78,6 +81,8 @@ unsafe extern "C" {
     fn linked_host_sem_post(sem: *mut libc::sem_t) -> c_int;
     #[link_name = "sem_trywait"]
     fn linked_host_sem_trywait(sem: *mut libc::sem_t) -> c_int;
+    #[link_name = "thrd_current"]
+    fn linked_host_thrd_current() -> libc::pthread_t;
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -190,6 +195,7 @@ enum Family {
     Getrandom,
     Getauxval,
     SemPost,
+    ThrdCurrent,
 }
 
 struct Case {
@@ -415,16 +421,17 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getrandom") => Family::Getrandom,
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
+                Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
-                     or sem_post"
+                     sem_post, or thrd_current"
                 ),
             };
         } else {
             panic!(
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
                  [--fl-so PATH] [--verify-only] \
-                 [--family nl_langinfo|getrandom|getauxval|sem_post]"
+                 [--family nl_langinfo|getrandom|getauxval|sem_post|thrd_current]"
             );
         }
     }
@@ -1057,6 +1064,92 @@ fn measure_sem_post_case(
         "uncontended_cycle",
         "historical sem_post plus sem_trywait token round trip",
         SEM_POST_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+#[inline(never)]
+fn run_thrd_current_batch(function: ThrdCurrentFn) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..THRD_CURRENT_REPS {
+        let thread = unsafe { black_box(function)() };
+        accumulator = accumulator.wrapping_add(black_box(thread as usize));
+    }
+    black_box(accumulator)
+}
+
+fn time_thrd_current_batch(function: ThrdCurrentFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_thrd_current_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / THRD_CURRENT_REPS as f64
+}
+
+fn measure_thrd_current_case(host: ThrdCurrentFn, fl: ThrdCurrentFn) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_thrd_current_batch(fl);
+                    fb = time_thrd_current_batch(fl);
+                }
+                0 => {
+                    fb = time_thrd_current_batch(fl);
+                    fa = time_thrd_current_batch(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_thrd_current_batch(host);
+                    gb = time_thrd_current_batch(host);
+                }
+                1 => {
+                    gb = time_thrd_current_batch(host);
+                    ga = time_thrd_current_batch(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_thrd_current_batch(fl);
+                    effect_glibc = time_thrd_current_batch(host);
+                }
+                2 => {
+                    effect_glibc = time_thrd_current_batch(host);
+                    effect_fl = time_thrd_current_batch(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        "current_identity",
+        "historical current-thread identity-cache lookup",
+        THRD_CURRENT_REPS,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -1846,6 +1939,162 @@ fn run_sem_post(config: &Config) {
     }
 }
 
+fn run_thrd_current(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_symbol = unsafe { libc::dlsym(handle, c"thrd_current".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC thrd_current")
+    );
+
+    let host: ThrdCurrentFn = linked_host_thrd_current;
+    let fl: ThrdCurrentFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity = symbol_object(host as *const () as *const c_void)
+        .expect("identify host thrd_current object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC thrd_current object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=thrd_current");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=thrd_current");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=thrd_current incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    let host_main_first = unsafe { host() };
+    let host_main_second = unsafe { host() };
+    let fl_main_first = unsafe { fl() };
+    let fl_main_second = unsafe { fl() };
+    assert_ne!(host_main_first, 0, "host main-thread token is zero");
+    assert_ne!(fl_main_first, 0, "FrankenLibC main-thread token is zero");
+    assert_eq!(
+        host_main_first, host_main_second,
+        "host main-thread token is unstable"
+    );
+    assert_eq!(
+        fl_main_first, fl_main_second,
+        "FrankenLibC main-thread token is unstable"
+    );
+
+    let child = std::thread::spawn(move || {
+        let host_first = unsafe { host() };
+        let host_second = unsafe { host() };
+        let fl_first = unsafe { fl() };
+        let fl_second = unsafe { fl() };
+        (host_first, host_second, fl_first, fl_second)
+    })
+    .join()
+    .expect("thrd_current conformance child panicked");
+    assert_ne!(child.0, 0, "host child-thread token is zero");
+    assert_ne!(child.2, 0, "FrankenLibC child-thread token is zero");
+    assert_eq!(child.0, child.1, "host child-thread token is unstable");
+    assert_eq!(
+        child.2, child.3,
+        "FrankenLibC child-thread token is unstable"
+    );
+    assert_ne!(
+        child.0, host_main_first,
+        "host main and child thread tokens are equal"
+    );
+    assert_ne!(
+        child.2, fl_main_first,
+        "FrankenLibC main and child thread tokens are equal"
+    );
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=thrd_current comparisons=8 \
+         stable_nonzero_per_thread_identity_verdict=pass opaque_cross_provider_tokens=true"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=thrd_current phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=thrd_current verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "thrd_current observed thread count changed between conformance and measurement"
+    );
+
+    let result = measure_thrd_current_case(host, fl);
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "thrd_current observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "thrd_current",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let wins = usize::from(result.comparison == "FL_FASTER");
+    let losses = usize::from(result.comparison == "FL_SLOWER");
+    let undecidable = 1 - wins - losses;
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=thrd_current verdict={verdict} \
+         cases=1 wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=current_identity headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        result.effect_median, result.comparison,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
@@ -1878,5 +2127,6 @@ fn main() {
         Family::Getrandom => run_getrandom(&config),
         Family::Getauxval => run_getauxval(&config),
         Family::SemPost => run_sem_post(&config),
+        Family::ThrdCurrent => run_thrd_current(&config),
     }
 }

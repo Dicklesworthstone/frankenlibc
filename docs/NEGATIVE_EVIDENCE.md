@@ -842,6 +842,41 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   files. No local Cargo fallback, stash change, timeout, or timeout-based verdict
   occurred.
 
+## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE: live-comparator conversion for `thrd_current`
+
+- **APPARATUS.** The shared `incumbent_coverage_ab` harness now covers
+  direct-process host-libc `thrd_current` against the explicitly loaded
+  FrankenLibC release object. The planned timing contract has 40 balanced
+  samples (4 warm-ups, 36 retained), per-provider A/A controls, and the
+  corrected null gate: the median clause plus twice the widest null-CI
+  half-width, with no CI-straddle veto and CV retained only as provenance.
+- **VERIFY-ONLY CONTRACT PASSED.** A strict-remote
+  `rch exec --base ebbe04a7a --clean-overlay` run on host `vmi1264463`, using
+  only `/data/tmp/cargo-target-frankenlibc`, passed eight identity comparisons,
+  proved distinct serving objects and addresses, and reported **1 actually
+  observed process thread** after the conformance child joined. The process
+  self-reported SHA-256 `58dd134024ff684ad3204f41c51e144b37cb35bbaeb9ac6ac97183e9ee8cc226`
+  for the benchmark ELF,
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`
+  for host libc, and
+  `feae9431aadd0697cc3afb95b8b985e277d057f873046f87ea06dcd32d852667`
+  for FrankenLibC.
+- **ZERO-SAMPLE QUIET-GATE OUTCOME.** Five complete 300-second
+  pre-measurement guard windows across `vmi1156319` and `vmi1264463` failed
+  closed because at least one allowed logical CPU repeatedly exceeded the 20%
+  busy ceiling. Later attempts booked every RCH slot on each host, but
+  pre-existing direct processes still contaminated the cpuset. No effect or
+  null sample ran: this follow-up made **0 rows decidable, 0 WIN, 0 LOSE** and
+  emitted no ratio.
+- **COMPETITIVE DISPOSITION / RETRY PREDICATE.**
+  The live-comparator verdict is blocked before timing, and the historical
+  **1.31x** remains maintenance evidence only. Retry only on a topology-valid
+  AVX2 host where all scheduler slots are booked, no direct co-tenant process
+  is present, and the host-wide gate obtains five consecutive one-second
+  samples with every allowed CPU at or below 20% busy; then run both timing
+  arms under the recorded corrected null contract and reclassify from the
+  resulting ratio.
+
 ## 2026-07-15 (cod / BlackThrush) — NO-SHIP: strict `getentropy` tracked-capacity bypass did not clear noise (`bd-lxm38p`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` surfaced a
