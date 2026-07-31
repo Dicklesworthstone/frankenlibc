@@ -473,6 +473,17 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   `null_bootstrap_median_ci=[0.932502,1.062039]`;
   `bench_elf_sha256=5d36e8f7a62306b4e18c515c613872383fe080f83b14fd1bf3a84740f63504bc`;
   `cv_used=false`.
+- **MACHINE-READABLE INCUMBENT EVIDENCE.**
+  `INCUMBENT_LINKAGE direct_process_link symbol=getauxval`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT
+  sha256=392f11046c5dde04dcfed19bf95d313ce7b7ece845f2697563f7f73322505b5e`;
+  `BENCH_ELF_OBJECT
+  sha256=5d36e8f7a62306b4e18c515c613872383fe080f83b14fd1bf3a84740f63504bc`;
+  `kind=fl_glibc symbol=getauxval case=AT_PAGESZ
+  fl_median_ns=3.873 glibc_median_ns=6.050 ratio_median=0.684736
+  ratio_ci95=[0.633910,0.707557]`.
 - **COMPARABLE HEADLINE / CORRECTED NULL GATE.** The historical `AT_PAGESZ`
   warm lookup now measures FrankenLibC **3.873 ns** versus live glibc
   **6.050 ns** in the same process and same invocation: FL/glibc median **0.684736**
@@ -676,6 +687,17 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   uncontended `sem_post` + `sem_trywait` cycle is **1.079190x slower** than
   actual host glibc in the same invocation (bootstrap median 95% CI
   **[1.064948, 1.090717]**): **0 WIN, 1 LOSE, 0 undecidable**.
+- **MACHINE-READABLE INCUMBENT EVIDENCE.**
+  `INCUMBENT_LINKAGE direct_process_link symbol=sem_post`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT
+  sha256=c52f79417d6cdfa74feffe9e2dbff095c5d9554d9a8a8bcffd05d33ddee0b6e7`;
+  `BENCH_ELF_OBJECT
+  sha256=06b0e93ff86d6ed7cf1507e26569bdec3a9edf58ab1e00ed80bfc1db56001f19`;
+  `kind=fl_glibc symbol=sem_post case=uncontended_post_trywait
+  glibc_median_ns=12.354 ratio_median=1.079190
+  ratio_ci95=[1.064948,1.090717]`.
 - **CORRECTED NULL GATE.** FrankenLibC/FrankenLibC A/A has median
   **1.000488** with bootstrap median CI **[0.975852, 1.012416]**;
   glibc/glibc A/A has median **0.995604** with CI
