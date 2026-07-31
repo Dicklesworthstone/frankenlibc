@@ -20279,6 +20279,45 @@ follow-on: wcsnrtombs count (interwoven with its dst loop + n/NUL bound); mbs* D
 The wide→multibyte ENCODE vein is now comprehensively mined: write paths (wcstombs/wcsrtombs/wcsnrtombs)
 AND count paths (wcstombs/wcsrtombs) all SIMD + clean.
 
+## cod-wcsrtombs-count-live-incumbent-2026-07-31 — REFUTE four-locale claim; CONFIRM ASCII specialization (1 WIN / 3 INCOMPARABLE)
+
+- **WHY THIS CLAIM WAS RETRIED.** The shipped `869e9b13d` row had only the old `dlmopen` comparator.
+  Reconstructing its fixtures exposed a configuration mismatch: fresh-namespace glibc alone was placed
+  in `C.UTF-8`, while the directly called FrankenLibC arm remained in its process locale. FrankenLibC's
+  exported `setlocale` currently accepts only `C`, `POSIX`, or the empty selector, yet its converter
+  emits UTF-8 in `C`; host glibc correctly rejects the same non-ASCII inputs in `C`. The historical
+  mixed `~0.57x`, Cyrillic `~0.35x`, and CJK `~0.21x` ratios therefore compared different contracts and
+  are **RETRACTED as competitive evidence**. The historical before/after improvement remains maintenance
+  evidence for the shipped implementation.
+- **LIVE HARNESS AND ORACLE.** `wcstombs_ab` now calls the normally linked process glibc `wcsrtombs`
+  and an explicitly `dlopen`ed FrankenLibC `wcsrtombs`, asserts distinct symbol addresses, configures
+  both providers to their common `C` locale, and checks count, full/bounded writes, source-cursor
+  movement, `errno`, `mbsinit`, empty input, and an invalid scalar before timing. The comparable
+  ASCII contract passed all 11 observable comparisons. The mixed/Cyrillic/CJK fixtures were checked,
+  observed to diverge exactly because no common UTF-8 locale exists, emitted as
+  `WCSRTOMBS_INCOMPARABLE`, and were never timed.
+- **FULL-CONTRACT RESULT — one decidable ASCII WIN.** On `vmi1293453`, 36 retained balanced samples
+  measured FrankenLibC/glibc `0.705471` with median-bootstrap 95% CI `[0.666961, 0.744987]`
+  (813.123 ns versus 1182.757 ns per 1350-codepoint count, 14,814 repetitions per arm). The paired
+  FL/FL null median was `1.012516` (CI `[0.986692, 1.046442]`, CV 8.594%) and the glibc/glibc null
+  median was `1.002049` (CI `[0.924936, 1.022743]`, CV 12.152%). Both corrected null medians are
+  inside the +/-2% clause; CI straddling is not a veto, CV is telemetry only, and the effect clears
+  twice the wider null half-width. Adjudication: **1 decidable, 1 WIN, 0 LOSE, 0 undecidable,
+  3 incomparable**.
+- **PROVENANCE.** Actual observed threads were `1` before and after timing. Runtime/build ISA was
+  x86_64 SSE4.2+AVX+AVX2+FMA (AVX-512 absent). In-process identities:
+  benchmark ELF SHA-256 `c169081db7bb899a6da47cc3b354815f52985e37674e26898259c145ffdaff9e`,
+  host `/usr/lib/x86_64-linux-gnu/libc.so.6` SHA-256
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, and deployed FrankenLibC
+  SHA-256 `935dd4ae1c1bd33442043430a8863c4544a4a96e58645c7036bbfa32b3fcee73`.
+  The pre/post host-wide gates both cleared all 8 allowed CPUs (29/14 samples, 29.018/14.010 seconds,
+  clear-window maxima 6%/4%). Execution was strict-remote
+  `rch exec --base be37ea0c2 --clean-overlay` with only the reserved harness overlay and the single
+  reusable `/data/tmp/cargo-target-frankenlibc` target.
+- **RETRY PREDICATE.** Retest the three multibyte rows only after FrankenLibC can select the same
+  UTF-8 locale as live glibc and the full observable oracle passes under that shared locale. Retest
+  ASCII only after a relevant production or toolchain change; its live-incumbent claim is now closed.
+
 ## cc-iconv-sbcs-utf8-2026-07-11 — SURFACE (profile-first killed a decode lever, characterized the encode)
 
 Profiled the SBCS <-> UTF-8 surface (the most common Western-European iconv) via a dlmopen probe,
