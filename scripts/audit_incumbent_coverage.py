@@ -67,6 +67,25 @@ NO_ARM = re.compile(
 
 SYMBOL = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{2,})")
 
+# Generic tokens that are not libc symbols. Without this stoplist the ranking
+# is garbage: a row about `fpclassify` also backticks `f64`, `f64` appears in
+# README, and the row scores "named in README, a user could act on it" on the
+# strength of a primitive type name. Measured 2026-07-31 -- the entire original
+# top-of-queue was ranked by `f64`, `while`, and `free`, not by its own symbol.
+STOP = set(
+    """f32 f64 u8 u16 u32 u64 i8 i16 i32 i64 usize isize bool char str String Vec
+    Option Result Some None true false let fn pub mut impl self crate use mod ref
+    dyn box const static NaN IEEE SIMD AVX2 SSE glibc FrankenLibC release debug
+    strict hardened test bench null while for if else return match loop struct
+    enum trait type where""".split()
+)
+
+# A public doc is only load-bearing for a PERFORMANCE claim where it quotes a
+# performance NUMBER next to the symbol. README lists `snprintf` under API
+# surface and fuzz targets and quotes no per-symbol ratio anywhere; treating
+# that as exposure ranks documentation breadth, not claim risk.
+PERF_NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)?\s*(?:x\b|ns\b)")
+
 
 def sections(lines):
     starts = [i for i, l in enumerate(lines) if l.startswith("## ")]
@@ -85,32 +104,56 @@ def main():
         p = ROOT / rel
         public[rel] = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
 
+    public_lines = {rel: text.splitlines() for rel, text in public.items()}
+
+    def exposure(head):
+        """Rank a claim by whether a public doc quotes a performance NUMBER on
+        the same line as one of the claim's own symbols."""
+        syms = [s for s in SYMBOL.findall(head) if s not in STOP]
+        score, where = 0, []
+        for rel, doc_lines in public_lines.items():
+            for s in syms:
+                # Mere presence ranks docs by breadth: README lists most of
+                # libc under API surface and fuzz targets while quoting no
+                # per-symbol ratio at all.
+                if any(
+                    re.search(rf"\b{re.escape(s)}\b", line) and PERF_NUMBER.search(line)
+                    for line in doc_lines
+                ):
+                    score = max(score, 3 if rel == "README.md" else 2)
+                    if rel not in where:
+                        where.append(rel)
+                    break
+        return score, syms[:3], where[:3]
+
     lines = LEDGER.read_text(encoding="utf-8").splitlines()
     tier_a, tier_b, tier_c, unsupported, no_arm = [], [], [], [], []
+    # The conversion queue spans EVERY unconverted held claim, tier C included.
+    # Ranking only the 13 tier-D1 rows hid the 202 tier-C rows, which are just
+    # as unconverted -- they quote a glibc number of unstated provenance. That
+    # omission is what put `fpclassify` at the head of the queue instead of
+    # `snprintf`, the most-quoted symbol in the public scorecard.
+    queue = []
 
     for line_no, head, body in sections(lines):
         if not HELD.search(head) or NOT_HELD.search(head):
             continue
         if TIER_A.search(body):
             tier_a.append((line_no, head))
-        elif TIER_B.search(body):
+            continue
+        if TIER_B.search(body):
             tier_b.append((line_no, head))
-        elif NO_ARM.search(head):
+            continue
+        if NO_ARM.search(head):
             no_arm.append((line_no, head))
-        elif TIER_C.search(body):
+            continue
+        score, syms, where = exposure(head)
+        if TIER_C.search(body):
             tier_c.append((line_no, head))
+            queue.append((score, line_no, head, syms, where, "C"))
         else:
-            syms = SYMBOL.findall(head)
-            score, where = 0, []
-            for rel, text in public.items():
-                for s in syms:
-                    if s and re.search(rf"\b{re.escape(s)}\b", text):
-                        weight = 3 if rel == "README.md" else 2
-                        score = max(score, weight)
-                        if rel not in where:
-                            where.append(rel)
-                        break
-            unsupported.append((score, line_no, head, syms[:3], where[:3]))
+            unsupported.append((score, line_no, head, syms, where))
+            queue.append((score, line_no, head, syms, where, "D1"))
 
     total = (len(tier_a) + len(tier_b) + len(tier_c) + len(unsupported)
              + len(no_arm))
@@ -138,16 +181,17 @@ def main():
           f"{len(tier_c)+len(unsupported)+len(no_arm):>4}"
           f"   ({pct(len(tier_c)+len(unsupported)+len(no_arm))})")
     print()
-    print(f"CONVERSION QUEUE, ranked by public-doc exposure (top {queue_n}):")
-    print("  3 = named in README.md, a user could act on it | 2 = other public "
-          "doc | 0 = ledger-only")
-    unsupported.sort(key=lambda r: (-r[0], r[1]))
-    for score, line_no, head, syms, where in unsupported[:queue_n]:
+    print(f"CONVERSION QUEUE ({len(queue)} unconverted: tier C + D1), ranked by "
+          f"public-doc exposure (top {queue_n}):")
+    print("  3 = the symbol appears beside a perf NUMBER in README.md | 2 = in "
+          "another public doc | 0 = ledger-only")
+    queue.sort(key=lambda r: (-r[0], r[1]))
+    for score, line_no, head, syms, where, tier in queue[:queue_n]:
         title = head[3:].strip()
-        title = title[:94] + ("..." if len(title) > 94 else "")
-        print(f"  [{score}] L{line_no:<6} {title}")
+        title = title[:88] + ("..." if len(title) > 88 else "")
+        print(f"  [{score}][{tier}] L{line_no:<6} {title}")
         if where:
-            print(f"        exposed in: {', '.join(where)}  syms={syms}")
+            print(f"        quotes a perf number in: {', '.join(where)}  syms={syms}")
     print()
     print(f"NO-ARM group ({len(no_arm)}) — permanently maintenance, not a backlog:")
     for line_no, head in no_arm[:12]:

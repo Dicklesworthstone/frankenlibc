@@ -3,10 +3,13 @@
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
 //! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, waiter-aware
 //! `sem_post`, inlined `thrd_current`, strict `mtx_trylock`, and hosts-backed
-//! `getaddrinfo`, `gethostbyaddr`, and `gethostbyname`, plus the coupled f32
-//! `sinhf`/`coshf` paths. Their historical rows proved FrankenLibC
-//! self-speedups, but did not time live glibc in the same invocation. This
-//! harness closes those evidence gaps without changing production code.
+//! `getaddrinfo`, `gethostbyaddr`, and `gethostbyname`, the coupled f32
+//! `sinhf`/`coshf` paths, and the exact `snprintf` `%u`/`%p`/`%c` emitters.
+//! Their historical rows proved FrankenLibC self-speedups, but did not time
+//! live glibc in the same invocation -- or, for `snprintf`, quoted a glibc
+//! number from an `abi-bench` Criterion binary whose interposed allocator and
+//! symbol resolution are exactly the hazard this harness exists to remove.
+//! This harness closes those evidence gaps without changing production code.
 //!
 //! Contract:
 //! - host glibc is linked normally and FrankenLibC is loaded from the release
@@ -31,8 +34,16 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname`
+//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf`
+//!
+//! On a shared fleet add `--pin-quietest N` and drive several conversions from
+//! one build with `--families a,b,c` (each family runs in a fresh child).
+//! The quiet gate keys on the process's own allowed cpuset, so pinning narrows
+//! what must be quiet without weakening the gate: same 20% ceiling, same five
+//! consecutive clear samples, same affinity tripwire, and the contract line
+//! records `allowed_cpus`/`affinity_mask` so the scope stays auditable.
 
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
 use std::hint::black_box;
@@ -56,6 +67,7 @@ const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 const F32_HYPERBOLIC_REPS: usize = 200_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
 const GETHOSTBYNAME_REPS: usize = 5_000;
+const SNPRINTF_REPS: usize = 200_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 const IPV4_LOOPBACK: [u8; 4] = [127, 0, 0, 1];
@@ -85,6 +97,11 @@ type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type GethostbyaddrFn =
     unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
 type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
+/// True C-variadic pointer type. Declaring `snprintf` with a fixed arity would
+/// leave `AL` (the SysV vector-register count) unset at the call site, so the
+/// two arms could diverge on register-save work that has nothing to do with the
+/// formatter under test. The variadic type makes both arms use the real ABI.
+type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -136,6 +153,13 @@ unsafe extern "C" {
     ) -> *mut libc::hostent;
     #[link_name = "gethostbyname"]
     fn linked_host_gethostbyname(name: *const c_char) -> *mut libc::hostent;
+    #[link_name = "snprintf"]
+    fn linked_host_snprintf(
+        s: *mut c_char,
+        n: usize,
+        format: *const c_char,
+        ...
+    ) -> c_int;
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -267,6 +291,11 @@ struct Config {
     verify_only: bool,
     build_fl_if_missing: bool,
     family: Family,
+    /// Narrow this process to the N quietest logical CPUs before the guard is
+    /// constructed. Zero leaves affinity untouched.
+    pin_quietest: usize,
+    /// Parent mode: run each named family in its own fresh child process.
+    families: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -281,6 +310,7 @@ enum Family {
     SinhfCoshf,
     Gethostbyaddr,
     Gethostbyname,
+    Snprintf,
 }
 
 struct Case {
@@ -495,11 +525,29 @@ fn parse_args() -> Config {
     let mut fl_so = None;
     let mut verify_only = false;
     let mut family = Family::NlLanginfo;
+    let mut pin_quietest = 0usize;
+    let mut families = Vec::new();
     while let Some(arg) = args.next() {
         if arg == "--fl-so" {
             fl_so = args.next().map(PathBuf::from);
         } else if arg == "--verify-only" {
             verify_only = true;
+        } else if arg == "--pin-quietest" {
+            pin_quietest = args
+                .next()
+                .expect("--pin-quietest needs a logical-CPU count")
+                .to_string_lossy()
+                .parse()
+                .expect("--pin-quietest needs an integer");
+        } else if arg == "--families" {
+            families = args
+                .next()
+                .expect("--families needs a comma-separated list")
+                .to_string_lossy()
+                .split(',')
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect();
         } else if arg == "--family" {
             family = match args.next().as_deref() {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
@@ -512,19 +560,21 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
                 Some(value) if value == OsStr::new("gethostbyaddr") => Family::Gethostbyaddr,
                 Some(value) if value == OsStr::new("gethostbyname") => Family::Gethostbyname,
+                Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
                      sem_post, thrd_current, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
-                     gethostbyaddr, or gethostbyname"
+                     gethostbyaddr, gethostbyname, or snprintf"
                 ),
             };
         } else {
             panic!(
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
-                 [--fl-so PATH] [--verify-only] \
+                 [--fl-so PATH] [--verify-only] [--pin-quietest N] \
+                 [--families a,b,c] \
                  [--family \
                   nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname]"
+                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf]"
             );
         }
     }
@@ -540,7 +590,162 @@ fn parse_args() -> Config {
         verify_only,
         build_fl_if_missing,
         family,
+        pin_quietest,
+        families,
     }
+}
+
+/// Logical CPUs this process is currently allowed to run on.
+fn current_affinity() -> Vec<usize> {
+    let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+    let status =
+        unsafe { libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) };
+    assert_eq!(status, 0, "sched_getaffinity failed");
+    (0..libc::CPU_SETSIZE as usize)
+        .filter(|&cpu| unsafe { libc::CPU_ISSET(cpu, &set) })
+        .collect()
+}
+
+/// Busy fraction per logical CPU across one `/proc/stat` window.
+fn cpu_busy_fractions(window: std::time::Duration) -> BTreeMap<usize, f64> {
+    fn snapshot() -> BTreeMap<usize, (u64, u64)> {
+        let mut counters = BTreeMap::new();
+        let stat = std::fs::read_to_string("/proc/stat").expect("read /proc/stat");
+        for line in stat.lines() {
+            let Some(rest) = line.strip_prefix("cpu") else {
+                continue;
+            };
+            let mut fields = rest.split_whitespace();
+            let Some(index) = fields.next() else { continue };
+            let Ok(cpu) = index.parse::<usize>() else {
+                continue;
+            };
+            let values = fields.filter_map(|v| v.parse::<u64>().ok()).collect::<Vec<_>>();
+            if values.len() >= 4 {
+                counters.insert(cpu, (values.iter().sum::<u64>(), values[3]));
+            }
+        }
+        counters
+    }
+
+    let before = snapshot();
+    std::thread::sleep(window);
+    let after = snapshot();
+    let mut busy = BTreeMap::new();
+    for (&cpu, &(total_before, idle_before)) in &before {
+        let Some(&(total_after, idle_after)) = after.get(&cpu) else {
+            continue;
+        };
+        let total_delta = total_after.saturating_sub(total_before);
+        let idle_delta = idle_after.saturating_sub(idle_before);
+        let fraction = if total_delta > 0 {
+            (total_delta - idle_delta) as f64 / total_delta as f64
+        } else {
+            1.0
+        };
+        busy.insert(cpu, fraction);
+    }
+    busy
+}
+
+/// Narrow this process to the `width` quietest logical CPUs it is already
+/// allowed to use.
+///
+/// This does NOT weaken the quiet gate. `HostWideBenchmarkGuard` keys on the
+/// process's own allowed cpuset, so on a shared fleet an unpinned run demands
+/// that every logical CPU on the box sit below the same 20% ceiling -- which is
+/// what failed closed, with zero samples, on four ledger rows. Narrowing scopes
+/// the set that must be quiet; the ceiling, the five-consecutive-clear-samples
+/// requirement, and the affinity-change tripwire are all unchanged, and the
+/// guard's contract line reports `allowed_cpus` and `affinity_mask` so the
+/// scope is auditable.
+fn pin_to_quietest(width: usize) {
+    let allowed = current_affinity();
+    if width == 0 || width >= allowed.len() {
+        println!(
+            "PIN_QUIETEST requested_width={width} action=none allowed_cpu_count={} \
+             reason=width_not_narrower",
+            allowed.len(),
+        );
+        return;
+    }
+
+    let busy = cpu_busy_fractions(std::time::Duration::from_secs(2));
+    let mut ranked = allowed
+        .iter()
+        .map(|&cpu| (cpu, busy.get(&cpu).copied().unwrap_or(1.0)))
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let chosen = &ranked[..width];
+
+    let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+    unsafe { libc::CPU_ZERO(&mut set) };
+    for &(cpu, _) in chosen {
+        unsafe { libc::CPU_SET(cpu, &mut set) };
+    }
+    let status =
+        unsafe { libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) };
+    assert_eq!(status, 0, "sched_setaffinity failed");
+
+    let ranking = ranked
+        .iter()
+        .map(|(cpu, fraction)| format!("{cpu}:{fraction:.3}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!(
+        "PIN_QUIETEST requested_width={width} action=narrowed selected_cpus={} \
+         selected_busy={} allowed_before={} sample_window_ms=2000 busy_ranking=[{ranking}]",
+        chosen
+            .iter()
+            .map(|(cpu, _)| cpu.to_string())
+            .collect::<Vec<_>>()
+            .join("+"),
+        chosen
+            .iter()
+            .map(|(_, fraction)| format!("{fraction:.3}"))
+            .collect::<Vec<_>>()
+            .join("+"),
+        allowed.len(),
+    );
+}
+
+/// Parent mode: run each family in its own fresh process.
+///
+/// One process per family keeps each measurement's conditions identical to the
+/// single-family rows already in the ledger -- notably the observed-thread
+/// assertions, which a resolver family could otherwise perturb for a math
+/// family that ran after it in the same process.
+fn run_families(config: &Config) -> ! {
+    let executable = std::env::current_exe().expect("resolve benchmark executable");
+    let mut statuses = Vec::new();
+    for family in &config.families {
+        println!("FAMILY_CHILD_BEGIN family={family}");
+        let mut command = Command::new(&executable);
+        command.arg("--family").arg(family);
+        command.arg("--fl-so").arg(&config.fl_so);
+        if config.verify_only {
+            command.arg("--verify-only");
+        }
+        if config.pin_quietest > 0 {
+            command.arg("--pin-quietest").arg(config.pin_quietest.to_string());
+        }
+        let status = command.status().expect("spawn family child");
+        let code = status.code().unwrap_or(-1);
+        println!("FAMILY_CHILD_END family={family} status={code}");
+        statuses.push((family.clone(), code));
+    }
+    let decided = statuses.iter().filter(|(_, code)| *code == 0).count();
+    println!(
+        "FAMILY_RUN_SUMMARY families={} decided={decided} blocked={} detail={}",
+        statuses.len(),
+        statuses.len() - decided,
+        statuses
+            .iter()
+            .map(|(family, code)| format!("{family}={code}"))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    std::process::exit(i32::from(decided != statuses.len()));
 }
 
 fn ensure_fl_shared_object(config: &Config) {
@@ -3851,9 +4056,455 @@ fn run_sinhf_coshf(config: &Config) {
     }
 }
 
+/// Destination bytes handed to every `snprintf` probe. Larger than the longest
+/// conversion under test so truncation is always a property of the `n` argument
+/// and never of the allocation.
+const SNPRINTF_BUF: usize = 32;
+/// Non-zero fill so an arm that writes nothing is distinguishable from an arm
+/// that writes a NUL, and so untouched tail bytes are proved untouched.
+const SNPRINTF_CANARY: u8 = 0xa5;
+/// The historical row's nine `%u` values: zero, every early decimal-width
+/// transition, the 16-bit ceiling, a round seven-digit value, and `u32::MAX`.
+const SNPRINTF_U_VALUES: [c_uint; 9] = [0, 9, 10, 99, 100, 999, 65_535, 1_000_000, u32::MAX];
+/// The historical row's nine destination sizes, spanning the zero-size,
+/// truncation, exact-fit, and one-past-fit final-NUL boundaries.
+const SNPRINTF_SIZES: [usize; 9] = [0, 1, 2, 3, 5, 8, 10, 11, 16];
+const SNPRINTF_P_VALUES: [usize; 8] = [
+    0,
+    1,
+    0xff,
+    0x1000,
+    0xdead_beef,
+    0x7fff_ffff,
+    0x7fff_ffff_ffff,
+    usize::MAX,
+];
+const SNPRINTF_C_VALUES: [c_int; 8] = [0, 0x41, 0x7a, 0x30, 0x20, 0x7e, 0x7f, 0xff];
+/// Power-of-two timing tables so the rep loop indexes with a mask. A modulo by
+/// nine would put a division in both arms and dilute the ratio under test.
+const SNPRINTF_U_TIMING: [c_uint; 8] = [0, 9, 10, 99, 100, 999, 65_535, u32::MAX];
+
+fn snprintf_probe(
+    call: impl Fn(*mut c_char, usize) -> c_int,
+    size: usize,
+) -> (c_int, [u8; SNPRINTF_BUF]) {
+    assert!(size <= SNPRINTF_BUF, "probe size {size} exceeds destination");
+    let mut buffer = [SNPRINTF_CANARY; SNPRINTF_BUF];
+    let returned = call(buffer.as_mut_ptr().cast(), size);
+    (returned, buffer)
+}
+
+/// Compare both providers on return value AND the complete destination array,
+/// including the bytes past `n` that a correct `snprintf` must leave alone.
+fn compare_snprintf_probe(
+    case: &str,
+    format: &str,
+    value: &str,
+    size: usize,
+    host_call: impl Fn(*mut c_char, usize) -> c_int,
+    fl_call: impl Fn(*mut c_char, usize) -> c_int,
+) -> bool {
+    let (host_returned, host_bytes) = snprintf_probe(host_call, size);
+    let (fl_returned, fl_bytes) = snprintf_probe(fl_call, size);
+    if host_returned == fl_returned && host_bytes == fl_bytes {
+        return true;
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE_MISMATCH symbol=snprintf case={case} \
+         format={format} value={value} size={size} glibc_return={host_returned} \
+         fl_return={fl_returned} glibc_bytes={host_bytes:02x?} fl_bytes={fl_bytes:02x?}"
+    );
+    false
+}
+
+fn check_snprintf_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize) {
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+
+    let unsigned_format = c"%u";
+    for &value in &SNPRINTF_U_VALUES {
+        for &size in &SNPRINTF_SIZES {
+            comparisons += 1;
+            if !compare_snprintf_probe(
+                "unsigned_decimal",
+                "%u",
+                &value.to_string(),
+                size,
+                |pointer, n| unsafe { host(pointer, n, unsigned_format.as_ptr(), value) },
+                |pointer, n| unsafe { fl(pointer, n, unsigned_format.as_ptr(), value) },
+            ) {
+                mismatches += 1;
+            }
+        }
+    }
+
+    let pointer_format = c"%p";
+    for &value in &SNPRINTF_P_VALUES {
+        let pointer_value = value as *const c_void;
+        for &size in &SNPRINTF_SIZES {
+            comparisons += 1;
+            if !compare_snprintf_probe(
+                "pointer",
+                "%p",
+                &format!("{value:#x}"),
+                size,
+                |pointer, n| unsafe { host(pointer, n, pointer_format.as_ptr(), pointer_value) },
+                |pointer, n| unsafe { fl(pointer, n, pointer_format.as_ptr(), pointer_value) },
+            ) {
+                mismatches += 1;
+            }
+        }
+    }
+
+    let character_format = c"%c";
+    for &value in &SNPRINTF_C_VALUES {
+        for &size in &SNPRINTF_SIZES {
+            comparisons += 1;
+            if !compare_snprintf_probe(
+                "character",
+                "%c",
+                &format!("{value:#04x}"),
+                size,
+                |pointer, n| unsafe { host(pointer, n, character_format.as_ptr(), value) },
+                |pointer, n| unsafe { fl(pointer, n, character_format.as_ptr(), value) },
+            ) {
+                mismatches += 1;
+            }
+        }
+    }
+
+    (comparisons, mismatches)
+}
+
+#[inline(never)]
+fn run_snprintf_u_batch(function: SnprintfFn) -> u64 {
+    let format = c"%u";
+    let mut buffer = [0u8; SNPRINTF_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = SNPRINTF_U_TIMING[index & (SNPRINTF_U_TIMING.len() - 1)];
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(SNPRINTF_BUF),
+                black_box(format.as_ptr()),
+                black_box(value),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_snprintf_p_batch(function: SnprintfFn) -> u64 {
+    let format = c"%p";
+    let mut buffer = [0u8; SNPRINTF_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = SNPRINTF_P_VALUES[index & (SNPRINTF_P_VALUES.len() - 1)] as *const c_void;
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(SNPRINTF_BUF),
+                black_box(format.as_ptr()),
+                black_box(value),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_snprintf_c_batch(function: SnprintfFn) -> u64 {
+    let format = c"%c";
+    let mut buffer = [0u8; SNPRINTF_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = SNPRINTF_C_VALUES[index & (SNPRINTF_C_VALUES.len() - 1)];
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(SNPRINTF_BUF),
+                black_box(format.as_ptr()),
+                black_box(value),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+fn time_snprintf_u_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_snprintf_u_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_snprintf_p_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_snprintf_p_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_snprintf_c_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_snprintf_c_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn measure_snprintf_case(
+    label: &'static str,
+    note: &'static str,
+    host: SnprintfFn,
+    fl: SnprintfFn,
+    time_batch: fn(SnprintfFn) -> f64,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_batch(fl);
+                    fb = time_batch(fl);
+                }
+                0 => {
+                    fb = time_batch(fl);
+                    fa = time_batch(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_batch(host);
+                    gb = time_batch(host);
+                }
+                1 => {
+                    gb = time_batch(host);
+                    ga = time_batch(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_batch(fl);
+                    effect_glibc = time_batch(host);
+                }
+                2 => {
+                    effect_glibc = time_batch(host);
+                    effect_fl = time_batch(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        label,
+        note,
+        SNPRINTF_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+fn run_snprintf(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_symbol = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC snprintf")
+    );
+
+    let host: SnprintfFn = linked_host_snprintf;
+    let fl: SnprintfFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host snprintf object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC snprintf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=snprintf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=snprintf");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both snprintf arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=snprintf incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    let (comparisons, mismatches) = check_snprintf_conformance(host, fl);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf formats=%u,%p,%c \
+         values_per_format=9,8,8 destination_sizes=9 destination_bytes={SNPRINTF_BUF} \
+         comparisons={comparisons} mismatches={mismatches} \
+         compared=return_value_and_full_destination verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=snprintf phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=snprintf verdict={conformance_verdict}");
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(
+        mismatches, 0,
+        "snprintf arms are not observationally equivalent; refusing to time them"
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "snprintf observed thread count changed between conformance and measurement"
+    );
+
+    let results = [
+        measure_snprintf_case(
+            "unsigned_decimal_bare",
+            "historical bd-gldi10 headline: bare \"%u\" over eight decimal widths",
+            host,
+            fl,
+            time_snprintf_u_batch,
+        ),
+        measure_snprintf_case(
+            "pointer_bare",
+            "historical pointer-formatter claim: bare \"%p\" over eight magnitudes",
+            host,
+            fl,
+            time_snprintf_p_batch,
+        ),
+        measure_snprintf_case(
+            "character_bare",
+            "historical character claim: bare \"%c\" over eight byte values",
+            host,
+            fl,
+            time_snprintf_c_batch,
+        ),
+    ];
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "snprintf observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print(
+            "snprintf",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "unsigned_decimal_bare")
+        .expect("missing unsigned_decimal_bare result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=snprintf verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=unsigned_decimal_bare headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
+    if !config.families.is_empty() {
+        run_families(&config);
+    }
+    pin_to_quietest(config.pin_quietest);
     assert!(
         std::env::var_os("FRANKENLIBC_MODE").is_none_or(|mode| mode == OsStr::new("strict")),
         "incumbent conversion must run with FRANKENLIBC_MODE=strict or the strict default"
@@ -3889,5 +4540,6 @@ fn main() {
         Family::SinhfCoshf => run_sinhf_coshf(&config),
         Family::Gethostbyaddr => run_gethostbyaddr(&config),
         Family::Gethostbyname => run_gethostbyname(&config),
+        Family::Snprintf => run_snprintf(&config),
     }
 }

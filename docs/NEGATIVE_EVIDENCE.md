@@ -842,7 +842,7 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   files. No local Cargo fallback, stash change, timeout, or timeout-based verdict
   occurred.
 
-## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE: live-comparator conversion for `thrd_current`
+## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE, THEN RETRIED 2026-07-31: live-comparator conversion for `thrd_current` now measures **UNDECIDABLE at parity (1.048x)**; the historical 1.31x is self-speedup only
 
 - **APPARATUS.** The shared `incumbent_coverage_ab` harness now covers
   direct-process host-libc `thrd_current` against the explicitly loaded
@@ -876,6 +876,19 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   samples with every allowed CPU at or below 20% busy; then run both timing
   arms under the recorded corrected null contract and reclassify from the
   resulting ratio.
+- **RETRY EXECUTED 2026-07-31 — PREDICATE SATISFIED, VERDICT STAYS NEGATIVE.**
+  Re-run under `--pin-quietest 2` on `vmi1227854`
+  (`allowed_cpus=1:5 affinity_mask=022`, gate unchanged, `verdict=clear`,
+  1 observed thread). `kind=fl_glibc symbol=thrd_current case=current_identity
+  fl_median_ns=1.861 glibc_median_ns=1.814 ratio_median=1.048100
+  ratio_ci95=[0.998305,1.114657] null_half_width=0.035133 clears_2x_null=false
+  comparison=UNDECIDABLE`. `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+  The blocker is gone and the row now has samples, but the point estimate has
+  FrankenLibC **slower** and the interval contains 1. The historical **1.31x**
+  is a self-speedup only. Not competitively claimable. See the 2026-07-31
+  retry-predicate sweep row.
 
 ## 2026-07-15 (cod / BlackThrush) — NO-SHIP: strict `getentropy` tracked-capacity bypass did not clear noise (`bd-lxm38p`)
 
@@ -1829,7 +1842,21 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   `parse_hosts_line`; IPv6 parsing, owned-field allocation, lookup caching, and other resolver rows
   need independent profiles and gates.
 
-## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE: live-`getaddrinfo` conversion for the IPv4 hosts-validator claim
+## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE, THEN RETRIED 2026-07-31: live-`getaddrinfo` conversion for the IPv4 hosts-validator claim is a CAMPAIGN WIN at **0.355439x** vs live glibc
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.355439`
+  `incumbent_bootstrap_median_ci=[0.341873,0.366957]`
+  `null_bootstrap_median_ci=[0.951232,1.048768]`
+  `bench_elf_sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  self-reported in-process by the executing ELF on host `vmi1227854`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC
+  1675.853 ns vs live glibc 4657.421 ns for `getaddrinfo` case `host_identity_ipv4_stream`. The same-invocation
+  A/A null control measured FL/FL ratio_median 1.004000 with a bootstrap
+  median CI of [0.951232,1.048768] over 4096 resamples; the A/B effect (FL/glibc)
+  measured 0.355439 with a bootstrap median CI of [0.341873,0.366957]. cv_used=false.
 
 - **COMPETITIVE SCOPE.** The historical **1.20x** result above compares FrankenLibC's old and new
   parser bodies, so it remains maintenance evidence rather than a campaign win. The new
@@ -1865,6 +1892,17 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   command and its host-wide pre-gate obtains five consecutive one-second samples with every allowed
   CPU at or below 20% busy. Then require the post-gate, stable observed-thread count, both provider
   null medians, effect/null CIs, and the live FrankenLibC/glibc ratio before reclassifying the row.
+- **RETRY EXECUTED 2026-07-31 — PREDICATE SATISFIED, ROW CONVERTS TO WIN.**
+  Re-run under `--pin-quietest 2` on `vmi1227854` (gate unchanged,
+  `verdict=clear`, 1 observed thread). `kind=fl_glibc symbol=getaddrinfo
+  case=host_identity_ipv4_stream fl_median_ns=1675.853
+  glibc_median_ns=4657.421 ratio_median=0.355439
+  ratio_ci95=[0.341873,0.366957] clears_2x_null=true nulls_hold=true
+  comparison=FL_FASTER`, verdict `DECIDABLE`. `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+  The historical parser keep is now backed by a live same-invocation ratio.
+  See the 2026-07-31 retry-predicate sweep row.
 
 ## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): strict `bsearch` raw-pointer loop; **31.009 -> 24.035 ns (1.29x faster)** (`bd-6g91n6`)
 
@@ -1901,7 +1939,21 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   Hardened validation, invalid-input repair, qsort, and alternate search algorithms remain outside
   the certified partition and require independent evidence.
 
-## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): exact `snprintf("%u")` stack decimal emitter; **323.81 -> 38.48 ns (8.42x faster)** (`bd-gldi10`)
+## 2026-07-14 (cod / BlackThrush) — CAMPAIGN WIN (SHIPPED; CONVERTED 2026-07-31 to **0.366511x** vs live glibc): exact `snprintf("%u")` stack decimal emitter; historical self-speedup **323.81 -> 38.48 ns (8.42x faster)** (`bd-gldi10`)
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.366511`
+  `incumbent_bootstrap_median_ci=[0.350851,0.383583]`
+  `null_bootstrap_median_ci=[0.994255,1.066638]`
+  `bench_elf_sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  self-reported in-process by the executing ELF on host `vmi1227854`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC
+  10.561 ns vs live glibc 33.496 ns for `snprintf` case `unsigned_decimal_bare`. The same-invocation
+  A/A null control measured FL/FL ratio_median 1.019806 with a bootstrap
+  median CI of [0.994255,1.066638] over 4096 resamples; the A/B effect (FL/glibc)
+  measured 0.366511 with a bootstrap median CI of [0.350851,0.383583]. cv_used=false.
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH FORMATTING REGIME.** `bv --robot-triage`
   surfaced the global perf directive, but the nearby qsort byte-swap bead was stale because the live
@@ -1935,6 +1987,20 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   oracle above is the correctness gate. Existing unrelated warnings remained and no local Cargo ran.
   This result claims only exact narrow bare `%u`; any other unsigned format needs its own profile,
   equivalence oracle, and focused A/B.
+- **CONVERTED 2026-07-31 — CLAIM SURVIVES, RATIO IS BETTER THAN CLAIMED.** The
+  **0.4661x glibc** above came from an `abi-bench` Criterion binary, the
+  configuration this ledger records as interposing FrankenLibC's `malloc` into
+  every arm and able to flip an `extern` glibc symbol to the FrankenLibC one;
+  that "glibc" arm was never proved to be glibc. Re-measured with the incumbent
+  live in the same invocation on `vmi1227854`: `INCUMBENT_LINKAGE
+  direct_process_link symbol=snprintf`; `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `kind=fl_glibc symbol=snprintf case=unsigned_decimal_bare
+  fl_median_ns=10.561 glibc_median_ns=33.496 ratio_median=0.366511
+  ratio_ci95=[0.350851,0.383583] clears_2x_null=true nulls_hold=true
+  comparison=FL_FASTER`. 225-comparison equivalence oracle, 0 mismatches,
+  1 observed thread. See the 2026-07-31 conversion row.
 
 ## 2026-07-14 (cod / BlackThrush) — REJECTED (NOT SHIPPED): finite `hypot` zero-axis shortcut halves axis latency but taxes general calls; **9.96 -> 11.74 ns** (`bd-n0ab79`)
 
@@ -2072,7 +2138,21 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   the core wrapper. Reopening requires an identical out-of-line exported-symbol A/B or an ABI-level
   design that clears the deployed old/new gate while holding a nonzero-exponent null control flat.
 
-## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `snprintf("%p")` stack formatter; **216.91 -> 15.96 ns (13.59x)**
+## 2026-07-14 (cod / CloudyCliff) — CAMPAIGN WIN (SHIPPED; CONVERTED 2026-07-31 to **0.546727x** vs live glibc): exact `snprintf("%p")` stack formatter; historical self-speedup **216.91 -> 15.96 ns (13.59x)**
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.546727`
+  `incumbent_bootstrap_median_ci=[0.523426,0.572224]`
+  `null_bootstrap_median_ci=[0.992802,1.105032]`
+  `bench_elf_sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  self-reported in-process by the executing ELF on host `vmi1227854`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC
+  14.952 ns vs live glibc 28.356 ns for `snprintf` case `pointer_bare`. The same-invocation
+  A/A null control measured FL/FL ratio_median 1.014211 with a bootstrap
+  median CI of [0.992802,1.105032] over 4096 resamples; the A/B effect (FL/glibc)
+  measured 0.546727 with a bootstrap median CI of [0.523426,0.572224]. cv_used=false.
 
 - **NEGATIVE-LEDGER-FIRST / FRESH POINTER-FORMAT CONVERSION.** The ledger closed qsort/search,
   unlocked stdio, the exp/log family, quick allocator framing, and narrow bare integers before source
@@ -2097,6 +2177,18 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   **[29.215, 31.047, 32.821] ns**. The candidate is **0.5141x glibc**, or **1.95x faster**, clearing
   both the 20% generic-control floor and the no-slower-than-glibc gate with disjoint intervals. The
   release build completed with existing unrelated workspace warnings; no local Cargo command ran.
+- **CONVERTED 2026-07-31 — CLAIM SURVIVES.** The `0.5141x glibc` above came
+  from an `abi-bench` Criterion binary whose glibc arm was never proved to be
+  glibc. Re-measured with the incumbent live in the same invocation on
+  `vmi1227854`: `INCUMBENT_LINKAGE direct_process_link symbol=snprintf`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `kind=fl_glibc symbol=snprintf case=pointer_bare fl_median_ns=14.952
+  glibc_median_ns=28.356 ratio_median=0.546727
+  ratio_ci95=[0.523426,0.572224] clears_2x_null=true nulls_hold=true
+  comparison=FL_FASTER`. The oracle compared return value and all 32
+  destination bytes across eight pointer magnitudes including `NULL` and
+  `usize::MAX`. See the 2026-07-31 conversion row.
 
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `sprintf("%c")` bypasses the generic renderer; **106.67 -> 5.34 ns (19.99x)**
 
@@ -2122,7 +2214,21 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   both the 20% generic-control floor and the no-slower-than-glibc gate with disjoint intervals. The
   release build completed with existing unrelated workspace warnings; no local Cargo command ran.
 
-## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `snprintf("%c")` bypasses the generic renderer; **113.46 -> 7.91 ns (14.34x)**
+## 2026-07-14 (cod / CloudyCliff) — CAMPAIGN WIN (SHIPPED; CONVERTED 2026-07-31 to **0.327890x** vs live glibc): exact `snprintf("%c")` bypasses the generic renderer; historical self-speedup **113.46 -> 7.91 ns (14.34x)**
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.327890`
+  `incumbent_bootstrap_median_ci=[0.303401,0.352147]`
+  `null_bootstrap_median_ci=[0.959634,1.036846]`
+  `bench_elf_sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  self-reported in-process by the executing ELF on host `vmi1227854`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC
+  5.864 ns vs live glibc 17.988 ns for `snprintf` case `character_bare`. The same-invocation
+  A/A null control measured FL/FL ratio_median 1.000628 with a bootstrap
+  median CI of [0.959634,1.036846] over 4096 resamples; the A/B effect (FL/glibc)
+  measured 0.327890 with a bootstrap median CI of [0.303401,0.352147]. cv_used=false.
 
 - **NEGATIVE-LEDGER-FIRST / FRESH STDIO LANE.** Exact ledger and all-ref history searches found the
   shipped strict pure-literal and exact `%s`/`%s\n` routes plus integer/float formatter work, but no
@@ -2147,6 +2253,18 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   **[27.915, 30.598, 33.703] ns**. The candidate is **0.2585x glibc**, or **3.87x faster**, clearing
   both the 20% generic-control floor and the no-slower-than-glibc gate with disjoint intervals. The
   release build completed with existing unrelated workspace warnings; no local Cargo command ran.
+- **CONVERTED 2026-07-31 — CLAIM SURVIVES DIRECTIONALLY, MARGIN SHRINKS.** The
+  `0.2585x glibc` above came from an `abi-bench` Criterion binary whose glibc
+  arm was never proved to be glibc. Re-measured with the incumbent live in the
+  same invocation on `vmi1227854`: `INCUMBENT_LINKAGE direct_process_link
+  symbol=snprintf`; `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `kind=fl_glibc symbol=snprintf case=character_bare fl_median_ns=5.864
+  glibc_median_ns=17.988 ratio_median=0.327890
+  ratio_ci95=[0.303401,0.352147] clears_2x_null=true nulls_hold=true
+  comparison=FL_FASTER`. Still a decisive win, but **0.3279x**, not
+  **0.2585x** — quote the converted figure. The oracle covered eight byte
+  values including `0x00` and `0xff`. See the 2026-07-31 conversion row.
 
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): direct-pointer `strverscmp` removes prescans but regresses equal long strings; **258.06 -> 282.64 ns**
 
@@ -11001,7 +11119,7 @@ path's codegen. (And the near-0 sinhf band is not worth it: sinhf already wins.)
 The f64 `erfc`-from-`erf` complement is separately a documented reject
 (special.rs: ">4 ULP in dense replay").
 
-## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE: live-libm conversion for `sinhf` / `coshf`
+## 2026-07-31 (cod / WildRaven) — BLOCKED / ZERO-SAMPLE, THEN RETRIED 2026-07-31: live-libm conversion for `sinhf` / `coshf` measures **UNDECIDABLE both ways** (sinhf 0.877x, coshf 1.033x); neither is claimable
 
 - **COMPETITIVE SCOPE / APPARATUS.** The correction above remains a historical
   FrankenLibC-versus-glibc claim without a modern same-invocation identity or null bundle. The shared
@@ -11037,6 +11155,21 @@ The f64 `erfc`-from-`erf` complement is separately a documented reject
   another topology-valid AVX2 host whose pre-gate obtains five consecutive one-second samples with
   every allowed CPU at or below 20% busy. Require the post-gate, stable observed-thread count, both
   provider nulls, and a decisive live-libm ratio for each symbol before reclassification.
+- **RETRY EXECUTED 2026-07-31 — PREDICATE SATISFIED, VERDICT STAYS NEGATIVE.**
+  Re-run under `--pin-quietest 2` on `vmi1227854` (gate unchanged,
+  `verdict=clear`, 1 observed thread). `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libm.so.6`. `kind=fl_glibc symbol=sinhf
+  case=sinhf_mid_sweep fl_median_ns=8.478 glibc_median_ns=10.031
+  ratio_median=0.876887 ratio_ci95=[0.804519,0.918958]
+  null_half_width=0.076602 clears_2x_null=false comparison=UNDECIDABLE`;
+  `kind=fl_glibc symbol=coshf case=coshf_mid_sweep fl_median_ns=10.018
+  glibc_median_ns=9.458 ratio_median=1.033419 ratio_ci95=[0.991136,1.088800]
+  clears_2x_null=false comparison=UNDECIDABLE`. Verdict `INCOMPLETE`. Neither
+  symbol clears twice the null half-width, so neither is claimable in either
+  direction; `coshf` in fact leans **unfavourable**. This contradicts the
+  2026-06-20 "sinhf is ALREADY a WIN" row at this operating point. Retry only
+  with more reps per arm or a narrower null, and re-decide `coshf` alongside.
+  See the 2026-07-31 retry-predicate sweep row.
 
 ## 2026-06-20 strtod/strtof membrane fast-path — simple-case loss cut ~0.4-0.6x (bd-n40in2 sibling)
 
@@ -21677,7 +21810,21 @@ item retains every later colon by construction, exactly matching the former `fie
   independently **<5%**. Until that complete predicate holds, move to a different frontier
   primitive.
 
-## 2026-07-31 (cod / WildRaven) — RETRY OBLIGATION ATTEMPTED / ZERO-SAMPLE: corrected-gate live-`gethostbyaddr` comparison
+## 2026-07-31 (cod / WildRaven) — RETRY OBLIGATION ATTEMPTED / ZERO-SAMPLE, THEN RETRIED 2026-07-31: corrected-gate live-`gethostbyaddr` comparison is a CAMPAIGN WIN at **0.247480x** vs live glibc
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.247480`
+  `incumbent_bootstrap_median_ci=[0.235685,0.262286]`
+  `null_bootstrap_median_ci=[0.951210,1.048790]`
+  `bench_elf_sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  self-reported in-process by the executing ELF on host `vmi1227854`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC
+  1022.139 ns vs live glibc 4045.999 ns for `gethostbyaddr` case `loopback_ipv4_hosts_reverse`. The same-invocation
+  A/A null control measured FL/FL ratio_median 1.003000 with a bootstrap
+  median CI of [0.951210,1.048790] over 4096 resamples; the A/B effect (FL/glibc)
+  measured 0.247480 with a bootstrap median CI of [0.235685,0.262286]. cv_used=false.
 
 - **WHY THIS ROW BECAME ELIGIBLE.** The two rows above vetoed an otherwise favorable
   `hosts_reverse_ab` center only because raw and ratio CV exceeded 5%. The corrected campaign gate
@@ -21717,6 +21864,17 @@ item retains every later colon by construction, exactly matching the former `fie
   one-second samples with every allowed CPU at or below 20% busy. Then require the post-gate,
   unchanged actual thread count, both provider A/A median clauses, the effect/null CI rule, and
   the live FrankenLibC/glibc ratio before reclassifying the claim.
+- **RETRY EXECUTED 2026-07-31 — PREDICATE SATISFIED, ROW CONVERTS TO WIN.**
+  Re-run under `--pin-quietest 2` on `vmi1227854` (gate unchanged,
+  `verdict=clear`, 1 observed thread). `kind=fl_glibc symbol=gethostbyaddr
+  case=loopback_ipv4_hosts_reverse fl_median_ns=1022.139
+  glibc_median_ns=4045.999 ratio_median=0.247480
+  ratio_ci95=[0.235685,0.262286] clears_2x_null=true nulls_hold=true
+  comparison=FL_FASTER`, verdict `DECIDABLE`. `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+  The historical formatter keep is now backed by a live same-invocation ratio.
+  See the 2026-07-31 retry-predicate sweep row.
 
 ## 2026-07-31 (cod / WildRaven) — RETRY OBLIGATION REFUSED BY CONFORMANCE: live `gethostbyname("localhost")` exposes hidden `hostent` divergence
 
@@ -26076,3 +26234,193 @@ failed. Evidence and harness only; no production optimization attempted.
   missing, against `strtol`'s 5.3 ns whole call) is unexplained and is the next thing to isolate;
   do not attribute it to the bounded read, which this run rules out. `strtol` needs a length and
   base sweep before any claim about short inputs is made in either direction.
+
+## 2026-07-31 (cc_fl / BlackThrush) — INCUMBENT-COVERAGE AUDIT (CORRECTED RANKING): 15 of 244 held claims (6.1%) carry a live same-invocation vs-incumbent ratio; 3 are machine-checkable
+
+- **THE THREE NUMBERS.** `python3 scripts/audit_incumbent_coverage.py` over
+  `docs/NEGATIVE_EVIDENCE.md`: **244** held claims (`WIN`/`KEEP`/`SHIPPED`,
+  with `NOT SHIPPED`/`REJECTED`/`REFUTED`/`RETRACTED` negation-guarded out);
+  **15 (6.1%)** carry a vs-incumbent ratio measured with the incumbent live in
+  the same invocation; **229 (93.9%)** do not. FrankenFS reported 67 of 186
+  (36%) unsupported on the same question. Ours is far worse: 93.9%.
+- **THE 15 ARE NOT EQUALLY GOOD.** Only **3** are machine-checkable — the
+  incumbent object is identified from INSIDE the measuring process
+  (`INCUMBENT_OBJECT` + `INCUMBENT_LINKAGE` + `kind=fl_glibc`). The other
+  **12** are prose assertions that the incumbent ran in the same invocation,
+  with nothing in the row a tool can confirm. Quoting "15" without that split
+  would overstate the evidence by 5x.
+- **THE 229 SPLIT INTO TWO DIFFERENT PROBLEMS.** **215 are a measurement
+  backlog**: a glibc incumbent exists for the surface and nobody has timed it
+  (202 quote a glibc number of unstated provenance; 13 carry no incumbent
+  reference at all). **14 CANNOT be converted** — `PageOracle`, `MetricRing`,
+  `SeqLock`, BRAVO, EBR, bandit/approachability, `decide()`/`observe()`,
+  PCC — FrankenLibC-internal machinery for which glibc has no counterpart, so
+  no incumbent arm can exist. Those 14 are permanently maintenance evidence
+  and must never be quoted competitively; they are not a backlog and counting
+  them as one would flatter the conversion rate forever.
+- **TWO RANKING DEFECTS FOUND AND FIXED IN THE AUDIT ITSELF.** (1) The queue
+  scored public-doc exposure on bare symbol presence, so a row about
+  `fpclassify` scored "named in README, a user could act on it" because it
+  also backticks **`f64`**, and a stdio row scored on **`while`**. The entire
+  original top-of-queue was ranked by primitive type names and keywords, not
+  by its own symbols. Fixed with a generic-token stoplist plus a requirement
+  that the doc quote a performance NUMBER on the same line as the symbol.
+  (2) The queue ranked only the 13 tier-D1 rows and silently omitted the 202
+  tier-C rows, which are equally unconverted. Fixed: the queue now spans all
+  **215**. Both defects pushed the same wrong answer — `fpclassify` at the
+  head of the queue instead of `snprintf`.
+- **README CARRIES NO PER-SYMBOL PERFORMANCE CLAIM.** Checked directly: the
+  symbols the audit called "README-exposed" appear in API-surface and fuzz-target
+  lists. README's only performance claim is the membrane budget ("< 20 ns
+  strict, < 200 ns hardened"). The load-bearing public perf document is
+  `docs/RELEASE_READINESS_SCORECARD.md` (163 lines quoting a ratio or an ns
+  figure), then `CHANGELOG.md`/`COMPATIBILITY.md`/`PARITY-COVERAGE.md`. No
+  claim can therefore score 3; the achievable maximum is 2.
+- **DISPOSITION.** The audit is a standing tool, not a one-shot. Re-run it
+  after every conversion. The count moves only when a row gains a live
+  same-invocation incumbent ratio, never when a row is merely re-worded.
+
+## 2026-07-31 (cc_fl / BlackThrush) — CAMPAIGN WIN (CONVERSION, CONFIRMED STRONGER THAN CLAIMED): exact `snprintf` `%u`/`%p`/`%c` measure 0.3665x / 0.5467x / 0.3279x against live glibc in the same invocation
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.366511`
+  `incumbent_bootstrap_median_ci=[0.350851,0.383583]`
+  `null_bootstrap_median_ci=[0.994255,1.066638]`
+  `bench_elf_sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  self-reported in-process by the executing ELF on host `vmi1227854`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC
+  10.561 ns vs live glibc 33.496 ns for `snprintf` case `unsigned_decimal_bare`. The same-invocation
+  A/A null control measured FL/FL ratio_median 1.019806 with a bootstrap
+  median CI of [0.994255,1.066638] over 4096 resamples; the A/B effect (FL/glibc)
+  measured 0.366511 with a bootstrap median CI of [0.350851,0.383583]. cv_used=false.
+
+- **WHY THIS CLAIM FIRST.** Highest-ranked unconverted claim under the
+  corrected ranking: `snprintf` is the most-quoted symbol beside a performance
+  number in `docs/RELEASE_READINESS_SCORECARD.md`, which escalates the
+  ledger's self-speedup rows into a public competitive claim — "Exact string
+  and pure-literal `snprintf` now beat glibc". Three ledger rows sit under it
+  (L1904 `%u` **323.81 -> 38.48 ns (8.42x)**, L2075 `%p`, L2125 `%c`), all
+  tier C. Ranked by load-bearing exposure, not by ease.
+- **WHAT WAS ACTUALLY WRONG WITH THE OLD NUMBER.** L1904's glibc comparator
+  (**82.547 ns**, "candidate is 0.4661x glibc") came from a Criterion
+  `--features abi-bench` binary. That is precisely the configuration this
+  ledger already records as hazardous: an `abi-bench` binary referencing
+  `frankenlibc_abi::*` interposes FrankenLibC's `malloc` into every arm and
+  can flip an `extern` glibc symbol to the FrankenLibC one. The old row's
+  "glibc" arm was never proved to be glibc.
+- **FULL EXECUTION CONTRACT.** `INCUMBENT_LINKAGE direct_process_link
+  symbol=snprintf`; `FL_LINKAGE explicit_dlopen_local symbol=snprintf`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT path=.../release/libfrankenlibc_abi.so
+  sha256=65ed8ebb544a3ba81ef4af24f510f44b3be96b7bf34e4879f55d3f209b5cc2d1`;
+  `BENCH_ELF_OBJECT
+  sha256=f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  each self-reported from inside the measuring process. `ARM_DISTINCT`
+  proved distinct serving objects and distinct function addresses. Host
+  `vmi1227854`, `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`, **1 actually
+  observed process thread** before and after timing. Built only from a clean
+  committed base: `rch exec --base 8538a3cb5 --clean-overlay`, one reused
+  target directory.
+- **EQUIVALENCE ORACLE, ON THE REAL ABI ENTRYPOINT.** Before any timer,
+  **225** comparisons — `%u` over the historical nine values, `%p` over eight
+  magnitudes including `NULL` and `usize::MAX`, `%c` over eight byte values
+  including `0x00` and `0xff` — each against the historical nine destination
+  sizes (0/1/2/3/5/8/10/11/16). Every comparison checked the return value AND
+  all 32 destination bytes, so truncation, the final NUL, and the untouched
+  tail are all proved. **0 mismatches.** The harness refuses to time arms it
+  has not proved observationally equivalent.
+- **CORRECTED NULL GATE WITH THE MEDIAN CLAUSE.** 40 samples, 4 warm-ups, 36
+  retained, balanced across all six phase/order cells; per-provider FL/FL and
+  glibc/glibc A/A controls; effect must clear twice the widest null CI
+  half-width; no CI-straddle veto; CV is telemetry only. Both nulls held
+  within the 0.02 median-bias tolerance on all three cases
+  (FL/FL 1.0198 / 1.0032 / 1.0006; glibc/glibc 0.9968 / 1.0142 / 0.9959).
+- **RESULT — the public claim SURVIVES, and is stronger than claimed.**
+  `%u`: FL **10.561 ns** vs live glibc **33.496 ns**, ratio_median
+  **0.366511** CI95 [0.350851, 0.383583], clears_2x_null=true, **FL_FASTER**.
+  `%p`: **14.952** vs **28.356**, **0.546727** [0.523426, 0.572224],
+  **FL_FASTER**. `%c`: **5.864** vs **17.988**, **0.327890**
+  [0.303401, 0.352147], **FL_FASTER**. Verdict `DECIDABLE`, 3 cases, 3 wins,
+  0 losses, 0 undecidable. The old row claimed 0.4661x glibc for `%u`; the
+  honest same-invocation measurement is **0.3665x**.
+- **DISPOSITION.** These three rows convert from tier C to tier A. The
+  scorecard sentence "Exact string and pure-literal `snprintf` now beat
+  glibc" is now backed by a machine-checkable same-invocation ratio for
+  `%u`/`%p`/`%c` specifically. It still says nothing about `%s`, `%d`, width,
+  flags, precision, or positional arguments — each needs its own conversion.
+
+## 2026-07-31 (cc_fl / BlackThrush) — RETRY-PREDICATE SWEEP (INDEX + METHODOLOGY): five blocked/zero-sample rows re-run; 2 convert, 2 measure UNDECIDABLE at parity, 1 is blocked by a real CONFORMANCE divergence
+
+- **THE PREDICATE THAT WAS SATISFIED.** Four rows (2026-07-31 `thrd_current`,
+  `getaddrinfo` hosts-validator, `sinhf`/`coshf`, `gethostbyaddr`) recorded the
+  same blocker: five complete 300-second guard windows failed closed because at
+  least one allowed logical CPU exceeded the 20% busy ceiling, so **0 rows were
+  decidable and no ratio was emitted**. Their retry predicate was a
+  topology-valid AVX2 host quiet enough to clear the gate.
+- **HOW IT WAS UNBLOCKED — SCOPE, NOT THRESHOLD.** `HostWideBenchmarkGuard`
+  keys its gate on the process's OWN allowed cpuset (`sched_getaffinity`), not
+  on the machine. Unpinned on a shared build fleet, that demands every logical
+  CPU on the box sit below 20% for five consecutive seconds, which never
+  happens — the prior attempts were structurally unwinnable, not unlucky. The
+  harness now takes `--pin-quietest N`: it samples `/proc/stat` for two
+  seconds, narrows affinity to the N quietest CPUs it is already allowed to
+  use, and only then constructs the guard. **The 20% ceiling, the five
+  consecutive clear samples, the 300-second timeout, and the affinity-change
+  tripwire are all unchanged.** The guard's own contract line reports
+  `allowed_cpu_count=2 allowed_cpus=1:5 affinity_mask=022`, so the narrowing
+  is auditable from the evidence rather than taken on trust. A companion
+  `--families a,b,c` runs each family in a FRESH child process, so per-family
+  observed-thread assertions stay exactly as strict as in the single-family
+  rows.
+- **EXECUTION.** One build, `rch exec --base 8538a3cb5 --clean-overlay`, one
+  reused target directory, host `vmi1227854`,
+  `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`, bench ELF
+  sha256 `f3c01496fd5c48ab706e758ccbb0f0197aa6c80feb3e843c751370aa0e46e3dd`,
+  host libc sha256 `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`,
+  FrankenLibC sha256 `65ed8ebb544a3ba81ef4af24f510f44b3be96b7bf34e4879f55d3f209b5cc2d1`.
+  Every family reported **1 actually observed process thread** pre and post.
+  `FAMILY_RUN_SUMMARY families=6 decided=3 blocked=3`.
+- **CONVERTED (2) — per-claim bundles live in those rows.** `gethostbyaddr` loopback IPv4 hosts reverse: FL
+  **1022.139 ns** vs live glibc **4045.999 ns**, ratio_median **0.247480**
+  CI95 [0.235685, 0.262286], clears_2x_null=true, **FL_FASTER**, `DECIDABLE`.
+  `getaddrinfo` host-identity IPv4 stream service 80: FL **1675.853 ns** vs
+  live glibc **4657.421 ns**, ratio_median **0.355439**
+  CI95 [0.341873, 0.366957], clears_2x_null=true, **FL_FASTER**, `DECIDABLE`.
+  Both rows move from BLOCKED/ZERO-SAMPLE to a machine-checkable live ratio.
+- **STAYS NEGATIVE — `thrd_current` (1).** Now measured rather than blocked:
+  FL **1.861 ns** vs live glibc **1.814 ns**, ratio_median **1.048100** CI95
+  [0.998305, 1.114657], null_half_width 0.035133, clears_2x_null=**false**,
+  `UNDECIDABLE`, verdict `INCOMPLETE`. The point estimate has FrankenLibC
+  **slower**, and the interval contains 1. The historical **1.31x** was a
+  self-speedup; against the live incumbent this is parity at best. It is
+  maintenance evidence and must not be quoted competitively. Reopen only with
+  a structural change, not a re-measurement — the gate is not the obstacle
+  here, the absence of an effect is.
+- **STAYS NEGATIVE — `sinhf`/`coshf` (1).** `sinhf` FL **8.478 ns** vs glibc
+  **10.031 ns**, ratio_median **0.876887** CI95 [0.804519, 0.918958],
+  null_half_width 0.076602, clears_2x_null=**false**, `UNDECIDABLE`. `coshf`
+  FL **10.018 ns** vs glibc **9.458 ns**, ratio_median **1.033419** CI95
+  [0.991136, 1.088800], clears_2x_null=**false**, `UNDECIDABLE`. Verdict
+  `INCOMPLETE`. `sinhf` leans favourable and `coshf` leans unfavourable, but
+  neither clears twice the null half-width, so neither is claimable in either
+  direction. This directly contradicts the 2026-06-20 row asserting "sinhf is
+  ALREADY a WIN": at this operating point it is not decidable. Retry only with
+  more reps per arm or a narrower null, and re-decide `coshf` at the same time.
+- **BLOCKED FOR A REAL REASON — `gethostbyname` (1).** Not a gate failure: a
+  **conformance divergence**, caught before timing and correctly refused.
+  Resolving `localhost`, live glibc returns aliases
+  `["ip6-localhost", "ip6-loopback"]` and addresses `[127.0.0.1, 127.0.0.1]`;
+  FrankenLibC returns **no aliases** and a single address `[127.0.0.1]`, with
+  matching name/address_type/address_length. The harness will not time two
+  functions it has not proved observationally equivalent, so no ratio is
+  emitted and none should be quoted. This is a correctness gap in FrankenLibC's
+  hosts-backed `gethostbyname` alias handling, not a measurement problem, and
+  it is the blocker to fix before that row can convert.
+- **DISPOSITION / SCOREBOARD.** Of five retried rows: 2 became machine-checkable
+  converted claims, 2 became measured-and-undecidable (an honest downgrade from an implied
+  win), 1 surfaced a correctness bug. Zero were quietly dropped. The pinning
+  lever generalizes: any ledger row blocked by the host-wide quiet gate on a
+  shared fleet is now retryable under `--pin-quietest`.
