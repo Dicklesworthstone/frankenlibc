@@ -8851,8 +8851,235 @@ pub unsafe extern "C" fn vasprintf(
 // ===========================================================================
 
 use frankenlibc_core::stdio::scanf::{
-    ScanDirective, ScanResult, ScanValue, parse_scanf_format, scan_input,
+    ScanDirective, ScanEmit, ScanResult, ScanSpec, ScanValue, next_scanf_directive,
+    parse_scanf_format, scan_input, skip_scanf_whitespace,
 };
+
+/// Cursor over a C `va_list`, yielding one POINTER argument per call.
+///
+/// x86-64 SysV `va_list` layout: `gp_offset` (u32) at +0, `fp_offset` (u32) at
+/// +4, `overflow_arg_area` (`*mut u8`) at +8, `reg_save_area` (`*mut u8`) at
+/// +16. Every scanf destination is a pointer — INTEGER class — so only
+/// `gp_offset` and the overflow area participate: `gp_offset < 48` means the
+/// next pointer is still in the register save area, otherwise it has spilled to
+/// the stack. This is the extraction the batch writer already performed inline;
+/// factoring it out lets the direct engine consume arguments AS it scans instead
+/// of after a whole value vector has been built.
+struct VaPtrCursor {
+    ap: *mut c_void,
+}
+
+impl VaPtrCursor {
+    #[inline]
+    fn new(ap: *mut c_void) -> Self {
+        Self { ap }
+    }
+
+    /// Read and consume the next pointer argument.
+    ///
+    /// # Safety
+    /// `ap` must point at a live x86-64 SysV `va_list` positioned at a pointer
+    /// argument, and the caller must not request more arguments than the caller
+    /// actually passed.
+    #[inline]
+    unsafe fn next_ptr(&mut self) -> *mut c_void {
+        unsafe {
+            let gp_offset_ptr = self.ap as *mut u32;
+            let overflow_ptr = (self.ap as *mut u8).add(8) as *mut *mut u8;
+            let reg_save_ptr = (self.ap as *mut u8).add(16) as *mut *mut u8;
+            let gp_off = *gp_offset_ptr;
+            if gp_off < 48 {
+                let slot = (*reg_save_ptr).add(gp_off as usize) as *mut *mut c_void;
+                *gp_offset_ptr = gp_off + 8;
+                *slot
+            } else {
+                let slot = *overflow_ptr as *mut *mut c_void;
+                *overflow_ptr = (*overflow_ptr).add(8);
+                *slot
+            }
+        }
+    }
+}
+
+/// Outcome of the direct scanf engine: the assignment count and whether the scan
+/// stopped because input ran out (as opposed to a literal/conversion mismatch).
+/// The caller maps `input_failure && count == 0` to `EOF`, exactly as it does for
+/// [`ScanResult`].
+struct DirectScan {
+    count: c_int,
+    input_failure: bool,
+}
+
+/// Single-pass `sscanf`: parse one directive, scan it, write the caller's
+/// destination, repeat.
+///
+/// WHY THIS EXISTS. The batch engine (`parse_scanf_format` + `scan_input` +
+/// `vscanf_write_values`) heap-allocates three times per call — the directive
+/// vector, the value vector, and one `Vec<u8>` per `%s`/`%c`/`%[` field — before
+/// a single byte reaches the caller. Against live glibc that put every
+/// string-scanning `sscanf` shape underwater. Nothing about scanning a caller's
+/// string requires any of it: the matched text is always a contiguous slice of
+/// the input, and the destination pointer is available the moment the directive
+/// completes.
+///
+/// WHY IT IS SAFE TO REPLACE THE BATCH PATH. Every semantic decision is the batch
+/// engine's, reached through the same code: `next_scanf_directive` is the body of
+/// `parse_scanf_format`'s loop, `scan_emit_at` is `scan_at` with the copy
+/// removed, `skip_scanf_whitespace` is the `Whitespace` directive's skip, and the
+/// stop conditions below mirror `scan_input_impl` branch for branch. Arguments
+/// are consumed one per assigned directive in directive order — the same order
+/// and count the batch writer used.
+///
+/// # Safety
+/// `ap` must be a live x86-64 SysV `va_list` holding one valid destination
+/// pointer per non-suppressed conversion in `fmt`.
+unsafe fn scanf_direct_va(input: &[u8], fmt: &[u8], ap: *mut c_void) -> DirectScan {
+    let mut pos = 0usize;
+    let mut count: c_int = 0;
+    let mut cursor = VaPtrCursor::new(ap);
+    let mut fmt_pos = 0usize;
+
+    while let Some(directive) = next_scanf_directive(fmt, &mut fmt_pos) {
+        match directive {
+            ScanDirective::Whitespace => {
+                // Matches zero or more, so it can never cause an input failure.
+                pos = skip_scanf_whitespace(input, pos, false);
+            }
+            ScanDirective::Literal(expected) => {
+                if pos >= input.len() {
+                    // Ran out of input while a literal still needed a char: EOF.
+                    return DirectScan {
+                        count,
+                        input_failure: true,
+                    };
+                }
+                if input[pos] != expected {
+                    // Char present but mismatched: matching failure, not EOF.
+                    return DirectScan {
+                        count,
+                        input_failure: false,
+                    };
+                }
+                pos += 1;
+            }
+            ScanDirective::Spec(spec) => match spec.scan_emit_at(input, pos, false) {
+                None => {
+                    let exhausted_before_conversion = if spec.skips_leading_whitespace() {
+                        skip_scanf_whitespace(input, pos, false) >= input.len()
+                    } else {
+                        pos >= input.len()
+                    };
+                    return DirectScan {
+                        count,
+                        input_failure: exhausted_before_conversion,
+                    };
+                }
+                Some((emit, next_pos)) => {
+                    pos = next_pos;
+                    if !spec.suppress
+                        && let Some(emit) = emit
+                    {
+                        // `%n` stores a value but is not an assignment.
+                        let counts_as_assignment =
+                            !matches!(emit, ScanEmit::Value(ScanValue::CharsConsumed(_)));
+                        // SAFETY: one pointer per non-suppressed conversion, in
+                        // directive order — the batch writer's contract.
+                        let dest = unsafe { cursor.next_ptr() };
+                        unsafe { scanf_write_emit(&emit, &spec, input, dest) };
+                        if counts_as_assignment {
+                            count += 1;
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    DirectScan {
+        count,
+        input_failure: false,
+    }
+}
+
+/// Write one directive's result through the caller's destination pointer.
+///
+/// The scalar conversions delegate to [`vscanf_write_one`]; `%c` and `%s`/`%[`
+/// copy straight out of the input slice. The GNU `m` modifier is honoured here
+/// (allocate and store a `char **`), matching the variadic writer — the batch
+/// va_list writer silently ignored `alloc` and wrote the text over the caller's
+/// `char *` variable instead.
+///
+/// # Safety
+/// `dest` must be the caller's destination for `spec`, with room for the matched
+/// bytes (plus a NUL for `Text`).
+unsafe fn scanf_write_emit(emit: &ScanEmit, spec: &ScanSpec, input: &[u8], dest: *mut c_void) {
+    match emit {
+        ScanEmit::Value(value) => unsafe { vscanf_write_one(value, spec, dest) },
+        ScanEmit::Chars { start, end } => {
+            let bytes = &input[*start..*end];
+            if spec.alloc {
+                // GNU `%mc`: exactly `bytes.len()` bytes, no NUL, like glibc.
+                let size = bytes.len().max(1);
+                unsafe {
+                    let buf = malloc(size).cast::<u8>();
+                    if !buf.is_null() {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+                    }
+                    *dest.cast::<*mut c_char>() = buf.cast::<c_char>();
+                }
+            } else {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.cast::<u8>(), bytes.len());
+                }
+            }
+        }
+        ScanEmit::Text { start, end } => {
+            let bytes = &input[*start..*end];
+            if spec.alloc {
+                // GNU `%ms` / `%m[`: matched length + NUL.
+                unsafe {
+                    let buf = malloc(bytes.len() + 1).cast::<u8>();
+                    if !buf.is_null() {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+                        *buf.add(bytes.len()) = 0;
+                    }
+                    *dest.cast::<*mut c_char>() = buf.cast::<c_char>();
+                }
+            } else {
+                unsafe {
+                    let out = dest.cast::<u8>();
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len());
+                    *out.add(bytes.len()) = 0;
+                }
+            }
+        }
+    }
+}
+
+/// Run the direct engine over a caller string and map its outcome to the C
+/// `sscanf` return value. Shared by every string-input scanf entry point.
+///
+/// # Safety
+/// `s` and `format` must be valid NUL-terminated C strings, and `ap` a live
+/// `va_list` matching `format`.
+unsafe fn sscanf_direct(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int {
+    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
+    if !input_terminated {
+        return libc::EOF;
+    }
+    let (fmt_len, fmt_terminated) = unsafe { strict_c_str_len(format) };
+    if !fmt_terminated {
+        return libc::EOF;
+    }
+    // SAFETY: both scans stopped at a NUL, so both ranges are readable.
+    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
+    let fmt = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
+    let scan = unsafe { scanf_direct_va(input, fmt, ap) };
+    if scan.input_failure && scan.count == 0 {
+        return libc::EOF;
+    }
+    scan.count
+}
 
 fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
     let bits = value.to_bits();
@@ -9259,27 +9486,14 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
 
     // PERF (bd-2g7oyh):
     // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
-    // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
-    // keeps the allocation-bound EOF branch for fl-tracked unterminated buffers.
-    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
-    if !input_terminated {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
-    let Some((result, directives)) = scanf_core(input, format) else {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    };
-
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    scanf_write_values!(&result.values, &directives, args);
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    // is strlen+parse-dominated. The direct engine below streams the format and
+    // writes each destination as its directive completes; `args` is a Rust
+    // `VaListImpl`, whose layout IS the x86-64 `__va_list_tag` the engine walks
+    // (the same bridge `__isoc99_sscanf` uses to reach `vsscanf`).
+    let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+    let count = unsafe { sscanf_direct(s, format, ap) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, count == libc::EOF);
+    count
 }
 
 /// POSIX `fscanf` — scan formatted input from stream.
@@ -9384,35 +9598,16 @@ pub unsafe extern "C" fn vsscanf(
         return -1;
     }
 
-    // PERF (bd-2g7oyh):
-    // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
-    // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
-    // keeps the allocation-bound EOF branch for fl-tracked unterminated buffers.
-    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
-    if !input_terminated {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
-    let Some((result, directives)) = scanf_core(input, format) else {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    };
-
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    // Write scanned values via raw va_list pointer.
-    // SAFETY: On x86_64 Linux, the raw va_list pointer has the same layout
-    // as Rust's VaListImpl. We transmute to access arg().
-    unsafe {
-        vscanf_write_values(&result.values, &directives, ap);
-    }
-
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    // PERF: this is the entry point that REAL programs reach. Compiled against
+    // modern glibc headers, a C caller's `sscanf` is redirected to
+    // `__isoc99_sscanf` / `__isoc23_sscanf`, both of which land here — so the
+    // exact-format leaf sitting on the bare `sscanf` symbol was unreachable from
+    // ordinary binaries and this path paid the full allocate-parse-allocate-scan
+    // -allocate-write cost. The direct engine streams the format and writes each
+    // destination as its directive completes.
+    let count = unsafe { sscanf_direct(s, format, ap) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, count == libc::EOF);
+    count
 }
 
 /// POSIX `vfscanf` — scan formatted input from stream with va_list.
@@ -9498,18 +9693,9 @@ pub(crate) unsafe fn vscanf_write_values(
     directives: &[ScanDirective],
     ap: *mut c_void,
 ) {
-    // On x86_64, the va_list structure fields:
-    // gp_offset (u32) at +0: offset into reg_save_area for next GP register arg
-    // fp_offset (u32) at +4: offset into reg_save_area for next FP register arg
-    // overflow_arg_area (*mut u8) at +8: pointer to next stack argument
-    // reg_save_area (*mut u8) at +16: saved register area
-    //
-    // For pointer arguments (all scanf destinations), gp_offset < 48 means
-    // the arg is in a register save slot; otherwise it's in overflow_arg_area.
-    let gp_offset_ptr = ap as *mut u32;
-    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
-    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
-
+    // One destination pointer per non-suppressed conversion, in directive order
+    // — the same walk [`VaPtrCursor`] performs for the direct engine.
+    let mut cursor = VaPtrCursor::new(ap);
     let mut val_idx = 0usize;
     for dir in directives {
         if let ScanDirective::Spec(spec) = dir {
@@ -9520,23 +9706,9 @@ pub(crate) unsafe fn vscanf_write_values(
                 break;
             }
 
-            // Extract the next pointer argument from va_list.
-            let dest_ptr: *mut c_void = unsafe {
-                let gp_off = *gp_offset_ptr;
-                if gp_off < 48 {
-                    // Read from register save area.
-                    let p = (*reg_save_ptr).add(gp_off as usize) as *mut *mut c_void;
-                    *gp_offset_ptr = gp_off + 8;
-                    *p
-                } else {
-                    // Read from overflow area.
-                    let p = *overflow_ptr as *mut *mut c_void;
-                    *overflow_ptr = (*overflow_ptr).add(8);
-                    *p
-                }
-            };
-
-            // Write the value through the pointer.
+            // SAFETY: the caller passed one pointer per non-suppressed
+            // conversion; `val_idx < values.len()` bounds the requests.
+            let dest_ptr = unsafe { cursor.next_ptr() };
             unsafe {
                 vscanf_write_one(&values[val_idx], spec, dest_ptr);
             }

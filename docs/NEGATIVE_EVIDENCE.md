@@ -26617,3 +26617,68 @@ failed. Evidence and harness only; no production optimization attempted.
   shape together with unrelated `strfmon`/`unistd` work; that leaf is covered by
   this REJECT and should be re-measured or removed independently of the rest of
   that commit.
+
+## REJECT `sscanf-direct-engine-2026-07-31` — the allocation-free scanf engine is performance-neutral
+
+- **THE PREDICTION.** FrankenLibC's `sscanf` reached glibc parity only through an
+  exact-format leaf that matched `%d`, `%d %d`, and `%d %d %d` on the bare
+  `sscanf` symbol. Modern glibc headers redirect a C caller's `sscanf` to
+  `__isoc99_sscanf` (`-std=c99`) or `__isoc23_sscanf` (gcc 15's default
+  `-std=gnu23`) — on this host `gcc -O2` emits an undefined reference to
+  `__isoc23_sscanf@GLIBC_2.38` and never to bare `sscanf`, with or without
+  `_GNU_SOURCE`. Both shims funnel into `vsscanf`, which had no leaf at all and
+  ran the batch engine: `parse_scanf_format` (a `Vec<ScanDirective>`), then
+  `scan_input` (a `Vec<ScanValue>`, plus one `Vec<u8>` per `%s`/`%c`/`%[`
+  field), then a second walk to write the destinations. Three heap allocations
+  per call, on the highest-traffic parsing function in libc, before one byte
+  reaches the caller. Predicted multiples.
+- **WHAT WAS BUILT.** A single-pass engine: `next_scanf_directive` streams the
+  format one directive at a time (and `parse_scanf_format` is now defined in
+  terms of it, so they cannot drift), `ScanSpec::scan_emit_at` returns matched
+  text as a byte extent instead of a `Vec`, and each destination is written
+  through a `VaPtrCursor` the moment its directive completes. Zero allocations.
+  Wired into `vsscanf` (serving `__isoc99_sscanf`, `__isoc23_sscanf`,
+  `_IO_sscanf`, `__vsscanf`) and `sscanf`.
+- **REFUTED, AND THE BASE ARM IS WHY.** Measured base-vs-candidate on the same
+  harness, in both loader modes, `--pin-quietest 2`, 600k reps/arm, 36 retained
+  samples, 1 observed thread. The BASE tree already posted the candidate's
+  ratios, case for case: `%d` 0.798/0.814, `%lx` 0.748/0.720, `%[^=]` 0.816/0.866,
+  `%s` 1.086/1.081, `%s %s` 1.255/1.251 (base/cand, plain `dlopen`). Under
+  `RTLD_DEEPBIND`: `%d` 0.857/0.850, `%lx` 0.776/0.759, `%s %s` 1.382/1.388,
+  `%s %d %lf` 1.379/1.367. **Removing every allocation moved nothing.**
+- **THE LOADER MODE IS NOT A DETAIL — IT WAS THE WHOLE ORIGINAL SIGNAL.** A
+  plain `dlopen` of the FrankenLibC object leaves host libc first in the global
+  scope, so FrankenLibC's internal calls to its own exported symbols — `malloc`
+  above all — bind to GLIBC. An `LD_PRELOAD` deployment binds them to
+  FrankenLibC. A first probe under `RTLD_DEEPBIND` (the deployed binding) showed
+  `__isoc23_sscanf` at 3.88x, `%s` at 4.14x and `%[^=]=%s` at 6.53x against
+  glibc; the same probe without `RTLD_DEEPBIND` showed **1.00x on every case**,
+  because it was timing glibc's `vsscanf` against itself. `--fl-deepbind` was
+  added to the incumbent harness for this reason and applies to every family in
+  that file, not just this one. ⚠️ Any past ratio from that harness for an fl
+  function that calls another EXPORTED fl symbol was measured with glibc's
+  implementation underneath it.
+- **TWO WRONG HYPOTHESES, BOTH KILLED BY MEASUREMENT.** (1) `%[` was 2.01x
+  slower and the scanset parser built a `[bool; 256]` then packed it with a
+  256-iteration loop per call; replacing that with direct bitmap writes moved it
+  to 2.01x — no change. (2) The 2.01x itself was an artifact: adding two
+  unrelated cases to the harness array moved the same case, same production
+  code, to 0.936x. Do not size a scanf lever from a single run of this family.
+- **CONFORMANCE WAS NEVER THE PROBLEM.** 42 comparisons (7 timed shapes + 35
+  edges) each checking the return value AND the complete destination block,
+  covering EOF, matching failure, suppression, widths, scansets, `%n`, hex
+  floats, octal, auto-base and every length modifier: **0 mismatches**,
+  byte-identical to live glibc. Plus the five existing scanf differential fuzz
+  suites and 72 core unit tests.
+- **DISPOSITION.** The engine is KEPT — it is conformance-clean, does strictly
+  less work per call, and honours the GNU `m` modifier on the `va_list` entry
+  points (`vscanf_write_one` ignored `spec.alloc`, so `%ms` via
+  `__isoc99_sscanf`/`__isoc23_sscanf` wrote the matched text over the caller's
+  `char *` variable instead of allocating). But it is kept on those grounds, NOT
+  as a performance win: **there is none.** Do not re-derive a scanf perf claim
+  from allocation removal — it is already gone.
+- **THE REAL STANDING GAP, MEASURED.** `%s`-bearing multi-directive shapes lose
+  to glibc across four independent runs and both loader modes: `%s %s` 1.38x,
+  `%s %d %lf` 1.40x, `%s` 1.21x, `%d.%d.%d.%d` 1.11x — while the pure numeric
+  shapes WIN (`%lx` 0.71x, `%d` 0.78x, `%[^=]` 0.84x). It is not allocation and
+  not the scanset. That is the next lever, and it needs a profile, not a guess.

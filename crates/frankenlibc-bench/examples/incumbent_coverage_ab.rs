@@ -35,7 +35,7 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|wcsnrtombs`
+//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -45,7 +45,7 @@
 //! records `allowed_cpus`/`affinity_mask` so the scope stays auditable.
 
 use std::collections::BTreeMap;
-use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::os::unix::ffi::OsStrExt;
@@ -72,6 +72,11 @@ const F32_HYPERBOLIC_REPS: usize = 1_000_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
 const GETHOSTBYNAME_REPS: usize = 5_000;
 const SNPRINTF_REPS: usize = 200_000;
+// 200_000 left the A/A nulls at 5-11% half-width on a shared worker, which made
+// three real effects (`%d` at 0.889, `%s` at 1.120, the dotted quad at 1.124)
+// undecidable against noise rather than against glibc. More reps per batch
+// shrinks the null, not the effect.
+const SSCANF_REPS: usize = 600_000;
 const WCSNRTOMBS_CODEPOINTS_PER_ARM: usize = 20_000_000;
 const WCSNRTOMBS_MIN_REPS: usize = 2_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
@@ -109,6 +114,11 @@ type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent
 /// two arms could diverge on register-save work that has nothing to do with the
 /// formatter under test. The variadic type makes both arms use the real ABI.
 type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+/// `vsscanf` is the shared engine every `sscanf`/`__isoc99_sscanf`/
+/// `__isoc23_sscanf` call reaches, and it takes an explicit `va_list` pointer —
+/// so both arms are called through one non-variadic signature with no register-
+/// save-area asymmetry to confound the comparison.
+type VsscanfFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> c_int;
 type WcsnrtombsFn = unsafe extern "C" fn(
     *mut c_char,
     *mut *const libc::wchar_t,
@@ -175,6 +185,8 @@ unsafe extern "C" {
         format: *const c_char,
         ...
     ) -> c_int;
+    #[link_name = "vsscanf"]
+    fn linked_host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
     #[link_name = "wcsnrtombs"]
     fn linked_host_wcsnrtombs(
         destination: *mut c_char,
@@ -321,6 +333,10 @@ struct Config {
     pin_quietest: usize,
     /// Parent mode: run each named family in its own fresh child process.
     families: Vec<String>,
+    /// Load the FrankenLibC object with `RTLD_DEEPBIND`, so its own exported
+    /// symbols (notably `malloc`) bind to FrankenLibC the way `LD_PRELOAD`
+    /// deployment binds them, instead of to the already-global host libc.
+    fl_deepbind: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -338,6 +354,7 @@ enum Family {
     Snprintf,
     SnprintfFused,
     SnprintfFloat,
+    Sscanf,
     Wcsnrtombs,
 }
 
@@ -579,12 +596,15 @@ fn parse_args() -> Config {
     let mut verify_only = false;
     let mut family = Family::NlLanginfo;
     let mut pin_quietest = 0usize;
+    let mut fl_deepbind = false;
     let mut families = Vec::new();
     while let Some(arg) = args.next() {
         if arg == "--fl-so" {
             fl_so = args.next().map(PathBuf::from);
         } else if arg == "--verify-only" {
             verify_only = true;
+        } else if arg == "--fl-deepbind" {
+            fl_deepbind = true;
         } else if arg == "--pin-quietest" {
             pin_quietest = args
                 .next()
@@ -616,11 +636,12 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
                 Some(value) if value == OsStr::new("snprintf_fused") => Family::SnprintfFused,
                 Some(value) if value == OsStr::new("snprintf_float") => Family::SnprintfFloat,
+                Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
                      sem_post, thrd_current, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
-                     gethostbyaddr, gethostbyname, snprintf, or wcsnrtombs"
+                     gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
             };
         } else {
@@ -631,6 +652,7 @@ fn parse_args() -> Config {
                  [--family \
                   nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
+                  sscanf|\
                   wcsnrtombs]"
             );
         }
@@ -649,6 +671,7 @@ fn parse_args() -> Config {
         family,
         pin_quietest,
         families,
+        fl_deepbind,
     }
 }
 
@@ -782,6 +805,9 @@ fn run_families(config: &Config) -> ! {
         command.arg("--fl-so").arg(&config.fl_so);
         if config.verify_only {
             command.arg("--verify-only");
+        }
+        if config.fl_deepbind {
+            command.arg("--fl-deepbind");
         }
         if config.pin_quietest > 0 {
             command.arg("--pin-quietest").arg(config.pin_quietest.to_string());
@@ -5607,6 +5633,599 @@ fn measure_snprintf_case(
     )
 }
 
+// ---------------------------------------------------------------------------
+// sscanf — the entry point real C programs actually link
+// ---------------------------------------------------------------------------
+//
+// A C caller's `sscanf` is redirected by modern glibc headers to
+// `__isoc99_sscanf` (`-std=c99`) or `__isoc23_sscanf` (gcc 15's default
+// `-std=gnu23`); on this host `gcc -O2` emits an undefined reference to
+// `__isoc23_sscanf@GLIBC_2.38` and never to bare `sscanf`. Both shims funnel
+// into `vsscanf`, which is therefore the function that decides what every real
+// program pays. Timing `vsscanf` directly also removes a measurement hazard:
+// under plain `dlopen` the FrankenLibC shims' call to their OWN exported
+// `vsscanf` is resolved by the loader to the already-global host libc, so an
+// arm built on `__isoc23_sscanf` would silently time glibc against glibc.
+//
+// The `va_list` is built by hand rather than through a Rust variadic wrapper.
+// Every scanf destination is a pointer (SysV INTEGER class), so setting
+// `gp_offset = 48` parks all arguments in the overflow area: `va_arg(ap, T*)`
+// then reads them straight out of `overflow_arg_area` for BOTH arms, with no
+// register-save-area asymmetry between them. This is verified against glibc
+// before any timing by the conformance pass below.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct VaListTag {
+    gp_offset: c_uint,
+    fp_offset: c_uint,
+    overflow_arg_area: *mut c_void,
+    reg_save_area: *mut c_void,
+}
+
+impl VaListTag {
+    /// All arguments in the overflow area (`gp_offset`/`fp_offset` past their
+    /// register-save limits of 48 and 304).
+    fn overflow(destinations: &mut [*mut c_void]) -> Self {
+        Self {
+            gp_offset: 48,
+            fp_offset: 304,
+            overflow_arg_area: destinations.as_mut_ptr().cast(),
+            reg_save_area: std::ptr::null_mut(),
+        }
+    }
+}
+
+/// Destination block for one scanf call: enough slots for the widest case here,
+/// plus generously sized text buffers a `%s` cannot overrun.
+struct ScanDestinations {
+    ints: [c_int; 4],
+    long_value: c_long,
+    double_value: f64,
+    text: [u8; 128],
+    other: [u8; 128],
+}
+
+impl ScanDestinations {
+    fn new() -> Self {
+        Self {
+            ints: [0; 4],
+            long_value: 0,
+            double_value: 0.0,
+            text: [0; 128],
+            other: [0; 128],
+        }
+    }
+
+    fn reset(&mut self) {
+        self.ints = [0; 4];
+        self.long_value = 0;
+        self.double_value = 0.0;
+        self.text = [0; 128];
+        self.other = [0; 128];
+    }
+}
+
+/// One measured scanf shape: an input, a format, and the destination pointers it
+/// needs, in argument order.
+struct ScanCase {
+    label: &'static str,
+    note: &'static str,
+    input: &'static CStr,
+    format: &'static CStr,
+    destinations: fn(&mut ScanDestinations) -> Vec<*mut c_void>,
+}
+
+const SSCANF_CASES: &[ScanCase] = &[
+    ScanCase {
+        label: "single_int",
+        note: "\"%d\" -- the single most common scanf shape (config/proc parsing)",
+        input: c"12345",
+        format: c"%d",
+        destinations: |d| vec![d.ints.as_mut_ptr().cast()],
+    },
+    ScanCase {
+        label: "two_ints",
+        note: "\"%d %d\" -- coordinate/pair parsing",
+        input: c"12 34",
+        format: c"%d %d",
+        destinations: |d| {
+            vec![
+                std::ptr::addr_of_mut!(d.ints[0]).cast(),
+                std::ptr::addr_of_mut!(d.ints[1]).cast(),
+            ]
+        },
+    },
+    ScanCase {
+        label: "dotted_quad",
+        note: "\"%d.%d.%d.%d\" -- literal-separated ints, the IPv4 shape",
+        input: c"192.168.1.1",
+        format: c"%d.%d.%d.%d",
+        destinations: |d| {
+            vec![
+                std::ptr::addr_of_mut!(d.ints[0]).cast(),
+                std::ptr::addr_of_mut!(d.ints[1]).cast(),
+                std::ptr::addr_of_mut!(d.ints[2]).cast(),
+                std::ptr::addr_of_mut!(d.ints[3]).cast(),
+            ]
+        },
+    },
+    ScanCase {
+        label: "string_token",
+        note: "\"%s\" -- whitespace-delimited token; the shape that allocated per field",
+        input: c"alpha beta",
+        format: c"%s",
+        destinations: |d| vec![d.text.as_mut_ptr().cast()],
+    },
+    ScanCase {
+        label: "key_value",
+        note: "\"%[^=]=%s\" -- scanset + string, the config-line shape",
+        input: c"loglevel=debug",
+        format: c"%[^=]=%s",
+        destinations: |d| {
+            vec![
+                d.text.as_mut_ptr().cast(),
+                d.other.as_mut_ptr().cast(),
+            ]
+        },
+    },
+    // Decomposition of `key_value`, which is the family's one large loss.
+    // `scanset_only` has the same destination count and input as
+    // `string_token`, so the pair isolates the cost of a `%[` directive from
+    // the cost of a `%s`; `two_strings` has `key_value`'s destination count and
+    // directive count with no scanset, isolating the multi-directive cost.
+    ScanCase {
+        label: "scanset_only",
+        note: "\"%[^=]\" alone -- isolates one scanset directive against %s",
+        input: c"loglevel=debug",
+        format: c"%[^=]",
+        destinations: |d| vec![d.text.as_mut_ptr().cast()],
+    },
+    ScanCase {
+        label: "two_strings",
+        note: "\"%s %s\" -- key_value's shape without the scanset",
+        input: c"alpha beta",
+        format: c"%s %s",
+        destinations: |d| {
+            vec![
+                d.text.as_mut_ptr().cast(),
+                d.other.as_mut_ptr().cast(),
+            ]
+        },
+    },
+    ScanCase {
+        label: "mixed_record",
+        note: "\"%s %d %lf\" -- string + int + double, a whole log/CSV record",
+        input: c"sensor 42 3.14159",
+        format: c"%s %d %lf",
+        destinations: |d| {
+            vec![
+                d.text.as_mut_ptr().cast(),
+                std::ptr::addr_of_mut!(d.ints[0]).cast(),
+                std::ptr::addr_of_mut!(d.double_value).cast(),
+            ]
+        },
+    },
+    ScanCase {
+        label: "long_hex",
+        note: "\"%lx\" -- hexadecimal long, the address/mask shape",
+        input: c"deadbeefcafe",
+        format: c"%lx",
+        destinations: |d| vec![std::ptr::addr_of_mut!(d.long_value).cast()],
+    },
+];
+
+/// Run one case through one provider, returning the C return value.
+fn sscanf_probe(function: VsscanfFn, case: &ScanCase, destinations: &mut ScanDestinations) -> c_int {
+    destinations.reset();
+    let mut slots = (case.destinations)(destinations);
+    let mut ap = VaListTag::overflow(&mut slots);
+    unsafe {
+        function(
+            case.input.as_ptr(),
+            case.format.as_ptr(),
+            std::ptr::addr_of_mut!(ap).cast(),
+        )
+    }
+}
+
+/// Every case, on both providers, compared on the return value AND the complete
+/// destination block — so a wrong int, a missing NUL, or a stray byte past the
+/// token all fail here before anything is timed.
+fn check_sscanf_conformance(host: VsscanfFn, fl: VsscanfFn) -> (usize, usize) {
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+    // Beyond the timed cases: edge inputs that exercise EOF, matching failure,
+    // suppression, widths, %n and the signed/unsigned boundaries.
+    let edges: &[(&CStr, &CStr)] = &[
+        (c"", c"%d"),
+        (c"   ", c"%d"),
+        (c"abc", c"%d"),
+        (c"-2147483648", c"%d"),
+        (c"2147483647", c"%d"),
+        (c"99999999999999999999", c"%d"),
+        (c"+7", c"%d"),
+        (c"  -42xyz", c"%d"),
+        (c"12", c"%d %d"),
+        (c"12 ", c"%d %d"),
+        (c"0x1f", c"%x"),
+        (c"0755", c"%o"),
+        (c"0x10", c"%i"),
+        (c"12345678", c"%3d"),
+        (c"hello", c"%3s"),
+        (c"hello world", c"%*s %s"),
+        (c"abc", c"%c"),
+        (c"abc", c"%3c"),
+        (c"aaabbb", c"%[a]"),
+        (c"aaabbb", c"%[^b]"),
+        (c"]x", c"%[]]"),
+        (c"a-c", c"%[a-c]"),
+        (c"12 34", c"%d%n"),
+        (c"3.14e2", c"%lf"),
+        (c"nan", c"%lf"),
+        (c"-inf", c"%lf"),
+        (c"0x1p3", c"%lf"),
+        (c"  1.5  ", c"%lf"),
+        (c"x=1", c"x=%d"),
+        (c"y=1", c"x=%d"),
+        (c"a b", c"%s%s"),
+        (c"ff", c"%hhx"),
+        (c"70000", c"%hd"),
+    ];
+
+    let mut host_destinations = ScanDestinations::new();
+    let mut fl_destinations = ScanDestinations::new();
+
+    for case in SSCANF_CASES {
+        comparisons += 1;
+        let host_returned = sscanf_probe(host, case, &mut host_destinations);
+        let fl_returned = sscanf_probe(fl, case, &mut fl_destinations);
+        if !compare_scan_destinations(
+            case.label,
+            &case.input.to_string_lossy(),
+            &case.format.to_string_lossy(),
+            host_returned,
+            fl_returned,
+            &host_destinations,
+            &fl_destinations,
+        ) {
+            mismatches += 1;
+        }
+    }
+
+    for (input, format) in edges {
+        // Every edge is scanned with four destination slots so a format that
+        // assigns more fields than the timed cases still has somewhere to write.
+        comparisons += 1;
+        let edge = ScanCase {
+            label: "edge",
+            note: "",
+            input,
+            format,
+            destinations: |d| {
+                vec![
+                    d.text.as_mut_ptr().cast(),
+                    d.other.as_mut_ptr().cast(),
+                    std::ptr::addr_of_mut!(d.ints[2]).cast(),
+                    std::ptr::addr_of_mut!(d.ints[3]).cast(),
+                ]
+            },
+        };
+        let host_returned = sscanf_probe(host, &edge, &mut host_destinations);
+        let fl_returned = sscanf_probe(fl, &edge, &mut fl_destinations);
+        if !compare_scan_destinations(
+            "edge",
+            &input.to_string_lossy(),
+            &format.to_string_lossy(),
+            host_returned,
+            fl_returned,
+            &host_destinations,
+            &fl_destinations,
+        ) {
+            mismatches += 1;
+        }
+    }
+
+    (comparisons, mismatches)
+}
+
+fn compare_scan_destinations(
+    case: &str,
+    input: &str,
+    format: &str,
+    host_returned: c_int,
+    fl_returned: c_int,
+    host: &ScanDestinations,
+    fl: &ScanDestinations,
+) -> bool {
+    let same = host_returned == fl_returned
+        && host.ints == fl.ints
+        && host.long_value == fl.long_value
+        && host.double_value.to_bits() == fl.double_value.to_bits()
+        && host.text == fl.text
+        && host.other == fl.other;
+    if same {
+        return true;
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE_MISMATCH symbol=sscanf case={case} \
+         input={input:?} format={format:?} glibc_return={host_returned} \
+         fl_return={fl_returned} glibc_ints={:?} fl_ints={:?} \
+         glibc_long={:#x} fl_long={:#x} glibc_double={:?} fl_double={:?} \
+         glibc_text={:?} fl_text={:?} glibc_other={:?} fl_other={:?}",
+        host.ints,
+        fl.ints,
+        host.long_value,
+        fl.long_value,
+        host.double_value,
+        fl.double_value,
+        String::from_utf8_lossy(&host.text[..32]),
+        String::from_utf8_lossy(&fl.text[..32]),
+        String::from_utf8_lossy(&host.other[..32]),
+        String::from_utf8_lossy(&fl.other[..32]),
+    );
+    false
+}
+
+/// SENSITIVITY. `sscanf_probe` is right for conformance and wrong for timing:
+/// it allocates a `Vec` of destination slots and zeroes a 288-byte block on
+/// every call. Both arms pay it, so it does not bias which arm wins — but it
+/// added roughly 130 ns to a call whose real cost is ~50 ns, dragging every
+/// ratio toward 1.0 and swamping the effects this family exists to resolve.
+/// The timed loop therefore builds the slot array ONCE and rebuilds only the
+/// four-word `va_list` header per iteration, which is all a real C caller's
+/// `sscanf` call site does. The destinations are not re-zeroed: both providers
+/// overwrite exactly the fields they assign, and conformance is already settled
+/// before any timing runs.
+#[inline(never)]
+fn run_sscanf_batch(function: VsscanfFn, case: &ScanCase) -> u64 {
+    let mut destinations = ScanDestinations::new();
+    let mut slots = (case.destinations)(&mut destinations);
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for _ in 0..SSCANF_REPS {
+        let mut ap = VaListTag::overflow(&mut slots);
+        let returned = unsafe {
+            function(
+                case.input.as_ptr(),
+                case.format.as_ptr(),
+                std::ptr::addr_of_mut!(ap).cast(),
+            )
+        };
+        accumulator ^= returned as u64;
+        accumulator = accumulator.wrapping_mul(0x1_0000_01b3);
+        black_box(&destinations.text[0]);
+    }
+    accumulator
+}
+
+fn measure_sscanf_case(case: &'static ScanCase, host: VsscanfFn, fl: VsscanfFn) -> CaseResult {
+    let time_batch = |function: VsscanfFn| -> f64 {
+        let started = Instant::now();
+        black_box(run_sscanf_batch(function, case));
+        started.elapsed().as_secs_f64() * 1_000_000_000.0 / SSCANF_REPS as f64
+    };
+
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_batch(fl);
+                    fb = time_batch(fl);
+                }
+                0 => {
+                    fb = time_batch(fl);
+                    fa = time_batch(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_batch(host);
+                    gb = time_batch(host);
+                }
+                1 => {
+                    gb = time_batch(host);
+                    ga = time_batch(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_batch(fl);
+                    effect_glibc = time_batch(host);
+                }
+                2 => {
+                    effect_glibc = time_batch(host);
+                    effect_fl = time_batch(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        SSCANF_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+fn run_sscanf(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    // DEPLOYMENT FIDELITY. FrankenLibC ships via `LD_PRELOAD`, which puts it
+    // FIRST in the global symbol scope, so its internal calls to its own
+    // exported symbols — `malloc` above all — bind to FrankenLibC. A plain
+    // `dlopen` inverts that: host libc is already global, so fl's internal
+    // `malloc`/`memcpy` resolve to GLIBC's, and any measurement of an
+    // allocation-heavy fl path is really measuring glibc's allocator wearing
+    // fl's algorithm. `RTLD_DEEPBIND` restores the deployed binding.
+    //
+    // This is not a detail: the batch scanf path allocated three times per
+    // call, and those allocations are free-ish in glibc's allocator and
+    // expensive in FrankenLibC's tracked one. Which loader mode you pick
+    // decides whether you can see that at all.
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=vsscanf deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen_host_libc_wins_interposition"
+        }
+    );
+    let fl_symbol = unsafe { libc::dlsym(handle, c"vsscanf".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC vsscanf")
+    );
+
+    let host: VsscanfFn = linked_host_vsscanf;
+    let fl: VsscanfFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host vsscanf object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC vsscanf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=vsscanf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=vsscanf");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both vsscanf arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=sscanf incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    let (comparisons, mismatches) = check_sscanf_conformance(host, fl);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=sscanf comparisons={comparisons} \
+         mismatches={mismatches} compared=return_value_and_full_destination_block \
+         covers=int,width,suppression,scanset,string,char,float,hexfloat,octal,\
+autobase,percent_n,length_modifiers,eof,match_failure verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=sscanf phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=sscanf verdict={conformance_verdict}");
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(
+        mismatches, 0,
+        "sscanf arms are not observationally equivalent; refusing to time them"
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+
+    let results = SSCANF_CASES
+        .iter()
+        .map(|case| measure_sscanf_case(case, host, fl))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print("sscanf", &incumbent_identity.path, threads_pre, threads_post);
+    }
+
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let headline = results
+        .iter()
+        .find(|result| result.label == "single_int")
+        .expect("missing single_int result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=sscanf verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={} \
+         headline_case=single_int headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        results.len() - wins - losses,
+        headline.effect_median,
+    );
+
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn run_snprintf(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
@@ -5828,6 +6447,7 @@ fn main() {
         Family::Snprintf => run_snprintf(&config),
         Family::SnprintfFused => run_snprintf_fused(&config),
         Family::SnprintfFloat => run_snprintf_float(&config),
+        Family::Sscanf => run_sscanf(&config),
         // Peer-owned family (WildRaven): the variant and its batch helper have
         // landed but the top-level runner has not. This arm only keeps the
         // shared example compiling for every other family; replace it with the
