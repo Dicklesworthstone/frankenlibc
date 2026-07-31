@@ -378,7 +378,7 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   before an agent interrupt stopped only silent artifact retrieval. Focused
   `rustfmt --check` and `git diff --check` pass; no stash was modified.
 
-## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: strict `nl_langinfo` reads the immutable C-locale table directly (`bd-ak6fvz`)
+## 2026-07-16 (cod / codex-root) — COMPETITIVE REJECTED / SHIPPED MAINTENANCE: strict `nl_langinfo` reads the immutable C-locale table directly (`bd-ak6fvz`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
   surfaced broad correctness work and a peer-owned malloc bead. The initial
@@ -419,6 +419,49 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   The temporary incumbent wrapper and benchmark arms were removed, leaving a
   production-only diff. The release build completed with only pre-existing
   warnings; focused `rustfmt --check` and `git diff --check` pass.
+- **2026-07-30 LIVE-INCUMBENT CONVERSION / LOSS.** The historical **117.97x**
+  result remains a valid same-binary FrankenLibC-before versus
+  FrankenLibC-after self-speedup, but that is maintenance, not a competitive
+  win. A new same-invocation harness directly linked host glibc and loaded the
+  FrankenLibC release object with `dlopen(RTLD_NOW | RTLD_LOCAL)`. It proved
+  different serving-object hashes and symbol addresses, then byte-compared all
+  **63** supported C-locale selectors (**64** comparisons including the repeated
+  `CODESET`) before timing. On the historical `CODESET` selector, FrankenLibC
+  measured **5.097 ns** versus glibc **3.816 ns**: `FL/glibc =
+  1.377637` `[1.286098, 1.482742]`, a decisive **FrankenLibC loss**. Across the
+  full supported-table cycle it measured **5.923 ns** versus glibc **3.688 ns**:
+  `FL/glibc = 1.603033` `[1.518974, 1.688317]`, also a decisive loss.
+- **CORRECTED SAME-INVOCATION NULL GATE.** `CODESET` FL/FL had bootstrap
+  median 95% CI `1.015842` `[0.943215, 1.094163]`, and glibc/glibc had
+  bootstrap median 95% CI `0.993086` `[0.915330, 1.035950]`; both medians
+  satisfy the pre-registered **±2%** clause. The widest null half-width was
+  `0.094163`, the effect interval
+  excluded 1, and the effect magnitude cleared twice the null width. The
+  full-table FL/FL median was `0.989386` and glibc/glibc was `1.014894`, also
+  inside ±2%; its effect cleared the `0.078769` widest null half-width. CI
+  straddling is not a null veto, and CV/MAD remain provenance telemetry only.
+  The weekday and month side panels are **UNDECIDABLE**, not losses: their
+  glibc/glibc null medians were respectively `1.034796` and `1.027497`
+  (weekday FL/FL was also `1.038083`). Retry only after a pre-registered harness
+  or booking supplies equal positional-order cells and two consecutive
+  calibration passes whose FL/FL and glibc/glibc medians all satisfy ±2%.
+- **FULL EXECUTION CONTRACT.** `INCUMBENT_LINKAGE
+  direct_process_link symbol=nl_langinfo`; `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libc.so.6 bytes=2326088
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT bytes=22003880
+  sha256=f682b39b6ffd23b0e1a540229e424fd3ca093a6cb03e29223f05034c44dc0e5e`;
+  `BENCH_ELF_OBJECT bytes=725304
+  sha256=fe11e9dd7c15528af0901af61a391b24d2f0a9bce1fe15da05c078ffe25e0f09`.
+  The process self-reported host `vmi1156319` and actually observed **1**
+  thread both before and after timing. Host-wide guards passed before timing
+  (8 physical/8 logical CPUs, AVX2/FMA/BMI, 55 samples over 55.1 s, maximum
+  busy fraction `0.163`) and after timing (5 samples over 5.005 s, maximum
+  `0.081`). The strict-remote invocation used
+  `RCH_REQUIRE_REMOTE=1 RCH_DISABLE_TARGET_REUSE=0 rch exec --base 9e7265b5d
+  --clean-overlay` with only the benchmark manifest and source as explicit
+  overlays, `env -u CARGO_TARGET_DIR`, and the shared RCH target pool. No local
+  Cargo or per-run target directory participated.
 
 ## 2026-07-15 (cod / codex-root) — WIN / SHIPPED: `getauxval` publishes one bootstrap-safe auxv snapshot (`bd-92b6bz`)
 
