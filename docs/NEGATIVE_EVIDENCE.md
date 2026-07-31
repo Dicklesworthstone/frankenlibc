@@ -1081,7 +1081,54 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   Remote builds emitted only pre-existing warnings in untouched files. No
   `release-perf`, local Cargo fallback, stash change, or timeout-based verdict occurred.
 
-## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: strict `mtx_trylock` skips redundant allocation-bounds lookup (`bd-d8f9sm`)
+## 2026-07-15 (cod / BlackThrush) — MAINTENANCE (SHIPPED SELF-SPEEDUP; COMPETITIVE LOSS): strict `mtx_trylock` skips redundant allocation-bounds lookup (`bd-d8f9sm`)
+
+- **RESULT CLASS / 2026-07-31 LIVE-INCUMBENT ADJUDICATION:**
+  `result_class=self-speedup`. The shipped **1.24x** before/after FrankenLibC
+  speedup remains maintenance evidence; it is not a campaign win. On the exact
+  historical already-owned plain-mutex busy path, deployed FrankenLibC is
+  **1.227028x slower** than actual host glibc in the same invocation
+  (bootstrap median 95% CI **[1.187411, 1.285681]**): **0 WIN, 1 LOSE,
+  0 undecidable**.
+- **MACHINE-READABLE INCUMBENT EVIDENCE.**
+  `INCUMBENT_LINKAGE direct_process_link symbol=mtx_trylock`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT
+  sha256=feae9431aadd0697cc3afb95b8b985e277d057f873046f87ea06dcd32d852667`;
+  `BENCH_ELF_OBJECT
+  sha256=aea3a830427f34b94f3f8138f7fc6aa3763cbf98328ba213f0d3df796ee36dd7`;
+  `kind=fl_glibc symbol=mtx_trylock case=already_owned_busy
+  glibc_median_ns=7.063 ratio_median=1.227028
+  ratio_ci95=[1.187411,1.285681]`.
+- **CORRECTED NULL GATE.** FrankenLibC/FrankenLibC A/A has median
+  **1.009406** with bootstrap median CI **[0.975217, 1.038338]**;
+  glibc/glibc A/A has median **1.007479** with CI
+  **[0.993488, 1.031775]**. Both medians satisfy the corrected ±2% clause.
+  The wider null half-width is **0.038338**, while the FL/glibc effect's
+  **0.227028** distance from parity clears the mandatory 2× margin. CI
+  straddling is not a veto and CV is telemetry only (`cv_used=false`).
+- **BEHAVIOR / IDENTITY / ROUTING.** Before timing, the same release process
+  compared **8** provider-specific `mtx_init`, first-lock success,
+  already-owned busy, and `mtx_unlock` outcomes exactly, using separate mutex
+  objects. It directly linked the uninterposed host symbol, explicitly
+  `dlopen`ed FrankenLibC, and proved distinct provider objects and addresses.
+  The process self-reported host `vmi1264463`, one actual thread before and
+  after timing, FrankenLibC median **8.897 ns**, host-glibc median
+  **7.063 ns**, and the three ELF SHA-256 identities above. Host-wide 8-core
+  guards passed before timing (27 samples, maximum clear-window busy fraction
+  **0.020**) and after timing (28 samples, maximum **0.134**).
+  `rch exec --base 47d0a52b0 --clean-overlay` admitted only the harness
+  overlay; `env -u CARGO_TARGET_DIR` plus Cargo's explicit configuration
+  routed the outer and nested builds into the single reused
+  `/data/tmp/cargo-target-frankenlibc` directory. No local Cargo fallback or
+  per-run Cargo target participated.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** Keep the production optimization
+  as maintenance and retire the competitive claim. Reopen the live-incumbent
+  cycle only if `mtx_trylock` or its delegated pthread mutex path changes, or
+  a no-call-graph profile of this exact deployed busy path assigns at least
+  **3%** self-time to one named FrankenLibC-only frame; any new win must again
+  clear the corrected same-invocation null and 2× margin gates.
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
   the peer-owned allocator Swing-2 performance bead, so this turn pivoted to the

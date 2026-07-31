@@ -2,10 +2,10 @@
 //!
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
 //! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, waiter-aware
-//! `sem_post`, and inlined `thrd_current`. Their historical rows proved
-//! FrankenLibC self-speedups, but did not time live glibc in the same
-//! invocation. This harness closes those evidence gaps without changing
-//! production code.
+//! `sem_post`, inlined `thrd_current`, and strict `mtx_trylock`. Their
+//! historical rows proved FrankenLibC self-speedups, but did not time live
+//! glibc in the same invocation. This harness closes those evidence gaps
+//! without changing production code.
 //!
 //! Contract:
 //! - host glibc is linked normally and FrankenLibC is loaded from the release
@@ -28,7 +28,7 @@
 //!  cargo --config 'build.target-dir="/data/tmp/cargo-target-frankenlibc"' \
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
-//!  --family nl_langinfo|getrandom|getauxval|sem_post|thrd_current`
+//!  --family nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock`
 
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
@@ -48,6 +48,7 @@ const GETRANDOM_REPS: usize = 50_000;
 const GETAUXVAL_REPS: usize = 2_000_000;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
+const MTX_TRYLOCK_REPS: usize = 1_000_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 
@@ -61,6 +62,10 @@ type SemDestroyFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemPostFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type ThrdCurrentFn = unsafe extern "C" fn() -> libc::pthread_t;
+type MtxInitFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t, c_int) -> c_int;
+type MtxTrylockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
+type MtxUnlockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
+type MtxDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t);
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -83,6 +88,14 @@ unsafe extern "C" {
     fn linked_host_sem_trywait(sem: *mut libc::sem_t) -> c_int;
     #[link_name = "thrd_current"]
     fn linked_host_thrd_current() -> libc::pthread_t;
+    #[link_name = "mtx_init"]
+    fn linked_host_mtx_init(mtx: *mut libc::pthread_mutex_t, typ: c_int) -> c_int;
+    #[link_name = "mtx_trylock"]
+    fn linked_host_mtx_trylock(mtx: *mut libc::pthread_mutex_t) -> c_int;
+    #[link_name = "mtx_unlock"]
+    fn linked_host_mtx_unlock(mtx: *mut libc::pthread_mutex_t) -> c_int;
+    #[link_name = "mtx_destroy"]
+    fn linked_host_mtx_destroy(mtx: *mut libc::pthread_mutex_t);
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -196,6 +209,7 @@ enum Family {
     Getauxval,
     SemPost,
     ThrdCurrent,
+    MtxTrylock,
 }
 
 struct Case {
@@ -422,16 +436,18 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
+                Some(value) if value == OsStr::new("mtx_trylock") => Family::MtxTrylock,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
-                     sem_post, or thrd_current"
+                     sem_post, thrd_current, or mtx_trylock"
                 ),
             };
         } else {
             panic!(
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
                  [--fl-so PATH] [--verify-only] \
-                 [--family nl_langinfo|getrandom|getauxval|sem_post|thrd_current]"
+                 [--family \
+                  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock]"
             );
         }
     }
@@ -1150,6 +1166,102 @@ fn measure_thrd_current_case(host: ThrdCurrentFn, fl: ThrdCurrentFn) -> CaseResu
         "current_identity",
         "historical current-thread identity-cache lookup",
         THRD_CURRENT_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+#[inline(never)]
+fn run_mtx_trylock_batch(function: MtxTrylockFn, mutex: *mut libc::pthread_mutex_t) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..MTX_TRYLOCK_REPS {
+        let rc = unsafe { black_box(function)(black_box(mutex)) };
+        accumulator = accumulator.wrapping_add(black_box(rc as usize));
+    }
+    black_box(accumulator)
+}
+
+fn time_mtx_trylock_batch(function: MtxTrylockFn, mutex: *mut libc::pthread_mutex_t) -> f64 {
+    let started = Instant::now();
+    let accumulator = run_mtx_trylock_batch(function, mutex);
+    let elapsed = started.elapsed().as_secs_f64();
+    assert_eq!(
+        accumulator, MTX_TRYLOCK_REPS,
+        "mtx_trylock busy-path batch returned a non-busy result"
+    );
+    elapsed * 1_000_000_000.0 / MTX_TRYLOCK_REPS as f64
+}
+
+fn measure_mtx_trylock_case(
+    host: MtxTrylockFn,
+    fl: MtxTrylockFn,
+    host_mutex: *mut libc::pthread_mutex_t,
+    fl_mutex: *mut libc::pthread_mutex_t,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_mtx_trylock_batch(fl, fl_mutex);
+                    fb = time_mtx_trylock_batch(fl, fl_mutex);
+                }
+                0 => {
+                    fb = time_mtx_trylock_batch(fl, fl_mutex);
+                    fa = time_mtx_trylock_batch(fl, fl_mutex);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_mtx_trylock_batch(host, host_mutex);
+                    gb = time_mtx_trylock_batch(host, host_mutex);
+                }
+                1 => {
+                    gb = time_mtx_trylock_batch(host, host_mutex);
+                    ga = time_mtx_trylock_batch(host, host_mutex);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_mtx_trylock_batch(fl, fl_mutex);
+                    effect_glibc = time_mtx_trylock_batch(host, host_mutex);
+                }
+                2 => {
+                    effect_glibc = time_mtx_trylock_batch(host, host_mutex);
+                    effect_fl = time_mtx_trylock_batch(fl, fl_mutex);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        "already_owned_busy",
+        "historical already-owned plain-mutex busy path",
+        MTX_TRYLOCK_REPS,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -2095,6 +2207,220 @@ fn run_thrd_current(config: &Config) {
     }
 }
 
+fn verify_mtx_provider(
+    provider: &str,
+    init: MtxInitFn,
+    trylock: MtxTrylockFn,
+    unlock: MtxUnlockFn,
+    destroy: MtxDestroyFn,
+) {
+    let mut mutex: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+    let mutex_ptr = &mut mutex;
+    assert_eq!(
+        unsafe { init(mutex_ptr, 0) },
+        0,
+        "{provider} mtx_init(mtx_plain) failed"
+    );
+    assert_eq!(
+        unsafe { trylock(mutex_ptr) },
+        0,
+        "{provider} first mtx_trylock did not acquire the mutex"
+    );
+    assert_eq!(
+        unsafe { trylock(mutex_ptr) },
+        1,
+        "{provider} already-owned mtx_trylock did not return thrd_busy"
+    );
+    assert_eq!(
+        unsafe { unlock(mutex_ptr) },
+        0,
+        "{provider} mtx_unlock failed"
+    );
+    unsafe { destroy(mutex_ptr) };
+}
+
+fn run_mtx_trylock(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_init_symbol = unsafe { libc::dlsym(handle, c"mtx_init".as_ptr()) };
+    assert!(
+        !fl_init_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC mtx_init")
+    );
+    let fl_trylock_symbol = unsafe { libc::dlsym(handle, c"mtx_trylock".as_ptr()) };
+    assert!(
+        !fl_trylock_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC mtx_trylock")
+    );
+    let fl_unlock_symbol = unsafe { libc::dlsym(handle, c"mtx_unlock".as_ptr()) };
+    assert!(
+        !fl_unlock_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC mtx_unlock")
+    );
+    let fl_destroy_symbol = unsafe { libc::dlsym(handle, c"mtx_destroy".as_ptr()) };
+    assert!(
+        !fl_destroy_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC mtx_destroy")
+    );
+
+    let host_init: MtxInitFn = linked_host_mtx_init;
+    let host_trylock: MtxTrylockFn = linked_host_mtx_trylock;
+    let host_unlock: MtxUnlockFn = linked_host_mtx_unlock;
+    let host_destroy: MtxDestroyFn = linked_host_mtx_destroy;
+    let fl_init: MtxInitFn = unsafe { std::mem::transmute(fl_init_symbol) };
+    let fl_trylock: MtxTrylockFn = unsafe { std::mem::transmute(fl_trylock_symbol) };
+    let fl_unlock: MtxUnlockFn = unsafe { std::mem::transmute(fl_unlock_symbol) };
+    let fl_destroy: MtxDestroyFn = unsafe { std::mem::transmute(fl_destroy_symbol) };
+
+    let incumbent_identity = symbol_object(host_trylock as *const () as *const c_void)
+        .expect("identify host mtx_trylock object");
+    let fl_identity = symbol_object(fl_trylock_symbol.cast_const())
+        .expect("identify FrankenLibC mtx_trylock object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=mtx_trylock");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=mtx_trylock");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_trylock as usize, fl_trylock as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=mtx_trylock incumbent_address={:#x} fl_address={:#x}",
+        host_trylock as usize, fl_trylock as usize,
+    );
+
+    verify_mtx_provider("host", host_init, host_trylock, host_unlock, host_destroy);
+    verify_mtx_provider("FrankenLibC", fl_init, fl_trylock, fl_unlock, fl_destroy);
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=mtx_trylock comparisons=8 \
+         plain_init_first_lock_busy_unlock_verdict=pass"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=mtx_trylock phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=mtx_trylock verdict=pass");
+        return;
+    }
+
+    let mut host_mutex: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+    let mut fl_mutex: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+    let host_mutex_ptr = &mut host_mutex;
+    let fl_mutex_ptr = &mut fl_mutex;
+    assert_eq!(
+        unsafe { host_init(host_mutex_ptr, 0) },
+        0,
+        "host benchmark mtx_init failed"
+    );
+    assert_eq!(
+        unsafe { fl_init(fl_mutex_ptr, 0) },
+        0,
+        "FrankenLibC benchmark mtx_init failed"
+    );
+    assert_eq!(
+        unsafe { host_trylock(host_mutex_ptr) },
+        0,
+        "host benchmark mutex setup lock failed"
+    );
+    assert_eq!(
+        unsafe { fl_trylock(fl_mutex_ptr) },
+        0,
+        "FrankenLibC benchmark mutex setup lock failed"
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "mtx_trylock observed thread count changed between conformance and measurement"
+    );
+
+    let result = measure_mtx_trylock_case(host_trylock, fl_trylock, host_mutex_ptr, fl_mutex_ptr);
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "mtx_trylock observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "mtx_trylock",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    assert_eq!(
+        unsafe { host_unlock(host_mutex_ptr) },
+        0,
+        "host benchmark mtx_unlock failed"
+    );
+    assert_eq!(
+        unsafe { fl_unlock(fl_mutex_ptr) },
+        0,
+        "FrankenLibC benchmark mtx_unlock failed"
+    );
+    unsafe { host_destroy(host_mutex_ptr) };
+    unsafe { fl_destroy(fl_mutex_ptr) };
+
+    let wins = usize::from(result.comparison == "FL_FASTER");
+    let losses = usize::from(result.comparison == "FL_SLOWER");
+    let undecidable = 1 - wins - losses;
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=mtx_trylock verdict={verdict} \
+         cases=1 wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=already_owned_busy headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        result.effect_median, result.comparison,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
@@ -2128,5 +2454,6 @@ fn main() {
         Family::Getauxval => run_getauxval(&config),
         Family::SemPost => run_sem_post(&config),
         Family::ThrdCurrent => run_thrd_current(&config),
+        Family::MtxTrylock => run_mtx_trylock(&config),
     }
 }
