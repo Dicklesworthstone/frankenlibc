@@ -26424,3 +26424,61 @@ failed. Evidence and harness only; no production optimization attempted.
   win), 1 surfaced a correctness bug. Zero were quietly dropped. The pinning
   lever generalizes: any ledger row blocked by the host-wide quiet gate on a
   shared fleet is now retryable under `--pin-quietest`.
+
+## 2026-07-31 (cc_fl / BlackThrush) — CAMPAIGN WIN (`%d`) + PRIOR REFUTED + 3 CASES VOIDED BY THEIR OWN NULL: `snprintf("%d")` measures 0.374325x vs live glibc; `sinhf` parity survives 5x more reps
+
+- **CONVERSION BUNDLE (2026-07-31, machine-checkable).** `result_class=campaign-win`
+  `legacy_incumbent=host-glibc` `incumbent_provenance=uninterposed-host-link`
+  `same_invocation=true` `incumbent_ratio=0.374325`
+  `incumbent_bootstrap_median_ci=[0.363189,0.381992]`
+  `null_bootstrap_median_ci=[0.979942,1.043084]`
+  `bench_elf_sha256=c92395a69ba779a083e66c62f59e372deb4b24462cb0147208b91a0da59450d8`,
+  self-reported in-process by the executing ELF on host `vmi1153651`. Incumbent
+  is host glibc linked directly into the measuring process while FrankenLibC is
+  loaded `RTLD_LOCAL`, so neither arm interposes the other. FrankenLibC 29.618
+  ns vs live glibc 82.796 ns for `snprintf` case `signed_decimal_bare`. The
+  same-invocation A/A null control measured FL/FL ratio_median 1.005291 with a
+  bootstrap median CI of [0.979942,1.043084] over 4096 resamples; the A/B
+  effect (FL/glibc) measured 0.374325 with a bootstrap median CI of
+  [0.363189,0.381992]. cv_used=false.
+- **WHY THIS RAN — A PRE-REGISTERED PREDICTION THAT FAILED.** The working note
+  "`%d` is missing from the snprintf/sprintf strict fast paths" predicted that
+  `%d` would LOSE to glibc, and that finding a loss would bound the scorecard
+  sentence "Exact string and pure-literal `snprintf` now beat glibc". The
+  prediction is **REFUTED**: `%d` wins at **0.374325x**, statistically
+  indistinguishable from `%u`'s converted 0.366511x. Whatever fast path serves
+  `%u` evidently serves `%d` too, or the generic renderer already beats glibc
+  on bare integer conversions. Do not plan work on the premise that `%d` is a
+  gap. `%p` also re-confirmed at **0.460929x** [0.433042,0.480470] with both
+  nulls holding.
+- **THREE CASES VOIDED BY THEIR OWN NULL — NOT RESULTS, DO NOT QUOTE.** On this
+  host `%u`, `%c` and `%s` returned `nulls_hold=false` / `comparison=NULL_VIOLATED`:
+  the A/A control drifted outside the 0.020 median-bias tolerance, so the
+  environment was not stable enough to attribute anything to the arms. Their
+  apparent ratios (0.332188 / 0.344056 / 0.367148) are recorded here only to
+  document that they were discarded. `vmi1153651` was the noisy host
+  (`loadavg=6.49,8.77,11.83`; every absolute number ~2.5x the `vmi1227854`
+  run — FL `%u` 26.715 ns here vs 10.561 ns there), which is exactly the
+  condition the null control exists to catch. **`%u` and `%c` already hold
+  valid conversions from the `vmi1227854` run; `%s` has never been validly
+  measured and remains UNCONVERTED.** Pinning narrows which CPUs must be quiet;
+  it does not make a loaded host quiet, and the A/A null is what tells the two
+  apart.
+- **`sinhf`/`coshf` AT 5x REPS — THE APPARENT `sinhf` ADVANTAGE EVAPORATED.**
+  Reps raised 200_000 -> 1_000_000 specifically to shrink the null that left
+  both symbols undecidable. It shrank, and the effect went with it. `sinhf`
+  moved **0.876887x -> 0.995554x** [0.954484,1.012383] (FL 19.540 ns vs glibc
+  19.892 ns); `coshf` moved **1.033419x -> 1.060615x** [1.038863,1.085363] (FL
+  19.433 ns vs glibc 19.011 ns). Both `nulls_hold=true`, both still
+  `clears_2x_null=false`, verdict `INCOMPLETE`. The 200k-rep `sinhf` figure was
+  small-sample optimism, not a real 12% win. This is the **second independent
+  contradiction** of the 2026-06-20 "sinhf is ALREADY a WIN" row, and `coshf`
+  now leans unfavourable in both runs. Treat f32 `sinhf`/`coshf` as parity with
+  host libm and stop quoting either as a win.
+- **DISPOSITION.** `%d` converts. `%p` re-confirms. `%u`/`%c` keep their
+  `vmi1227854` conversions and gain nothing here. `%s` is still unconverted and
+  is the open item: re-run `--family snprintf` on a quiet host and accept the
+  result only if `nulls_hold=true`. Retry predicate for `sinhf`/`coshf` is now
+  narrower, not wider: more reps have been tried and did not decide them, so do
+  not simply raise reps again — either find a structural difference or leave
+  both classified as parity.

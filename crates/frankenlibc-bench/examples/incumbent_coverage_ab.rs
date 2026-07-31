@@ -64,7 +64,10 @@ const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
 const MTX_TRYLOCK_REPS: usize = 1_000_000;
 const GETADDRINFO_HOSTS_REPS: usize = 2_000;
-const F32_HYPERBOLIC_REPS: usize = 200_000;
+// Raised from 200_000 on 2026-07-31: at 200k the A/A null half-width was 7.7%,
+// which left both sinhf and coshf UNDECIDABLE against a real effect. More reps
+// per batch shrinks the null, not the effect.
+const F32_HYPERBOLIC_REPS: usize = 1_000_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
 const GETHOSTBYNAME_REPS: usize = 5_000;
 const SNPRINTF_REPS: usize = 200_000;
@@ -4080,6 +4083,21 @@ const SNPRINTF_P_VALUES: [usize; 8] = [
     usize::MAX,
 ];
 const SNPRINTF_C_VALUES: [c_int; 8] = [0, 0x41, 0x7a, 0x30, 0x20, 0x7e, 0x7f, 0xff];
+/// Signed decimal, including both extremes. `%d` has no exact fast path in the
+/// deployed formatter, so this case tests whether the scorecard's "exact
+/// `snprintf` now beats glibc" sentence generalizes past the formats that do.
+const SNPRINTF_D_VALUES: [c_int; 8] = [0, -1, 9, -9, 12_345, -12_345, i32::MIN, i32::MAX];
+/// Short strings spanning empty through a typical log token.
+const SNPRINTF_S_VALUES: [&CStr; 8] = [
+    c"",
+    c"a",
+    c"ab",
+    c"abcd",
+    c"abcdefgh",
+    c"localhost",
+    c"frankenlibc",
+    c"the quick brown fox",
+];
 /// Power-of-two timing tables so the rep loop indexes with a mask. A modulo by
 /// nine would put a division in both arms and dilute the ratio under test.
 const SNPRINTF_U_TIMING: [c_uint; 8] = [0, 9, 10, 99, 100, 999, 65_535, u32::MAX];
@@ -4173,7 +4191,98 @@ fn check_snprintf_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize
         }
     }
 
+    let signed_format = c"%d";
+    for &value in &SNPRINTF_D_VALUES {
+        for &size in &SNPRINTF_SIZES {
+            comparisons += 1;
+            if !compare_snprintf_probe(
+                "signed_decimal",
+                "%d",
+                &value.to_string(),
+                size,
+                |pointer, n| unsafe { host(pointer, n, signed_format.as_ptr(), value) },
+                |pointer, n| unsafe { fl(pointer, n, signed_format.as_ptr(), value) },
+            ) {
+                mismatches += 1;
+            }
+        }
+    }
+
+    let string_format = c"%s";
+    for &value in &SNPRINTF_S_VALUES {
+        let string_pointer = value.as_ptr();
+        for &size in &SNPRINTF_SIZES {
+            comparisons += 1;
+            if !compare_snprintf_probe(
+                "string",
+                "%s",
+                &format!("{:?}", value.to_string_lossy()),
+                size,
+                |pointer, n| unsafe { host(pointer, n, string_format.as_ptr(), string_pointer) },
+                |pointer, n| unsafe { fl(pointer, n, string_format.as_ptr(), string_pointer) },
+            ) {
+                mismatches += 1;
+            }
+        }
+    }
+
     (comparisons, mismatches)
+}
+
+#[inline(never)]
+fn run_snprintf_d_batch(function: SnprintfFn) -> u64 {
+    let format = c"%d";
+    let mut buffer = [0u8; SNPRINTF_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = SNPRINTF_D_VALUES[index & (SNPRINTF_D_VALUES.len() - 1)];
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(SNPRINTF_BUF),
+                black_box(format.as_ptr()),
+                black_box(value),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_snprintf_s_batch(function: SnprintfFn) -> u64 {
+    let format = c"%s";
+    let mut buffer = [0u8; SNPRINTF_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = SNPRINTF_S_VALUES[index & (SNPRINTF_S_VALUES.len() - 1)];
+        let returned = unsafe {
+            black_box(function)(
+                black_box(buffer.as_mut_ptr().cast()),
+                black_box(SNPRINTF_BUF),
+                black_box(format.as_ptr()),
+                black_box(value.as_ptr()),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+fn time_snprintf_d_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_snprintf_d_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_snprintf_s_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_snprintf_s_batch(function));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
 #[inline(never)]
@@ -4387,8 +4496,8 @@ fn run_snprintf(config: &Config) {
     let (comparisons, mismatches) = check_snprintf_conformance(host, fl);
     let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
     println!(
-        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf formats=%u,%p,%c \
-         values_per_format=9,8,8 destination_sizes=9 destination_bytes={SNPRINTF_BUF} \
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf formats=%u,%p,%c,%d,%s \
+         values_per_format=9,8,8,8,8 destination_sizes=9 destination_bytes={SNPRINTF_BUF} \
          comparisons={comparisons} mismatches={mismatches} \
          compared=return_value_and_full_destination verdict={conformance_verdict}"
     );
@@ -4442,6 +4551,20 @@ fn run_snprintf(config: &Config) {
             host,
             fl,
             time_snprintf_c_batch,
+        ),
+        measure_snprintf_case(
+            "signed_decimal_bare",
+            "generality probe: bare \"%d\", which has no exact fast path",
+            host,
+            fl,
+            time_snprintf_d_batch,
+        ),
+        measure_snprintf_case(
+            "string_bare",
+            "scorecard's \"exact string snprintf\" sentence: bare \"%s\"",
+            host,
+            fl,
+            time_snprintf_s_batch,
         ),
     ];
 

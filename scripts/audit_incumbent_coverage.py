@@ -116,8 +116,13 @@ def main():
                 # Mere presence ranks docs by breadth: README lists most of
                 # libc under API surface and fuzz targets while quoting no
                 # per-symbol ratio at all.
+                # `\b` treats a hyphen as a word boundary, so `\bfree\b` matches
+                # the "free" inside "Lock-free" and scored the free(NULL) row on
+                # an unrelated allocator line. Exclude hyphen on both sides so a
+                # symbol only counts as itself, never as half of a compound.
                 if any(
-                    re.search(rf"\b{re.escape(s)}\b", line) and PERF_NUMBER.search(line)
+                    re.search(rf"(?<![\w-]){re.escape(s)}(?![\w-])", line)
+                    and PERF_NUMBER.search(line)
                     for line in doc_lines
                 ):
                     score = max(score, 3 if rel == "README.md" else 2)
