@@ -27117,28 +27117,84 @@ pub unsafe extern "C" fn getservent_r(
 // Misc string/format extras
 // ===========================================================================
 
-/// Recognize the closed C-locale default monetary formats.
+/// A monetary format whose C-locale semantics reduce to fixed-two rendering
+/// plus optional field-width padding.
+#[derive(Clone, Copy)]
+struct SimpleCMonetaryFormat {
+    field_width: usize,
+    left_justify: bool,
+}
+
+/// Partially evaluate the simple C-locale monetary grammar.
+///
+/// In the C locale, `^` (disable grouping), `!` (suppress the absent currency
+/// symbol), and `+` (select the already-default sign convention) are semantic
+/// identities. A decimal field width and `-` reduce to space padding around the
+/// same fixed-two numeric leaf used by `%n`/`%i`. Everything else declines to
+/// the general parser.
 ///
 /// # Safety
 ///
 /// `format` must point to a valid C string.
 #[inline]
-unsafe fn is_exact_c_locale_default_monetary_format(format: *const c_char) -> bool {
+unsafe fn simple_c_locale_monetary_format(
+    format: *const c_char,
+) -> Option<SimpleCMonetaryFormat> {
     let bytes = format.cast::<u8>();
     // SAFETY: the caller contract says `format` is a valid C string. Each next
     // byte is read only after the preceding byte proved non-NUL, so no read goes
     // beyond the string's terminating byte.
     unsafe {
         if *bytes != b'%' {
-            return false;
+            return None;
         }
-        match *bytes.add(1) {
-            b'n' | b'i' => *bytes.add(2) == 0,
-            b'.' => {
-                *bytes.add(2) == b'2' && matches!(*bytes.add(3), b'n' | b'i') && *bytes.add(4) == 0
+
+        let mut i = 1usize;
+        let mut left_justify = false;
+        let mut saw_plus = false;
+        loop {
+            match *bytes.add(i) {
+                b'^' | b'!' => i += 1,
+                b'-' => {
+                    left_justify = true;
+                    i += 1;
+                }
+                b'+' => {
+                    // The general parser rejects a duplicate `+`; decline so it
+                    // remains the single source of malformed-format behavior.
+                    if saw_plus {
+                        return None;
+                    }
+                    saw_plus = true;
+                    i += 1;
+                }
+                _ => break,
             }
-            _ => false,
         }
+
+        let mut field_width = 0usize;
+        while (*bytes.add(i)).is_ascii_digit() {
+            field_width = field_width
+                .saturating_mul(10)
+                .saturating_add((*bytes.add(i) - b'0') as usize);
+            i += 1;
+        }
+
+        if *bytes.add(i) == b'.' {
+            if *bytes.add(i + 1) != b'2' {
+                return None;
+            }
+            i += 2;
+        }
+
+        if !matches!(*bytes.add(i), b'n' | b'i') || *bytes.add(i + 1) != 0 {
+            return None;
+        }
+
+        Some(SimpleCMonetaryFormat {
+            field_width,
+            left_justify,
+        })
     }
 }
 
@@ -27165,10 +27221,11 @@ pub(crate) unsafe fn strfmon_emit(
     }
 
     // Closed C-locale specialization. `%n` and `%i` are identical when the
-    // currency symbol/grouping tables are empty, and their implicit precision
-    // is two. Recognizing those exact formats deletes the generic grammar walk
-    // and all three heap allocations from the whole exported call.
-    if unsafe { is_exact_c_locale_default_monetary_format(format) } {
+    // currency symbol/grouping tables are empty, their implicit precision is
+    // two, and simple flags/width reduce to padding. Partial evaluation deletes
+    // the generic grammar walk and all three heap allocations from the whole
+    // exported call.
+    if let Some(simple) = unsafe { simple_c_locale_monetary_format(format) } {
         // IEEE-754 binary64 has at most 309 integral decimal digits. Sign,
         // decimal point, and two fractional digits keep the fixed rendering
         // below 384 bytes; non-finite spellings are shorter still.
@@ -27180,15 +27237,27 @@ pub(crate) unsafe fn strfmon_emit(
             unsafe { set_abi_errno(libc::E2BIG) };
             return -1;
         };
-        if len + 1 > maxsize {
+        let field_len = len.max(simple.field_width);
+        if field_len >= maxsize {
             unsafe { set_abi_errno(libc::E2BIG) };
             return -1;
         }
+        let padding = field_len - len;
         unsafe {
-            std::ptr::copy_nonoverlapping(scratch.as_ptr(), s.cast::<u8>(), len);
-            *s.add(len) = 0;
+            // SAFETY: `field_len < maxsize` and the caller guarantees `s` is
+            // writable for `maxsize` bytes. Scratch contains `len` initialized
+            // bytes and the source cannot overlap the caller's output region.
+            let out = s.cast::<u8>();
+            if simple.left_justify {
+                std::ptr::copy_nonoverlapping(scratch.as_ptr(), out, len);
+                std::ptr::write_bytes(out.add(len), b' ', padding);
+            } else {
+                std::ptr::write_bytes(out, b' ', padding);
+                std::ptr::copy_nonoverlapping(scratch.as_ptr(), out.add(padding), len);
+            }
+            *out.add(field_len) = 0;
         }
-        return len as isize;
+        return field_len as isize;
     }
 
     let fmt_bytes = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
