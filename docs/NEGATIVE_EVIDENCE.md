@@ -21755,6 +21755,46 @@ item retains every later colon by construction, exactly matching the former `fie
   host-wide pre/post gates, stable actual-thread check, both provider nulls, and corrected
   effect/null decision rule.
 
+## 2026-07-31 (cod / WildRaven) — RETRY OBLIGATION RECLASSIFIED / NO INCUMBENT ARM: `_gethtent` is a FrankenLibC-only deployed extension
+
+- **WHY THIS RETRY RAN.** `hostent_iter_ab` was the last of the three July 22 hosts rows rejected
+  solely by the retired CV-under-5% gate. The corrected median-based null contract therefore made
+  a fresh adjudication obligatory. Before spending a timing window, the existing harness now
+  audits the exact deployed symbol surface and fails closed when the requested incumbent arm
+  cannot exist.
+- **THE HISTORICAL COMPARATOR WAS NOT THE SAME API.** Host glibc's live object exports public
+  `sethostent`, `gethostent`, and `endhostent`, but not `_gethtent`. The deployed FrankenLibC
+  object does export `_gethtent` as an unversioned dynamic symbol. The historical harness called
+  FrankenLibC's private `_gethtent` directly but labeled public glibc `gethostent` as its incumbent;
+  it also explicitly filtered glibc to IPv4 and reported rather than rejected their differing
+  drain counts. That was useful correctness discovery, but it is not a like-for-like competitive
+  arm. The old **0.346x / 2.89x faster than glibc** number is therefore invalid competitive
+  evidence and must not be quoted.
+- **MACHINE-CHECKED SURFACE / FULL PROVENANCE.** On `vmi1264463`, the process resolved public
+  glibc `gethostent` from an explicit fresh namespace, proved glibc `_gethtent` absent with
+  `dlsym`, and audited FrankenLibC's defined dynamic symbols from the exact hashed release object:
+  `STRUCTURAL_SURFACE requested_symbol=_gethtent incumbent_present=false
+  fl_deployed_present=true`. It self-reported benchmark ELF SHA-256
+  `9f09d2a5c7b1b29112b3168728ca4c0c9268953673744f153facd6c262f77c30`,
+  host libc SHA-256
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, and
+  FrankenLibC SHA-256
+  `feae9431aadd0697cc3afb95b8b985e277d057f873046f87ea06dcd32d852667`.
+  The process observed **1 actual thread** from `/proc/self/task`.
+- **CLEAN-OVERLAY / SINGLE-TARGET CONTRACT.** The admitted invocation used strict-remote
+  `rch exec --base e253d7661 --clean-overlay` with only
+  `hostent_iter_ab.rs` overlaid. Cargo was explicitly routed to the single reused repository
+  target `/data/tmp/cargo-target-frankenlibc`; the executing ELF and FrankenLibC object both
+  self-reported from that directory. No local Cargo or per-run target participated.
+- **OUTCOME / COUNTS / DISPOSITION.** The process exited structurally at
+  `phase=incumbent_resolution reason=host_glibc_has_no_same_symbol` before any host-wide gate or
+  timer: **0 rows decidable, 0 WIN, 0 LOSE**. The clone-to-borrow **1.67x** FrankenLibC
+  before/after result remains maintenance evidence for removing O(N-squared) work. `_gethtent`
+  itself is a no-incumbent surface, not a campaign claim. Reopen a competitive `_gethtent` row
+  only if a real incumbent exports that exact ABI symbol with equal drain semantics. A public
+  `gethostent` comparison is a separate claim and may run only after full returned-entry parity,
+  with both provider A/A median gates and the corrected effect/null rule.
+
 ## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fread-fmemopen pointer-cursor fast path lands on retry round 2 — old-fl 1t cost HALVED (disjoint distributions), 8t contention collapse 39.1µs→8.5µs/drain (cc-fread-mem-2026-07-11 RESOLVED)
 
 - **THE LEVER (unchanged from the banked patch).** `FastFixedMemRead::read_bytes` (atomic bulk
