@@ -778,7 +778,7 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   emitted only pre-existing warnings in untouched files. No `release-perf`, local
   Cargo fallback, stash change, or timeout-based verdict occurred.
 
-## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: strict `getrandom` bypasses redundant membrane bookkeeping (`bd-maq8lp`)
+## 2026-07-15 (cod / BlackThrush) — COMPETITIVE REJECTED / SHIPPED MAINTENANCE: strict `getrandom` bypasses redundant membrane bookkeeping (`bd-maq8lp`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
   the peer-owned allocator Swing-2 performance bead, so this turn left it untouched
@@ -815,6 +815,57 @@ uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
   null-control floor. The temporary incumbent/oracle harness was restored byte-for-byte.
   Remote compilation emitted only pre-existing warnings in untouched files. No
   `release-perf`, local Cargo fallback, stash change, or timeout-based verdict occurred.
+- **2026-07-30 LIVE-INCUMBENT CONVERSION / FOUR LOSSES.** The historical
+  FrankenLibC-before versus FrankenLibC-after result remains a valid **1.21x
+  self-speedup**, but it is maintenance, not a campaign win. The corrected harness
+  directly linked host glibc, explicitly loaded the FrankenLibC release object, and
+  proved distinct serving-object hashes and symbol addresses. Its pre-timing oracle
+  checked successful lengths 0, 1, 32, and 256 plus `GRND_NONBLOCK`: **5/5 passed**.
+  The same-invocation live comparison made all four size panels decidable, with
+  **0 WIN / 4 LOSS / 0 UNDECIDABLE**:
+
+  | request | FL ns | glibc ns | FL/glibc bootstrap median 95% CI | corrected null bootstrap median 95% CIs | verdict |
+  |---|---:|---:|---|---|---|
+  | 0 bytes | 156.801 | 15.902 | 9.835839 [9.538302, 10.450350] | FL/FL 0.988462 [0.968620, 1.023873]; glibc/glibc 1.012123 [0.989500, 1.040156] | FL slower |
+  | 1 byte | 442.205 | 26.296 | 16.941507 [16.521378, 17.858261] | FL/FL 1.008233 [0.989415, 1.031433]; glibc/glibc 0.999466 [0.988855, 1.025242] | FL slower |
+  | **32 bytes (historical headline)** | **468.901** | **119.777** | **3.766871 [3.567558, 3.956268]** | **FL/FL 0.997101 [0.953920, 1.039961]; glibc/glibc 0.992081 [0.974948, 1.007466]** | **FL slower** |
+  | 256 bytes | 1447.476 | 677.737 | 2.193163 [2.044678, 2.269699] | FL/FL 1.008186 [0.963988, 1.040664]; glibc/glibc 1.006548 [0.965283, 1.046790] | FL slower |
+
+- **CORRECTED NULL GATE / PROVENANCE.** All eight FL/FL and glibc/glibc
+  **bootstrap median 95% CIs** were retained in the harness output; all eight
+  null medians satisfy the pre-registered **±2%** clause. The 32-byte FL/FL CI
+  was `[0.953920, 1.039961]` and glibc/glibc CI was
+  `[0.974948, 1.007466]`; its widest null half-width was `0.046080`, while
+  the effect CI excluded 1 and cleared twice that width. CI straddling is not a
+  null veto, and CV/MAD are telemetry only. Thirty-six retained samples exactly
+  balanced all six phase/order cells.
+- **FULL EXECUTION CONTRACT.** `INCUMBENT_LINKAGE direct_process_link
+  symbol=getrandom`; `INCUMBENT_OBJECT
+  path=/usr/lib/x86_64-linux-gnu/libc.so.6 bytes=2326088
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT bytes=22003848
+  sha256=735c5030c254d51554f21b95d7f3d855ffb679c5ba625675c96b674e163f8046`.
+  The process self-reported its executing ELF as `BENCH_ELF_OBJECT
+  bytes=744504
+  sha256=9175ad90992a72b3f37aa41ec4848d1496e65a41c1bd29683bd43e9a4a3511ea`.
+  It self-reported host `vmi1156319` and actually observed **1** thread before
+  and after timing. Host-wide exclusivity passed before timing (8 physical/8
+  logical CPUs, AVX2/FMA/BMI, 159 samples over 159.289 s, maximum busy fraction
+  `0.112`) and after timing (16 samples over 16.021 s, maximum `0.133`).
+  The strict-remote invocation used
+  `RCH_WORKER=vmi1156319 RCH_REQUIRE_REMOTE=1 RCH_DISABLE_TARGET_REUSE=0
+  rch exec --base 937f8dd60 --clean-overlay` with only
+  `incumbent_coverage_ab.rs` overlaid, `env -u CARGO_TARGET_DIR`, and the shared
+  RCH target pool. No local Cargo or per-run target directory participated.
+- **CONCRETE RETRY PREDICATE.** Do not rerun the current direct-syscall wrapper.
+  Retry the 32-byte headline only after a production mechanism changes its
+  counted kernel-entry path or removes at least one counted pre-syscall stage,
+  and the same invocation proves that count changed. A direct SSH syscall-count
+  diagnostic was unavailable from this pane, so no vDSO or other incumbent
+  mechanism is asserted. Any retry must retain the direct-linked live-glibc arm,
+  exact positional balance, both corrected null-median gates, actual observed
+  threads, self-reported ELF hashes, host identity, and the clean-overlay RCH
+  contract above.
 
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: `fpclassifyf` classifies `f32` from exponent and fraction bits (`bd-a3vxfu`)
 
