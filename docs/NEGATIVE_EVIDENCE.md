@@ -26578,3 +26578,42 @@ failed. Evidence and harness only; no production optimization attempted.
   format handle, or an interface that passes lengths), not what `snprintf`
   does internally. Integer-only multi-directive shapes are the one remaining
   place this lever could still pay off and were not measured.
+
+## 2026-07-31 (cc_fl / BlackThrush) — REJECT (prediction REFUTED): exact `%.Nf` snprintf leaf LOSES 1.51-1.65x to live glibc; glibc's `%f` is not the slow `mpn` path at ordinary magnitudes
+
+- **PREDICTION AND WHY IT FAILED.** Predicted a multiple: glibc formats floats
+  through `__printf_fp` arbitrary-precision `mpn` arithmetic, `%.2f` is
+  ubiquitous traffic, and FrankenLibC already owned a correctly-rounded
+  fixed-point kernel (`rounded_scaled_fixed`) reachable only behind the membrane
+  decide and a `Vec` render buffer. Wired that kernel straight to the caller's
+  buffer. **REFUTED: glibc renders `%.2f` in 93.904 ns**, so its common-magnitude
+  path is not arbitrary precision at all, and our direct path is slower.
+- **RESULT — DECIDABLE LOSS, all nulls holding.** Host `vmi1227854`,
+  `--pin-quietest 2`, `bench_elf_sha256=377bdf8e2fca4191905b94aa0d911d179227c7e7d1691f8d9c78746c57c428c2`
+  self-reported in-process by the executing ELF, incumbent
+  `/usr/lib/x86_64-linux-gnu/libc.so.6` linked directly with FrankenLibC loaded
+  `RTLD_LOCAL`, 1 observed thread.
+  The same-invocation A/A null control measured FL/FL ratio_median 0.992856 with a bootstrap median CI of [0.970767,1.014003] over 4096 resamples; the glibc/glibc A/A null measured 1.003044 with a bootstrap median CI of [0.982211,1.020171].
+  The A/B effect (FL/glibc) measured 1.561076 with a bootstrap median CI of [1.477112,1.625796], clearing 2x the null half-width: **FL_SLOWER**.
+  `%.2f` **1.561076x**, `%.4f` **1.460358x**, `%f` **1.319717x** — three cases,
+  0 wins, 3 losses, `DECIDABLE`. cv_used=false.
+- **THE ONE MECHANICAL DEFECT, FIXED, AND IT DID NOT RESCUE IT.** The first
+  render called `decimal_digits_u128`, which divides a `u128` by 10 per digit and
+  compiles to a `__udivti3` libcall — tens of cycles, up to 20 times — despite
+  `rounded_scaled_fixed` only returning `Some` when the value fits `u64`.
+  Re-rendered with `u64` arithmetic and re-measured: **1.645637x / 1.508802x**,
+  i.e. flat within noise on a busier box. The loss is not the digit loop.
+- **CONFORMANCE WAS NEVER THE PROBLEM.** 1440 comparisons — 10 formats
+  (`%f` plus `%.0f`..`%.9f`) x 16 values x 9 destination sizes — each checking
+  return value AND the full destination, covering signed zero, subnormal
+  (5e-324), the `u64` scale-overflow boundary (1e19), max finite, NaN and Inf.
+  **0 mismatches**, byte-identical to glibc.
+- **DISPOSITION / DO-NOT-RETRY.** The production leaf was reverted from this
+  agent's tree. **Do not retry a fixed-point `%f` leaf built on scale-to-integer
+  plus digit emission** — that shape is now measured at 1.3-1.6x on two
+  independent runs with holding nulls. Reopening requires a different algorithm
+  class (Ryu/Schubfach-style shortest-round-trip with a precision post-pass), not
+  a faster loop. ⚠️ A peer commit (`22595833b`) landed an `%f` leaf of this same
+  shape together with unrelated `strfmon`/`unistd` work; that leaf is covered by
+  this REJECT and should be re-measured or removed independently of the rest of
+  that commit.
