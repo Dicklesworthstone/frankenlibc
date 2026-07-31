@@ -25217,3 +25217,112 @@ harness only; no production optimization was attempted.
   the inputs that occur, against our measured floor including the membrane. A prediction that
   gets the incumbent right to rho 0.99 and still gets the sign wrong at the operating point is
   the failure mode to watch for.
+
+## 2026-07-30 (cod_fl / SnowyBass) — RETRY-SATISFIED POPULATION AUDIT: eight fresh terminal entries, one null-gated row
+
+This closes the cod half of the two-pane cycle. No production source or harness was changed.
+The population and tally unit were frozen before the reruns: one tally unit is one prior ledger
+entry, not every size cell inside a sweep. Five entries had an ISA-bound retry predicate newly
+satisfied by the AVX2/FMA/SSE4.2 Rust fleet; four measurements had previously been vetoed only
+by the retired null-CI-straddle rule.
+
+- **FRESH-ONLY TALLY.** All nine eligible entries were attempted. Eight now have fresh terminal
+  evidence: **zero entry-level WIN, seven clean LOSS/REJECT, one MIXED/CORRECTED, and one
+  UNDECIDABLE**. The undecidable entry is `wordexp/param_simple`, whose unchanged retry missed
+  the still-binding ±2% null-median gate. The four-row previously-vetoed subset is therefore
+  **3/4 freshly decidable, 0 WIN, 3 LOSE, 1 UNDECIDABLE**.
+- **CUMULATIVE LEDGER TALLY.** The failed fresh null does not erase the earlier same-ELF,
+  two-host, triple-replicated `param_simple` evidence that the corrected contract already made
+  admissible. On all valid evidence retained by the ledger, the nine-entry population is
+  **0 entry-level WIN, 8 LOSS/REJECT, 1 MIXED/CORRECTED**; all four formerly vetoed rows remain
+  decidable losses. The fresh-only count above is the one to use when asking what this rerun
+  itself established.
+- **WHY THERE IS A MIXED CATEGORY.** It would be false to force the July 11 survey into either
+  binary bucket. Sixteen registered floor arms still lose, but deployed `wcsstr` is now a real
+  favorable cell at **0.875768x**, with FrankenLibC median 132.999 ns
+  CI95 [130.384,135.469] versus glibc 151.866 ns [149.523,157.142]. The independent conservative
+  endpoint ratio remains below 1. This older Criterion harness has no same-invocation A/A null,
+  so the cell corrects the survey and is not promoted as a new campaign keep. Likewise the
+  4096-byte `memchr` point at 0.960x has no CI and is direction-only, not a win.
+
+### Frozen population and fresh adjudication
+
+| prior ledger entry | retry-satisfied rerun | fresh result | entry adjudication |
+|---|---|---|---|
+| 2026-06-25 `str/mem/wide SCAN+COMPARE` portable-SIMD floor | full `string_inprocess_survey_bench` | the 16 named raw scan/compare floor arms lose **1.198-6.360x**; the separately classified algorithmic `wcsstr` contrast wins 0.875768x | **LOSS/REJECT unchanged** for the registered raw-family claim |
+| 2026-07-03 `strcasecmp/strncasecmp` floor | `casecmp_ab`, 12 cells | `strcasecmp` **1.252-2.242x**; `strncasecmp` **1.613-2.851x** | **LOSS/REJECT** |
+| 2026-07-04 top scanners / `memchr` fold-width ceiling | `strlen_memchr_sweep` plus `memchr_foldwidth_ab` | `strlen` **1.449-1.833x**; `memchr` **1.493-2.732x** through 1024 B, direction-only 0.960x at 4096 B; proposed 32-lane/64-lane fold **1.592-1.647x slower** | **LOSS/REJECT**; the registered fold candidate loses every cell |
+| 2026-07-04 `wcsrchr` 128-byte combined-mask ~0-gain | `wcsrchr_wide_ab`, 10 cells | 9/10 slower at **1.043-1.563x**, one absent-needle 1024-element tie at 0.997x | **LOSS/REJECT** |
+| 2026-07-11 fresh glibc-2.42 in-process string survey | same full Criterion invocation as the June entry | 16 floor arms lose; `wcsstr` flips from the old 1.24x loss to **0.875768x** | **MIXED/CORRECTED**, not cropped into either binary bucket |
+| 2026-07-30 vetoed `wordexp/plain_split` | unchanged full seven-case invocation | **3.189789x**, CI95 [3.093717,3.340330]; FL/FL median 1.006823, glibc/glibc 1.005358; both nulls hold and 2x-null clears | **LOSS** |
+| 2026-07-30 vetoed `wordexp/param_simple` | same unchanged invocation, never stitched to another run | raw effect 2.955114x, CI95 [2.834848,3.174139], but FL/FL median **0.959732** and glibc/glibc **1.024489** both miss ±2% | **UNDECIDABLE in the fresh rerun**; prior admissible replicated loss remains in the cumulative ledger |
+| 2026-07-30 vetoed `wordexp/param_default` | same unchanged invocation | **2.461152x**, CI95 [2.353362,2.599157]; FL/FL median 0.984435, glibc/glibc 1.019384; both nulls hold and 2x-null clears | **LOSS** |
+| 2026-07-30 vetoed fixed-work 32/32 workers | newly booked unchanged `e2e_workloads_ab` invocation | **3.177332x**, CI95 [3.073406,3.291515]; host/host 0.997903, FL/FL 1.016576; exact 160,000 records and 32/32 start/join/work witnesses | **LOSS_VS_GLIBC** |
+
+### Evidence contract and provenance
+
+- **ISA rows.** Every Rust example was compiled and executed remotely from exact clean base
+  `308e7537681df01d8385ca9847b59e3cb3d67a85` on `vmi1264463`, with
+  `RCH_REQUIRE_REMOTE=1`, `RCH_NO_SELF_HEALING=1`, one explicit worker, and all six RCH slots
+  reserved. The worker is an 8-core AMD EPYC with AVX2/FMA/SSE4.2. The example artifacts and
+  Build IDs were: `casecmp_ab`
+  `8b43830949d9626f92381ef8071087ba1152912a135ee6dc83bbec148150eb0e` /
+  `950372e0aa7005e7ec5a817e11d21663127a0fcf`;
+  `strlen_memchr_sweep`
+  `63ad9dce97d5dd7a12c05aac23ba8aa27e87cf2393101c9d51af70184eef39ea` /
+  `539c720f2ac84cd9fcbc54d67027b526dfb230d8`;
+  `memchr_foldwidth_ab`
+  `fac4a1bb77a60d11f59f4c68af65dc00a1ac2a61b86b467d1a968bf901c1615e` /
+  `7a8de31e88ebcddeeeee634afff0895618054d31`;
+  `wcsrchr_wide_ab`
+  `25ef3d812adb2c9062ea9de7feafdefaedc435eb7c89381083bf33ad1331ff2f` /
+  `763f9266a602cdd59bd748e57055a050ed430360`. Disassembly counted 22,633 `%ymm`
+  uses in the broad example artifacts, 151 in the fold-width artifact, and 233 in the
+  `wcsrchr` artifact; these are AVX2 binaries, not the former fleet-wide SSE2 floor.
+- **Criterion survey.** `string_inprocess_survey_bench` deliberately ran without `abi-bench`,
+  so its extern C calls were the real in-process host glibc rather than FrankenLibC symbol
+  interposition. It used 100 samples, 400 ms warmup, one-second measurement windows, medians,
+  and Criterion bootstrap intervals. Source SHA-256 is
+  `17f12a71a57d60db4396d73c57602b36bfc176cf80a27c6df2aa8d0c469ab7b3`.
+  Because that historical harness neither self-reports its executing ELF hash nor carries A/A
+  controls, its one favorable cell is a correction/lead, not a modern competitive keep.
+- **Fresh `wordexp` invocation.** Exact same command and source were used for all seven cases:
+  source SHA-256
+  `f99ed520903414f01fd26a50761c3c7f443845a9e049a0bec1c5c51e2a715380`,
+  frozen base `308e7537681df01d8385ca9847b59e3cb3d67a85`, strict RCH worker
+  `vmi1156319`, all 3/3 slots reserved. The executing AVX2/FMA/SSE4.2 ELF self-reported
+  SHA-256 `fa1c1c53aad74dc9e98b0216d35db69ae6f15d993e73d5ec788c338f602c7fe8`,
+  21,583,160 bytes, Build ID `f62b6bbb0bda48c1e101c00be9a1c6717028b8da`.
+  The incumbent was distinct `/lib/x86_64-linux-gnu/libc.so.6`, glibc 2.42,
+  SHA-256 `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  all seven return-code, word-count, and every-word byte comparisons passed before timing.
+  Post-run `vmstat` was 85-94% idle with zero iowait.
+- **Fixed-work 32/32.** The admitted invocation used the booked exclusive
+  `threadripperje` host and passed identity, parity, exact-work, startup, pre/post host-wide,
+  and both corrected null gates. Controller ELF SHA-256
+  `5bd9eaff8026bac17a8ca7098f54229449c0e45e0b59c95e69d3d6f122bdc1f8`,
+  Build ID `183458c54c75981cbb4241f876f37f9f9e382033`; FrankenLibC ABI object
+  SHA-256 `39c6b5b4f78836a6435192fdcece925752776718909ff2854f4e8581a88f9e45`,
+  Build ID `de6fca263772e5cad7d8ebe866ec6e54982d3357`. Complete raw log:
+  `/data/tmp/frankenlibc-cod-rerun-20260730-7092-5bd9eaff/claim7113.log`.
+
+### Admission history and retry boundary
+
+- A first nonexclusive `casecmp_ab` attempt overlapped unrelated worker load and was discarded
+  before any verdict; only the six-slot rerun above is used. The first Threadripper claim was
+  released before timing when the census found stale peer work; claim 7113 is the sole admitted
+  32/32 invocation.
+- The first fresh full `wordexp` invocation on `vmi1264463` was invalid as a unit: although
+  `plain_split` and `param_simple` pointed to 3.180x and 3.026x losses, `param_default` had a
+  glibc/glibc null median 0.958621, outside the unchanged gate. The one predeclared full retry
+  above moved to another glibc-2.42 AVX2 host after RCH refused hz2 for critical disk pressure
+  and after the replacement worker's exact pinned nightly was installed additively. That retry
+  made `plain_split` and `param_default` valid but left `param_simple` null-invalid. No values
+  were stitched across invocations and no third run will be selected.
+- **CONCRETE RETRY PREDICATE.** Do not rerun any of the seven clean LOSS/REJECT entries merely
+  to rediscover direction, and do not use the isolated 0.960x `memchr` point without adding a
+  same-invocation A/A plus bootstrap-median-CI contract. Reopen the mixed July survey only with
+  that modern contract and executable identity, principally to test the current `wcsstr` lead.
+  Reopen fresh `param_simple` only as part of one prospectively registered whole `wordexp`
+  invocation on a booked/quiescent host; both null medians must remain within ±2%, and the
+  existing valid replicated loss remains the incumbent result until such an invocation lands.
