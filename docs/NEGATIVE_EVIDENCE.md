@@ -21677,6 +21677,47 @@ item retains every later colon by construction, exactly matching the former `fie
   independently **<5%**. Until that complete predicate holds, move to a different frontier
   primitive.
 
+## 2026-07-31 (cod / WildRaven) — RETRY OBLIGATION ATTEMPTED / ZERO-SAMPLE: corrected-gate live-`gethostbyaddr` comparison
+
+- **WHY THIS ROW BECAME ELIGIBLE.** The two rows above vetoed an otherwise favorable
+  `hosts_reverse_ab` center only because raw and ratio CV exceeded 5%. The corrected campaign gate
+  makes CV provenance-only: each provider's A/A median must remain within 2% of 1, the live
+  FrankenLibC/glibc effect CI must exclude 1, and its distance from 1 must exceed twice the widest
+  null-CI half-width. A null CI that straddles 1 is not a veto. That methodology change satisfied
+  the old statistical retry predicate and made a modern live-incumbent rerun obligatory.
+- **MODERN WHOLE-CALL APPARATUS.** The shared `incumbent_coverage_ab` harness now measures
+  direct-process host-glibc `gethostbyaddr(127.0.0.1, 4, AF_INET)` against the symbol from an
+  explicitly `RTLD_NOW | RTLD_LOCAL`-loaded FrankenLibC object. It consumes each returned
+  `hostent`, balances 40 samples by phase and order (4 warm-ups, 36 retained), and carries
+  independent FrankenLibC/FrankenLibC and glibc/glibc controls. Before any timer, eight trials per
+  provider must agree exactly on canonical name, sorted aliases, address family and length, and
+  sorted address bytes. Both `vmi1264463` and `vmi1156319` passed all 16 comparisons:
+  `localhost`, zero aliases, one `127.0.0.1` address.
+- **IDENTITY / THREADS / CLEAN BUILD CONTRACT.** The benchmark ELF self-reported SHA-256
+  `4e7a755aced02c9712f1ec7f2236a16a09aaff331b43f9d7ba7067f464b714b4` on both hosts; live
+  `/usr/lib/x86_64-linux-gnu/libc.so.6` self-reported
+  `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`. FrankenLibC
+  self-reported `feae9431aadd0697cc3afb95b8b985e277d057f873046f87ea06dcd32d852667` on
+  `vmi1264463` and `c52f79417d6cdfa74feffe9e2dbff095c5d9554d9a8a8bcffd05d33ddee0b6e7`
+  on `vmi1156319`; serving objects and symbol addresses were distinct. Both processes observed
+  **1 actual thread** from `/proc/self/task`. Every executable invocation used strict-remote
+  `rch exec --base e78800516 --clean-overlay` and the single per-repository target
+  `/data/tmp/cargo-target-frankenlibc`; the binary path and Rust build-script `OUT_DIR` both
+  confirmed that canonical target.
+- **ZERO-SAMPLE RESULT.** The full attempt on the less-loaded eligible host, `vmi1156319`,
+  repeated identity, linkage, conformance, and thread checks, then failed closed before timing.
+  Across the complete 300-second host-wide pre-gate it obtained 300 samples but never five
+  consecutive clear ones. The final obstruction had every CPU above the 20% ceiling:
+  `cpu0=72.8%`, `cpu1=82.7%`, `cpu2=99.0%`, `cpu3=55.1%`, `cpu4=100.0%`,
+  `cpu5=79.8%`, `cpu6=90.7%`, `cpu7=69.1%`. No effect or null arm ran:
+  **0 rows decidable, 0 WIN, 0 LOSE**.
+- **DISPOSITION / REPLACEMENT RETRY PREDICATE.** The historical formatter keep remains
+  maintenance evidence: it is neither retracted nor promoted by a zero-sample attempt. Retry this
+  exact whole-call comparison only when an eligible host's pre-gate obtains five consecutive
+  one-second samples with every allowed CPU at or below 20% busy. Then require the post-gate,
+  unchanged actual thread count, both provider A/A median clauses, the effect/null CI rule, and
+  the live FrankenLibC/glibc ratio before reclassifying the claim.
+
 ## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fread-fmemopen pointer-cursor fast path lands on retry round 2 — old-fl 1t cost HALVED (disjoint distributions), 8t contention collapse 39.1µs→8.5µs/drain (cc-fread-mem-2026-07-11 RESOLVED)
 
 - **THE LEVER (unchanged from the banked patch).** `FastFixedMemRead::read_bytes` (atomic bulk
