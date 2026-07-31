@@ -1226,6 +1226,37 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
+        // Exact `%c\0` in FrankenLibC's C locale is the closed representation
+        // `%a %b %e %H:%M:%S %Y`. Compile that nested locale format into one
+        // fixed emitter before the generic C-string scan, full `tm` projection,
+        // and recursive directive interpreter. Non-normalized fields and short
+        // buffers deliberately fall through to preserve the general behavior.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'c'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (weekday, month, day, year, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_wday,
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_year,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_c_locale_datetime(
+                weekday, month, day, year, hour, minute, second, buf,
+            ) {
+                return n;
+            }
+        }
         // Exact HTTP-date is a bounded C-locale transducer. Match the complete
         // `%a, %d %b %Y %H:%M:%S GMT\0` format before the generic C-string
         // scan and full `tm` projection. The left-to-right `&&` chain stops at

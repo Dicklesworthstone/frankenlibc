@@ -547,6 +547,13 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     ) {
         return n;
     }
+    if fmt == b"%c"
+        && let Some(n) = format_strftime_c_locale_datetime(
+            bd.tm_wday, bd.tm_mon, bd.tm_mday, bd.tm_year, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+        )
+    {
+        return n;
+    }
     if let Some(n) = format_strftime_ymdhm(fmt, bd, buf) {
         return n;
     }
@@ -1277,6 +1284,69 @@ pub fn format_strftime_http_date(
     buf[22] = b':';
     write_two_digits(&mut buf[23..25], second as u32);
     buf[25..29].copy_from_slice(b" GMT");
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+/// Emit the exact C-locale `%c` representation `%a %b %e %H:%M:%S %Y`.
+///
+/// `%c` normally enters the locale/configuration interpreter, expands another
+/// format, and recursively walks eight directives and literals. FrankenLibC's
+/// process locale is the C locale, so normalized fields and a four-digit year
+/// define a closed finite transducer with one fixed 24-byte output. Inputs
+/// outside that certified domain return `None` and retain the general path.
+#[allow(clippy::too_many_arguments)] // Scalar projection is the closed-transducer boundary.
+#[inline]
+pub fn format_strftime_c_locale_datetime(
+    weekday: i32,
+    month: i32,
+    day: i32,
+    year_since_1900: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = i64::from(year_since_1900) + 1900;
+    if !(0..=6).contains(&weekday)
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(1000..=9999).contains(&year)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 24;
+    if buf.len() <= OUT_LEN {
+        // The generic formatter's partial writes on failure remain untouched.
+        return None;
+    }
+
+    buf[0..3].copy_from_slice(WDAY_NAMES[weekday as usize]);
+    buf[3] = b' ';
+    buf[4..7].copy_from_slice(MON_NAMES[month as usize]);
+    buf[7] = b' ';
+    if day < 10 {
+        buf[8] = b' ';
+        buf[9] = b'0' + day as u8;
+    } else {
+        write_two_digits(&mut buf[8..10], day as u32);
+    }
+    buf[10] = b' ';
+    write_two_digits(&mut buf[11..13], hour as u32);
+    buf[13] = b':';
+    write_two_digits(&mut buf[14..16], minute as u32);
+    buf[16] = b':';
+    write_two_digits(&mut buf[17..19], second as u32);
+    buf[19] = b' ';
+    let year = year as u32;
+    buf[20] = b'0' + (year / 1000) as u8;
+    buf[21] = b'0' + ((year / 100) % 10) as u8;
+    buf[22] = b'0' + ((year / 10) % 10) as u8;
+    buf[23] = b'0' + (year % 10) as u8;
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -2296,6 +2366,71 @@ mod tests {
         bd.tm_hour = 99;
         let n = format_strftime(b"%a, %d %b %Y %H:%M:%S GMT", &bd, &mut buf);
         assert_eq!(&buf[..n], b"Tue, 14 Nov 2023 99:13:20 GMT");
+    }
+
+    #[test]
+    fn strftime_c_locale_datetime_exact_and_fallback_boundaries() {
+        let mut bd = epoch_to_broken_down(1_700_000_000);
+        bd.tm_wday = 2;
+        bd.tm_mon = 10;
+        bd.tm_mday = 14;
+        bd.tm_year = 123;
+        bd.tm_hour = 22;
+        bd.tm_min = 13;
+        bd.tm_sec = 20;
+        let expected = b"Tue Nov 14 22:13:20 2023";
+
+        let mut buf = [0x55u8; 25];
+        assert_eq!(format_strftime(b"%c", &bd, &mut buf), 24);
+        assert_eq!(&buf[..24], expected);
+        assert_eq!(buf[24], 0);
+
+        let mut direct_short = [0x55u8; 24];
+        assert_eq!(
+            format_strftime_c_locale_datetime(
+                bd.tm_wday,
+                bd.tm_mon,
+                bd.tm_mday,
+                bd.tm_year,
+                bd.tm_hour,
+                bd.tm_min,
+                bd.tm_sec,
+                &mut direct_short,
+            ),
+            None
+        );
+        assert_eq!(direct_short, [0x55; 24]);
+        for capacity in 0usize..=24 {
+            let mut short = [0x55u8; 25];
+            assert_eq!(format_strftime(b"%c", &bd, &mut short[..capacity]), 0);
+            let prefix_len = capacity.saturating_sub(1);
+            assert_eq!(&short[..prefix_len], &expected[..prefix_len]);
+            assert!(short[prefix_len..].iter().all(|byte| *byte == 0x55));
+        }
+
+        for (weekday, month, day, year, hour, minute, second) in [
+            (-1, 10, 14, 123, 22, 13, 20),
+            (7, 10, 14, 123, 22, 13, 20),
+            (2, -1, 14, 123, 22, 13, 20),
+            (2, 12, 14, 123, 22, 13, 20),
+            (2, 10, 0, 123, 22, 13, 20),
+            (2, 10, 32, 123, 22, 13, 20),
+            (2, 10, 14, -901, 22, 13, 20),
+            (2, 10, 14, 8100, 22, 13, 20),
+            (2, 10, 14, 123, -1, 13, 20),
+            (2, 10, 14, 123, 24, 13, 20),
+            (2, 10, 14, 123, 22, -1, 20),
+            (2, 10, 14, 123, 22, 60, 20),
+            (2, 10, 14, 123, 22, 13, -1),
+            (2, 10, 14, 123, 22, 13, 61),
+        ] {
+            assert_eq!(
+                format_strftime_c_locale_datetime(
+                    weekday, month, day, year, hour, minute, second, &mut buf,
+                ),
+                None
+            );
+        }
     }
 
     #[test]

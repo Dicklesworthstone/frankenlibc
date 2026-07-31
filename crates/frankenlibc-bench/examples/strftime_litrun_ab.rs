@@ -111,6 +111,13 @@ const CASES: &[Case] = &[
         label: "http_date",
         format: b"%a, %d %b %Y %H:%M:%S GMT\0",
     },
+    // Canonical C-locale date/time representation. glibc resolves the locale's
+    // D_T_FMT and interprets its nested format on every call; this is the
+    // closed-language target for a straight-line FrankenLibC transducer.
+    Case {
+        label: "locale_datetime",
+        format: b"%c\0",
+    },
 ];
 
 fn self_identity() -> String {
@@ -310,6 +317,32 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     }
 
     if case.label == "http_date" {
+        for weekday in 0..=6 {
+            for month in 0..=11 {
+                for day in [1, 9, 10, 31] {
+                    for year in [1000, 9999] {
+                        for hour in [0, 23] {
+                            for minute in [0, 59] {
+                                for second in [0, 59, 60] {
+                                    let mut probe = *tm;
+                                    probe.tm_wday = weekday;
+                                    probe.tm_mon = month;
+                                    probe.tm_mday = day;
+                                    probe.tm_year = year - 1900;
+                                    probe.tm_hour = hour;
+                                    probe.tm_min = minute;
+                                    probe.tm_sec = second;
+                                    verify_one(host, case, &probe);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if case.label == "locale_datetime" {
         for weekday in 0..=6 {
             for month in 0..=11 {
                 for day in [1, 9, 10, 31] {
