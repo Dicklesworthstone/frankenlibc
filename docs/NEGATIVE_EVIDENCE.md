@@ -21718,6 +21718,43 @@ item retains every later colon by construction, exactly matching the former `fie
   unchanged actual thread count, both provider A/A median clauses, the effect/null CI rule, and
   the live FrankenLibC/glibc ratio before reclassifying the claim.
 
+## 2026-07-31 (cod / WildRaven) — RETRY OBLIGATION REFUSED BY CONFORMANCE: live `gethostbyname("localhost")` exposes hidden `hostent` divergence
+
+- **WHY THIS RETRY RAN.** `hosts_lookup_ab` was one of the three July 22 hosts rows vetoed solely
+  by the old CV-under-5% rule. The corrected median-based null gate supersedes that veto, so the
+  live whole-call comparison became obligatory. The new `gethostbyname` family in
+  `incumbent_coverage_ab` uses direct-process host glibc, an explicitly
+  `RTLD_NOW | RTLD_LOCAL`-loaded FrankenLibC object, independent provider A/A controls, 40
+  order/phase-balanced samples, and the corrected null/effect gate. Full `hostent` parity runs
+  before any host-wide gate or timer.
+- **THE OLD ORACLE WAS TOO WEAK.** The historical harness compared only canonical name and the
+  first address, under which both providers appeared to return `localhost` / `127.0.0.1`. Eight
+  full-snapshot trials instead compare canonical name, sorted aliases, address family and length,
+  and the complete sorted address list. On `vmi1156319`, glibc returned canonical `localhost`,
+  aliases `ip6-localhost` and `ip6-loopback`, and two `127.0.0.1` address-list entries.
+  FrankenLibC returned the same canonical name and address type/length, but **zero aliases and only
+  one address entry**. Those fields are observable `hostent` API output; the oracle must not be
+  weakened to make the performance arms comparable.
+- **PROVENANCE / ACTUAL THREADS / SINGLE TARGET.** The structured refusal self-reported benchmark
+  ELF SHA-256 `0855a12a375ba510ffcbd21af05ff3e6f334ef85a656e5f507fa70c1922ed8f3`,
+  host libc SHA-256 `6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`,
+  and FrankenLibC SHA-256
+  `c52f79417d6cdfa74feffe9e2dbff095c5d9554d9a8a8bcffd05d33ddee0b6e7`; symbol addresses
+  and serving objects were distinct. It observed **1 actual process thread** from
+  `/proc/self/task`. The strict-remote command used
+  `rch exec --base 8538a3cb5 --clean-overlay`, and Rust emitted the binary and shared object under
+  the reused `/data/tmp/cargo-target-frankenlibc`.
+- **OUTCOME / COUNTS.** The process failed closed at `phase=conformance` with
+  `reason=hostent_mismatch`; the host-wide gate and all effect/null arms were intentionally skipped:
+  **0 rows decidable, 0 WIN, 0 LOSE**. This is not statistical indecision and not a performance
+  refutation; it is proof that the current providers do different work on the historical input.
+- **DISPOSITION / REPLACEMENT RETRY PREDICATE.** The historical backend-borrow and needle-removal
+  self-speedups remain maintenance evidence and gain no incumbent ratio. Do not retry timing until
+  FrankenLibC matches glibc's complete `hostent` alias and address-list semantics for `localhost`
+  on this fixture (and repeats that parity over all eight pre-timing trials). Only then run the
+  host-wide pre/post gates, stable actual-thread check, both provider nulls, and corrected
+  effect/null decision rule.
+
 ## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fread-fmemopen pointer-cursor fast path lands on retry round 2 — old-fl 1t cost HALVED (disjoint distributions), 8t contention collapse 39.1µs→8.5µs/drain (cc-fread-mem-2026-07-11 RESOLVED)
 
 - **THE LEVER (unchanged from the banked patch).** `FastFixedMemRead::read_bytes` (atomic bulk

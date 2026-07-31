@@ -3,10 +3,10 @@
 //! The first conversions are the deployed strict-mode `nl_langinfo` C-locale
 //! lookup, `getrandom` syscall wrapper, `getauxval` snapshot, waiter-aware
 //! `sem_post`, inlined `thrd_current`, strict `mtx_trylock`, and hosts-backed
-//! `getaddrinfo` and `gethostbyaddr`, plus the coupled f32 `sinhf`/`coshf`
-//! paths. Their historical rows proved FrankenLibC self-speedups, but did not
-//! time live glibc in the same invocation. This harness closes those evidence
-//! gaps without changing production code.
+//! `getaddrinfo`, `gethostbyaddr`, and `gethostbyname`, plus the coupled f32
+//! `sinhf`/`coshf` paths. Their historical rows proved FrankenLibC
+//! self-speedups, but did not time live glibc in the same invocation. This
+//! harness closes those evidence gaps without changing production code.
 //!
 //! Contract:
 //! - host glibc is linked normally and FrankenLibC is loaded from the release
@@ -31,7 +31,7 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr`
+//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname`
 
 use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_uint, c_ulong, c_void};
 use std::fmt::Write as _;
@@ -55,6 +55,7 @@ const MTX_TRYLOCK_REPS: usize = 1_000_000;
 const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 const F32_HYPERBOLIC_REPS: usize = 200_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
+const GETHOSTBYNAME_REPS: usize = 5_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
 const IPV4_LOOPBACK: [u8; 4] = [127, 0, 0, 1];
@@ -83,6 +84,7 @@ type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
 type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type GethostbyaddrFn =
     unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
+type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
 
 unsafe extern "C" {
     #[link_name = "nl_langinfo"]
@@ -132,6 +134,8 @@ unsafe extern "C" {
         length: libc::socklen_t,
         family: c_int,
     ) -> *mut libc::hostent;
+    #[link_name = "gethostbyname"]
+    fn linked_host_gethostbyname(name: *const c_char) -> *mut libc::hostent;
 }
 
 const CODESET_CYCLE: &[libc::nl_item] = &[libc::CODESET];
@@ -276,6 +280,7 @@ enum Family {
     GetaddrinfoHosts,
     SinhfCoshf,
     Gethostbyaddr,
+    Gethostbyname,
 }
 
 struct Case {
@@ -506,10 +511,11 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
                 Some(value) if value == OsStr::new("gethostbyaddr") => Family::Gethostbyaddr,
+                Some(value) if value == OsStr::new("gethostbyname") => Family::Gethostbyname,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
                      sem_post, thrd_current, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
-                     or gethostbyaddr"
+                     gethostbyaddr, or gethostbyname"
                 ),
             };
         } else {
@@ -518,7 +524,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] \
                  [--family \
                   nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
-                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr]"
+                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname]"
             );
         }
     }
@@ -1640,6 +1646,96 @@ fn measure_gethostbyaddr_case(
         "loopback_ipv4_hosts_reverse",
         "resolve IPv4 loopback to its canonical host entry through the hosts database",
         GETHOSTBYADDR_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+#[inline(never)]
+fn run_gethostbyname_batch(gethostbyname: GethostbynameFn, name: &CStr) -> u64 {
+    let mut accumulator = 0u64;
+    for _ in 0..GETHOSTBYNAME_REPS {
+        let result = unsafe { black_box(gethostbyname)(black_box(name.as_ptr())) };
+        accumulator = accumulator.rotate_left(7) ^ consume_hostent(result);
+    }
+    black_box(accumulator)
+}
+
+fn time_gethostbyname_batch(gethostbyname: GethostbynameFn, name: &CStr) -> f64 {
+    let started = Instant::now();
+    black_box(run_gethostbyname_batch(gethostbyname, name));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / GETHOSTBYNAME_REPS as f64
+}
+
+fn measure_gethostbyname_case(
+    host_gethostbyname: GethostbynameFn,
+    fl_gethostbyname: GethostbynameFn,
+    name: &CStr,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_gethostbyname_batch(fl_gethostbyname, name);
+                    fb = time_gethostbyname_batch(fl_gethostbyname, name);
+                }
+                0 => {
+                    fb = time_gethostbyname_batch(fl_gethostbyname, name);
+                    fa = time_gethostbyname_batch(fl_gethostbyname, name);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_gethostbyname_batch(host_gethostbyname, name);
+                    gb = time_gethostbyname_batch(host_gethostbyname, name);
+                }
+                1 => {
+                    gb = time_gethostbyname_batch(host_gethostbyname, name);
+                    ga = time_gethostbyname_batch(host_gethostbyname, name);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_gethostbyname_batch(fl_gethostbyname, name);
+                    effect_glibc = time_gethostbyname_batch(host_gethostbyname, name);
+                }
+                2 => {
+                    effect_glibc = time_gethostbyname_batch(host_gethostbyname, name);
+                    effect_fl = time_gethostbyname_batch(fl_gethostbyname, name);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        "localhost_ipv4_hosts_lookup",
+        "resolve localhost to its canonical IPv4 host entry through the hosts database",
+        GETHOSTBYNAME_REPS,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -3346,6 +3442,177 @@ fn run_gethostbyaddr(config: &Config) {
     }
 }
 
+fn call_gethostbyname_once(gethostbyname: GethostbynameFn, name: &CStr) -> HostentObservation {
+    let result = unsafe { gethostbyname(name.as_ptr()) };
+    observe_hostent(result)
+}
+
+fn run_gethostbyname(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_gethostbyname_symbol = unsafe { libc::dlsym(handle, c"gethostbyname".as_ptr()) };
+    assert!(
+        !fl_gethostbyname_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC gethostbyname")
+    );
+
+    let host_gethostbyname: GethostbynameFn = linked_host_gethostbyname;
+    let fl_gethostbyname: GethostbynameFn = unsafe { std::mem::transmute(fl_gethostbyname_symbol) };
+    let incumbent_identity = symbol_object(host_gethostbyname as *const () as *const c_void)
+        .expect("identify host gethostbyname object");
+    let fl_identity = symbol_object(fl_gethostbyname_symbol.cast_const())
+        .expect("identify FrankenLibC gethostbyname object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=gethostbyname");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=gethostbyname");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_gethostbyname as usize, fl_gethostbyname as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=gethostbyname incumbent_address={:#x} fl_address={:#x}",
+        host_gethostbyname as usize, fl_gethostbyname as usize,
+    );
+
+    let query = c"localhost";
+    let incumbent_observation = call_gethostbyname_once(host_gethostbyname, query);
+    let fl_observation = call_gethostbyname_once(fl_gethostbyname, query);
+    if fl_observation != incumbent_observation {
+        let threads_observed = observed_threads();
+        println!(
+            "THREADS_OBSERVED symbol=gethostbyname phase=conformance count={threads_observed}"
+        );
+        eprintln!(
+            "INCUMBENT_COVERAGE_BLOCKED phase=conformance symbol=gethostbyname \
+             reason=hostent_mismatch threads_observed={threads_observed} \
+             incumbent={incumbent_observation:?} fl={fl_observation:?}"
+        );
+        std::process::exit(2);
+    }
+    assert_eq!(
+        fl_observation.address_type,
+        libc::AF_INET,
+        "gethostbyname localhost result is not IPv4"
+    );
+    assert_eq!(
+        fl_observation.address_length,
+        IPV4_LOOPBACK.len() as c_int,
+        "gethostbyname localhost result has the wrong address length"
+    );
+    assert!(
+        fl_observation
+            .addresses
+            .iter()
+            .any(|address| address == &IPV4_LOOPBACK),
+        "gethostbyname localhost result omitted IPv4 loopback"
+    );
+    for trial in 1..8 {
+        assert_eq!(
+            call_gethostbyname_once(host_gethostbyname, query),
+            incumbent_observation,
+            "host gethostbyname result changed on conformance trial {trial}"
+        );
+        assert_eq!(
+            call_gethostbyname_once(fl_gethostbyname, query),
+            fl_observation,
+            "FrankenLibC gethostbyname result changed on conformance trial {trial}"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=gethostbyname comparisons=16 \
+         query=localhost canonical_name={} aliases={} addresses={} \
+         exact_semantic_result_verdict=pass",
+        String::from_utf8_lossy(&fl_observation.name),
+        fl_observation.aliases.len(),
+        fl_observation.addresses.len(),
+    );
+
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=gethostbyname phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=gethostbyname verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "gethostbyname observed thread count changed between conformance and measurement"
+    );
+
+    let result = measure_gethostbyname_case(host_gethostbyname, fl_gethostbyname, query);
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "gethostbyname observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "gethostbyname",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let wins = usize::from(result.comparison == "FL_FASTER");
+    let losses = usize::from(result.comparison == "FL_SLOWER");
+    let undecidable = 1 - wins - losses;
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=gethostbyname verdict={verdict} \
+         cases=1 wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=localhost_ipv4_hosts_lookup headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        result.effect_median, result.comparison,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn same_f32_bits(left: f32, right: f32) -> bool {
     (left.is_nan() && right.is_nan()) || left.to_bits() == right.to_bits()
 }
@@ -3621,5 +3888,6 @@ fn main() {
         Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
         Family::SinhfCoshf => run_sinhf_coshf(&config),
         Family::Gethostbyaddr => run_gethostbyaddr(&config),
+        Family::Gethostbyname => run_gethostbyname(&config),
     }
 }
