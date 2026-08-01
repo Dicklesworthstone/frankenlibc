@@ -316,7 +316,7 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
-    if case.label == "numeric_19" {
+    if matches!(case.label, "numeric_19" | "compact_14") {
         for year in [1000, 9999] {
             for month in 0..=11 {
                 for day in [1, 9, 10, 31] {

@@ -537,6 +537,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_compact_14(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_rfc3164(
         fmt, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
     ) {
@@ -1682,6 +1685,62 @@ pub fn format_strftime_numeric_datetime(
     Some(OUT_LEN)
 }
 
+#[inline]
+fn format_strftime_compact_14(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    if fmt != b"%Y%m%d%H%M%S" {
+        return None;
+    }
+
+    format_strftime_compact_datetime(
+        bd.tm_year, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+    )
+}
+
+/// Emits the normalized, locale-independent `%Y%m%d%H%M%S` language.
+///
+/// This is the compact representation of the same closed field domain as
+/// [`format_strftime_numeric_datetime`]. Callers retain the general formatter
+/// as the fallback for non-normalized fields.
+#[inline]
+pub fn format_strftime_compact_datetime(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year)
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 14;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    let year = year as u32;
+    buf[0] = b'0' + ((year / 1000) % 10) as u8;
+    buf[1] = b'0' + ((year / 100) % 10) as u8;
+    buf[2] = b'0' + ((year / 10) % 10) as u8;
+    buf[3] = b'0' + (year % 10) as u8;
+    write_two_digits(&mut buf[4..6], (month + 1) as u32);
+    write_two_digits(&mut buf[6..8], day as u32);
+    write_two_digits(&mut buf[8..10], hour as u32);
+    write_two_digits(&mut buf[10..12], minute as u32);
+    write_two_digits(&mut buf[12..14], second as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
 /// Formats the locale-independent fixed-width numeric subset without entering
 /// the general flag/modifier parser. The first pass proves that the format has
 /// at least one numeric directive, every directive is supported, every
@@ -2559,6 +2618,20 @@ mod tests {
         assert_eq!(n, 19);
         assert_eq!(&buf[..19], b"2024-01-01 14:30:45");
         assert_eq!(buf[19], 0);
+    }
+
+    #[test]
+    fn strftime_compact_14_exact_fit() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0x55u8; 15];
+        let n = format_strftime(b"%Y%m%d%H%M%S", &bd, &mut buf);
+
+        assert_eq!(n, 14);
+        assert_eq!(&buf[..14], b"20240101143045");
+        assert_eq!(buf[14], 0);
     }
 
     #[test]

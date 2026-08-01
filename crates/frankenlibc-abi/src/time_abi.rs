@@ -1388,6 +1388,47 @@ pub unsafe extern "C" fn strftime(
                 return n;
             }
         }
+        // `%Y%m%d%H%M%S\0` is the compact member of the same normalized
+        // numeric timestamp family. Its six directives otherwise enter the
+        // two-pass numeric interpreter, the largest candidate-only self-time
+        // in the whole-job profile. Match the full C string before projecting
+        // only the six fields this transducer consumes.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
+        // short-circuit chain never reads past an earlier NUL.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'Y'
+                && *format.cast::<u8>().add(2) == b'%'
+                && *format.cast::<u8>().add(3) == b'm'
+                && *format.cast::<u8>().add(4) == b'%'
+                && *format.cast::<u8>().add(5) == b'd'
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'H'
+                && *format.cast::<u8>().add(8) == b'%'
+                && *format.cast::<u8>().add(9) == b'M'
+                && *format.cast::<u8>().add(10) == b'%'
+                && *format.cast::<u8>().add(11) == b'S'
+                && *format.cast::<u8>().add(12) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_year,
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_compact_datetime(
+                year, month, day, hour, minute, second, buf,
+            ) {
+                return n;
+            }
+        }
         // Exact `%c\0` in FrankenLibC's C locale is the closed representation
         // `%a %b %e %H:%M:%S %Y`. Compile that nested locale format into one
         // fixed emitter before the generic C-string scan, full `tm` projection,
