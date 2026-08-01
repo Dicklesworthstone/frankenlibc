@@ -1621,13 +1621,33 @@ fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -
         return None;
     }
 
-    let year = bd.tm_year as i64 + 1900;
+    format_strftime_numeric_datetime(
+        bd.tm_year, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+    )
+}
+
+/// Emits the normalized, locale-independent `%Y-%m-%d %H:%M:%S` language.
+///
+/// The accepted domain is deliberately closed: four-digit calendar years,
+/// normalized month/day/hour/minute fields, and POSIX's leap-second value 60.
+/// Callers must fall back to the general formatter when this returns `None`.
+#[inline]
+pub fn format_strftime_numeric_datetime(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
     if !(1000..=9999).contains(&year)
-        || !(0..=11).contains(&bd.tm_mon)
-        || !(1..=31).contains(&bd.tm_mday)
-        || !(0..=23).contains(&bd.tm_hour)
-        || !(0..=59).contains(&bd.tm_min)
-        || !(0..=60).contains(&bd.tm_sec)
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
     {
         return None;
     }
@@ -1638,11 +1658,11 @@ fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -
     }
 
     let year = year as u32;
-    let month = (bd.tm_mon + 1) as u32;
-    let day = bd.tm_mday as u32;
-    let hour = bd.tm_hour as u32;
-    let minute = bd.tm_min as u32;
-    let second = bd.tm_sec as u32;
+    let month = (month + 1) as u32;
+    let day = day as u32;
+    let hour = hour as u32;
+    let minute = minute as u32;
+    let second = second as u32;
 
     buf[0] = b'0' + ((year / 1000) % 10) as u8;
     buf[1] = b'0' + ((year / 100) % 10) as u8;

@@ -1342,6 +1342,52 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
+        // `%Y-%m-%d %H:%M:%S\0` is a closed, locale-independent language.
+        // Compile it at the ABI boundary so the dominant timestamp form avoids
+        // the generic C-string scan, allocation-registry probes, full `tm`
+        // projection, slice searches, and directive dispatch. The left-to-right
+        // chain never reads beyond an earlier NUL. Non-normalized fields fall
+        // through to the general formatter, preserving its extended behavior.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'Y'
+                && *format.cast::<u8>().add(2) == b'-'
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'm'
+                && *format.cast::<u8>().add(5) == b'-'
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'd'
+                && *format.cast::<u8>().add(8) == b' '
+                && *format.cast::<u8>().add(9) == b'%'
+                && *format.cast::<u8>().add(10) == b'H'
+                && *format.cast::<u8>().add(11) == b':'
+                && *format.cast::<u8>().add(12) == b'%'
+                && *format.cast::<u8>().add(13) == b'M'
+                && *format.cast::<u8>().add(14) == b':'
+                && *format.cast::<u8>().add(15) == b'%'
+                && *format.cast::<u8>().add(16) == b'S'
+                && *format.cast::<u8>().add(17) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_year,
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_numeric_datetime(
+                year, month, day, hour, minute, second, buf,
+            ) {
+                return n;
+            }
+        }
         // Exact `%c\0` in FrankenLibC's C locale is the closed representation
         // `%a %b %e %H:%M:%S %Y`. Compile that nested locale format into one
         // fixed emitter before the generic C-string scan, full `tm` projection,
