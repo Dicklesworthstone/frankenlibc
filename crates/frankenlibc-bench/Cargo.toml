@@ -748,3 +748,11 @@ required-features = ["abi-bench"]
 [[example]]
 name = "malloc_sizetrack_ab"
 required-features = ["abi-bench"]
+
+[[example]]
+name = "span_largeset_ab"
+required-features = ["abi-bench"]
+
+[[example]]
+name = "tokenize_loop_ab"
+required-features = ["abi-bench"]

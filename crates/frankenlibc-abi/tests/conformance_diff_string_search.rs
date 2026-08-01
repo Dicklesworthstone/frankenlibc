@@ -34,6 +34,9 @@ mod g {
         pub fn strpbrk(s: *const c_char, a: *const c_char) -> *mut c_char;
         pub fn strspn(s: *const c_char, a: *const c_char) -> usize;
         pub fn strcspn(s: *const c_char, a: *const c_char) -> usize;
+        pub fn strtok(s: *mut c_char, d: *const c_char) -> *mut c_char;
+        pub fn strtok_r(s: *mut c_char, d: *const c_char, sp: *mut *mut c_char) -> *mut c_char;
+        pub fn strsep(sp: *mut *mut c_char, d: *const c_char) -> *mut c_char;
     }
 }
 
@@ -395,6 +398,229 @@ fn fused_span_long_strings_match_glibc() {
             off(gp.cast(), s.cast()),
             "strpbrk(long) mismatch head={head} blen={blen} set={set:?}"
         );
+    }
+}
+
+/// Differential gate for the SSE4.2 `pcmpistri` span probe (`span_probe_cmpistri`),
+/// which answers `strspn`/`strcspn`/`strpbrk` for 5..=16-byte sets without the LUT
+/// path's per-call setup. Every boundary the probe decides on is swept here, and
+/// each must agree with live glibc:
+///
+///   * set length 4..=17 — 4 is below the probe's floor (tuned splat path), 16 is
+///     the exact `pcmpistri` needle width (no terminator inside the register, so
+///     the length comes from the byte *after* the load), 17 is the first width it
+///     must decline;
+///   * spans on both sides of the 128-byte probe budget, so the "resolved inside
+///     the budget" and "fell through to the LUT path" branches are both exercised
+///     and must produce the same answer;
+///   * non-ASCII set bytes, which `pcmpistri` handles but the PSHUFB classifier
+///     refuses — the two arms must still agree;
+///   * strings and sets placed hard against a page end, which trips the probe's
+///     page-cross guard into declining. Both guard branches must agree.
+#[test]
+fn cmpistri_span_probe_matches_glibc() {
+    const PAGE: usize = 4096;
+    let mut rng = Rng(0x0BAD_F00D_1234_5678);
+
+    // A 4-page window, page-aligned in the interior, so a string can be laid out to
+    // end exactly at a page boundary without ever reading unmapped memory.
+    let backing = vec![0u8; PAGE * 5];
+    let page0 = (backing.as_ptr() as usize).next_multiple_of(PAGE);
+
+    for _ in 0..4000 {
+        // 4..=17 straddles both ends of the probe's accepted set width.
+        let setlen = 4 + rng.below(14);
+        // Half the sets draw from a small ASCII alphabet (so members actually occur
+        // in `s`), half include bytes >= 0x80 to cover the non-ASCII case.
+        let non_ascii = rng.below(2) == 1;
+        let mut set: Vec<u8> = (0..setlen)
+            .map(|_| {
+                if non_ascii && rng.below(3) == 0 {
+                    0x80 + (rng.below(0x7F) as u8)
+                } else {
+                    1 + (rng.below(9) as u8)
+                }
+            })
+            .collect();
+        set.push(0);
+
+        // Body length straddling the 128-byte probe budget.
+        let blen = 1 + rng.below(300);
+        let alpha = [2u8, 6, 11, 200][rng.below(4)];
+
+        // Place the string either in the page interior or ending flush at a page
+        // boundary, which forces a page-crossing 16-byte load partway through.
+        let s_off = if rng.below(2) == 0 {
+            PAGE + rng.below(64)
+        } else {
+            // NUL lands on the last byte of page 2.
+            2 * PAGE - blen - 1 + rng.below(2)
+        };
+        // SAFETY: `backing` covers [page0, page0 + 4*PAGE); s_off + blen stays inside.
+        let s = unsafe {
+            let p = (page0 + s_off) as *mut u8;
+            for i in 0..blen {
+                *p.add(i) = 1 + (rng.next() % (alpha as u64)) as u8;
+            }
+            *p.add(blen) = 0;
+            p as *const u8
+        };
+
+        // Place the set either in the interior or flush against a page end, so the
+        // probe's set-load guard is exercised in both directions.
+        let set_ptr = if rng.below(2) == 0 {
+            set.as_ptr()
+        } else {
+            // SAFETY: writing set.len() bytes ending at the boundary of page 4.
+            unsafe {
+                let p = (page0 + 4 * PAGE - set.len()) as *mut u8;
+                std::ptr::copy_nonoverlapping(set.as_ptr(), p, set.len());
+                p as *const u8
+            }
+        };
+
+        let ctx = || format!("setlen={setlen} blen={blen} s_off={s_off} set={set:?}");
+
+        let g_spn = unsafe { g::strspn(s.cast(), set_ptr.cast()) };
+        let f_spn = unsafe { fl::strspn(s.cast(), set_ptr.cast()) };
+        assert_eq!(f_spn, g_spn, "strspn mismatch {}", ctx());
+
+        let g_csp = unsafe { g::strcspn(s.cast(), set_ptr.cast()) };
+        let f_csp = unsafe { fl::strcspn(s.cast(), set_ptr.cast()) };
+        assert_eq!(f_csp, g_csp, "strcspn mismatch {}", ctx());
+
+        let gp = unsafe { g::strpbrk(s.cast(), set_ptr.cast()) };
+        let fp = unsafe { fl::strpbrk(s.cast(), set_ptr.cast()) };
+        assert_eq!(
+            off(fp.cast(), s.cast()),
+            off(gp.cast(), s.cast()),
+            "strpbrk mismatch {}",
+            ctx()
+        );
+    }
+}
+
+/// Differential gate for the TOKENIZER family — `strtok`, `strtok_r`, `strsep` —
+/// driven to exhaustion, comparing the WHOLE token stream against live glibc.
+///
+/// A single-call test cannot see the failure mode these functions actually have:
+/// each of them carries a resume point across calls, and `strtok_r` keeps it in the
+/// caller's `saveptr` while `strtok` keeps it in a thread-local. A fast path that
+/// writes the wrong one still returns a correct FIRST token and only truncates the
+/// stream afterwards — which is exactly the bug the `pcmpistri` widening introduced
+/// and the existing per-function tests passed straight through.
+///
+/// Delimiter sets sweep 1..=20 bytes so the 5..=16 probe range, its two boundaries,
+/// and the wider fallback are all covered, with leading, trailing, adjacent and
+/// absent delimiters.
+#[test]
+fn tokenizer_family_token_streams_match_glibc() {
+    fn fl_stream_strtok_r(src: &[u8], delim: &[u8]) -> Vec<Vec<u8>> {
+        let mut buf = src.to_vec();
+        let mut out = Vec::new();
+        let mut save: *mut c_char = std::ptr::null_mut();
+        unsafe {
+            let mut t = fl::strtok_r(buf.as_mut_ptr().cast(), delim.as_ptr().cast(), &mut save);
+            while !t.is_null() {
+                out.push(std::ffi::CStr::from_ptr(t).to_bytes().to_vec());
+                t = fl::strtok_r(std::ptr::null_mut(), delim.as_ptr().cast(), &mut save);
+            }
+        }
+        out
+    }
+    fn g_stream_strtok_r(src: &[u8], delim: &[u8]) -> Vec<Vec<u8>> {
+        let mut buf = src.to_vec();
+        let mut out = Vec::new();
+        let mut save: *mut c_char = std::ptr::null_mut();
+        unsafe {
+            let mut t = g::strtok_r(buf.as_mut_ptr().cast(), delim.as_ptr().cast(), &mut save);
+            while !t.is_null() {
+                out.push(std::ffi::CStr::from_ptr(t).to_bytes().to_vec());
+                t = g::strtok_r(std::ptr::null_mut(), delim.as_ptr().cast(), &mut save);
+            }
+        }
+        out
+    }
+    // `strsep` differs from strtok by design: it returns EMPTY fields between
+    // adjacent delimiters instead of collapsing them, so it is compared to glibc's
+    // strsep, never to the strtok streams.
+    fn stream_strsep(src: &[u8], delim: &[u8], fl_side: bool) -> Vec<Vec<u8>> {
+        let mut buf = src.to_vec();
+        let mut cur = buf.as_mut_ptr().cast::<c_char>();
+        let mut out = Vec::new();
+        unsafe {
+            loop {
+                let t = if fl_side {
+                    fl::strsep(&mut cur, delim.as_ptr().cast())
+                } else {
+                    g::strsep(&mut cur, delim.as_ptr().cast())
+                };
+                if t.is_null() {
+                    break;
+                }
+                out.push(std::ffi::CStr::from_ptr(t).to_bytes().to_vec());
+            }
+        }
+        out
+    }
+
+    let mut rng = Rng(0xFEED_FACE_5EED_1234);
+    for _ in 0..3000 {
+        // 1..=20 covers below, inside, and above the probe's 5..=16 window.
+        let dlen = 1 + rng.below(20);
+        let mut delim: Vec<u8> = (0..dlen).map(|_| 1 + (rng.below(6) as u8)).collect();
+        delim.push(0);
+
+        // Body from an alphabet that overlaps the delimiters, so delimiters land in
+        // runs, at the head, and at the tail.
+        let blen = 1 + rng.below(260);
+        let alpha = [3u8, 8, 14][rng.below(3)];
+        let mut src: Vec<u8> = (0..blen)
+            .map(|_| 1 + (rng.next() % alpha as u64) as u8)
+            .collect();
+        src.push(0);
+
+        let ctx = || format!("dlen={dlen} blen={blen} delim={delim:?}");
+        assert_eq!(
+            fl_stream_strtok_r(&src, &delim),
+            g_stream_strtok_r(&src, &delim),
+            "strtok_r stream {}",
+            ctx()
+        );
+        assert_eq!(
+            stream_strsep(&src, &delim, true),
+            stream_strsep(&src, &delim, false),
+            "strsep stream {}",
+            ctx()
+        );
+
+        // `strtok` carries its resume point in per-implementation global state, so
+        // each stream is driven to exhaustion before the other starts.
+        let fl_tok = {
+            let mut buf = src.clone();
+            let mut out = Vec::new();
+            unsafe {
+                let mut t = fl::strtok(buf.as_mut_ptr().cast(), delim.as_ptr().cast());
+                while !t.is_null() {
+                    out.push(std::ffi::CStr::from_ptr(t).to_bytes().to_vec());
+                    t = fl::strtok(std::ptr::null_mut(), delim.as_ptr().cast());
+                }
+            }
+            out
+        };
+        let g_tok = {
+            let mut buf = src.clone();
+            let mut out = Vec::new();
+            unsafe {
+                let mut t = g::strtok(buf.as_mut_ptr().cast(), delim.as_ptr().cast());
+                while !t.is_null() {
+                    out.push(std::ffi::CStr::from_ptr(t).to_bytes().to_vec());
+                    t = g::strtok(std::ptr::null_mut(), delim.as_ptr().cast());
+                }
+            }
+            out
+        };
+        assert_eq!(fl_tok, g_tok, "strtok stream {}", ctx());
     }
 }
 
