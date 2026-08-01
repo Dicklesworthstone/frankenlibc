@@ -9001,6 +9001,51 @@ unsafe fn scanf_direct_va(input: &[u8], fmt: &[u8], ap: *mut c_void) -> DirectSc
     }
 }
 
+/// Copy `n` bytes without a `memcpy` call, for the short tokens `%s`/`%[`/`%c`
+/// actually produce.
+///
+/// `copy_nonoverlapping` with a RUNTIME length compiles to a call to `memcpy` —
+/// under `LD_PRELOAD` that is FrankenLibC's own, reached through the PLT, and it
+/// then runs its own size dispatch, all to move five bytes. glibc's scanf never
+/// pays it: its inner loop stores each character into the destination as it
+/// scans. The overlapping fixed-width pairs below touch only `src[0..n]` and
+/// `dst[0..n]`, so this reads and writes exactly what the call would have.
+///
+/// # Safety
+/// `src` and `dst` must both be valid for `n` bytes and must not overlap.
+#[inline(always)]
+unsafe fn copy_short(src: *const u8, dst: *mut u8, n: usize) {
+    unsafe {
+        if n >= 16 {
+            if n > 32 {
+                std::ptr::copy_nonoverlapping(src, dst, n);
+                return;
+            }
+            let head = src.cast::<u128>().read_unaligned();
+            let tail = src.add(n - 16).cast::<u128>().read_unaligned();
+            dst.cast::<u128>().write_unaligned(head);
+            dst.add(n - 16).cast::<u128>().write_unaligned(tail);
+        } else if n >= 8 {
+            let head = src.cast::<u64>().read_unaligned();
+            let tail = src.add(n - 8).cast::<u64>().read_unaligned();
+            dst.cast::<u64>().write_unaligned(head);
+            dst.add(n - 8).cast::<u64>().write_unaligned(tail);
+        } else if n >= 4 {
+            let head = src.cast::<u32>().read_unaligned();
+            let tail = src.add(n - 4).cast::<u32>().read_unaligned();
+            dst.cast::<u32>().write_unaligned(head);
+            dst.add(n - 4).cast::<u32>().write_unaligned(tail);
+        } else if n >= 2 {
+            let head = src.cast::<u16>().read_unaligned();
+            let tail = src.add(n - 2).cast::<u16>().read_unaligned();
+            dst.cast::<u16>().write_unaligned(head);
+            dst.add(n - 2).cast::<u16>().write_unaligned(tail);
+        } else if n == 1 {
+            *dst = *src;
+        }
+    }
+}
+
 /// Write one directive's result through the caller's destination pointer.
 ///
 /// The scalar conversions delegate to [`vscanf_write_one`]; `%c` and `%s`/`%[`
@@ -9028,9 +9073,7 @@ unsafe fn scanf_write_emit(emit: &ScanEmit, spec: &ScanSpec, input: &[u8], dest:
                     *dest.cast::<*mut c_char>() = buf.cast::<c_char>();
                 }
             } else {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.cast::<u8>(), bytes.len());
-                }
+                unsafe { copy_short(bytes.as_ptr(), dest.cast::<u8>(), bytes.len()) };
             }
         }
         ScanEmit::Text { start, end } => {
@@ -9048,7 +9091,7 @@ unsafe fn scanf_write_emit(emit: &ScanEmit, spec: &ScanSpec, input: &[u8], dest:
             } else {
                 unsafe {
                     let out = dest.cast::<u8>();
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len());
+                    copy_short(bytes.as_ptr(), out, bytes.len());
                     *out.add(bytes.len()) = 0;
                 }
             }
