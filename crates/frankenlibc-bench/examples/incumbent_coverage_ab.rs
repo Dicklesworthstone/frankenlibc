@@ -5792,6 +5792,31 @@ const SSCANF_CASES: &[ScanCase] = &[
             ]
         },
     },
+    // Decomposition of `mixed_record`, the family's worst ratio. `%d %d` sits at
+    // parity while `%s %d %lf` loses 1.40x, so the cost is in a particular
+    // CONVERSION, not in multi-directive dispatch. These two cases split the
+    // record: `string_then_int` is it without the float, `float_only` is the
+    // float on its own. Both arms are timed for every case, so each one answers
+    // "does the incumbent pay this same cost?" directly.
+    ScanCase {
+        label: "string_then_int",
+        note: "\"%s %d\" -- mixed_record without the float",
+        input: c"sensor 42",
+        format: c"%s %d",
+        destinations: |d| {
+            vec![
+                d.text.as_mut_ptr().cast(),
+                std::ptr::addr_of_mut!(d.ints[0]).cast(),
+            ]
+        },
+    },
+    ScanCase {
+        label: "float_only",
+        note: "\"%lf\" alone -- isolates the float conversion",
+        input: c"3.14159",
+        format: c"%lf",
+        destinations: |d| vec![std::ptr::addr_of_mut!(d.double_value).cast()],
+    },
     ScanCase {
         label: "mixed_record",
         note: "\"%s %d %lf\" -- string + int + double, a whole log/CSV record",
@@ -5865,6 +5890,30 @@ fn check_sscanf_conformance(host: VsscanfFn, fl: VsscanfFn) -> (usize, usize) {
         (c"-inf", c"%lf"),
         (c"0x1p3", c"%lf"),
         (c"  1.5  ", c"%lf"),
+        // Decimal-token boundaries. `scan_float` parses the token in place from
+        // the input slice instead of copying it, so the exact extent matters:
+        // a leading '+' must be EXCLUDED (the old copy simply never pushed it),
+        // a second '.' must end the token, and a dangling exponent must still
+        // produce the same unparseable token and hence the same match failure.
+        (c"+5.5", c"%lf"),
+        (c"+.25", c"%lf"),
+        (c"-.5", c"%lf"),
+        (c"03.1.5", c"%lf"),
+        (c"3.14e", c"%lf"),
+        (c"1e+", c"%lf"),
+        (c"1e+5", c"%lf"),
+        (c"5.", c"%lf"),
+        (c".5", c"%lf"),
+        (c"e5", c"%lf"),
+        (c"+", c"%lf"),
+        (c"-", c"%lf"),
+        (c"12345678901234567890.5", c"%lf"),
+        (c"1.7976931348623157e308", c"%lf"),
+        (c"5e-324", c"%lf"),
+        (c"+7.5e-3", c"%7lf"),
+        (c"+123456", c"%3lf"),
+        (c"3.5", c"%f"),
+        (c"+3.5", c"%f"),
         (c"x=1", c"x=%d"),
         (c"y=1", c"x=%d"),
         (c"a b", c"%s%s"),

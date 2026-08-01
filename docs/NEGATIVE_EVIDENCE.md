@@ -26682,3 +26682,45 @@ failed. Evidence and harness only; no production optimization attempted.
   `%s %d %lf` 1.40x, `%s` 1.21x, `%d.%d.%d.%d` 1.11x — while the pure numeric
   shapes WIN (`%lx` 0.71x, `%d` 0.78x, `%[^=]` 0.84x). It is not allocation and
   not the scanset. That is the next lever, and it needs a profile, not a guess.
+
+## KEEP `scan-float-in-place-2026-07-31` — the float token copy was the sscanf gap (1.574x -> 0.583x)
+
+Recorded here because it is the resolution of the REJECT above: that entry named
+`%s`-bearing multi-directive shapes as "the real standing gap ... needs a
+profile, not a guess". Decomposing them found the gap was not `%s` at all.
+
+- **THE DECOMPOSITION.** `%d %d` measured at parity (0.988x) while `%s %d %lf`
+  lost 1.439x, so the cost was in a CONVERSION, not in multi-directive dispatch.
+  Splitting the losing record: `string_then_int` (`%s %d`, the record minus the
+  float) 1.127x, `float_only` (`%lf` alone) **1.574x** — the worst ratio in the
+  family, on a single conversion. Both arms are timed for every case, so each
+  case answers "does the incumbent pay this same cost?" directly.
+- **THE STRUCTURAL DIFFERENCE.** `scan_float` accumulated the decimal token into
+  a `Vec::with_capacity(64)`, one `push` per byte, and parsed the copy — a heap
+  allocation per float conversion, landing in FrankenLibC's own tracked
+  allocator under `LD_PRELOAD`. glibc pays nothing comparable:
+  `__vfscanf_internal` gathers float characters into a stack buffer and hands it
+  to `__strtod_internal`. This was the last production allocation in the scan
+  path (the other `Vec::with_capacity` sites in the file are test-only digit
+  generators).
+- **THE FIX IS A DELETION.** Every byte the old loop pushed was `input[i]` and
+  every push advanced `i` by exactly one, so the token is always the contiguous
+  slice `input[token_start..i]`; the only byte that differed was a leading `+`,
+  which the old loop dropped and `token_start` now skips. No copy, no allocation,
+  same bytes to `parse`, same values and same matching failures.
+- **MEASURED.** `--fl-deepbind`, `--pin-quietest 2`, 600k reps/arm, 36 retained
+  samples, one observed thread. `float_only` **1.574x -> 0.583x**
+  (fl 497.7 -> 172.0 ns, 2.9x fl-over-fl, while glibc moved 319.9 -> 297.8 ns,
+  7% host drift) CI [0.567,0.613]. `mixed_record` **1.439x -> 0.841x**
+  (fl 660.9 -> 404.9 ns) CI [0.812,0.875]. Every non-float case unchanged within
+  noise. ⚠️ The busy shared worker violated the A/A null on most rows, so the
+  harness gate reports these as `NULL_VIOLATED` rather than `FL_FASTER`; the
+  effect is nonetheless ~10x the observed null and has an identified mechanism.
+- **CONFORMANCE.** 63 comparisons, 0 mismatches, byte-identical to live glibc,
+  including the edges that specifically exercise the new token extent: `+5.5`,
+  `+.25`, `-.5`, `03.1.5` (second dot ends the token), `3.14e` and `1e+`
+  (dangling exponent must still fail to match), `5.`, `.5`, `e5`, bare `+`/`-`,
+  `5e-324`, `1.7976931348623157e308`, and width-truncated `%7lf` / `%3lf` on
+  `+`-signed input. Core `stdio::scanf` 72/72.
+- **REMAINING GAP.** `%s` itself: `two_strings` 1.328x, `string_token` 1.171x.
+  Not allocation — there is none left on that path.

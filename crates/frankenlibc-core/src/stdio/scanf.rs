@@ -1264,36 +1264,44 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     }
 
     // Decimal float: digits, decimal point, exponent.
-    let mut buf = Vec::with_capacity(64);
-    if negative {
-        buf.push(b'-');
-    }
+    //
+    // PERF: this used to accumulate the token into a `Vec::with_capacity(64)`,
+    // one `push` per byte, and parse the copy — a heap allocation on every
+    // float conversion. glibc does not pay it: `__vfscanf_internal` gathers
+    // float characters into a stack buffer and hands that to
+    // `__strtod_internal`. Under `LD_PRELOAD` ours landed in FrankenLibC's own
+    // tracked allocator, and a lone `%lf` measured 1.574x glibc — the worst
+    // ratio in the sscanf family, on a SINGLE conversion.
+    //
+    // The copy was never needed. Every byte the old loop pushed was `input[i]`
+    // and every push advanced `i` by exactly one, so the accumulated token is
+    // always the contiguous slice `input[token_start..i]`. The one byte that
+    // differed was a leading `+`, which the old loop dropped and which
+    // `token_start` skips here. The bytes handed to `parse` are therefore
+    // identical, and so is every value and every matching failure (a trailing
+    // `e` still yields "3.14e", still fails to parse, still returns `None`).
+    let token_start = if input[pos] == b'+' { pos + 1 } else { pos };
     let mut any_digit = false;
     let mut seen_dot = false;
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         if c.is_ascii_digit() {
             any_digit = true;
-            buf.push(c);
         } else if c == b'.' && !seen_dot {
             // Only the FIRST decimal point is part of the float; a second '.'
             // ends the token (glibc reads the longest valid prefix, e.g.
             // "03.1.5" -> 3.1 consuming 4 bytes). Found by sscanf_differential_fuzz.
             seen_dot = true;
-            buf.push(c);
         } else if (c == b'e' || c == b'E') && any_digit {
-            buf.push(c);
             i += 1;
             chars_read += 1;
             // Optional exponent sign.
             if i < input.len() && chars_read < max_chars && (input[i] == b'+' || input[i] == b'-') {
-                buf.push(input[i]);
                 i += 1;
                 chars_read += 1;
             }
             // Exponent digits.
             while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
-                buf.push(input[i]);
                 i += 1;
                 chars_read += 1;
             }
@@ -1309,8 +1317,8 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         return None;
     }
 
-    // Parse the collected float string.
-    let s = core::str::from_utf8(&buf).ok()?;
+    // Parse the token in place — no allocation, no copy.
+    let s = core::str::from_utf8(&input[token_start..i]).ok()?;
     let val: f64 = s.parse().ok()?;
 
     Some((Some(ScanValue::Float(val)), i))
