@@ -5780,6 +5780,16 @@ const SSCANF_CASES: &[ScanCase] = &[
         format: c"%[^=]",
         destinations: |d| vec![d.text.as_mut_ptr().cast()],
     },
+    // A realistic `%s` token (a path), not a 5-byte one. Together with
+    // `string_token` this separates per-BYTE cost from per-CALL cost: if the
+    // gap is per-byte it grows with the token, if it is fixed it does not.
+    ScanCase {
+        label: "long_string",
+        note: "\"%s\" on a 44-byte path -- per-byte vs fixed cost",
+        input: c"/usr/lib/x86_64-linux-gnu/libfrankenlibc.so.1 rest",
+        format: c"%s",
+        destinations: |d| vec![d.text.as_mut_ptr().cast()],
+    },
     ScanCase {
         label: "two_strings",
         note: "\"%s %s\" -- key_value's shape without the scanset",

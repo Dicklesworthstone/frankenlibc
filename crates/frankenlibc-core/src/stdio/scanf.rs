@@ -760,7 +760,13 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
 /// For a WIDE stream the input bytes are the UTF-8 encoding of wide characters,
 /// so the whole UTF-8 sequence is decoded and tested with `iswspace`, matching
 /// glibc's wide scanf (which recognises U+2003, U+205F, U+3000, … as space).
-#[inline]
+/// PERF: the Unicode arm lives in its own `#[inline(never)]` function so that
+/// `ws_seq_len` itself is small enough to inline. It is called ONCE PER BYTE by
+/// the `%s` token scan and by every whitespace skip; with the `utf8_seq_len` +
+/// `from_utf8` + `iswspace` body inline, it was too large for the compiler to
+/// inline and each byte cost a real call. That showed up as ~17-22 ns of gap per
+/// `%s` conversion against glibc, whose inner loop is an `ISSPACE` table lookup.
+#[inline(always)]
 fn ws_seq_len(input: &[u8], pos: usize, wide: bool) -> usize {
     if pos >= input.len() {
         return 0;
@@ -768,6 +774,13 @@ fn ws_seq_len(input: &[u8], pos: usize, wide: bool) -> usize {
     if !wide {
         return if is_c_space(input[pos]) { 1 } else { 0 };
     }
+    ws_seq_len_wide(input, pos)
+}
+
+/// Unicode whitespace sequence length — only a WIDE scanf stream (`swscanf` /
+/// `fwscanf`), or a narrow `%ls`, ever reaches this.
+#[inline(never)]
+fn ws_seq_len_wide(input: &[u8], pos: usize) -> usize {
     let len = utf8_seq_len(input[pos]);
     if pos + len > input.len() {
         // Truncated trailing sequence: fall back to the ASCII test.
@@ -798,6 +811,14 @@ pub fn skip_scanf_whitespace(input: &[u8], pos: usize, wide: bool) -> usize {
 /// Skip leading whitespace. Returns new position. When `wide`, Unicode
 /// whitespace (whole UTF-8 sequences) is skipped, not just ASCII.
 fn skip_ws(input: &[u8], mut pos: usize, wide: bool) -> usize {
+    if !wide {
+        // Narrow stream: a whitespace run is a byte run, so hoist the branch out
+        // of the loop and test bytes directly.
+        while pos < input.len() && is_c_space(input[pos]) {
+            pos += 1;
+        }
+        return pos;
+    }
     loop {
         let n = ws_seq_len(input, pos, wide);
         if n == 0 {
@@ -1547,6 +1568,23 @@ fn scan_string_extent(
     // bytes for a narrow stream (sscanf) but WIDE characters for a wide stream
     // (swscanf), whose input is multibyte-encoded wide text.
     let wide = wide_input || matches!(spec.length, LengthMod::L);
+
+    // Narrow `%s` on a narrow stream — the overwhelmingly common case. Here a
+    // character IS a byte, so the token ends at the first ASCII-whitespace byte
+    // and the width is a byte bound: one tight loop with no per-byte call and no
+    // wide/narrow branch inside it. (`!wide` already implies `!wide_input`.)
+    if !wide {
+        let limit = input.len().min(pos.saturating_add(max_chars));
+        let mut end = pos;
+        while end < limit && !is_c_space(input[end]) {
+            end += 1;
+        }
+        if end == pos {
+            return None;
+        }
+        return Some((pos, end));
+    }
+
     let mut i = pos;
     let mut chars_read = 0usize;
 
