@@ -76,6 +76,10 @@ const CASES: &[Case] = &[
         label: "mixed_general",
         format: b"prefix %A suffix\0",
     },
+    Case {
+        label: "mixed_month_general",
+        format: b"prefix %B suffix\0",
+    },
     // Real-world shapes. The exact-leaf family already beats glibc (0.448-0.675) while
     // `mixed_general` — one directive wrapped in literal text — loses 11.7x on a 227 ns
     // frame. These probe where the boundary actually falls for formats people write:
@@ -296,6 +300,22 @@ fn verify_one(host: StrftimeFn, case: &Case, tm: &libc::tm) {
 
 fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     verify_one(host, case, tm);
+    if case.label == "mixed_general" {
+        for weekday in 0..=6 {
+            let mut probe = *tm;
+            probe.tm_wday = weekday;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if case.label == "mixed_month_general" {
+        for month in 0..=11 {
+            let mut probe = *tm;
+            probe.tm_mon = month;
+            verify_one(host, case, &probe);
+        }
+    }
+
     if case.label == "syslog_ts" {
         for month in 0..=11 {
             for day in [1, 9, 10, 31] {

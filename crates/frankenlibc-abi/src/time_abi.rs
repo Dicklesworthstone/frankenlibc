@@ -1205,6 +1205,122 @@ pub unsafe extern "C" fn ctime_r(
 // strftime
 // ---------------------------------------------------------------------------
 
+/// Copy a truncated C-locale name without re-entering FrankenLibC's exported
+/// `memcpy` symbol. These names are at most nine bytes, so decomposing the copy
+/// into 8/4/2/1-byte scalar stores is both bounded and cheaper than another ABI
+/// dispatch through the general memory routine.
+#[inline(always)]
+unsafe fn copy_strftime_small_name(dst: *mut u8, src: &[u8], count: usize) {
+    debug_assert!(count <= src.len());
+    debug_assert!(count <= 9);
+
+    let mut offset = 0usize;
+    if count & 8 != 0 {
+        // SAFETY: `count >= 8`, the caller proves `src` and `dst` each contain
+        // `count` bytes, and unaligned accesses are used deliberately.
+        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().cast::<u64>()) };
+        // SAFETY: the same bound proves the destination has eight writable bytes.
+        unsafe { std::ptr::write_unaligned(dst.cast::<u64>(), word) };
+        offset = 8;
+    }
+    if count & 4 != 0 {
+        // SAFETY: the bit decomposition leaves four readable/writable bytes at
+        // `offset`; unaligned accesses impose no alignment precondition.
+        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().add(offset).cast::<u32>()) };
+        // SAFETY: see the preceding bound argument.
+        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u32>(), word) };
+        offset += 4;
+    }
+    if count & 2 != 0 {
+        // SAFETY: the bit decomposition leaves two readable/writable bytes at
+        // `offset`; unaligned accesses impose no alignment precondition.
+        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().add(offset).cast::<u16>()) };
+        // SAFETY: see the preceding bound argument.
+        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u16>(), word) };
+        offset += 2;
+    }
+    if count & 1 != 0 {
+        // SAFETY: the final bit proves one readable/writable byte remains.
+        unsafe { *dst.add(offset) = src[offset] };
+    }
+}
+
+/// Fuse recognition and emission for one C-locale name surrounded by literals.
+///
+/// The accepted language is `literal* ("%a"|"%A"|"%b"|"%B"|"%h") literal*`;
+/// pure literals are accepted as its zero-conversion case. Every input byte is
+/// read once and every output byte is written once. On a second or unsupported
+/// conversion this declines to the untouched general formatter. POSIX declares
+/// `s` and `format` restricted, so speculative literal writes cannot alias and
+/// alter the format before that fallback overwrites the output.
+#[inline]
+unsafe fn try_strftime_strict_fused_single_name(
+    s: *mut std::ffi::c_char,
+    maxsize: usize,
+    format: *const std::ffi::c_char,
+    tm: *const libc::tm,
+) -> Option<usize> {
+    let format = format.cast::<u8>();
+    let s = s.cast::<u8>();
+    let write_limit = maxsize - 1;
+    let mut input_offset = 0usize;
+    let mut output_offset = 0usize;
+    let mut saw_name = false;
+
+    loop {
+        // SAFETY: the strict-mode C contract makes `format` readable through
+        // its terminating NUL. `input_offset` advances only across those bytes.
+        let byte = unsafe { *format.add(input_offset) };
+        if byte == 0 {
+            if output_offset >= maxsize {
+                return Some(0);
+            }
+            // SAFETY: `output_offset < maxsize` leaves one byte in the caller's
+            // writable region for the C terminator.
+            unsafe { *s.add(output_offset) = 0 };
+            return Some(output_offset);
+        }
+        if byte != b'%' {
+            if output_offset < write_limit {
+                // SAFETY: the branch proves this byte lies before the reserved
+                // terminator position in the caller's `maxsize` region.
+                unsafe { *s.add(output_offset) = byte };
+            }
+            input_offset += 1;
+            output_offset += 1;
+            continue;
+        }
+        if saw_name {
+            return None;
+        }
+
+        // SAFETY: a percent byte precedes either another format byte or the
+        // terminating NUL, both readable under the same C-string contract.
+        let conversion = unsafe { *format.add(input_offset + 1) };
+        if !matches!(conversion, b'a' | b'A' | b'b' | b'B' | b'h') {
+            return None;
+        }
+        // SAFETY: strict mode trusts the caller's valid `tm` object.
+        let field = unsafe {
+            if matches!(conversion, b'a' | b'A') {
+                (*tm).tm_wday
+            } else {
+                (*tm).tm_mon
+            }
+        };
+        let name = time_core::strftime_c_locale_name(conversion, field)?;
+        let count = (write_limit.saturating_sub(output_offset)).min(name.len());
+        if count != 0 {
+            // SAFETY: `count` is bounded by both `name` and the remaining caller
+            // output region before its reserved terminator byte.
+            unsafe { copy_strftime_small_name(s.add(output_offset), name, count) };
+        }
+        output_offset += name.len();
+        input_offset += 2;
+        saw_name = true;
+    }
+}
+
 /// POSIX `strftime` — format broken-down time into a string.
 ///
 /// Writes at most `maxsize` bytes (including the NUL terminator) into `s`.
@@ -1430,6 +1546,15 @@ pub unsafe extern "C" fn strftime(
                 return n;
             }
         }
+
+        // Execute the locale-independent language while recognizing it, so
+        // supported formats avoid the allocation registry, full `tm`
+        // projection, second format read, and directive interpreter.
+        // SAFETY: strict mode trusts the non-overlapping valid C arguments.
+        if let Some(n) = unsafe { try_strftime_strict_fused_single_name(s, maxsize, format, tm) } {
+            return n;
+        }
+
         // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
         let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
         if !terminated {

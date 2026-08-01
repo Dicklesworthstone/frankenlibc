@@ -1351,6 +1351,45 @@ pub fn format_strftime_c_locale_datetime(
     Some(OUT_LEN)
 }
 
+/// Resolve one unmodified C-locale name conversion to its fixed byte string.
+///
+/// `field` is `tm_wday` for `%a`/`%A` and `tm_mon` for `%b`/`%B`/`%h`.
+/// Out-of-domain fields deliberately preserve the general formatter's `?`.
+#[inline]
+pub fn strftime_c_locale_name(conversion: u8, field: i32) -> Option<&'static [u8]> {
+    Some(match conversion {
+        b'a' => {
+            if (0..=6).contains(&field) {
+                WDAY_NAMES[field as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'A' => {
+            if (0..=6).contains(&field) {
+                WDAY_FULL_NAMES[field as usize].as_bytes()
+            } else {
+                b"?"
+            }
+        }
+        b'b' | b'h' => {
+            if (0..=11).contains(&field) {
+                MON_NAMES[field as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'B' => {
+            if (0..=11).contains(&field) {
+                MON_FULL_NAMES[field as usize].as_bytes()
+            } else {
+                b"?"
+            }
+        }
+        _ => return None,
+    })
+}
+
 /// Emit one C-locale full weekday name for the exact `%A` transducer leaf.
 #[inline]
 pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
@@ -2023,6 +2062,39 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%F %T", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2024-01-01 00:00:00");
+    }
+
+    #[test]
+    fn strftime_c_locale_name_selects_all_states() {
+        for (weekday, short, full) in [
+            (0, b"Sun".as_slice(), b"Sunday".as_slice()),
+            (1, b"Mon".as_slice(), b"Monday".as_slice()),
+            (2, b"Tue".as_slice(), b"Tuesday".as_slice()),
+            (3, b"Wed".as_slice(), b"Wednesday".as_slice()),
+            (4, b"Thu".as_slice(), b"Thursday".as_slice()),
+            (5, b"Fri".as_slice(), b"Friday".as_slice()),
+            (6, b"Sat".as_slice(), b"Saturday".as_slice()),
+        ] {
+            assert_eq!(strftime_c_locale_name(b'a', weekday), Some(short));
+            assert_eq!(strftime_c_locale_name(b'A', weekday), Some(full));
+        }
+        for month in 0..=11 {
+            assert_eq!(
+                strftime_c_locale_name(b'b', month),
+                Some(MON_NAMES[month as usize].as_slice())
+            );
+            assert_eq!(
+                strftime_c_locale_name(b'h', month),
+                Some(MON_NAMES[month as usize].as_slice())
+            );
+            assert_eq!(
+                strftime_c_locale_name(b'B', month),
+                Some(MON_FULL_NAMES[month as usize].as_bytes())
+            );
+        }
+        assert_eq!(strftime_c_locale_name(b'A', -1), Some(b"?".as_slice()));
+        assert_eq!(strftime_c_locale_name(b'B', 12), Some(b"?".as_slice()));
+        assert_eq!(strftime_c_locale_name(b'Y', 2024), None);
     }
 
     #[test]
