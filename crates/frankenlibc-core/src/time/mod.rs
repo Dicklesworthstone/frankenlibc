@@ -566,6 +566,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_mdy(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_dmy(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_simple_numeric(fmt, bd, buf) {
         return n;
     }
@@ -1619,6 +1622,49 @@ fn format_strftime_mdy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
 }
 
 #[inline]
+fn format_strftime_dmy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    if fmt != b"%d/%m/%Y" {
+        return None;
+    }
+
+    format_strftime_dmy_date(bd.tm_year, bd.tm_mon, bd.tm_mday, buf)
+}
+
+/// Emits the normalized, locale-independent `%d/%m/%Y` date language.
+///
+/// Four-digit years and normalized calendar fields form the certified fast
+/// domain. Callers must retain the general formatter for inputs outside it.
+#[inline]
+pub fn format_strftime_dmy_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    const OUT_LEN: usize = 10;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    write_two_digits(&mut buf[0..2], day as u32);
+    buf[2] = b'/';
+    write_two_digits(&mut buf[3..5], (month + 1) as u32);
+    buf[5] = b'/';
+    let year = year as u32;
+    buf[6] = b'0' + ((year / 1000) % 10) as u8;
+    buf[7] = b'0' + ((year / 100) % 10) as u8;
+    buf[8] = b'0' + ((year / 10) % 10) as u8;
+    buf[9] = b'0' + (year % 10) as u8;
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
 fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
     if fmt != b"%Y-%m-%d %H:%M:%S" {
         return None;
@@ -2632,6 +2678,17 @@ mod tests {
         assert_eq!(n, 14);
         assert_eq!(&buf[..14], b"20240101143045");
         assert_eq!(buf[14], 0);
+    }
+
+    #[test]
+    fn strftime_dmy_exact_fit() {
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0x55u8; 11];
+        let n = format_strftime(b"%d/%m/%Y", &bd, &mut buf);
+
+        assert_eq!(n, 10);
+        assert_eq!(&buf[..10], b"01/01/2024");
+        assert_eq!(buf[10], 0);
     }
 
     #[test]

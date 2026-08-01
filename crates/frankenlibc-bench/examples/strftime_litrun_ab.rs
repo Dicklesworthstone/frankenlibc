@@ -339,6 +339,20 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
+    if case.label == "date_slash_dmy" {
+        for year in [1000, 9999] {
+            for month in 0..=11 {
+                for day in [1, 9, 10, 31] {
+                    let mut probe = *tm;
+                    probe.tm_year = year - 1900;
+                    probe.tm_mon = month;
+                    probe.tm_mday = day;
+                    verify_one(host, case, &probe);
+                }
+            }
+        }
+    }
+
     if case.label == "syslog_ts" {
         for month in 0..=11 {
             for day in [1, 9, 10, 31] {
