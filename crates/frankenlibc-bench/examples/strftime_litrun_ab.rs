@@ -65,6 +65,10 @@ const CASES: &[Case] = &[
         format: b"%H:%M:%S\0",
     },
     Case {
+        label: "hms_12_exact",
+        format: b"%I:%M:%S %p\0",
+    },
+    Case {
         label: "literal_long",
         format: b"a longer literal string of text with no percent directives at all here\0",
     },
@@ -359,7 +363,10 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
-    if matches!(case.label, "hms_exact" | "alias_T" | "alias_X" | "alias_r") {
+    if matches!(
+        case.label,
+        "hms_exact" | "hms_12_exact" | "alias_T" | "alias_X" | "alias_r"
+    ) {
         for hour in [0, 11, 12, 23] {
             for minute in [0, 59] {
                 for second in [0, 59, 60] {

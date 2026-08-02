@@ -1554,6 +1554,28 @@ pub unsafe extern "C" fn strftime(
                         return n;
                     }
                 }
+            } else if head == b'I'
+                // SAFETY: every read is guarded by the preceding non-NUL byte.
+                && unsafe {
+                    *format.cast::<u8>().add(2) == b':'
+                        && *format.cast::<u8>().add(3) == b'%'
+                        && *format.cast::<u8>().add(4) == b'M'
+                        && *format.cast::<u8>().add(5) == b':'
+                        && *format.cast::<u8>().add(6) == b'%'
+                        && *format.cast::<u8>().add(7) == b'S'
+                        && *format.cast::<u8>().add(8) == b' '
+                        && *format.cast::<u8>().add(9) == b'%'
+                        && *format.cast::<u8>().add(10) == b'p'
+                        && *format.cast::<u8>().add(11) == 0
+                }
+            {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let (hour, minute, second) = unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                if let Some(n) = time_core::format_strftime_hms_12_time(hour, minute, second, buf) {
+                    return n;
+                }
             }
         }
         // `%Y-%m-%d %H:%M:%S\0` is a closed, locale-independent language.
