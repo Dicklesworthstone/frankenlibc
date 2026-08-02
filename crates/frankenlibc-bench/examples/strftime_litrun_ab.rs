@@ -304,6 +304,17 @@ fn verify_one(host: StrftimeFn, case: &Case, tm: &libc::tm) {
 
 fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     verify_one(host, case, tm);
+    if case.label == "hm_exact" {
+        for hour in [0, 23] {
+            for minute in [0, 59] {
+                let mut probe = *tm;
+                probe.tm_hour = hour;
+                probe.tm_min = minute;
+                verify_one(host, case, &probe);
+            }
+        }
+    }
+
     if case.label == "mixed_general" {
         for weekday in 0..=6 {
             let mut probe = *tm;

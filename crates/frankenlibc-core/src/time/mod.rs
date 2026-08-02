@@ -1490,25 +1490,32 @@ pub fn format_strftime_day_of_year(yday: i32, buf: &mut [u8]) -> Option<usize> {
 
 #[inline]
 fn format_strftime_hm(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
-    // "%H:%M" (== the `%R` expansion) — a very common clock/log format. Without
-    // this it fell to the two-pass `#[inline(never)]` `format_strftime_simple_numeric`
-    // and ran ~1.6x its own `%H:%M:%S` fast path (and lost ~1.2x to glibc), even
-    // though it produces LESS output. Single-pass exact match, mirroring
-    // `format_strftime_hms`; byte-identical (out-of-range fields -> None -> the
-    // same simple_numeric/general path as before).
     if fmt != b"%H:%M" {
         return None;
     }
-    if !(0..=23).contains(&bd.tm_hour) || !(0..=59).contains(&bd.tm_min) {
+
+    format_strftime_hm_time(bd.tm_hour, bd.tm_min, buf)
+}
+
+/// Emit normalized 24-hour time for the exact `%H:%M` / `%R` family.
+///
+/// The 24 by 60 input domain is a finite, locale-independent transducer. Fields
+/// outside that domain return `None`, allowing the generic formatter to retain
+/// its existing behavior for non-normalized caller input.
+#[inline]
+pub fn format_strftime_hm_time(hour: i32, minute: i32, buf: &mut [u8]) -> Option<usize> {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
         return None;
     }
+
     const OUT_LEN: usize = 5;
     if buf.len() <= OUT_LEN {
         return Some(0);
     }
-    write_two_digits(&mut buf[0..2], bd.tm_hour as u32);
+
+    write_two_digits(&mut buf[0..2], hour as u32);
     buf[2] = b':';
-    write_two_digits(&mut buf[3..5], bd.tm_min as u32);
+    write_two_digits(&mut buf[3..5], minute as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -2751,6 +2758,23 @@ mod tests {
         let n = format_strftime(b"%H:%M:%S", &bd, &mut buf);
 
         assert_eq!(&buf[..n], b"99:30:45");
+    }
+
+    #[test]
+    fn strftime_hm_fast_path_exact_fit() {
+        let mut buf = [0x55u8; 6];
+
+        assert_eq!(format_strftime_hm_time(0, 59, &mut buf), Some(5));
+        assert_eq!(&buf, b"00:59\0");
+    }
+
+    #[test]
+    fn strftime_hm_fast_path_rejects_non_normalized_fields() {
+        let mut buf = [0x55u8; 6];
+
+        assert_eq!(format_strftime_hm_time(24, 0, &mut buf), None);
+        assert_eq!(format_strftime_hm_time(0, 60, &mut buf), None);
+        assert_eq!(buf, [0x55u8; 6]);
     }
 
     #[test]
