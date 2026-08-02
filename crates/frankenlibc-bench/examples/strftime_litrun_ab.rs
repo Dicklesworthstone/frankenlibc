@@ -80,6 +80,26 @@ const CASES: &[Case] = &[
         label: "mixed_month_general",
         format: b"prefix %B suffix\0",
     },
+    Case {
+        label: "weekday_abbrev",
+        format: b"%a\0",
+    },
+    Case {
+        label: "weekday_full",
+        format: b"%A\0",
+    },
+    Case {
+        label: "month_abbrev",
+        format: b"%b\0",
+    },
+    Case {
+        label: "month_full",
+        format: b"%B\0",
+    },
+    Case {
+        label: "month_alias_h",
+        format: b"%h\0",
+    },
     // Real-world shapes. The exact-leaf family already beats glibc (0.448-0.675) while
     // `mixed_general` — one directive wrapped in literal text — loses 11.7x on a 227 ns
     // frame. These probe where the boundary actually falls for formats people write:
@@ -342,6 +362,22 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     }
 
     if case.label == "mixed_month_general" {
+        for month in 0..=11 {
+            let mut probe = *tm;
+            probe.tm_mon = month;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if matches!(case.label, "weekday_abbrev" | "weekday_full") {
+        for weekday in 0..=6 {
+            let mut probe = *tm;
+            probe.tm_wday = weekday;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if matches!(case.label, "month_abbrev" | "month_full" | "month_alias_h") {
         for month in 0..=11 {
             let mut probe = *tm;
             probe.tm_mon = month;

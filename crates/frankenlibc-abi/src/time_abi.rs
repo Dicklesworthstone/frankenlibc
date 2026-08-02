@@ -1421,8 +1421,8 @@ pub unsafe extern "C" fn strftime(
         {
             return n;
         }
-        // Exact `%R`, `%T`, and `%F` aliases plus the clock/date aliases'
-        // defining spellings share a finite, locale-independent dispatcher.
+        // Exact clock/date aliases, their defining spellings, and bare
+        // C-locale names share a finite, locale-independent dispatcher.
         // Compile the families before the generic C-string scan, full `tm`
         // projection, alias expansion, and directive interpreter, reading only
         // the fields each member can observe. Non-normalized fields fall through
@@ -1460,6 +1460,33 @@ pub unsafe extern "C" fn strftime(
                 if let Some(n) = result {
                     return n;
                 }
+            } else if matches!(head, b'a' | b'A' | b'b' | b'B' | b'h')
+                // SAFETY: a recognized non-NUL conversion makes byte two readable.
+                && unsafe { *format.cast::<u8>().add(2) == 0 }
+            {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let field = unsafe {
+                    if matches!(head, b'a' | b'A') {
+                        (*tm).tm_wday
+                    } else {
+                        (*tm).tm_mon
+                    }
+                };
+                let name = time_core::strftime_c_locale_name(head, field)
+                    .expect("exact C-locale name conversion");
+                let write_limit = maxsize - 1;
+                let count = write_limit.min(name.len());
+                if count != 0 {
+                    // SAFETY: `count` is bounded by the static name and the
+                    // caller's writable output region before its terminator.
+                    unsafe { copy_strftime_small_name(s.cast(), name, count) };
+                }
+                if name.len() >= maxsize {
+                    return 0;
+                }
+                // SAFETY: the length check leaves one writable terminator byte.
+                unsafe { *s.cast::<u8>().add(name.len()) = 0 };
+                return name.len();
             } else if head == b'Y'
                 // SAFETY: every read is guarded by the preceding non-NUL byte.
                 && unsafe {
@@ -1791,52 +1818,6 @@ pub unsafe extern "C" fn strftime(
             ) {
                 return n;
             }
-        }
-        // Exact `%A\0` is a three-byte C-format transducer leaf. Recognize it
-        // before the generic NUL scan so this common one-directive format pays
-        // neither a scan nor full `tm` materialization. Short-circuiting means
-        // byte 2 is read only after bytes 0/1 prove the string is at least `%A`.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'A'
-                && *format.cast::<u8>().add(2) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let wday = unsafe { (*tm).tm_wday };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            return time_core::format_strftime_full_weekday(wday, buf);
-        }
-        // Exact `%b\0` selects one of 12 fixed three-byte C-locale month
-        // abbreviations. Keep `%h`, flags, modifiers, and mixed formats on the
-        // general formatter by matching the complete C string.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'b'
-                && *format.cast::<u8>().add(2) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let month = unsafe { (*tm).tm_mon };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            return time_core::format_strftime_abbrev_month(month, buf);
-        }
-        // Exact `%B\0` selects one of 12 C-locale month names. Recognize the
-        // finite leaf before scanning the format or projecting the full `tm`;
-        // malformed month fields retain the general formatter's `?` behavior.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'B'
-                && *format.cast::<u8>().add(2) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let month = unsafe { (*tm).tm_mon };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            return time_core::format_strftime_full_month(month, buf);
         }
         // Exact `%j\0` is another three-byte finite transducer leaf. Its
         // normalized domain is the 366 possible `tm_yday` states, so bypass the
