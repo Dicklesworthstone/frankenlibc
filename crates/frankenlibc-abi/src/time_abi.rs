@@ -1433,8 +1433,8 @@ pub unsafe extern "C" fn strftime(
             let head = unsafe { *format.cast::<u8>().add(1) };
             // SAFETY: `head` is checked before byte two, so an earlier NUL stops
             // the short-circuit expression.
-            let exact_alias =
-                matches!(head, b'R' | b'T' | b'F') && unsafe { *format.cast::<u8>().add(2) == 0 };
+            let exact_alias = matches!(head, b'R' | b'T' | b'F' | b'D')
+                && unsafe { *format.cast::<u8>().add(2) == 0 };
             if exact_alias {
                 // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
                 let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
@@ -1450,11 +1450,17 @@ pub unsafe extern "C" fn strftime(
                             unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
                         time_core::format_strftime_hms_time(hour, minute, second, buf)
                     }
-                    _ => {
+                    b'F' => {
                         // SAFETY: strict mode trusts the caller's valid `tm` object.
                         let (year, month, day) =
                             unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
                         time_core::format_strftime_ymd_date(year, month, day, buf)
+                    }
+                    _ => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (year, month, day) =
+                            unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+                        time_core::format_strftime_mdy_short_date(year, month, day, buf)
                     }
                 };
                 if let Some(n) = result {

@@ -1661,6 +1661,34 @@ pub fn format_strftime_mdy_date(
     Some(OUT_LEN)
 }
 
+/// Emits the normalized `%m/%d/%y` date language used by exact `%D`.
+///
+/// The four-digit normalized input domain keeps the fast leaf aligned with the
+/// existing date transducers; the emitted year is its POSIX two-digit residue.
+#[inline]
+pub fn format_strftime_mdy_short_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    const OUT_LEN: usize = 8;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    write_two_digits(&mut buf[0..2], (month + 1) as u32);
+    buf[2] = b'/';
+    write_two_digits(&mut buf[3..5], day as u32);
+    buf[5] = b'/';
+    write_two_digits(&mut buf[6..8], year.rem_euclid(100) as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
 #[inline]
 fn format_strftime_dmy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
     if fmt != b"%d/%m/%Y" {
