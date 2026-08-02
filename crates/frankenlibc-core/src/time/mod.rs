@@ -1597,20 +1597,32 @@ fn format_strftime_mdy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     if fmt != b"%m/%d/%Y" {
         return None;
     }
-    let year = bd.tm_year as i64 + 1900;
-    if !(1000..=9999).contains(&year)
-        || !(0..=11).contains(&bd.tm_mon)
-        || !(1..=31).contains(&bd.tm_mday)
-    {
+
+    format_strftime_mdy_date(bd.tm_year, bd.tm_mon, bd.tm_mday, buf)
+}
+
+/// Emits the normalized, locale-independent `%m/%d/%Y` date language.
+///
+/// Four-digit years and normalized calendar fields form the certified fast
+/// domain. Callers must retain the general formatter for inputs outside it.
+#[inline]
+pub fn format_strftime_mdy_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     const OUT_LEN: usize = 10;
     if buf.len() <= OUT_LEN {
         return Some(0);
     }
-    write_two_digits(&mut buf[0..2], (bd.tm_mon + 1) as u32);
+    write_two_digits(&mut buf[0..2], (month + 1) as u32);
     buf[2] = b'/';
-    write_two_digits(&mut buf[3..5], bd.tm_mday as u32);
+    write_two_digits(&mut buf[3..5], day as u32);
     buf[5] = b'/';
     let year = year as u32;
     buf[6] = b'0' + ((year / 1000) % 10) as u8;
@@ -2685,6 +2697,17 @@ mod tests {
         let bd = epoch_to_broken_down(1_704_067_200);
         let mut buf = [0x55u8; 11];
         let n = format_strftime(b"%d/%m/%Y", &bd, &mut buf);
+
+        assert_eq!(n, 10);
+        assert_eq!(&buf[..10], b"01/01/2024");
+        assert_eq!(buf[10], 0);
+    }
+
+    #[test]
+    fn strftime_mdy_exact_fit() {
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0x55u8; 11];
+        let n = format_strftime(b"%m/%d/%Y", &bd, &mut buf);
 
         assert_eq!(n, 10);
         assert_eq!(&buf[..10], b"01/01/2024");

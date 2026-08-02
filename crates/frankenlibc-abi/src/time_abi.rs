@@ -1429,6 +1429,30 @@ pub unsafe extern "C" fn strftime(
                 return n;
             }
         }
+        // `%m/%d/%Y\0` is the normalized month-first member of the fixed
+        // numeric date family. Select it before the format scan and two-pass
+        // interpreter, reading only the three `tm` fields it can observe.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
+        // short-circuit chain never reads past an earlier NUL.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'm'
+                && *format.cast::<u8>().add(2) == b'/'
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'd'
+                && *format.cast::<u8>().add(5) == b'/'
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'Y'
+                && *format.cast::<u8>().add(8) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_mdy_date(year, month, day, buf) {
+                return n;
+            }
+        }
         // `%d/%m/%Y\0` is the normalized day-first date member of the fixed
         // numeric family. Select it before the format scan and two-pass
         // interpreter, reading only the three `tm` fields it can observe.
