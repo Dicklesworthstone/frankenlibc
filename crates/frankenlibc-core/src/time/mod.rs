@@ -1538,11 +1538,24 @@ fn format_strftime_ymd(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     if fmt != b"%Y-%m-%d" {
         return None;
     }
-    let year = bd.tm_year as i64 + 1900;
-    if !(1000..=9999).contains(&year)
-        || !(0..=11).contains(&bd.tm_mon)
-        || !(1..=31).contains(&bd.tm_mday)
-    {
+
+    format_strftime_ymd_date(bd.tm_year, bd.tm_mon, bd.tm_mday, buf)
+}
+
+/// Emit the normalized four-digit ISO date used by `%Y-%m-%d` and `%F`.
+///
+/// The finite year/month/day domain is locale-independent. Non-normalized
+/// fields return `None` so callers retain the generic formatter's extended
+/// year and malformed-field behavior.
+#[inline]
+pub fn format_strftime_ymd_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     const OUT_LEN: usize = 10;
@@ -1555,9 +1568,9 @@ fn format_strftime_ymd(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     buf[2] = b'0' + ((year / 10) % 10) as u8;
     buf[3] = b'0' + (year % 10) as u8;
     buf[4] = b'-';
-    write_two_digits(&mut buf[5..7], (bd.tm_mon + 1) as u32);
+    write_two_digits(&mut buf[5..7], (month + 1) as u32);
     buf[7] = b'-';
-    write_two_digits(&mut buf[8..10], bd.tm_mday as u32);
+    write_two_digits(&mut buf[8..10], day as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }

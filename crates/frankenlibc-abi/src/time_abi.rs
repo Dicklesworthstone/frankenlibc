@@ -1421,9 +1421,9 @@ pub unsafe extern "C" fn strftime(
         {
             return n;
         }
-        // The exact `%R`/`%T` aliases and their defining `%H:%M`/`%H:%M:%S`
+        // Exact `%R`, `%T`, and `%F` aliases plus the clock aliases' defining
         // spellings share a finite, locale-independent prefix dispatcher.
-        // Compile the family before the generic C-string scan, full `tm`
+        // Compile the families before the generic C-string scan, full `tm`
         // projection, alias expansion, and directive interpreter, reading only
         // the fields each member can observe. Non-normalized fields fall through
         // so the established extended behavior remains unchanged.
@@ -1434,19 +1434,28 @@ pub unsafe extern "C" fn strftime(
             // SAFETY: `head` is checked before byte two, so an earlier NUL stops
             // the short-circuit expression.
             let exact_alias =
-                (head == b'R' || head == b'T') && unsafe { *format.cast::<u8>().add(2) == 0 };
+                matches!(head, b'R' | b'T' | b'F') && unsafe { *format.cast::<u8>().add(2) == 0 };
             if exact_alias {
                 // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
                 let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                let result = if head == b'R' {
-                    // SAFETY: strict mode trusts the caller's valid `tm` object.
-                    let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
-                    time_core::format_strftime_hm_time(hour, minute, buf)
-                } else {
-                    // SAFETY: strict mode trusts the caller's valid `tm` object.
-                    let (hour, minute, second) =
-                        unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
-                    time_core::format_strftime_hms_time(hour, minute, second, buf)
+                let result = match head {
+                    b'R' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+                        time_core::format_strftime_hm_time(hour, minute, buf)
+                    }
+                    b'T' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (hour, minute, second) =
+                            unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                        time_core::format_strftime_hms_time(hour, minute, second, buf)
+                    }
+                    _ => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (year, month, day) =
+                            unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+                        time_core::format_strftime_ymd_date(year, month, day, buf)
+                    }
                 };
                 if let Some(n) = result {
                     return n;
