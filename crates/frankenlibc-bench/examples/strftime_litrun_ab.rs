@@ -126,6 +126,10 @@ const CASES: &[Case] = &[
         format: b"%T\0",
     },
     Case {
+        label: "alias_X",
+        format: b"%X\0",
+    },
+    Case {
         label: "alias_R",
         format: b"%R\0",
     },
@@ -351,7 +355,7 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
-    if matches!(case.label, "hms_exact" | "alias_T") {
+    if matches!(case.label, "hms_exact" | "alias_T" | "alias_X") {
         for hour in [0, 23] {
             for minute in [0, 59] {
                 for second in [0, 59, 60] {
