@@ -1245,6 +1245,74 @@ unsafe fn copy_strftime_small_name(dst: *mut u8, src: &[u8], count: usize) {
     }
 }
 
+/// Copy a pure-literal format with a page-safe portable-SIMD sentinel scan.
+///
+/// Returns `None` at the first `%`, leaving directive-bearing formats to the
+/// existing formatter. A 32-byte-aligned load cannot cross a Linux page
+/// boundary, so aligning the first load down and advancing by 32 never faults
+/// beyond the page containing the terminating NUL. This is the same guard-page
+/// discipline used by the string family's unbounded scanners.
+#[inline(never)]
+unsafe fn try_strftime_strict_literal_copy(
+    s: *mut std::ffi::c_char,
+    maxsize: usize,
+    format: *const std::ffi::c_char,
+) -> Option<usize> {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+
+    let src = format.cast::<u8>();
+    let dst = s.cast::<u8>();
+    let zero = Simd::<u8, 32>::splat(0);
+    let percent = Simd::<u8, 32>::splat(b'%');
+    let align = (src as usize) & 31;
+    // SAFETY: `base` precedes `src` by at most 31 bytes in the same mapped page;
+    // its 32-byte-aligned window cannot cross that page boundary.
+    let base = unsafe { src.sub(align) };
+    let first = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let mut mask = (first.simd_eq(zero).to_bitmask() | first.simd_eq(percent).to_bitmask())
+        & !((1u64 << align) - 1);
+
+    let literal_len = if mask != 0 {
+        let index = mask.trailing_zeros() as usize - align;
+        // SAFETY: the sentinel mask proves `index` addresses either `%` or NUL.
+        if unsafe { *src.add(index) } == b'%' {
+            return None;
+        }
+        index
+    } else {
+        let mut offset = 32 - align;
+        loop {
+            // SAFETY: `src + offset` is 32-byte aligned. Each full vector stays
+            // in one mapped page; the loop stops in the page containing `%`/NUL.
+            let panel = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(src.add(offset), 32)
+            });
+            mask = panel.simd_eq(zero).to_bitmask() | panel.simd_eq(percent).to_bitmask();
+            if mask != 0 {
+                let index = offset + mask.trailing_zeros() as usize;
+                // SAFETY: the sentinel mask proves `index` addresses `%` or NUL.
+                if unsafe { *src.add(index) } == b'%' {
+                    return None;
+                }
+                break index;
+            }
+            offset += 32;
+        }
+    };
+
+    if literal_len >= maxsize {
+        return Some(0);
+    }
+    // SAFETY: POSIX declares `s` and `format` restricted; `literal_len` readable
+    // source bytes and `maxsize` writable destination bytes are caller-owned.
+    unsafe {
+        std::ptr::copy_nonoverlapping(src, dst, literal_len);
+        *dst.add(literal_len) = 0;
+    }
+    Some(literal_len)
+}
+
 /// Fuse recognition and emission for one C-locale name surrounded by literals.
 ///
 /// The accepted language is `literal* ("%a"|"%A"|"%b"|"%B"|"%h") literal*`;
@@ -1341,6 +1409,17 @@ pub unsafe extern "C" fn strftime(
     if runtime_policy::strict_passthrough_active() {
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
+        }
+        // Pure literals are the worst remaining whole-job ratio and cannot
+        // match any exact `%...` transducer. A page-safe portable-SIMD scan
+        // recognizes and copies them before the specialization tree; formats
+        // containing a directive decline without writing and retain the
+        // existing fused/general behavior.
+        // SAFETY: strict mode trusts the non-overlapping valid C arguments.
+        if unsafe { *format.cast::<u8>() != b'%' }
+            && let Some(n) = unsafe { try_strftime_strict_literal_copy(s, maxsize, format) }
+        {
+            return n;
         }
         // The exact `%R`/`%T` aliases and their defining `%H:%M`/`%H:%M:%S`
         // spellings share a finite, locale-independent prefix dispatcher.
