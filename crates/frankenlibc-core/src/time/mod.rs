@@ -1153,10 +1153,22 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
         return None;
     }
 
-    if !(0..=23).contains(&bd.tm_hour)
-        || !(0..=59).contains(&bd.tm_min)
-        || !(0..=60).contains(&bd.tm_sec)
-    {
+    format_strftime_hms_time(bd.tm_hour, bd.tm_min, bd.tm_sec, buf)
+}
+
+/// Emit normalized 24-hour time for the exact `%H:%M:%S` / `%T` family.
+///
+/// The leap-second-inclusive 24 by 60 by 61 domain is finite and independent
+/// of locale. Non-normalized fields return `None` so callers can preserve the
+/// general format interpreter's extended behavior.
+#[inline]
+pub fn format_strftime_hms_time(
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
         return None;
     }
 
@@ -1165,15 +1177,11 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
         return Some(0);
     }
 
-    let hour = bd.tm_hour as u32;
-    let minute = bd.tm_min as u32;
-    let second = bd.tm_sec as u32;
-
-    write_two_digits(&mut buf[0..2], hour);
+    write_two_digits(&mut buf[0..2], hour as u32);
     buf[2] = b':';
-    write_two_digits(&mut buf[3..5], minute);
+    write_two_digits(&mut buf[3..5], minute as u32);
     buf[5] = b':';
-    write_two_digits(&mut buf[6..8], second);
+    write_two_digits(&mut buf[6..8], second as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }

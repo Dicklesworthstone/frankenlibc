@@ -315,6 +315,20 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
+    if case.label == "hms_exact" {
+        for hour in [0, 23] {
+            for minute in [0, 59] {
+                for second in [0, 59, 60] {
+                    let mut probe = *tm;
+                    probe.tm_hour = hour;
+                    probe.tm_min = minute;
+                    probe.tm_sec = second;
+                    verify_one(host, case, &probe);
+                }
+            }
+        }
+    }
+
     if case.label == "mixed_general" {
         for weekday in 0..=6 {
             let mut probe = *tm;

@@ -1342,11 +1342,11 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
-        // `%H:%M\0` is a finite, locale-independent clock language. Compile
-        // the suite's narrowest live win before the generic C-string scan,
+        // `%H:%M\0` and `%H:%M:%S\0` share one finite, locale-independent
+        // prefix dispatcher. Compile both before the generic C-string scan,
         // full `tm` projection, and directive interpreter, reading only the
-        // two fields this format can observe. Non-normalized fields fall
-        // through so the established extended behavior remains unchanged.
+        // fields each format can observe. Non-normalized fields fall through
+        // so the established extended behavior remains unchanged.
         // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
         // short-circuit chain never reads past an earlier NUL.
         if unsafe {
@@ -1355,14 +1355,33 @@ pub unsafe extern "C" fn strftime(
                 && *format.cast::<u8>().add(2) == b':'
                 && *format.cast::<u8>().add(3) == b'%'
                 && *format.cast::<u8>().add(4) == b'M'
-                && *format.cast::<u8>().add(5) == 0
         } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_hm_time(hour, minute, buf) {
-                return n;
+            // SAFETY: the matched five-byte prefix proves byte five is readable
+            // under the caller's NUL-terminated string contract.
+            let suffix = unsafe { *format.cast::<u8>().add(5) };
+            if suffix == 0 {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                if let Some(n) = time_core::format_strftime_hm_time(hour, minute, buf) {
+                    return n;
+                }
+            } else if suffix == b':'
+                // SAFETY: each read is guarded by the prior non-NUL byte.
+                && unsafe {
+                    *format.cast::<u8>().add(6) == b'%'
+                        && *format.cast::<u8>().add(7) == b'S'
+                        && *format.cast::<u8>().add(8) == 0
+                }
+            {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let (hour, minute, second) = unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                if let Some(n) = time_core::format_strftime_hms_time(hour, minute, second, buf) {
+                    return n;
+                }
             }
         }
         // `%Y-%m-%d %H:%M:%S\0` is a closed, locale-independent language.
