@@ -90,6 +90,10 @@ const CASES: &[Case] = &[
         format: b"%F\0",
     },
     Case {
+        label: "date_iso",
+        format: b"%Y-%m-%d\0",
+    },
+    Case {
         label: "alias_T",
         format: b"%T\0",
     },
@@ -368,7 +372,10 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
-    if matches!(case.label, "alias_F" | "date_slash_dmy" | "date_slash_mdy") {
+    if matches!(
+        case.label,
+        "alias_F" | "date_iso" | "date_slash_dmy" | "date_slash_mdy"
+    ) {
         for year in [1000, 9999] {
             for month in 0..=11 {
                 for day in [1, 9, 10, 31] {

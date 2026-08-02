@@ -1421,8 +1421,8 @@ pub unsafe extern "C" fn strftime(
         {
             return n;
         }
-        // Exact `%R`, `%T`, and `%F` aliases plus the clock aliases' defining
-        // spellings share a finite, locale-independent prefix dispatcher.
+        // Exact `%R`, `%T`, and `%F` aliases plus the clock/date aliases'
+        // defining spellings share a finite, locale-independent dispatcher.
         // Compile the families before the generic C-string scan, full `tm`
         // projection, alias expansion, and directive interpreter, reading only
         // the fields each member can observe. Non-normalized fields fall through
@@ -1458,6 +1458,25 @@ pub unsafe extern "C" fn strftime(
                     }
                 };
                 if let Some(n) = result {
+                    return n;
+                }
+            } else if head == b'Y'
+                // SAFETY: every read is guarded by the preceding non-NUL byte.
+                && unsafe {
+                    *format.cast::<u8>().add(2) == b'-'
+                        && *format.cast::<u8>().add(3) == b'%'
+                        && *format.cast::<u8>().add(4) == b'm'
+                        && *format.cast::<u8>().add(5) == b'-'
+                        && *format.cast::<u8>().add(6) == b'%'
+                        && *format.cast::<u8>().add(7) == b'd'
+                        && *format.cast::<u8>().add(8) == 0
+                }
+            {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                if let Some(n) = time_core::format_strftime_ymd_date(year, month, day, buf) {
                     return n;
                 }
             } else if head == b'H'
