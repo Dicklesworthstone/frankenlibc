@@ -304,7 +304,7 @@ fn verify_one(host: StrftimeFn, case: &Case, tm: &libc::tm) {
 
 fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     verify_one(host, case, tm);
-    if case.label == "hm_exact" {
+    if matches!(case.label, "hm_exact" | "alias_R") {
         for hour in [0, 23] {
             for minute in [0, 59] {
                 let mut probe = *tm;
@@ -315,7 +315,7 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         }
     }
 
-    if case.label == "hms_exact" {
+    if matches!(case.label, "hms_exact" | "alias_T") {
         for hour in [0, 23] {
             for minute in [0, 59] {
                 for second in [0, 59, 60] {

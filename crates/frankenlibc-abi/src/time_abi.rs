@@ -1342,45 +1342,71 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
-        // `%H:%M\0` and `%H:%M:%S\0` share one finite, locale-independent
-        // prefix dispatcher. Compile both before the generic C-string scan,
-        // full `tm` projection, and directive interpreter, reading only the
-        // fields each format can observe. Non-normalized fields fall through
+        // The exact `%R`/`%T` aliases and their defining `%H:%M`/`%H:%M:%S`
+        // spellings share a finite, locale-independent prefix dispatcher.
+        // Compile the family before the generic C-string scan, full `tm`
+        // projection, alias expansion, and directive interpreter, reading only
+        // the fields each member can observe. Non-normalized fields fall through
         // so the established extended behavior remains unchanged.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
-        // short-circuit chain never reads past an earlier NUL.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'H'
-                && *format.cast::<u8>().add(2) == b':'
-                && *format.cast::<u8>().add(3) == b'%'
-                && *format.cast::<u8>().add(4) == b'M'
-        } {
-            // SAFETY: the matched five-byte prefix proves byte five is readable
-            // under the caller's NUL-terminated string contract.
-            let suffix = unsafe { *format.cast::<u8>().add(5) };
-            if suffix == 0 {
-                // SAFETY: strict mode trusts the caller's valid `tm` object.
-                let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe { *format.cast::<u8>() == b'%' } {
+            // SAFETY: the leading non-NUL byte proves byte one is readable.
+            let head = unsafe { *format.cast::<u8>().add(1) };
+            // SAFETY: `head` is checked before byte two, so an earlier NUL stops
+            // the short-circuit expression.
+            let exact_alias =
+                (head == b'R' || head == b'T') && unsafe { *format.cast::<u8>().add(2) == 0 };
+            if exact_alias {
                 // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
                 let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                if let Some(n) = time_core::format_strftime_hm_time(hour, minute, buf) {
+                let result = if head == b'R' {
+                    // SAFETY: strict mode trusts the caller's valid `tm` object.
+                    let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+                    time_core::format_strftime_hm_time(hour, minute, buf)
+                } else {
+                    // SAFETY: strict mode trusts the caller's valid `tm` object.
+                    let (hour, minute, second) =
+                        unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                    time_core::format_strftime_hms_time(hour, minute, second, buf)
+                };
+                if let Some(n) = result {
                     return n;
                 }
-            } else if suffix == b':'
-                // SAFETY: each read is guarded by the prior non-NUL byte.
+            } else if head == b'H'
+                // SAFETY: every read is guarded by the preceding non-NUL byte.
                 && unsafe {
-                    *format.cast::<u8>().add(6) == b'%'
-                        && *format.cast::<u8>().add(7) == b'S'
-                        && *format.cast::<u8>().add(8) == 0
+                    *format.cast::<u8>().add(2) == b':'
+                        && *format.cast::<u8>().add(3) == b'%'
+                        && *format.cast::<u8>().add(4) == b'M'
                 }
             {
-                // SAFETY: strict mode trusts the caller's valid `tm` object.
-                let (hour, minute, second) = unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
-                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                if let Some(n) = time_core::format_strftime_hms_time(hour, minute, second, buf) {
-                    return n;
+                // SAFETY: the matched five-byte prefix proves byte five is readable.
+                let suffix = unsafe { *format.cast::<u8>().add(5) };
+                if suffix == 0 {
+                    // SAFETY: strict mode trusts the caller's valid `tm` object.
+                    let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+                    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                    if let Some(n) = time_core::format_strftime_hm_time(hour, minute, buf) {
+                        return n;
+                    }
+                } else if suffix == b':'
+                    // SAFETY: each read is guarded by the prior non-NUL byte.
+                    && unsafe {
+                        *format.cast::<u8>().add(6) == b'%'
+                            && *format.cast::<u8>().add(7) == b'S'
+                            && *format.cast::<u8>().add(8) == 0
+                    }
+                {
+                    // SAFETY: strict mode trusts the caller's valid `tm` object.
+                    let (hour, minute, second) =
+                        unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                    if let Some(n) = time_core::format_strftime_hms_time(hour, minute, second, buf)
+                    {
+                        return n;
+                    }
                 }
             }
         }
