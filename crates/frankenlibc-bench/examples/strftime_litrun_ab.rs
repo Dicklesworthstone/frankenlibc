@@ -114,6 +114,10 @@ const CASES: &[Case] = &[
         format: b"%D\0",
     },
     Case {
+        label: "alias_x",
+        format: b"%x\0",
+    },
+    Case {
         label: "date_iso",
         format: b"%Y-%m-%d\0",
     },
@@ -420,6 +424,7 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
         case.label,
         "alias_D"
             | "alias_F"
+            | "alias_x"
             | "date_iso"
             | "date_slash_dmy"
             | "date_slash_mdy"

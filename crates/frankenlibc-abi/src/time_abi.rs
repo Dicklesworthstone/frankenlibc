@@ -1433,7 +1433,7 @@ pub unsafe extern "C" fn strftime(
             let head = unsafe { *format.cast::<u8>().add(1) };
             // SAFETY: `head` is checked before byte two, so an earlier NUL stops
             // the short-circuit expression.
-            let exact_alias = matches!(head, b'R' | b'T' | b'F' | b'D')
+            let exact_alias = matches!(head, b'R' | b'T' | b'F' | b'D' | b'x')
                 && unsafe { *format.cast::<u8>().add(2) == 0 };
             if exact_alias {
                 // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
