@@ -428,17 +428,23 @@ fn cmpistri_span_probe_matches_glibc() {
     let page0 = (backing.as_ptr() as usize).next_multiple_of(PAGE);
 
     for _ in 0..4000 {
-        // 4..=17 straddles both ends of the probe's accepted set width.
-        let setlen = 4 + rng.below(14);
+        // The probe holds a bank of four 16-byte needles, so its behaviour changes at
+        // every multiple of 16: a set of exactly 16/32/48 leaves the terminating needle
+        // empty (it is dropped), 17/33/49 open a new one, and 65 is the first width the
+        // bank refuses. Sample 4..=70 so all of those, plus both ends, are hit.
+        let setlen = 4 + rng.below(67);
         // Half the sets draw from a small ASCII alphabet (so members actually occur
-        // in `s`), half include bytes >= 0x80 to cover the non-ASCII case.
+        // in `s`), half include bytes >= 0x80 to cover the non-ASCII case. The
+        // alphabet is drawn WIDER than the widest set so a long set still leaves
+        // non-members behind: a 70-byte set over 9 values would cover them all, and
+        // both spans would then be trivially 0 or `blen` at every width.
         let non_ascii = rng.below(2) == 1;
         let mut set: Vec<u8> = (0..setlen)
             .map(|_| {
                 if non_ascii && rng.below(3) == 0 {
                     0x80 + (rng.below(0x7F) as u8)
                 } else {
-                    1 + (rng.below(9) as u8)
+                    1 + (rng.below(90) as u8)
                 }
             })
             .collect();
@@ -446,7 +452,9 @@ fn cmpistri_span_probe_matches_glibc() {
 
         // Body length straddling the 128-byte probe budget.
         let blen = 1 + rng.below(300);
-        let alpha = [2u8, 6, 11, 200][rng.below(4)];
+        // Haystack alphabets that variously sit inside, astride, and outside the set's
+        // range, so each set width sees both an immediate stop and a long run.
+        let alpha = [2u8, 6, 30, 91, 200][rng.below(5)];
 
         // Place the string either in the page interior or ending flush at a page
         // boundary, which forces a page-crossing 16-byte load partway through.
@@ -566,15 +574,16 @@ fn tokenizer_family_token_streams_match_glibc() {
 
     let mut rng = Rng(0xFEED_FACE_5EED_1234);
     for _ in 0..3000 {
-        // 1..=20 covers below, inside, and above the probe's 5..=16 window.
-        let dlen = 1 + rng.below(20);
-        let mut delim: Vec<u8> = (0..dlen).map(|_| 1 + (rng.below(6) as u8)).collect();
+        // 1..=70 covers below, inside, and above the probe's 5..=64 window, and every
+        // 16-byte needle boundary the bank steps across in between.
+        let dlen = 1 + rng.below(70);
+        let mut delim: Vec<u8> = (0..dlen).map(|_| 1 + (rng.below(22) as u8)).collect();
         delim.push(0);
 
         // Body from an alphabet that overlaps the delimiters, so delimiters land in
         // runs, at the head, and at the tail.
         let blen = 1 + rng.below(260);
-        let alpha = [3u8, 8, 14][rng.below(3)];
+        let alpha = [3u8, 8, 14, 25][rng.below(4)];
         let mut src: Vec<u8> = (0..blen)
             .map(|_| 1 + (rng.next() % alpha as u64) as u8)
             .collect();
