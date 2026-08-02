@@ -1186,6 +1186,39 @@ pub fn format_strftime_hms_time(
     Some(OUT_LEN)
 }
 
+/// Emit the normalized C-locale `%r` language `%I:%M:%S %p`.
+///
+/// The 24-hour input domain maps directly to one of two fixed AM/PM suffixes;
+/// non-normalized fields retain the generic formatter through `None` fallback.
+#[inline]
+pub fn format_strftime_hms_12_time(
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
+        return None;
+    }
+    const OUT_LEN: usize = 11;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    let hour_12 = match hour % 12 {
+        0 => 12,
+        value => value,
+    };
+    write_two_digits(&mut buf[0..2], hour_12 as u32);
+    buf[2] = b':';
+    write_two_digits(&mut buf[3..5], minute as u32);
+    buf[5] = b':';
+    write_two_digits(&mut buf[6..8], second as u32);
+    buf[8] = b' ';
+    buf[9..11].copy_from_slice(if hour < 12 { b"AM" } else { b"PM" });
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
 /// Emit the exact C-locale RFC3164 timestamp `%b %e %H:%M:%S`.
 ///
 /// The exact format and normalized field domains form a bounded deterministic

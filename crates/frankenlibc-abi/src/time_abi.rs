@@ -1433,7 +1433,7 @@ pub unsafe extern "C" fn strftime(
             let head = unsafe { *format.cast::<u8>().add(1) };
             // SAFETY: `head` is checked before byte two, so an earlier NUL stops
             // the short-circuit expression.
-            let exact_alias = matches!(head, b'R' | b'T' | b'X' | b'F' | b'D' | b'x')
+            let exact_alias = matches!(head, b'R' | b'T' | b'X' | b'r' | b'F' | b'D' | b'x')
                 && unsafe { *format.cast::<u8>().add(2) == 0 };
             if exact_alias {
                 // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
@@ -1449,6 +1449,12 @@ pub unsafe extern "C" fn strftime(
                         let (hour, minute, second) =
                             unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
                         time_core::format_strftime_hms_time(hour, minute, second, buf)
+                    }
+                    b'r' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (hour, minute, second) =
+                            unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                        time_core::format_strftime_hms_12_time(hour, minute, second, buf)
                     }
                     b'F' => {
                         // SAFETY: strict mode trusts the caller's valid `tm` object.
