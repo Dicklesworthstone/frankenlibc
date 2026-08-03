@@ -216,3 +216,7 @@ rust_out
 **/local-target/
 # Scratch probe/bench tests (zz_ prefix; never committed — 0 ever tracked).
 **/tests/zz_*.rs
+
+# === multi-repo ephemeral cleanup 2026-08-03 ===
+# Agent recovery "misplaced duplicate" backups left beside real sources.
+*.misplaced-dup-backup-*
