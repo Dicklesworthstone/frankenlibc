@@ -18915,7 +18915,14 @@ sha256, self-time, cv or null.
   `591a0cfae73c52918271c4025edc9a16c70d5fabf0c1785780295165a28e2327`, worker `vmi1152480`).
   **self-time: blocked (bd-3dxo1a).**
 
-## 2026-07-10 (cod_fl) — REJECT (EVIDENCE GATE ONLY): per-thread segment magazines win 21.9-22.5%, but CPU0 drift fails the mandatory all-CV <5% gate (bd-dcrhgl)
+## 2026-07-10 (cod_fl) — VOID-CV / RETRY SATISFIED (EVIDENCE GATE ONLY): per-thread segment magazines showed 21.9-22.5% apparent gain, but CPU0 drift fails the historical all-CV <5% gate (bd-dcrhgl)
+
+- **2026-08-04 ADJUDICATION — CONCRETE RETRY PREDICATE SATISFIED.** Re-run the unchanged
+  composition on a measured non-housekeeping CPU with longer fully interleaved samples. The next
+  row did so on `vmi1149989` CPU 9 with 12,582,912 pairs per arm, satisfying this row's retry
+  predicate and isolating the remaining all-six-CV decision defect. This row is `VOID-CV`, not an
+  admissible performance rejection or an accepted performance verdict; the historical samples are
+  retained only as provenance.
 
 - **LEDGER-FIRST / OPEN FAMILY.** Re-grepped this ledger for `segment`, `pagemap`, `PageMap`,
   `bitmap`, `magazine`, `packed shadow`, `ownership`, and `bd-dcrhgl`. This attempt does not retry
@@ -18964,7 +18971,14 @@ sha256, self-time, cv or null.
   **23,603 bytes**, `candidate.perf` **788,132 bytes**, `perf-report.txt` **8,507 bytes**, and
   `executable.sha256` **202 bytes**.
 
-## 2026-07-10 (cod_fl) — REJECT (ALL-SIX-CV GATE ONLY): quiet-CPU 4x run proves both paired candidate contrasts stable below 5% (bd-dcrhgl)
+## 2026-07-10 (cod_fl) — VOID-CV / RETRY SATISFIED (ALL-SIX-CV GATE ONLY): quiet-CPU 4x run proves both paired candidate contrasts stable below 5% (bd-dcrhgl)
+
+- **2026-08-04 ADJUDICATION — CONCRETE RETRY PREDICATE SATISFIED.** Correct the
+  benchmark-only decision lens to the candidate-containing paired contrasts and rerun the
+  unchanged composition. The immediately following `vmi1152480` row makes exactly that correction
+  with the same all-six interleaving; its unrelated worker-instability result supplied the next
+  retry predicate. This row is `VOID-CV`, not an admissible performance rejection or an accepted
+  performance verdict; the historical samples remain provenance only.
 
 - **RETRY CONDITION HONORED.** Production code is unchanged from the preceding attempt. The gate
   sampled `/proc/stat`, excluded housekeeping CPU0, pinned the least-busy allowed CPU (**CPU 9,
@@ -18999,7 +19013,13 @@ sha256, self-time, cv or null.
   **23,568 bytes**, `candidate.perf` **298,016 bytes**, `perf-report.txt` **4,124 bytes**, and
   `executable.sha256` **202 bytes**.
 
-## 2026-07-10 (cod_fl) — REJECT (WORKER STABILITY): paired decision gate fails on known-noisy vmi1152480; production lever still wins every size (bd-dcrhgl)
+## 2026-07-10 (cod_fl) — VOID-CV / RETRY SATISFIED (WORKER STABILITY): paired decision gate fails on known-noisy vmi1152480; production lever still wins every size (bd-dcrhgl)
+
+- **2026-08-04 ADJUDICATION — CONCRETE RETRY PREDICATE SATISFIED.** Re-run the identical
+  composition shape on an idle `vmi1149989` or `vmi1227854` worker. The following row records the
+  `vmi1149989` CPU 9 rerun and the shipped source change `15f58c419`; the authoritative hand audit
+  classifies this noisy-worker row as `VOID-CV`. It is not an admissible performance rejection or
+  an accepted performance verdict, and it cannot be reused to decide a later `segment_free` probe.
 
 - **UNCHANGED LEVER / FINAL GATE.** This run changes no production mechanism from the prior two
   attempts. The declared CV gate now correctly covers the paired candidate contrasts only
