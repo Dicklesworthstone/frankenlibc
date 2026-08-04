@@ -2544,7 +2544,7 @@ unsafe extern "C" {
 }
 
 use frankenlibc_core::getopt as getopt_core;
-use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, ShortOutcome};
+use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, ShortOutcome, StepOutcome};
 
 /// Persistent scanner state across `parse_getopt_short` calls.
 ///
@@ -2623,7 +2623,13 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
     let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
 }
 
-unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
+unsafe fn parse_getopt_short(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optspec: &[u8],
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+) -> c_int {
     if argc <= 0 || argv.is_null() {
         return -1;
     }
@@ -2722,13 +2728,44 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
         optarg: None,
     };
 
-    // Plain `getopt` is handed no `longopts` table, so the GNU `X;` marker has
-    // nothing to route to and is inert — verified against live glibc, which
-    // answers `-W foo` under `optstring = "W;"` with 'W', a NULL optarg, and
-    // `foo` left as an operand. This entry point cannot return a route, which
-    // is what keeps the match below total.
-    let outcome = getopt_core::step_short_no_long_routing(&argv_slices, effective, &mut state);
+    if longopts.is_null() {
+        // Plain `getopt` has no long-option table. GNU treats the trailing
+        // semicolon marker as inert here, leaving `-W` as an ordinary short
+        // option and its following word as an operand.
+        let outcome = getopt_core::step_short_no_long_routing(&argv_slices, effective, &mut state);
+        unsafe {
+            libc_optind = state.optind as c_int;
+            libc_optopt = state.optopt as c_int;
+            GETOPT_NEXTCHAR = state.nextchar;
+            libc_optarg = match state.optarg {
+                Some(ArgRef {
+                    argv_idx,
+                    byte_offset,
+                }) => {
+                    let base = *argv.add(argv_idx);
+                    if base.is_null() {
+                        std::ptr::null_mut()
+                    } else {
+                        base.add(byte_offset)
+                    }
+                }
+                None => std::ptr::null_mut(),
+            };
+        }
+        return match outcome {
+            ShortOutcome::Done => -1,
+            ShortOutcome::Found { code, diagnostic } => {
+                emit_getopt_diagnostic(
+                    argv_slices.first().copied().unwrap_or(b""),
+                    effective,
+                    diagnostic,
+                );
+                code
+            }
+        };
+    }
 
+    let outcome = getopt_core::step_short(&argv_slices, effective, &mut state);
     unsafe {
         libc_optind = state.optind as c_int;
         libc_optopt = state.optopt as c_int;
@@ -2750,8 +2787,8 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
     }
 
     match outcome {
-        ShortOutcome::Done => -1,
-        ShortOutcome::Found { code, diagnostic } => {
+        StepOutcome::Done => -1,
+        StepOutcome::Found { code, diagnostic } => {
             emit_getopt_diagnostic(
                 argv_slices.first().copied().unwrap_or(b""),
                 effective,
@@ -2759,6 +2796,9 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
             );
             code
         }
+        StepOutcome::LongRoute { arg } => unsafe {
+            getopt_route_w_long(arg, argc, argv, &argv_bytes, effective, longopts, longindex)
+        },
     }
 }
 
@@ -2822,6 +2862,11 @@ unsafe fn parse_getopt_long(
         b'?' as c_int
     };
 
+    // GNU accepts an unambiguous prefix, while an exact spelling wins even
+    // when a longer option shares it.  Equivalent duplicate descriptors are
+    // treated as one option; genuinely distinct prefix hits are ambiguous.
+    let mut exact = None;
+    let mut prefixes = Vec::new();
     let mut idx = 0usize;
     loop {
         let opt_ptr = unsafe { longopts.add(idx) };
@@ -2834,70 +2879,92 @@ unsafe fn parse_getopt_long(
             return Some(-1);
         };
         if candidate.as_slice() == name {
-            if !longindex.is_null() {
-                unsafe {
-                    *longindex = idx as c_int;
-                }
-            }
-            unsafe {
-                libc_optarg = std::ptr::null_mut();
-                libc_optopt = 0;
-                GETOPT_NEXTCHAR = None;
-            }
-            let mut next_index = unsafe { libc_optind + 1 };
-            match unsafe { (*opt_ptr).has_arg } {
-                0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
-                    unsafe {
-                        libc_optopt = (*opt_ptr).val;
-                        libc_optind = next_index;
-                    }
-                    return Some(b'?' as c_int);
-                }
-                1 => {
-                    if !inline_value.is_null() && unsafe { *inline_value != 0 } {
-                        unsafe {
-                            libc_optarg = inline_value as *mut c_char;
-                        }
-                    } else {
-                        if next_index >= argc {
-                            unsafe {
-                                libc_optopt = (*opt_ptr).val;
-                                libc_optind = next_index;
-                            }
-                            return Some(missing_code);
-                        }
-                        let value = unsafe { *argv.add(next_index as usize) };
-                        if value.is_null() {
-                            unsafe {
-                                libc_optopt = (*opt_ptr).val;
-                                libc_optind = next_index;
-                            }
-                            return Some(missing_code);
-                        }
-                        unsafe {
-                            libc_optarg = value;
-                        }
-                        next_index += 1;
-                    }
-                }
-                2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
-                    libc_optarg = inline_value as *mut c_char;
-                },
-                _ => {}
-            }
-            unsafe {
-                libc_optind = next_index;
-            }
-            let flag_ptr = unsafe { (*opt_ptr).flag };
-            if !flag_ptr.is_null() {
-                unsafe {
-                    *flag_ptr = (*opt_ptr).val;
-                }
-                return Some(0);
-            }
-            return Some(unsafe { (*opt_ptr).val });
+            exact = Some(idx);
+            break;
+        }
+        if candidate.len() > name.len() && candidate.starts_with(name) {
+            prefixes.push(idx);
         }
         idx += 1;
+    }
+    let matched = if let Some(idx) = exact {
+        Some(idx)
+    } else if prefixes.len() == 1 {
+        Some(prefixes[0])
+    } else if prefixes.len() > 1 {
+        let first = unsafe { *longopts.add(prefixes[0]) };
+        if prefixes.iter().skip(1).all(|&idx| {
+            let candidate = unsafe { *longopts.add(idx) };
+            candidate.has_arg == first.has_arg
+                && candidate.flag == first.flag
+                && candidate.val == first.val
+        }) {
+            Some(prefixes[0])
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(idx) = matched {
+        let opt_ptr = unsafe { longopts.add(idx) };
+        if !longindex.is_null() {
+            unsafe { *longindex = idx as c_int };
+        }
+        unsafe {
+            libc_optarg = std::ptr::null_mut();
+            libc_optopt = 0;
+            GETOPT_NEXTCHAR = None;
+        }
+        let mut next_index = unsafe { libc_optind + 1 };
+        match unsafe { (*opt_ptr).has_arg } {
+            0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+                unsafe {
+                    libc_optopt = (*opt_ptr).val;
+                    libc_optind = next_index;
+                }
+                return Some(b'?' as c_int);
+            }
+            1 => {
+                if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                    unsafe {
+                        libc_optarg = inline_value as *mut c_char;
+                    }
+                } else {
+                    if next_index >= argc {
+                        unsafe {
+                            libc_optopt = (*opt_ptr).val;
+                            libc_optind = next_index;
+                        }
+                        return Some(missing_code);
+                    }
+                    let value = unsafe { *argv.add(next_index as usize) };
+                    if value.is_null() {
+                        unsafe {
+                            libc_optopt = (*opt_ptr).val;
+                            libc_optind = next_index;
+                        }
+                        return Some(missing_code);
+                    }
+                    unsafe {
+                        libc_optarg = value;
+                    }
+                    next_index += 1;
+                }
+            }
+            2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+                libc_optarg = inline_value as *mut c_char;
+            },
+            _ => {}
+        }
+        unsafe { libc_optind = next_index };
+        let flag_ptr = unsafe { (*opt_ptr).flag };
+        if !flag_ptr.is_null() {
+            unsafe { *flag_ptr = (*opt_ptr).val };
+            return Some(0);
+        }
+        return Some(unsafe { (*opt_ptr).val });
     }
 
     if prefix_len == 1 {
@@ -2911,6 +2978,157 @@ unsafe fn parse_getopt_long(
         GETOPT_NEXTCHAR = None;
     }
     Some(b'?' as c_int)
+}
+
+/// Resolve the GNU `W;` extension after the short-option scanner consumed the
+/// routed specification.  Unlike an ordinary `--long` option, a required
+/// argument is read at the current `optind`, because `-W` and its spec were
+/// already consumed by [`getopt_core::step_short`].
+unsafe fn getopt_route_w_long(
+    arg: ArgRef,
+    argc: c_int,
+    argv: *const *mut c_char,
+    argv_bytes: &[Vec<u8>],
+    optspec: &[u8],
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+) -> c_int {
+    let missing_code = if getopt_core::getopt_prefers_colon(optspec) {
+        b':' as c_int
+    } else {
+        b'?' as c_int
+    };
+    let space_arg_idx = unsafe { libc_optind };
+    let reject = || {
+        unsafe {
+            libc_optarg = std::ptr::null_mut();
+            libc_optopt = 0;
+            libc_optind = space_arg_idx;
+            GETOPT_NEXTCHAR = None;
+        }
+        b'?' as c_int
+    };
+
+    let Some(spec) = argv_bytes
+        .get(arg.argv_idx)
+        .and_then(|entry| entry.get(arg.byte_offset..))
+    else {
+        return reject();
+    };
+    let split_idx = spec
+        .iter()
+        .position(|&byte| byte == b'=')
+        .unwrap_or(spec.len());
+    let name = &spec[..split_idx];
+    let inline_value = if split_idx < spec.len() {
+        let base = unsafe { *argv.add(arg.argv_idx) };
+        if base.is_null() {
+            std::ptr::null()
+        } else {
+            unsafe { base.add(arg.byte_offset + split_idx + 1) }
+        }
+    } else {
+        std::ptr::null()
+    };
+    if name.is_empty() {
+        return reject();
+    }
+
+    let mut exact = None;
+    let mut prefixes = Vec::new();
+    let mut index = 0usize;
+    loop {
+        let option = unsafe { longopts.add(index) };
+        let long_name = unsafe { (*option).name };
+        if long_name.is_null() {
+            break;
+        }
+        let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        };
+        if candidate.as_slice() == name {
+            exact = Some(index);
+            break;
+        }
+        if candidate.len() > name.len() && candidate.starts_with(name) {
+            prefixes.push(index);
+        }
+        index += 1;
+    }
+    let matched = if let Some(index) = exact {
+        index
+    } else if prefixes.len() == 1 {
+        prefixes[0]
+    } else if prefixes.len() > 1 {
+        let first = unsafe { *longopts.add(prefixes[0]) };
+        if prefixes.iter().skip(1).all(|&index| {
+            let candidate = unsafe { *longopts.add(index) };
+            candidate.has_arg == first.has_arg
+                && candidate.flag == first.flag
+                && candidate.val == first.val
+        }) {
+            prefixes[0]
+        } else {
+            return reject();
+        }
+    } else {
+        return reject();
+    };
+
+    let option = unsafe { longopts.add(matched) };
+    unsafe {
+        libc_optarg = std::ptr::null_mut();
+        libc_optopt = 0;
+        GETOPT_NEXTCHAR = None;
+    }
+    let mut final_index = space_arg_idx;
+    match unsafe { (*option).has_arg } {
+        0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+            unsafe {
+                libc_optopt = (*option).val;
+                libc_optind = final_index;
+            }
+            return b'?' as c_int;
+        }
+        1 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+            libc_optarg = inline_value as *mut c_char;
+        },
+        1 => {
+            if space_arg_idx >= argc {
+                unsafe {
+                    libc_optopt = (*option).val;
+                    libc_optind = final_index;
+                }
+                return missing_code;
+            }
+            let value = unsafe { *argv.add(space_arg_idx as usize) };
+            if value.is_null() {
+                unsafe {
+                    libc_optopt = (*option).val;
+                    libc_optind = final_index;
+                }
+                return missing_code;
+            }
+            unsafe { libc_optarg = value };
+            final_index += 1;
+        }
+        2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+            libc_optarg = inline_value as *mut c_char;
+        },
+        _ => {}
+    }
+    unsafe { libc_optind = final_index };
+    if !longindex.is_null() {
+        unsafe { *longindex = matched as c_int };
+    }
+    let flag = unsafe { (*option).flag };
+    if !flag.is_null() {
+        unsafe { *flag = (*option).val };
+        0
+    } else {
+        unsafe { (*option).val }
+    }
 }
 
 /// POSIX `getopt` — parse command-line options.
@@ -2943,7 +3161,8 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = unsafe { parse_getopt_short(argc, argv, &optspec) };
+    let rc =
+        unsafe { parse_getopt_short(argc, argv, &optspec, std::ptr::null(), std::ptr::null_mut()) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3010,7 +3229,7 @@ pub unsafe extern "C" fn getopt_long(
     };
     let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
         Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
+        None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -3058,7 +3277,7 @@ pub unsafe extern "C" fn getopt_long_only(
     };
     let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
         Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
+        None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -3970,6 +4189,9 @@ impl frankenlibc_core::ftw::StatLike for AbiStat {
     }
     fn dev_id(&self) -> u64 {
         self.0.st_dev
+    }
+    fn inode_id(&self) -> u64 {
+        self.0.st_ino
     }
 }
 

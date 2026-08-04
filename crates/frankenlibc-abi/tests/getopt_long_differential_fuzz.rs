@@ -74,14 +74,20 @@ fn gen_optstring(r: &mut Lcg) -> String {
         2 => s.push(':'),
         _ => {}
     }
-    let letters = b"abfhov";
+    let letters = b"abfhovW";
     let n = 1 + r.below(letters.len());
     for _ in 0..n {
-        s.push(letters[r.below(letters.len())] as char);
-        match r.below(3) {
-            0 => s.push(':'),
-            1 => s.push_str("::"),
-            _ => {}
+        let option = letters[r.below(letters.len())];
+        s.push(option as char);
+        if option == b'W' && r.below(2) == 0 {
+            // GNU routes only the `W;` spelling through the long-option table.
+            s.push(';');
+        } else {
+            match r.below(3) {
+                0 => s.push(':'),
+                1 => s.push_str("::"),
+                _ => {}
+            }
         }
     }
     s
@@ -126,7 +132,7 @@ fn gen_argv(r: &mut Lcg) -> Vec<String> {
     let mut v = vec!["prog".to_string()];
     let n = r.below(7);
     for _ in 0..n {
-        let tok = match r.below(13) {
+        let tok = match r.below(16) {
             0 => "-a".to_string(),
             1 => "-f".to_string(),
             2 => "-fval".to_string(),
@@ -142,7 +148,10 @@ fn gen_argv(r: &mut Lcg) -> Vec<String> {
             // rewrite (bd-1fw2a7).
             10 => "-".to_string(),
             11 => "--xyz".to_string(), // unknown long option
-            _ => "-z".to_string(),     // unknown short option
+            12 => "-W".to_string(),
+            13 => "-Wfile".to_string(),
+            14 => "-Wfile=x".to_string(),
+            _ => "-z".to_string(), // unknown short option
         };
         v.push(tok);
     }
