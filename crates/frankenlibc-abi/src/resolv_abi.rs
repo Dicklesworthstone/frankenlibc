@@ -1612,32 +1612,100 @@ fn resolve_addrinfo_profiles(
     }
 }
 
-fn resolve_gethostbyname_ipv4(node: &str) -> Option<Ipv4Addr> {
-    if let Ok(v4) = node.parse::<Ipv4Addr>() {
-        return Some(v4);
+struct GethostbynameTarget {
+    name: Vec<u8>,
+    aliases: Vec<Vec<u8>>,
+    addresses: Vec<Ipv4Addr>,
+}
+
+impl GethostbynameTarget {
+    fn numeric(name: &[u8], address: Ipv4Addr) -> Self {
+        Self {
+            name: name.to_vec(),
+            aliases: Vec::new(),
+            addresses: vec![address],
+        }
     }
-    match resolve_hosts_subset(node, libc::AF_INET) {
-        Some(HostsAddress::V4(v4)) => Some(v4),
-        _ => None,
+
+    fn seeded<'a, I>(canonical_name: &[u8], aliases: I, address: Ipv4Addr) -> Self
+    where
+        I: Iterator<Item = &'a [u8]>,
+    {
+        Self {
+            name: canonical_name.to_vec(),
+            aliases: aliases.map(ToOwned::to_owned).collect(),
+            addresses: vec![address],
+        }
+    }
+
+    fn append_row<'a, I>(&mut self, canonical_name: &[u8], aliases: I, address: Ipv4Addr)
+    where
+        I: Iterator<Item = &'a [u8]>,
+    {
+        self.aliases.extend(aliases.map(ToOwned::to_owned));
+        if canonical_name != self.name {
+            self.aliases.push(canonical_name.to_vec());
+        }
+        self.addresses.push(address);
     }
 }
 
-/// Borrowed: the resolved name aliases `name` (or is the `'static` repair default), so no `Vec` is
-/// allocated per `gethostbyname` call. `populate_tls_hostent` / `write_reentrant_hostent` copy the
-/// bytes out immediately, so the borrow never outlives the caller's C string.
-fn resolve_gethostbyname_target<'a>(
-    name: Option<&'a CStr>,
-    repair: bool,
-) -> Option<(&'a [u8], Ipv4Addr)> {
-    if let Some(name_cstr) = name
-        && let Ok(node) = name_cstr.to_str()
-        && let Some(v4) = resolve_gethostbyname_ipv4(node)
-    {
-        return Some((name_cstr.to_bytes(), v4));
+fn gethostbyname_ipv4_address(address: &[u8]) -> Option<Ipv4Addr> {
+    let address = core::str::from_utf8(address).ok()?;
+    if let Ok(v4) = address.parse::<Ipv4Addr>() {
+        return Some(v4);
+    }
+    let v6 = address.parse::<Ipv6Addr>().ok()?;
+    v6.to_ipv4_mapped()
+        .or_else(|| v6.is_loopback().then_some(Ipv4Addr::LOCALHOST))
+}
+
+/// Borrowed: the returned target aliases either the caller's name or the
+/// hosts-backend snapshot. TLS and reentrant result writers copy it before the
+/// backend borrow ends, so no allocation is needed on the hot lookup path.
+fn resolve_gethostbyname_target(name: Option<&CStr>, repair: bool) -> Option<GethostbynameTarget> {
+    if let Some(name_cstr) = name {
+        if let Ok(node) = name_cstr.to_str()
+            && let Ok(v4) = node.parse::<Ipv4Addr>()
+        {
+            return Some(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
+        }
+
+        let target = with_hosts_backend_snapshot(|content, _generation| {
+            let mut target = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(
+                content,
+                name_cstr.to_bytes(),
+                |entry| {
+                    let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
+                        return false;
+                    };
+                    if let Some(target) = &mut target {
+                        target.append_row(entry.canonical_name(), entry.aliases(), address);
+                    } else {
+                        target = Some(GethostbynameTarget::seeded(
+                            entry.canonical_name(),
+                            entry.aliases(),
+                            address,
+                        ));
+                    }
+                    false
+                },
+            );
+            target
+        })
+        .ok()
+        .flatten();
+        if target.is_some() {
+            return target;
+        }
     }
     if repair {
         global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-        return Some((b"localhost".as_slice(), Ipv4Addr::LOCALHOST));
+        return Some(GethostbynameTarget::numeric(
+            b"localhost".as_slice(),
+            Ipv4Addr::LOCALHOST,
+        ));
     }
     None
 }
@@ -1677,25 +1745,23 @@ unsafe fn set_h_errnop(h_errnop: *mut c_int, value: c_int) {
     }
 }
 
-const HOSTENT_MAX_ALIASES: usize = 8;
-
 struct HostentTlsStorage {
-    name: [c_char; 256],
-    alias_names: [[c_char; 256]; HOSTENT_MAX_ALIASES],
-    aliases: [*mut c_char; HOSTENT_MAX_ALIASES + 1],
-    addr_list: [*mut c_char; 2],
-    addr: [u8; 4],
+    name: Vec<c_char>,
+    alias_names: Vec<Vec<c_char>>,
+    aliases: Vec<*mut c_char>,
+    addr_list: Vec<*mut c_char>,
+    addresses: Vec<[u8; 4]>,
     hostent: libc::hostent,
 }
 
 impl HostentTlsStorage {
     fn new() -> Self {
         Self {
-            name: [0; 256],
-            alias_names: [[0; 256]; HOSTENT_MAX_ALIASES],
-            aliases: [ptr::null_mut(); HOSTENT_MAX_ALIASES + 1],
-            addr_list: [ptr::null_mut(); 2],
-            addr: [0; 4],
+            name: Vec::new(),
+            alias_names: Vec::new(),
+            aliases: Vec::new(),
+            addr_list: Vec::new(),
+            addresses: Vec::new(),
             hostent: libc::hostent {
                 h_name: ptr::null_mut(),
                 h_aliases: ptr::null_mut(),
@@ -1750,25 +1816,56 @@ unsafe fn populate_tls_hostent_with_aliases(
     ip: Ipv4Addr,
 ) -> *mut c_void {
     with_tls_hostent(|storage| {
-        storage.name.fill(0);
-        let max_name = storage.name.len().saturating_sub(1);
-        let copy_len = name_bytes.len().min(max_name);
-        for (index, byte) in name_bytes.iter().take(copy_len).copied().enumerate() {
-            storage.name[index] = byte as c_char;
-        }
+        storage.name = cchar_string(name_bytes);
+        storage.alias_names = aliases.iter().map(|alias| cchar_string(alias)).collect();
+        storage.aliases = storage
+            .alias_names
+            .iter_mut()
+            .map(|alias| alias.as_mut_ptr())
+            .collect();
+        storage.aliases.push(ptr::null_mut());
 
-        storage.aliases.fill(ptr::null_mut());
-        for alias_name in &mut storage.alias_names {
-            alias_name.fill(0);
-        }
-        for (index, alias) in aliases.iter().take(HOSTENT_MAX_ALIASES).enumerate() {
-            copy_to_cchar_buf(&mut storage.alias_names[index], alias);
-            storage.aliases[index] = storage.alias_names[index].as_mut_ptr();
-        }
+        storage.addresses.clear();
+        storage.addresses.push(ip.octets());
+        storage.addr_list = storage
+            .addresses
+            .iter_mut()
+            .map(|address| address.as_mut_ptr().cast::<c_char>())
+            .collect();
+        storage.addr_list.push(ptr::null_mut());
+        storage.hostent = libc::hostent {
+            h_name: storage.name.as_mut_ptr(),
+            h_aliases: storage.aliases.as_mut_ptr(),
+            h_addrtype: libc::AF_INET,
+            h_length: 4,
+            h_addr_list: storage.addr_list.as_mut_ptr(),
+        };
+        (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+    })
+}
 
-        storage.addr = ip.octets();
-        storage.addr_list[0] = storage.addr.as_mut_ptr().cast::<c_char>();
-        storage.addr_list[1] = ptr::null_mut();
+unsafe fn populate_tls_gethostbyname(target: &GethostbynameTarget) -> *mut c_void {
+    with_tls_hostent(|storage| {
+        storage.name = cchar_string(&target.name);
+        storage.alias_names = target
+            .aliases
+            .iter()
+            .map(|alias| cchar_string(alias))
+            .collect();
+        storage.aliases = storage
+            .alias_names
+            .iter_mut()
+            .map(|alias| alias.as_mut_ptr())
+            .collect();
+        storage.aliases.push(ptr::null_mut());
+
+        storage.addresses = target.addresses.iter().map(Ipv4Addr::octets).collect();
+        storage.addr_list = storage
+            .addresses
+            .iter_mut()
+            .map(|address| address.as_mut_ptr().cast::<c_char>())
+            .collect();
+        storage.addr_list.push(ptr::null_mut());
         storage.hostent = libc::hostent {
             h_name: storage.name.as_mut_ptr(),
             h_aliases: storage.aliases.as_mut_ptr(),
@@ -1858,6 +1955,107 @@ unsafe fn write_reentrant_hostent(
     hostent.h_addr_list = addr_list_ptr;
 
     // SAFETY: result pointer is valid and writable by caller contract.
+    unsafe { *result = result_buf };
+    Ok(())
+}
+
+unsafe fn write_reentrant_gethostbyname(
+    target: &GethostbynameTarget,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    if result_buf.is_null() || buf.is_null() || result.is_null() {
+        return Err(libc::EINVAL);
+    }
+    if !is_aligned_for::<libc::hostent>(result_buf) {
+        return Err(libc::EINVAL);
+    }
+    let buf_limit = known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
+    let mut offset = 0usize;
+
+    let copy_string = |bytes: &[u8], offset: &mut usize| -> Result<*mut c_char, c_int> {
+        let length = bytes.len().checked_add(1).ok_or(libc::ERANGE)?;
+        let end = offset.checked_add(length).ok_or(libc::ERANGE)?;
+        if end > buf_limit {
+            return Err(libc::ERANGE);
+        }
+        // SAFETY: the bounds check above reserves the full NUL-terminated string.
+        unsafe {
+            let destination = buf.add(*offset);
+            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), destination, bytes.len());
+            *destination.add(bytes.len()) = 0;
+            *offset = end;
+            Ok(destination)
+        }
+    };
+
+    let name_ptr = copy_string(&target.name, &mut offset)?;
+    let mut alias_values = Vec::with_capacity(target.aliases.len());
+    for alias in &target.aliases {
+        alias_values.push(copy_string(alias, &mut offset)?);
+    }
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<u8>()).ok_or(libc::ERANGE)?;
+    let addresses_bytes = target.addresses.len().checked_mul(4).ok_or(libc::ERANGE)?;
+    let addresses_end = offset.checked_add(addresses_bytes).ok_or(libc::ERANGE)?;
+    if addresses_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    let mut address_values = Vec::with_capacity(target.addresses.len());
+    for (index, address) in target.addresses.iter().enumerate() {
+        // SAFETY: the bounds check above reserves all four-byte IPv4 addresses.
+        let destination = unsafe { buf.add(offset + index * 4).cast::<u8>() };
+        // SAFETY: destination points to four writable bytes for this address.
+        unsafe { ptr::copy_nonoverlapping(address.octets().as_ptr(), destination, 4) };
+        address_values.push(destination.cast::<c_char>());
+    }
+    offset = addresses_end;
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
+    let aliases_bytes = (target.aliases.len() + 1)
+        .checked_mul(size_of::<*mut c_char>())
+        .ok_or(libc::ERANGE)?;
+    let aliases_end = offset.checked_add(aliases_bytes).ok_or(libc::ERANGE)?;
+    if aliases_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: the bounds check and alignment calculation reserve the aliases table.
+    let aliases_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    for (index, alias) in alias_values.iter().enumerate() {
+        // SAFETY: aliases_ptr has one slot for every alias plus a terminator.
+        unsafe { *aliases_ptr.add(index) = *alias };
+    }
+    // SAFETY: the final aliases-table slot is within the reserved terminator slot.
+    unsafe { *aliases_ptr.add(target.aliases.len()) = ptr::null_mut() };
+    offset = aliases_end;
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
+    let address_list_bytes = (target.addresses.len() + 1)
+        .checked_mul(size_of::<*mut c_char>())
+        .ok_or(libc::ERANGE)?;
+    let address_list_end = offset.checked_add(address_list_bytes).ok_or(libc::ERANGE)?;
+    if address_list_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: the bounds check and alignment calculation reserve the address list.
+    let address_list_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    for (index, address) in address_values.iter().enumerate() {
+        // SAFETY: address_list_ptr has one slot for every address plus a terminator.
+        unsafe { *address_list_ptr.add(index) = *address };
+    }
+    // SAFETY: the final address-list slot is within the reserved terminator slot.
+    unsafe { *address_list_ptr.add(target.addresses.len()) = ptr::null_mut() };
+
+    // SAFETY: result_buf and result passed the alignment and null checks above.
+    let hostent = unsafe { &mut *result_buf.cast::<libc::hostent>() };
+    hostent.h_name = name_ptr;
+    hostent.h_aliases = aliases_ptr;
+    hostent.h_addrtype = libc::AF_INET;
+    hostent.h_length = 4;
+    hostent.h_addr_list = address_list_ptr;
+    // SAFETY: result is a caller-provided writable out pointer.
     unsafe { *result = result_buf };
     Ok(())
 }
@@ -3383,6 +3581,13 @@ fn fill_protoent_storage(
 // parse_protocols_line moved to frankenlibc_core::resolv. Local callers
 // use frankenlibc_core::resolv::parse_protocols_line directly.
 
+fn cchar_string(bytes: &[u8]) -> Vec<c_char> {
+    let mut value = Vec::with_capacity(bytes.len() + 1);
+    value.extend(bytes.iter().copied().map(|byte| byte as c_char));
+    value.push(0);
+    value
+}
+
 /// Copy a byte slice into a c_char buffer with NUL termination.
 fn copy_to_cchar_buf(dst: &mut [c_char], src: &[u8]) {
     let copy_len = src.len().min(dst.len().saturating_sub(1));
@@ -3425,14 +3630,14 @@ pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
             return ptr::null_mut();
         }
     };
-    let Some((resolved_name, addr)) = resolve_gethostbyname_target(name_cstr, repair) else {
+    let Some(target) = resolve_gethostbyname_target(name_cstr, repair) else {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
         return ptr::null_mut();
     };
 
     // SAFETY: pointer returned references thread-local hostent storage.
-    let hostent_ptr = unsafe { populate_tls_hostent(resolved_name, addr) };
+    let hostent_ptr = unsafe { populate_tls_gethostbyname(&target) };
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
     hostent_ptr
@@ -3476,7 +3681,7 @@ pub(crate) unsafe fn gethostbyname_r_impl(
             return libc::EINVAL;
         }
     };
-    let Some((resolved_name, addr)) = resolve_gethostbyname_target(name_cstr, repair) else {
+    let Some(target) = resolve_gethostbyname_target(name_cstr, repair) else {
         // SAFETY: optional h_errno pointer from caller.
         unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
@@ -3484,7 +3689,7 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     };
 
     // SAFETY: all pointers/length validated within helper.
-    match unsafe { write_reentrant_hostent(resolved_name, addr, result_buf, buf, buflen, result) } {
+    match unsafe { write_reentrant_gethostbyname(&target, result_buf, buf, buflen, result) } {
         Ok(()) => {
             // SAFETY: optional h_errno pointer from caller.
             unsafe { set_h_errnop(h_errnop, 0) };

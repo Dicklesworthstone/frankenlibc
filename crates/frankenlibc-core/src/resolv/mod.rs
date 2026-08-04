@@ -187,9 +187,65 @@ pub fn for_each_hosts_match(content: &[u8], name: &[u8], mut visit: impl FnMut(&
     }
 }
 
+/// A borrowed matching `/etc/hosts` entry.
+///
+/// The first hostname is the canonical name; the remaining names are aliases.
+/// All slices refer to the supplied hosts-file content.
+#[derive(Clone, Copy, Debug)]
+pub struct HostsMatch<'a> {
+    address: &'a [u8],
+    names: &'a [u8],
+}
+
+impl<'a> HostsMatch<'a> {
+    /// The text form of the entry's IPv4 or IPv6 address.
+    pub fn address(self) -> &'a [u8] {
+        self.address
+    }
+
+    /// The entry's canonical hostname.
+    pub fn canonical_name(self) -> &'a [u8] {
+        self.names()
+            .next()
+            .expect("HostsMatch always contains a canonical hostname")
+    }
+
+    /// The entry's aliases, in file order.
+    pub fn aliases(self) -> impl Iterator<Item = &'a [u8]> {
+        self.names().skip(1)
+    }
+
+    fn names(self) -> impl Iterator<Item = &'a [u8]> {
+        self.names
+            .split(|&b| is_resolver_field_separator(b))
+            .filter(|field| !field.is_empty())
+    }
+}
+
+/// Allocation-free variant of [`for_each_hosts_match`] that preserves the
+/// canonical hostname and aliases belonging to every matching entry.
+pub fn for_each_hosts_match_entry(
+    content: &[u8],
+    name: &[u8],
+    mut visit: impl FnMut(HostsMatch<'_>) -> bool,
+) {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some(entry) = hosts_line_match_entry(line, name)
+            && visit(entry)
+        {
+            return;
+        }
+    }
+}
+
 /// Borrowed core of [`for_each_hosts_match`]: the address field of `line` iff `line` parses as a
 /// hosts entry (per [`parse_hosts_line`]) and one of its hostnames equals `name`.
 fn hosts_line_match<'a>(line: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    hosts_line_match_entry(line, name).map(HostsMatch::address)
+}
+
+/// Borrowed core of [`for_each_hosts_match_entry`].
+fn hosts_line_match_entry<'a>(line: &'a [u8], name: &[u8]) -> Option<HostsMatch<'a>> {
     // Strip comments (as `parse_hosts_line`).
     let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
         &line[..pos]
@@ -205,16 +261,15 @@ fn hosts_line_match<'a>(line: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
 
     // `parse_hosts_line` rejects a line with no hostnames; `lookup_hosts` then accepts the line
     // only if some hostname matches. Both conditions must hold, so test them together.
-    let mut saw_hostname = false;
-    let mut matched = false;
-    for field in fields {
-        saw_hostname = true;
-        if eq_ignore_ascii_case(field, name) {
-            matched = true;
-            break;
-        }
-    }
-    if !saw_hostname || !matched {
+    let names_start = (addr_field.as_ptr() as usize - line.as_ptr() as usize) + addr_field.len();
+    let names = &line[names_start..];
+    let mut names_iter = names
+        .split(|&b| is_resolver_field_separator(b))
+        .filter(|field| !field.is_empty());
+    let canonical_name = names_iter.next()?;
+    if !eq_ignore_ascii_case(canonical_name, name)
+        && !names_iter.any(|field| eq_ignore_ascii_case(field, name))
+    {
         return None;
     }
 
@@ -223,7 +278,10 @@ fn hosts_line_match<'a>(line: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
         || core::str::from_utf8(addr_field)
             .ok()
             .is_some_and(|addr| addr.parse::<Ipv6Addr>().is_ok());
-    valid_addr.then_some(addr_field)
+    valid_addr.then_some(HostsMatch {
+        address: addr_field,
+        names,
+    })
 }
 
 /// Allocation-free analogue of [`reverse_lookup_hosts`] for the only shape its callers use: the
@@ -1082,6 +1140,35 @@ mod tests {
         let content = b"127.0.0.1 localhost\r\n192.0.2.10 fixture\r\n";
         let addrs = lookup_hosts(content, b"fixture");
         assert_eq!(addrs, vec![b"192.0.2.10".to_vec()]);
+    }
+
+    #[test]
+    fn hosts_match_entry_preserves_canonical_name_and_all_aliases() {
+        let content = b"::1 canon query-alias first\n127.0.0.1 other query-alias second\n";
+        let mut entries = Vec::new();
+        for_each_hosts_match_entry(content, b"QuErY-AlIaS", |entry| {
+            entries.push((
+                entry.address().to_vec(),
+                entry.canonical_name().to_vec(),
+                entry.aliases().map(ToOwned::to_owned).collect::<Vec<_>>(),
+            ));
+            false
+        });
+        assert_eq!(
+            entries,
+            vec![
+                (
+                    b"::1".to_vec(),
+                    b"canon".to_vec(),
+                    vec![b"query-alias".to_vec(), b"first".to_vec()],
+                ),
+                (
+                    b"127.0.0.1".to_vec(),
+                    b"other".to_vec(),
+                    vec![b"query-alias".to_vec(), b"second".to_vec()],
+                ),
+            ]
+        );
     }
 
     // ---- reverse_lookup_hosts ----

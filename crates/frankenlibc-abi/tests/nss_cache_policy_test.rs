@@ -67,6 +67,35 @@ unsafe fn hostent_ipv4(ptr: *mut c_void) -> [u8; 4] {
     [octets[0], octets[1], octets[2], octets[3]]
 }
 
+unsafe fn hostent_aliases(ptr: *mut c_void) -> Vec<Vec<u8>> {
+    let hostent = unsafe { &*(ptr as *const libc::hostent) };
+    let mut aliases = Vec::new();
+    for index in 0..16 {
+        let alias = unsafe { *hostent.h_aliases.add(index) };
+        if alias.is_null() {
+            return aliases;
+        }
+        aliases.push(unsafe { CStr::from_ptr(alias) }.to_bytes().to_vec());
+    }
+    aliases
+}
+
+unsafe fn hostent_ipv4_addresses(ptr: *mut c_void) -> Vec<[u8; 4]> {
+    let hostent = unsafe { &*(ptr as *const libc::hostent) };
+    let mut addresses = Vec::new();
+    for index in 0..16 {
+        let address = unsafe { *hostent.h_addr_list.add(index) };
+        if address.is_null() {
+            return addresses;
+        }
+        let octets = unsafe { std::slice::from_raw_parts(address.cast::<u8>(), 4) };
+        let mut value = [0; 4];
+        value.copy_from_slice(octets);
+        addresses.push(value);
+    }
+    addresses
+}
+
 #[test]
 fn passwd_cache_invalidation_resets_iteration_on_file_change() {
     let _guard = TEST_LOCK.lock().expect("lock should be available");
@@ -484,6 +513,78 @@ fn hosts_cache_refreshes_forward_lookup_after_file_change() {
     // SAFETY: integration tests serialize env mutation via TEST_LOCK.
     unsafe { std::env::remove_var(HOSTS_ENV) };
     let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn hosts_forward_lookup_matches_glibc_multi_row_alias_contract() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = temp_path("hosts-forward-aliases");
+    write_file(
+        &path,
+        b"::1 canon query-alias duplicate\n127.0.0.1 other duplicate\n127.0.0.1 canon tail\n",
+    );
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::set_var(HOSTS_ENV, &path) };
+
+    let name = CString::new("query-alias").expect("literal has no interior NUL");
+    let result = unsafe { frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()) };
+    assert!(!result.is_null(), "hosts lookup should succeed");
+    let hostent = unsafe { &*(result as *const libc::hostent) };
+    assert_eq!(hostent.h_addrtype, libc::AF_INET);
+    assert_eq!(hostent.h_length, 4);
+    assert_eq!(unsafe { hostent_name(result) }, "canon");
+    assert_eq!(
+        unsafe { hostent_aliases(result) },
+        vec![
+            b"query-alias".to_vec(),
+            b"duplicate".to_vec(),
+            b"duplicate".to_vec(),
+            b"other".to_vec(),
+            b"tail".to_vec(),
+        ]
+    );
+    assert_eq!(
+        unsafe { hostent_ipv4_addresses(result) },
+        vec![[127, 0, 0, 1], [127, 0, 0, 1], [127, 0, 0, 1]],
+        "matching hosts lines must preserve duplicate IPv4 addresses"
+    );
+
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut scratch = [0 as c_char; 512];
+    let mut reentrant_result = ptr::null_mut();
+    let mut h_errno = -1;
+    let rc = unsafe {
+        frankenlibc_abi::inet_abi::gethostbyname_r(
+            name.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast(),
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut reentrant_result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errno, 0);
+    assert_eq!(hostent.h_addrtype, libc::AF_INET);
+    assert_eq!(hostent.h_length, 4);
+    assert_eq!(unsafe { hostent_name(reentrant_result) }, "canon");
+    assert_eq!(
+        unsafe { hostent_aliases(reentrant_result) },
+        vec![
+            b"query-alias".to_vec(),
+            b"duplicate".to_vec(),
+            b"duplicate".to_vec(),
+            b"other".to_vec(),
+            b"tail".to_vec(),
+        ]
+    );
+    assert_eq!(
+        unsafe { hostent_ipv4_addresses(reentrant_result) },
+        vec![[127, 0, 0, 1], [127, 0, 0, 1], [127, 0, 0, 1]]
+    );
+
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::remove_var(HOSTS_ENV) };
 }
 
 #[test]

@@ -338,6 +338,124 @@ fn gethostbyname_numeric_ipv4_returns_hostent() {
 }
 
 #[test]
+fn gethostbyname_hosts_result_preserves_aliases_and_duplicate_addresses() {
+    with_resolver_backends(
+        Some(
+            b"127.0.0.1 localhost ip6-localhost ip6-loopback\n\
+              127.0.0.1 localhost\n",
+        ),
+        None,
+        |_| {
+            let query = c"localhost";
+            let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+            assert!(!ptr.is_null());
+
+            // SAFETY: gethostbyname returned a non-null pointer to its TLS-backed hostent.
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"localhost"
+            );
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+
+            // SAFETY: the hostent aliases table is terminated by a null pointer.
+            let aliases = unsafe {
+                let mut aliases = Vec::new();
+                let mut alias_ptr = hostent.h_aliases;
+                while !(*alias_ptr).is_null() {
+                    aliases.push(CStr::from_ptr(*alias_ptr).to_bytes().to_vec());
+                    alias_ptr = alias_ptr.add(1);
+                }
+                aliases
+            };
+            assert_eq!(
+                aliases,
+                vec![b"ip6-localhost".to_vec(), b"ip6-loopback".to_vec()]
+            );
+
+            // SAFETY: the hostent address table is terminated by a null pointer, and IPv4
+            // entries carry exactly four bytes because h_length is asserted by the ABI.
+            let addresses = unsafe {
+                let mut addresses = Vec::new();
+                let mut address_ptr = hostent.h_addr_list;
+                while !(*address_ptr).is_null() {
+                    addresses
+                        .push(std::slice::from_raw_parts((*address_ptr).cast::<u8>(), 4).to_vec());
+                    address_ptr = address_ptr.add(1);
+                }
+                addresses
+            };
+            assert_eq!(addresses, [vec![127, 0, 0, 1], vec![127, 0, 0, 1]]);
+        },
+    );
+}
+
+#[test]
+fn gethostbyname_r_hosts_result_preserves_aliases_and_duplicate_addresses() {
+    with_resolver_backends(
+        Some(
+            b"127.0.0.1 localhost ip6-localhost ip6-loopback\n\
+              127.0.0.1 localhost\n",
+        ),
+        None,
+        |_| {
+            // SAFETY: hostent is a C POD output structure whose fields are all zero-valid.
+            let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+            let mut scratch = [0i8; 512];
+            let mut result_ptr = ptr::null_mut();
+            let mut h_errno = -1;
+            let rc = unsafe {
+                inet_abi::gethostbyname_r(
+                    c"localhost".as_ptr(),
+                    (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                    scratch.as_mut_ptr(),
+                    scratch.len(),
+                    &mut result_ptr,
+                    &mut h_errno,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert_eq!(h_errno, 0);
+            assert_eq!(
+                result_ptr,
+                (&mut hostent as *mut libc::hostent).cast::<c_void>()
+            );
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+
+            // SAFETY: gethostbyname_r populated the null-terminated aliases table in scratch.
+            let aliases = unsafe {
+                let mut aliases = Vec::new();
+                let mut alias_ptr = hostent.h_aliases;
+                while !(*alias_ptr).is_null() {
+                    aliases.push(CStr::from_ptr(*alias_ptr).to_bytes().to_vec());
+                    alias_ptr = alias_ptr.add(1);
+                }
+                aliases
+            };
+            assert_eq!(
+                aliases,
+                vec![b"ip6-localhost".to_vec(), b"ip6-loopback".to_vec()]
+            );
+
+            // SAFETY: gethostbyname_r populated the null-terminated IPv4 address table in scratch.
+            let addresses = unsafe {
+                let mut addresses = Vec::new();
+                let mut address_ptr = hostent.h_addr_list;
+                while !(*address_ptr).is_null() {
+                    addresses
+                        .push(std::slice::from_raw_parts((*address_ptr).cast::<u8>(), 4).to_vec());
+                    address_ptr = address_ptr.add(1);
+                }
+                addresses
+            };
+            assert_eq!(addresses, [vec![127, 0, 0, 1], vec![127, 0, 0, 1]]);
+        },
+    );
+}
+
+#[test]
 fn gethostbyname_unknown_host_returns_null() {
     with_resolver_lock(|| {
         let query =
