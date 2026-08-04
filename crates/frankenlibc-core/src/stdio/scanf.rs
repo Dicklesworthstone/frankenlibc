@@ -216,6 +216,11 @@ pub struct ScanSpec {
     /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
     /// entry points after parsing; defaults to false for narrow `sscanf`.
     pub wide_input: bool,
+    /// True when the GNU `m` assignment-allocation modifier was given (`%ms`,
+    /// `%m[`, `%mc`): the destination argument is a `char **` and the matched
+    /// text is stored into a freshly allocated buffer. Only meaningful for the
+    /// string conversions; the ABI layer performs the allocation.
+    pub alloc: bool,
     route: ScanfRoute,
 }
 
@@ -269,7 +274,8 @@ impl ScanSpec {
         pos: usize,
         wide_input: bool,
     ) -> Option<(Option<ScanValue>, usize)> {
-        self.scan_operation_kind()?.scan(input, pos, self, wide_input)
+        self.scan_operation_kind()?
+            .scan(input, pos, self, wide_input)
     }
 }
 
@@ -345,6 +351,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 conversion: 0,
                 scanset: None,
                 wide_input: false,
+                alloc: false,
                 route: ScanfRoute::invalid(),
             };
 
@@ -366,6 +373,14 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
             }
             if has_width {
                 spec.width = Some(w);
+            }
+
+            // GNU `m` assignment-allocation modifier (`%ms`, `%m[`, `%mc`,
+            // optionally combined with `l`). It precedes the length modifier;
+            // the destination is a `char **` filled with a malloc'd buffer.
+            if i < fmt.len() && fmt[i] == b'm' {
+                spec.alloc = true;
+                i += 1;
             }
 
             // Length modifier.
@@ -1514,6 +1529,70 @@ mod tests {
             assert!(ss.chars[b'a' as usize]);
         } else {
             panic!("expected Spec");
+        }
+    }
+
+    /// Helper: the single `ScanSpec` a one-directive format parses to.
+    fn only_spec(fmt: &[u8]) -> ScanSpec {
+        let dirs = parse_scanf_format(fmt);
+        assert_eq!(dirs.len(), 1, "expected exactly one directive from {fmt:?}");
+        match &dirs[0] {
+            ScanDirective::Spec(s) => (**s).clone(),
+            other => panic!("expected Spec from {fmt:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_gnu_m_allocation_modifier_on_string_conversions() {
+        // GNU `%ms` / `%m[` / `%mc`: the destination is a `char **` and the ABI
+        // layer allocates. Core's only job is to record that it was asked for.
+        // Checked against live glibc 2.42: sscanf("hello world", "%ms", &p)
+        // yields 1 with p == "hello", likewise "%m[a-z]" and "%mc".
+        for (fmt, conversion) in [
+            (b"%ms".as_slice(), b's'),
+            (b"%m[a-z]", b'['),
+            (b"%mc", b'c'),
+        ] {
+            let spec = only_spec(fmt);
+            assert!(spec.alloc, "{fmt:?} must set alloc");
+            assert_eq!(spec.conversion, conversion, "{fmt:?} conversion");
+        }
+    }
+
+    #[test]
+    fn gnu_m_modifier_sits_between_width_and_length() {
+        // Order is load-bearing and was verified against live glibc:
+        //   "%4ms" -> 1, "hell"   (width still applies, so m follows the width)
+        //   "%mls" -> 1, wide     (m precedes the length modifier)
+        //   "%lms" -> 0           (m AFTER the length modifier is not the
+        //                          modifier at all — glibc assigns nothing)
+        let spec = only_spec(b"%4ms");
+        assert!(spec.alloc);
+        assert_eq!(spec.width, Some(4));
+        assert_eq!(spec.conversion, b's');
+
+        let spec = only_spec(b"%mls");
+        assert!(spec.alloc);
+        assert!(matches!(spec.length, LengthMod::L));
+        assert_eq!(spec.conversion, b's');
+
+        // `%lms` reads `m` as the conversion character, which binds no route,
+        // so the directive is rejected outright — matching glibc returning 0.
+        assert!(
+            parse_scanf_format(b"%lms").is_empty(),
+            "%lms must not parse as an allocating directive"
+        );
+    }
+
+    #[test]
+    fn gnu_m_modifier_composes_with_suppression_and_is_off_by_default() {
+        let spec = only_spec(b"%*ms");
+        assert!(spec.suppress, "%*ms suppresses");
+        assert!(spec.alloc, "%*ms still records the m modifier");
+
+        // Regression guard: ordinary directives must not claim allocation.
+        for fmt in [b"%s".as_slice(), b"%c", b"%[a-z]", b"%d", b"%ls"] {
+            assert!(!only_spec(fmt).alloc, "{fmt:?} must not set alloc",);
         }
     }
 
