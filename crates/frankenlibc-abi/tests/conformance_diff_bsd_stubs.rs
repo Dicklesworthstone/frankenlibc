@@ -7,6 +7,7 @@ use std::ffi::{CString, c_char, c_int, c_ulong};
 
 unsafe extern "C" {
     fn chflags(path: *const c_char, flags: c_ulong) -> c_int;
+    fn revoke(path: *const c_char) -> c_int;
     fn setlogin(name: *const c_char) -> c_int;
 }
 
@@ -49,5 +50,20 @@ fn bsd_stubs_match_host_enosys_contract() {
         (fl_setlogin, fl_errno()),
         (host_setlogin, host_setlogin_errno),
         "setlogin ENOSYS contract"
+    );
+}
+
+#[test]
+fn revoke_matches_host_enosys_contract() {
+    let path = CString::new("/nonexistent/frankenlibc-revoke").unwrap();
+    clear_errnos();
+    let host_result = unsafe { revoke(path.as_ptr()) };
+    let host_result_errno = host_errno();
+    clear_errnos();
+    let fl_result = unsafe { fl::revoke(path.as_ptr()) };
+    assert_eq!(
+        (fl_result, fl_errno()),
+        (host_result, host_result_errno),
+        "revoke ENOSYS contract"
     );
 }
