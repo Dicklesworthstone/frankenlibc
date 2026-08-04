@@ -5523,44 +5523,6 @@ pub unsafe extern "C" fn matherr(_exc: *mut std::ffi::c_void) -> c_int {
 pub static _LIB_VERSION: c_int = 0;
 
 // =========================================================================
-// fenv extensions (glibc-specific) - delegate to host fenv
-// =========================================================================
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fedisableexcept(_excepts: c_int) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn feenableexcept(_excepts: c_int) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fegetexcept() -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fesetexcept(_excepts: c_int) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fetestexceptflag(_flagp: *const c_int, _excepts: c_int) -> c_int {
-    -1
-}
-
-#[repr(C)]
-pub struct FeMode {
-    _data: [u8; 8],
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fegetmode(_modep: *mut FeMode) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fesetmode(_modep: *const FeMode) -> c_int {
-    -1
-}
-
-// =========================================================================
 // TS 18661 / C23 type-generic math width aliases
 // =========================================================================
 //
