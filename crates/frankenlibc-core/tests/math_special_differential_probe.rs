@@ -432,6 +432,25 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
     );
 }
 
+#[test]
+#[allow(unsafe_code)] // host-glibc oracle (-lm linked by std)
+fn atanhf_tiny_inputs_match_glibc_bits() {
+    use frankenlibc_core::math as m;
+    unsafe extern "C" {
+        fn atanhf(x: f32) -> f32;
+    }
+
+    for x in [-1.911_694_1e-12_f32, -1.0 / 8192.0, 0.0, 1.0 / 8192.0] {
+        let got = m::atanhf(x);
+        let want = unsafe { atanhf(x) };
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "atanhf tiny-input drift at x={x:e}: got={got:e}, glibc={want:e}"
+        );
+    }
+}
+
 /// Regression guard for the f32 libm-passthrough trig / inverse-trig /
 /// inverse-hyperbolic / cbrt / logf family: each stays within 4 ULP of the host
 /// glibc across its range (incl. moderate large-arg range reduction for sinf).

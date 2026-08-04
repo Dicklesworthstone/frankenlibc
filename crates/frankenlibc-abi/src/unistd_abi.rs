@@ -4046,6 +4046,59 @@ fn walktype_to_ftw_int(t: frankenlibc_core::ftw::WalkType) -> c_int {
     t.as_c_int()
 }
 
+/// Re-run the root probe the walker just failed, so `errno` carries the real
+/// reason it failed.
+///
+/// glibc leaves `errno` exactly as the failed `stat` set it, which is not
+/// always ENOENT: a path whose parent component is a regular file reports
+/// ENOTDIR, an unresolvable symlink chain reports ELOOP, and so on. `FsOps`
+/// deliberately reduces a probe to `Option`, discarding the code, so the only
+/// way back to it is to ask the kernel again — which only ever happens on this
+/// error path.
+fn root_probe_errno(path: &[u8], flags: frankenlibc_core::ftw::WalkFlags) -> c_int {
+    let mut buf = path.to_vec();
+    buf.push(0);
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let at_flags = if flags.contains(frankenlibc_core::ftw::WalkFlags::PHYSICAL) {
+        libc::AT_SYMLINK_NOFOLLOW
+    } else {
+        0
+    };
+    match unsafe {
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            buf.as_ptr(),
+            &mut st as *mut _ as *mut u8,
+            at_flags,
+        )
+    } {
+        // The path became readable between the walker's probe and this one.
+        // Nothing sensible is left to report, so keep the historical default.
+        Ok(()) => errno::ENOENT,
+        Err(code) => code,
+    }
+}
+
+/// Turn a walk outcome into the `ftw`/`nftw` return value, reporting `errno`
+/// only for the "could not start the walk" case.
+///
+/// A callback that returns -1 must NOT touch `errno` — verified against host
+/// glibc, which leaves a pre-seeded errno untouched through such a walk.
+unsafe fn finish_walk(
+    outcome: frankenlibc_core::ftw::WalkOutcome,
+    path: &[u8],
+    flags: frankenlibc_core::ftw::WalkFlags,
+) -> c_int {
+    match outcome {
+        frankenlibc_core::ftw::WalkOutcome::Completed(value) => value,
+        frankenlibc_core::ftw::WalkOutcome::RootUnreadable => {
+            // SAFETY: sets the calling thread's errno slot.
+            unsafe { set_abi_errno(root_probe_errno(path, flags)) };
+            -1
+        }
+    }
+}
+
 /// POSIX `ftw` — file tree walk.
 ///
 /// Now a thin shim over `frankenlibc_core::ftw::walk_tree` (bd-ftw-3).
@@ -4069,10 +4122,11 @@ pub unsafe extern "C" fn ftw(
     };
 
     let fs = AbiFs;
-    let r = frankenlibc_core::ftw::walk_tree(
+    let core_flags = frankenlibc_core::ftw::WalkFlags::NONE;
+    let outcome = frankenlibc_core::ftw::walk_tree(
         &path_bytes,
         &fs,
-        frankenlibc_core::ftw::WalkFlags::NONE,
+        core_flags,
         |p, st, t, _level, _base| {
             // Build NUL-terminated path for the C callback.
             let mut buf = p.to_vec();
@@ -4080,11 +4134,8 @@ pub unsafe extern "C" fn ftw(
             unsafe { callback(buf.as_ptr() as *const c_char, &st.0, walktype_to_ftw_int(t)) }
         },
     );
-    if r == -1 {
-        // Root probe failed — propagate a sensible errno.
-        unsafe { set_abi_errno(errno::ENOENT) };
-    }
-    r
+    // SAFETY: reports errno only when the walk never started.
+    unsafe { finish_walk(outcome, &path_bytes, core_flags) }
 }
 
 /// FTW info struct (POSIX): { int base; int level; }
@@ -4124,7 +4175,7 @@ pub unsafe extern "C" fn nftw(
 
     let fs = AbiFs;
     let core_flags = frankenlibc_core::ftw::WalkFlags::from_bits(flags as u32);
-    let r =
+    let outcome =
         frankenlibc_core::ftw::walk_tree(&path_bytes, &fs, core_flags, |p, st, t, level, base| {
             let mut buf = p.to_vec();
             buf.push(0);
@@ -4141,10 +4192,9 @@ pub unsafe extern "C" fn nftw(
                 )
             }
         });
-    if r == -1 {
-        unsafe { set_abi_errno(errno::ENOENT) };
-    }
-    r
+    // SAFETY: reports errno only when the walk never started. In particular a
+    // callback that returns -1 must leave errno alone.
+    unsafe { finish_walk(outcome, &path_bytes, core_flags) }
 }
 
 // ---------------------------------------------------------------------------

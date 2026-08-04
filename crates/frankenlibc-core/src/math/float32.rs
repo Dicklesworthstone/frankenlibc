@@ -871,6 +871,13 @@ pub fn atanhf(x: f32) -> f32 {
     // (NaN, FE_INVALID), plus ±0/inf/NaN — use the exact f64 path (bit-identical to the old
     // impl, which raises the correct FE flags via the f64 `log`).
     let ax = x.abs();
+    // For |x| < 2^-12, the first omitted term x^3 / 3 is below one third of
+    // an f32 ULP at x. Returning x is therefore correctly rounded, preserves
+    // signed zero, and avoids magnifying the tiny result through the f64 log
+    // approximation.
+    if ax < 1.0 / 4096.0 {
+        return x;
+    }
     if (0.5..1.0).contains(&ax) {
         let r = 0.5 * crate::math::logf((1.0 + ax) / (1.0 - ax));
         return r.copysign(x);
