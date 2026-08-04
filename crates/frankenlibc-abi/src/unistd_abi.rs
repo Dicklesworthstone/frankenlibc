@@ -23859,10 +23859,73 @@ pub unsafe extern "C" fn sysv_signal(
     }
 }
 
+/// The `SIG_HOLD` sentinel disposition, meaning "block this signal instead of
+/// installing a handler". Linux defines it as `(__sighandler_t) 2`; the `libc`
+/// crate does not export it.
+const SIG_HOLD: libc::sighandler_t = 2;
+
 /// `sigset` — reliable signal (XSI extension).
+///
+/// Not `sysv_signal`: XSI `sigset` installs a *reliable* disposition (the
+/// handler survives delivery and the signal is blocked while it runs), and it
+/// additionally owns the signal mask — `SIG_HOLD` blocks the signal, and
+/// installing any other disposition unblocks it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigset(sig: c_int, disp: libc::sighandler_t) -> libc::sighandler_t {
-    unsafe { sysv_signal(sig, disp) }
+    // SIG_ERR is a failure sentinel, never a disposition to install.
+    if disp == libc::SIG_ERR {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::SIG_ERR;
+    }
+
+    // The signal number is range-checked by sigaddset, which sets EINVAL for
+    // out-of-range and reserved signals exactly as glibc's does.
+    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let mut oset: libc::sigset_t = unsafe { std::mem::zeroed() };
+    if unsafe { crate::signal_abi::sigemptyset(&mut set) } < 0
+        || unsafe { crate::signal_abi::sigaddset(&mut set, sig) } < 0
+    {
+        return libc::SIG_ERR;
+    }
+
+    if disp == SIG_HOLD {
+        // Block the signal, leaving its disposition untouched.
+        if unsafe { crate::signal_abi::sigprocmask(libc::SIG_BLOCK, &set, &mut oset) } < 0 {
+            return libc::SIG_ERR;
+        }
+        if unsafe { crate::signal_abi::sigismember(&oset, sig) } == 1 {
+            // Already blocked: report that rather than a disposition.
+            return SIG_HOLD;
+        }
+        let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
+        if unsafe { crate::signal_abi::sigaction(sig, std::ptr::null(), &mut oact) } < 0 {
+            return libc::SIG_ERR;
+        }
+        return oact.sa_sigaction;
+    }
+
+    // sa_flags = 0 is the whole difference from sysv_signal's
+    // SA_RESETHAND | SA_NODEFER: the disposition persists across delivery and
+    // the signal is blocked for the duration of its own handler.
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = disp;
+    act.sa_flags = 0;
+    if unsafe { crate::signal_abi::sigemptyset(&mut act.sa_mask) } < 0 {
+        return libc::SIG_ERR;
+    }
+    let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
+    if unsafe { crate::signal_abi::sigaction(sig, &act, &mut oact) } < 0 {
+        return libc::SIG_ERR;
+    }
+    // Installing a disposition also releases the signal from the mask.
+    if unsafe { crate::signal_abi::sigprocmask(libc::SIG_UNBLOCK, &set, &mut oset) } < 0 {
+        return libc::SIG_ERR;
+    }
+    if unsafe { crate::signal_abi::sigismember(&oset, sig) } == 1 {
+        SIG_HOLD
+    } else {
+        oact.sa_sigaction
+    }
 }
 
 // ===========================================================================
