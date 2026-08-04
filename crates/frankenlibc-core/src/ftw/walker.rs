@@ -174,6 +174,24 @@ where
     let stat = match stat_opt {
         Some(s) => s,
         None => {
+            // A logical walk follows the link for `stat`, but glibc reports a
+            // symlink whose target cannot be resolved as FTW_SLN rather than
+            // FTW_NS. `lstat` lets us retain that distinction.
+            if !flags.contains(WalkFlags::PHYSICAL) {
+                if let Some(link_stat) = fs.lstat(path) {
+                    if link_stat.is_symlink() {
+                        return visit_control(
+                            path,
+                            &link_stat,
+                            WalkType::DanglingSymlink,
+                            level,
+                            base,
+                            flags,
+                            visit,
+                        );
+                    }
+                }
+            }
             // FTW_NS — pass a default (all-zeros) stat. POSIX leaves
             // the contents undefined when typeflag is FTW_NS.
             let dummy = F::Stat::default();
@@ -191,12 +209,7 @@ where
 
     // Handle symlinks under FTW_PHYS.
     if stat.is_symlink() && flags.contains(WalkFlags::PHYSICAL) {
-        let typeflag = if fs.stat(path).is_some() {
-            WalkType::Symlink
-        } else {
-            WalkType::DanglingSymlink
-        };
-        return visit_control(path, &stat, typeflag, level, base, flags, visit);
+        return visit_control(path, &stat, WalkType::Symlink, level, base, flags, visit);
     }
 
     if !stat.is_dir() {
@@ -818,20 +831,31 @@ mod tests {
             ),
         );
         let fs = MockFs { nodes };
-        let mut sym = false;
-        let mut sln = false;
-        let _ = walk_tree(b"/r", &fs, WalkFlags::PHYSICAL, |_, _, t, _, _| {
-            match t {
-                WalkType::Symlink => sym = true,
-                WalkType::DanglingSymlink => sln = true,
-                _ => {}
+        let mut physical_links = Vec::new();
+        let _ = walk_tree(b"/r", &fs, WalkFlags::PHYSICAL, |path, _, t, _, _| {
+            if path == b"/r/link_to_a" || path == b"/r/dangling" {
+                physical_links.push((path.to_vec(), t));
             }
             0
         });
-        assert!(sym, "live symlink should be reported as Symlink");
         assert!(
-            sln,
-            "dangling symlink should be reported as DanglingSymlink"
+            physical_links
+                .iter()
+                .all(|(_, typeflag)| *typeflag == WalkType::Symlink),
+            "FTW_PHYS must report live and dangling links as FTW_SL: {physical_links:?}"
+        );
+
+        let mut logical_dangling = None;
+        let _ = walk_tree(b"/r", &fs, WalkFlags::from_bits(0), |path, _, t, _, _| {
+            if path == b"/r/dangling" {
+                logical_dangling = Some(t);
+            }
+            0
+        });
+        assert_eq!(
+            logical_dangling,
+            Some(WalkType::DanglingSymlink),
+            "logical dangling link must be reported as FTW_SLN"
         );
     }
 

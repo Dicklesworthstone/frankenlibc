@@ -118,6 +118,16 @@ fn build_tree() -> std::path::PathBuf {
     dir
 }
 
+fn build_symlink_tree() -> std::path::PathBuf {
+    let dir = unique_tempdir();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("target"), b"target").unwrap();
+    std::os::unix::fs::symlink("target", dir.join("live")).unwrap();
+    std::os::unix::fs::symlink("missing", dir.join("dangling")).unwrap();
+    dir
+}
+
 /// Run a walker (use_fl=true → fl, false → libc). Returns the sorted
 /// (path-suffix-after-base, typeflag) collection.
 fn run_ftw(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
@@ -246,6 +256,33 @@ fn diff_nftw_phys_visits_same_set() {
         v_fl, v_lc,
         "nftw FTW_PHYS visited set divergence:\n  fl: {v_fl:?}\n  lc: {v_lc:?}"
     );
+}
+
+#[test]
+fn diff_nftw_dangling_symlink_typeflags_match_glibc() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_symlink_tree();
+
+    for (flags, expected_live, expected_dangling) in
+        [(FTW_PHYS, FTW_SL, FTW_SL), (0, FTW_F, FTW_SLN)]
+    {
+        let v_fl = run_nftw(true, &dir, flags);
+        let v_lc = run_nftw(false, &dir, flags);
+        assert_eq!(
+            v_fl, v_lc,
+            "nftw symlink typeflag divergence for flags={flags}:\\n  fl: {v_fl:?}\\n  lc: {v_lc:?}"
+        );
+        assert!(
+            v_fl.contains(&("/live".to_string(), expected_live)),
+            "live link typeflag for flags={flags}: {v_fl:?}"
+        );
+        assert!(
+            v_fl.contains(&("/dangling".to_string(), expected_dangling)),
+            "dangling link typeflag for flags={flags}: {v_fl:?}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

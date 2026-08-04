@@ -14,7 +14,7 @@
 ///   FTW_NS  = 3  stat() failed
 ///   FTW_SL  = 4  symbolic link (only when [`WalkFlags::PHYSICAL`])
 ///   FTW_DP  = 5  directory (post-order, only when [`WalkFlags::DEPTH`])
-///   FTW_SLN = 6  dangling symlink (only when [`WalkFlags::PHYSICAL`])
+///   FTW_SLN = 6  dangling symlink (only when not [`WalkFlags::PHYSICAL`])
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 pub enum WalkType {
