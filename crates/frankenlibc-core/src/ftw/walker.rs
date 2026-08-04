@@ -7,6 +7,8 @@
 //! layer can wire concrete syscall closures (and tests can use an
 //! in-memory mock) without forcing `unsafe` into core.
 
+use std::collections::BTreeSet;
+
 use super::path::{WalkFlags, WalkType, base_offset_of, build_child_path};
 
 /// Stat-like info per walked entry. Implemented by the abi layer over
@@ -19,6 +21,11 @@ pub trait StatLike: Default + Clone {
     fn is_symlink(&self) -> bool;
     /// Containing-filesystem identifier (`st_dev`); used by FTW_MOUNT.
     fn dev_id(&self) -> u64;
+    /// Inode number (`st_ino`). Together with [`StatLike::dev_id`] this
+    /// identifies a directory independently of the path used to reach it,
+    /// which is what lets a logical walk avoid descending the same directory
+    /// twice, and hence from looping forever on a symlink cycle.
+    fn inode_id(&self) -> u64;
 }
 
 /// Filesystem operations needed by [`walk_tree`].
@@ -90,10 +97,16 @@ where
         None => return WalkOutcome::RootUnreadable,
     };
     let root_dev = root_stat.dev_id();
-    WalkOutcome::Completed(match walk_rec(root, fs, flags, &mut visit, 0, root_dev) {
-        WalkControl::Stop(r) => r,
-        WalkControl::Continue | WalkControl::SkipSubtree | WalkControl::SkipSiblings => 0,
-    })
+    // Directories already entered, by (dev, ino). Only consulted for a logical
+    // walk — see `walk_rec`. Empty until the first directory, so a walk rooted
+    // at a plain file never allocates.
+    let mut visited: BTreeSet<(u64, u64)> = BTreeSet::new();
+    WalkOutcome::Completed(
+        match walk_rec(root, fs, flags, &mut visit, 0, root_dev, &mut visited) {
+            WalkControl::Stop(r) => r,
+            WalkControl::Continue | WalkControl::SkipSubtree | WalkControl::SkipSiblings => 0,
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +148,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_rec<F, V>(
     path: &[u8],
     fs: &F,
@@ -142,6 +156,7 @@ fn walk_rec<F, V>(
     visit: &mut V,
     depth: usize,
     root_dev: u64,
+    visited: &mut BTreeSet<(u64, u64)>,
 ) -> WalkControl
 where
     F: FsOps,
@@ -193,6 +208,27 @@ where
         return WalkControl::Continue;
     }
 
+    // A logical walk follows symlinks, so the same directory can be reached by
+    // several paths — and `ln -s .. loop` makes that an infinite regress. glibc
+    // keeps every directory it has entered, keyed by (dev, ino), and skips a
+    // repeat ENTIRELY: no callback of any kind, no descent. Measured against
+    // live glibc 2.42:
+    //
+    //   - two sibling symlinks to one directory: only the first is reported and
+    //     descended, the second produces no callback at all — so the record is
+    //     global to the walk, not just the ancestor chain;
+    //   - a directory reachable both directly and through a symlink is reported
+    //     once, under whichever path readdir reached first;
+    //   - FTW_DEPTH suppresses the repeat the same way;
+    //   - FILES are NOT suppressed: a file reached as itself, as a hard link and
+    //     through a symlink is reported all three times, despite sharing
+    //     (dev, ino) with itself;
+    //   - under FTW_PHYS nothing is suppressed, because that walk never follows
+    //     a symlink and so cannot revisit anything.
+    if !flags.contains(WalkFlags::PHYSICAL) && !visited.insert((stat.dev_id(), stat.inode_id())) {
+        return WalkControl::Continue;
+    }
+
     // Pre-order visit (default).
     if !flags.contains(WalkFlags::DEPTH) {
         match visit_control(path, &stat, WalkType::Dir, level, base, flags, visit) {
@@ -215,7 +251,7 @@ where
 
     for name in &entries {
         let child = build_child_path(path, name);
-        match walk_rec(&child, fs, flags, visit, depth + 1, root_dev) {
+        match walk_rec(&child, fs, flags, visit, depth + 1, root_dev, visited) {
             WalkControl::Continue | WalkControl::SkipSubtree => {}
             WalkControl::SkipSiblings => break,
             WalkControl::Stop(r) => return WalkControl::Stop(r),
@@ -249,6 +285,9 @@ mod tests {
         is_dir: bool,
         is_link: bool,
         dev: u64,
+        /// Distinct per node unless a test deliberately aliases two paths onto
+        /// one inode, which is how a symlinked/hardlinked revisit is modelled.
+        ino: u64,
     }
 
     impl StatLike for MockStat {
@@ -260,6 +299,9 @@ mod tests {
         }
         fn dev_id(&self) -> u64 {
             self.dev
+        }
+        fn inode_id(&self) -> u64 {
+            self.ino
         }
     }
 
@@ -294,10 +336,18 @@ mod tests {
         }
 
         fn read_dir(&self, path: &[u8], visit_entry: &mut dyn FnMut(&[u8])) -> bool {
-            let (s, entries, _) = match self.nodes.get(path) {
+            let (s, entries, link_target) = match self.nodes.get(path) {
                 Some(n) => n,
                 None => return false,
             };
+            // Opening a symlink-to-directory opens the target, as on a real
+            // filesystem — otherwise a logical walk could never descend one.
+            if s.is_link {
+                return match link_target {
+                    Some(target) => self.read_dir(target, visit_entry),
+                    None => false,
+                };
+            }
             if !s.is_dir {
                 return false;
             }
@@ -321,6 +371,8 @@ mod tests {
                 MockStat {
                     is_dir: true,
                     dev: 1,
+                    ino: 1,
+
                     ..Default::default()
                 },
                 vec![b"a.txt".to_vec(), b"b.txt".to_vec(), b"sub".to_vec()],
@@ -333,6 +385,8 @@ mod tests {
                 MockStat {
                     is_dir: false,
                     dev: 1,
+                    ino: 2,
+
                     ..Default::default()
                 },
                 vec![],
@@ -345,6 +399,8 @@ mod tests {
                 MockStat {
                     is_dir: false,
                     dev: 1,
+                    ino: 3,
+
                     ..Default::default()
                 },
                 vec![],
@@ -357,6 +413,8 @@ mod tests {
                 MockStat {
                     is_dir: true,
                     dev: 1,
+                    ino: 4,
+
                     ..Default::default()
                 },
                 vec![b"c.txt".to_vec()],
@@ -369,6 +427,8 @@ mod tests {
                 MockStat {
                     is_dir: false,
                     dev: 1,
+                    ino: 5,
+
                     ..Default::default()
                 },
                 vec![],
@@ -403,6 +463,173 @@ mod tests {
         let r = walk_tree(b"/nope", &fs, WalkFlags::NONE, |_, _, _, _, _| 0);
         assert_eq!(r, WalkOutcome::RootUnreadable);
         assert_eq!(r.as_c_int(), -1);
+    }
+
+    /// Node builder for the revisit tests: `ino` is what identifies a
+    /// directory, so these tests set it deliberately rather than by position.
+    fn dir_node(ino: u64, entries: &[&str]) -> MockNode {
+        (
+            MockStat {
+                is_dir: true,
+                is_link: false,
+                dev: 1,
+                ino,
+            },
+            entries.iter().map(|e| e.as_bytes().to_vec()).collect(),
+            None,
+        )
+    }
+
+    fn file_node(ino: u64) -> MockNode {
+        (
+            MockStat {
+                is_dir: false,
+                is_link: false,
+                dev: 1,
+                ino,
+            },
+            vec![],
+            None,
+        )
+    }
+
+    fn symlink_node(target: &str) -> MockNode {
+        (
+            MockStat {
+                is_dir: false,
+                is_link: true,
+                dev: 1,
+                ino: 9_000 + target.len() as u64,
+            },
+            vec![],
+            Some(target.as_bytes().to_vec()),
+        )
+    }
+
+    /// `/r/d/loop -> /r`, the tree `ln -s .. loop` produces.
+    fn build_cyclic_fs() -> MockFs {
+        let mut nodes: MockNodes = BTreeMap::new();
+        nodes.insert(b"/r".to_vec(), dir_node(1, &["d"]));
+        nodes.insert(b"/r/d".to_vec(), dir_node(2, &["file", "loop"]));
+        nodes.insert(b"/r/d/file".to_vec(), file_node(3));
+        nodes.insert(b"/r/d/loop".to_vec(), symlink_node("/r"));
+        MockFs { nodes }
+    }
+
+    /// Two sibling symlinks onto one directory that is also reachable directly.
+    fn build_shared_target_fs() -> MockFs {
+        let mut nodes: MockNodes = BTreeMap::new();
+        nodes.insert(b"/r".to_vec(), dir_node(1, &["a", "b", "hidden"]));
+        nodes.insert(b"/r/a".to_vec(), dir_node(2, &["link1"]));
+        nodes.insert(b"/r/b".to_vec(), dir_node(3, &["link2"]));
+        nodes.insert(b"/r/a/link1".to_vec(), symlink_node("/r/hidden"));
+        nodes.insert(b"/r/b/link2".to_vec(), symlink_node("/r/hidden"));
+        nodes.insert(b"/r/hidden".to_vec(), dir_node(4, &["leaf"]));
+        nodes.insert(b"/r/hidden/leaf".to_vec(), file_node(5));
+        MockFs { nodes }
+    }
+
+    fn logical_walk(fs: &MockFs, root: &[u8], flags: WalkFlags) -> Vec<(Vec<u8>, WalkType)> {
+        let mut visits = Vec::new();
+        let outcome = walk_tree(root, fs, flags, |p, _s, t, _l, _b| {
+            visits.push((p.to_vec(), t));
+            0
+        });
+        assert_eq!(outcome, WalkOutcome::Completed(0));
+        visits
+    }
+
+    #[test]
+    fn logical_walk_terminates_on_a_symlink_cycle() {
+        // Without (dev, ino) suppression this recurses /r -> d -> loop -> d ->
+        // loop ... until the stack is exhausted. glibc reports the cycle entry
+        // not at all and finishes.
+        let fs = build_cyclic_fs();
+        let visits = logical_walk(&fs, b"/r", WalkFlags::NONE);
+        let paths: Vec<&[u8]> = visits.iter().map(|(p, _)| p.as_slice()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                b"/r".as_slice(),
+                b"/r/d".as_slice(),
+                b"/r/d/file".as_slice()
+            ],
+            "the cycle entry must produce no callback at all"
+        );
+    }
+
+    #[test]
+    fn logical_walk_reports_a_shared_directory_once_under_the_first_path() {
+        // Global record, not an ancestor stack: /r/b/link2 is a SIBLING of the
+        // path that claimed the inode, and is still suppressed. So is the
+        // directory's own name, reached last.
+        let fs = build_shared_target_fs();
+        let visits = logical_walk(&fs, b"/r", WalkFlags::NONE);
+        let paths: Vec<&[u8]> = visits.iter().map(|(p, _)| p.as_slice()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                b"/r".as_slice(),
+                b"/r/a".as_slice(),
+                b"/r/a/link1".as_slice(),
+                b"/r/a/link1/leaf".as_slice(),
+                b"/r/b".as_slice(),
+            ],
+            "only the first route into the shared directory is walked"
+        );
+    }
+
+    #[test]
+    fn logical_walk_suppression_also_applies_under_ftw_depth() {
+        let fs = build_shared_target_fs();
+        let visits = logical_walk(&fs, b"/r", WalkFlags::DEPTH);
+        let paths: Vec<Vec<u8>> = visits.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            !paths.iter().any(|p| p == b"/r/b/link2"),
+            "the repeat is suppressed post-order too: {paths:?}"
+        );
+        assert!(
+            paths.iter().any(|p| p == b"/r/a/link1/leaf"),
+            "the first route is still fully walked: {paths:?}"
+        );
+    }
+
+    #[test]
+    fn physical_walk_suppresses_nothing() {
+        // FTW_PHYS never follows a symlink, so it cannot revisit anything and
+        // must keep reporting every name — both links AND the real directory.
+        let fs = build_shared_target_fs();
+        let visits = logical_walk(&fs, b"/r", WalkFlags::PHYSICAL);
+        let paths: Vec<Vec<u8>> = visits.iter().map(|(p, _)| p.clone()).collect();
+        for expected in [
+            b"/r/a/link1".as_slice(),
+            b"/r/b/link2".as_slice(),
+            b"/r/hidden".as_slice(),
+            b"/r/hidden/leaf".as_slice(),
+        ] {
+            assert!(
+                paths.iter().any(|p| p.as_slice() == expected),
+                "FTW_PHYS must still report {:?}: {paths:?}",
+                std::str::from_utf8(expected).unwrap_or("?")
+            );
+        }
+        for (_, typeflag) in visits.iter().filter(|(p, _)| p.ends_with(b"link1")) {
+            assert_eq!(*typeflag, WalkType::Symlink);
+        }
+    }
+
+    #[test]
+    fn files_sharing_an_inode_are_never_suppressed() {
+        // A hard link gives two names one (dev, ino). glibc reports both —
+        // suppression is for directories only, because only directories are
+        // descended into.
+        let mut nodes: MockNodes = BTreeMap::new();
+        nodes.insert(b"/r".to_vec(), dir_node(1, &["real", "hard"]));
+        nodes.insert(b"/r/real".to_vec(), file_node(7));
+        nodes.insert(b"/r/hard".to_vec(), file_node(7));
+        let fs = MockFs { nodes };
+        let visits = logical_walk(&fs, b"/r", WalkFlags::NONE);
+        assert_eq!(visits.len(), 3, "root + both names: {visits:?}");
     }
 
     #[test]
@@ -540,6 +767,8 @@ mod tests {
                 MockStat {
                     is_dir: true,
                     dev: 1,
+                    ino: 6,
+
                     ..Default::default()
                 },
                 vec![b"link_to_a".to_vec(), b"a".to_vec(), b"dangling".to_vec()],
@@ -552,6 +781,8 @@ mod tests {
                 MockStat {
                     is_dir: false,
                     dev: 1,
+                    ino: 7,
+
                     ..Default::default()
                 },
                 vec![],
@@ -564,6 +795,8 @@ mod tests {
                 MockStat {
                     is_link: true,
                     dev: 1,
+                    ino: 8,
+
                     ..Default::default()
                 },
                 vec![],
@@ -576,6 +809,8 @@ mod tests {
                 MockStat {
                     is_link: true,
                     dev: 1,
+                    ino: 9,
+
                     ..Default::default()
                 },
                 vec![],
@@ -610,6 +845,8 @@ mod tests {
                 MockStat {
                     is_dir: true,
                     dev: 1,
+                    ino: 10,
+
                     ..Default::default()
                 },
                 vec![b"locked".to_vec()],
@@ -623,6 +860,8 @@ mod tests {
                 MockStat {
                     is_dir: true,
                     dev: 1,
+                    ino: 11,
+
                     ..Default::default()
                 },
                 vec![], // empty entries but our mock returns false unless is_dir

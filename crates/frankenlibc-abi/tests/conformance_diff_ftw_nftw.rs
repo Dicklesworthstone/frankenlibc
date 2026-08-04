@@ -1057,6 +1057,143 @@ fn diff_nftw64_actionretval_matches_nftw() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Logical-walk revisit suppression (bd-78f8do).
+//
+// A logical walk follows symlinks, so one directory can be reached by several
+// paths — and `ln -s .. loop` makes that an infinite regress. These build real
+// symlinks on disk and compare the full ordered visit sequence against glibc.
+// ---------------------------------------------------------------------------
+
+/// `root/d/{file,loop}` where `loop` points back at `root`.
+fn build_cyclic_tree() -> std::path::PathBuf {
+    let dir = unique_tempdir();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("d")).unwrap();
+    std::fs::write(dir.join("d/file"), b"x").unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("d/loop")).unwrap();
+    dir
+}
+
+/// `root/{a/link1,b/link2,hidden/leaf}` with both links pointing at `hidden`.
+fn build_shared_target_tree() -> std::path::PathBuf {
+    let dir = unique_tempdir();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    std::fs::create_dir_all(dir.join("hidden")).unwrap();
+    std::fs::write(dir.join("hidden/leaf"), b"x").unwrap();
+    std::os::unix::fs::symlink(dir.join("hidden"), dir.join("a/link1")).unwrap();
+    std::os::unix::fs::symlink(dir.join("hidden"), dir.join("b/link2")).unwrap();
+    dir
+}
+
+#[test]
+fn diff_nftw_logical_walk_terminates_on_a_symlink_cycle() {
+    // Before the fix this recursed until the stack was exhausted, taking the
+    // whole test process with it. glibc reports the cycle entry not at all.
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_cyclic_tree();
+    let (rc, log) = diff_action(
+        &dir,
+        FTW_ACTIONRETVAL,
+        KIND_ALWAYS,
+        FTW_CONTINUE,
+        "logical walk over a symlink cycle",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(rc, 0);
+    let paths: Vec<&str> = log.iter().map(|(p, _, _)| p.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec!["/", "/d", "/d/file"],
+        "the cycle entry must produce no callback: {log:?}"
+    );
+}
+
+#[test]
+fn diff_nftw_logical_walk_reports_a_shared_directory_once() {
+    // The record is global to the walk, not the ancestor chain: whichever of
+    // a/link1, b/link2 and hidden readdir reaches first claims the inode, and
+    // the other two are suppressed entirely.
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_shared_target_tree();
+    let (rc, log) = diff_action(
+        &dir,
+        FTW_ACTIONRETVAL,
+        KIND_ALWAYS,
+        FTW_CONTINUE,
+        "logical walk with three routes to one directory",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(rc, 0);
+    let leaf_visits = log.iter().filter(|(p, _, _)| p.ends_with("leaf")).count();
+    assert_eq!(leaf_visits, 1, "the shared subtree is walked once: {log:?}");
+    // Exactly one of the three routes into `hidden` is reported as FTW_D.
+    let routes = ["/a/link1", "/b/link2", "/hidden"];
+    let reported = log
+        .iter()
+        .filter(|(p, _, _)| routes.contains(&p.as_str()))
+        .count();
+    assert_eq!(reported, 1, "exactly one route is reported: {log:?}");
+}
+
+#[test]
+fn diff_nftw_physical_walk_keeps_every_route() {
+    // FTW_PHYS never follows a symlink, so it cannot revisit anything and must
+    // still report both links AND the real directory.
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_shared_target_tree();
+    let (rc, log) = diff_action(
+        &dir,
+        FTW_ACTIONRETVAL | FTW_PHYS,
+        KIND_ALWAYS,
+        FTW_CONTINUE,
+        "physical walk with three routes to one directory",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(rc, 0);
+    for expected in ["/a/link1", "/b/link2", "/hidden", "/hidden/leaf"] {
+        assert!(
+            log.iter().any(|(p, _, _)| p == expected),
+            "FTW_PHYS must still report {expected}: {log:?}"
+        );
+    }
+    for (path, typeflag, _) in &log {
+        if path == "/a/link1" || path == "/b/link2" {
+            assert_eq!(*typeflag, FTW_SL, "{path} is a symlink under FTW_PHYS");
+        }
+    }
+}
+
+#[test]
+fn diff_nftw_logical_cycle_suppression_holds_under_depth() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_cyclic_tree();
+    let (rc, log) = diff_action(
+        &dir,
+        FTW_ACTIONRETVAL | FTW_DEPTH,
+        KIND_ALWAYS,
+        FTW_CONTINUE,
+        "FTW_DEPTH over a symlink cycle",
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(rc, 0);
+    assert!(
+        !log.iter().any(|(p, _, _)| p == "/d/loop"),
+        "the cycle entry stays suppressed post-order: {log:?}"
+    );
+    assert_eq!(
+        log.last().map(|(p, t, _)| (p.as_str(), *t)),
+        Some(("/", FTW_DP)),
+        "the walk still finishes with the root's post-order visit: {log:?}"
+    );
+}
+
 #[test]
 fn ftw_diff_coverage_report() {
     eprintln!("{{\"family\":\"ftw.h\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",);
