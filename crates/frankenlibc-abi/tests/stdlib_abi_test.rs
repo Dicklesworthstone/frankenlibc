@@ -2880,6 +2880,39 @@ fn ctermid_writes_into_caller_buffer() {
 }
 
 #[test]
+fn ctermid_matches_host_for_static_and_caller_storage() {
+    // SAFETY: null requests ctermid's static storage in each implementation.
+    let fl_static = unsafe { ctermid(ptr::null_mut()) };
+    // SAFETY: null requests the host libc's static storage.
+    let host_static = unsafe { libc::ctermid(ptr::null_mut()) };
+    assert!(!fl_static.is_null());
+    assert!(!host_static.is_null());
+    // SAFETY: both ctermid calls returned valid NUL-terminated strings.
+    assert_eq!(
+        unsafe { CStr::from_ptr(fl_static).to_bytes_with_nul() },
+        unsafe { CStr::from_ptr(host_static).to_bytes_with_nul() }
+    );
+    // SAFETY: repeated null calls are valid and must retain static storage.
+    assert_eq!(unsafe { ctermid(ptr::null_mut()) }, fl_static);
+    // SAFETY: repeated null calls are valid and must retain host static storage.
+    assert_eq!(unsafe { libc::ctermid(ptr::null_mut()) }, host_static);
+
+    let mut fl_buffer = [0_i8; 32];
+    let mut host_buffer = [0_i8; 32];
+    // SAFETY: both buffers are writable and large enough for ctermid output.
+    let fl_out = unsafe { ctermid(fl_buffer.as_mut_ptr()) };
+    // SAFETY: both buffers are writable and large enough for ctermid output.
+    let host_out = unsafe { libc::ctermid(host_buffer.as_mut_ptr()) };
+    assert_eq!(fl_out, fl_buffer.as_mut_ptr());
+    assert_eq!(host_out, host_buffer.as_mut_ptr());
+    // SAFETY: both calls wrote NUL-terminated output to their supplied buffers.
+    assert_eq!(
+        unsafe { CStr::from_ptr(fl_buffer.as_ptr()).to_bytes_with_nul() },
+        unsafe { CStr::from_ptr(host_buffer.as_ptr()).to_bytes_with_nul() }
+    );
+}
+
+#[test]
 fn get_nprocs_helpers_match_sysconf_values() {
     let online = get_nprocs();
     let conf = get_nprocs_conf();
@@ -4090,7 +4123,10 @@ fn random_r_accepts_valid_tracked_state_and_result() {
         // srandom_r reseeds the bound generator; the same seed replays exactly.
         assert_eq!(srandom_r(123, buf.cast()), 0);
         assert_eq!(random_r(buf.cast(), result), 0);
-        assert_eq!(*result, first, "srandom_r(123) must replay the seed sequence");
+        assert_eq!(
+            *result, first,
+            "srandom_r(123) must replay the seed sequence"
+        );
 
         frankenlibc_abi::malloc_abi::free(result.cast());
         frankenlibc_abi::malloc_abi::free(statebuf.cast());
