@@ -41,7 +41,7 @@ ftui-widgets = { version = "0.3.1", optional = true }
 frankenlibc-membrane = { workspace = true }
 frankenlibc-abi = { workspace = true, features = ["conformance-testing"] }
 frankenlibc-core = { workspace = true }
-frankenlibc-fixture-exec = { workspace = true, default-features = false }
+frankenlibc-fixture-exec = { workspace = true }
 
 [[bin]]
 name = "harness"
