@@ -50,6 +50,13 @@ fn test_gnu_get_libc_release_stable_across_calls() {
     let first = unsafe { gnu_get_libc_release() };
     let second = unsafe { gnu_get_libc_release() };
     assert_eq!(first, second, "release string should use static storage");
+
+    let host_first = unsafe { host_gnu_get_libc_release() };
+    let host_second = unsafe { host_gnu_get_libc_release() };
+    assert_eq!(
+        host_first, host_second,
+        "host release string should use static storage"
+    );
 }
 
 // ---------------------------------------------------------------------------
