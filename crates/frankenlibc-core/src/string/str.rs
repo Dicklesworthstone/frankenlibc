@@ -1232,15 +1232,25 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Equivalent to C `strspn`.
 pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
     let accept_len = strlen(accept);
-    match accept_len {
+    strspn_set(s, &accept[..accept_len])
+}
+
+/// `strspn` over an EXACT member set, so the set does not have to be
+/// NUL-terminated and is never measured with `strlen`.
+///
+/// `strtok`/`strtok_r` hold their delimiters as a plain slice and would
+/// otherwise need their own scalar membership loop; this lets them reuse the
+/// same scanners `strspn` uses. [`strspn`] is the NUL-terminated wrapper.
+pub(crate) fn strspn_set(s: &[u8], accept_set: &[u8]) -> usize {
+    match accept_set.len() {
         0 => return 0,
         1 => {
-            let accepted = accept[0];
+            let accepted = accept_set[0];
             return find_non_byte_or_nul(s, accepted);
         }
         2 => {
-            let a0 = accept[0];
-            let a1 = accept[1];
+            let a0 = accept_set[0];
+            let a1 = accept_set[1];
             for (i, &byte) in s.iter().enumerate() {
                 if byte == 0 || (byte != a0 && byte != a1) {
                     return i;
@@ -1249,9 +1259,9 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
             return s.len();
         }
         3 => {
-            let a0 = accept[0];
-            let a1 = accept[1];
-            let a2 = accept[2];
+            let a0 = accept_set[0];
+            let a1 = accept_set[1];
+            let a2 = accept_set[2];
             for (i, &byte) in s.iter().enumerate() {
                 if byte == 0 || (byte != a0 && byte != a1 && byte != a2) {
                     return i;
@@ -1259,11 +1269,18 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
             }
             return s.len();
         }
-        4 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[3]),
+        4 => {
+            return find_non_any_of4_or_nul(
+                s,
+                accept_set[0],
+                accept_set[1],
+                accept_set[2],
+                accept_set[3],
+            );
+        }
         _ => {}
     }
 
-    let accept_set = &accept[..accept_len];
     let accept_table = byte_membership_table(accept_set);
     span_general(s, accept_set, &accept_table, false)
 }
@@ -1274,15 +1291,21 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
 /// Equivalent to C `strcspn`.
 pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
     let reject_len = strlen(reject);
-    match reject_len {
+    strcspn_set(s, &reject[..reject_len])
+}
+
+/// `strcspn` over an EXACT reject set. Companion to [`strspn_set`] for
+/// `strtok`-style callers whose delimiter slice is not NUL-terminated.
+pub(crate) fn strcspn_set(s: &[u8], reject_set: &[u8]) -> usize {
+    match reject_set.len() {
         0 => return strlen(s),
         1 => {
-            let rejected = reject[0];
+            let rejected = reject_set[0];
             return find_byte_or_nul(s, rejected);
         }
         2 => {
-            let r0 = reject[0];
-            let r1 = reject[1];
+            let r0 = reject_set[0];
+            let r1 = reject_set[1];
             for (i, &byte) in s.iter().enumerate() {
                 if byte == 0 || byte == r0 || byte == r1 {
                     return i;
@@ -1291,9 +1314,9 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
             return s.len();
         }
         3 => {
-            let r0 = reject[0];
-            let r1 = reject[1];
-            let r2 = reject[2];
+            let r0 = reject_set[0];
+            let r1 = reject_set[1];
+            let r2 = reject_set[2];
             for (i, &byte) in s.iter().enumerate() {
                 if byte == 0 || byte == r0 || byte == r1 || byte == r2 {
                     return i;
@@ -1301,11 +1324,18 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
             }
             return s.len();
         }
-        4 => return find_any_of4_or_nul(s, reject[0], reject[1], reject[2], reject[3]),
+        4 => {
+            return find_any_of4_or_nul(
+                s,
+                reject_set[0],
+                reject_set[1],
+                reject_set[2],
+                reject_set[3],
+            );
+        }
         _ => {}
     }
 
-    let reject_set = &reject[..reject_len];
     let reject_table = byte_membership_table(reject_set);
     span_general(s, reject_set, &reject_table, true)
 }
@@ -2418,6 +2448,64 @@ mod tests {
     #[test]
     fn test_strcspn_empty_reject_returns_strlen() {
         assert_eq!(strcspn(b"abc\0", b"\0"), 3);
+    }
+
+    #[test]
+    fn test_span_set_accepts_a_set_with_no_terminator() {
+        // The whole reason the `_set` entry points exist: `strtok` holds its
+        // delimiters as a bare slice, so measuring the set with `strlen` is
+        // not an option.
+        assert_eq!(strspn_set(b"ababaZ\0", b"ab"), 5);
+        assert_eq!(strcspn_set(b"abcXdef\0", b"XY"), 3);
+        // A set slice that is followed by unrelated bytes must not absorb them.
+        let backing = b"ab!!!!";
+        assert_eq!(strspn_set(b"abab!\0", &backing[..2]), 4);
+    }
+
+    #[test]
+    fn test_span_set_matches_the_nul_terminated_wrappers() {
+        // Every set length must route through the same scanner tiers, so the
+        // wrapper and the exact-set form have to agree byte for byte.
+        for set in [
+            b"".as_slice(),
+            b"a",
+            b"ab",
+            b"abc",
+            b"abcd",
+            b"abcde",
+            b"abcdefghijklmnopqrstuvwxyz",
+        ] {
+            let mut terminated = set.to_vec();
+            terminated.push(0);
+            for subject in [
+                b"".as_slice(),
+                b"\0",
+                b"aaaa\0",
+                b"abcdeZZZ\0",
+                b"Zabcde\0",
+                b"unterminated",
+                b"abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcQ\0",
+            ] {
+                assert_eq!(
+                    strspn_set(subject, set),
+                    strspn(subject, &terminated),
+                    "strspn_set diverged: set={set:?} subject={subject:?}"
+                );
+                assert_eq!(
+                    strcspn_set(subject, set),
+                    strcspn(subject, &terminated),
+                    "strcspn_set diverged: set={set:?} subject={subject:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_span_set_edge_sets() {
+        assert_eq!(strspn_set(b"abc\0", b""), 0);
+        assert_eq!(strcspn_set(b"abc\0", b""), 3);
+        assert_eq!(strspn_set(b"", b"a"), 0);
+        assert_eq!(strcspn_set(b"", b"a"), 0);
     }
 
     #[test]
