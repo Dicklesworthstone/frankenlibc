@@ -12644,9 +12644,9 @@ fn hstrerror_message_ptr(err: c_int) -> *const c_char {
     match err {
         _ if err < 0 => c"Resolver internal error".as_ptr(),
         0 => c"Resolver Error 0 (no error)".as_ptr(),
-        1 => c"Unknown host".as_ptr(), // HOST_NOT_FOUND
+        1 => c"Unknown host".as_ptr(),             // HOST_NOT_FOUND
         2 => c"Host name lookup failure".as_ptr(), // TRY_AGAIN
-        3 => c"Unknown server error".as_ptr(), // NO_RECOVERY
+        3 => c"Unknown server error".as_ptr(),     // NO_RECOVERY
         4 => c"No address associated with name".as_ptr(), // NO_DATA / NO_ADDRESS
         _ => c"Unknown resolver error".as_ptr(),
     }
@@ -20473,6 +20473,85 @@ pub unsafe extern "C" fn dn_expand(
     wire_len.unwrap_or(0) as c_int
 }
 
+/// Shared engine for resolver name packers that receive an uncompressed DNS
+/// wire name.  It can reuse suffixes from the preceding message bytes recorded
+/// by `dnptrs`, and records a newly emitted name when glibc would do so.
+///
+/// # Safety
+/// `dst` must be valid for `dstsiz` bytes.  When `dnptrs` enables compression,
+/// `dnptrs[0]` must point at the beginning of the message containing `dst`.
+pub(crate) unsafe fn pack_name_with_dnptrs(
+    src_wire: &[u8],
+    dst: *mut u8,
+    dstsiz: usize,
+    dnptrs: *mut *mut u8,
+    lastdnptr: *mut *mut u8,
+) -> c_int {
+    if dst.is_null() || dstsiz == 0 {
+        return -1;
+    }
+
+    let mut compression = false;
+    let mut origin = std::ptr::null_mut();
+    let mut output_offset = 0usize;
+    let mut offsets = Vec::new();
+    if !dnptrs.is_null() {
+        let candidate_origin = unsafe { *dnptrs };
+        if !candidate_origin.is_null() {
+            let distance = (dst as isize).wrapping_sub(candidate_origin as isize);
+            if distance >= 0 && (distance as usize) <= 0x1_0000 {
+                compression = true;
+                origin = candidate_origin;
+                output_offset = distance as usize;
+                let mut entry = unsafe { dnptrs.add(1) };
+                while lastdnptr.is_null() || entry < lastdnptr {
+                    let pointer = unsafe { *entry };
+                    if pointer.is_null() {
+                        break;
+                    }
+                    let offset = (pointer as isize).wrapping_sub(origin as isize);
+                    if offset >= 0 && (offset as usize) < output_offset {
+                        offsets.push(offset as usize);
+                    }
+                    entry = unsafe { entry.add(1) };
+                }
+            }
+        }
+    }
+
+    let output = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    let message_prefix = if compression {
+        unsafe { std::slice::from_raw_parts(origin, output_offset) }
+    } else {
+        &[]
+    };
+    match frankenlibc_core::resolv::dns_name::name_pack_compressed(
+        src_wire,
+        output,
+        message_prefix,
+        &offsets,
+        output_offset,
+        compression,
+    ) {
+        Ok((written, recorded)) => {
+            if recorded.is_some() && !dnptrs.is_null() && !lastdnptr.is_null() {
+                let mut slot = unsafe { dnptrs.add(1) };
+                while slot < unsafe { lastdnptr.sub(1) } && !unsafe { (*slot).is_null() } {
+                    slot = unsafe { slot.add(1) };
+                }
+                if slot < unsafe { lastdnptr.sub(1) } {
+                    unsafe {
+                        *slot = dst;
+                        *slot.add(1) = std::ptr::null_mut();
+                    }
+                }
+            }
+            written as c_int
+        }
+        Err(_) => -1,
+    }
+}
+
 /// `dn_comp` — compress a domain name into DNS wire format (RFC 1035).
 ///
 /// Native implementation: converts a dotted domain name (`exp_dn`) into
@@ -24418,7 +24497,12 @@ thread_local! {
 /// emit the remaining bytes as `(size_t)-3` without consuming input. Resumes an
 /// incomplete multibyte sequence from `ps` across calls.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mbrtoc8(pc8: *mut u8, s: *const c_char, n: usize, ps: *mut c_void) -> usize {
+pub unsafe extern "C" fn mbrtoc8(
+    pc8: *mut u8,
+    s: *const c_char,
+    n: usize,
+    ps: *mut c_void,
+) -> usize {
     use frankenlibc_core::string::wchar::{Utf8Step, utf8_decode_step};
     const INCOMPLETE: usize = usize::MAX - 1; // (size_t)-2
     const PENDING: usize = usize::MAX - 2; // (size_t)-3

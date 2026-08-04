@@ -411,6 +411,69 @@ pub fn wcs_ascii_prefix(dest: &mut [u8], src: &[u32]) -> usize {
     k
 }
 
+/// Number of UTF-8 code points in a NUL-terminated multibyte string.
+///
+/// This is the count-mode counterpart of [`mbstowcs`].  It deliberately uses
+/// the same single-character decoder for non-ASCII input so callers observe
+/// the exact invalid-sequence boundary and error contract as the write path.
+pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
+    let mut consumed = 0usize;
+    let mut count = 0usize;
+    while consumed < src.len() {
+        if src[consumed] == 0 {
+            return Some(count);
+        }
+        let (_, width) = mbtowc(&src[consumed..])?;
+        consumed += width;
+        count += 1;
+    }
+    Some(count)
+}
+
+/// Consume the leading ASCII run of a multibyte input window.
+///
+/// Streaming ABI callers use this as an optional fast prefix before resolving
+/// the next multibyte character with [`mbtowc`].  Returning only whole ASCII
+/// characters leaves every partial or malformed UTF-8 sequence for that
+/// authoritative scalar step.
+pub fn mbs_decoded_len_prefix(src: &[u8]) -> (usize, usize) {
+    let prefix = ascii_prefix_len(src);
+    (prefix, prefix)
+}
+
+/// Decode the leading ASCII run of `src` into `dst`.
+///
+/// The returned pair is `(wide_chars_written, bytes_consumed)`.  As with
+/// [`mbs_decoded_len_prefix`], non-ASCII input is intentionally left to the
+/// caller's scalar decoder so its restart and error semantics stay exact.
+pub fn mbs_decode_prefix(dst: &mut [u32], src: &[u8]) -> (usize, usize) {
+    let written = mbs_ascii_prefix(dst, src);
+    (written, written)
+}
+
+/// Encode the leading ASCII run of `src` into `dst`.
+///
+/// Returns `(wide_chars_consumed, bytes_written)` and leaves NUL, multibyte,
+/// and invalid wide characters for the caller's scalar [`wctomb`] step.
+pub fn wcs_simd_prefix(dst: &mut [u8], src: &[u32]) -> (usize, usize) {
+    let written = wcs_ascii_prefix(dst, src);
+    (written, written)
+}
+
+/// Total UTF-8 byte length of the supplied wide-character window.
+///
+/// This is the count-mode answer used by the restartable wide-string ABI
+/// functions.  Using [`wctomb`] for each element preserves its acceptance of
+/// the glibc-compatible extended UTF-8 range and its rejection of surrogates.
+pub fn wcs_encoded_len(src: &[u32]) -> Option<usize> {
+    let mut total = 0usize;
+    let mut scratch = [0u8; 6];
+    for &wc in src {
+        total += wctomb(wc, &mut scratch)?;
+    }
+    Some(total)
+}
+
 /// Convert a wide character string to a multibyte string (UTF-8).
 ///
 /// Returns the number of bytes written (not including NUL terminator), or
@@ -632,6 +695,38 @@ mod tests {
             si += 1;
         }
         Some(di)
+    }
+
+    #[test]
+    fn restored_streaming_helpers_match_scalar_conversion_contracts() {
+        let multibyte = b"ascii \xC3\xA9 \xE2\x82\xAC\0";
+        assert_eq!(mbs_decoded_len(multibyte), Some(9));
+        assert_eq!(mbs_decoded_len(b"\xFF\0"), None);
+
+        let (count, consumed) = mbs_decoded_len_prefix(multibyte);
+        assert_eq!((count, consumed), (6, 6));
+
+        let mut wide = [0u32; 16];
+        let (written, bytes) = mbs_decode_prefix(&mut wide, multibyte);
+        assert_eq!((written, bytes), (6, 6));
+        assert_eq!(
+            &wide[..written],
+            &[
+                b'a' as u32,
+                b's' as u32,
+                b'c' as u32,
+                b'i' as u32,
+                b'i' as u32,
+                b' ' as u32
+            ]
+        );
+
+        let source = [b'a' as u32, b'b' as u32, 0x20AC, 0];
+        let mut bytes_out = [0u8; 16];
+        assert_eq!(wcs_simd_prefix(&mut bytes_out, &source), (2, 2));
+        assert_eq!(&bytes_out[..2], b"ab");
+        assert_eq!(wcs_encoded_len(&source[..3]), Some(5));
+        assert_eq!(wcs_encoded_len(&[0xD800]), None);
     }
 
     #[test]

@@ -201,6 +201,13 @@ static GLOBAL: Mutex<RandomState> = Mutex::new(RandomState {
 /// Track whether the global state has been initialized.
 static INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Mark the process as multi-threaded for ABI callers.
+///
+/// The current global random-state implementation already serializes every
+/// access with its mutex, so this transition carries no additional state; the
+/// entrypoint remains part of the ABI thread-creation contract.
+pub fn mark_multithreaded() {}
+
 #[cfg(test)]
 static TEST_RANDOM_LOCK: Mutex<()> = Mutex::new(());
 
