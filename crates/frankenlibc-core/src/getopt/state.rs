@@ -115,6 +115,65 @@ impl StepOutcome {
 /// A leading `:` enables the GNU silent-error mode where missing
 /// required arguments report `:` instead of `?`.
 pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> StepOutcome {
+    step_short_inner(argv, optspec, state, true)
+}
+
+/// Outcome of a scan performed on behalf of a caller that has NO long-option
+/// table, and therefore cannot route anything. Structurally a [`StepOutcome`]
+/// without the `LongRoute` case, so such callers stay total without writing an
+/// arm for a variant they can never receive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortOutcome {
+    /// As [`StepOutcome::Done`].
+    Done,
+    /// As [`StepOutcome::Found`].
+    Found {
+        code: i32,
+        diagnostic: Option<GetoptDiagnostic>,
+    },
+}
+
+/// [`step_short`] for plain `getopt`, which is handed no `longopts` table.
+///
+/// The GNU `X;` marker is INERT for such a caller: there is nothing to route
+/// to, so the option is scanned as the ordinary no-argument option its
+/// `arg_mode` says it is. Measured against live glibc 2.42 — with
+/// `optstring = "W;"`:
+///
+/// ```text
+///   getopt(["prog","-W","foo","x"], "W;")  -> 'W', optarg NULL, optind 2
+///                                             ("foo" survives as an operand)
+///   getopt(["prog","-Wfoo","x"],    "W;")  -> 'W', then '?' for f, o, o
+///   getopt(["prog","-W"],           "W;")  -> 'W', no missing-argument error
+/// ```
+///
+/// versus the ordinary required-argument spelling `"W:"`, which consumes the
+/// argument (`'W'` with `optarg == "foo"`, optind 3). The same holds for any
+/// letter, not just `W`.
+pub fn step_short_no_long_routing(
+    argv: &[&[u8]],
+    optspec: &[u8],
+    state: &mut GetoptState,
+) -> ShortOutcome {
+    match step_short_inner(argv, optspec, state, false) {
+        StepOutcome::Done => ShortOutcome::Done,
+        StepOutcome::Found { code, diagnostic } => ShortOutcome::Found { code, diagnostic },
+        StepOutcome::LongRoute { .. } => {
+            // Unreachable: `long_routing` is false, so the `W;` branch below is
+            // never entered. Answering `Done` keeps a broken invariant benign
+            // (getopt reports "no more options") rather than inventing a code.
+            debug_assert!(false, "step_short_inner routed with long_routing = false");
+            ShortOutcome::Done
+        }
+    }
+}
+
+fn step_short_inner(
+    argv: &[&[u8]],
+    optspec: &[u8],
+    state: &mut GetoptState,
+    long_routing: bool,
+) -> StepOutcome {
     if argv.is_empty() {
         return StepOutcome::Done;
     }
@@ -198,7 +257,7 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
     // `option` with a trailing `;`, so non-`W;` optstrings are unaffected.
     let optspec_match = getopt_spec_match(optspec, option);
 
-    if optspec_match.is_some_and(|m| m.w_extension) {
+    if long_routing && optspec_match.is_some_and(|m| m.w_extension) {
         if !at_end {
             // Inline form `-Wfoo`: the spec is the rest of this argv element.
             let arg = ArgRef {
@@ -349,6 +408,99 @@ mod tests {
             }
             other => panic!("expected LongRoute, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn w_extension_is_inert_without_a_long_option_table() {
+        // Plain getopt() gets no longopts, so there is nothing to route to and
+        // the `;` marker means nothing: the option is scanned as the ordinary
+        // no-argument option it is. All three expectations were measured on
+        // live glibc 2.42 (see step_short_no_long_routing's doc comment).
+
+        // Separated form: 'W' is returned, "foo" is NOT consumed and survives
+        // as an operand at optind.
+        let argv: Vec<&[u8]> = ["prog", "-W", "foo", "x"]
+            .iter()
+            .map(|s| s.as_bytes())
+            .collect();
+        let mut state = GetoptState::default();
+        assert_eq!(
+            step_short_no_long_routing(&argv, b"W;ab:", &mut state),
+            ShortOutcome::Found {
+                code: b'W' as i32,
+                diagnostic: None,
+            }
+        );
+        assert_eq!(state.optind, 2, "\"foo\" must survive as an operand");
+        assert!(state.optarg.is_none(), "no argument is consumed");
+
+        // Inline form: the rest of the bundle keeps being scanned as short
+        // options rather than being swallowed as a long-option spec.
+        let argv: Vec<&[u8]> = ["prog", "-Wa"].iter().map(|s| s.as_bytes()).collect();
+        let mut state = GetoptState::default();
+        assert_eq!(
+            step_short_no_long_routing(&argv, b"W;ab:", &mut state),
+            ShortOutcome::Found {
+                code: b'W' as i32,
+                diagnostic: None,
+            }
+        );
+        assert_eq!(
+            step_short_no_long_routing(&argv, b"W;ab:", &mut state),
+            ShortOutcome::Found {
+                code: b'a' as i32,
+                diagnostic: None,
+            },
+            "the bundle continues into 'a'"
+        );
+
+        // Bare "-W" at the end is not a missing-argument error.
+        let argv: Vec<&[u8]> = ["prog", "-W"].iter().map(|s| s.as_bytes()).collect();
+        let mut state = GetoptState::default();
+        assert_eq!(
+            step_short_no_long_routing(&argv, b"W;", &mut state),
+            ShortOutcome::Found {
+                code: b'W' as i32,
+                diagnostic: None,
+            }
+        );
+        assert_eq!(state.optind, 2);
+    }
+
+    #[test]
+    fn w_extension_still_routes_for_callers_that_have_a_long_table() {
+        // The narrow entry point must not have disturbed the routing one:
+        // `step_short` keeps producing LongRoute for the same input.
+        let argv: Vec<&[u8]> = ["prog", "-W", "foo", "x"]
+            .iter()
+            .map(|s| s.as_bytes())
+            .collect();
+        let mut state = GetoptState::default();
+        assert!(matches!(
+            step_short(&argv, b"W;ab:", &mut state),
+            StepOutcome::LongRoute { .. }
+        ));
+    }
+
+    #[test]
+    fn ordinary_options_are_unaffected_by_the_narrow_entry_point() {
+        // A required-argument option still consumes its argument, so the
+        // difference above is specific to the `;` marker.
+        let argv: Vec<&[u8]> = ["prog", "-b", "foo", "x"]
+            .iter()
+            .map(|s| s.as_bytes())
+            .collect();
+        let mut state = GetoptState::default();
+        assert_eq!(
+            step_short_no_long_routing(&argv, b"W;ab:", &mut state),
+            ShortOutcome::Found {
+                code: b'b' as i32,
+                diagnostic: None,
+            }
+        );
+        let arg = state.optarg.expect("-b consumes its argument");
+        assert_eq!(&argv[arg.argv_idx][arg.byte_offset..], b"foo");
+        assert_eq!(state.optind, 3);
     }
 
     #[test]

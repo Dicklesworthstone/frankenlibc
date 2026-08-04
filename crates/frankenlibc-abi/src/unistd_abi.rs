@@ -2544,7 +2544,7 @@ unsafe extern "C" {
 }
 
 use frankenlibc_core::getopt as getopt_core;
-use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, StepOutcome};
+use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, ShortOutcome};
 
 /// Persistent scanner state across `parse_getopt_short` calls.
 ///
@@ -2722,7 +2722,12 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
         optarg: None,
     };
 
-    let outcome = getopt_core::step_short(&argv_slices, effective, &mut state);
+    // Plain `getopt` is handed no `longopts` table, so the GNU `X;` marker has
+    // nothing to route to and is inert — verified against live glibc, which
+    // answers `-W foo` under `optstring = "W;"` with 'W', a NULL optarg, and
+    // `foo` left as an operand. This entry point cannot return a route, which
+    // is what keeps the match below total.
+    let outcome = getopt_core::step_short_no_long_routing(&argv_slices, effective, &mut state);
 
     unsafe {
         libc_optind = state.optind as c_int;
@@ -2745,8 +2750,8 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
     }
 
     match outcome {
-        StepOutcome::Done => -1,
-        StepOutcome::Found { code, diagnostic } => {
+        ShortOutcome::Done => -1,
+        ShortOutcome::Found { code, diagnostic } => {
             emit_getopt_diagnostic(
                 argv_slices.first().copied().unwrap_or(b""),
                 effective,
