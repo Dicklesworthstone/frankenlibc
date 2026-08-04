@@ -1672,7 +1672,7 @@ fn resolve_gethostbyname_target(name: Option<&CStr>, repair: bool) -> Option<Get
         }
 
         let target = with_hosts_backend_snapshot(|content, _generation| {
-            let mut target = None;
+            let mut target: Option<GethostbynameTarget> = None;
             frankenlibc_core::resolv::for_each_hosts_match_entry(
                 content,
                 name_cstr.to_bytes(),
