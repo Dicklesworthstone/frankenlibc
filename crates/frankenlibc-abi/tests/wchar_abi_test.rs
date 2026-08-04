@@ -1684,6 +1684,64 @@ fn wcsftime_formats_via_native_bridge() {
 }
 
 #[test]
+fn wcsftime_exact_iso_alias_uses_fixed_width_contract() {
+    let fmt: [libc::wchar_t; 6] = [
+        b'%' as libc::wchar_t,
+        b'F' as libc::wchar_t,
+        b'T' as libc::wchar_t,
+        b'%' as libc::wchar_t,
+        b'T' as libc::wchar_t,
+        0,
+    ];
+    let tm = libc::tm {
+        tm_sec: 5,
+        tm_min: 4,
+        tm_hour: 3,
+        tm_mday: 2,
+        tm_mon: 0,
+        tm_year: 126,
+        tm_wday: 5,
+        tm_yday: 1,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: std::ptr::null(),
+    };
+
+    let mut exact_fit = [b'?' as libc::wchar_t; 19];
+    assert_eq!(
+        unsafe {
+            wcsftime(
+                exact_fit.as_mut_ptr(),
+                exact_fit.len(),
+                fmt.as_ptr(),
+                &tm as *const libc::tm as *const c_void,
+            )
+        },
+        0
+    );
+
+    let mut out = [0_i32; 20];
+    let written = unsafe {
+        wcsftime(
+            out.as_mut_ptr(),
+            out.len(),
+            fmt.as_ptr(),
+            &tm as *const libc::tm as *const c_void,
+        )
+    };
+    assert_eq!(written, 19);
+    let rendered: Vec<u32> = out[..written].iter().map(|&ch| ch as u32).collect();
+    assert_eq!(
+        rendered,
+        "2026-01-02T03:04:05"
+            .bytes()
+            .map(u32::from)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(out[written], 0);
+}
+
+#[test]
 fn wcsftime_l_null_locale_matches_base() {
     let mut out = [0_i32; 32];
     let fmt: [libc::wchar_t; 9] = [

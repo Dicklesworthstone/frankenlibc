@@ -278,21 +278,43 @@ fn diff_difftime_cases() {
 // ===========================================================================
 
 const STRFTIME_FORMATS: &[&[u8]] = &[
-    b"%Y-%m-%d",          // ISO date
-    b"%H:%M:%S",          // 24-hour time
-    b"%Y-%m-%dT%H:%M:%S", // ISO 8601
-    b"%a",                // abbreviated weekday
-    b"%A",                // full weekday
-    b"%b",                // abbreviated month
-    b"%B",                // full month
-    b"%j",                // day of year
-    b"%w",                // weekday number
-    b"%U",                // week of year (Sunday-start)
-    b"%W",                // week of year (Monday-start)
-    b"%p",                // AM/PM
-    b"%I:%M %p",          // 12-hour clock
-    b"%%",                // literal percent
-    b"static text only",  // no conversions
+    b"%Y-%m-%d",                  // ISO date
+    b"%H:%M:%S",                  // 24-hour time
+    b"%b %e %H:%M:%S",            // RFC3164 syslog timestamp
+    b"%a, %d %b %Y %H:%M:%S GMT", // HTTP-date
+    b"%Y-%m-%dT%H:%M:%S",         // ISO 8601
+    b"%a",                        // abbreviated weekday
+    b"%A",                        // full weekday
+    b"%b",                        // abbreviated month
+    b"%B",                        // full month
+    b"%j",                        // day of year
+    b"%w",                        // weekday number
+    b"%U",                        // week of year (Sunday-start)
+    b"%W",                        // week of year (Monday-start)
+    b"%p",                        // AM/PM
+    b"%I:%M %p",                  // 12-hour clock
+    b"%%",                        // literal percent
+    b"static text only",          // no conversions
+    // C-standard whole-format aliases. These are normalized to their defining
+    // expansions before exact-leaf dispatch (ISO C 7.27.3.5 makes that an identity),
+    // so they must stay byte-identical to glibc — including the embedded forms, which
+    // deliberately do NOT take the rewrite and still go through the general loop.
+    b"%T",       // == %H:%M:%S
+    b"%F",       // == %Y-%m-%d
+    b"%R",       // == %H:%M
+    b"%D",       // == %m/%d/%y, intentionally not rewritten
+    b"[%T]",     // alias embedded in literals -> general loop
+    b"%F %T",    // two aliases, not a whole-format alias
+    b"%d/%m/%Y", // European ordering; only %m/%d/%Y has a leaf
+    // Zone directives. `read_tm_zone` is guarded on the parsed %Z directive, so
+    // these pin both sides of that guard: bare and modified %Z must still echo
+    // the caller's zone, while %z must not depend on the zone copy.
+    b"%Z",  // zone name — REQUIRES the guarded copy to have run
+    b"%EZ", // C-locale E modifier is accepted for %Z
+    b"%OZ", // C-locale O modifier is accepted for %Z
+    b"%z",  // numeric offset — must not depend on the zone copy
+    b"%Y-%m-%d %H:%M:%S %Z",
+    b"%H:%M:%S %z",
     // Year-format specifiers — exercise the no-width contract that fl
     // previously violated by zero-padding.
     b"%c",    // preferred date/time (uses %Y bare)
@@ -639,6 +661,35 @@ const STRPTIME_CASES: &[StrptimeCase] = &[
         fmt: b"%F",
         input: b"2024-01-15",
         fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    // --- composite specifiers, NON-CANONICAL inputs ---
+    // An alias is routed to its expansion's exact-numeric leaf, so these pin the
+    // fallthrough: unpadded fields and out-of-range values must still reach the
+    // general parser (which does numeric backoff and observable partial writes)
+    // and must not be captured by the leaf.
+    StrptimeCase {
+        fmt: b"%T",
+        input: b"8:15:30",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%T",
+        input: b"12:60:00",
+        fields: 0,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%F",
+        input: b"2024-1-5",
+        fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%R",
+        input: b"8:15",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
         expect_failure: false,
     },
     // --- whitespace and literal directives ---

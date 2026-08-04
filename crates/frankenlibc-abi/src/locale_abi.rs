@@ -5,6 +5,7 @@
 
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::locale as locale_core;
@@ -350,17 +351,21 @@ pub unsafe extern "C" fn ngettext(
 
 /// Default text domain name.
 static DEFAULT_TEXT_DOMAIN: &[u8] = b"messages\0";
+/// Lock-free publication point for the current text domain.
+///
+/// Writers allocate an immutable `CString`, retain it permanently in
+/// `TextDomainState::pool`, then publish its pointer with `Release`. Readers
+/// acquire that pointer without taking the writer mutex. Because published
+/// allocations are never reclaimed, a concurrent or later query cannot
+/// observe a dangling pointer.
+static TEXT_DOMAIN_CURRENT: AtomicPtr<c_char> =
+    AtomicPtr::new(DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char);
 /// Default locale directory.
 static DEFAULT_LOCALE_DIR: &[u8] = b"/usr/share/locale\0";
 
 struct TextDomainState {
-    current: *mut c_char,
     pool: Vec<CString>,
 }
-
-// SAFETY: access is synchronized via the surrounding Mutex, and the raw
-// pointers refer either to static storage or heap allocations owned by `pool`.
-unsafe impl Send for TextDomainState {}
 
 struct LocaleDirState {
     current_by_domain: ArtifactHashMap<Vec<u8>, *mut c_char>,
@@ -373,12 +378,7 @@ unsafe impl Send for LocaleDirState {}
 
 fn text_domain_storage() -> &'static Mutex<TextDomainState> {
     static STORAGE: OnceLock<Mutex<TextDomainState>> = OnceLock::new();
-    STORAGE.get_or_init(|| {
-        Mutex::new(TextDomainState {
-            current: DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char,
-            pool: Vec::new(),
-        })
-    })
+    STORAGE.get_or_init(|| Mutex::new(TextDomainState { pool: Vec::new() }))
 }
 
 fn locale_dir_bindings() -> &'static Mutex<LocaleDirState> {
@@ -395,12 +395,13 @@ fn locale_dir_bindings() -> &'static Mutex<LocaleDirState> {
 /// integration tests that exercise `textdomain`/`bindtextdomain`.
 #[doc(hidden)]
 pub fn locale_reset_gettext_state_for_tests() {
-    let mut domains = text_domain_storage()
+    let _domains = text_domain_storage()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    domains.current = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
-    domains.pool.clear();
-    drop(domains);
+    TEXT_DOMAIN_CURRENT.store(
+        DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char,
+        Ordering::Release,
+    );
 
     let mut bindings = locale_dir_bindings()
         .lock()
@@ -415,28 +416,29 @@ pub fn locale_reset_gettext_state_for_tests() {
 /// Returns the domain name for API compatibility.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
-    let storage = text_domain_storage();
-    let mut current = storage.lock().unwrap_or_else(|e| e.into_inner());
     if domainname.is_null() {
-        return current.current;
+        return TEXT_DOMAIN_CURRENT.load(Ordering::Acquire);
     }
     // Read the domain name through the bounded helper so a non-NUL-terminated
     // pointer cannot walk arbitrary memory, and the empty-string path is
     // discovered from the bounded bytes rather than a raw dereference of the
     // first byte. (bd-z4k96)
     let Some(name) = (unsafe { read_bounded_cstr(domainname) }) else {
-        return current.current;
+        return TEXT_DOMAIN_CURRENT.load(Ordering::Acquire);
     };
+    let storage = text_domain_storage();
+    let mut state = storage.lock().unwrap_or_else(|e| e.into_inner());
     if name.is_empty() {
-        current.current = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
-        return current.current;
+        let default = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
+        TEXT_DOMAIN_CURRENT.store(default, Ordering::Release);
+        return default;
     }
     let Ok(owned) = CString::new(name) else {
-        return current.current;
+        return TEXT_DOMAIN_CURRENT.load(Ordering::Acquire);
     };
     let ptr = owned.as_ptr() as *mut c_char;
-    current.pool.push(owned);
-    current.current = ptr;
+    state.pool.push(owned);
+    TEXT_DOMAIN_CURRENT.store(ptr, Ordering::Release);
     ptr
 }
 

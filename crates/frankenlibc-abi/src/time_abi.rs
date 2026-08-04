@@ -725,6 +725,41 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
 /// Copy the caller's `tm_zone` C string into a `BrokenDownTime.zone` buffer for
 /// `strftime` `%Z`. Reads at most 15 bytes (NUL-terminated). A NULL pointer
 /// leaves the zone unset (so `%Z` falls back to "UTC").
+/// Does this format contain a `%Z` zone-name directive, the only directive that
+/// reads `bd.zone`?
+///
+/// Match the formatter's `flags -> width -> optional E/O modifier -> specifier`
+/// grammar. In particular, `%EZ` and `%OZ` are valid in the C locale and must not
+/// be mistaken for formats that cannot observe `tm_zone`.
+#[inline]
+fn fmt_has_zone_directive(fmt: &[u8]) -> bool {
+    let mut i = 0;
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= fmt.len() {
+            break;
+        }
+        while i < fmt.len() && b"-_0^#".contains(&fmt[i]) {
+            i += 1;
+        }
+        while i < fmt.len() && fmt[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i < fmt.len() && (fmt[i] == b'E' || fmt[i] == b'O') {
+            i += 1;
+        }
+        if i < fmt.len() && fmt[i] == b'Z' {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) {
     let zp = unsafe { (*tm).tm_zone };
     if zp.is_null() {
@@ -1191,6 +1226,179 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
+        // Exact HTTP-date is a bounded C-locale transducer. Match the complete
+        // `%a, %d %b %Y %H:%M:%S GMT\0` format before the generic C-string
+        // scan and full `tm` projection. The left-to-right `&&` chain stops at
+        // the first mismatch or earlier NUL, so shorter valid strings do not
+        // read the next byte.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'a'
+                && *format.cast::<u8>().add(2) == b','
+                && *format.cast::<u8>().add(3) == b' '
+                && *format.cast::<u8>().add(4) == b'%'
+                && *format.cast::<u8>().add(5) == b'd'
+                && *format.cast::<u8>().add(6) == b' '
+                && *format.cast::<u8>().add(7) == b'%'
+                && *format.cast::<u8>().add(8) == b'b'
+                && *format.cast::<u8>().add(9) == b' '
+                && *format.cast::<u8>().add(10) == b'%'
+                && *format.cast::<u8>().add(11) == b'Y'
+                && *format.cast::<u8>().add(12) == b' '
+                && *format.cast::<u8>().add(13) == b'%'
+                && *format.cast::<u8>().add(14) == b'H'
+                && *format.cast::<u8>().add(15) == b':'
+                && *format.cast::<u8>().add(16) == b'%'
+                && *format.cast::<u8>().add(17) == b'M'
+                && *format.cast::<u8>().add(18) == b':'
+                && *format.cast::<u8>().add(19) == b'%'
+                && *format.cast::<u8>().add(20) == b'S'
+                && *format.cast::<u8>().add(21) == b' '
+                && *format.cast::<u8>().add(22) == b'G'
+                && *format.cast::<u8>().add(23) == b'M'
+                && *format.cast::<u8>().add(24) == b'T'
+                && *format.cast::<u8>().add(25) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (weekday, day, month, year, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_wday,
+                    (*tm).tm_mday,
+                    (*tm).tm_mon,
+                    (*tm).tm_year,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_http_date(
+                b"%a, %d %b %Y %H:%M:%S GMT",
+                weekday,
+                day,
+                month,
+                year,
+                hour,
+                minute,
+                second,
+                buf,
+            ) {
+                return n;
+            }
+        }
+        // Exact RFC3164 timestamps are a bounded C-locale transducer. Recognize
+        // the complete `%b %e %H:%M:%S\0` language before the generic C-string
+        // scan and full `tm` projection. The `&&` chain is intentionally
+        // left-to-right: a shorter C string stops at its NUL before the next byte
+        // is read. Non-normalized fields fall through to the unchanged formatter.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'b'
+                && *format.cast::<u8>().add(2) == b' '
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'e'
+                && *format.cast::<u8>().add(5) == b' '
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'H'
+                && *format.cast::<u8>().add(8) == b':'
+                && *format.cast::<u8>().add(9) == b'%'
+                && *format.cast::<u8>().add(10) == b'M'
+                && *format.cast::<u8>().add(11) == b':'
+                && *format.cast::<u8>().add(12) == b'%'
+                && *format.cast::<u8>().add(13) == b'S'
+                && *format.cast::<u8>().add(14) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (month, day, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_rfc3164(
+                b"%b %e %H:%M:%S",
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                buf,
+            ) {
+                return n;
+            }
+        }
+        // Exact `%A\0` is a three-byte C-format transducer leaf. Recognize it
+        // before the generic NUL scan so this common one-directive format pays
+        // neither a scan nor full `tm` materialization. Short-circuiting means
+        // byte 2 is read only after bytes 0/1 prove the string is at least `%A`.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'A'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let wday = unsafe { (*tm).tm_wday };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            return time_core::format_strftime_full_weekday(wday, buf);
+        }
+        // Exact `%b\0` selects one of 12 fixed three-byte C-locale month
+        // abbreviations. Keep `%h`, flags, modifiers, and mixed formats on the
+        // general formatter by matching the complete C string.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'b'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let month = unsafe { (*tm).tm_mon };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            return time_core::format_strftime_abbrev_month(month, buf);
+        }
+        // Exact `%B\0` selects one of 12 C-locale month names. Recognize the
+        // finite leaf before scanning the format or projecting the full `tm`;
+        // malformed month fields retain the general formatter's `?` behavior.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'B'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let month = unsafe { (*tm).tm_mon };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            return time_core::format_strftime_full_month(month, buf);
+        }
+        // Exact `%j\0` is another three-byte finite transducer leaf. Its
+        // normalized domain is the 366 possible `tm_yday` states, so bypass the
+        // generic format scan and full `tm` projection. Non-normalized fields
+        // deliberately fall through to the unchanged general formatter.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'j'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let yday = unsafe { (*tm).tm_yday };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_day_of_year(yday, buf) {
+                return n;
+            }
+        }
         // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
         let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
         if !terminated {
@@ -1211,7 +1419,16 @@ pub unsafe extern "C" fn strftime(
             return fmt_len;
         }
         let mut bd = unsafe { read_tm(tm) };
-        unsafe { read_tm_zone(tm, &mut bd) };
+        // `bd.zone` is a [u8; 16] and `read_tm_zone` fills it with a 15-iteration
+        // byte copy from the caller's `tm_zone`. That buffer is consumed by exactly
+        // one directive — `%Z` — so for every other format the copy is work whose
+        // result is never observed. Guarding on the directive is behavior-preserving
+        // by construction: if the format cannot emit the zone, the bytes cannot be
+        // read. `%z` is unaffected — it formats `tm_gmtoff`, which `read_tm` already
+        // carries.
+        if fmt_has_zone_directive(fmt) {
+            unsafe { read_tm_zone(tm, &mut bd) };
+        }
         // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
         let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
         return time_core::format_strftime(fmt, &bd, buf);
@@ -1743,7 +1960,29 @@ fn parse_exact_numeric_mdy(input: &[u8], start: usize) -> Option<(i32, i32, i32)
 /// formats. Any miss falls through to the general parser before touching `tm`,
 /// preserving its whitespace, variable-width, backoff, and partial-write quirks.
 #[inline]
+/// Map a bare C-standard alias format to its defining expansion.
+///
+/// ISO C 7.27.3.5 / POSIX specify these as exact equivalents for both `strftime`
+/// and `strptime`, so an alias may be routed to the expansion's exact-numeric leaf.
+/// Without this the two-byte spelling misses the whole-format table below and pays
+/// the general per-directive dispatch — measured at 2.17x the cost of parsing the
+/// identical format spelled out in full.
+///
+/// `%D` is deliberately absent: POSIX defines it as `%m/%d/%y` with a TWO-digit
+/// year, which is not the `%m/%d/%Y` leaf.
+fn strptime_alias_expansion(fmt: &[u8]) -> Option<&'static [u8]> {
+    match fmt {
+        b"%T" => Some(b"%H:%M:%S"),
+        b"%F" => Some(b"%Y-%m-%d"),
+        b"%R" => Some(b"%H:%M"),
+        _ => None,
+    }
+}
+
 fn parse_exact_numeric_strptime(input: &[u8], fmt: &[u8]) -> Option<ExactNumericStrptime> {
+    // Normalize only for leaf selection; a non-canonical input still falls through
+    // to the general parser holding the caller's original format.
+    let fmt = strptime_alias_expansion(fmt).unwrap_or(fmt);
     match fmt.len() {
         5 if fmt == b"%H:%M" => {
             let (hour, minute) = parse_exact_numeric_time_hm(input, 0)?;
