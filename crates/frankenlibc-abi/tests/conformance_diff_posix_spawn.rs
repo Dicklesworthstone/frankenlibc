@@ -339,6 +339,193 @@ fn diff_file_actions_addclose_negative_fd_is_ebadf() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// POSIX_SPAWN_SETSID behaviour (bd-h0ht3b). The flag was previously ignored, so
+// the child stayed in the parent's session. The flag-bit validation test above
+// only proves setflags ACCEPTS 0x80; this proves the spawned child actually
+// lands in a new session.
+// ---------------------------------------------------------------------------
+
+/// glibc >= 2.26; not exposed by the libc crate.
+const POSIX_SPAWN_SETSID: libc::c_short = 0x80;
+
+type SpawnFn = unsafe extern "C" fn(
+    *mut libc::pid_t,
+    *const c_char,
+    *const c_void,
+    *const c_void,
+    *const *mut c_char,
+    *const *mut c_char,
+) -> c_int;
+type AttrInitFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type AttrFlagsFn = unsafe extern "C" fn(*mut c_void, libc::c_short) -> c_int;
+
+/// One implementation's spawn entry points, so both arms run identical logic.
+struct SpawnApi {
+    name: &'static str,
+    spawn: SpawnFn,
+    attr_init: AttrInitFn,
+    attr_setflags: AttrFlagsFn,
+    attr_destroy: AttrInitFn,
+}
+
+/// A stand-in for `posix_spawnattr_t` with the alignment the real type has.
+/// A bare `[u8; ATTR_BYTES]` local is only 1-byte aligned, and both impls store
+/// a `u64` magic at offset 0, so an unaligned buffer trips the misaligned-write
+/// check under a debug build depending on where the array happens to land.
+#[repr(C, align(16))]
+struct AttrBuf([u8; ATTR_BYTES]);
+
+/// `(comm, session id)` from `/proc/<pid>/stat`. `comm` is delimited by the
+/// first `(` and the LAST `)`, since a program name may itself contain either;
+/// the fields after it are state, ppid, pgrp, session.
+fn proc_comm_and_sid(pid: libc::pid_t) -> Option<(String, libc::pid_t)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    let comm = stat.get(open + 1..close)?.to_string();
+    let after: Vec<&str> = stat.get(close + 1..)?.split_whitespace().collect();
+    Some((comm, after.get(3)?.parse().ok()?))
+}
+
+/// Session id of `pid` once it has finished exec'ing into `want`.
+///
+/// Waiting for the exec is what makes this race-free: every spawn attribute is
+/// applied in the child before it execs, so a `comm` of `want` proves SETSID
+/// has already been applied (or skipped) — no polling on the value itself.
+fn sid_after_exec(pid: libc::pid_t, want: &str) -> libc::pid_t {
+    for _ in 0..2000 {
+        if let Some((comm, sid)) = proc_comm_and_sid(pid)
+            && comm == want
+        {
+            return sid;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("child {pid} never exec'd into {want}");
+}
+
+/// Spawn `/bin/sleep 30` through `api`, optionally with SETSID, and report the
+/// child's `(pid, session id)`. The child is killed and reaped before returning.
+fn spawned_child_sid(api: &SpawnApi, setsid: bool) -> (libc::pid_t, libc::pid_t) {
+    let path = CString::new("/bin/sleep").unwrap();
+    let arg0 = CString::new("sleep").unwrap();
+    let arg1 = CString::new("30").unwrap();
+    let argv = [
+        arg0.as_ptr() as *mut c_char,
+        arg1.as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+
+    let mut attr = AttrBuf([0u8; ATTR_BYTES]);
+    let ap = attr.0.as_mut_ptr() as *mut c_void;
+    assert_eq!(
+        unsafe { (api.attr_init)(ap) },
+        0,
+        "{} attr_init failed",
+        api.name
+    );
+    if setsid {
+        assert_eq!(
+            unsafe { (api.attr_setflags)(ap, POSIX_SPAWN_SETSID) },
+            0,
+            "{} setflags(SETSID) failed",
+            api.name
+        );
+    }
+
+    let mut pid: libc::pid_t = -1;
+    let rc = unsafe {
+        (api.spawn)(
+            &mut pid,
+            path.as_ptr(),
+            std::ptr::null(),
+            ap as *const c_void,
+            argv.as_ptr(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0, "{} posix_spawn(/bin/sleep) failed: {rc}", api.name);
+    assert!(pid > 0, "{} returned a bogus pid {pid}", api.name);
+
+    let sid = sid_after_exec(pid, "sleep");
+
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    unsafe { (api.attr_destroy)(ap) };
+    (pid, sid)
+}
+
+fn fl_api() -> SpawnApi {
+    SpawnApi {
+        name: "fl",
+        spawn: fl::posix_spawn,
+        attr_init: fl::posix_spawnattr_init,
+        attr_setflags: fl::posix_spawnattr_setflags,
+        attr_destroy: fl::posix_spawnattr_destroy,
+    }
+}
+
+fn glibc_api() -> SpawnApi {
+    let api = SpawnApi {
+        name: "glibc",
+        spawn: posix_spawn,
+        attr_init: posix_spawnattr_init,
+        attr_setflags: posix_spawnattr_setflags,
+        attr_destroy: posix_spawnattr_destroy,
+    };
+    assert_ne!(
+        api.spawn as *const () as usize,
+        fl::posix_spawn as *const () as usize,
+        "glibc posix_spawn resolved to fl's own symbol — the arms are not distinct"
+    );
+    api
+}
+
+#[test]
+fn diff_posix_spawn_setsid_puts_child_in_a_new_session() {
+    let own_sid = unsafe { libc::getsid(0) };
+
+    let (g_pid, g_sid) = spawned_child_sid(&glibc_api(), true);
+    let (f_pid, f_sid) = spawned_child_sid(&fl_api(), true);
+
+    // The two children are different processes, so their session ids cannot be
+    // compared directly. The defining property is compared instead: setsid()
+    // makes the caller a session leader, so its session id IS its own pid.
+    assert_eq!(
+        g_sid, g_pid,
+        "glibc SETSID child must lead its own session (sid={g_sid} pid={g_pid})"
+    );
+    assert_eq!(
+        f_sid, f_pid,
+        "SETSID child must lead its own session (fl sid={f_sid} pid={f_pid}) — \
+         ignoring the flag leaves it in the spawner's session instead"
+    );
+    assert_ne!(
+        f_sid, own_sid,
+        "SETSID child must not stay in the spawner's session ({own_sid})"
+    );
+}
+
+#[test]
+fn diff_posix_spawn_without_setsid_keeps_the_spawner_session() {
+    // Negative control: the same code path with the flag cleared must leave the
+    // child in our session, so the test above is detecting SETSID and not just
+    // "spawned children get a new session".
+    let own_sid = unsafe { libc::getsid(0) };
+    let (_, g_sid) = spawned_child_sid(&glibc_api(), false);
+    let (_, f_sid) = spawned_child_sid(&fl_api(), false);
+    assert_eq!(
+        g_sid, own_sid,
+        "glibc child without SETSID must inherit the spawner's session"
+    );
+    assert_eq!(
+        f_sid, g_sid,
+        "child session without SETSID: fl={f_sid} glibc={g_sid} (spawner={own_sid})"
+    );
+}
+
 #[test]
 fn posix_spawn_diff_coverage_report() {
     eprintln!(
