@@ -4,6 +4,7 @@
 //! flat-combining vs lock-based baselines under varying thread counts,
 //! operation mixes, and batch sizes.
 
+use std::fmt::Write as _;
 use std::fs::{self, File, create_dir_all};
 use std::hint::black_box;
 use std::io::Write;
@@ -12,12 +13,13 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex, RwLock};
+use std::sync::{Arc, Barrier, Mutex, OnceLock, RwLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 use frankenlibc_core::malloc::size_class::{SizeClassIndex, small_bin_index};
+use sha2::{Digest, Sha256};
 
 const FLAT_SLOTS: usize = 128;
 const FC_OP_NONE: usize = 0;
@@ -25,6 +27,40 @@ const FC_OP_READ: usize = 1;
 const FC_OP_ALLOC: usize = 2;
 const FC_OP_FREE: usize = 3;
 const SAMPLE_STRIDE: u64 = 64;
+
+struct BenchExecutableIdentity {
+    sha256: String,
+    bytes: u64,
+    path: PathBuf,
+}
+
+/// Hash the executable from inside the process that will perform the measurement.
+///
+/// `main` reports this before Criterion can emit any output. The production
+/// artifact writer reuses the same cached identity, so the console and
+/// retrievable artifact cannot accidentally describe different ELFs.
+fn bench_executable_identity() -> &'static BenchExecutableIdentity {
+    static IDENTITY: OnceLock<BenchExecutableIdentity> = OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let path = std::env::current_exe().expect("locate running benchmark executable");
+        let executable = fs::read(&path).expect("read running benchmark executable");
+        assert!(
+            !executable.is_empty(),
+            "running benchmark executable is empty"
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(&executable);
+        let mut sha256 = String::with_capacity(64);
+        for byte in hasher.finalize() {
+            write!(&mut sha256, "{byte:02x}").expect("format executable SHA-256");
+        }
+        BenchExecutableIdentity {
+            sha256,
+            bytes: executable.len() as u64,
+            path,
+        }
+    })
+}
 
 #[cfg(feature = "abi-bench")]
 const SEGMENT_SHIFT_FOR_BENCH: usize = 22;
@@ -431,11 +467,22 @@ const SEGMENT_PRODUCTION_PERMUTATIONS: [[SegmentProductionArm; 3]; 6] = [
 ];
 
 #[cfg(feature = "abi-bench")]
+const SEGMENT_PRODUCTION_BOOTSTRAP_RESAMPLES: usize = 4_096;
+
+#[cfg(feature = "abi-bench")]
 #[derive(Default)]
 struct SegmentProductionSample {
     orig_elapsed: u128,
     candidate_elapsed: u128,
     glibc_elapsed: u128,
+    checksum: usize,
+}
+
+#[cfg(feature = "abi-bench")]
+#[derive(Default)]
+struct SegmentProductionNullSample {
+    arm_a_elapsed: u128,
+    arm_b_elapsed: u128,
     checksum: usize,
 }
 
@@ -460,6 +507,56 @@ fn time_segment_production_microblock(
         )
     };
     (start.elapsed().as_nanos(), black_box(checksum))
+}
+
+/// Exact A/A control at the same unit of analysis as one production sample.
+///
+/// Both arms call the identical ORIG batch function with the identical
+/// allocator pair. Each arm receives the same number of microblocks as ORIG
+/// and CAND receive in `segment_production_sample`, and arm order alternates
+/// within the sample. This makes the null ratio directly comparable with the
+/// per-sample CAND/ORIG decision ratio.
+#[cfg(feature = "abi-bench")]
+#[inline(never)]
+fn segment_production_null_sample(
+    orig_malloc: SegmentProductionMallocFn,
+    orig_free: SegmentProductionFreeFn,
+    size: usize,
+    operations_per_microblock: u64,
+    microblock_pairs: usize,
+    reverse_first_order: bool,
+) -> SegmentProductionNullSample {
+    let mut sample = SegmentProductionNullSample::default();
+    for pair_index in 0..black_box(microblock_pairs) {
+        let arm_b_first = pair_index.is_multiple_of(2) == reverse_first_order;
+        let first = time_segment_production_microblock(
+            black_box(segment_production_orig_batch as SegmentProductionBatchFn),
+            black_box(orig_malloc),
+            black_box(orig_free),
+            black_box(size),
+            black_box(operations_per_microblock),
+        );
+        let second = time_segment_production_microblock(
+            black_box(segment_production_orig_batch as SegmentProductionBatchFn),
+            black_box(orig_malloc),
+            black_box(orig_free),
+            black_box(size),
+            black_box(operations_per_microblock),
+        );
+        let ((arm_a_elapsed, arm_a_checksum), (arm_b_elapsed, arm_b_checksum)) = if arm_b_first {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        sample.arm_a_elapsed = sample.arm_a_elapsed.wrapping_add(arm_a_elapsed);
+        sample.arm_b_elapsed = sample.arm_b_elapsed.wrapping_add(arm_b_elapsed);
+        sample.checksum = sample.checksum.rotate_left(11)
+            ^ black_box(arm_a_checksum)
+            ^ black_box(arm_b_checksum).rotate_left(1)
+            ^ black_box(arm_a_elapsed as usize)
+            ^ black_box(arm_b_elapsed as usize).rotate_left(1);
+    }
+    black_box(sample)
 }
 
 #[cfg(feature = "abi-bench")]
@@ -535,36 +632,57 @@ fn segment_production_sample(
 struct SegmentProductionSizeResult {
     size: usize,
     operations_per_arm_sample: u64,
+    null_a_samples: Vec<f64>,
+    null_b_samples: Vec<f64>,
+    null_b_over_null_a: Vec<f64>,
     orig_samples: Vec<f64>,
     candidate_samples: Vec<f64>,
     glibc_samples: Vec<f64>,
     candidate_over_orig: Vec<f64>,
     candidate_over_glibc: Vec<f64>,
     orig_over_glibc: Vec<f64>,
+    null_a_p50: f64,
+    null_b_p50: f64,
+    null_b_over_null_a_p50: f64,
     orig_p50: f64,
     candidate_p50: f64,
     glibc_p50: f64,
     candidate_over_orig_p50: f64,
     candidate_over_glibc_p50: f64,
     orig_over_glibc_p50: f64,
+    null_b_over_null_a_cv: f64,
     orig_cv: f64,
     candidate_cv: f64,
     glibc_cv: f64,
     candidate_over_orig_cv: f64,
     candidate_over_glibc_cv: f64,
     orig_over_glibc_cv: f64,
+    null_b_over_null_a_mad: f64,
+    candidate_over_orig_mad: f64,
+    candidate_over_glibc_mad: f64,
+    orig_over_glibc_mad: f64,
+    null_b_over_null_a_ci95_low: f64,
+    null_b_over_null_a_ci95_high: f64,
+    candidate_over_orig_ci95_low: f64,
+    candidate_over_orig_ci95_high: f64,
+    candidate_over_glibc_ci95_low: f64,
+    candidate_over_glibc_ci95_high: f64,
+    orig_over_glibc_ci95_low: f64,
+    orig_over_glibc_ci95_high: f64,
+    checksum: usize,
 }
 
 #[cfg(feature = "abi-bench")]
 impl SegmentProductionSizeResult {
-    fn cv_gate_pass(&self) -> bool {
-        // Substrate v2 interleaves every arm within one sample specifically so
-        // common-mode worker drift cancels in paired decision contrasts.  Raw
-        // arm CVs and the ORIG/glibc anchor remain reported, but neither can
-        // accept or reject the candidate.
-        [self.candidate_over_orig_cv, self.candidate_over_glibc_cv]
-            .into_iter()
-            .all(|cv| cv < 5.0)
+    fn median_ci_gate_pass(&self) -> bool {
+        // The A/A null's bootstrap CI is the measured noise floor. CV is
+        // descriptive only: a keep requires a faster CAND/ORIG median whose
+        // distance from 1.0 exceeds twice the wider null-CI half-width.
+        let null_half_width = (1.0 - self.null_b_over_null_a_ci95_low)
+            .abs()
+            .max((self.null_b_over_null_a_ci95_high - 1.0).abs());
+        self.candidate_over_orig_p50 < 1.0
+            && (1.0 - self.candidate_over_orig_p50) > 2.0 * null_half_width
     }
 
     fn candidate_beats_orig(&self) -> bool {
@@ -577,6 +695,40 @@ fn segment_production_p50(samples: &[f64]) -> f64 {
     let mut sorted = samples.to_vec();
     sorted.sort_by(f64::total_cmp);
     percentile_sorted(&sorted, 0.50)
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_mad(samples: &[f64], center: f64) -> f64 {
+    let deviations = samples
+        .iter()
+        .map(|sample| (sample - center).abs())
+        .collect::<Vec<_>>();
+    segment_production_p50(&deviations)
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_bootstrap_median_ci95(samples: &[f64]) -> (f64, f64) {
+    assert!(
+        !samples.is_empty(),
+        "bootstrap requires at least one sample"
+    );
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ samples.len() as u64;
+    let mut resampled_medians = Vec::with_capacity(SEGMENT_PRODUCTION_BOOTSTRAP_RESAMPLES);
+    let mut resample = vec![0.0; samples.len()];
+    for _ in 0..SEGMENT_PRODUCTION_BOOTSTRAP_RESAMPLES {
+        for value in &mut resample {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *value = samples[(state as usize) % samples.len()];
+        }
+        resampled_medians.push(segment_production_p50(&resample));
+    }
+    resampled_medians.sort_by(f64::total_cmp);
+    let low = (SEGMENT_PRODUCTION_BOOTSTRAP_RESAMPLES * 25) / 1_000;
+    let high = ((SEGMENT_PRODUCTION_BOOTSTRAP_RESAMPLES * 975) / 1_000)
+        .min(SEGMENT_PRODUCTION_BOOTSTRAP_RESAMPLES - 1);
+    (resampled_medians[low], resampled_medians[high])
 }
 
 #[cfg(feature = "abi-bench")]
@@ -594,6 +746,14 @@ fn score_segment_production_size(
     raw_samples: usize,
 ) -> SegmentProductionSizeResult {
     for reverse in [false, true] {
+        black_box(segment_production_null_sample(
+            black_box(orig_malloc),
+            black_box(orig_free),
+            black_box(size),
+            black_box(operations_per_microblock),
+            black_box(SEGMENT_PRODUCTION_PERMUTATIONS.len() * warmup_permutation_cycles),
+            black_box(reverse),
+        ));
         black_box(segment_production_sample(
             black_box(orig_malloc),
             black_box(orig_free),
@@ -611,6 +771,9 @@ fn score_segment_production_size(
     let operations_per_arm_sample = operations_per_microblock
         * SEGMENT_PRODUCTION_PERMUTATIONS.len() as u64
         * permutation_cycles_per_sample as u64;
+    let mut null_a_samples = Vec::with_capacity(raw_samples);
+    let mut null_b_samples = Vec::with_capacity(raw_samples);
+    let mut null_b_over_null_a = Vec::with_capacity(raw_samples);
     let mut orig_samples = Vec::with_capacity(raw_samples);
     let mut candidate_samples = Vec::with_capacity(raw_samples);
     let mut glibc_samples = Vec::with_capacity(raw_samples);
@@ -620,23 +783,53 @@ fn score_segment_production_size(
     let mut scoring_checksum = 0usize;
 
     for sample_index in 0..raw_samples {
-        let sample = segment_production_sample(
-            black_box(orig_malloc),
-            black_box(orig_free),
-            black_box(candidate_malloc),
-            black_box(candidate_free),
-            black_box(glibc_malloc),
-            black_box(glibc_free),
-            black_box(size),
-            black_box(operations_per_microblock),
-            black_box(permutation_cycles_per_sample),
-            black_box(sample_index.is_multiple_of(2)),
-        );
-        scoring_checksum = scoring_checksum.rotate_left(17) ^ black_box(sample.checksum);
+        let reverse = sample_index.is_multiple_of(2);
+        let run_null = || {
+            segment_production_null_sample(
+                black_box(orig_malloc),
+                black_box(orig_free),
+                black_box(size),
+                black_box(operations_per_microblock),
+                black_box(SEGMENT_PRODUCTION_PERMUTATIONS.len() * permutation_cycles_per_sample),
+                black_box(reverse),
+            )
+        };
+        let run_real = || {
+            segment_production_sample(
+                black_box(orig_malloc),
+                black_box(orig_free),
+                black_box(candidate_malloc),
+                black_box(candidate_free),
+                black_box(glibc_malloc),
+                black_box(glibc_free),
+                black_box(size),
+                black_box(operations_per_microblock),
+                black_box(permutation_cycles_per_sample),
+                black_box(reverse),
+            )
+        };
+        // Alternate the outer A/A-versus-real block order as well as each
+        // block's internal arm order, so neither block owns a fixed thermal or
+        // scheduler position within a raw sample.
+        let (null, sample) = if reverse {
+            let real = run_real();
+            (run_null(), real)
+        } else {
+            let null = run_null();
+            (null, run_real())
+        };
+        scoring_checksum = scoring_checksum.rotate_left(17)
+            ^ black_box(null.checksum)
+            ^ black_box(sample.checksum).rotate_left(1);
         let operations = operations_per_arm_sample as f64;
+        let null_a_ns = null.arm_a_elapsed as f64 / operations;
+        let null_b_ns = null.arm_b_elapsed as f64 / operations;
         let orig_ns = sample.orig_elapsed as f64 / operations;
         let candidate_ns = sample.candidate_elapsed as f64 / operations;
         let glibc_ns = sample.glibc_elapsed as f64 / operations;
+        null_a_samples.push(null_a_ns);
+        null_b_samples.push(null_b_ns);
+        null_b_over_null_a.push(null_b_ns / null_a_ns);
         orig_samples.push(orig_ns);
         candidate_samples.push(candidate_ns);
         glibc_samples.push(glibc_ns);
@@ -646,21 +839,60 @@ fn score_segment_production_size(
     }
     black_box(scoring_checksum);
 
+    let null_b_over_null_a_p50 = segment_production_p50(&null_b_over_null_a);
+    let candidate_over_orig_p50 = segment_production_p50(&candidate_over_orig);
+    let candidate_over_glibc_p50 = segment_production_p50(&candidate_over_glibc);
+    let orig_over_glibc_p50 = segment_production_p50(&orig_over_glibc);
+    let (null_b_over_null_a_ci95_low, null_b_over_null_a_ci95_high) =
+        segment_production_bootstrap_median_ci95(&null_b_over_null_a);
+    let (candidate_over_orig_ci95_low, candidate_over_orig_ci95_high) =
+        segment_production_bootstrap_median_ci95(&candidate_over_orig);
+    let (candidate_over_glibc_ci95_low, candidate_over_glibc_ci95_high) =
+        segment_production_bootstrap_median_ci95(&candidate_over_glibc);
+    let (orig_over_glibc_ci95_low, orig_over_glibc_ci95_high) =
+        segment_production_bootstrap_median_ci95(&orig_over_glibc);
+
     SegmentProductionSizeResult {
         size,
         operations_per_arm_sample,
+        null_a_p50: segment_production_p50(&null_a_samples),
+        null_b_p50: segment_production_p50(&null_b_samples),
+        null_b_over_null_a_p50,
         orig_p50: segment_production_p50(&orig_samples),
         candidate_p50: segment_production_p50(&candidate_samples),
         glibc_p50: segment_production_p50(&glibc_samples),
-        candidate_over_orig_p50: segment_production_p50(&candidate_over_orig),
-        candidate_over_glibc_p50: segment_production_p50(&candidate_over_glibc),
-        orig_over_glibc_p50: segment_production_p50(&orig_over_glibc),
+        candidate_over_orig_p50,
+        candidate_over_glibc_p50,
+        orig_over_glibc_p50,
+        null_b_over_null_a_cv: paired_cv_pct(&null_b_over_null_a),
         orig_cv: paired_cv_pct(&orig_samples),
         candidate_cv: paired_cv_pct(&candidate_samples),
         glibc_cv: paired_cv_pct(&glibc_samples),
         candidate_over_orig_cv: paired_cv_pct(&candidate_over_orig),
         candidate_over_glibc_cv: paired_cv_pct(&candidate_over_glibc),
         orig_over_glibc_cv: paired_cv_pct(&orig_over_glibc),
+        null_b_over_null_a_mad: segment_production_mad(&null_b_over_null_a, null_b_over_null_a_p50),
+        candidate_over_orig_mad: segment_production_mad(
+            &candidate_over_orig,
+            candidate_over_orig_p50,
+        ),
+        candidate_over_glibc_mad: segment_production_mad(
+            &candidate_over_glibc,
+            candidate_over_glibc_p50,
+        ),
+        orig_over_glibc_mad: segment_production_mad(&orig_over_glibc, orig_over_glibc_p50),
+        null_b_over_null_a_ci95_low,
+        null_b_over_null_a_ci95_high,
+        candidate_over_orig_ci95_low,
+        candidate_over_orig_ci95_high,
+        candidate_over_glibc_ci95_low,
+        candidate_over_glibc_ci95_high,
+        orig_over_glibc_ci95_low,
+        orig_over_glibc_ci95_high,
+        checksum: scoring_checksum,
+        null_a_samples,
+        null_b_samples,
+        null_b_over_null_a,
         orig_samples,
         candidate_samples,
         glibc_samples,
@@ -978,37 +1210,18 @@ fn pin_segment_production_scoring_thread() -> usize {
 
 #[cfg(feature = "abi-bench")]
 fn segment_production_executable_provenance(output_dir: &Path) -> (String, u64, u64) {
-    let executable = std::env::current_exe().expect("locate running benchmark executable");
-    let executable_bytes = fs::metadata(&executable)
-        .expect("stat running benchmark executable")
-        .len();
-    assert!(
-        executable_bytes > 0,
-        "running benchmark executable is empty"
-    );
-    let output = Command::new("sha256sum")
-        .arg(&executable)
-        .output()
-        .expect("compute benchmark executable sha256 inside remote worker");
-    assert!(output.status.success(), "remote sha256sum failed");
-    let sha256 = String::from_utf8(output.stdout)
-        .expect("sha256sum output must be UTF-8")
-        .split_whitespace()
-        .next()
-        .expect("sha256sum output missing digest")
-        .to_owned();
-    assert!(
-        sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "invalid executable sha256"
-    );
+    let identity = bench_executable_identity();
     let sha_path = output_dir.join("executable.sha256");
-    fs::write(&sha_path, format!("{sha256}  {}\n", executable.display()))
-        .expect("write executable sha256 artifact");
+    fs::write(
+        &sha_path,
+        format!("{}  {}\n", identity.sha256, identity.path.display()),
+    )
+    .expect("write executable sha256 artifact");
     let sha_bytes = fs::metadata(&sha_path)
         .expect("stat executable sha256 artifact")
         .len();
     assert!(sha_bytes > 0, "executable sha256 artifact is empty");
-    (sha256, executable_bytes, sha_bytes)
+    (identity.sha256.clone(), identity.bytes, sha_bytes)
 }
 
 #[derive(Default)]
@@ -1702,29 +1915,40 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
             RAW_SAMPLES,
         );
         println!(
-            "MALLOC_SEGMENT_PRODUCTION_SIZE size={} samples={RAW_SAMPLES} ops_per_arm_sample={} orig_p50_ns={:.3} candidate_p50_ns={:.3} glibc_p50_ns={:.3} candidate_over_orig={:.4} candidate_over_glibc={:.4} orig_over_glibc={:.4} orig_cv_pct={:.2} candidate_cv_pct={:.2} glibc_cv_pct={:.2} candidate_over_orig_cv_pct={:.2} candidate_over_glibc_cv_pct={:.2} orig_over_glibc_cv_pct={:.2} cv_gate_pass={} candidate_beats_orig={}",
+            "MALLOC_SEGMENT_PRODUCTION_SIZE size={} samples={RAW_SAMPLES} ops_per_arm_sample={} null_a_p50_ns={:.3} null_b_p50_ns={:.3} null_b_over_a={:.6} null_ratio_ci95=[{:.6},{:.6}] null_ratio_cv_pct={:.2} null_ratio_mad={:.6} orig_p50_ns={:.3} candidate_p50_ns={:.3} glibc_p50_ns={:.3} candidate_over_orig={:.6} candidate_over_orig_ci95=[{:.6},{:.6}] candidate_over_orig_cv_pct={:.2} candidate_over_orig_mad={:.6} candidate_over_glibc={:.4} orig_over_glibc={:.4} orig_cv_pct={:.2} candidate_cv_pct={:.2} glibc_cv_pct={:.2} candidate_over_glibc_cv_pct={:.2} orig_over_glibc_cv_pct={:.2} median_ci_gate_pass={} candidate_beats_orig={} checksum={}",
             result.size,
             result.operations_per_arm_sample,
+            result.null_a_p50,
+            result.null_b_p50,
+            result.null_b_over_null_a_p50,
+            result.null_b_over_null_a_ci95_low,
+            result.null_b_over_null_a_ci95_high,
+            result.null_b_over_null_a_cv,
+            result.null_b_over_null_a_mad,
             result.orig_p50,
             result.candidate_p50,
             result.glibc_p50,
             result.candidate_over_orig_p50,
+            result.candidate_over_orig_ci95_low,
+            result.candidate_over_orig_ci95_high,
+            result.candidate_over_orig_cv,
+            result.candidate_over_orig_mad,
             result.candidate_over_glibc_p50,
             result.orig_over_glibc_p50,
             result.orig_cv,
             result.candidate_cv,
             result.glibc_cv,
-            result.candidate_over_orig_cv,
             result.candidate_over_glibc_cv,
             result.orig_over_glibc_cv,
-            result.cv_gate_pass(),
+            result.median_ci_gate_pass(),
             result.candidate_beats_orig(),
+            result.checksum,
         );
         size_results.push(result);
     }
-    let all_size_cv_gate_pass = size_results
+    let all_size_median_ci_gate_pass = size_results
         .iter()
-        .all(SegmentProductionSizeResult::cv_gate_pass);
+        .all(SegmentProductionSizeResult::median_ci_gate_pass);
     let all_size_candidate_beats_orig = size_results
         .iter()
         .all(SegmentProductionSizeResult::candidate_beats_orig);
@@ -1737,20 +1961,36 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
                 "      \"size\": {size},\n",
                 "      \"samples\": {samples},\n",
                 "      \"operations_per_arm_sample\": {operations_per_arm_sample},\n",
+                "      \"null_a_p50_ns\": {null_a_p50:.6},\n",
+                "      \"null_b_p50_ns\": {null_b_p50:.6},\n",
+                "      \"null_b_over_null_a_p50\": {null_b_over_null_a_p50:.8},\n",
+                "      \"null_b_over_null_a_ci95\": [{null_ci95_low:.8}, {null_ci95_high:.8}],\n",
+                "      \"null_b_over_null_a_cv_pct\": {null_cv:.6},\n",
+                "      \"null_b_over_null_a_mad\": {null_mad:.8},\n",
                 "      \"orig_p50_ns\": {orig_p50:.6},\n",
                 "      \"candidate_p50_ns\": {candidate_p50:.6},\n",
                 "      \"glibc_p50_ns\": {glibc_p50:.6},\n",
                 "      \"candidate_over_orig_p50\": {candidate_over_orig_p50:.8},\n",
+                "      \"candidate_over_orig_ci95\": [{candidate_over_orig_ci95_low:.8}, {candidate_over_orig_ci95_high:.8}],\n",
+                "      \"candidate_over_orig_mad\": {candidate_over_orig_mad:.8},\n",
                 "      \"candidate_over_glibc_p50\": {candidate_over_glibc_p50:.8},\n",
+                "      \"candidate_over_glibc_ci95\": [{candidate_over_glibc_ci95_low:.8}, {candidate_over_glibc_ci95_high:.8}],\n",
+                "      \"candidate_over_glibc_mad\": {candidate_over_glibc_mad:.8},\n",
                 "      \"orig_over_glibc_p50\": {orig_over_glibc_p50:.8},\n",
+                "      \"orig_over_glibc_ci95\": [{orig_over_glibc_ci95_low:.8}, {orig_over_glibc_ci95_high:.8}],\n",
+                "      \"orig_over_glibc_mad\": {orig_over_glibc_mad:.8},\n",
                 "      \"orig_cv_pct\": {orig_cv:.6},\n",
                 "      \"candidate_cv_pct\": {candidate_cv:.6},\n",
                 "      \"glibc_cv_pct\": {glibc_cv:.6},\n",
                 "      \"candidate_over_orig_cv_pct\": {candidate_over_orig_cv:.6},\n",
                 "      \"candidate_over_glibc_cv_pct\": {candidate_over_glibc_cv:.6},\n",
                 "      \"orig_over_glibc_cv_pct\": {orig_over_glibc_cv:.6},\n",
-                "      \"cv_gate_pass\": {cv_gate_pass},\n",
+                "      \"median_ci_gate_pass\": {median_ci_gate_pass},\n",
                 "      \"candidate_beats_orig\": {candidate_beats_orig},\n",
+                "      \"checksum\": {checksum},\n",
+                "      \"null_a_samples_ns\": {null_a_samples:?},\n",
+                "      \"null_b_samples_ns\": {null_b_samples:?},\n",
+                "      \"null_b_over_null_a_samples\": {null_b_over_null_a:?},\n",
                 "      \"orig_samples_ns\": {orig_samples:?},\n",
                 "      \"candidate_samples_ns\": {candidate_samples:?},\n",
                 "      \"glibc_samples_ns\": {glibc_samples:?},\n",
@@ -1762,20 +2002,40 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
             size = result.size,
             samples = RAW_SAMPLES,
             operations_per_arm_sample = result.operations_per_arm_sample,
+            null_a_p50 = result.null_a_p50,
+            null_b_p50 = result.null_b_p50,
+            null_b_over_null_a_p50 = result.null_b_over_null_a_p50,
+            null_ci95_low = result.null_b_over_null_a_ci95_low,
+            null_ci95_high = result.null_b_over_null_a_ci95_high,
+            null_cv = result.null_b_over_null_a_cv,
+            null_mad = result.null_b_over_null_a_mad,
             orig_p50 = result.orig_p50,
             candidate_p50 = result.candidate_p50,
             glibc_p50 = result.glibc_p50,
             candidate_over_orig_p50 = result.candidate_over_orig_p50,
+            candidate_over_orig_ci95_low = result.candidate_over_orig_ci95_low,
+            candidate_over_orig_ci95_high = result.candidate_over_orig_ci95_high,
+            candidate_over_orig_mad = result.candidate_over_orig_mad,
             candidate_over_glibc_p50 = result.candidate_over_glibc_p50,
+            candidate_over_glibc_ci95_low = result.candidate_over_glibc_ci95_low,
+            candidate_over_glibc_ci95_high = result.candidate_over_glibc_ci95_high,
+            candidate_over_glibc_mad = result.candidate_over_glibc_mad,
             orig_over_glibc_p50 = result.orig_over_glibc_p50,
+            orig_over_glibc_ci95_low = result.orig_over_glibc_ci95_low,
+            orig_over_glibc_ci95_high = result.orig_over_glibc_ci95_high,
+            orig_over_glibc_mad = result.orig_over_glibc_mad,
             orig_cv = result.orig_cv,
             candidate_cv = result.candidate_cv,
             glibc_cv = result.glibc_cv,
             candidate_over_orig_cv = result.candidate_over_orig_cv,
             candidate_over_glibc_cv = result.candidate_over_glibc_cv,
             orig_over_glibc_cv = result.orig_over_glibc_cv,
-            cv_gate_pass = result.cv_gate_pass(),
+            median_ci_gate_pass = result.median_ci_gate_pass(),
             candidate_beats_orig = result.candidate_beats_orig(),
+            checksum = result.checksum,
+            null_a_samples = &result.null_a_samples,
+            null_b_samples = &result.null_b_samples,
+            null_b_over_null_a = &result.null_b_over_null_a,
             orig_samples = &result.orig_samples,
             candidate_samples = &result.candidate_samples,
             glibc_samples = &result.glibc_samples,
@@ -1799,9 +2059,10 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
                 "  \"sizes\": {sizes:?},\n",
                 "  \"operations_per_microblock\": {operations_per_microblock},\n",
                 "  \"permutation_cycles_per_sample\": {permutation_cycles},\n",
-                "  \"order_scheme\": \"all six O-C-G permutations; permutation-list order reversed every other sample\",\n",
-                "  \"cv_gate_scope\": \"paired candidate/orig and candidate/glibc CV below 5%; raw-arm and orig/glibc CV are descriptive\",\n",
-                "  \"all_size_cv_gate_pass\": {all_size_cv_gate_pass},\n",
+                "  \"order_scheme\": \"exact ORIG/ORIG A/A pairs interleaved within every raw sample; all six O-C-G permutations; inner and outer block order reversed every other sample\",\n",
+                "  \"null_unit_of_analysis\": \"one A/A ratio per raw sample, with the same operations per null arm as each O-C-G arm\",\n",
+                "  \"decision_gate_scope\": \"candidate/orig ratio median below 1.0 and more than 2x the A/A null median-CI half-width from 1.0; every CV is descriptive only\",\n",
+                "  \"all_size_median_ci_gate_pass\": {all_size_median_ci_gate_pass},\n",
                 "  \"all_size_candidate_beats_orig\": {all_size_candidate_beats_orig},\n",
                 "  \"production_allocator_self_pct\": {production_allocator_self_pct:.6},\n",
                 "  \"production_malloc_self_pct\": {production_malloc_self_pct:.6},\n",
@@ -1822,7 +2083,7 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
             sizes = SIZES,
             operations_per_microblock = OPERATIONS_PER_MICROBLOCK,
             permutation_cycles = PERMUTATION_CYCLES_PER_SAMPLE,
-            all_size_cv_gate_pass = all_size_cv_gate_pass,
+            all_size_median_ci_gate_pass = all_size_median_ci_gate_pass,
             all_size_candidate_beats_orig = all_size_candidate_beats_orig,
             production_allocator_self_pct = profile.allocator_self_pct,
             production_malloc_self_pct = profile.allocator_malloc_self_pct,
@@ -1860,7 +2121,7 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
     );
 
     println!(
-        "MALLOC_SEGMENT_PRODUCTION_GATE sizes={} samples_per_size={RAW_SAMPLES} all_size_cv_gate_pass={all_size_cv_gate_pass} all_size_candidate_beats_orig={all_size_candidate_beats_orig}",
+        "MALLOC_SEGMENT_PRODUCTION_GATE sizes={} samples_per_size={RAW_SAMPLES} all_size_median_ci_gate_pass={all_size_median_ci_gate_pass} all_size_candidate_beats_orig={all_size_candidate_beats_orig} cv_role=descriptive_only",
         SIZES.len(),
     );
     println!(
@@ -2387,4 +2648,15 @@ criterion_group!(
     bench_segment_production_paired,
     bench_flat_combining_vs_lock_contention
 );
-criterion_main!(benches);
+
+fn main() {
+    let identity = bench_executable_identity();
+    println!(
+        "bench_elf_sha256={} executable_bytes={} executable={}",
+        identity.sha256,
+        identity.bytes,
+        identity.path.display()
+    );
+    benches();
+    Criterion::default().configure_from_args().final_summary();
+}

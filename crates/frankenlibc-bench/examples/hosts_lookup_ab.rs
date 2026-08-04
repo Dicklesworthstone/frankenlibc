@@ -1,35 +1,73 @@
-//! Truly-interleaved paired A/B for the `/etc/hosts` lookup path (cc_fl/BlackThrush, bd-0p00be).
+//! Same-invocation A/A + A/B for the allocation-free `/etc/hosts` scanner.
 //!
-//! WHY NOT CRITERION. Registering ORIG and CAND as two members of one criterion group does NOT
-//! cancel worker/thermal drift: criterion runs group members *sequentially*, so each arm sees a
-//! different slice of machine time. This sampler alternates the two arms **within a single
-//! measured routine** — one ORIG call and one CAND call per paired sample, order swapped every
-//! sample — so drift lands on both arms equally and the per-sample ratio is drift-cancelled.
-//! Host glibc is a third interleaved arm, resolved via `dlmopen` so it cannot bind our own
-//! `#[no_mangle]` symbols.
+//! Prior deployed-ABI reruns mixed the scanner with environment, metadata, and
+//! file-backed cache work. Their source-identical null arms had real dispersion
+//! even with 500 ms blocks. This workload isolates the shipped lever on one
+//! immutable in-memory hosts snapshot while rotating hit, multi-hit, case-folded,
+//! and miss queries. It reconstructs the old allocating `lookup_hosts` scanner
+//! and compares it with the deployed allocation-free `for_each_hosts_match`.
 //!
-//! BLACK_BOX DISCIPLINE. Every input is fed through `black_box` and every result is consumed
-//! through `black_box`, so no arm can be dead-code-eliminated. `verify()` additionally asserts
-//! the arms agree before any timing runs — a DCE'd arm cannot satisfy that.
+//! The binary prints its own SHA-256 before any oracle or timing output. A
+//! source-identical candidate/candidate null is measured in the same invocation.
+//! Bootstrap median CIs and the 2x null-half-width rule decide the result; CV is
+//! descriptive only.
 //!
-//! Run: `rch exec -- cargo run --release -p frankenlibc-bench --features abi-bench --example hosts_lookup_ab`
+//! Run: `RCH_REQUIRE_REMOTE=1 RCH_WORKER=<worker> rch exec -- cargo bench -j4 --profile release \
+//!       -p frankenlibc-bench --features abi-bench --bench hosts_lookup_ab -- --noplot`
 
-use std::ffi::{CStr, c_char, c_void};
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_abi::resolv_abi as fl;
+use frankenlibc_core::resolv::{for_each_hosts_match, lookup_hosts};
+use sha2::{Digest, Sha256};
 
-/// Paired samples. Each sample times ORIG once and CAND once, alternating which goes first.
-const SAMPLES: usize = 2000;
-/// Leading samples discarded (page-cache / branch warm-up).
-const WARMUP: usize = 100;
-/// Calls per arm per sample.
-const REPS: usize = 20;
+const SAMPLES: usize = 37;
+const WARMUP: usize = 4;
+const REPS: usize = 50_000;
+const BOOTSTRAP_RESAMPLES: usize = 4096;
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const QUERIES: [&[u8]; 8] = [
+    b"localhost",
+    b"cache",
+    b"gateway",
+    b"API",
+    b"database",
+    b"edge",
+    b"dual",
+    b"absent",
+];
+const HOSTS_FIXTURE: &[u8] = b"\
+# deterministic in-memory /etc/hosts snapshot
+127.0.0.1 localhost localhost.localdomain
+::1 localhost ip6-localhost
+10.0.0.1 gateway gw
+10.0.0.2 cache cache-a
+10.0.0.3 cache cache-b
+10.0.0.4 api API.internal
+10.0.0.5 database db
+10.0.0.6 worker-01
+10.0.0.7 worker-02
+10.0.0.8 worker-03
+192.0.2.10 edge edge-v4
+2001:db8::10 edge edge-v6
+192.0.2.11 dual
+2001:db8::11 dual
+198.51.100.12 metrics
+198.51.100.13 logs
+203.0.113.14 auth
+203.0.113.15 queue
+203.0.113.16 object-store
+203.0.113.17 mail
+203.0.113.18 ntp
+bad-address ignored-host
+192.0.2.19
+";
 
 fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).expect("no NaN timings"));
+    v.sort_by(f64::total_cmp);
     let n = v.len();
     if n % 2 == 0 {
         (v[n / 2 - 1] + v[n / 2]) / 2.0
@@ -42,6 +80,49 @@ fn mean(xs: &[f64]) -> f64 {
     xs.iter().sum::<f64>() / xs.len() as f64
 }
 
+fn self_identity() -> String {
+    let Ok(path) = std::env::current_exe() else {
+        return "unavailable".into();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return "unavailable".into();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut digest_hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut digest_hex, "{byte:02x}").expect("write SHA-256 hex");
+    }
+    format!("{} ({} bytes) {}", digest_hex, bytes.len(), path.display())
+}
+
+fn median_absolute_deviation(xs: &[f64], center: f64) -> f64 {
+    median(
+        &xs.iter()
+            .map(|value| (value - center).abs())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn bootstrap_median_ci95(xs: &[f64]) -> (f64, f64) {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ xs.len() as u64;
+    let mut medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
+    let mut resample = vec![0.0; xs.len()];
+    for _ in 0..BOOTSTRAP_RESAMPLES {
+        for value in &mut resample {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *value = xs[(state as usize) % xs.len()];
+        }
+        medians.push(median(&resample));
+    }
+    medians.sort_by(f64::total_cmp);
+    let low = (BOOTSTRAP_RESAMPLES * 25) / 1000;
+    let high = ((BOOTSTRAP_RESAMPLES * 975) / 1000).min(BOOTSTRAP_RESAMPLES - 1);
+    (medians[low], medians[high])
+}
+
 fn cv_pct(xs: &[f64]) -> f64 {
     let m = mean(xs);
     if m == 0.0 {
@@ -51,165 +132,188 @@ fn cv_pct(xs: &[f64]) -> f64 {
     100.0 * var.sqrt() / m
 }
 
-/// CAND: the deployed, allocation-free hosts walk (borrowed backend, `for_each_hosts_match`).
-#[inline(never)]
-fn cand(name: &[u8]) -> u32 {
-    let mut acc = 0u32;
-    for _ in 0..REPS {
-        let h = unsafe { fl::gethostbyname(black_box(c"localhost").as_ptr()) };
-        assert!(!h.is_null(), "fl gethostbyname(localhost) returned NULL");
-        // Consume the resolved address so nothing can be elided.
-        let hp = h.cast::<libc::hostent>();
-        let addr = unsafe { *(*hp).h_addr_list.read().cast::<u32>() };
-        acc = acc.wrapping_add(black_box(addr));
+fn fold_address(mut fingerprint: u64, address: &[u8]) -> u64 {
+    for &byte in address {
+        fingerprint ^= u64::from(byte);
+        fingerprint = fingerprint.wrapping_mul(FNV_PRIME);
     }
-    black_box(name);
-    black_box(acc)
+    fingerprint ^ 0xff
 }
 
-/// ORIG: reconstructs the removed per-call work in-process — a clone of the whole `/etc/hosts`
-/// plus `lookup_hosts`, which `parse_hosts_line`-allocates every line — then runs the deployed
-/// call. It therefore OVERSTATES ORIG by the deployed walk, making the measured ratio an
-/// UNDER-estimate of the speedup.
-#[inline(never)]
-fn orig(name: &[u8]) -> u32 {
-    let mut acc = 0u32;
-    for _ in 0..REPS {
-        fl::bench_legacy_hosts_scan(black_box(name));
-        let h = unsafe { fl::gethostbyname(black_box(c"localhost").as_ptr()) };
-        assert!(!h.is_null());
-        let hp = h.cast::<libc::hostent>();
-        let addr = unsafe { *(*hp).h_addr_list.read().cast::<u32>() };
-        acc = acc.wrapping_add(black_box(addr));
+fn scan_orig(content: &[u8], query: &[u8]) -> (usize, u64) {
+    let addresses = lookup_hosts(content, query);
+    let mut fingerprint = FNV_OFFSET;
+    for address in &addresses {
+        fingerprint = fold_address(fingerprint, address);
     }
-    black_box(acc)
+    black_box(&addresses);
+    (addresses.len(), fingerprint)
 }
 
-type GetHostByName = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
+fn scan_candidate(content: &[u8], query: &[u8]) -> (usize, u64) {
+    let mut count = 0usize;
+    let mut fingerprint = FNV_OFFSET;
+    for_each_hosts_match(content, query, |address| {
+        count += 1;
+        fingerprint = fold_address(fingerprint, address);
+        false
+    });
+    (count, fingerprint)
+}
 
-/// Host glibc in a private namespace, so `gethostbyname` cannot bind our exported symbol.
-fn host_gethostbyname() -> GetHostByName {
-    unsafe {
-        let handle = libc::dlmopen(
-            libc::LM_ID_NEWLM,
-            c"libc.so.6".as_ptr(),
-            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+#[inline(never)]
+fn run_orig() -> u64 {
+    let mut accumulator = 0u64;
+    for index in 0..REPS {
+        let query = black_box(QUERIES[index & (QUERIES.len() - 1)]);
+        let (count, fingerprint) = scan_orig(black_box(HOSTS_FIXTURE), query);
+        accumulator = accumulator.rotate_left(7) ^ fingerprint ^ count as u64;
+    }
+    black_box(accumulator)
+}
+
+#[inline(never)]
+fn run_candidate() -> u64 {
+    let mut accumulator = 0u64;
+    for index in 0..REPS {
+        let query = black_box(QUERIES[index & (QUERIES.len() - 1)]);
+        let (count, fingerprint) = scan_candidate(black_box(HOSTS_FIXTURE), query);
+        accumulator = accumulator.rotate_left(7) ^ fingerprint ^ count as u64;
+    }
+    black_box(accumulator)
+}
+
+fn verify() {
+    for query in QUERIES {
+        let expected = lookup_hosts(HOSTS_FIXTURE, query);
+        let mut actual = Vec::new();
+        for_each_hosts_match(HOSTS_FIXTURE, query, |address| {
+            actual.push(address.to_vec());
+            false
+        });
+        assert_eq!(actual, expected, "scanner mismatch for query {query:?}");
+        assert_eq!(
+            scan_candidate(HOSTS_FIXTURE, query),
+            scan_orig(HOSTS_FIXTURE, query),
+            "consumed outcome mismatch for query {query:?}"
         );
-        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
-        let s = libc::dlsym(handle, c"gethostbyname".as_ptr());
-        assert!(!s.is_null(), "dlsym gethostbyname failed");
-        std::mem::transmute::<*mut c_void, GetHostByName>(s)
     }
-}
-
-#[inline(never)]
-fn host(f: GetHostByName) -> u32 {
-    let mut acc = 0u32;
-    for _ in 0..REPS {
-        let h = unsafe { f(black_box(c"localhost").as_ptr()) };
-        assert!(!h.is_null(), "host gethostbyname(localhost) returned NULL");
-        let addr = unsafe { *(*h).h_addr_list.read().cast::<u32>() };
-        acc = acc.wrapping_add(black_box(addr));
-    }
-    black_box(acc)
-}
-
-/// Byte-identity: the deployed path, the reconstructed-ORIG path and host glibc must all resolve
-/// `localhost` to the same address. Runs before timing, so a dead-code arm cannot pass.
-fn verify(hf: GetHostByName) {
-    let fl_h = unsafe { fl::gethostbyname(c"localhost".as_ptr()) };
-    assert!(!fl_h.is_null());
-    let fl_hp = fl_h.cast::<libc::hostent>();
-    let fl_addr = unsafe { *(*fl_hp).h_addr_list.read().cast::<u32>() };
-    let fl_name = unsafe { CStr::from_ptr((*fl_hp).h_name) };
-
-    let h_h = unsafe { hf(c"localhost".as_ptr()) };
-    assert!(!h_h.is_null());
-    let h_addr = unsafe { *(*h_h).h_addr_list.read().cast::<u32>() };
-    let h_name = unsafe { CStr::from_ptr((*h_h).h_name) };
-
-    assert_eq!(fl_addr, h_addr, "fl vs host glibc address mismatch");
-    assert_eq!(fl_name, h_name, "fl vs host glibc canonical name mismatch");
-    println!("verify: OK (fl == host glibc for gethostbyname(localhost): {fl_name:?})");
+    assert_eq!(run_candidate(), run_orig(), "batched consumption mismatch");
+    println!(
+        "verify: OK (allocation-free scanner == allocating lookup_hosts for {} rotating queries)",
+        QUERIES.len()
+    );
 }
 
 fn main() {
-    let hf = host_gethostbyname();
-    verify(hf);
+    println!("BENCH_ELF_SHA256 {}", self_identity());
+    verify();
 
-    let name: &[u8] = b"localhost";
-    let mut o = Vec::with_capacity(SAMPLES);
-    let mut c = Vec::with_capacity(SAMPLES);
-    let mut g = Vec::with_capacity(SAMPLES);
+    let mut orig = Vec::with_capacity(SAMPLES - WARMUP);
+    let mut candidate = Vec::with_capacity(SAMPLES - WARMUP);
+    let mut null_a = Vec::with_capacity(SAMPLES - WARMUP);
+    let mut null_b = Vec::with_capacity(SAMPLES - WARMUP);
 
-    for i in 0..SAMPLES {
-        // Alternate arm order every sample so neither arm systematically leads.
-        let (t_o, t_c) = if i % 2 == 0 {
-            let s = Instant::now();
-            black_box(orig(name));
-            let a = s.elapsed();
-            let s = Instant::now();
-            black_box(cand(name));
-            let b = s.elapsed();
+    for sample in 0..SAMPLES {
+        let (t_null_a, t_null_b) = if sample % 2 == 0 {
+            let start = Instant::now();
+            black_box(run_candidate());
+            let a = start.elapsed();
+            let start = Instant::now();
+            black_box(run_candidate());
+            let b = start.elapsed();
             (a, b)
         } else {
-            let s = Instant::now();
-            black_box(cand(name));
-            let b = s.elapsed();
-            let s = Instant::now();
-            black_box(orig(name));
-            let a = s.elapsed();
+            let start = Instant::now();
+            black_box(run_candidate());
+            let b = start.elapsed();
+            let start = Instant::now();
+            black_box(run_candidate());
+            let a = start.elapsed();
             (a, b)
         };
-        let s = Instant::now();
-        black_box(host(hf));
-        let t_g = s.elapsed();
+        let (t_orig, t_candidate) = if sample % 2 == 0 {
+            let start = Instant::now();
+            black_box(run_orig());
+            let a = start.elapsed();
+            let start = Instant::now();
+            black_box(run_candidate());
+            let b = start.elapsed();
+            (a, b)
+        } else {
+            let start = Instant::now();
+            black_box(run_candidate());
+            let b = start.elapsed();
+            let start = Instant::now();
+            black_box(run_orig());
+            let a = start.elapsed();
+            (a, b)
+        };
 
-        if i >= WARMUP {
-            o.push(t_o.as_nanos() as f64 / REPS as f64);
-            c.push(t_c.as_nanos() as f64 / REPS as f64);
-            g.push(t_g.as_nanos() as f64 / REPS as f64);
+        if sample >= WARMUP {
+            orig.push(t_orig.as_nanos() as f64 / REPS as f64);
+            candidate.push(t_candidate.as_nanos() as f64 / REPS as f64);
+            null_a.push(t_null_a.as_nanos() as f64 / REPS as f64);
+            null_b.push(t_null_b.as_nanos() as f64 / REPS as f64);
         }
     }
 
-    // Per-sample paired ratio: drift within a sample hits both arms, so the ratio cancels it.
-    let paired: Vec<f64> = c.iter().zip(o.iter()).map(|(cc, oo)| cc / oo).collect();
+    let paired: Vec<f64> = candidate
+        .iter()
+        .zip(&orig)
+        .map(|(candidate_ns, orig_ns)| candidate_ns / orig_ns)
+        .collect();
+    let null_paired: Vec<f64> = null_b
+        .iter()
+        .zip(&null_a)
+        .map(|(b_ns, a_ns)| b_ns / a_ns)
+        .collect();
+    let paired_median = median(&paired);
+    let null_median = median(&null_paired);
+    let (paired_low, paired_high) = bootstrap_median_ci95(&paired);
+    let (null_low, null_high) = bootstrap_median_ci95(&null_paired);
+    let null_half_width = (1.0 - null_low).abs().max((null_high - 1.0).abs());
+    let paired_clears_null = (paired_median - 1.0).abs() > 2.0 * null_half_width;
+    let paired_excludes_one = paired_high < 1.0 || paired_low > 1.0;
+    let verdict = if paired_clears_null && paired_excludes_one && paired_median < 1.0 {
+        "KEEP"
+    } else if paired_clears_null && paired_excludes_one {
+        "REJECT"
+    } else {
+        "UNDECIDABLE"
+    };
 
     println!(
-        "HOSTS_LOOKUP_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
-        o.len()
+        "HOSTS_LOOKUP_IN_MEMORY_AB samples={} reps/arm={REPS} queries={} \
+         (immutable snapshot, interleaved, order alternated)",
+        orig.len(),
+        QUERIES.len()
     );
     println!(
-        "  orig(clone+parse) median {:8.2} ns/call  mean {:8.2}  cv={:5.2}%",
-        median(&o),
-        mean(&o),
-        cv_pct(&o)
+        "  orig(allocating lookup_hosts) median {:8.2} ns/call  mean {:8.2}  cv={:5.2}%",
+        median(&orig),
+        mean(&orig),
+        cv_pct(&orig)
     );
     println!(
-        "  cand(borrow+scan)  median {:8.2} ns/call  mean {:8.2}  cv={:5.2}%",
-        median(&c),
-        mean(&c),
-        cv_pct(&c)
+        "  candidate(allocation-free)    median {:8.2} ns/call  mean {:8.2}  cv={:5.2}%",
+        median(&candidate),
+        mean(&candidate),
+        cv_pct(&candidate)
     );
     println!(
-        "  host glibc         median {:8.2} ns/call  mean {:8.2}  cv={:5.2}%",
-        median(&g),
-        mean(&g),
-        cv_pct(&g)
+        "HOSTS_LOOKUP_IN_MEMORY_CONTRACT kind=null_candidate_candidate \
+         ratio_median={null_median:.6} ratio_ci95=[{null_low:.6},{null_high:.6}] \
+         ratio_cv_pct={:.3} ratio_mad={:.6}",
+        cv_pct(&null_paired),
+        median_absolute_deviation(&null_paired, null_median),
     );
     println!(
-        "  PAIRED cand/orig: median {:.4} ({:.2}x faster)  cv={:.2}%",
-        median(&paired),
-        1.0 / median(&paired),
-        cv_pct(&paired)
-    );
-    println!(
-        "  cand/glibc: median {:.3}x ({})",
-        median(&c) / median(&g),
-        if median(&c) <= median(&g) {
-            "WIN"
-        } else {
-            "LOSS"
-        }
+        "HOSTS_LOOKUP_IN_MEMORY_CONTRACT kind=candidate_orig \
+         ratio_median={paired_median:.6} ratio_ci95=[{paired_low:.6},{paired_high:.6}] \
+         ratio_cv_pct={:.3} ratio_mad={:.6} null_half_width={null_half_width:.6} \
+         clears_2x_null={paired_clears_null} verdict={verdict}",
+        cv_pct(&paired),
+        median_absolute_deviation(&paired, paired_median),
     );
 }

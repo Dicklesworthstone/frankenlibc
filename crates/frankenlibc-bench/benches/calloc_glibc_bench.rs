@@ -15,11 +15,13 @@
 //! `calloc`/`free` so pointers never cross allocators.
 
 use std::ffi::c_void;
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
+use sha2::{Digest, Sha256};
 
 type CallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 type ReallocFn = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
@@ -29,6 +31,169 @@ struct HostAllocator {
     calloc: CallocFn,
     realloc: ReallocFn,
     free: FreeFn,
+}
+
+const PAIRED_ROUNDS: usize = 21;
+const BOOTSTRAP_RESAMPLES: usize = 4096;
+const MIN_ARM_SAMPLE_NS: u128 = 2_000_000;
+const MAX_PAIRED_ITERS: u64 = 1 << 20;
+
+/// SHA-256 of this executable, reported from inside the measured process.
+fn self_identity() -> String {
+    let Ok(path) = std::env::current_exe() else {
+        return "unavailable".into();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return "unavailable".into();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut digest_hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut digest_hex, "{byte:02x}").expect("write SHA-256 hex");
+    }
+    format!("{} ({} bytes) {}", digest_hex, bytes.len(), path.display())
+}
+
+#[derive(Debug)]
+struct PairedStats {
+    p50_a_ns: f64,
+    p50_b_ns: f64,
+    ratio_p50: f64,
+    ratio_cv_pct: f64,
+    ratio_mad: f64,
+    ratio_ci95_low: f64,
+    ratio_ci95_high: f64,
+    checksum: u64,
+}
+
+fn median(values: &[f64]) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    sorted[sorted.len() / 2]
+}
+
+fn coefficient_of_variation_pct(values: &[f64]) -> f64 {
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    if values.len() < 2 || mean == 0.0 {
+        return 0.0;
+    }
+    let variance = values
+        .iter()
+        .map(|value| {
+            let delta = value - mean;
+            delta * delta
+        })
+        .sum::<f64>()
+        / (values.len() - 1) as f64;
+    100.0 * variance.sqrt() / mean
+}
+
+fn median_absolute_deviation(values: &[f64], center: f64) -> f64 {
+    let deviations = values
+        .iter()
+        .map(|value| (value - center).abs())
+        .collect::<Vec<_>>();
+    median(&deviations)
+}
+
+fn bootstrap_median_ci95(values: &[f64]) -> (f64, f64) {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ values.len() as u64;
+    let mut resampled_medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
+    let mut resample = vec![0.0; values.len()];
+    for _ in 0..BOOTSTRAP_RESAMPLES {
+        for value in &mut resample {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *value = values[(state as usize) % values.len()];
+        }
+        resampled_medians.push(median(&resample));
+    }
+    resampled_medians.sort_by(f64::total_cmp);
+    let low = (BOOTSTRAP_RESAMPLES * 25) / 1000;
+    let high = ((BOOTSTRAP_RESAMPLES * 975) / 1000).min(BOOTSTRAP_RESAMPLES - 1);
+    (resampled_medians[low], resampled_medians[high])
+}
+
+fn time_arm(iters: u64, arm: &mut impl FnMut() -> u64) -> (f64, u64) {
+    let start = Instant::now();
+    let mut checksum = 0u64;
+    for iteration in 0..iters {
+        checksum =
+            checksum.rotate_left(11) ^ black_box(arm()) ^ iteration.wrapping_mul(0x9e37_79b9);
+    }
+    (
+        start.elapsed().as_nanos() as f64 / iters.max(1) as f64,
+        black_box(checksum),
+    )
+}
+
+/// Time both arms back-to-back in every round, alternating their order.
+///
+/// The decision statistic is the median of the per-round A/B ratios. CV is
+/// descriptive provenance only; the bootstrap interval on the median is the
+/// acceptance instrument.
+fn paired(
+    rounds: usize,
+    iters: u64,
+    mut arm_a: impl FnMut() -> u64,
+    mut arm_b: impl FnMut() -> u64,
+) -> PairedStats {
+    let mut samples_a = Vec::with_capacity(rounds);
+    let mut samples_b = Vec::with_capacity(rounds);
+    let mut ratios = Vec::with_capacity(rounds);
+    let mut checksum = 0u64;
+
+    for round in 0..rounds {
+        let ((elapsed_a, checksum_a), (elapsed_b, checksum_b)) = if round.is_multiple_of(2) {
+            (time_arm(iters, &mut arm_a), time_arm(iters, &mut arm_b))
+        } else {
+            let b = time_arm(iters, &mut arm_b);
+            let a = time_arm(iters, &mut arm_a);
+            (a, b)
+        };
+        samples_a.push(elapsed_a);
+        samples_b.push(elapsed_b);
+        ratios.push(elapsed_a / elapsed_b.max(f64::MIN_POSITIVE));
+        checksum = checksum.rotate_left(7) ^ checksum_a ^ checksum_b.rotate_left(1);
+    }
+
+    let ratio_p50 = median(&ratios);
+    let (ratio_ci95_low, ratio_ci95_high) = bootstrap_median_ci95(&ratios);
+    PairedStats {
+        p50_a_ns: median(&samples_a),
+        p50_b_ns: median(&samples_b),
+        ratio_p50,
+        ratio_cv_pct: coefficient_of_variation_pct(&ratios),
+        ratio_mad: median_absolute_deviation(&ratios, ratio_p50),
+        ratio_ci95_low,
+        ratio_ci95_high,
+        checksum: black_box(checksum),
+    }
+}
+
+fn claim_clears_null_with_2x_margin(null: &PairedStats, claim_ratio: f64) -> bool {
+    let null_half_width = (1.0 - null.ratio_ci95_low)
+        .abs()
+        .max((null.ratio_ci95_high - 1.0).abs());
+    (claim_ratio - 1.0).abs() > 2.0 * null_half_width
+}
+
+fn report_pair(kind: &str, size: usize, iters: u64, stats: &PairedStats) {
+    println!(
+        "CALLOC_BENCH_CONTRACT kind={kind} size={size} rounds={PAIRED_ROUNDS} iters={iters} \
+         p50_a_ns={:.3} p50_b_ns={:.3} ratio_median={:.6} \
+         ratio_ci95=[{:.6},{:.6}] ratio_cv_pct={:.3} ratio_mad={:.6} checksum={}",
+        stats.p50_a_ns,
+        stats.p50_b_ns,
+        stats.ratio_p50,
+        stats.ratio_ci95_low,
+        stats.ratio_ci95_high,
+        stats.ratio_cv_pct,
+        stats.ratio_mad,
+        stats.checksum,
+    );
 }
 
 /// Resolve a pristine host glibc allocator in an isolated link
@@ -146,6 +311,72 @@ fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
 /// large (>128K mmap-threshold, kernel-zeroed, where the redundant memset is the
 /// whole cost) regimes.
 const SIZES: &[usize] = &[16, 256, 4096, 65_536, 262_144, 1_048_576, 4_194_304];
+
+fn fl_calloc_cycle(size: usize) -> u64 {
+    // SAFETY: the benchmark checks the allocation before reading its first byte
+    // and returns the pointer to the same FrankenLibC allocator.
+    unsafe {
+        let ptr = frankenlibc_abi::malloc_abi::calloc(1, size);
+        assert!(!ptr.is_null(), "FrankenLibC calloc failed in paired bench");
+        let first = ptr.cast::<u8>().read_volatile();
+        frankenlibc_abi::malloc_abi::free(ptr);
+        (ptr as usize as u64).rotate_left(17) ^ u64::from(first)
+    }
+}
+
+fn host_calloc_cycle(size: usize, host: &HostAllocator) -> u64 {
+    // SAFETY: the benchmark checks the allocation before reading its first byte
+    // and returns the pointer to the same isolated host allocator.
+    unsafe {
+        let ptr = (host.calloc)(1, size);
+        assert!(!ptr.is_null(), "host glibc calloc failed in paired bench");
+        let first = ptr.cast::<u8>().read_volatile();
+        (host.free)(ptr);
+        (ptr as usize as u64).rotate_left(17) ^ u64::from(first)
+    }
+}
+
+fn calibrate_paired_iters(arm_a: &mut impl FnMut() -> u64, arm_b: &mut impl FnMut() -> u64) -> u64 {
+    let mut iters = 1u64;
+    loop {
+        let (a_ns_per_op, _) = time_arm(iters, arm_a);
+        let (b_ns_per_op, _) = time_arm(iters, arm_b);
+        let faster_total_ns = a_ns_per_op.min(b_ns_per_op) * iters as f64;
+        if faster_total_ns >= MIN_ARM_SAMPLE_NS as f64 || iters >= MAX_PAIRED_ITERS {
+            return iters;
+        }
+        iters = iters.saturating_mul(2).min(MAX_PAIRED_ITERS);
+    }
+}
+
+fn run_bench_contract() {
+    let host = host_allocator();
+    for &size in SIZES {
+        let mut calibrate_a = || fl_calloc_cycle(size);
+        let mut calibrate_b = || host_calloc_cycle(size, host);
+        let iters = calibrate_paired_iters(&mut calibrate_a, &mut calibrate_b);
+
+        let null = paired(
+            PAIRED_ROUNDS,
+            iters,
+            || fl_calloc_cycle(size),
+            || fl_calloc_cycle(size),
+        );
+        let real = paired(
+            PAIRED_ROUNDS,
+            iters,
+            || fl_calloc_cycle(size),
+            || host_calloc_cycle(size, host),
+        );
+        report_pair("null", size, iters, &null);
+        report_pair("real", size, iters, &real);
+        println!(
+            "CALLOC_BENCH_GATE size={size} ratio_fl_over_glibc={:.6} decidable_2x_margin={}",
+            real.ratio_p50,
+            claim_clears_null_with_2x_margin(&null, real.ratio_p50),
+        );
+    }
+}
 
 fn bench_calloc(c: &mut Criterion) {
     let host = host_allocator();
@@ -320,4 +551,9 @@ fn bench_realloc(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bench_calloc, bench_realloc);
-criterion_main!(benches);
+
+fn main() {
+    println!("bench_elf_sha256={}", self_identity());
+    run_bench_contract();
+    benches();
+}

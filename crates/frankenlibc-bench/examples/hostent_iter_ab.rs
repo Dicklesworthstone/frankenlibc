@@ -13,8 +13,8 @@
 //! it. `verify()` asserts fl and host glibc agree on the number of drained entries and on the first
 //! canonical name before any timing — a dead-code-eliminated arm cannot satisfy that.
 //!
-//! Run: `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release \
-//!       -p frankenlibc-bench --features abi-bench --example hostent_iter_ab`
+//! Run: `RCH_REQUIRE_REMOTE=1 RCH_WORKER=<worker> rch exec -- cargo bench -j4 --profile release \
+//!       -p frankenlibc-bench --features abi-bench --bench hostent_iter_ab -- --noplot`
 
 use std::ffi::{CStr, c_int, c_void};
 use std::hint::black_box;
@@ -22,8 +22,21 @@ use std::time::Instant;
 
 use frankenlibc_abi::resolv_abi as fl;
 
-const SAMPLES: usize = 1200;
-const WARMUP: usize = 100;
+const SAMPLES: usize = 240;
+const WARMUP: usize = 40;
+const DRAINS_PER_ARM: usize = 200;
+
+#[inline(never)]
+fn repeat_arm(mut arm: impl FnMut() -> (u32, u8)) -> (u32, u8) {
+    let mut entries = 0u32;
+    let mut first = 0u8;
+    for _ in 0..DRAINS_PER_ARM {
+        let (n, byte) = arm();
+        entries = entries.wrapping_add(n);
+        first ^= byte;
+    }
+    (black_box(entries), black_box(first))
+}
 
 /// Drain the fl iterator, returning (entries, first-name-first-byte).
 #[inline(never)]
@@ -187,40 +200,66 @@ fn main() {
     let mut o = Vec::with_capacity(SAMPLES);
     let mut c = Vec::with_capacity(SAMPLES);
     let mut g = Vec::with_capacity(SAMPLES);
+    let mut null_a = Vec::with_capacity(SAMPLES);
+    let mut null_b = Vec::with_capacity(SAMPLES);
 
     for i in 0..SAMPLES {
-        let (t_o, t_c) = if i % 2 == 0 {
+        let (t_null_a, t_null_b) = if i % 2 == 0 {
             let s = Instant::now();
-            black_box(orig());
+            black_box(repeat_arm(cand));
             let a = s.elapsed();
             let s = Instant::now();
-            black_box(cand());
+            black_box(repeat_arm(cand));
             let b = s.elapsed();
             (a, b)
         } else {
             let s = Instant::now();
-            black_box(cand());
+            black_box(repeat_arm(cand));
             let b = s.elapsed();
             let s = Instant::now();
-            black_box(orig());
+            black_box(repeat_arm(cand));
+            let a = s.elapsed();
+            (a, b)
+        };
+        let (t_o, t_c) = if i % 2 == 0 {
+            let s = Instant::now();
+            black_box(repeat_arm(orig));
+            let a = s.elapsed();
+            let s = Instant::now();
+            black_box(repeat_arm(cand));
+            let b = s.elapsed();
+            (a, b)
+        } else {
+            let s = Instant::now();
+            black_box(repeat_arm(cand));
+            let b = s.elapsed();
+            let s = Instant::now();
+            black_box(repeat_arm(orig));
             let a = s.elapsed();
             (a, b)
         };
         let s = Instant::now();
-        black_box(host(h));
+        black_box(repeat_arm(|| host(h)));
         let t_g = s.elapsed();
 
         if i >= WARMUP {
-            o.push(t_o.as_nanos() as f64);
-            c.push(t_c.as_nanos() as f64);
-            g.push(t_g.as_nanos() as f64);
+            o.push(t_o.as_nanos() as f64 / DRAINS_PER_ARM as f64);
+            c.push(t_c.as_nanos() as f64 / DRAINS_PER_ARM as f64);
+            g.push(t_g.as_nanos() as f64 / DRAINS_PER_ARM as f64);
+            null_a.push(t_null_a.as_nanos() as f64 / DRAINS_PER_ARM as f64);
+            null_b.push(t_null_b.as_nanos() as f64 / DRAINS_PER_ARM as f64);
         }
     }
 
     let paired: Vec<f64> = c.iter().zip(o.iter()).map(|(cc, oo)| cc / oo).collect();
+    let null_paired: Vec<f64> = null_b
+        .iter()
+        .zip(null_a.iter())
+        .map(|(bb, aa)| bb / aa)
+        .collect();
 
     println!(
-        "HOSTENT_ITER_AB samples={} (interleaved, order alternated; ns per FULL drain)",
+        "HOSTENT_ITER_AB samples={} drains/arm={DRAINS_PER_ARM} (interleaved; ns per FULL drain)",
         o.len()
     );
     println!(
@@ -240,6 +279,13 @@ fn main() {
         median(&g),
         mean(&g),
         cv_pct(&g)
+    );
+    println!(
+        "  NULL cand/cand: median {:.4}  cv={:.2}%  arms cv={:.2}%/{:.2}%",
+        median(&null_paired),
+        cv_pct(&null_paired),
+        cv_pct(&null_a),
+        cv_pct(&null_b)
     );
     println!(
         "  PAIRED cand/orig: median {:.4} ({:.2}x faster)  cv={:.2}%",

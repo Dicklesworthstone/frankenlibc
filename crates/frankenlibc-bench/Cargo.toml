@@ -21,6 +21,7 @@ frankenlibc-abi = { workspace = true, optional = true }
 criterion = { workspace = true }
 libc = { workspace = true }
 libm = "0.2.16"
+sha2 = { workspace = true }
 
 [[example]]
 name = "wmemrchr_strict_ab"
@@ -29,6 +30,11 @@ required-features = ["abi-bench"]
 
 [[example]]
 name = "stdio_mapper_mt_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "stdio_fread_mem_mt_ab"
 harness = false
 required-features = ["abi-bench"]
 
@@ -74,6 +80,29 @@ required-features = ["abi-bench"]
 
 [[example]]
 name = "getaddrinfo_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "e2e_workloads_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "hosts_lookup_ab"
+path = "examples/hosts_lookup_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "hosts_reverse_ab"
+path = "examples/hosts_reverse_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "hostent_iter_ab"
+path = "examples/hostent_iter_ab.rs"
 harness = false
 required-features = ["abi-bench"]
 
@@ -291,6 +320,24 @@ name = "wcsftime_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[bench]]
+name = "wcsftime_ab"
+path = "examples/wcsftime_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "textdomain_ab"
+path = "examples/textdomain_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "strftime_exact_ab"
+path = "examples/wcsftime_survey.rs"
+harness = false
+required-features = ["abi-bench"]
+
 [[example]]
 name = "wcsftime_l_ab"
 harness = false
@@ -303,6 +350,11 @@ required-features = ["abi-bench"]
 
 [[example]]
 name = "swprintf_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "snprintf_d_ab"
 harness = false
 required-features = ["abi-bench"]
 
