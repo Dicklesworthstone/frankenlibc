@@ -1662,36 +1662,36 @@ pub unsafe extern "C" fn __res_state() -> *mut c_void {
 
 fn hostname_labels_ok(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
-        return false;
+        return true;
     }
 
     let mut label_len: usize = 0;
-    let mut last = b'.';
+    let mut at_label_start = true;
     for &c in bytes {
         if c == b'.' {
-            if label_len == 0 || last == b'-' {
+            if label_len == 0 {
                 return false;
             }
             label_len = 0;
-            last = c;
-        } else if c.is_ascii_alphanumeric() || c == b'-' {
-            if label_len == 0 && c == b'-' {
+            at_label_start = true;
+        } else if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' {
+            if at_label_start && c == b'-' {
                 return false;
             }
             label_len += 1;
             if label_len > 63 {
                 return false;
             }
-            last = c;
+            at_label_start = false;
         } else {
             return false;
         }
     }
 
-    label_len != 0 && last != b'-'
+    label_len != 0 || bytes.last() == Some(&b'.')
 }
 
-// res_hnok: hostname — letters, digits, hyphens only (RFC 952)
+// res_hnok: glibc-compatible hostname-label predicate.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_hnok(dn: *const c_char) -> c_int {
     let Some(bytes) = (unsafe { dns_c_string_bytes(dn) }) else {
