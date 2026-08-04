@@ -905,8 +905,17 @@ pub unsafe extern "C" fn setuid(uid: libc::uid_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn seteuid(euid: libc::uid_t) -> c_int {
-    // seteuid(euid) == setreuid(-1, euid)
-    match syscall::sys_setreuid(libc::uid_t::MAX, euid) {
+    // glibc rejects (uid_t)-1 up front: the kernel reads it as "leave unchanged",
+    // so setresuid would silently succeed without setting anything.
+    if euid == libc::uid_t::MAX {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // setresuid(-1, euid, -1), NOT setreuid(-1, euid): setreuid also moves the
+    // saved-set-user-ID to the new euid whenever euid differs from the old real
+    // UID, which would destroy the caller's ability to regain the dropped
+    // privilege. setresuid names the saved UID explicitly and leaves it alone.
+    match syscall::sys_setresuid(libc::uid_t::MAX, euid, libc::uid_t::MAX) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -939,8 +948,13 @@ pub unsafe extern "C" fn setgid(gid: libc::gid_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
-    // setegid(egid) == setregid(-1, egid)
-    match syscall::sys_setregid(libc::gid_t::MAX, egid) {
+    // Mirror of `seteuid`: (gid_t)-1 is EINVAL, and the effective GID moves via
+    // setresgid so the saved-set-group-ID survives.
+    if egid == libc::gid_t::MAX {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    match syscall::sys_setresgid(libc::gid_t::MAX, egid, libc::gid_t::MAX) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
