@@ -44,6 +44,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 unsafe extern "C" {
+    #[link_name = "getpagesize"]
+    fn host_getpagesize() -> c_int;
+
     #[link_name = "optarg"]
     static mut OPTARG_TEST: *mut libc::c_char;
     #[link_name = "optind"]
@@ -1135,6 +1138,19 @@ fn getpagesize_matches_sysconf_table_value() {
     let page_size = unsafe { getpagesize() };
     assert!(page_size > 0);
     assert_eq!(page_size as libc::c_long, 4096);
+}
+
+#[test]
+fn getpagesize_matches_host_and_sysconf() {
+    // SAFETY: neither page-size query has pointer preconditions.
+    let fl_page_size = unsafe { getpagesize() };
+    // SAFETY: host getpagesize has no pointer preconditions.
+    let host_page_size = unsafe { host_getpagesize() };
+    // SAFETY: _SC_PAGESIZE requires no pointer arguments.
+    let host_sysconf_page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+
+    assert_eq!(fl_page_size, host_page_size);
+    assert_eq!(fl_page_size as libc::c_long, host_sysconf_page_size);
 }
 
 #[test]
