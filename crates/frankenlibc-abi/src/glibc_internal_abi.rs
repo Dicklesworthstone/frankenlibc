@@ -1743,8 +1743,8 @@ pub unsafe extern "C" fn res_mailok(dn: *const c_char) -> c_int {
             len = 0;
             first_label = false;
         } else if first_label {
-            // Mailbox label: printable ASCII except @ and whitespace
-            if c > 0x20 && c < 0x7F && c != b'@' {
+            // Mailbox label: glibc accepts any printable ASCII byte.
+            if c > 0x20 && c < 0x7F {
                 len += 1;
                 if len > 63 {
                     return 0;
