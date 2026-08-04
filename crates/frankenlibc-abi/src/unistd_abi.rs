@@ -22485,6 +22485,7 @@ const ARGP_HELP_POST_DOC: c_uint = 0x20;
 const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
 const ARGP_HELP_EXIT_ERR: c_uint = 0x100;
 const ARGP_HELP_EXIT_OK: c_uint = 0x200;
+const ARGP_NO_EXIT: c_uint = 0x20;
 const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
 const ARGP_HELP_STATE_NON_RENDERING_FLAGS: c_uint =
     ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR | ARGP_HELP_EXIT_OK;
@@ -22646,18 +22647,56 @@ unsafe fn argp_write_diagnostic(state: *mut c_void, message: &[u8], errnum: c_in
     unsafe { argp_write_bytes(stream, &line) }
 }
 
+#[inline]
+unsafe fn argp_exit_unless_suppressed(state: &ArgpStateHeader, status: c_int) {
+    if state.flags & ARGP_NO_EXIT == 0 {
+        unsafe { crate::stdlib_abi::exit(status) };
+    }
+}
+
+unsafe fn argp_write_version(stream: *mut libc::FILE, state: *mut c_void) -> bool {
+    let hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
+    if !hook.is_null() {
+        type ArgpVersionHook = unsafe extern "C" fn(*mut libc::FILE, *mut c_void);
+        // SAFETY: `argp_program_version_hook` is the public GNU argp callback
+        // slot. A non-null value is required by that ABI to be a function with
+        // this exact signature.
+        let hook = unsafe { core::mem::transmute::<*mut c_void, ArgpVersionHook>(hook) };
+        unsafe { hook(stream, state) };
+        return true;
+    }
+
+    let version = unsafe { crate::glibc_internal_abi::argp_program_version };
+    let Some(version) = (unsafe { argp_read_text(version) }) else {
+        return false;
+    };
+    unsafe { argp_write_text_line(stream, &version) }
+}
+
+unsafe fn argp_parse_version_requested(argc: c_int, argv: *mut *mut c_char) -> bool {
+    for index in 1..argc as usize {
+        let arg = unsafe { *argv.add(index) };
+        if let Some(arg) = unsafe { argp_read_text(arg.cast_const()) }
+            && arg == b"--version"
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// `argp_parse` — parse arguments using argp framework.
 ///
 /// Native phase-1 support handles the common zeroed `struct argp` case as a
-/// successful no-op parse, matching glibc's behavior for empty parsers.
+/// successful no-op parse and its GNU `--version` built-in.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_parse(
     argp: *const c_void,
     argc: c_int,
     argv: *mut *mut c_char,
-    _flags: libc::c_uint,
+    flags: libc::c_uint,
     arg_index: *mut c_int,
-    _input: *mut c_void,
+    input: *mut c_void,
 ) -> c_int {
     if argp.is_null() || argc < 0 || (argc > 0 && argv.is_null()) {
         unsafe { set_abi_errno(libc::EINVAL) };
@@ -22666,6 +22705,22 @@ pub unsafe extern "C" fn argp_parse(
 
     let header = unsafe { &*(argp as *const ArgpHeader) };
     if header.is_empty() {
+        let version = unsafe { crate::glibc_internal_abi::argp_program_version };
+        let version_hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
+        let version_available = !version.is_null() || !version_hook.is_null();
+        if version_available && unsafe { argp_parse_version_requested(argc, argv) } {
+            let stream = unsafe { crate::stdio_abi::stdout }.cast::<libc::FILE>();
+            if !unsafe { argp_write_version(stream, input) } {
+                unsafe { set_abi_errno(libc::EIO) };
+            }
+            if !arg_index.is_null() {
+                unsafe { *arg_index = argc };
+            }
+            if flags & ARGP_NO_EXIT == 0 {
+                unsafe { crate::stdlib_abi::exit(0) };
+            }
+            return 0;
+        }
         if !arg_index.is_null() {
             unsafe { *arg_index = argc.min(1) };
         }
@@ -22715,7 +22770,7 @@ pub unsafe extern "C" fn argp_usage(state: *mut c_void) {
     unsafe { argp_state_help(state, core::ptr::null_mut(), ARGP_HELP_STD_USAGE_PHASE1) };
 }
 
-/// `argp_error` — report a bounded formatted parsing diagnostic to state error stream.
+/// `argp_error` — report a bounded formatted parsing diagnostic and exit unless suppressed.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut args: ...) {
     if unsafe { argp_diagnostic_stream(state) }.is_null() {
@@ -22734,13 +22789,16 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
     if !unsafe { argp_write_diagnostic(state, &rendered, 0) } {
         unsafe { set_abi_errno(libc::EIO) };
     }
+    let state = unsafe { &*(state as *const ArgpStateHeader) };
+    let status = unsafe { crate::glibc_internal_abi::argp_err_exit_status };
+    unsafe { argp_exit_unless_suppressed(state, status) };
 }
 
-/// `argp_failure` — report a bounded formatted parsing failure diagnostic.
+/// `argp_failure` — report a bounded formatted parsing failure diagnostic and exit when requested.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_failure(
     state: *mut c_void,
-    _status: c_int,
+    status: c_int,
     errnum: c_int,
     fmt: *const c_char,
     mut args: ...
@@ -22760,6 +22818,10 @@ pub unsafe extern "C" fn argp_failure(
     };
     if !unsafe { argp_write_diagnostic(state, &rendered, errnum) } {
         unsafe { set_abi_errno(libc::EIO) };
+    }
+    if status != 0 {
+        let state = unsafe { &*(state as *const ArgpStateHeader) };
+        unsafe { argp_exit_unless_suppressed(state, status) };
     }
 }
 

@@ -3336,6 +3336,28 @@ fn abi_argp_failure_exits_with_status_in_child() {
 }
 
 #[test]
+fn abi_argp_failure_honors_no_exit_flag_in_child() {
+    let name = CString::new("failure-demo").unwrap();
+    let fmt = CString::new("failed %d").unwrap();
+
+    let output = capture_argp_child_exit(127, |stream| unsafe {
+        let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+        state.flags = ARGP_NO_EXIT;
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_failure(
+            (&mut state as *mut FixtureArgpState).cast(),
+            74,
+            libc::EINVAL,
+            fmt.as_ptr(),
+            9 as c_int,
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "failure-demo: failed 9: Invalid argument\n");
+}
+
+#[test]
 fn abi_argp_error_and_failure_null_state_preserve_fixture_noop_contract() {
     let fmt = CString::new("ignored %d").unwrap();
 
