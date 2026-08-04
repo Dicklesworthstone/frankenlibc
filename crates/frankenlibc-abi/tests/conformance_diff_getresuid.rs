@@ -74,3 +74,31 @@ fn getresuid_null_pointer_matches_glibc() {
         "glibc: -1/EFAULT on NULL out-pointer"
     );
 }
+
+#[test]
+fn getresgid_null_pointer_matches_glibc() {
+    let g = unsafe {
+        *__errno_location() = 0;
+        let rc = getresgid(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        (rc, *__errno_location())
+    };
+    let f = unsafe {
+        *__errno_location() = 0;
+        let rc = frankenlibc_abi::unistd_abi::getresgid(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        (rc, *__errno_location())
+    };
+    assert_eq!(f, g, "getresgid(NULL,NULL,NULL): fl={f:?} glibc={g:?}");
+    assert_eq!(
+        (g.0, g.1),
+        (-1, libc::EFAULT),
+        "glibc: -1/EFAULT on NULL out-pointer"
+    );
+}
