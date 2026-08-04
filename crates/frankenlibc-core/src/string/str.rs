@@ -15,18 +15,27 @@ const STRLEN_SIMD_LANES: usize = 64;
 const STRLEN_BLOCK: usize = STRLEN_SIMD_LANES * 4;
 /// Bytes scanned per wide folded strlen NUL iteration.
 const STRLEN_NUL_BLOCK: usize = STRLEN_SIMD_LANES * 8;
-const STRCPY_4096_SRC_LEN: usize = STRLEN_NUL_BLOCK * 8 + 1;
 
 #[inline(always)]
 fn has_nul_byte(word: usize) -> bool {
     word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC != 0
 }
 
-// (repeated_byte removed: its only user, find_non_byte_or_nul's SWAR small path, is
-// gone — replaced by a direct simd_ne mask scan. bd-2g7oyh.)
+#[inline(always)]
+fn repeated_byte(byte: u8) -> usize {
+    usize::from_ne_bytes([byte; size_of::<usize>()])
+}
 
-// (has_byte_or_nul_simd_32 removed: find_byte_or_nul/find_ascii_folded now mask-scan
-// directly, so this bool prefilter is unused. bd-2g7oyh.)
+#[inline(always)]
+fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    // Fold the needle and NUL comparisons into one mask, then a SINGLE `.any()`
+    // reduction (movemask + test) instead of two — needle==0 collapses to a NUL
+    // scan, which is still correct.
+    let hit = lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(byte));
+    hit.any()
+}
 
 /// Number of 32-byte SIMD panels folded under a single `.any()` reduction. The
 /// reduction (movemask + test) is the per-iteration cost that dominates a flat
@@ -36,11 +45,23 @@ fn has_nul_byte(word: usize) -> bool {
 /// halved reduction count, so four is the sweet spot.)
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+const STRCHR_FOLD_PANELS: usize = 4;
+const STRCHR_FOLD_BYTES: usize = STRLEN_SIMD_LANES * STRCHR_FOLD_PANELS;
 const STRCMP_EXACT_256_LEN: usize = STRLEN_BLOCK + 1;
 
-// (has_byte_or_nul_simd_folded_256 + STRCHR_FOLD_PANELS/BYTES removed: find_byte_or_nul
-// and strrchr now use a direct mask scan / memrchr, so the folded coarse-check is unused.
-// bd-2g7oyh.)
+#[inline(always)]
+fn has_byte_or_nul_simd_folded_256(block: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(block.len(), STRCHR_FOLD_BYTES);
+    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(byte);
+    let z = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    let mut acc = Mask::<i8, STRLEN_SIMD_LANES>::splat(false);
+    for k in 0..STRCHR_FOLD_PANELS {
+        let lo = k * STRLEN_SIMD_LANES;
+        let panel = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&block[lo..lo + STRLEN_SIMD_LANES]);
+        acc |= panel.simd_eq(n) | panel.simd_eq(z);
+    }
+    acc.any()
+}
 
 #[inline(always)]
 fn has_nul_simd_64(chunk: &[u8]) -> bool {
@@ -103,18 +124,18 @@ fn block_has_nul_512(chunk: &[u8]) -> bool {
     folded.simd_eq(Simd::splat(0)).any()
 }
 
-/// Returns `true` if any byte in a `STRLEN_BLOCK`-wide chunk equals `needle` or NUL.
-///
-/// Two-target sibling of [`block_has_nul_256`] for `find_byte_or_nul`: `min(v ^
-/// needle, v)` is `0` in a lane iff that byte is `needle` (`v ^ needle == 0`) or
-/// NUL (`v == 0`), because `min(a, b) == 0` iff either operand is `0`. Folding the
-/// per-panel results with `simd_min` then pays ONE zero-compare reduction per 256
-/// bytes instead of a movemask+branch every 64. The caller's SIMD fine loop
-/// resolves the exact first index, so the widened detection never changes it.
 #[inline(always)]
-fn block_has_byte_or_nul_256(chunk: &[u8], needle: u8) -> bool {
+fn has_non_byte_simd_64(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_SIMD_LANES);
+    !Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(byte))
+        .all()
+}
+
+#[inline(always)]
+fn block_has_non_byte_256(chunk: &[u8], byte: u8) -> bool {
     debug_assert_eq!(chunk.len(), STRLEN_BLOCK);
-    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
+    let splat = Simd::<u8, STRLEN_SIMD_LANES>::splat(byte);
     let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
     let v1 =
         Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
@@ -122,141 +143,28 @@ fn block_has_byte_or_nul_256(chunk: &[u8], needle: u8) -> bool {
         &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
     );
     let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 3..STRLEN_BLOCK]);
-    let p0 = (v0 ^ n).simd_min(v0);
-    let p1 = (v1 ^ n).simd_min(v1);
-    let p2 = (v2 ^ n).simd_min(v2);
-    let p3 = (v3 ^ n).simd_min(v3);
-    let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
-    folded.simd_eq(Simd::splat(0)).any()
-}
-
-/// Returns `true` if any byte in a `STRLEN_NUL_BLOCK`-wide chunk equals `needle`
-/// or NUL — the 512-byte sibling of [`block_has_byte_or_nul_256`] (same
-/// `min(v ^ needle, v)` trick, eight panels, one reduction per 512 bytes).
-#[inline(always)]
-fn block_has_byte_or_nul_512(chunk: &[u8], needle: u8) -> bool {
-    debug_assert_eq!(chunk.len(), STRLEN_NUL_BLOCK);
-    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
-    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
-    let v1 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
-    );
-    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &chunk[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
-    );
-    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &chunk[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
-    );
-    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &chunk[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
-    );
-    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &chunk[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
-    );
-    let v7 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
-    let p0 = (v0 ^ n).simd_min(v0);
-    let p1 = (v1 ^ n).simd_min(v1);
-    let p2 = (v2 ^ n).simd_min(v2);
-    let p3 = (v3 ^ n).simd_min(v3);
-    let p4 = (v4 ^ n).simd_min(v4);
-    let p5 = (v5 ^ n).simd_min(v5);
-    let p6 = (v6 ^ n).simd_min(v6);
-    let p7 = (v7 ^ n).simd_min(v7);
-    let folded = p0
-        .simd_min(p1)
-        .simd_min(p2.simd_min(p3))
-        .simd_min(p4.simd_min(p5).simd_min(p6.simd_min(p7)));
-    folded.simd_eq(Simd::splat(0)).any()
+    let folded = (v0 ^ splat)
+        .simd_max(v1 ^ splat)
+        .simd_max((v2 ^ splat).simd_max(v3 ^ splat));
+    folded.simd_ne(Simd::splat(0)).any()
 }
 
 #[inline(always)]
-fn copy_nul_free_block_512(dest: &mut [u8], src: &[u8]) -> bool {
-    debug_assert_eq!(dest.len(), STRLEN_NUL_BLOCK);
-    debug_assert_eq!(src.len(), STRLEN_NUL_BLOCK);
-    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[0..STRLEN_SIMD_LANES]);
-    let v1 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
-    );
-    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
-    );
-    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
-    );
-    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
-    );
-    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &src[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
-    );
-    let v7 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&src[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
-    let folded = v0
-        .simd_min(v1)
-        .simd_min(v2.simd_min(v3))
-        .simd_min(v4.simd_min(v5).simd_min(v6.simd_min(v7)));
-    if folded.simd_eq(Simd::splat(0)).any() {
-        return true;
-    }
-
-    v0.copy_to_slice(&mut dest[0..STRLEN_SIMD_LANES]);
-    v1.copy_to_slice(&mut dest[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-    v2.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3]);
-    v3.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4]);
-    v4.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5]);
-    v5.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6]);
-    v6.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7]);
-    v7.copy_to_slice(&mut dest[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
-    false
+fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), SIMD_LANES);
+    debug_assert_eq!(right.len(), SIMD_LANES);
+    let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
+    let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
+    // Continue only if every lane is equal AND non-NUL. Fuse the "differs" and
+    // "is-NUL" lane masks so a SINGLE horizontal reduction (`.any()`) gates the
+    // loop, instead of two (`.all()` for equality + `.any()` for NUL). On equal
+    // inputs — the hot path — the prior form always ran both reductions; glibc's
+    // hand-tuned strcmp likewise issues one test per 32-byte step. Logically
+    // identical: `eq.all() && !nul.any()` ⇔ `!((!eq) | nul).any()`.
+    let differs = left_lanes.simd_ne(right_lanes);
+    let is_nul = left_lanes.simd_eq(Simd::splat(0));
+    !(differs | is_nul).any()
 }
-
-#[inline(always)]
-fn copy_strcpy_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) -> usize {
-    let mut i = block_start;
-    while i < src.len() {
-        if src[i] == 0 {
-            let copied = i + 1;
-            dest[block_start..copied].copy_from_slice(&src[block_start..copied]);
-            return copied;
-        }
-        i += 1;
-    }
-    src.len()
-}
-
-#[inline(always)]
-fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
-    debug_assert_eq!(src.len(), STRCPY_4096_SRC_LEN);
-    debug_assert!(dest.len() >= src.len());
-    debug_assert_eq!(src.last().copied(), Some(0));
-
-    let mut block_start = 0usize;
-    while block_start + STRLEN_NUL_BLOCK < STRCPY_4096_SRC_LEN {
-        let block_end = block_start + STRLEN_NUL_BLOCK;
-        if copy_nul_free_block_512(
-            &mut dest[block_start..block_end],
-            &src[block_start..block_end],
-        ) {
-            return copy_strcpy_terminal_from(dest, src, block_start);
-        }
-        block_start = block_end;
-    }
-
-    dest[STRCPY_4096_SRC_LEN - 1] = 0;
-    STRCPY_4096_SRC_LEN
-}
-
-// (has_non_byte_simd_64 + block_has_non_byte_256 removed: find_non_byte_or_nul now
-// uses a direct simd_ne mask scan, so these bool prefilters are unused. bd-2g7oyh.)
-
-// (equal_and_no_nul_simd_32 removed: strcmp/strncmp's SIMD_LANES loops now compute
-// the divergence index directly via an event-mask instead of a bool prefilter +
-// scalar re-scan, so the bool helper is unused. bd-2g7oyh.)
 
 /// True iff all `SIMD_FOLD_BYTES` (128) bytes are byte-for-byte equal AND
 /// NUL-free. OR's the four 32-byte panels' `(differs | is_nul)` masks and
@@ -303,21 +211,6 @@ fn strcmp_exact_256_equal_nul_terminated(left: &[u8], right: &[u8]) -> bool {
     !acc.any()
 }
 
-#[inline(always)]
-fn strncmp_exact_256_equal_prefix(left: &[u8], right: &[u8]) -> bool {
-    debug_assert_eq!(left.len(), STRLEN_BLOCK);
-    debug_assert_eq!(right.len(), STRLEN_BLOCK);
-
-    let mut acc = Mask::<i8, STRLEN_SIMD_LANES>::splat(false);
-    for k in 0..4 {
-        let lo = k * STRLEN_SIMD_LANES;
-        let l = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&left[lo..lo + STRLEN_SIMD_LANES]);
-        let r = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&right[lo..lo + STRLEN_SIMD_LANES]);
-        acc |= l.simd_ne(r);
-    }
-    !acc.any()
-}
-
 /// Branchless ASCII A-Z -> a-z fold of a 32-byte panel, exactly matching
 /// `u8::to_ascii_lowercase` (only bytes in `b'A'..=b'Z'` are shifted by `0x20`;
 /// everything else, including NUL, is unchanged).
@@ -327,23 +220,22 @@ fn fold_ascii_upper_simd_32(v: Simd<u8, SIMD_LANES>) -> Simd<u8, SIMD_LANES> {
     is_upper.select(v + Simd::splat(0x20), v)
 }
 
-// (fold_equal_and_no_nul_simd_32 removed: strcasecmp/strncasecmp's SIMD_LANES loops
-// now compute the divergence index directly via a fold-event-mask using
-// fold_ascii_upper_simd_32, so the bool helper is unused. bd-2g7oyh.)
-
+/// Returns `true` iff the two 32-byte panels are equal after ASCII case-folding
+/// AND contain no terminating NUL. The equal-prefix fast path for
+/// case-insensitive byte compares: a `false` result means a folded divergence
+/// or a NUL is present, so the scalar tail resolves the exact index. NUL (`0`)
+/// is below the fold range, so fold-equality implies shared NUL positions —
+/// checking `left` suffices.
 #[inline(always)]
-fn fold_equal_and_no_nul_simd_folded(left: &[u8], right: &[u8]) -> bool {
-    debug_assert_eq!(left.len(), SIMD_FOLD_BYTES);
-    debug_assert_eq!(right.len(), SIMD_FOLD_BYTES);
-    let z = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut acc = Mask::<i8, SIMD_LANES>::splat(false);
-    for k in 0..SIMD_FOLD_PANELS {
-        let lo = k * SIMD_LANES;
-        let l = Simd::<u8, SIMD_LANES>::from_slice(&left[lo..lo + SIMD_LANES]);
-        let r = Simd::<u8, SIMD_LANES>::from_slice(&right[lo..lo + SIMD_LANES]);
-        acc |= fold_ascii_upper_simd_32(l).simd_ne(fold_ascii_upper_simd_32(r)) | l.simd_eq(z);
-    }
-    !acc.any()
+fn fold_equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), SIMD_LANES);
+    debug_assert_eq!(right.len(), SIMD_LANES);
+    let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
+    let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
+    fold_ascii_upper_simd_32(left_lanes)
+        .simd_eq(fold_ascii_upper_simd_32(right_lanes))
+        .all()
+        && !left_lanes.simd_eq(Simd::splat(0)).any()
 }
 
 #[inline(always)]
@@ -351,13 +243,42 @@ fn byte_is_any4(byte: u8, b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     byte == b0 || byte == b1 || byte == b2 || byte == b3
 }
 
-// (has_any_of4_or_nul_simd_32 / _fused_32 / has_non_any_of4_or_nul_simd_32 were the
-// bool "any flagged?" prefilters; the find_*_of4_or_nul scanners now compute the lane
-// mask directly and return the first set lane via trailing_zeros, so the separate bool
-// helpers + their scalar re-scan are gone. bd-2g7oyh.)
+#[inline(always)]
+fn has_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    lanes.simd_eq(Simd::splat(0)).any()
+        || lanes.simd_eq(Simd::splat(b0)).any()
+        || lanes.simd_eq(Simd::splat(b1)).any()
+        || lanes.simd_eq(Simd::splat(b2)).any()
+        || lanes.simd_eq(Simd::splat(b3)).any()
+}
 
-// (has_ascii_folded_byte_or_nul_simd_32 + _folded_128 removed: find_ascii_folded_byte_or_nul
-// now uses a direct 3-way mask scan, so these bool prefilters are unused. bd-2g7oyh.)
+#[inline(always)]
+fn has_non_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    let member = lanes.simd_eq(Simd::splat(b0))
+        | lanes.simd_eq(Simd::splat(b1))
+        | lanes.simd_eq(Simd::splat(b2))
+        | lanes.simd_eq(Simd::splat(b3));
+    (lanes.simd_eq(Simd::splat(0)) | !member).any()
+}
+
+#[inline(always)]
+fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    if !folded.is_ascii_lowercase() {
+        return has_byte_or_nul_simd_32(chunk, folded);
+    }
+
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    lanes.simd_eq(Simd::splat(0)).any()
+        || lanes.simd_eq(Simd::splat(folded)).any()
+        || lanes
+            .simd_eq(Simd::splat(folded.to_ascii_uppercase()))
+            .any()
+}
 
 #[inline]
 fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
@@ -372,7 +293,6 @@ fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
 ///
 /// Equivalent to C `strlen`. Scans `s` for the first `0x00` byte and returns
 /// its index. If no NUL is found, returns the full slice length.
-#[inline(always)]
 #[allow(unsafe_code)]
 pub fn strlen(s: &[u8]) -> usize {
     const WORD_SIZE: usize = size_of::<usize>();
@@ -493,24 +413,8 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
     }
 
     while i + SIMD_LANES <= s1.len() && i + SIMD_LANES <= s2.len() {
-        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
-        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
-        // First lane that differs OR is NUL in s1 — resolve the divergence index via
-        // the SIMD mask + trailing_zeros (O(1)) instead of cascading to the WORD +
-        // scalar tiers and re-scanning the panel (strcmp was 4.4x slower than glibc on
-        // a deep-in-panel difference; bd-2g7oyh). Equivalent to the byte tail's
-        // `a!=b || a==0` stop. The loop still exits by exhaustion when <32 B remain,
-        // falling to the WORD/scalar tail for the remainder.
-        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let a = s1[j];
-            let b = s2[j];
-            if a != b {
-                return (a as i32) - (b as i32);
-            }
-            return 0; // shared NUL terminator
+        if !equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
         }
         i += SIMD_LANES;
     }
@@ -548,14 +452,6 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
 ///
 /// Equivalent to C `strncmp`. Like [`strcmp`], but stops after `n` bytes.
 pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
-    if n == STRLEN_BLOCK
-        && s1.len() >= STRLEN_BLOCK
-        && s2.len() >= STRLEN_BLOCK
-        && strncmp_exact_256_equal_prefix(&s1[..STRLEN_BLOCK], &s2[..STRLEN_BLOCK])
-    {
-        return 0;
-    }
-
     // Bytes we may inspect from both slices: bounded by `n` and the shorter
     // buffer. Vectorized panels only run over indices present in both slices;
     // out-of-range indices are resolved as logical NUL by the scalar tail,
@@ -568,27 +464,13 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     // that differs OR contains a NUL, so the scalar loop below resolves the
     // exact divergence/terminator index — identical result to the reference.
     while i + SIMD_LANES <= bounded {
-        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
-        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
-        // First lane that differs OR is NUL in s1 — the exact divergence/terminator
-        // index, via the SIMD mask + trailing_zeros instead of a scalar per-byte
-        // re-scan of the broken panel (was 9.45x slower than glibc on a deep-in-panel
-        // difference; bd-2g7oyh). Equivalent to the scalar tail's `a!=b || a==0` stop.
-        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let a = s1[j];
-            let b = s2[j];
-            if a != b {
-                return (a as i32) - (b as i32);
-            }
-            return 0; // a == b == 0 (shared NUL terminator)
+        if !equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
         }
         i += SIMD_LANES;
     }
 
-    // Resolve any remaining bytes past the last full SIMD panel exactly.
+    // Resolve the remaining bytes (and the panel that broke) exactly.
     while i < n {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
@@ -612,31 +494,29 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// # Panics
 ///
 /// Panics if `dest` is too small to hold the source string plus NUL.
-#[inline(always)]
 pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
     if src.last().copied() == Some(0) && dest.len() >= src.len() {
-        if src.len() == STRCPY_4096_SRC_LEN {
-            return strcpy_4096_terminated(dest, src);
-        }
-
         if src.len() >= STRLEN_NUL_BLOCK {
             let mut i = 0;
             while i + STRLEN_NUL_BLOCK <= src.len() {
-                let block_start = i;
-                if copy_nul_free_block_512(
-                    &mut dest[i..i + STRLEN_NUL_BLOCK],
-                    &src[i..i + STRLEN_NUL_BLOCK],
-                ) {
-                    return copy_strcpy_terminal_from(dest, src, block_start);
+                let chunk = &src[i..i + STRLEN_NUL_BLOCK];
+                if block_has_nul_512(chunk) {
+                    while i < src.len() {
+                        if src[i] == 0 {
+                            let copied = i + 1;
+                            dest[..copied].copy_from_slice(&src[..copied]);
+                            return copied;
+                        }
+                        i += 1;
+                    }
                 }
                 i += STRLEN_NUL_BLOCK;
             }
 
             while i < src.len() {
-                let byte = src[i];
-                dest[i] = byte;
-                if byte == 0 {
+                if src[i] == 0 {
                     let copied = i + 1;
+                    dest[..copied].copy_from_slice(&src[..copied]);
                     return copied;
                 }
                 i += 1;
@@ -762,16 +642,11 @@ pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
-    // Single shared scan: `find_byte_or_nul` returns the first `c`-or-NUL position, so
-    // a SINGLE pass decides the result — `c` before the terminator (return it) vs the
-    // NUL reached first / no match (None). The prior two memchr passes (find `c`, then
-    // re-scan the [0, c) prefix for a NUL) scanned the prefix TWICE; 2.26x→1.41x vs
-    // glibc (bd-2g7oyh). Byte-identical: a NUL strictly before the first `c` ⇒ None.
-    let pos = find_byte_or_nul(s, c);
-    if pos < s.len() && s[pos] == c {
-        Some(pos)
-    } else {
+    let needle = super::mem::memchr(s, c, s.len())?;
+    if super::mem::memchr(&s[..needle], 0, needle).is_some() {
         None
+    } else {
+        Some(needle)
     }
 }
 
@@ -786,73 +661,41 @@ pub fn strchrnul(s: &[u8], c: u8) -> usize {
 fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
     let mut i = 0;
 
-    // Coarse min-fold tiers (512B then 256B), mirroring `strlen`'s block scan: over
-    // a needle/NUL-free span they pay ONE horizontal reduction per block instead of
-    // a movemask+branch every 64 bytes. `min(v ^ needle, v)` is `0` iff v==needle or
-    // v==0, so the fold detects a hit in the block; the SIMD fine loop below then
-    // resolves the exact first index from the flagged block start (byte-identical).
-    // This differs from the reverted coarse+SCALAR-rescan (which made the flagged
-    // block ~16x slow): the re-scan here stays SIMD, so needle/NUL-free spans get
-    // strlen-class throughput (strchr_absent 1.87x -> ~parity; bd-4iaexa lineage).
-    while i + STRLEN_NUL_BLOCK <= s.len() {
-        if block_has_byte_or_nul_512(&s[i..i + STRLEN_NUL_BLOCK], needle) {
-            break;
+    // Tier 1: 256-byte folded blocks — one `.any()` reduction per 4 wide panels.
+    // On a hit, resolve the first matching byte within the block scalar-side
+    // (rare path), so the steady-state scan pays a single reduction per 256B.
+    while i + STRCHR_FOLD_BYTES <= s.len() {
+        if has_byte_or_nul_simd_folded_256(&s[i..i + STRCHR_FOLD_BYTES], needle) {
+            for k in 0..STRCHR_FOLD_BYTES {
+                let byte = s[i + k];
+                if byte == needle || byte == 0 {
+                    return i + k;
+                }
+            }
         }
-        i += STRLEN_NUL_BLOCK;
-    }
-    while i + STRLEN_BLOCK <= s.len() {
-        if block_has_byte_or_nul_256(&s[i..i + STRLEN_BLOCK], needle) {
-            break;
-        }
-        i += STRLEN_BLOCK;
+        i += STRCHR_FOLD_BYTES;
     }
 
-    // Fine mask scan for the exact first `needle`-or-NUL lane via trailing_zeros —
-    // one movemask per 64-byte panel. Resolves the position inside the block the
-    // coarse tiers flagged (or scans a short sub-512B input directly).
-    let n64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
-    let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
-    while i + STRLEN_SIMD_LANES <= s.len() {
-        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[i..i + STRLEN_SIMD_LANES]);
-        let bits = (v.simd_eq(n64) | v.simd_eq(z64)).to_bitmask();
-        if bits != 0 {
-            return i + bits.trailing_zeros() as usize;
-        }
-        i += STRLEN_SIMD_LANES;
-    }
-
-    let n32 = Simd::<u8, SIMD_LANES>::splat(needle);
-    let z32 = Simd::<u8, SIMD_LANES>::splat(0);
+    // Tier 2: remaining whole 32-byte panels.
     while i + SIMD_LANES <= s.len() {
-        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[i..i + SIMD_LANES]);
-        let bits = (v.simd_eq(n32) | v.simd_eq(z32)).to_bitmask();
-        if bits != 0 {
-            return i + bits.trailing_zeros() as usize;
+        if has_byte_or_nul_simd_32(&s[i..i + SIMD_LANES], needle) {
+            for k in 0..SIMD_LANES {
+                let byte = s[i + k];
+                if byte == needle || byte == 0 {
+                    return i + k;
+                }
+            }
         }
         i += SIMD_LANES;
     }
 
-    // Overlapping 32-lane tail (span >= 32): finish the sub-32 remainder with one
-    // SIMD load instead of the scalar byte loop. The overlap region is already-scanned
-    // with no needle/NUL, so the window's leftmost hit is the first remainder hit —
-    // byte-identical.
-    if i < s.len() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let v = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let bits = (v.simd_eq(n32) | v.simd_eq(z32)).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            while i < s.len() {
-                let byte = s[i];
-                if byte == needle || byte == 0 {
-                    return i;
-                }
-                i += 1;
-            }
+    // Tier 3: scalar tail.
+    while i < s.len() {
+        let byte = s[i];
+        if byte == needle || byte == 0 {
+            return i;
         }
+        i += 1;
     }
 
     s.len()
@@ -863,55 +706,24 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
         return find_byte_or_nul(s, folded);
     }
 
-    // First `folded`-or-`upper`-or-NUL lane via a direct 3-way mask scan +
-    // trailing_zeros (one movemask/64), replacing the prior coarse-check + scalar
-    // byte-by-byte re-scan of the flagged block (strcasestr was ~1.4x slower than
-    // glibc; bd-2g7oyh). Byte-identical to the scalar `==0 || ==folded || ==upper`.
     let upper = folded.to_ascii_uppercase();
+    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
     let mut base = 0usize;
-    let f64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(folded);
-    let u64v = Simd::<u8, STRLEN_SIMD_LANES>::splat(upper);
-    let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
-    while base + STRLEN_SIMD_LANES <= s.len() {
-        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[base..base + STRLEN_SIMD_LANES]);
-        let bits = (v.simd_eq(f64) | v.simd_eq(u64v) | v.simd_eq(z64)).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
-        base += STRLEN_SIMD_LANES;
-    }
 
-    let f32 = Simd::<u8, SIMD_LANES>::splat(folded);
-    let u32v = Simd::<u8, SIMD_LANES>::splat(upper);
-    let z32 = Simd::<u8, SIMD_LANES>::splat(0);
-    while base + SIMD_LANES <= s.len() {
-        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[base..base + SIMD_LANES]);
-        let bits = (v.simd_eq(f32) | v.simd_eq(u32v) | v.simd_eq(z32)).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
+    for chunk in simd_chunks.by_ref() {
+        if has_ascii_folded_byte_or_nul_simd_32(chunk, folded) {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || byte == folded || byte == upper {
+                    return base + j;
+                }
+            }
         }
         base += SIMD_LANES;
     }
 
-    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load
-    // (3-way folded/upper/NUL mask) instead of a scalar loop. The overlap region is
-    // already-scanned with no match, so byte-identical.
-    if base < s.len() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let v = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let bits = (v.simd_eq(f32) | v.simd_eq(u32v) | v.simd_eq(z32)).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            while base < s.len() {
-                let byte = s[base];
-                if byte == 0 || byte == folded || byte == upper {
-                    return base;
-                }
-                base += 1;
-            }
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || byte == folded || byte == upper {
+            return base + j;
         }
     }
 
@@ -923,89 +735,19 @@ fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
     let mut base = 0usize;
 
     for chunk in simd_chunks.by_ref() {
-        // Locate the first matching lane via the SIMD mask (O(1) trailing_zeros)
-        // instead of a scalar re-scan of the whole flagged chunk (bd-2g7oyh: the
-        // scalar re-scan made strcspn/strpbrk ~5x slower than glibc).
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-        let member = lanes.simd_eq(Simd::splat(b0))
-            | lanes.simd_eq(Simd::splat(b1))
-            | lanes.simd_eq(Simd::splat(b2))
-            | lanes.simd_eq(Simd::splat(b3));
-        let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
-        base += SIMD_LANES;
-    }
-
-    // Overlapping 32-lane tail (span >= 32): finish the sub-32 remainder with one
-    // SIMD load instead of a scalar `byte_is_any4` loop (4 compares/byte). The
-    // overlap region is already-scanned no-match, so byte-identical.
-    let rem = simd_chunks.remainder();
-    if !rem.is_empty() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let member = lanes.simd_eq(Simd::splat(b0))
-                | lanes.simd_eq(Simd::splat(b1))
-                | lanes.simd_eq(Simd::splat(b2))
-                | lanes.simd_eq(Simd::splat(b3));
-            let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            for (j, &byte) in rem.iter().enumerate() {
+        if has_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
+            for (j, &byte) in chunk.iter().enumerate() {
                 if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
                     return base + j;
                 }
             }
         }
-    }
-
-    s.len()
-}
-
-fn find_any_of4_or_nul_fused(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
-    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
-    let mut base = 0usize;
-
-    for chunk in simd_chunks.by_ref() {
-        // SIMD mask + trailing_zeros for O(1) position (no scalar re-scan; bd-2g7oyh).
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-        let member = lanes.simd_eq(Simd::splat(b0))
-            | lanes.simd_eq(Simd::splat(b1))
-            | lanes.simd_eq(Simd::splat(b2))
-            | lanes.simd_eq(Simd::splat(b3));
-        let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
         base += SIMD_LANES;
     }
 
-    // Overlapping 32-lane tail (span >= 32): finish the sub-32 remainder with one
-    // SIMD load instead of a scalar `byte_is_any4` loop (4 compares/byte). The
-    // overlap region is already-scanned no-match, so byte-identical.
-    let rem = simd_chunks.remainder();
-    if !rem.is_empty() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let member = lanes.simd_eq(Simd::splat(b0))
-                | lanes.simd_eq(Simd::splat(b1))
-                | lanes.simd_eq(Simd::splat(b2))
-                | lanes.simd_eq(Simd::splat(b3));
-            let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            for (j, &byte) in rem.iter().enumerate() {
-                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
-                    return base + j;
-                }
-            }
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+            return base + j;
         }
     }
 
@@ -1017,173 +759,19 @@ fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
     let mut base = 0usize;
 
     for chunk in simd_chunks.by_ref() {
-        // SIMD mask + trailing_zeros for O(1) position (no scalar re-scan; bd-2g7oyh).
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-        let member = lanes.simd_eq(Simd::splat(b0))
-            | lanes.simd_eq(Simd::splat(b1))
-            | lanes.simd_eq(Simd::splat(b2))
-            | lanes.simd_eq(Simd::splat(b3));
-        let bits = (lanes.simd_eq(Simd::splat(0)) | !member).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
-        base += SIMD_LANES;
-    }
-
-    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load
-    // instead of a scalar `!byte_is_any4` loop. The overlap region is already-scanned
-    // and entirely IN the set (no stop), so the window's leftmost stop is the first
-    // remainder stop — byte-identical.
-    let rem = simd_chunks.remainder();
-    if !rem.is_empty() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let member = lanes.simd_eq(Simd::splat(b0))
-                | lanes.simd_eq(Simd::splat(b1))
-                | lanes.simd_eq(Simd::splat(b2))
-                | lanes.simd_eq(Simd::splat(b3));
-            let bits = (lanes.simd_eq(Simd::splat(0)) | !member).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            for (j, &byte) in rem.iter().enumerate() {
+        if has_non_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
+            for (j, &byte) in chunk.iter().enumerate() {
                 if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
                     return base + j;
                 }
             }
         }
-    }
-
-    s.len()
-}
-
-#[inline(always)]
-fn in_set_mask6(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 6]) -> Mask<i8, SIMD_LANES> {
-    lanes.simd_eq(Simd::splat(set[0]))
-        | lanes.simd_eq(Simd::splat(set[1]))
-        | lanes.simd_eq(Simd::splat(set[2]))
-        | lanes.simd_eq(Simd::splat(set[3]))
-        | lanes.simd_eq(Simd::splat(set[4]))
-        | lanes.simd_eq(Simd::splat(set[5]))
-}
-
-#[inline(always)]
-fn in_set_mask6_16(lanes: Simd<u8, 16>, set: &[u8; 6]) -> Mask<i8, 16> {
-    lanes.simd_eq(Simd::splat(set[0]))
-        | lanes.simd_eq(Simd::splat(set[1]))
-        | lanes.simd_eq(Simd::splat(set[2]))
-        | lanes.simd_eq(Simd::splat(set[3]))
-        | lanes.simd_eq(Simd::splat(set[4]))
-        | lanes.simd_eq(Simd::splat(set[5]))
-}
-
-#[inline(always)]
-fn byte_is_any6(byte: u8, set: &[u8; 6]) -> bool {
-    byte == set[0]
-        || byte == set[1]
-        || byte == set[2]
-        || byte == set[3]
-        || byte == set[4]
-        || byte == set[5]
-}
-
-fn find_any_of6_or_nul(s: &[u8], set: &[u8; 6]) -> usize {
-    let mut base = 0usize;
-
-    // Many libc span calls are short and stop inside the first cache line. The
-    // exact 16-byte prologue avoids a full 32-byte mask when the first stop is
-    // in bytes 0..16, while the normal 32-byte loop keeps long spans vectorized.
-    if s.len() >= 16 {
-        let lanes = Simd::<u8, 16>::from_slice(&s[..16]);
-        let bits = (lanes.simd_eq(Simd::splat(0)) | in_set_mask6_16(lanes, set)).to_bitmask();
-        if bits != 0 {
-            return bits.trailing_zeros() as usize;
-        }
-        base = 16;
-    }
-
-    let zero = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut simd_chunks = s[base..].chunks_exact(SIMD_LANES);
-
-    for chunk in simd_chunks.by_ref() {
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-        let bits = (lanes.simd_eq(zero) | in_set_mask6(lanes, set)).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
         base += SIMD_LANES;
     }
 
-    // Finish the sub-32-byte remainder with ONE overlapping 32-lane load anchored at
-    // the end (when the whole span is >= 32 B) instead of a scalar tail. The overlap
-    // region `[len-32 .. base]` lies inside already-scanned bytes (16-B prologue +
-    // 32-B chunks) that held no match/NUL, so the window's leftmost hit is the first
-    // remainder hit — byte-identical.
-    let rem = simd_chunks.remainder();
-    if !rem.is_empty() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let bits = (lanes.simd_eq(zero) | in_set_mask6(lanes, set)).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            for (j, &byte) in rem.iter().enumerate() {
-                if byte == 0 || byte_is_any6(byte, set) {
-                    return base + j;
-                }
-            }
-        }
-    }
-
-    s.len()
-}
-
-fn find_non_any_of6_or_nul(s: &[u8], set: &[u8; 6]) -> usize {
-    let mut base = 0usize;
-
-    if s.len() >= 16 {
-        let lanes = Simd::<u8, 16>::from_slice(&s[..16]);
-        let bits = (lanes.simd_eq(Simd::splat(0)) | !in_set_mask6_16(lanes, set)).to_bitmask();
-        if bits != 0 {
-            return bits.trailing_zeros() as usize;
-        }
-        base = 16;
-    }
-
-    let zero = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut simd_chunks = s[base..].chunks_exact(SIMD_LANES);
-
-    for chunk in simd_chunks.by_ref() {
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-        let bits = (lanes.simd_eq(zero) | !in_set_mask6(lanes, set)).to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
-        base += SIMD_LANES;
-    }
-
-    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load
-    // instead of a scalar `!byte_is_any6` loop. The overlap region is already-scanned
-    // and entirely IN the set (no stop), so byte-identical.
-    let rem = simd_chunks.remainder();
-    if !rem.is_empty() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let bits = (lanes.simd_eq(zero) | !in_set_mask6(lanes, set)).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            for (j, &byte) in rem.iter().enumerate() {
-                if byte == 0 || !byte_is_any6(byte, set) {
-                    return base + j;
-                }
-            }
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
+            return base + j;
         }
     }
 
@@ -1207,18 +795,21 @@ fn in_set_mask8(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 8]) -> Mask<i8, SIMD_LAN
         | lanes.simd_eq(Simd::splat(set[7]))
 }
 
+/// Hand-unrolled membership mask for 16 set bytes (two [`in_set_mask8`] halves).
+#[inline(always)]
+fn in_set_mask16(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 16]) -> Mask<i8, SIMD_LANES> {
+    let lo: &[u8; 8] = set[0..8].try_into().unwrap();
+    let hi: &[u8; 8] = set[8..16].try_into().unwrap();
+    in_set_mask8(lanes, lo) | in_set_mask8(lanes, hi)
+}
+
 /// Branchless 32-byte-chunk span scan. `in_set` computes a chunk's membership
 /// mask; `stop_in_set` selects direction — `true` is `strcspn` (stop on a member
 /// or NUL), `false` is `strspn` (stop on a non-member or NUL). The exact stop is
 /// resolved scalar-side via `table` (built from the REAL, unpadded set), so a
 /// padded mask only ever fast-forwards correct chunks.
 #[inline(always)]
-// Table-FREE span scan for a ≤16-byte member `set`: the SIMD chunks use `in_set`
-// (in_set_mask8/16, simd_eq over the set bytes) and the <32-byte remainder checks the
-// `set` slice directly — so strspn/strcspn for 5-16-char sets need NOT build a 256-byte
-// `byte_membership_table` per call (was ~6x slower than glibc; bd-2g7oyh). Byte-identical:
-// `set.contains(b)` == the old `table[b]` membership for these sets.
-fn span_scan<F>(s: &[u8], stop_in_set: bool, in_set: F, set: &[u8]) -> usize
+fn span_scan<F>(s: &[u8], table: &[bool; 256], stop_in_set: bool, in_set: F) -> usize
 where
     F: Fn(Simd<u8, SIMD_LANES>) -> Mask<i8, SIMD_LANES>,
 {
@@ -1230,20 +821,23 @@ where
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let nul = lanes.simd_eq(zero);
         let member = in_set(lanes);
-        let stop_mask = if stop_in_set {
-            nul | member
+        let stop = if stop_in_set {
+            (nul | member).any()
         } else {
-            nul | !member
+            nul.any() || !member.all()
         };
-        let bits = stop_mask.to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
+        if stop {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || (table[byte as usize] == stop_in_set) {
+                    return base + j;
+                }
+            }
         }
         base += SIMD_LANES;
     }
 
     for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
-        if byte == 0 || (set.contains(&byte) == stop_in_set) {
+        if byte == 0 || (table[byte as usize] == stop_in_set) {
             return base + j;
         }
     }
@@ -1268,75 +862,6 @@ fn contiguous_set_range(set: &[u8], table: &[bool; 256]) -> Option<(u8, u8)> {
         return None;
     }
     Some((lo, hi))
-}
-
-#[derive(Clone, Copy)]
-struct SpanIntervalCover {
-    ranges: [(u8, u8); 2],
-    count: usize,
-}
-
-#[inline]
-fn small_interval_cover(set: &[u8]) -> Option<SpanIntervalCover> {
-    let mut bytes = [0u8; 8];
-    let mut len = 0usize;
-
-    for &byte in set {
-        if bytes[..len].contains(&byte) {
-            continue;
-        }
-
-        let mut pos = len;
-        while pos > 0 && bytes[pos - 1] > byte {
-            bytes[pos] = bytes[pos - 1];
-            pos -= 1;
-        }
-        bytes[pos] = byte;
-        len += 1;
-    }
-
-    if len == 0 {
-        return None;
-    }
-
-    let mut ranges = [(0u8, 0u8); 2];
-    let mut count = 0usize;
-    let mut i = 0usize;
-    while i < len {
-        let lo = bytes[i];
-        let mut hi = lo;
-        while i + 1 < len && hi != u8::MAX && bytes[i + 1] == hi + 1 {
-            i += 1;
-            hi = bytes[i];
-        }
-        if count == ranges.len() {
-            return None;
-        }
-        ranges[count] = (lo, hi);
-        count += 1;
-        i += 1;
-    }
-
-    Some(SpanIntervalCover { ranges, count })
-}
-
-#[inline(always)]
-fn byte_range_mask(lanes: Simd<u8, SIMD_LANES>, lo: u8, hi: u8) -> Mask<i8, SIMD_LANES> {
-    (lanes - Simd::splat(lo)).simd_le(Simd::splat(hi - lo))
-}
-
-#[inline(always)]
-fn interval_cover_mask(
-    lanes: Simd<u8, SIMD_LANES>,
-    cover: SpanIntervalCover,
-) -> Mask<i8, SIMD_LANES> {
-    let (lo, hi) = cover.ranges[0];
-    let mut member = byte_range_mask(lanes, lo, hi);
-    if cover.count == 2 {
-        let (lo, hi) = cover.ranges[1];
-        member |= byte_range_mask(lanes, lo, hi);
-    }
-    member
 }
 
 #[inline(always)]
@@ -1395,23 +920,9 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
             t.simd_gt(range_v).any()
         };
         if stop {
-            // Mask-resolve the first stop lane (range test == real `table` membership,
-            // proven by the caller) instead of a scalar byte re-scan of the block —
-            // strspn/strcspn(range) was ~10x slower than glibc (bd-2g7oyh). Runs only
-            // on the one flagged (stop) block, so the coarse fold's long-span
-            // throughput is preserved.
-            for k in 0..PANELS {
-                let off = base + k * PANEL;
-                let p = Simd::<u8, PANEL>::from_slice(&block[k * PANEL..(k + 1) * PANEL]);
-                let member = (p - lo_v).simd_le(range_v);
-                let stopmask = if stop_in_set {
-                    member | p.simd_eq(zero_v)
-                } else {
-                    !member
-                };
-                let bits = stopmask.to_bitmask();
-                if bits != 0 {
-                    return off + bits.trailing_zeros() as usize;
+            for (j, &byte) in block.iter().enumerate() {
+                if byte == 0 || (table[byte as usize] == stop_in_set) {
+                    return base + j;
                 }
             }
         }
@@ -1426,16 +937,17 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let member = lanes.simd_ge(lower) & lanes.simd_le(upper);
-        // Direct stop-mask resolve (range test == real `table` membership) — no
-        // scalar re-scan of the flagged chunk (bd-2g7oyh).
-        let stopmask = if stop_in_set {
-            member | lanes.simd_eq(zero)
+        let stop = if stop_in_set {
+            lanes.simd_eq(zero).any() || member.any()
         } else {
-            !member
+            !member.all()
         };
-        let bits = stopmask.to_bitmask();
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
+        if stop {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || (table[byte as usize] == stop_in_set) {
+                    return base + j;
+                }
+            }
         }
         base += SIMD_LANES;
     }
@@ -1452,278 +964,95 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
 /// Dispatches the `strspn`/`strcspn` general path (set size > 4) to a branchless
 /// SIMD multi-compare for sets up to 16 bytes — padding short sets with a real
 /// member — or a scalar `table` scan for larger sets (rare). `set` is non-empty.
-// Span scan for LARGE (>16-byte) member sets, which keep the 256-byte
-// `byte_membership_table` (a per-byte bitmap lookup beats a >16-element scalar
-// compare). 5-16-byte sets are routed by strspn/strcspn to the table-free
-// `span_scan` instead (bd-2g7oyh). Contiguous sets of any size use the range test.
-#[allow(unsafe_code)]
 fn span_general(s: &[u8], set: &[u8], table: &[bool; 256], stop_in_set: bool) -> usize {
     if let Some((lo, hi)) = contiguous_set_range(set, table) {
         return span_range(s, table, stop_in_set, lo, hi);
     }
 
-    // Non-contiguous set: for an all-ASCII set, a Langdale/Lemire 2-PSHUFB byte
-    // classifier scans 32 bytes per step (vs the scalar `table[byte]` loop, which is
-    // O(s_len) per byte and ~16x glibc on long non-contiguous spans). The build flag
-    // mandates AVX2, so no runtime feature check is needed. Non-ASCII sets (any byte
-    // >= 0x80) fall through to the scalar reference. Byte-identical (verified by the
-    // `span_pshufb_matches_scalar` differential test).
-    // Gate on `s.len() >= 64`: the classifier's LUT build + AVX2 call-boundary setup
-    // (~20ns, no cross-`target_feature` inlining) exceeds the scalar `table[byte]` loop
-    // for short spans, so short strings stay scalar (no regression). Long spans amortize
-    // the setup over 32-byte SIMD steps (measured: 256-char run 167ns→53ns, ~3.2x).
-    #[cfg(target_arch = "x86_64")]
-    if s.len() >= 64 && set.iter().all(|&b| b < 0x80) {
-        // SAFETY: AVX2 is enabled crate-wide (-Ctarget-feature=+avx2).
-        return unsafe { span_pshufb_ascii(s, set, stop_in_set) };
-    }
-
-    for (i, &byte) in s.iter().enumerate() {
-        if byte == 0 || (table[byte as usize] == stop_in_set) {
-            return i;
-        }
-    }
-    s.len()
-}
-
-/// Langdale/Lemire 2-PSHUFB membership classifier for a non-contiguous ALL-ASCII
-/// `set` (every byte `< 0x80`). For each input byte `b`: member iff
-/// `lo_lut[b&0xF] & hi_lut[b>>4] != 0`, where `lo_lut[lo] |= 1 << (v>>4)` per set
-/// byte `v` and `hi_lut[h] = 1 << h` (h<8; h>=8 → 0, so non-ASCII input bytes and
-/// NUL are non-members — exact). `stop_in_set` selects strcspn (stop on member|NUL)
-/// vs strspn (stop on non-member|NUL). Returns the stop index (== scalar reference).
-///
-/// # Safety
-/// Requires AVX2 (enabled crate-wide). `set` must be all-ASCII.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-#[allow(unsafe_code)]
-unsafe fn span_pshufb_ascii(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
-    use std::arch::x86_64::*;
-
-    let mut lo16 = [0u8; 16];
-    let mut hi16 = [0u8; 16];
-    for &v in set {
-        lo16[(v & 0x0F) as usize] |= 1u8 << (v >> 4);
-    }
-    for (h, slot) in hi16.iter_mut().enumerate().take(8) {
-        *slot = 1u8 << h;
-    }
-    // Duplicate the 16-byte LUTs into both 128-bit lanes (vpshufb is per-lane).
-    let lo_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(lo16.as_ptr().cast()));
-    let hi_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(hi16.as_ptr().cast()));
-    let zero = _mm256_setzero_si256();
-    let low_mask = _mm256_set1_epi8(0x0F);
-    let ones = _mm256_set1_epi8(-1i8);
-
-    let mut base = 0usize;
-    macro_rules! stop_bits {
-        ($off:expr) => {{
-            let lanes = _mm256_loadu_si256(s.as_ptr().add(base + $off).cast());
-            let lo = _mm256_and_si256(lanes, low_mask);
-            let hi = _mm256_and_si256(_mm256_srli_epi16(lanes, 4), low_mask);
-            let lo_bits = _mm256_shuffle_epi8(lo_table, lo);
-            let hi_bits = _mm256_shuffle_epi8(hi_table, hi);
-            let member = _mm256_and_si256(lo_bits, hi_bits); // nonzero lane == member
-            let nonmember = _mm256_cmpeq_epi8(member, zero); // 0xFF where NON-member
-            let nul = _mm256_cmpeq_epi8(lanes, zero);
-            let stop = if stop_in_set {
-                // strcspn: stop on member (NOT nonmember) OR NUL.
-                _mm256_or_si256(_mm256_andnot_si256(nonmember, ones), nul)
-            } else {
-                // strspn: stop on non-member OR NUL.
-                _mm256_or_si256(nonmember, nul)
-            };
-            _mm256_movemask_epi8(stop) as u32 as u64
-        }};
-    }
-
-    while base + 32 <= s.len() {
-        let bits = stop_bits!(0);
-        if bits != 0 {
-            return base + bits.trailing_zeros() as usize;
-        }
-        base += 32;
-    }
-    // Scalar tail (same membership math; byte-identical to the SIMD lanes).
-    while base < s.len() {
-        let v = s[base];
-        let is_member = (lo16[(v & 0x0F) as usize] & hi16[(v >> 4) as usize]) != 0;
-        if v == 0 || (is_member == stop_in_set) {
-            return base;
-        }
-        base += 1;
-    }
-    s.len()
-}
-
-/// Routes a ≥5-byte accept/reject `set` to the table-free `span_scan` (≤16) or the
-/// table-backed `span_general` (>16). The 256-byte table is built ONLY for >16 sets.
-fn span_dispatch(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
-    if set.len() >= 7
-        && set.len() <= 8
-        && s.len() >= 64
-        && !stop_in_set
-        && let Some(cover) = small_interval_cover(set)
-    {
-        return span_scan(
-            s,
-            stop_in_set,
-            |lanes| interval_cover_mask(lanes, cover),
-            set,
-        );
-    }
-
-    if set.len() == 6 {
-        let exact: &[u8; 6] = set.try_into().unwrap();
-        if stop_in_set {
-            find_any_of6_or_nul(s, exact)
-        } else {
-            find_non_any_of6_or_nul(s, exact)
-        }
-    } else if set.len() <= 8 {
+    if set.len() <= 8 {
         let mut padded = [set[0]; 8];
         padded[..set.len()].copy_from_slice(set);
-        span_scan(s, stop_in_set, |lanes| in_set_mask8(lanes, &padded), set)
+        span_scan(s, table, stop_in_set, |lanes| in_set_mask8(lanes, &padded))
+    } else if set.len() <= 16 {
+        let mut padded = [set[0]; 16];
+        padded[..set.len()].copy_from_slice(set);
+        span_scan(s, table, stop_in_set, |lanes| in_set_mask16(lanes, &padded))
     } else {
-        // 9+ byte sets: a 256-bit membership bitmap (one O(1) lookup per byte) beats
-        // `in_set_mask16` (16 `simd_eq` per panel = O(s_len * set_size)). Measured:
-        // 16-byte set, 256-char run, in_set_mask16 643ns vs bitmap 32ns (20x); a
-        // 16-char run 52ns vs 34ns (1.5x). The bitmap path (`span_general`) is the
-        // same one 17+ byte sets already use, so it is byte-identical and already
-        // conformance-tested — only the routing threshold changed (in_set_mask16
-        // was O(s_len*set_size) and pathological on long accepted spans).
-        let table = byte_membership_table(set);
-        span_general(s, set, &table, stop_in_set)
+        for (i, &byte) in s.iter().enumerate() {
+            if byte == 0 || (table[byte as usize] == stop_in_set) {
+                return i;
+            }
+        }
+        s.len()
     }
 }
 
 #[allow(unsafe_code)]
 fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
-    // First byte != `accepted` via a direct mask scan + trailing_zeros (one
-    // movemask/64), replacing the prior coarse-break + scalar tier re-scan (and the
-    // SWAR small path) — strspn(1) was ~5x slower than glibc (bd-2g7oyh). Since
-    // `accepted != 0`, a NUL is also `!= accepted`, so `simd_ne(accepted)` is exactly
-    // the scalar `byte == 0 || byte != accepted` stop. Byte-identical.
+    const WORD_SIZE: usize = size_of::<usize>();
+
     if accepted == 0 {
         return 0;
     }
+
+    if s.len() >= STRLEN_BLOCK {
+        let mut i = 0usize;
+
+        while i + STRLEN_BLOCK <= s.len() {
+            let chunk = &s[i..i + STRLEN_BLOCK];
+            if block_has_non_byte_256(chunk, accepted) {
+                break;
+            }
+            i += STRLEN_BLOCK;
+        }
+
+        while i + STRLEN_SIMD_LANES <= s.len() {
+            let chunk = &s[i..i + STRLEN_SIMD_LANES];
+            if has_non_byte_simd_64(chunk, accepted) {
+                break;
+            }
+            i += STRLEN_SIMD_LANES;
+        }
+
+        while i < s.len() {
+            let byte = s[i];
+            if byte == 0 || byte != accepted {
+                return i;
+            }
+            i += 1;
+        }
+
+        return s.len();
+    }
+
+    let repeated = repeated_byte(accepted);
     let mut i = 0;
-    let a64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(accepted);
-    while i + STRLEN_SIMD_LANES <= s.len() {
-        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[i..i + STRLEN_SIMD_LANES]);
-        let bits = v.simd_ne(a64).to_bitmask();
-        if bits != 0 {
-            return i + bits.trailing_zeros() as usize;
-        }
-        i += STRLEN_SIMD_LANES;
-    }
-    let a32 = Simd::<u8, SIMD_LANES>::splat(accepted);
-    while i + SIMD_LANES <= s.len() {
-        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[i..i + SIMD_LANES]);
-        let bits = v.simd_ne(a32).to_bitmask();
-        if bits != 0 {
-            return i + bits.trailing_zeros() as usize;
-        }
-        i += SIMD_LANES;
-    }
-    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load.
-    // The overlap region is already-scanned and all == accepted (no stop), so the
-    // window's leftmost `!= accepted` is the first remainder stop — byte-identical.
-    if i < s.len() {
-        if s.len() >= SIMD_LANES {
-            let start = s.len() - SIMD_LANES;
-            let v = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
-            let bits = v.simd_ne(a32).to_bitmask();
-            if bits != 0 {
-                return start + bits.trailing_zeros() as usize;
-            }
-        } else {
-            while i < s.len() {
-                if s[i] != accepted {
-                    return i;
-                }
-                i += 1;
-            }
-        }
-    }
-    s.len()
-}
-
-#[inline(always)]
-fn find_last_byte_before_nul(s: &[u8], needle: u8) -> Option<usize> {
-    debug_assert_ne!(needle, 0);
-
-    let mut i = 0usize;
-    let mut last = None;
-    let n64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
-    let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
-    while i + STRLEN_SIMD_LANES <= s.len() {
-        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[i..i + STRLEN_SIMD_LANES]);
-        let target = v.simd_eq(n64);
-        let nul = v.simd_eq(z64);
-        let event_bits = (target | nul).to_bitmask() as u64;
-        if event_bits != 0 {
-            let nul_bits = nul.to_bitmask() as u64;
-            let target_bits = event_bits & !nul_bits;
-            if nul_bits == 0 {
-                last = Some(i + 63 - target_bits.leading_zeros() as usize);
-            } else {
-                let nul = nul_bits.trailing_zeros() as usize;
-                let before_nul = if nul == 0 {
-                    0
-                } else {
-                    target_bits & ((1u64 << nul) - 1)
-                };
-                if before_nul != 0 {
-                    last = Some(i + 63 - before_nul.leading_zeros() as usize);
-                }
-                return last;
-            }
-        }
-        i += STRLEN_SIMD_LANES;
-    }
-
-    let n32 = Simd::<u8, SIMD_LANES>::splat(needle);
-    let z32 = Simd::<u8, SIMD_LANES>::splat(0);
-    while i + SIMD_LANES <= s.len() {
-        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[i..i + SIMD_LANES]);
-        let target = v.simd_eq(n32);
-        let nul = v.simd_eq(z32);
-        let event_bits = (target | nul).to_bitmask() as u64;
-        if event_bits != 0 {
-            let nul_bits = nul.to_bitmask() as u64;
-            let target_bits = event_bits & !nul_bits;
-            if nul_bits == 0 {
-                last = Some(i + 63 - target_bits.leading_zeros() as usize);
-            } else {
-                let nul = nul_bits.trailing_zeros() as usize;
-                let before_nul = if nul == 0 {
-                    0
-                } else {
-                    target_bits & ((1u64 << nul) - 1)
-                };
-                if before_nul != 0 {
-                    last = Some(i + 63 - before_nul.leading_zeros() as usize);
-                }
-                return last;
-            }
-        }
-        i += SIMD_LANES;
-    }
-
-    while i < s.len() {
+    while i < s.len() && !(s.as_ptr() as usize + i).is_multiple_of(WORD_SIZE) {
         let byte = s[i];
-        if byte == 0 {
-            return last;
-        }
-        if byte == needle {
-            last = Some(i);
+        if byte == 0 || byte != accepted {
+            return i;
         }
         i += 1;
     }
 
-    last
+    while i + WORD_SIZE <= s.len() {
+        // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len().
+        let word = unsafe { core::ptr::read(s.as_ptr().add(i) as *const usize) };
+        if word != repeated {
+            break;
+        }
+        i += WORD_SIZE;
+    }
+
+    while i < s.len() {
+        let byte = s[i];
+        if byte == 0 || byte != accepted {
+            return i;
+        }
+        i += 1;
+    }
+
+    s.len()
 }
 
 /// Locates the last occurrence of `c` in the NUL-terminated string `s`.
@@ -1735,9 +1064,45 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
-    // One pass: keep the highest `c` lane seen before the first NUL. This is the
-    // same result as `memrchr(s, c, strlen(s))` without scanning the string twice.
-    find_last_byte_before_nul(s, c)
+    // Absent needles need only the pure byte scan; found cases still use the
+    // existing C-string resolver below to preserve last-before-NUL semantics.
+    super::mem::memchr(s, c, s.len())?;
+
+    // Single forward pass tracking the last match — exactly what glibc does,
+    // versus the old strlen()+reverse-scan that walked the buffer TWICE. A
+    // 256B folded SIMD probe skips blocks containing neither `c` nor NUL with
+    // one reduction; only a block that has a hit is resolved scalar-side,
+    // updating the last-seen `c` until the terminating NUL ends the string.
+    let mut last = None;
+    let mut i = 0;
+
+    while i + STRCHR_FOLD_BYTES <= s.len() {
+        if has_byte_or_nul_simd_folded_256(&s[i..i + STRCHR_FOLD_BYTES], c) {
+            for k in 0..STRCHR_FOLD_BYTES {
+                let byte = s[i + k];
+                if byte == 0 {
+                    return last;
+                }
+                if byte == c {
+                    last = Some(i + k);
+                }
+            }
+        }
+        i += STRCHR_FOLD_BYTES;
+    }
+
+    while i < s.len() {
+        let byte = s[i];
+        if byte == 0 {
+            return last;
+        }
+        if byte == c {
+            last = Some(i);
+        }
+        i += 1;
+    }
+
+    last
 }
 
 /// Finds the first occurrence of the NUL-terminated substring `needle` in
@@ -1805,33 +1170,9 @@ pub fn strcasecmp(s1: &[u8], s2: &[u8]) -> i32 {
     // (post-fold) or holds a NUL drops to the scalar tail for exact resolution.
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
-    while i + SIMD_FOLD_BYTES <= bounded {
-        if !fold_equal_and_no_nul_simd_folded(
-            &s1[i..i + SIMD_FOLD_BYTES],
-            &s2[i..i + SIMD_FOLD_BYTES],
-        ) {
-            break;
-        }
-        i += SIMD_FOLD_BYTES;
-    }
-
     while i + SIMD_LANES <= bounded {
-        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
-        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
-        // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
-        // index via the SIMD mask instead of breaking to the scalar tail and
-        // re-lowercasing the panel byte-by-byte (bd-2g7oyh; same fix as strncasecmp).
-        let event = fold_ascii_upper_simd_32(av).simd_ne(fold_ascii_upper_simd_32(bv))
-            | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let la = s1[j].to_ascii_lowercase();
-            let lb = s2[j].to_ascii_lowercase();
-            if la != lb {
-                return (la as i32) - (lb as i32);
-            }
-            return 0; // shared NUL after case-folding equal
+        if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
         }
         i += SIMD_LANES;
     }
@@ -1861,36 +1202,9 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     // out-of-range (logical NUL) bytes, identical to the scalar scan.
     let bounded = n.min(s1.len()).min(s2.len());
     let mut i = 0;
-    while i + SIMD_FOLD_BYTES <= bounded {
-        if !fold_equal_and_no_nul_simd_folded(
-            &s1[i..i + SIMD_FOLD_BYTES],
-            &s2[i..i + SIMD_FOLD_BYTES],
-        ) {
-            break;
-        }
-        i += SIMD_FOLD_BYTES;
-    }
-
     while i + SIMD_LANES <= bounded {
-        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
-        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
-        // First lane that case-folds-differently OR is NUL in s1 — resolve the
-        // divergence index via the SIMD mask + trailing_zeros (O(1)) instead of
-        // breaking to the scalar tail and re-lowercasing the panel byte-by-byte
-        // (strncasecmp was 12.3x slower than glibc on a deep-in-panel case diff;
-        // bd-2g7oyh). `fold_ascii_upper_simd_32` matches fold_equal_and_no_nul_simd_32's
-        // break condition exactly; the lowercase byte compare at `j` matches the tail.
-        let event = fold_ascii_upper_simd_32(av).simd_ne(fold_ascii_upper_simd_32(bv))
-            | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let la = s1[j].to_ascii_lowercase();
-            let lb = s2[j].to_ascii_lowercase();
-            if la != lb {
-                return (la as i32) - (lb as i32);
-            }
-            return 0; // shared NUL after case-folding equal
+        if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
+            break;
         }
         i += SIMD_LANES;
     }
@@ -1918,50 +1232,40 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Equivalent to C `strspn`.
 pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
     let accept_len = strlen(accept);
-    strspn_set(s, &accept[..accept_len])
-}
-
-/// `strspn` over an EXACT member set (no NUL-terminated `strlen` of the set).
-/// Lets non-NUL-terminated callers (e.g. `strtok`'s delimiter slice) reuse the
-/// same SIMD scanners. `strspn` is the NUL-terminated wrapper.
-pub(crate) fn strspn_set(s: &[u8], accept_set: &[u8]) -> usize {
-    match accept_set.len() {
+    match accept_len {
         0 => return 0,
-        1 => return find_non_byte_or_nul(s, accept_set[0]),
-        // len 2/3 reuse the SIMD len-4 scanner by duplicating accept bytes (same
-        // membership set), instead of a scalar per-byte loop (was 6.5x slower than
-        // glibc's vectorized strspn; bd-2g7oyh).
+        1 => {
+            let accepted = accept[0];
+            return find_non_byte_or_nul(s, accepted);
+        }
         2 => {
-            return find_non_any_of4_or_nul(
-                s,
-                accept_set[0],
-                accept_set[1],
-                accept_set[0],
-                accept_set[1],
-            );
+            let a0 = accept[0];
+            let a1 = accept[1];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || (byte != a0 && byte != a1) {
+                    return i;
+                }
+            }
+            return s.len();
         }
         3 => {
-            return find_non_any_of4_or_nul(
-                s,
-                accept_set[0],
-                accept_set[1],
-                accept_set[2],
-                accept_set[2],
-            );
+            let a0 = accept[0];
+            let a1 = accept[1];
+            let a2 = accept[2];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || (byte != a0 && byte != a1 && byte != a2) {
+                    return i;
+                }
+            }
+            return s.len();
         }
-        4 => {
-            return find_non_any_of4_or_nul(
-                s,
-                accept_set[0],
-                accept_set[1],
-                accept_set[2],
-                accept_set[3],
-            );
-        }
+        4 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[3]),
         _ => {}
     }
 
-    span_dispatch(s, accept_set, false)
+    let accept_set = &accept[..accept_len];
+    let accept_table = byte_membership_table(accept_set);
+    span_general(s, accept_set, &accept_table, false)
 }
 
 /// Returns the length of the initial segment of `s` consisting entirely of
@@ -1970,48 +1274,40 @@ pub(crate) fn strspn_set(s: &[u8], accept_set: &[u8]) -> usize {
 /// Equivalent to C `strcspn`.
 pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
     let reject_len = strlen(reject);
-    strcspn_set(s, &reject[..reject_len])
-}
-
-/// `strcspn` over an EXACT reject set (no NUL-terminated `strlen` of the set).
-/// Companion to [`strspn_set`] for `strtok`-style callers.
-pub(crate) fn strcspn_set(s: &[u8], reject_set: &[u8]) -> usize {
-    match reject_set.len() {
+    match reject_len {
         0 => return strlen(s),
-        1 => return find_byte_or_nul(s, reject_set[0]),
-        // len 2/3 reuse the SIMD len-4 scanner by duplicating reject bytes (same
-        // membership set), instead of a scalar per-byte loop (bd-2g7oyh).
+        1 => {
+            let rejected = reject[0];
+            return find_byte_or_nul(s, rejected);
+        }
         2 => {
-            return find_any_of4_or_nul_fused(
-                s,
-                reject_set[0],
-                reject_set[1],
-                reject_set[0],
-                reject_set[1],
-            );
+            let r0 = reject[0];
+            let r1 = reject[1];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || byte == r0 || byte == r1 {
+                    return i;
+                }
+            }
+            return s.len();
         }
         3 => {
-            return find_any_of4_or_nul_fused(
-                s,
-                reject_set[0],
-                reject_set[1],
-                reject_set[2],
-                reject_set[2],
-            );
+            let r0 = reject[0];
+            let r1 = reject[1];
+            let r2 = reject[2];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || byte == r0 || byte == r1 || byte == r2 {
+                    return i;
+                }
+            }
+            return s.len();
         }
-        4 => {
-            return find_any_of4_or_nul_fused(
-                s,
-                reject_set[0],
-                reject_set[1],
-                reject_set[2],
-                reject_set[3],
-            );
-        }
+        4 => return find_any_of4_or_nul(s, reject[0], reject[1], reject[2], reject[3]),
         _ => {}
     }
 
-    span_dispatch(s, reject_set, true)
+    let reject_set = &reject[..reject_len];
+    let reject_table = byte_membership_table(reject_set);
+    span_general(s, reject_set, &reject_table, true)
 }
 
 /// Locates the first occurrence of any byte from `accept` in `s`.
@@ -2029,19 +1325,30 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
             }
             return None;
         }
-        // len 2/3 reuse the SIMD len-4 scanner by duplicating accept bytes (same
-        // membership set), instead of a scalar per-byte loop (bd-2g7oyh).
         2 => {
-            let index = find_any_of4_or_nul(s, accept[0], accept[1], accept[0], accept[1]);
-            if index < s.len() && s[index] != 0 {
-                return Some(index);
+            let a0 = accept[0];
+            let a1 = accept[1];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 {
+                    return None;
+                }
+                if byte == a0 || byte == a1 {
+                    return Some(i);
+                }
             }
             return None;
         }
         3 => {
-            let index = find_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[2]);
-            if index < s.len() && s[index] != 0 {
-                return Some(index);
+            let a0 = accept[0];
+            let a1 = accept[1];
+            let a2 = accept[2];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 {
+                    return None;
+                }
+                if byte == a0 || byte == a1 || byte == a2 {
+                    return Some(i);
+                }
             }
             return None;
         }
@@ -2056,9 +1363,10 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
     }
 
     let accept_set = &accept[..accept_len];
-    // span_dispatch(stop_in_set=true) returns the first member-or-NUL index, or
+    let accept_table = byte_membership_table(accept_set);
+    // span_general(stop_in_set=true) returns the first member-or-NUL index, or
     // s.len(). It is strpbrk when the stop is a real member (non-NUL, in range).
-    let index = span_dispatch(s, accept_set, true);
+    let index = span_general(s, accept_set, &accept_table, true);
     if index < s.len() && s[index] != 0 {
         Some(index)
     } else {
@@ -2089,13 +1397,16 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
     // Dual-anchor fast path: a match at `start` requires BOTH the case-folded
     // first byte at `start` and the case-folded last byte at `start + n_len - 1`.
-    // Last-byte anchoring is excellent when the last byte is the rarer anchor
-    // (e.g. icase "aaaa...b"), but text needles often end in a common byte (`e`,
-    // `t`, space). Use the same static frequency prior as `memmem`/`wcsstr` so
-    // common-last text routes to the first-byte scan below while rare-last
-    // needles keep the dual-anchor win. The O(n+m) Two-Way bailout and
-    // leftmost-match semantics are preserved whichever anchor is selected.
-    if first != last && strcasestr_prefers_last_anchor(first, last) {
+    // When the folded first byte is common (e.g. icase "aAaA…aB" over a mixed
+    // 'a'/'A' run) but the folded last byte is rare/absent, anchoring the SIMD
+    // scan on the last byte collapses the search to a single pass — the
+    // first-byte-only scan below makes every position a candidate (O(n*m)). We
+    // scan for the folded last byte; each hit confirms the folded first byte and
+    // a full case-insensitive compare. Only valid when `first != last`; otherwise
+    // the anchors coincide and we use the first-byte scan. The O(n+m) Two-Way
+    // bailout and leftmost-match semantics are preserved (last-byte hits are
+    // visited left to right, so candidate starts increase monotonically).
+    if first != last {
         let mut anchor = n_len - 1;
         let mut miss_work = 0usize;
         while anchor < hay.len() {
@@ -2171,26 +1482,6 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     None
 }
 
-#[inline(always)]
-fn strcasestr_prefers_last_anchor(first: u8, last: u8) -> bool {
-    debug_assert_ne!(first, last);
-    strcasestr_anchor_commonness(last) <= strcasestr_anchor_commonness(first)
-}
-
-#[inline(always)]
-fn strcasestr_anchor_commonness(byte: u8) -> u8 {
-    match byte.to_ascii_lowercase() {
-        b' ' | b'e' => 16,
-        b'a' | b'i' | b'n' | b'o' | b'r' | b's' | b't' => 12,
-        b'c' | b'd' | b'f' | b'g' | b'h' | b'l' | b'm' | b'p' | b'u' | b'w' | b'y' => 8,
-        b'\t' | b'\n' | b'\r' | b'_' | b'-' | b'.' | b'/' => 6,
-        b'0'..=b'9' => 5,
-        b'!'..=b'~' => 4,
-        0 => 2,
-        _ => 1,
-    }
-}
-
 /// Duplicates a NUL-terminated string into a new `Vec<u8>`.
 ///
 /// This is the safe core of C `strdup`. The ABI layer handles the actual
@@ -2227,33 +1518,6 @@ pub fn strsep(s: &mut [u8], delim: &[u8]) -> Option<usize> {
         let delimiter = delim[0];
         let index = find_byte_or_nul(s, delimiter);
         if index < s.len() && s[index] == delimiter {
-            s[index] = 0;
-            return Some(index);
-        }
-        return None;
-    }
-    // 2- and 3-delimiter sets (e.g. "\r\n", ", ", "::") are common; route them
-    // through the SIMD find_any_of4 by padding the unused slot(s) with a repeated
-    // delimiter, instead of the byte-by-byte linear .contains general path below.
-    if delim_len == 2 {
-        let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[0], delim[1]);
-        if index < s.len() && s[index] != 0 {
-            s[index] = 0;
-            return Some(index);
-        }
-        return None;
-    }
-    if delim_len == 3 {
-        let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[2], delim[2]);
-        if index < s.len() && s[index] != 0 {
-            s[index] = 0;
-            return Some(index);
-        }
-        return None;
-    }
-    if delim_len == 4 {
-        let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[2], delim[3]);
-        if index < s.len() && s[index] != 0 {
             s[index] = 0;
             return Some(index);
         }
@@ -2337,63 +1601,6 @@ mod tests {
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
     use sha2::{Digest, Sha256};
-
-    fn scalar_span_ref(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
-        let mut table = [false; 256];
-        for &b in set {
-            table[b as usize] = true;
-        }
-        for (i, &byte) in s.iter().enumerate() {
-            if byte == 0 || (table[byte as usize] == stop_in_set) {
-                return i;
-            }
-        }
-        s.len()
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(4000))]
-        /// The 2-PSHUFB classifier must be byte-identical to the scalar reference for
-        /// EVERY all-ASCII set + arbitrary haystack (incl. non-ASCII bytes and NULs),
-        /// in both strspn and strcspn directions. Guards the deployed core change.
-        #[cfg(target_arch = "x86_64")]
-        #[test]
-        #[allow(unsafe_code)]
-        fn span_pshufb_matches_scalar(
-            s in proptest::collection::vec(any::<u8>(), 0..200),
-            set in proptest::collection::vec(1u8..0x80, 1..24),
-            stop_in_set in any::<bool>(),
-        ) {
-            // SAFETY: avx2 enabled crate-wide; `set` is all-ASCII (1..0x80).
-            let simd = unsafe { span_pshufb_ascii(&s, &set, stop_in_set) };
-            let scalar = scalar_span_ref(&s, &set, stop_in_set);
-            prop_assert_eq!(simd, scalar, "s={:?} set={:?} stop={}", s, set, stop_in_set);
-        }
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(4000))]
-        /// A one/two-interval cover is an exact algebraic normalization of the
-        /// small member set; the SIMD range masks must preserve scalar byte
-        /// identity in both span directions.
-        #[test]
-        fn span_interval_cover_matches_scalar(
-            s in proptest::collection::vec(any::<u8>(), 0..200),
-            set in proptest::collection::vec(any::<u8>(), 1..9),
-            stop_in_set in any::<bool>(),
-        ) {
-            if let Some(cover) = small_interval_cover(&set) {
-                let simd = span_scan(
-                    &s,
-                    stop_in_set,
-                    |lanes| interval_cover_mask(lanes, cover),
-                    &set,
-                );
-                let scalar = scalar_span_ref(&s, &set, stop_in_set);
-                prop_assert_eq!(simd, scalar, "s={:?} set={:?} stop={}", s, set, stop_in_set);
-            }
-        }
-    }
 
     fn property_proptest_config(default_cases: u32) -> ProptestConfig {
         let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
@@ -2687,52 +1894,6 @@ mod tests {
         assert_eq!(copied, 3);
         assert_eq!(&dst[..3], b"hi\0");
         assert_eq!(dst[3], 0xAA);
-    }
-
-    #[test]
-    fn test_strcpy_fused_path_preserves_tail_after_early_nul() {
-        let mut src = vec![b'a'; STRLEN_NUL_BLOCK * 2 + 1];
-        src[STRLEN_NUL_BLOCK + 17] = 0;
-        *src.last_mut().unwrap() = 0;
-        let mut dst = vec![0xA5; src.len()];
-
-        let copied = strcpy(&mut dst, &src);
-
-        assert_eq!(copied, STRLEN_NUL_BLOCK + 18);
-        assert_eq!(&dst[..copied], &src[..copied]);
-        assert_eq!(dst[copied], 0xA5);
-    }
-
-    #[test]
-    fn test_strcpy_exact_4096_path_preserves_tail_after_early_nul() {
-        let nul_pos = STRLEN_NUL_BLOCK * 3 + 29;
-        let mut src = vec![b'a'; STRCPY_4096_SRC_LEN];
-        src[nul_pos] = 0;
-        *src.last_mut().unwrap() = 0;
-        let mut dst = vec![0x5A; src.len()];
-
-        let copied = strcpy(&mut dst, &src);
-
-        assert_eq!(copied, nul_pos + 1);
-        assert_eq!(&dst[..copied], &src[..copied]);
-        assert_eq!(dst[copied], 0x5A);
-        assert_eq!(dst[STRCPY_4096_SRC_LEN - 1], 0x5A);
-    }
-
-    #[test]
-    fn test_strcpy_exact_4096_path_copies_terminal_boundary_payload() {
-        let mut src = vec![b'a'; STRCPY_4096_SRC_LEN];
-        for (i, byte) in src[..STRCPY_4096_SRC_LEN - 1].iter_mut().enumerate() {
-            *byte = b'A' + (i % 26) as u8;
-        }
-        *src.last_mut().unwrap() = 0;
-        let mut dst = vec![0x5A; STRCPY_4096_SRC_LEN + 8];
-
-        let copied = strcpy(&mut dst, &src);
-
-        assert_eq!(copied, STRCPY_4096_SRC_LEN);
-        assert_eq!(&dst[..STRCPY_4096_SRC_LEN], &src[..]);
-        assert!(dst[STRCPY_4096_SRC_LEN..].iter().all(|&byte| byte == 0x5A));
     }
 
     #[test]
@@ -3242,17 +2403,6 @@ mod tests {
         s[70] = b'X';
 
         assert_eq!(strcspn(&s, b"WXYZ\0"), 29);
-    }
-
-    #[test]
-    fn test_strcspn_four_reject_fused_mask_preserves_first_stop_order() {
-        let mut s = vec![b'A'; SIMD_LANES * 3 + 5];
-        s[SIMD_LANES + 7] = b'Y';
-        s[SIMD_LANES * 2 + 3] = 0;
-        assert_eq!(strcspn(&s, b"WXYZ\0"), SIMD_LANES + 7);
-
-        s[SIMD_LANES + 4] = 0;
-        assert_eq!(strcspn(&s, b"WXYZ\0"), SIMD_LANES + 4);
     }
 
     #[test]
@@ -3795,23 +2945,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ascii_folded_finder_folded_block_preserves_first_nul_or_candidate() {
-        let mut haystack = vec![b'A'; SIMD_FOLD_BYTES * 2 + 17];
-        haystack[SIMD_FOLD_BYTES + 5] = b'Q';
-        haystack[SIMD_FOLD_BYTES + 12] = 0;
-        assert_eq!(
-            find_ascii_folded_byte_or_nul(&haystack, b'q'),
-            SIMD_FOLD_BYTES + 5
-        );
-
-        haystack[SIMD_LANES + 3] = 0;
-        assert_eq!(
-            find_ascii_folded_byte_or_nul(&haystack, b'q'),
-            SIMD_LANES + 3
-        );
-    }
-
-    #[test]
     fn test_strsep_basic() {
         let mut s = *b"hello,world,end\0";
         let result = strsep(&mut s, b",\0");
@@ -3838,69 +2971,6 @@ mod tests {
         assert_eq!(s[53], 0);
         assert_eq!(s[52], b'a');
         assert_eq!(s[54], b'a');
-    }
-
-    #[test]
-    fn test_strsep_four_delimiter_bulk_scan_preserves_first_stop_order() {
-        let mut s = vec![b'a'; SIMD_LANES * 3 + 5];
-        s[SIMD_LANES + 9] = b'|';
-        s[SIMD_LANES * 2 + 1] = 0;
-
-        let result = strsep(&mut s, b":;|\t\0");
-
-        assert_eq!(result, Some(SIMD_LANES + 9));
-        assert_eq!(s[SIMD_LANES + 9], 0);
-        assert_eq!(s[SIMD_LANES + 8], b'a');
-        assert_eq!(s[SIMD_LANES + 10], b'a');
-
-        let mut nul_first = vec![b'a'; SIMD_LANES * 3 + 5];
-        nul_first[SIMD_LANES + 4] = 0;
-        nul_first[SIMD_LANES + 9] = b'|';
-
-        assert_eq!(strsep(&mut nul_first, b":;|\t\0"), None);
-        assert_eq!(nul_first[SIMD_LANES + 9], b'|');
-    }
-
-    #[test]
-    fn test_strsep_two_three_delim_simd_matches_reference() {
-        // The len-2/3 SIMD-routed paths must find the same first delimiter-or-NUL
-        // as a byte-by-byte reference, across a long buffer (exercises the SIMD
-        // bulk scan) for each delimiter and the no-match case.
-        fn reference(s: &[u8], delims: &[u8]) -> Option<usize> {
-            for (i, &b) in s.iter().enumerate() {
-                if b == 0 {
-                    return None;
-                }
-                if delims[..delims.len() - 1].contains(&b) {
-                    return Some(i);
-                }
-            }
-            None
-        }
-        for delims in [
-            b"\r\n\0".as_slice(),
-            b", \0".as_slice(),
-            b"::\0".as_slice(),
-            b";|:\0".as_slice(),
-        ] {
-            for hit in [7usize, SIMD_LANES + 3, SIMD_LANES * 2 + 1, 999] {
-                let mut buf = vec![b'x'; SIMD_LANES * 3 + 10];
-                let last = delims[..delims.len() - 1].len() - 1;
-                if hit < buf.len() {
-                    buf[hit] = delims[last.min(delims.len() - 2)]; // a real delimiter byte
-                }
-                let mut a = buf.clone();
-                let got = strsep(&mut a, delims);
-                let want = reference(&buf, delims);
-                assert_eq!(
-                    got, want,
-                    "strsep delims={delims:?} hit={hit}: got={got:?} want={want:?}"
-                );
-                if let Some(idx) = got {
-                    assert_eq!(a[idx], 0, "delimiter overwritten with NUL");
-                }
-            }
-        }
     }
 
     #[test]

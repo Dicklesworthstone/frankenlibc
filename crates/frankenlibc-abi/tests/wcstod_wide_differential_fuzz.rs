@@ -118,7 +118,7 @@ const NON_ASCII: &[i32] = &[
 fn gen_case(r: &mut Lcg) -> Vec<i32> {
     let mut v: Vec<i32> = Vec::new();
     match r.below(10) {
-        0..=2 => {
+        0 | 1 | 2 => {
             // Decimal float with variable mantissa/exponent.
             maybe_ws(r, &mut v);
             maybe_sign(r, &mut v);
@@ -210,7 +210,7 @@ fn gen_case(r: &mut Lcg) -> Vec<i32> {
             push_ascii(&mut v, ".");
             push_ascii(&mut v, &digits(r, 8));
             // trailing letters/punct
-            let tail = *b"abxpe.-";
+            let tail = [b'a', b'b', b'x', b'p', b'e', b'.', b'-'];
             let n = r.below(4);
             for _ in 0..n {
                 v.push(tail[r.below(tail.len() as u64) as usize] as i32);
@@ -288,8 +288,7 @@ fn wcstod_wide_differential_fuzz_vs_glibc() {
 
         // wcstod (f64)
         let (fl, lc) = run_pair_d(&chars);
-        let val_ok =
-            fl.0 == lc.0 || (f64::from_bits(fl.0).is_nan() && f64::from_bits(lc.0).is_nan());
+        let val_ok = fl.0 == lc.0 || (f64::from_bits(fl.0).is_nan() && f64::from_bits(lc.0).is_nan());
         if (!val_ok || fl.1 != lc.1) && divs.len() < 40 {
             divs.push(format!(
                 "wcstod input={:?}\n    fl   =(bits={:#018x} off={})\n    glibc=(bits={:#018x} off={})",

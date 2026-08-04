@@ -2428,6 +2428,414 @@ unsafe fn scan_c_string_pshufb(
     }
 }
 
+/// Byte budget for the `pcmpistri` span probe. Spans that stop inside this many
+/// bytes are answered entirely by `pcmpistri`; longer ones hand the probe's proven
+/// prefix to the LUT + 32-byte AVX2 loop, which beats glibc ~2x from ~1 KiB up.
+///
+/// Because the budget is handed over rather than discarded, its only cost on a
+/// non-resolving call is the delta between `pcmpistri` (~0.045 ns/byte) and the
+/// AVX2 loop (~0.015) across the budget — ~8 ns at 256 bytes, against a ~120 ns
+/// span-4096 call that still finishes at ~0.5x glibc. What the budget buys is the
+/// whole short-span regime, which is where real callers live (field widths,
+/// whitespace runs, token lengths) and where the LUT setup cost 3-15x.
+///
+/// A span landing just PAST the budget is the worst case: it pays the probe and
+/// then the LUT setup. That penalty scales with the budget, so the budget also
+/// bounds the regression — ~+3-5 ns at 128 bytes. 64 and 256 were both measured
+/// and rejected: 64 puts the penalty band at spans 64-128 (common — punct16
+/// regressed to 3.57x), and 256 both widens the band and pushes span-4096 to
+/// ~139 ns from ~120.
+#[cfg(target_arch = "x86_64")]
+const CMPISTRI_PROBE_BYTES: usize = 128;
+
+/// How many 16-byte `pcmpistr*` needles the probe will hold, i.e. the widest set it
+/// answers: 4 x 16 = 64 bytes. Sets wider than this decline to the LUT path.
+///
+/// Why widen past one needle at all: a set of 17+ bytes is where glibc ITSELF gives
+/// up on `pcmpistri` and falls back to `__strcspn_sse2` — a 256-byte table build and
+/// a 4-byte-per-iteration scalar walk. So on long spans our AVX2 LUT loop already
+/// beats it 5-7x (measured: 22-byte set, span 4096, strcspn 0.14x). The ONLY region
+/// we lost was short spans, and for exactly the same reason as the <=16 case: a fixed
+/// setup, three passes over the set, paid before the haystack is touched. The needle
+/// bank deletes those passes for 17..=64-byte sets too — the loads that find the set's
+/// NUL ARE the length scan, and their sign bits ARE the ASCII test.
+///
+/// 4 is the width at which the per-chunk cost still pays for itself inside the budget:
+/// n needles cost n `pcmpistrm` per 16 haystack bytes (~0.9 cycles/byte at n=4) against
+/// a ~48 ns `build_pshufb_lut` for a 63-byte set, so the LUT only amortizes past
+/// ~140 bytes — just outside [`CMPISTRI_PROBE_BYTES`], which is why the same 128-byte
+/// budget is correct for every needle count and is not scaled down.
+#[cfg(target_arch = "x86_64")]
+const CMPISTRI_MAX_NEEDLES: usize = 4;
+
+/// Outcome of [`span_probe_cmpistri`].
+#[cfg(target_arch = "x86_64")]
+enum SpanProbe {
+    /// Resolved: the stop is at this index from `s`.
+    Stop(usize),
+    /// Not resolved inside the budget, but the first `consumed` bytes of `s` are
+    /// proven stop-free and the set is `set_len` bytes wide — so the caller resumes
+    /// its own scan at `s + consumed` rather than rescanning from the start. Without
+    /// this the probe would be pure waste on long spans (measured: +13 ns at span
+    /// 256 when the prefix was discarded).
+    ///
+    /// `all_ascii` is the PSHUFB classifier's precondition, read straight off the
+    /// set vector the probe already loaded, so the handoff never re-walks the set
+    /// with `all_bytes_ascii`. Pure edge-band savings: it costs nothing on the
+    /// resolved path, where it is never read.
+    Resume {
+        consumed: usize,
+        set_len: usize,
+        all_ascii: bool,
+    },
+    /// The probe does not apply; use the existing path from `s`, unchanged.
+    Decline,
+}
+
+/// SSE4.2 `pcmpistr*` early-stop span probe for a 5..=64-byte accept/reject set —
+/// the deployed answer to a FIXED per-call setup floor that glibc does not pay.
+///
+/// For a set of at most 16 bytes glibc's `__strspn_sse42` / `__strcspn_sse42` /
+/// `__strpbrk_sse42` do ONE unaligned 16-byte load of the set and then one
+/// instruction per 16 input bytes; their per-call setup is O(1). FrankenLibC's LUT
+/// path instead makes THREE scalar passes over the set — `scan_c_string` for its
+/// length, `all_bytes_ascii`, and `build_pshufb_lut` — before it touches the
+/// haystack, and the strcspn slice fallback additionally materializes a 256-byte
+/// `byte_membership_table`. Measured against live glibc (`span_largeset_ab`), that
+/// setup is a flat ~12-50 ns: invisible at span 4096 (where the AVX2 loop wins
+/// ~2x) and 3-15x of the whole call at span <= 64 — worst arm strcspn/16-byte-set
+/// 14.81x at span 4. This probe deletes the setup rather than shaving it: the set
+/// goes straight into a bank of up to [`CMPISTRI_MAX_NEEDLES`] xmm registers and each
+/// needle's implicit NUL length supplies the set length for free.
+///
+/// Past 16 bytes glibc stops using `pcmpistri` too and falls back to `__strcspn_sse2`
+/// — a 256-byte table build plus a 4-byte-per-iteration scalar walk — so on long spans
+/// our AVX2 LUT loop already beats it 5-7x there. The needle bank exists for the other
+/// end: at span <= 100 a 22-byte set cost us a flat 53-63 ns against glibc's 24-54, and
+/// a 63-byte set a flat 102-153 ns against 48-88, purely because those three passes
+/// over the set run before the first haystack byte is read.
+///
+/// Returns [`SpanProbe::Stop`] when the answer is resolved inside the probe budget,
+/// [`SpanProbe::Resume`] when the span outran the budget (the caller continues past
+/// the proven prefix), and [`SpanProbe::Decline`] when the probe does not apply at
+/// all — a set outside 5..=64 bytes or a page-crossing load. Neither non-`Stop`
+/// outcome ever means "no stop exists"; they only mean "not answered here", so
+/// every caller stays correct by falling through unchanged.
+///
+/// `stop_in_set == false` is strspn (stop at the first NON-member or the NUL);
+/// `true` is strcspn/strpbrk (stop at the first member or the NUL).
+///
+/// Sets of 1..=4 bytes are deliberately excluded: they have their own tuned splat
+/// kernels (`scan_c_string_for_set4`, `scan_c_string_first_not_byte`) that already
+/// run at glibc's level, and fronting them with a probe would only add work.
+///
+/// Unlike the PSHUFB classifier this path needs no ASCII precondition —
+/// `_SIDD_UBYTE_OPS` compares raw bytes — so it also covers non-ASCII sets that the
+/// LUT path refuses.
+///
+/// # Safety
+/// `s` and `set` must be valid NUL-terminated C strings. SSE4.2 is implied by the
+/// crate-wide AVX2 mandate (`-Ctarget-feature=+avx2`).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -> SpanProbe {
+    use std::arch::x86_64::*;
+
+    // SAFETY of every load below: a 16-byte load stays inside one 4 KiB page iff it
+    // starts at most 16 bytes before the page end. Byte 0 of a valid C string is
+    // mapped, so a non-crossing load touches only mapped bytes — the same page-cross
+    // reasoning the AVX2 scans use, with a 16-byte window instead of 32.
+    unsafe {
+        let zero = _mm_setzero_si128();
+
+        // ---- Needle 0: the whole answer for a set of at most 16 bytes -----------
+        // This load IS the length scan and IS the ASCII test: `pcmpistr*` reads the
+        // needle's own terminator out of the register (lanes at and past it are marked
+        // invalid and can never match), and the same vector's sign bits give the PSHUFB
+        // handoff's `all_ascii` precondition. So the set is never walked — which is the
+        // whole point, since walking it is the cost glibc does not pay.
+        if (set as usize) & 0xFFF > 0xFF0 {
+            return SpanProbe::Decline;
+        }
+        let setv = _mm_loadu_si128(set.cast());
+        let set_nul = _mm_movemask_epi8(_mm_cmpeq_epi8(setv, zero)) as u32;
+        let signs = _mm_movemask_epi8(setv) as u32;
+
+        // Sets of 17+ bytes leave through ONE branch into an out-of-line function, so
+        // everything below is the <=16-byte path exactly as it shipped: same loads, same
+        // registers, same straight line. That placement is load-bearing — folding the
+        // wider needle bank into this body cost the <=16 arms 1.1-1.25x (punct16 span-4
+        // strcspn 11.3 -> 13.7 ns) even when the bank itself was never entered, because
+        // the ABI entry points carry no `target_feature`, so this probe is already a real
+        // call whose frame and layout every narrow-set call pays for.
+        let set_len = if set_nul != 0 {
+            let l = set_nul.trailing_zeros() as usize;
+            if l < 5 {
+                return SpanProbe::Decline;
+            }
+            l
+        } else if *set.add(16) == 0 {
+            // Exactly 16 bytes: no terminator in the register, so `pcmpistri` treats all
+            // 16 lanes as valid — which is the correct needle. Index 16 is the string's
+            // own NUL, hence readable. Answering this with a byte load rather than a
+            // second vector load is what keeps a 16-byte set at its shipped cost.
+            16
+        } else {
+            return span_probe_wide(s, set, setv, signs, stop_in_set);
+        };
+        // The PSHUFB handoff's precondition, straight off the vector already loaded:
+        // no set byte within `set_len` has its high bit set.
+        let all_ascii = signs & ((1u32 << set_len) - 1) == 0;
+
+        // `pcmpistri`'s INDEX form: it names the stop directly, so no mask arithmetic.
+        let mut base = 0usize;
+        while base < CMPISTRI_PROBE_BYTES {
+            let cur = s.add(base);
+            if (cur as usize) & 0xFFF > 0xFF0 {
+                // The prefix already cleared is still sound to hand over.
+                return SpanProbe::Resume {
+                    consumed: base,
+                    set_len,
+                    all_ascii,
+                };
+            }
+            let data = _mm_loadu_si128(cur.cast());
+            if stop_in_set {
+                // strcspn/strpbrk: EQUAL_ANY reports the first data lane that equals
+                // some set byte. Lanes at or past the data NUL are invalid and so are
+                // forced to "no match", which means the terminator has to be found
+                // separately — one `pcmpeqb` against zero.
+                let idx =
+                    _mm_cmpistri::<{ _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ANY }>(setv, data) as usize;
+                let nul = _mm_movemask_epi8(_mm_cmpeq_epi8(data, zero)) as u32;
+                if nul != 0 {
+                    // A member can only be reported before the terminator, so `min`
+                    // is exactly "first member, else the terminator".
+                    return SpanProbe::Stop(base + idx.min(nul.trailing_zeros() as usize));
+                }
+                if idx < 16 {
+                    return SpanProbe::Stop(base + idx);
+                }
+            } else {
+                // strspn: NEGATIVE_POLARITY inverts every lane, including the invalid
+                // ones at and past the terminator — a NUL is never "in set", so it
+                // inverts to a stop. That is precisely strspn's "stop at the first
+                // non-member or the terminator", in one instruction.
+                let idx = _mm_cmpistri::<
+                    { _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_NEGATIVE_POLARITY },
+                >(setv, data) as usize;
+                if idx < 16 {
+                    return SpanProbe::Stop(base + idx);
+                }
+            }
+            base += 16;
+        }
+        SpanProbe::Resume {
+            consumed: base,
+            set_len,
+            all_ascii,
+        }
+    }
+}
+
+/// The 17..=64-byte half of [`span_probe_cmpistri`]: widen the single needle into a bank
+/// of up to [`CMPISTRI_MAX_NEEDLES`], then scan with it.
+///
+/// Past 16 bytes glibc stops using `pcmpistri` too and falls back to `__strcspn_sse2` —
+/// a 256-byte table build plus a 4-byte-per-iteration scalar walk — so on long spans our
+/// AVX2 LUT loop already beats it 5-7x there. This exists for the other end: at span
+/// <= 100 a 22-byte set cost a flat 53-63 ns against glibc's 24-54, and a 63-byte set a
+/// flat 102-153 ns against 48-88, purely because three passes over the set (`scan_c_string`,
+/// `all_bytes_ascii`, `build_pshufb_lut`) run before the first haystack byte is read. The
+/// bank deletes all three: each further needle is loaded only once the previous one has
+/// proved the set runs past it, so it costs one load per 16 bytes of set and nothing else.
+///
+/// `inline(never)`: this is the cold half, and its cost is a rounding error against the
+/// work it does, whereas hoisting it into the caller taxes every narrow-set call.
+///
+/// `setv0`/`signs0` are needle 0 and its sign bits, already loaded by the caller, which
+/// has also proved needle 0 holds no NUL and `set[16] != 0` — so the set is 17+ bytes.
+///
+/// # Safety
+/// `s` and `set` must be valid NUL-terminated C strings; SSE4.2 enabled.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+#[inline(never)]
+unsafe fn span_probe_wide(
+    s: *const u8,
+    set: *const u8,
+    setv0: std::arch::x86_64::__m128i,
+    signs0: u32,
+    stop_in_set: bool,
+) -> SpanProbe {
+    use std::arch::x86_64::*;
+    // SAFETY: forwarded from the caller's contract; every load is page-guarded below.
+    unsafe {
+        let zero = _mm_setzero_si128();
+        macro_rules! next_needle {
+            ($idx:expr) => {{
+                let p = set.add($idx * 16);
+                // Byte 0 of this window is a byte of the set string (the previous needle
+                // held no NUL), hence mapped; a 16-byte load stays inside its page iff it
+                // starts at most 16 bytes before the page end.
+                if (p as usize) & 0xFFF > 0xFF0 {
+                    return SpanProbe::Decline;
+                }
+                let v = _mm_loadu_si128(p.cast());
+                let nul = _mm_movemask_epi8(_mm_cmpeq_epi8(v, zero)) as u32;
+                let sg = _mm_movemask_epi8(v) as u32;
+                (v, nul, sg)
+            }};
+        }
+        // A terminating needle whose NUL sits at lane 0 carries no set bytes at all, so
+        // the bank stays one narrower rather than scanning with an empty needle.
+        macro_rules! valid_prefix {
+            ($nul:expr, $sg:expr, $prev_signs:expr, $idx:expr) => {{
+                let l = $nul.trailing_zeros() as usize;
+                ($idx * 16 + l, $prev_signs | ($sg & ((1u32 << l) - 1)), l)
+            }};
+        }
+
+        // The caller proved `set[16] != 0`, so this needle's NUL cannot be at lane 0.
+        let (n1, nul1, sg1) = next_needle!(1);
+        if nul1 != 0 {
+            let (set_len, signs, _) = valid_prefix!(nul1, sg1, signs0, 1);
+            return span_probe_scan_bank(s, [setv0, n1], set_len, signs == 0, stop_in_set);
+        }
+
+        let (n2, nul2, sg2) = next_needle!(2);
+        if nul2 != 0 {
+            let (set_len, signs, l) = valid_prefix!(nul2, sg2, signs0 | sg1, 2);
+            return if l == 0 {
+                span_probe_scan_bank(s, [setv0, n1], set_len, signs == 0, stop_in_set)
+            } else {
+                span_probe_scan_bank(s, [setv0, n1, n2], set_len, signs == 0, stop_in_set)
+            };
+        }
+
+        let (n3, nul3, sg3) = next_needle!(3);
+        if nul3 != 0 {
+            let (set_len, signs, l) = valid_prefix!(nul3, sg3, signs0 | sg1 | sg2, 3);
+            return if l == 0 {
+                span_probe_scan_bank(s, [setv0, n1, n2], set_len, signs == 0, stop_in_set)
+            } else {
+                span_probe_scan_bank(s, [setv0, n1, n2, n3], set_len, signs == 0, stop_in_set)
+            };
+        }
+
+        // Exactly `MAX*16` bytes: no terminator in any needle, so every lane of every
+        // needle is a valid set byte — the correct bank. That index is the string's own
+        // NUL, hence readable. Anything wider declines to the LUT path.
+        if *set.add(CMPISTRI_MAX_NEEDLES * 16) != 0 {
+            return SpanProbe::Decline;
+        }
+        span_probe_scan_bank(
+            s,
+            [setv0, n1, n2, n3],
+            CMPISTRI_MAX_NEEDLES * 16,
+            signs0 | sg1 | sg2 | sg3 == 0,
+            stop_in_set,
+        )
+    }
+}
+
+/// The multi-needle (17..=64-byte set) probe scan.
+///
+/// `pcmpistrm` (mask form) rather than `pcmpistri` (index form): with more than one
+/// needle the per-needle answers must be combined before a stop can be named, and only
+/// strcspn's "first member" would compose as a `min` of indices. strspn asks for the
+/// first byte in NO needle — a property of the UNION — so take the 16-bit match masks
+/// and OR them. Invalid data lanes (at and past the haystack NUL) are forced to "no
+/// match" by EQUAL_ANY, as are needle lanes past each needle's own NUL, which is what
+/// lets a partly-filled last needle be used raw.
+///
+/// `N` is a const parameter so the needle loop unrolls and the bank stays in registers.
+///
+/// # Safety
+/// `s` must be a valid NUL-terminated C string; SSE4.2 enabled.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+#[inline]
+unsafe fn span_probe_scan_bank<const N: usize>(
+    s: *const u8,
+    needles: [std::arch::x86_64::__m128i; N],
+    set_len: usize,
+    all_ascii: bool,
+    stop_in_set: bool,
+) -> SpanProbe {
+    use std::arch::x86_64::*;
+    const MSK: i32 = _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+    // SAFETY: forwarded from the caller's contract; every load is page-guarded below.
+    unsafe {
+        let zero = _mm_setzero_si128();
+        let mut base = 0usize;
+        while base < CMPISTRI_PROBE_BYTES {
+            let cur = s.add(base);
+            if (cur as usize) & 0xFFF > 0xFF0 {
+                return SpanProbe::Resume {
+                    consumed: base,
+                    set_len,
+                    all_ascii,
+                };
+            }
+            let data = _mm_loadu_si128(cur.cast());
+            let mut members = 0u32;
+            for needle in needles {
+                members |= _mm_cvtsi128_si32(_mm_cmpistrm::<MSK>(needle, data)) as u32 & 0xFFFF;
+            }
+            let stop = if stop_in_set {
+                // strcspn/strpbrk: first member, else the terminator.
+                members | (_mm_movemask_epi8(_mm_cmpeq_epi8(data, zero)) as u32)
+            } else {
+                // strspn: first NON-member. The NUL lane is never a member, so it
+                // inverts to a stop on its own — no separate terminator test.
+                !members & 0xFFFF
+            };
+            if stop != 0 {
+                return SpanProbe::Stop(base + stop.trailing_zeros() as usize);
+            }
+            base += 16;
+        }
+        SpanProbe::Resume {
+            consumed: base,
+            set_len,
+            all_ascii,
+        }
+    }
+}
+
+/// One COMPLETE span scan for a 5..=64-byte set: [`span_probe_cmpistri`] answers it
+/// outright when the span is short, and hands its proven prefix to the PSHUFB loop
+/// when the span outruns the probe budget. `None` means the probe declined (set
+/// outside 5..=64 bytes, a page-crossing set load, or a non-ASCII set that has no
+/// PSHUFB form) and the caller must use its existing path.
+///
+/// # Safety
+/// `s` and `set` must be valid NUL-terminated C strings; AVX2/SSE4.2 crate-wide.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn span_scan_cmpistri(
+    s: *const c_char,
+    set: *const c_char,
+    stop_in_set: bool,
+) -> Option<usize> {
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        match span_probe_cmpistri(s.cast::<u8>(), set.cast::<u8>(), stop_in_set) {
+            SpanProbe::Stop(idx) => Some(idx),
+            SpanProbe::Resume {
+                consumed,
+                set_len,
+                all_ascii: true,
+            } => {
+                let (lo16, hi16) = build_pshufb_lut(set.cast::<u8>(), set_len);
+                Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, stop_in_set))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Page-safe FUSED early-stop membership scan over a NUL-terminated string for a
 /// SMALL set of 1..=4 bytes (`set`, duplicate-filled to 4 — same membership set).
 ///
@@ -5654,6 +6062,30 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
             }
             // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB early-stop
             // (mirrors the strtok_r >4 path; thread-local saved ptr). O(n) loop.
+            // 5..=64-byte delim set: `pcmpistr*` for BOTH per-token boundaries. strtok
+            // rebuilds the LUT on every call, i.e. once per token, so a tokenization
+            // loop pays that fixed setup N times while glibc's per-token setup is
+            // O(1) — and tokens are short, which is exactly where the probe wins.
+            #[cfg(target_arch = "x86_64")]
+            if (5..=CMPISTRI_MAX_NEEDLES * 16).contains(&delim_len)
+                && let Some(start) = span_scan_cmpistri(current, delim, false)
+                && let Some(tok_len) = span_scan_cmpistri(current.add(start), delim, true)
+            {
+                if *current.add(start).cast::<u8>() == 0 {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    return std::ptr::null_mut();
+                }
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                set_strtok_saved_ptr(current.add(next));
+                return current.add(start) as *mut c_char;
+            }
             #[cfg(target_arch = "x86_64")]
             if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
                 let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
@@ -5906,6 +6338,39 @@ pub unsafe extern "C" fn strtok_r(
             // BOTH scans (skip leading delims via strspn, token end via strcspn) —
             // classifier-throughput body scan, no prescan → O(n) loop, no scalar
             // long-token regression. Non-ASCII sets fall through to the slice path.
+            // 5..=64-byte delim set: `pcmpistr*` for BOTH per-token boundaries. The
+            // LUT is rebuilt on every call, i.e. once per token, so a tokenization
+            // loop pays that fixed setup N times while glibc's per-token setup is
+            // O(1) — and tokens are short, which is exactly where the probe wins.
+            // The gate is the EXACT range the probe accepts, not `> 4`: `delim_len`
+            // is already known here, so a set the probe would refuse must never even
+            // call it. Letting it call and decline cost ~6 ns per token on a 22-byte
+            // set — back when 22 bytes was refused; the needle bank now accepts it,
+            // which is why the bound tracks `CMPISTRI_MAX_NEEDLES`. (strspn and
+            // friends cannot do this — there the whole point is to answer before
+            // the set has been measured.)
+            // NOTE: this is strtok_r, so the resume point goes to the CALLER's
+            // `saveptr`, not strtok's thread-local.
+            #[cfg(target_arch = "x86_64")]
+            if (5..=CMPISTRI_MAX_NEEDLES * 16).contains(&delim_len)
+                && let Some(start) = span_scan_cmpistri(current, delim, false)
+                && let Some(tok_len) = span_scan_cmpistri(current.add(start), delim, true)
+            {
+                if *current.add(start).cast::<u8>() == 0 {
+                    *saveptr = std::ptr::null_mut();
+                    return std::ptr::null_mut();
+                }
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                *saveptr = current.add(next);
+                return current.add(start) as *mut c_char;
+            }
             #[cfg(target_arch = "x86_64")]
             if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
                 let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
@@ -6309,6 +6774,29 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
             if a0 != 0 && *(accept.cast::<u8>().add(1)) == 0 {
                 return scan_c_string_first_not_byte(s, a0);
             }
+            // 5..=64-byte accept set: answer short spans with `pcmpistr*` BEFORE any
+            // pass over `accept`, so the LUT path's fixed setup is skipped entirely
+            // rather than merely shortened.
+            #[cfg(target_arch = "x86_64")]
+            {
+                match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), false) {
+                    SpanProbe::Stop(idx) => return idx,
+                    // The probe consumes only for sets it accepted (5..=64 bytes), so
+                    // the LUT path below is the one that would run — enter it past the
+                    // proven prefix instead of rescanning. A non-ASCII set has no LUT
+                    // form, so it falls through whole to the slice path.
+                    SpanProbe::Resume {
+                        consumed,
+                        set_len,
+                        all_ascii: true,
+                    } => {
+                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len);
+                        return consumed
+                            + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, false);
+                    }
+                    _ => {}
+                }
+            }
             let (accept_len, accept_terminated) = scan_c_string(accept, None);
             // Small accept set (1..=4): FUSED single early-stopping pass — stop at the
             // first byte NOT in the set (or NUL) — instead of a full pre-scan of `s` +
@@ -6435,6 +6923,25 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
     // body — scan s + reject, core strcspn. Skips the membrane bookkeeping.
     if !s.is_null() && !reject.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
+            // 5..=64-byte reject set: `pcmpistr*` first, before the `reject` scan —
+            // this is the arm that lost worst to glibc (14.81x at span 4 with a
+            // 16-byte set).
+            #[cfg(target_arch = "x86_64")]
+            {
+                match span_probe_cmpistri(s.cast::<u8>(), reject.cast::<u8>(), true) {
+                    SpanProbe::Stop(idx) => return idx,
+                    SpanProbe::Resume {
+                        consumed,
+                        set_len,
+                        all_ascii: true,
+                    } => {
+                        let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), set_len);
+                        return consumed
+                            + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true);
+                    }
+                    _ => {}
+                }
+            }
             let (reject_len, reject_terminated) = scan_c_string(reject, None);
             // Single-char reject: strcspn(s, [c]) == index of the first `c` (or strlen(s)
             // if none) — the page-safe early-stopping scan returns exactly that, with NO
@@ -6568,6 +7075,32 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
     // body — scan s + accept, core strpbrk, map index to pointer. Skips bookkeeping.
     if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
+            // 5..=64-byte accept set: `pcmpistr*` first. The probe returns the same
+            // stop index strcspn does — first member OR the NUL — so the member/NUL
+            // discrimination is the identical `*s.add(idx) != 0` test the 2..=4 path
+            // already uses.
+            #[cfg(target_arch = "x86_64")]
+            {
+                let hit = match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), true) {
+                    SpanProbe::Stop(idx) => Some(idx),
+                    SpanProbe::Resume {
+                        consumed,
+                        set_len,
+                        all_ascii: true,
+                    } => {
+                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len);
+                        Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true))
+                    }
+                    _ => None,
+                };
+                if let Some(idx) = hit {
+                    return if *s.add(idx).cast::<u8>() != 0 {
+                        s.add(idx) as *mut c_char
+                    } else {
+                        std::ptr::null_mut()
+                    };
+                }
+            }
             let (accept_len, accept_terminated) = scan_c_string(accept, None);
             // Single-char accept: strpbrk(s, [c]) == strchr(s, c) — the page-safe
             // early-stopping scan stops at the first `c` (NO full-haystack pre-scan).
@@ -7956,6 +8489,21 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
             }
             // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB first-delimiter
             // scan (strcspn direction) — O(n) tokenization, classifier body scan.
+            // 5..=64-byte delim set: `pcmpistr*` first — same per-token argument as
+            // strtok, and strsep is the tokenizer that runs the tightest loop.
+            #[cfg(target_arch = "x86_64")]
+            if (5..=CMPISTRI_MAX_NEEDLES * 16).contains(&delim_len)
+                && let Some(idx) = span_scan_cmpistri(s, delim, true)
+            {
+                let stop = s.add(idx).cast::<u8>();
+                if *stop != 0 {
+                    *stop = 0;
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
             #[cfg(target_arch = "x86_64")]
             if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
                 let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);

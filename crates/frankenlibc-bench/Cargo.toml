@@ -358,6 +358,11 @@ name = "snprintf_d_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "incumbent_coverage_ab"
+harness = false
+required-features = ["abi-bench"]
+
 # strcmp OLD (single 32B panel) vs NEW (4×32 folded 128B block) vs glibc, 1 process.
 [[bench]]
 name = "strcmp_fold_ab_bench"
@@ -742,4 +747,12 @@ required-features = ["abi-bench"]
 
 [[example]]
 name = "malloc_sizetrack_ab"
+required-features = ["abi-bench"]
+
+[[example]]
+name = "span_largeset_ab"
+required-features = ["abi-bench"]
+
+[[example]]
+name = "tokenize_loop_ab"
 required-features = ["abi-bench"]

@@ -198,10 +198,8 @@ pub enum ScanDirective {
     Literal(u8),
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
-    /// A conversion specifier. Stored inline (not boxed): with a pre-sized
-    /// directive `Vec` the whole format then parses in a single allocation
-    /// instead of one extra heap box per conversion specifier.
-    Spec(ScanSpec),
+    /// A conversion specifier.
+    Spec(Box<ScanSpec>),
 }
 
 /// A parsed scanf conversion specifier.
@@ -218,11 +216,6 @@ pub struct ScanSpec {
     /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
     /// entry points after parsing; defaults to false for narrow `sscanf`.
     pub wide_input: bool,
-    /// True when the GNU `m` assignment-allocation modifier was given (`%ms`,
-    /// `%m[`, `%mc`): the destination argument is a `char **` and the matched
-    /// text is stored into a freshly allocated buffer. Only meaningful for the
-    /// string conversions; the ABI layer performs the allocation.
-    pub alloc: bool,
     route: ScanfRoute,
 }
 
@@ -276,8 +269,7 @@ impl ScanSpec {
         pos: usize,
         wide_input: bool,
     ) -> Option<(Option<ScanValue>, usize)> {
-        self.scan_operation_kind()?
-            .scan(input, pos, self, wide_input)
+        self.scan_operation_kind()?.scan(input, pos, self, wide_input)
     }
 }
 
@@ -317,31 +309,7 @@ impl ScanOperationKind {
 #[derive(Debug, Clone)]
 pub struct ScanSet {
     pub negated: bool,
-    /// 256-bit membership bitmap (`words[c>>6] >> (c&63) & 1`). Replaces the old
-    /// `[bool; 256]` (257 B): since `ScanSpec` is now stored inline in the
-    /// directive list, the 32-byte bitmap keeps every directive element small.
-    words: [u64; 4],
-}
-
-impl ScanSet {
-    /// Build from a parse-time `[bool; 256]` membership array.
-    fn from_bool_array(negated: bool, chars: &[bool; 256]) -> Self {
-        let mut words = [0u64; 4];
-        let mut c = 0usize;
-        while c < 256 {
-            if chars[c] {
-                words[c >> 6] |= 1u64 << (c & 63);
-            }
-            c += 1;
-        }
-        Self { negated, words }
-    }
-
-    /// Whether byte `c` is a member of the set (before negation is applied).
-    #[inline]
-    pub fn contains(&self, c: u8) -> bool {
-        (self.words[(c >> 6) as usize] >> (c & 63)) & 1 != 0
-    }
+    pub chars: [bool; 256],
 }
 
 // ---------------------------------------------------------------------------
@@ -350,9 +318,7 @@ impl ScanSet {
 
 /// Parse a scanf format string into a list of directives.
 pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
-    // Pre-size for the common case (a handful of directives) so the inline
-    // ScanSpec elements are placed without reallocation/copy churn.
-    let mut directives = Vec::with_capacity(8);
+    let mut directives = Vec::new();
     let mut i = 0;
 
     while i < fmt.len() {
@@ -379,7 +345,6 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 conversion: 0,
                 scanset: None,
                 wide_input: false,
-                alloc: false,
                 route: ScanfRoute::invalid(),
             };
 
@@ -401,14 +366,6 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
             }
             if has_width {
                 spec.width = Some(w);
-            }
-
-            // GNU `m` assignment-allocation modifier (`%ms`, `%m[`, `%mc`,
-            // optionally combined with `l`). It precedes the length modifier;
-            // the destination is a `char **` filled with a malloc'd buffer.
-            if i < fmt.len() && fmt[i] == b'm' {
-                spec.alloc = true;
-                i += 1;
             }
 
             // Length modifier.
@@ -495,19 +452,11 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                         i += 1;
                     }
                 }
-                // A scanset MUST be closed by ']'. If the format ends first
-                // (e.g. "%[^]", where the ']' right after '^' is a literal
-                // member, not the closer), the conversion specification is
-                // malformed: glibc stops scanning at the invalid directive and
-                // returns the conversions completed so far (sscanf("^abc","%[^]")
-                // -> 0, NOT a match of "^abc").
-                let terminated = i < fmt.len() && fmt[i] == b']';
-                if !terminated {
-                    break;
+                if i < fmt.len() && fmt[i] == b']' {
+                    i += 1;
                 }
-                i += 1;
                 spec.conversion = b'[';
-                spec.scanset = Some(ScanSet::from_bool_array(negated, &chars));
+                spec.scanset = Some(ScanSet { negated, chars });
             } else {
                 // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
                 // string / wide char): normalise to (s|c, length `L`) so they
@@ -530,7 +479,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 break;
             }
 
-            directives.push(ScanDirective::Spec(spec));
+            directives.push(ScanDirective::Spec(Box::new(spec)));
         } else if is_c_space(fmt[i]) {
             directives.push(ScanDirective::Whitespace);
             i += 1;
@@ -582,33 +531,24 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     let mut pos = 0;
     let mut values = Vec::new();
     let mut count: i32 = 0;
+    let mut input_failure = true; // true until first successful read
 
-    // `input_failure` records WHY the scan stopped: it is true only when a
-    // directive ran out of input (premature EOF), distinguishing it from a
-    // matching failure (a char was present but did not match) or normal
-    // completion. The caller maps `input_failure && count == 0` to EOF (-1) and
-    // everything else to the assignment count. A format that completes — or that
-    // contains no value conversions at all (whitespace/literals only) — must
-    // therefore NOT report input failure.
     for dir in directives {
         match dir {
             ScanDirective::Whitespace => {
                 // Skip whitespace in input (Unicode-aware for a wide stream).
-                // Matches zero or more, so it never causes an input failure.
                 pos = skip_ws(input, pos, wide_input);
             }
             ScanDirective::Literal(expected) => {
                 if pos >= input.len() {
-                    // Ran out of input while a literal still needed a char: EOF.
                     return ScanResult {
                         values,
                         count,
                         consumed: pos,
-                        input_failure: true,
+                        input_failure,
                     };
                 }
                 if input[pos] != *expected {
-                    // Char present but mismatched: matching failure, not EOF.
                     return ScanResult {
                         values,
                         count,
@@ -632,10 +572,11 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                             values,
                             count,
                             consumed: pos,
-                            input_failure: exhausted_before_conversion,
+                            input_failure: exhausted_before_conversion && count == 0,
                         };
                     }
                     Some((val, new_pos)) => {
+                        input_failure = false;
                         pos = new_pos;
                         if !spec.suppress
                             && let Some(v) = val
@@ -652,13 +593,11 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
         }
     }
 
-    // All directives consumed without an EOF-induced stop: never an input
-    // failure (a conversion-less format returns 0, not EOF).
     ScanResult {
         values,
         count,
         consumed: pos,
-        input_failure: false,
+        input_failure,
     }
 }
 
@@ -1114,14 +1053,11 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             // after "nan", where the sequence is `[0-9A-Za-z_]*` and the
             // closing ')' is MANDATORY: if it is absent, the whole token
             // (sign and all) is rewound and the conversion fails to match.
-            // The sign bit is applied to the NaN ("-nan" keeps its sign) and the
-            // `(n-char-sequence)` payload is encoded into the significand exactly
-            // as glibc's strtod does (parsed as strtoull base 0).
+            // The sign bit is applied to the NaN ("-nan" keeps its sign); the
+            // payload value itself is an impl detail we do not replicate.
             let budget = max_chars - chars_read; // chars allowed from `remaining`
             let mut j = 3usize;
-            let mut payload = 0u64;
             if remaining.len() > j && j < budget && remaining[j] == b'(' {
-                let seq_start = j + 1;
                 let mut k = j + 1;
                 while k < remaining.len()
                     && k < budget
@@ -1130,8 +1066,6 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     k += 1;
                 }
                 if k < remaining.len() && k < budget && remaining[k] == b')' {
-                    payload =
-                        crate::stdlib::conversion::parse_nan_payload(&remaining[seq_start..k]);
                     j = k + 1; // consume through the ')'
                 } else {
                     // Malformed payload (no closing paren / cut off by width):
@@ -1139,7 +1073,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     return None;
                 }
             }
-            let val = crate::stdlib::conversion::nan_f64(payload, negative);
+            let val = f64::NAN.copysign(if negative { -1.0 } else { 1.0 });
             return Some((Some(ScanValue::Float(val)), i + j));
         }
     }
@@ -1319,14 +1253,14 @@ fn scan_hex_float(
         }
     }
 
-    // Convert to f64: value = significand * 2^(bin_exp - 4*frac_digits). Each
-    // hex fractional digit shifts the binary point 4 bits. Scale with
-    // `libm::ldexp` (== scalbn) rather than `* 2_f64.powi(n)`: for a large
-    // negative exponent `powi` evaluates 1/2^|n|, and 2^1074 overflows to inf,
-    // so the smallest subnormal `0x1p-1074` (5e-324) wrongly underflowed to 0.
-    // ldexp handles the full subnormal/overflow range correctly.
-    let total_exp = bin_exp.saturating_sub(frac_digits.saturating_mul(4));
-    let mut val = libm::ldexp(significand as f64, total_exp);
+    // Convert to f64:
+    // value = significand * 2^(bin_exp - 4*frac_digits)
+    // Each hex fractional digit shifts the binary point 4 bits.
+    let total_exp = bin_exp - (frac_digits * 4);
+    let mut val = significand as f64;
+    if total_exp != 0 {
+        val *= 2_f64.powi(total_exp);
+    }
     if negative {
         val = -val;
     }
@@ -1379,14 +1313,11 @@ fn scan_char(
         }
         return Some((Some(ScanValue::Char(input[pos..end].to_vec())), end));
     }
-    // Read UP TO `n` bytes. Like glibc (and the wide path above), a `%Nc` whose
-    // width exceeds the available input reads what IS there and still succeeds;
-    // only a total absence of input is a matching failure. fl previously
-    // required the full `n` bytes and wrongly failed (e.g. `%5c` on "ab").
-    // `checked_add` guards a pathological width from overflowing `pos + n`
-    // (bd-35vob).
-    let end = core::cmp::min(pos.checked_add(n)?, input.len());
-    if end == pos {
+    // Guard against pathological widths that overflow pos + n. Under
+    // debug_assertions `usize` add panics; in release it wraps and
+    // would skip the bounds check below, reading past input. (bd-35vob)
+    let end = pos.checked_add(n)?;
+    if end > input.len() {
         return None;
     }
     let chars = input[pos..end].to_vec();
@@ -1451,7 +1382,7 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
 
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
-        let in_set = scanset.contains(c);
+        let in_set = scanset.chars[c as usize];
         let accept = if scanset.negated { !in_set } else { in_set };
         if !accept {
             break;
@@ -1558,36 +1489,6 @@ mod tests {
     }
 
     #[test]
-    fn scanset_bitmap_matches_bool_array() {
-        // Exhaustively prove the 256-bit bitmap encodes the same membership as
-        // the parse-time [bool; 256] array, including word-boundary bytes.
-        for seed in [
-            0u64,
-            1,
-            0x5555_5555_5555_5555,
-            0xFFFF_FFFF_FFFF_FFFF,
-            0x0123_4567_89ab_cdef,
-        ] {
-            let mut arr = [false; 256];
-            let mut s = seed | 1;
-            for (i, slot) in arr.iter_mut().enumerate() {
-                s ^= s << 13;
-                s ^= s >> 7;
-                s ^= s << 17;
-                *slot = (s & 1 == 0) || matches!(i, 0 | 63 | 64 | 127 | 128 | 255);
-            }
-            let set = ScanSet::from_bool_array(false, &arr);
-            for c in 0..=255u8 {
-                assert_eq!(
-                    set.contains(c),
-                    arr[c as usize],
-                    "membership mismatch at c={c} seed={seed:#x}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_parse_scanset() {
         let dirs = parse_scanf_format(b"%[abc]");
         assert_eq!(dirs.len(), 1);
@@ -1595,10 +1496,10 @@ mod tests {
             assert_eq!(s.conversion, b'[');
             let ss = s.scanset.as_ref().unwrap();
             assert!(!ss.negated);
-            assert!(ss.contains(b'a'));
-            assert!(ss.contains(b'b'));
-            assert!(ss.contains(b'c'));
-            assert!(!ss.contains(b'd'));
+            assert!(ss.chars[b'a' as usize]);
+            assert!(ss.chars[b'b' as usize]);
+            assert!(ss.chars[b'c' as usize]);
+            assert!(!ss.chars[b'd' as usize]);
         } else {
             panic!("expected Spec");
         }
@@ -1610,7 +1511,7 @@ mod tests {
         if let ScanDirective::Spec(ref s) = dirs[0] {
             let ss = s.scanset.as_ref().unwrap();
             assert!(ss.negated);
-            assert!(ss.contains(b'a'));
+            assert!(ss.chars[b'a' as usize]);
         } else {
             panic!("expected Spec");
         }

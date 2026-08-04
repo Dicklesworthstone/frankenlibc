@@ -188,6 +188,7 @@ fn run_fl(buf: *mut c_char, fmt: *const c_char, value: f64) -> isize {
                 black_box(BUF),
                 black_box(fmt),
                 black_box(value),
+                black_box(value),
             )
         });
         acc = acc.wrapping_add(n);
@@ -205,6 +206,7 @@ fn run_host(host: StrfmonFn, buf: *mut c_char, fmt: *const c_char, value: f64) -
                 black_box(BUF),
                 black_box(fmt),
                 black_box(value),
+                black_box(value),
             )
         });
         acc = acc.wrapping_add(n);
@@ -220,8 +222,10 @@ fn verify(host: StrfmonFn, case: &Case) {
     let mut host_buf = [0i8; BUF];
     let fmt = case.format.as_ptr().cast::<c_char>();
 
-    let fl_n = unsafe { strfmon(fl_buf.as_mut_ptr(), BUF, fmt, case.value) };
-    let host_n = unsafe { host(host_buf.as_mut_ptr(), BUF, fmt, case.value) };
+    // Supplying two values is valid for every case: single-conversion formats
+    // ignore the extra variadic argument, while `two_values` consumes both.
+    let fl_n = unsafe { strfmon(fl_buf.as_mut_ptr(), BUF, fmt, case.value, case.value) };
+    let host_n = unsafe { host(host_buf.as_mut_ptr(), BUF, fmt, case.value, case.value) };
 
     assert_eq!(
         fl_n, host_n,
@@ -249,8 +253,24 @@ fn verify_truncation(host: StrfmonFn) {
     for cap in 1..=24usize {
         let mut fl_buf = [0i8; BUF];
         let mut host_buf = [0i8; BUF];
-        let fl_n = unsafe { strfmon(fl_buf.as_mut_ptr(), cap, fmt, 1_234_567.891f64) };
-        let host_n = unsafe { host(host_buf.as_mut_ptr(), cap, fmt, 1_234_567.891f64) };
+        let fl_n = unsafe {
+            strfmon(
+                fl_buf.as_mut_ptr(),
+                cap,
+                fmt,
+                1_234_567.891f64,
+                1_234_567.891f64,
+            )
+        };
+        let host_n = unsafe {
+            host(
+                host_buf.as_mut_ptr(),
+                cap,
+                fmt,
+                1_234_567.891f64,
+                1_234_567.891f64,
+            )
+        };
         assert_eq!(
             fl_n, host_n,
             "truncation cap={cap}: return value differs (fl {fl_n} vs glibc {host_n})"

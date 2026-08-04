@@ -11,7 +11,7 @@ use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf
 use frankenlibc_core::syscall;
 use frankenlibc_core::unistd as unistd_core;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
@@ -50,15 +50,6 @@ fn current_abi_errno() -> c_int {
 
 #[inline]
 unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
-    Some(unsafe { read_c_string_bytes_ref(ptr)? }.to_vec())
-}
-
-/// Borrowed (allocation-free) variant of [`read_c_string_bytes`]: returns the
-/// bounded, NUL-terminated input as a slice aliasing `ptr`. Use where the bytes are
-/// only READ within the call (e.g. the pure `ether_aton` parser, which consumes the
-/// slice and never retains it) — the owning `to_vec` was pure per-call overhead on
-/// such conversions. Same bounded-read safety (rejects non-NUL-terminated input).
-unsafe fn read_c_string_bytes_ref<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     if ptr.is_null() {
         return None;
     }
@@ -66,9 +57,8 @@ unsafe fn read_c_string_bytes_ref<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     if !terminated {
         return None;
     }
-    // SAFETY: scan_c_string confirmed `len` readable NUL-terminated bytes at `ptr`,
-    // valid for the calling conversion (which does not retain the slice).
-    Some(unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) })
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
 }
 
 #[inline]
@@ -915,16 +905,8 @@ pub unsafe extern "C" fn setuid(uid: libc::uid_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn seteuid(euid: libc::uid_t) -> c_int {
-    // glibc seteuid rejects (uid_t)-1 with EINVAL and issues
-    // setresuid(-1, euid, -1) — NOT setreuid(-1, euid). setreuid additionally
-    // moves the saved-set-uid to euid whenever euid != the real uid (a kernel
-    // quirk), which would defeat a later attempt to restore the original euid.
-    // bd-nb3egy.
-    if euid == libc::uid_t::MAX {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    match syscall::sys_setresuid(libc::uid_t::MAX, euid, libc::uid_t::MAX) {
+    // seteuid(euid) == setreuid(-1, euid)
+    match syscall::sys_setreuid(libc::uid_t::MAX, euid) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -957,14 +939,8 @@ pub unsafe extern "C" fn setgid(gid: libc::gid_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
-    // glibc setegid rejects (gid_t)-1 with EINVAL and issues
-    // setresgid(-1, egid, -1) — NOT setregid(-1, egid), which would also move
-    // the saved-set-gid when egid != the real gid. bd-nb3egy.
-    if egid == libc::gid_t::MAX {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    match syscall::sys_setresgid(libc::gid_t::MAX, egid, libc::gid_t::MAX) {
+    // setegid(egid) == setregid(-1, egid)
+    match syscall::sys_setregid(libc::gid_t::MAX, egid) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -2036,24 +2012,7 @@ pub unsafe extern "C" fn fchmodat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    // glibc accepts only AT_SYMLINK_NOFOLLOW for fchmodat and routes it through
-    // the flag-aware fchmodat2 syscall — the classic 3-arg fchmodat syscall
-    // silently IGNORES the flags word, so passing AT_SYMLINK_NOFOLLOW there would
-    // wrongly follow a symlink (chmod the target) and an invalid flag would be
-    // accepted instead of rejected. Mirror glibc: reject unknown flags with
-    // EINVAL, use fchmodat2 for AT_SYMLINK_NOFOLLOW (the kernel returns
-    // EOPNOTSUPP for chmod-on-symlink), and the classic path only for flags == 0.
-    if flags & !libc::AT_SYMLINK_NOFOLLOW != 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
-        return -1;
-    }
-    let res = if flags == 0 {
-        unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, 0) }
-    } else {
-        unsafe { syscall::sys_fchmodat2(dirfd, path as *const u8, mode, flags) }
-    };
-    let rc = match res {
+    let rc = match unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, flags) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -2460,15 +2419,22 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
     match name {
         libc::_SC_PAGESIZE => runtime_page_size() as libc::c_long,
         libc::_SC_CLK_TCK => 100,
-        // glibc maps these to __get_nprocs (online CPUs, from
-        // /sys/devices/system/cpu/online) and __get_nprocs_conf (configured
-        // CPUs, from .../cpu/present) respectively — NOT the process affinity
-        // mask. fl conflated the two and counted sched_getaffinity, which
-        // differs from the online/present counts when CPUs are offline or the
-        // process is pinned. Delegate to the matching get_nprocs* helpers.
-        // bd-n1uzcb.
-        libc::_SC_NPROCESSORS_ONLN => crate::stdlib_abi::get_nprocs() as libc::c_long,
-        libc::_SC_NPROCESSORS_CONF => crate::stdlib_abi::get_nprocs_conf() as libc::c_long,
+        libc::_SC_NPROCESSORS_ONLN | libc::_SC_NPROCESSORS_CONF => {
+            // Read from /sys/devices/system/cpu/online or fallback.
+            // Simple approach: use SYS_sched_getaffinity to count CPUs.
+            let mut mask = [0u8; 512]; // 4096 CPUs max (supports large NUMA systems)
+            let rc = unsafe { syscall::sys_sched_getaffinity(0, mask.len(), mask.as_mut_ptr()) };
+            if let Ok(bytes) = rc {
+                let n = mask[..bytes as usize]
+                    .iter()
+                    .map(|b| b.count_ones() as libc::c_long)
+                    .sum();
+                if n > 0 {
+                    return n;
+                }
+            }
+            1
+        }
         libc::_SC_OPEN_MAX => {
             // Try to get from getrlimit.
             let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
@@ -2522,125 +2488,39 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_STREAM_MAX => 16, // FOPEN_MAX (matches glibc)
         libc::_SC_IOV_MAX => 1024,
         libc::_SC_PHYS_PAGES => runtime_meminfo_pages("MemTotal:").unwrap_or(-1),
-        // glibc sysconf(_SC_AVPHYS_PAGES) == __get_avphys_pages == sysinfo
-        // freeram (/proc/meminfo "MemFree"), not the larger "MemAvailable"
-        // estimate. bd-l18p7s.
-        libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemFree:").unwrap_or(-1),
+        libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemAvailable:").unwrap_or(-1),
         libc::_SC_NGROUPS_MAX => {
             runtime_procfs_long("/proc/sys/kernel/ngroups_max").unwrap_or(65536)
         }
-        // glibc returns NSS_BUFLEN_PASSWD / NSS_BUFLEN_GROUP (both 1024) for
-        // these suggested getpwnam_r/getgrnam_r buffer sizes (sysconf.c returns
-        // those macros). fl returned 4096. bd-o283z7.
-        libc::_SC_GETPW_R_SIZE_MAX => 1024,
-        libc::_SC_GETGR_R_SIZE_MAX => 1024,
+        libc::_SC_GETPW_R_SIZE_MAX => 4096,
+        libc::_SC_GETGR_R_SIZE_MAX => 4096,
         libc::_SC_LOGIN_NAME_MAX => 256,
         libc::_SC_TTY_NAME_MAX => 32,
-        // Linux does not define SYMLOOP_MAX, so glibc's sysconf returns -1
-        // (indeterminate / no fixed limit) — getconf SYMLOOP_MAX reports
-        // "undefined". fl previously returned a fabricated 40. bd-j850j3.
-        libc::_SC_SYMLOOP_MAX => -1,
+        libc::_SC_SYMLOOP_MAX => 40,
         libc::_SC_RE_DUP_MAX => 32767,
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
-        // X/Open issue 7 (XPG7 / SUSv4): glibc returns _XOPEN_VERSION == 700.
-        // fl had no arm, so this fell through to the EINVAL default (-1).
-        // bd-mjct6o.
-        libc::_SC_XOPEN_VERSION => 700,
-        // X/Open feature flags glibc reports as supported (verified via
-        // `getconf -a`): each had no arm and fell through to the EINVAL default
-        // (-1) where glibc returns a positive value. bd-mjct6o.
-        libc::_SC_XOPEN_UNIX => 1,
-        libc::_SC_XOPEN_ENH_I18N => 1,
-        libc::_SC_XOPEN_SHM => 1,
-        libc::_SC_XOPEN_LEGACY => 1,
-        libc::_SC_XOPEN_REALTIME => 1,
-        libc::_SC_XOPEN_REALTIME_THREADS => 1,
-        libc::_SC_XOPEN_XCU_VERSION => 4,
-        libc::_SC_REGEXP => 1,
-        libc::_SC_SHELL => 1,
         libc::_SC_THREAD_SAFE_FUNCTIONS => 1,
-        // _SC_THREADS reports the supported _POSIX_THREADS version (200809L),
-        // not a boolean — glibc returns 200809; fl previously returned 1.
-        libc::_SC_THREADS => 200809,
-        // POSIX thread/realtime option flags glibc reports as supported at the
-        // 200809L level (verified via `getconf -a`); fl had no arm so each fell
-        // through to the EINVAL default (-1). bd-mjct6o.
-        libc::_SC_THREAD_ATTR_STACKADDR => 200809,
-        libc::_SC_THREAD_ATTR_STACKSIZE => 200809,
-        libc::_SC_THREAD_PRIORITY_SCHEDULING => 200809,
-        libc::_SC_THREAD_PRIO_INHERIT => 200809,
-        libc::_SC_THREAD_PRIO_PROTECT => 200809,
-        libc::_SC_THREAD_PROCESS_SHARED => 200809,
-        libc::_SC_BARRIERS => 200809,
-        libc::_SC_CLOCK_SELECTION => 200809,
-        libc::_SC_READER_WRITER_LOCKS => 200809,
-        libc::_SC_SPIN_LOCKS => 200809,
-        libc::_SC_SPAWN => 200809,
-        libc::_SC_TIMEOUTS => 200809,
+        libc::_SC_THREADS => 1,
         libc::_SC_THREAD_KEYS_MAX => 1024,
         libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
         libc::_SC_THREAD_DESTRUCTOR_ITERATIONS => 4,
-        // These _POSIX_* options report the SUPPORTED VERSION (200809L), not a
-        // boolean 1 — glibc returns 200809 for each (verified via `getconf -a`).
-        // Returning 1 broke callers that gate on `>= 200112L`. bd-mjct6o.
-        libc::_SC_MONOTONIC_CLOCK => 200809,
-        libc::_SC_CPUTIME => 200809,
-        libc::_SC_THREAD_CPUTIME => 200809,
-        libc::_SC_MAPPED_FILES => 200809,
-        libc::_SC_MEMLOCK => 200809,
-        libc::_SC_MEMLOCK_RANGE => 200809,
-        libc::_SC_MEMORY_PROTECTION => 200809,
-        libc::_SC_SEMAPHORES => 200809,
-        libc::_SC_SHARED_MEMORY_OBJECTS => 200809,
-        libc::_SC_SYNCHRONIZED_IO => 200809,
-        libc::_SC_TIMERS => 200809,
-        libc::_SC_REALTIME_SIGNALS => 200809,
-        libc::_SC_PRIORITY_SCHEDULING => 200809,
-        libc::_SC_FSYNC => 200809,
-        libc::_SC_ASYNCHRONOUS_IO => 200809,
-        // POSIX feature flags and utility limits glibc reports as definite
-        // constants; these were previously falling through to the EINVAL default
-        // (returning -1 as if the key were unknown), diverging from glibc.
-        libc::_SC_JOB_CONTROL => 1,
-        libc::_SC_SAVED_IDS => 1,
-        libc::_SC_BC_BASE_MAX => 99,
-        libc::_SC_BC_DIM_MAX => 2048,
-        libc::_SC_BC_SCALE_MAX => 99,
-        libc::_SC_BC_STRING_MAX => 1000,
-        libc::_SC_COLL_WEIGHTS_MAX => 255,
-        libc::_SC_EXPR_NEST_MAX => 32,
-        libc::_SC_2_C_BIND => 200809,
-        libc::_SC_2_C_DEV => 200809,
-        libc::_SC_2_LOCALEDEF => 200809,
-        libc::_SC_2_SW_DEV => 200809,
-        // Realtime / message-queue / AIO limits (glibc's fixed Linux values).
-        libc::_SC_ATEXIT_MAX => libc::c_int::MAX as libc::c_long,
-        libc::_SC_SEM_VALUE_MAX => libc::c_int::MAX as libc::c_long,
-        libc::_SC_DELAYTIMER_MAX => libc::c_int::MAX as libc::c_long,
-        libc::_SC_MQ_PRIO_MAX => 32768,
-        libc::_SC_RTSIG_MAX => 32,
-        libc::_SC_AIO_PRIO_DELTA_MAX => 20,
-        libc::_SC_SIGQUEUE_MAX => {
-            // glibc reports the RLIMIT_SIGPENDING soft limit (the max number of
-            // queued realtime signals). Read it the same way _SC_OPEN_MAX reads
-            // RLIMIT_NOFILE; fall back to the _POSIX_SIGQUEUE_MAX minimum (32).
-            let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-            match unsafe {
-                syscall::sys_getrlimit(libc::RLIMIT_SIGPENDING as i32, rlim.as_mut_ptr() as *mut u8)
-            } {
-                Ok(()) => {
-                    let rlim = unsafe { rlim.assume_init() };
-                    if rlim.rlim_cur == libc::RLIM_INFINITY {
-                        -1
-                    } else {
-                        rlim.rlim_cur as libc::c_long
-                    }
-                }
-                Err(_) => 32,
-            }
-        }
+        libc::_SC_MONOTONIC_CLOCK => 1,
+        libc::_SC_CPUTIME => 1,
+        libc::_SC_THREAD_CPUTIME => 1,
+        libc::_SC_MAPPED_FILES => 1,
+        libc::_SC_MEMLOCK => 1,
+        libc::_SC_MEMLOCK_RANGE => 1,
+        libc::_SC_MEMORY_PROTECTION => 1,
+        libc::_SC_SEMAPHORES => 1,
+        libc::_SC_SHARED_MEMORY_OBJECTS => 1,
+        libc::_SC_SYNCHRONIZED_IO => 1,
+        libc::_SC_TIMERS => 1,
+        libc::_SC_REALTIME_SIGNALS => 1,
+        libc::_SC_PRIORITY_SCHEDULING => 1,
+        libc::_SC_FSYNC => 1,
+        libc::_SC_ASYNCHRONOUS_IO => 1,
         _ => {
             unsafe { set_abi_errno(errno::EINVAL) };
             -1
@@ -2666,7 +2546,7 @@ unsafe extern "C" {
 use frankenlibc_core::getopt as getopt_core;
 use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, StepOutcome};
 
-/// Persistent scanner state across [`getopt_internal`] calls.
+/// Persistent scanner state across `parse_getopt_short` calls.
 ///
 /// Only `nextchar` carries cross-call meaning here; `optind`, `optopt`,
 /// and `optarg` are mirrored to/from the public `libc_optind` /
@@ -2674,14 +2554,6 @@ use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, StepOutcom
 /// callers (including code linked against system libc symbols) see
 /// the canonical POSIX state.
 static mut GETOPT_NEXTCHAR: Option<ArgRef> = None;
-
-/// glibc's `__getopt_data` permutation markers. `[first_nonopt, last_nonopt)`
-/// is the run of skipped non-option (operand) argv elements that the PERMUTE
-/// engine has accumulated but not yet moved to the tail; the exchange step
-/// rotates the intervening options in front of them. They are reset whenever
-/// the caller reinitializes the scan with `optind <= 0`.
-static mut GETOPT_FIRST_NONOPT: usize = 1;
-static mut GETOPT_LAST_NONOPT: usize = 1;
 
 /// Reconstruct a C-style argv into owned byte vectors.
 ///
@@ -2707,41 +2579,21 @@ fn getopt_is_option_like(elem: &[u8]) -> bool {
     elem.len() >= 2 && elem[0] == b'-'
 }
 
-/// The ordering policy glibc derives from the optstring's leading mode flag
-/// (and `POSIXLY_CORRECT`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum GetoptOrdering {
-    /// `+` prefix / `POSIXLY_CORRECT`: stop at the first operand.
-    RequireOrder,
-    /// Default: permute argv so options are reported before operands.
-    Permute,
-    /// `-` prefix: report operands inline as `'\1'` arguments, in order.
-    ReturnInOrder,
-}
-
-/// glibc-faithful argv exchange: swap the accumulated run of non-options
-/// `[first_nonopt, last_nonopt)` with the run of options `[last_nonopt, optind)`
-/// so the options end up first. Both the caller's raw pointer array and our
-/// reconstructed byte vectors are rotated in lockstep so later index lookups
-/// (and the mirrored `optarg`) stay consistent.
-unsafe fn getopt_exchange(
-    argv_mut: *mut *mut c_char,
-    argv_bytes: &mut [Vec<u8>],
-    first_nonopt: usize,
-    last_nonopt: usize,
-    optind: usize,
-) {
-    if first_nonopt >= last_nonopt || last_nonopt >= optind {
-        return;
+/// Whether the bundled short-option element `elem` consumes the *following*
+/// argv element as a separate argument: true iff walking the bundle reaches
+/// a `Required`-argument option with no attached text after it. Used by the
+/// permutation step so an option and its separate argument move together.
+fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
+    let mut i = 1;
+    while i < elem.len() {
+        match getopt_core::getopt_arg_mode(optspec, elem[i]) {
+            None => return false,
+            Some(getopt_core::GetoptArgMode::None) => i += 1,
+            Some(getopt_core::GetoptArgMode::Required) => return i + 1 >= elem.len(),
+            Some(getopt_core::GetoptArgMode::Optional) => return false,
+        }
     }
-    let nonopt = last_nonopt - first_nonopt;
-    argv_bytes[first_nonopt..optind].rotate_left(nonopt);
-    // SAFETY: `[first_nonopt, optind)` ⊆ `[0, argc)`, and `argv` holds `argc`
-    // valid pointer slots, so the constructed mutable slice is in bounds.
-    unsafe {
-        std::slice::from_raw_parts_mut(argv_mut.add(first_nonopt), optind - first_nonopt)
-            .rotate_left(nonopt);
-    }
+    false
 }
 
 fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<GetoptDiagnostic>) {
@@ -2771,44 +2623,20 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
     let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
 }
 
-/// Unified getopt engine shared by `getopt`, `getopt_long`, and
-/// `getopt_long_only`. It mirrors glibc's `_getopt_internal_r`: a single
-/// per-call ADVANCE step (with the PERMUTE exchange model) walks to the next
-/// option-bearing argv element, then control dispatches to the long-option
-/// matcher (when `longopts` is non-null and the element is a long option) or
-/// the short-option scanner [`getopt_core::step_short`].
-///
-/// `longopts == NULL` selects pure POSIX `getopt`. `long_only` enables
-/// `getopt_long_only`'s single-dash long matching.
-unsafe fn getopt_internal(
-    argc: c_int,
-    argv: *const *mut c_char,
-    optspec: &[u8],
-    longopts: *const libc::option,
-    longindex: *mut c_int,
-    long_only: bool,
-) -> c_int {
+unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
     if argc <= 0 || argv.is_null() {
         return -1;
     }
-    let argc_us = argc as usize;
-
-    // Leading optstring mode flags: `+` forces strict ordering (stop at the
-    // first operand), `-` selects RETURN_IN_ORDER; either may be followed by a
-    // `:`. `POSIXLY_CORRECT` also forces strict ordering. The flag byte is
-    // stripped so it is never a selectable option; a leading `:` stays for the
-    // colon/arg-mode helpers.
+    // Leading optstring mode flags: `+` forces POSIX strict ordering (stop at
+    // the first operand) and `-` selects RETURN_IN_ORDER; either is followed
+    // by an optional `:`. `POSIXLY_CORRECT` in the environment also forces
+    // strict ordering. The flag byte is stripped so it is never treated as a
+    // selectable option; a leading `:` stays for the colon/arg-mode helpers.
     let mode = optspec.first().copied();
     let mode_prefix = matches!(mode, Some(b'+' | b'-')) as usize;
-    let ordering = if mode == Some(b'-') {
-        GetoptOrdering::ReturnInOrder
-    } else if mode == Some(b'+')
-        || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some())
-    {
-        GetoptOrdering::RequireOrder
-    } else {
-        GetoptOrdering::Permute
-    };
+    let return_in_order = mode == Some(b'-');
+    let strict =
+        mode == Some(b'+') || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some());
     let effective = &optspec[mode_prefix..];
 
     let mut argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
@@ -2818,160 +2646,84 @@ unsafe fn getopt_internal(
             return -1;
         }
     };
-    let argv_mut = argv as *mut *mut c_char;
-    let has_long = !longopts.is_null();
-
-    // --- Load / (re)initialize the persistent scan state ---
+    let argc_us = argc as usize;
     let raw_optind = unsafe { libc_optind };
-    let mut optind;
-    let mut first_nonopt;
-    let mut last_nonopt;
-    let mut nextchar;
-    if raw_optind <= 0 {
-        optind = 1;
-        first_nonopt = 1;
-        last_nonopt = 1;
-        nextchar = None;
+    let optind = if raw_optind <= 0 {
+        1
     } else {
-        optind = raw_optind as usize;
-        first_nonopt = unsafe { GETOPT_FIRST_NONOPT };
-        last_nonopt = unsafe { GETOPT_LAST_NONOPT };
-        nextchar = unsafe { GETOPT_NEXTCHAR };
-    }
+        raw_optind as usize
+    };
+    let mid_bundle = raw_optind > 0 && unsafe { GETOPT_NEXTCHAR }.is_some();
 
-    // A `nextchar` is only meaningful if it still references the current argv
-    // element at a positive, in-bounds offset that looks like `-...`.
-    let mid_bundle = nextchar.is_some_and(|nc| {
-        nc.argv_idx == optind
-            && nc.byte_offset > 0
-            && argv_bytes
-                .get(nc.argv_idx)
-                .is_some_and(|cur| cur.first() == Some(&b'-') && nc.byte_offset < cur.len())
-    });
-    if !mid_bundle {
-        nextchar = None;
-    }
-
-    if !mid_bundle {
-        // === ADVANCE to the next option element (glibc PERMUTE engine) ===
-        if last_nonopt > optind {
-            last_nonopt = optind;
-        }
-        if first_nonopt > optind {
-            first_nonopt = optind;
-        }
-
-        if ordering == GetoptOrdering::Permute {
-            // If we just finished some options after some operands, move the
-            // options ahead of the operand block.
-            if first_nonopt != last_nonopt && last_nonopt != optind {
-                unsafe {
-                    getopt_exchange(argv_mut, &mut argv_bytes, first_nonopt, last_nonopt, optind);
-                }
-                first_nonopt += optind - last_nonopt;
-            } else if last_nonopt != optind {
-                first_nonopt = optind;
-            }
-            // Skip the run of operands, extending the recorded non-option range.
-            while optind < argc_us && !getopt_is_option_like(&argv_bytes[optind]) {
-                optind += 1;
-            }
-            last_nonopt = optind;
-        }
-
-        // Explicit end-of-options "--".
-        if optind != argc_us && argv_bytes[optind] == b"--" {
-            optind += 1;
-            if first_nonopt != last_nonopt && last_nonopt != optind {
-                unsafe {
-                    getopt_exchange(argv_mut, &mut argv_bytes, first_nonopt, last_nonopt, optind);
-                }
-                first_nonopt += optind - last_nonopt;
-            } else if first_nonopt == last_nonopt {
-                first_nonopt = optind;
-            }
-            last_nonopt = argc_us;
-            optind = argc_us;
-        }
-
-        // No more arguments: back up over the permuted operands.
-        if optind == argc_us {
-            if first_nonopt != last_nonopt {
-                optind = first_nonopt;
-            }
+    if return_in_order && !mid_bundle && optind >= 1 && optind < argc_us {
+        let current = &argv_bytes[optind];
+        if current == b"--" {
             unsafe {
-                libc_optind = optind as c_int;
+                libc_optind = (optind + 1) as c_int;
+                libc_optopt = 0;
+                libc_optarg = std::ptr::null_mut();
                 GETOPT_NEXTCHAR = None;
-                GETOPT_FIRST_NONOPT = first_nonopt;
-                GETOPT_LAST_NONOPT = last_nonopt;
             }
             return -1;
         }
-
-        // A non-option that PERMUTE/REQUIRE_ORDER did not skip.
-        if !getopt_is_option_like(&argv_bytes[optind]) {
-            if ordering == GetoptOrdering::RequireOrder {
-                unsafe {
-                    libc_optind = optind as c_int;
-                    GETOPT_NEXTCHAR = None;
-                    GETOPT_FIRST_NONOPT = first_nonopt;
-                    GETOPT_LAST_NONOPT = last_nonopt;
-                }
-                return -1;
-            }
-            // RETURN_IN_ORDER: hand the operand back as a `'\1'` argument.
-            let operand = unsafe { *argv.add(optind) };
-            optind += 1;
+        if !getopt_is_option_like(current) {
             unsafe {
-                libc_optarg = operand;
+                libc_optind = (optind + 1) as c_int;
                 libc_optopt = 0;
-                libc_optind = optind as c_int;
+                libc_optarg = *argv.add(optind);
                 GETOPT_NEXTCHAR = None;
-                GETOPT_FIRST_NONOPT = first_nonopt;
-                GETOPT_LAST_NONOPT = last_nonopt;
             }
             return 1;
         }
-        // `optind` now points at an option element. `nextchar` stays None: the
-        // long matcher reads the element directly and `step_short` re-derives
-        // the bundle start at byte 1.
     }
 
-    // Persist advance results before dispatch; the long matcher and step_short
-    // read `libc_optind` and advance it themselves.
-    unsafe {
-        libc_optind = optind as c_int;
-        GETOPT_FIRST_NONOPT = first_nonopt;
-        GETOPT_LAST_NONOPT = last_nonopt;
-        GETOPT_NEXTCHAR = nextchar;
-    }
-
-    // === Dispatch: long option first (when applicable), else short scan ===
-    if has_long
+    // Argument permutation (glibc default mode): when the element at `optind`
+    // is an operand, rotate the next option element — together with its
+    // separate argument, if any — in front of the run of operands, so options
+    // are reported in order and operands accumulate at the tail of argv.
+    if !strict
+        && !return_in_order
         && !mid_bundle
-        && let Some(code) = unsafe {
-            getopt_try_long(
-                argc,
-                argv,
-                &argv_bytes,
-                effective,
-                longopts,
-                longindex,
-                long_only,
-            )
-        }
+        && optind >= 1
+        && optind < argc_us
+        && !getopt_is_option_like(&argv_bytes[optind])
     {
-        return code;
+        let mut k = optind + 1;
+        while k < argc_us && !getopt_is_option_like(&argv_bytes[k]) {
+            k += 1;
+        }
+        if k < argc_us {
+            let blk = if k + 1 < argc_us && getopt_block_takes_next_arg(&argv_bytes[k], effective) {
+                2
+            } else {
+                1
+            };
+            let end = k + blk;
+            argv_bytes[optind..end].rotate_right(blk);
+            // Mirror the rotation onto the caller's real argv pointer array
+            // so subsequent getopt() calls and the caller observe the
+            // permutation — exactly what glibc's getopt does.
+            let argv_mut = argv as *mut *mut c_char;
+            // SAFETY: argv has `argc` valid elements; `optind..end` is within
+            // `[0, argc)`, so the constructed slice stays in bounds.
+            unsafe {
+                std::slice::from_raw_parts_mut(argv_mut.add(optind), end - optind)
+                    .rotate_right(blk);
+            }
+        }
     }
 
     let argv_slices: Vec<&[u8]> = argv_bytes.iter().map(Vec::as_slice).collect();
+
     let mut state = GetoptState {
         optind: unsafe { libc_optind.max(0) as usize },
         nextchar: unsafe { GETOPT_NEXTCHAR },
         optopt: unsafe { libc_optopt as u8 },
         optarg: None,
     };
+
     let outcome = getopt_core::step_short(&argv_slices, effective, &mut state);
+
     unsafe {
         libc_optind = state.optind as c_int;
         libc_optopt = state.optopt as c_int;
@@ -2991,6 +2743,7 @@ unsafe fn getopt_internal(
             None => std::ptr::null_mut(),
         };
     }
+
     match outcome {
         StepOutcome::Done => -1,
         StepOutcome::Found { code, diagnostic } => {
@@ -3001,44 +2754,51 @@ unsafe fn getopt_internal(
             );
             code
         }
-        // GNU `W;` extension: `-W foo` -> resolve `foo` as the long option
-        // `--foo` against the caller's longopts table.
-        StepOutcome::LongRoute { arg } => unsafe {
-            getopt_route_w_long(arg, argc, argv, &argv_bytes, effective, longopts, longindex)
-        },
     }
 }
 
-/// Match the option element at `libc_optind` (already positioned by
-/// [`getopt_internal`]'s advance step) as a long option. Returns `Some(code)`
-/// when handled as a long option (a match, or a long-specific error such as an
-/// ambiguous abbreviation, an unknown `--name`, or `--flag=value` on a
-/// no-argument option), advancing `libc_optind` past what it consumed. Returns
-/// `None` when the element is a plain short option (or a `getopt_long_only`
-/// single dash that matched no long name) so the caller falls back to the
-/// short-option scanner.
-unsafe fn getopt_try_long(
+unsafe fn parse_getopt_long(
     argc: c_int,
     argv: *const *mut c_char,
-    argv_bytes: &[Vec<u8>],
     optspec: &[u8],
     longopts: *const libc::option,
     longindex: *mut c_int,
     long_only: bool,
 ) -> Option<c_int> {
-    let cur_idx = unsafe { libc_optind } as usize;
-    if cur_idx >= argc as usize {
+    if argc <= 0 || argv.is_null() || longopts.is_null() {
         return None;
     }
-    let current = unsafe { *argv.add(cur_idx) };
+    if unsafe { libc_optind <= 0 } {
+        unsafe {
+            libc_optind = 1;
+            GETOPT_NEXTCHAR = None;
+        }
+    }
+    if unsafe { libc_optind >= argc } {
+        unsafe {
+            GETOPT_NEXTCHAR = None;
+        }
+        return Some(-1);
+    }
+
+    let current = unsafe { *argv.add(libc_optind as usize) };
     if current.is_null() {
-        return None;
+        return Some(-1);
     }
-    let current_bytes = &argv_bytes[cur_idx];
+    let Some(current_bytes) = (unsafe { read_c_string_bytes(current) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return Some(-1);
+    };
     let prefix_len = if current_bytes.starts_with(b"--") {
-        // A bare "--" is consumed by the advance step, so len() > 2 here.
+        if current_bytes.len() == 2 {
+            unsafe {
+                libc_optind += 1;
+                GETOPT_NEXTCHAR = None;
+            }
+            return Some(-1);
+        }
         2
-    } else if long_only && current_bytes.first() == Some(&b'-') && current_bytes.len() > 1 {
+    } else if long_only && current_bytes.starts_with(b"-") && current_bytes.len() > 1 {
         1
     } else {
         return None;
@@ -3057,64 +2817,18 @@ unsafe fn getopt_try_long(
         b'?' as c_int
     };
 
-    // Resolve the long option: an EXACT name match wins; otherwise GNU
-    // unambiguous-prefix abbreviation applies (`--ver` -> `--verbose`). Multiple
-    // prefix matches are ambiguous UNLESS every candidate shares the same
-    // (flag, val) — glibc then treats them as the same option (the first).
-    let mut matched_idx: Option<usize> = None;
-    if !name.is_empty() {
-        let mut exact: Option<usize> = None;
-        let mut prefix_hits: Vec<usize> = Vec::new();
-        let mut scan = 0usize;
-        loop {
-            let opt_ptr = unsafe { longopts.add(scan) };
-            let long_name = unsafe { (*opt_ptr).name };
-            if long_name.is_null() {
-                break;
-            }
-            let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
-                unsafe { set_abi_errno(errno::EINVAL) };
-                return Some(-1);
-            };
-            if candidate.as_slice() == name {
-                exact = Some(scan);
-                break;
-            }
-            if candidate.len() > name.len() && candidate.starts_with(name) {
-                prefix_hits.push(scan);
-            }
-            scan += 1;
-        }
-        if let Some(e) = exact {
-            matched_idx = Some(e);
-        } else if prefix_hits.len() == 1 {
-            matched_idx = Some(prefix_hits[0]);
-        } else if prefix_hits.len() > 1 {
-            // glibc treats multiple prefix matches as the SAME option (not
-            // ambiguous) only when every candidate shares has_arg, flag, AND val.
-            let first = unsafe { *longopts.add(prefix_hits[0]) };
-            let all_same = prefix_hits.iter().all(|&i| {
-                let o = unsafe { *longopts.add(i) };
-                o.has_arg == first.has_arg && o.flag == first.flag && o.val == first.val
-            });
-            if all_same {
-                matched_idx = Some(prefix_hits[0]);
-            } else {
-                // Ambiguous abbreviation -> '?'.
-                unsafe {
-                    libc_optarg = std::ptr::null_mut();
-                    libc_optopt = 0;
-                    libc_optind += 1;
-                    GETOPT_NEXTCHAR = None;
-                }
-                return Some(b'?' as c_int);
-            }
-        }
-    }
-
-    if let Some(idx) = matched_idx {
+    let mut idx = 0usize;
+    loop {
         let opt_ptr = unsafe { longopts.add(idx) };
-        {
+        let long_name = unsafe { (*opt_ptr).name };
+        if long_name.is_null() {
+            break;
+        }
+        let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return Some(-1);
+        };
+        if candidate.as_slice() == name {
             if !longindex.is_null() {
                 unsafe {
                     *longindex = idx as c_int;
@@ -3178,6 +2892,7 @@ unsafe fn getopt_try_long(
             }
             return Some(unsafe { (*opt_ptr).val });
         }
+        idx += 1;
     }
 
     if prefix_len == 1 {
@@ -3191,170 +2906,6 @@ unsafe fn getopt_try_long(
         GETOPT_NEXTCHAR = None;
     }
     Some(b'?' as c_int)
-}
-
-/// Resolve a GNU `W;`-extension routed long option.
-///
-/// `step_short` returned [`StepOutcome::LongRoute`]: it consumed `-W`'s argument
-/// (`arg`, a `name` or `name=value` spec) and left `libc_optind` pointing at the
-/// slot a space-separated long-option argument would come from. This resolves
-/// `arg` against `longopts` with the SAME semantics as [`getopt_try_long`]
-/// (exact match wins, then unambiguous prefix; required arg comes inline after
-/// `=` or from the next argv slot; missing arg yields `:`/`?`). It is a separate
-/// function rather than a shared helper because the two paths use a different
-/// `optind` convention: here the routed spec is already consumed, so a
-/// space-separated argument comes from `libc_optind` itself, not `+ 1`.
-unsafe fn getopt_route_w_long(
-    arg: ArgRef,
-    argc: c_int,
-    argv: *const *mut c_char,
-    argv_bytes: &[Vec<u8>],
-    optspec: &[u8],
-    longopts: *const libc::option,
-    longindex: *mut c_int,
-) -> c_int {
-    let missing_code = if getopt_core::getopt_prefers_colon(optspec) {
-        b':' as c_int
-    } else {
-        b'?' as c_int
-    };
-    // `space_arg_idx` is where a space-separated long argument is taken from;
-    // `step_short` already advanced libc_optind to exactly that slot.
-    let space_arg_idx = unsafe { libc_optind };
-
-    // Helper: finalize an error/no-match return, leaving optind put.
-    let reject = || {
-        unsafe {
-            libc_optarg = std::ptr::null_mut();
-            libc_optopt = 0;
-            libc_optind = space_arg_idx;
-            GETOPT_NEXTCHAR = None;
-        }
-        b'?' as c_int
-    };
-
-    let Some(spec) = argv_bytes
-        .get(arg.argv_idx)
-        .and_then(|e| e.get(arg.byte_offset..))
-    else {
-        return reject();
-    };
-    let split_idx = spec.iter().position(|&b| b == b'=').unwrap_or(spec.len());
-    let name = &spec[..split_idx];
-    let inline_value = if split_idx < spec.len() {
-        let base = unsafe { *argv.add(arg.argv_idx) };
-        if base.is_null() {
-            std::ptr::null()
-        } else {
-            unsafe { base.add(arg.byte_offset + split_idx + 1) }
-        }
-    } else {
-        std::ptr::null()
-    };
-
-    if longopts.is_null() || name.is_empty() {
-        return reject();
-    }
-
-    // Resolve: exact match wins; otherwise unambiguous-prefix abbreviation, with
-    // glibc's "same (has_arg, flag, val) collapses to one option" rule.
-    let mut exact: Option<usize> = None;
-    let mut prefix_hits: Vec<usize> = Vec::new();
-    let mut scan = 0usize;
-    loop {
-        let opt_ptr = unsafe { longopts.add(scan) };
-        let long_name = unsafe { (*opt_ptr).name };
-        if long_name.is_null() {
-            break;
-        }
-        let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            return -1;
-        };
-        if candidate.as_slice() == name {
-            exact = Some(scan);
-            break;
-        }
-        if candidate.len() > name.len() && candidate.starts_with(name) {
-            prefix_hits.push(scan);
-        }
-        scan += 1;
-    }
-    let matched_idx = if let Some(e) = exact {
-        e
-    } else if prefix_hits.len() == 1 {
-        prefix_hits[0]
-    } else if prefix_hits.len() > 1 {
-        let first = unsafe { *longopts.add(prefix_hits[0]) };
-        let all_same = prefix_hits.iter().all(|&i| {
-            let o = unsafe { *longopts.add(i) };
-            o.has_arg == first.has_arg && o.flag == first.flag && o.val == first.val
-        });
-        if all_same {
-            prefix_hits[0]
-        } else {
-            return reject(); // ambiguous abbreviation
-        }
-    } else {
-        return reject(); // unknown long option
-    };
-
-    let opt_ptr = unsafe { longopts.add(matched_idx) };
-    unsafe {
-        libc_optarg = std::ptr::null_mut();
-        libc_optopt = 0;
-        GETOPT_NEXTCHAR = None;
-    }
-    let mut final_idx = space_arg_idx;
-    match unsafe { (*opt_ptr).has_arg } {
-        0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
-            // `--name=value` on a no-argument option -> '?'.
-            unsafe {
-                libc_optopt = (*opt_ptr).val;
-                libc_optind = final_idx;
-            }
-            return b'?' as c_int;
-        }
-        1 => {
-            if !inline_value.is_null() && unsafe { *inline_value != 0 } {
-                unsafe { libc_optarg = inline_value as *mut c_char };
-            } else {
-                if space_arg_idx >= argc {
-                    unsafe {
-                        libc_optopt = (*opt_ptr).val;
-                        libc_optind = final_idx;
-                    }
-                    return missing_code;
-                }
-                let value = unsafe { *argv.add(space_arg_idx as usize) };
-                if value.is_null() {
-                    unsafe {
-                        libc_optopt = (*opt_ptr).val;
-                        libc_optind = final_idx;
-                    }
-                    return missing_code;
-                }
-                unsafe { libc_optarg = value };
-                final_idx += 1;
-            }
-        }
-        2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
-            libc_optarg = inline_value as *mut c_char;
-        },
-        _ => {}
-    }
-    unsafe { libc_optind = final_idx };
-    // glibc only assigns *longindex on a successful match (the missing-argument
-    // error paths above leave the caller's value, conventionally -1, untouched).
-    if !longindex.is_null() {
-        unsafe { *longindex = matched_idx as c_int };
-    }
-    let flag_ptr = unsafe { (*opt_ptr).flag };
-    if !flag_ptr.is_null() {
-        unsafe { *flag_ptr = (*opt_ptr).val };
-        return 0;
-    }
-    unsafe { (*opt_ptr).val }
 }
 
 /// POSIX `getopt` — parse command-line options.
@@ -3382,21 +2933,12 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    // Borrow the optstring instead of a per-call Vec copy (read_c_string_bytes) — getopt is
-    // called once per option in the arg-parse loop, re-copying the SAME optstring each
-    // call; getopt_internal only reads it. SAFETY: optstring non-null (checked above) and
-    // NUL-terminated (C contract).
-    let optspec = unsafe { core::ffi::CStr::from_ptr(optstring) }.to_bytes();
-    let rc = unsafe {
-        getopt_internal(
-            argc,
-            argv,
-            optspec,
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            false,
-        )
+    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
     };
+    let rc = unsafe { parse_getopt_short(argc, argv, &optspec) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3456,10 +2998,15 @@ pub unsafe extern "C" fn getopt_long(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    // Borrow the optstring (read-only) instead of a per-call Vec copy — same as getopt.
-    // SAFETY: optstring non-null (checked above), NUL-terminated (C contract).
-    let optspec = unsafe { core::ffi::CStr::from_ptr(optstring) }.to_bytes();
-    let rc = unsafe { getopt_internal(argc, argv, optspec, longopts, longindex, false) };
+    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    };
+    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
+        Some(value) => value,
+        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
+    };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3499,10 +3046,15 @@ pub unsafe extern "C" fn getopt_long_only(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    // Borrow the optstring (read-only) instead of a per-call Vec copy — same as getopt.
-    // SAFETY: optstring non-null (checked above), NUL-terminated (C contract).
-    let optspec = unsafe { core::ffi::CStr::from_ptr(optstring) }.to_bytes();
-    let rc = unsafe { getopt_internal(argc, argv, optspec, longopts, longindex, true) };
+    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    };
+    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
+        Some(value) => value,
+        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
+    };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3555,14 +3107,6 @@ fn syslog_connect() -> c_int {
 }
 
 fn syslog_send(priority: c_int, message: &[u8]) {
-    // glibc filters by the setlogmask() priority mask: a message whose level
-    // bit is not set is dropped — (LOG_MASK(LOG_PRI(pri)) & mask) == 0 -> ignore.
-    // fl stored the mask in setlogmask() but never consulted it here. bd-c7cs3h.
-    let mask = SYSLOG_MASK.load(std::sync::atomic::Ordering::Relaxed);
-    if (1i32 << (priority & 0x07)) & mask == 0 {
-        return;
-    }
-
     let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
 
     let level = priority & 0x07;
@@ -3863,16 +3407,14 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
     }
 
     let mut pty_num: c_int = 0;
-    // SAFETY: ioctl writes PTY slave index into `pty_num` on success. glibc maps
-    // the non-pty-master EINVAL to ENOTTY (so ptsname on a slave fails ENOTTY).
+    // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
     unsafe {
         syscall::sys_ioctl(
             fd,
             libc::TIOCGPTN as usize,
             &mut pty_num as *mut c_int as usize,
         )
-    }
-    .map_err(|e| if e == errno::EINVAL { errno::ENOTTY } else { e })?;
+    }?;
 
     let path = format!("/dev/pts/{pty_num}");
     let c_path = CString::new(path).map_err(|_| errno::EINVAL)?;
@@ -3929,54 +3471,6 @@ unsafe fn pc_link_max_for_fd(fd: c_int) -> libc::c_long {
     }
 }
 
-#[inline]
-/// Per-filesystem _PC_FILESIZEBITS, mirroring glibc's __statfs_filesize_max
-/// (sysdeps/unix/sysv/linux/pathconf.c). f_type magic from <linux/magic.h>.
-fn fs_filesizebits_for_type(f_type: i64) -> libc::c_long {
-    const EXT2_SUPER_MAGIC: i64 = 0xEF53; // ext2/3/4
-    const XFS_SUPER_MAGIC: i64 = 0x58465342;
-    const REISERFS_SUPER_MAGIC: i64 = 0x52654973;
-    const NTFS_SB_MAGIC: i64 = 0x5346544E;
-    const UDF_SUPER_MAGIC: i64 = 0x15013346;
-    const JFS_SUPER_MAGIC: i64 = 0x3153464A;
-    const CGROUP_SUPER_MAGIC: i64 = 0x27e0eb;
-    const SMB_SUPER_MAGIC: i64 = 0x517B;
-    const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
-    const F2FS_SUPER_MAGIC: i64 = 0xF2F52010;
-    const MSDOS_SUPER_MAGIC: i64 = 0x4d44;
-    const JFFS2_SUPER_MAGIC: i64 = 0x72b6;
-    const ROMFS_MAGIC: i64 = 0x7275;
-    match f_type {
-        F2FS_SUPER_MAGIC => 256,
-        BTRFS_SUPER_MAGIC => 255,
-        EXT2_SUPER_MAGIC | XFS_SUPER_MAGIC | REISERFS_SUPER_MAGIC | NTFS_SB_MAGIC
-        | UDF_SUPER_MAGIC | JFS_SUPER_MAGIC | CGROUP_SUPER_MAGIC | SMB_SUPER_MAGIC => 64,
-        MSDOS_SUPER_MAGIC | JFFS2_SUPER_MAGIC | ROMFS_MAGIC => 32,
-        _ => 32, // glibc's default
-    }
-}
-
-/// Resolve _PC_FILESIZEBITS via statfs; glibc returns 32 if statfs is
-/// unsupported (ENOSYS) and -1 on any other error.
-unsafe fn pc_filesizebits_for_path(path: *const c_char) -> libc::c_long {
-    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
-    match unsafe { syscall::sys_statfs(path as *const u8, sf.as_mut_ptr()) } {
-        Ok(()) => fs_filesizebits_for_type(unsafe { sf.assume_init() }.f_type),
-        Err(e) if e == libc::ENOSYS => 32,
-        Err(_) => -1,
-    }
-}
-
-/// Resolve _PC_FILESIZEBITS for an fd via fstatfs.
-unsafe fn pc_filesizebits_for_fd(fd: c_int) -> libc::c_long {
-    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
-    match unsafe { syscall::sys_fstatfs(fd, sf.as_mut_ptr()) } {
-        Ok(()) => fs_filesizebits_for_type(unsafe { sf.assume_init() }.f_type),
-        Err(e) if e == libc::ENOSYS => 32,
-        Err(_) => -1,
-    }
-}
-
 fn pathconf_value(name: c_int) -> Option<libc::c_long> {
     match name {
         // _PC_LINK_MAX is resolved via per-path/per-fd statfs in the
@@ -3991,9 +3485,6 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         libc::_PC_CHOWN_RESTRICTED => Some(1),
         libc::_PC_NO_TRUNC => Some(1),
         libc::_PC_VDISABLE => Some(0),
-        // POSIX requires the FS to support symlinks ("/" -> ".." etc.); glibc
-        // returns 1 on Linux. This used to fall through to the EINVAL default.
-        libc::_PC_2_SYMLINKS => Some(1),
         _ => None,
     }
 }
@@ -4100,29 +3591,6 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
         return v;
     }
-
-    // _PC_FILESIZEBITS is filesystem-dependent (glibc __statfs_filesize_max);
-    // fl previously fell through to the EINVAL default (-1). bd-eqcn80.
-    if name == libc::_PC_FILESIZEBITS {
-        let v = unsafe { pc_filesizebits_for_path(path) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
-        return v;
-    }
-
-    // glibc reports these record/allocation limits as the filesystem block size
-    // (statvfs f_bsize). fl previously returned -1 (EINVAL) for them.
-    if matches!(
-        name,
-        libc::_PC_REC_MIN_XFER_SIZE | libc::_PC_REC_XFER_ALIGN | libc::_PC_ALLOC_SIZE_MIN
-    ) {
-        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
-        let v = match unsafe { syscall::sys_statfs(path as *const u8, fs.as_mut_ptr()) } {
-            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
-            Err(_) => -1,
-        };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
-        return v;
-    }
     let out = match pathconf_value(name) {
         Some(v) => v,
         None => {
@@ -4165,29 +3633,6 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
         return v;
     }
-
-    // _PC_FILESIZEBITS is filesystem-dependent; mirror the per-path branch in
-    // pathconf via fstatfs. bd-eqcn80.
-    if name == libc::_PC_FILESIZEBITS {
-        let v = unsafe { pc_filesizebits_for_fd(fd) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
-        return v;
-    }
-
-    // Record/allocation limits = filesystem block size (statvfs f_bsize), via the
-    // fd's fstatfs — mirrors the per-path statfs branch in pathconf.
-    if matches!(
-        name,
-        libc::_PC_REC_MIN_XFER_SIZE | libc::_PC_REC_XFER_ALIGN | libc::_PC_ALLOC_SIZE_MIN
-    ) {
-        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
-        let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
-            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
-            Err(_) => -1,
-        };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
-        return v;
-    }
     let out = match pathconf_value(name) {
         Some(v) => v,
         None => {
@@ -4217,11 +3662,7 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
 
     let target = current.saturating_add(inc).clamp(-20, 19);
     if let Err(e) = syscall::sys_setpriority(libc::PRIO_PROCESS as c_int, 0, target) {
-        // POSIX nice() reports a permission failure as EPERM, but the kernel's
-        // setpriority returns EACCES when an unprivileged process tries to lower
-        // its nice value. glibc remaps EACCES -> EPERM here; mirror that.
-        let mapped = if e == libc::EACCES { libc::EPERM } else { e };
-        unsafe { set_abi_errno(mapped) };
+        unsafe { set_abi_errno(e) };
         return -1;
     }
 
@@ -4399,17 +3840,6 @@ pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
 /// Linux `getrandom` — fill buffer with random bytes from the kernel CSPRNG.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
-    if runtime_policy::strict_passthrough_active() {
-        return match unsafe { syscall::sys_getrandom(buf as *mut u8, buflen, flags) } {
-            Ok(n) => n,
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                runtime_policy::observe(ApiFamily::IoFd, ValidationProfile::Fast, 8, true);
-                -1
-            }
-        };
-    }
-
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, buf as usize, buflen, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -4729,18 +4159,7 @@ pub unsafe extern "C" fn sched_getaffinity(
     mask: *mut c_void,
 ) -> c_int {
     match unsafe { syscall::sys_sched_getaffinity(pid, cpusetsize, mask as *mut u8) } {
-        Ok(written) => {
-            // The kernel only writes `written` bytes; glibc zero-fills the rest
-            // of the caller's mask so high CPUs read as clear (CPU_ISSET == 0),
-            // rather than leaving stale buffer contents.
-            let written = written.max(0) as usize;
-            if !mask.is_null() && written < cpusetsize {
-                unsafe {
-                    std::ptr::write_bytes((mask as *mut u8).add(written), 0, cpusetsize - written)
-                };
-            }
-            0
-        }
+        Ok(_) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -5071,35 +4490,6 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
 
-/// Interpret the second word of `sem_t` as the number of registered waiters.
-///
-/// Keeping this count lets `sem_post` avoid entering the kernel when no thread
-/// can be asleep on the futex. The value word remains at offset zero, preserving
-/// the existing representation and the Linux `sem_t` layout.
-unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
-    // SAFETY: callers provide a valid, suitably aligned Linux sem_t, which is
-    // at least 32 bytes. Offset four is therefore an aligned AtomicU32 slot.
-    unsafe {
-        &*((sem as *const u8).add(std::mem::size_of::<i32>())
-            as *const std::sync::atomic::AtomicU32)
-    }
-}
-
-struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
-
-impl Drop for SemWaiterRegistration {
-    fn drop(&mut self) {
-        self.0
-            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
-    let waiters = unsafe { sem_waiters_as_atomic(sem) };
-    waiters.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    SemWaiterRegistration(waiters)
-}
-
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     match unsafe {
         syscall::sys_futex(
@@ -5321,7 +4711,6 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
     // If we just created the semaphore, initialize the futex word.
     if created {
         let atom = unsafe { &*(ptr as *const std::sync::atomic::AtomicI32) };
-        unsafe { sem_waiters_as_atomic(ptr) }.store(0, std::sync::atomic::Ordering::Relaxed);
         atom.store(initial_value as i32, std::sync::atomic::Ordering::Release);
     }
 
@@ -5377,7 +4766,6 @@ pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_ui
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
-    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
     atom.store(value as i32, std::sync::atomic::Ordering::Release);
     0
 }
@@ -5401,16 +4789,15 @@ pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
-    let old = atom.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let old = atom.fetch_add(1, std::sync::atomic::Ordering::Release);
     if old < 0 || old == i32::MAX {
         // Overflow protection
         atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     }
-    if unsafe { sem_waiters_as_atomic(sem) }.load(std::sync::atomic::Ordering::SeqCst) != 0 {
-        sem_futex_wake(sem, 1);
-    }
+    // Wake one waiter
+    sem_futex_wake(sem, 1);
     0
 }
 
@@ -5437,30 +4824,6 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
             return 0;
         }
         if val <= 0 {
-            break;
-        }
-    }
-
-    // Register before rechecking the value. With the matching SeqCst value
-    // increment and waiter load in sem_post, either the poster observes this
-    // registration and wakes us, or this thread observes the posted token and
-    // never sleeps. This rules out the lost-wake store-buffering execution.
-    let _registration = unsafe { sem_register_waiter(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
             let ret = sem_futex_wait(sem, val);
             if ret < 0 {
                 let err = -ret;
@@ -5472,7 +4835,7 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
                     unsafe { set_abi_errno(err) };
                     return -1;
                 }
-                // EAGAIN is a value mismatch or spurious wakeup — retry.
+                // EAGAIN is spurious wakeup or value mismatch — retry.
             }
         }
     }
@@ -5536,26 +4899,6 @@ pub unsafe extern "C" fn sem_timedwait(
                 unsafe { set_abi_errno(libc::EINVAL) };
                 return -1;
             }
-            break;
-        }
-    }
-
-    let _registration = unsafe { sem_register_waiter(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
             let ret = sem_futex_wait_timed(sem, val, abs_timeout);
             if ret < 0 {
                 let err = -ret;
@@ -5563,7 +4906,7 @@ pub unsafe extern "C" fn sem_timedwait(
                     unsafe { set_abi_errno(err) };
                     return -1;
                 }
-                // EAGAIN is a value mismatch or spurious wakeup — retry.
+                // EAGAIN is spurious wakeup or value mismatch — retry.
             }
         }
     }
@@ -6982,13 +6325,9 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 // ---------------------------------------------------------------------------
 //
 // Supports: tilde expansion (~user), environment variable expansion ($VAR, ${VAR}),
-// arithmetic expansion ($((expr)), full POSIX integer operators), pathname
-// expansion (glob), field splitting on IFS, and WRDE_NOCMD safety.
-// Command substitution ($(...) and `...`) is rejected ENTIRELY for safety
-// (returns WRDE_CMDSUB regardless of WRDE_NOCMD) — wordexp command substitution
-// is a known injection vector, so this implementation never forks /bin/sh.
-// Note: $((...)) is arithmetic, NOT command substitution, and is permitted
-// (including under WRDE_NOCMD).
+// pathname expansion (glob), field splitting on IFS, and WRDE_NOCMD safety.
+// Command substitution ($(...) and `...`) is rejected when WRDE_NOCMD is set
+// and executed via /bin/sh -c "echo ..." otherwise.
 
 // POSIX wordexp_t layout (matches glibc x86_64):
 // struct wordexp_t { size_t we_wordc; char **we_wordv; size_t we_offs; };
@@ -7032,33 +6371,6 @@ fn scan_braced_parameter_end(s: &[u8], open_brace: usize) -> Option<usize> {
 }
 
 /// Scan `wordexp` input while honoring shell quoting and escaping context.
-/// If `s[dollar..]` begins with `$((` this is arithmetic expansion (NOT command
-/// substitution, and allowed under `WRDE_NOCMD`); returns the index just past
-/// the matching `))`. Otherwise returns `None`. An unterminated `$((` returns
-/// `Some(s.len())` so the scanner skips to the end rather than misfiring on an
-/// inner `(` as a bad character.
-fn arith_skip(s: &[u8], dollar: usize) -> Option<usize> {
-    if dollar + 2 < s.len() && s[dollar + 1] == b'(' && s[dollar + 2] == b'(' {
-        let mut depth = 2i32;
-        let mut p = dollar + 3;
-        while p < s.len() {
-            match s[p] {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(p + 1);
-                    }
-                }
-                _ => {}
-            }
-            p += 1;
-        }
-        return Some(s.len());
-    }
-    None
-}
-
 fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
     let mut scan = WordexpSyntaxScan {
         has_bad_char: false,
@@ -7107,10 +6419,6 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
             if byte == b'$' && i + 1 < s.len() {
                 match s[i + 1] {
                     b'(' => {
-                        if let Some(next) = arith_skip(s, i) {
-                            i = next;
-                            continue;
-                        }
                         scan.has_command_substitution = true;
                         return scan;
                     }
@@ -7142,10 +6450,6 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
         if byte == b'$' && i + 1 < s.len() {
             match s[i + 1] {
                 b'(' => {
-                    if let Some(next) = arith_skip(s, i) {
-                        i = next;
-                        continue;
-                    }
                     scan.has_command_substitution = true;
                     return scan;
                 }
@@ -7179,11 +6483,7 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
     scan
 }
 
-/// Perform tilde expansion on a word, matching glibc wordexp:
-///   * `~`/`~/suffix`     → `$HOME` (falling back to the current user's
-///                          passwd home dir when HOME is unset);
-///   * `~user`/`~user/sfx` → that user's `pw_dir` via /etc/passwd;
-///   * an unknown user, or an unresolvable `~`, is left literal.
+/// Perform tilde expansion on a word.
 fn expand_tilde(word: &str) -> String {
     if !word.starts_with('~') {
         return word.to_string();
@@ -7194,25 +6494,12 @@ fn expand_tilde(word: &str) -> String {
         None => (rest, ""),
     };
     if user.is_empty() {
-        // ~ alone / ~/suffix → $HOME, else the current user's pw_dir.
+        // ~ alone → $HOME
         if let Ok(home) = std::env::var("HOME") {
             return format!("{home}{suffix}");
         }
-        let uid = syscall::sys_getuid();
-        if let Some(pw) = crate::pwd_abi::lookup_passwd_by_uid(uid)
-            && let Ok(dir) = String::from_utf8(pw.pw_dir)
-        {
-            return format!("{dir}{suffix}");
-        }
-        return word.to_string();
     }
-    // ~user → that user's home directory from /etc/passwd; if the user is not
-    // found, glibc leaves the word untouched.
-    if let Some(pw) = crate::pwd_abi::lookup_passwd_by_name(user.as_bytes())
-        && let Ok(dir) = String::from_utf8(pw.pw_dir)
-    {
-        return format!("{dir}{suffix}");
-    }
+    // ~user → lookup (simplified: just return as-is if we can't resolve)
     word.to_string()
 }
 
@@ -7229,7 +6516,6 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
     })
     .map_err(|e| match e {
         frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => WRDE_BADVAL,
-        frankenlibc_core::stdlib::wordexp::ExpandError::Syntax => WRDE_SYNTAX,
     })
 }
 
@@ -7276,54 +6562,6 @@ fn expand_vars_with_split_mask_dyn(
                 push_masked_char(&mut result, &mut split_mask, '$', false);
                 continue;
             }
-            if bytes[i] == b'(' && i + 1 < bytes.len() && bytes[i + 1] == b'(' {
-                // `$(( expr ))` — POSIX arithmetic expansion. Find the matching
-                // `))` (tracking nested parens), evaluate the inner expression
-                // as integer arithmetic, and substitute the decimal result.
-                let inner_start = i + 2;
-                let mut depth = 2i32;
-                let mut pos = inner_start;
-                let mut close = None;
-                while pos < bytes.len() {
-                    match bytes[pos] {
-                        b'(' => depth += 1,
-                        b')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                close = Some(pos);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                    pos += 1;
-                }
-                let Some(close) = close else {
-                    return Err(WRDE_SYNTAX);
-                };
-                let inner = core::str::from_utf8(&bytes[inner_start..close - 1]).unwrap_or("");
-                i = close + 1;
-                // glibc expands `$`/`${...}` parameter (and nested arithmetic)
-                // forms in the arithmetic text BEFORE evaluating it, so e.g.
-                // `$(( ${x:-5} + 1 ))` works. Bare names (`x`) are left for the
-                // evaluator to resolve. Unset vars are 0 here, never an error.
-                let pre = expand_vars_with_split_mask_dyn(inner, false, false)?.0;
-                let lookup = |name: &str| std::env::var(name).ok();
-                match frankenlibc_core::stdlib::wordexp::eval_arith(&pre, &lookup) {
-                    Ok(val) => {
-                        for ch in val.to_string().chars() {
-                            push_masked_char(
-                                &mut result,
-                                &mut split_mask,
-                                ch,
-                                split_unquoted_expansions,
-                            );
-                        }
-                    }
-                    Err(_) => return Err(WRDE_SYNTAX),
-                }
-                continue;
-            }
             if bytes[i] == b'{' {
                 // `${...}` — full parameter expansion (default/alt/length forms),
                 // shared with the core expander.
@@ -7355,9 +6593,6 @@ fn expand_vars_with_split_mask_dyn(
                                 split_unquoted_expansions,
                             );
                         }
-                    }
-                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::Syntax) => {
-                        return Err(WRDE_SYNTAX);
                     }
                     Err(_) => return Err(WRDE_BADVAL),
                 }
@@ -7541,9 +6776,8 @@ fn push_wordexp_masked_fields(
 
 /// POSIX `wordexp` — perform shell-like word expansion.
 ///
-/// Native implementation supporting tilde, variable, arithmetic ($((...))), and
-/// pathname (glob) expansion. Command substitution ($(...)/backticks) is
-/// rejected entirely for safety (WRDE_CMDSUB), never forking /bin/sh.
+/// Native implementation supporting tilde, variable, and pathname (glob) expansion.
+/// Command substitution requires WRDE_NOCMD to be unset and uses /bin/sh.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wordexp(
     words: *const c_char,
@@ -8336,24 +7570,6 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         return std::ptr::null_mut();
     };
 
-    // Host libcrypt (libxcrypt) NEVER returns NULL: for any setting it cannot
-    // produce a hash for (unsupported scheme, traditional DES, or malformed
-    // salt) it returns a "failure token" — "*0", or "*1" when the setting
-    // already begins with "*0" — so the result can never compare equal to a
-    // valid stored hash and a caller's strcmp won't dereference NULL. It also
-    // sets EINVAL. Mirror that. bd-r9ihvq. (DES/yescrypt/bcrypt hashing itself
-    // is still unsupported — bd-c6ykz1.)
-    let failure_token = |buf: &mut [u8; 256]| -> *mut c_char {
-        let token: &[u8] = if salt_bytes.starts_with(b"*0") {
-            b"*1"
-        } else {
-            b"*0"
-        };
-        buf[..token.len()].copy_from_slice(token);
-        buf[token.len()] = 0;
-        buf.as_mut_ptr() as *mut c_char
-    };
-
     let result = if salt_bytes.starts_with(b"$6$") {
         crypt_sha512(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$5$") {
@@ -8361,9 +7577,9 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
     } else {
-        // Unsupported scheme / traditional DES.
+        // Traditional DES or unknown — return error (DES is obsolete and insecure)
         unsafe { set_abi_errno(errno::EINVAL) };
-        return with_crypt_buf(failure_token);
+        return std::ptr::null_mut();
     };
 
     match result {
@@ -8374,9 +7590,8 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
             buf.as_mut_ptr() as *mut c_char
         }),
         None => {
-            // Malformed salt for a supported scheme.
             unsafe { set_abi_errno(errno::EINVAL) };
-            with_crypt_buf(failure_token)
+            std::ptr::null_mut()
         }
     }
 }
@@ -8432,14 +7647,14 @@ pub unsafe extern "C" fn crypt_preferred_method() -> *const c_char {
     CRYPT_PREFERRED_METHOD_STATIC.as_ptr() as *const c_char
 }
 
-/// libcrypt `crypt_checksalt(setting) -> int` — classify a crypt salt setting,
-/// matching host libxcrypt's constants: `CRYPT_SALT_OK = 0`,
-/// `CRYPT_SALT_INVALID = 1`, `CRYPT_SALT_METHOD_DISABLED = 2`,
-/// `CRYPT_SALT_METHOD_LEGACY = 3`. We return `OK(0)` for `$5$` (SHA-256) and
-/// `$6$` (SHA-512), `METHOD_LEGACY(3)` for `$1$` (MD5, like the host), and
-/// `INVALID(1)` for any other prefix or NULL input — including schemes the host
-/// supports but fl cannot hash yet (DES, yescrypt, bcrypt: bd-c6ykz1), which we
-/// report INVALID rather than claiming a usability we can't honour.
+/// libcrypt `crypt_checksalt(setting) -> int` — validate that
+/// `setting` begins with a recognized crypt prefix. Returns
+/// `CRYPT_SALT_OK = 0` for `$1$` (MD5), `$5$` (SHA-256), and `$6$`
+/// (SHA-512); returns `CRYPT_SALT_INVALID = 1` for any other
+/// prefix or NULL input. (libxcrypt also defines
+/// `CRYPT_SALT_METHOD_LEGACY = 2` and `CRYPT_SALT_METHOD_DISABLED
+/// = 3` for older / disabled algorithms; we don't classify those
+/// separately.)
 ///
 /// # Safety
 ///
@@ -8452,16 +7667,8 @@ pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
     let Some(bytes) = (unsafe { read_c_string_bytes(setting) }) else {
         return 1;
     };
-    // libxcrypt classifies a recognized salt: CRYPT_SALT_OK(0),
-    // CRYPT_SALT_INVALID(1), CRYPT_SALT_METHOD_DISABLED(2),
-    // CRYPT_SALT_METHOD_LEGACY(3). $5$/$6$ (SHA-256/512) are OK; $1$ (MD5) is a
-    // recognized-but-legacy method -> 3 (verified vs host). Schemes fl cannot
-    // hash (DES, yescrypt, ...) are reported INVALID rather than claiming a
-    // usability fl can't honour (bd-c6ykz1). bd-iu39zz.
-    if bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
+    if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
         0
-    } else if bytes.starts_with(b"$1$") {
-        3
     } else {
         1
     }
@@ -12256,113 +11463,6 @@ pub unsafe extern "C" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int
     out
 }
 
-/// glibc's generic `posix_fallocate` fallback emulation
-/// (`sysdeps/posix/posix_fallocate.c`), used when the `fallocate(2)` syscall
-/// reports `EOPNOTSUPP` — filesystems lacking native `fallocate` support, such
-/// as some network filesystems. It forces backing-store allocation by touching
-/// one byte in every filesystem block across `[offset, offset+len)`, reading
-/// each block first so already-allocated data is never clobbered and writing a
-/// zero byte only into holes. The file is extended to `offset+len`, existing
-/// data is preserved, and the file is never shrunk. Returns an errno (0 on
-/// success), matching glibc's errno-direct (not `-1`/`errno`) contract.
-///
-/// Exposed (Rust-visible, no C symbol) so the differential conformance gate can
-/// drive the fallback path directly — tmpfs/ext4 support native `fallocate`, so
-/// it would otherwise never execute on the test host.
-#[allow(unsafe_code)]
-pub unsafe fn internal_fallocate_emulate(
-    fd: c_int,
-    offset: libc::off_t,
-    mut len: libc::off_t,
-) -> c_int {
-    // offset/len negativity is validated by the caller, but glibc's standalone
-    // emulation re-checks it; mirror that for self-containment.
-    if offset < 0 || len < 0 {
-        return libc::EINVAL;
-    }
-    // Overflow check: offset + len must not wrap past off_t's max (glibc casts
-    // the unsigned sum back to signed and rejects a negative result).
-    if ((offset as u64).wrapping_add(len as u64) as i64) < 0 {
-        return libc::EFBIG;
-    }
-    // `pwrite` would misbehave in O_APPEND mode (every write lands at EOF rather
-    // than the requested offset), so glibc rejects append-mode descriptors and
-    // maps any F_GETFL failure to EBADF.
-    match unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) } {
-        Ok(flags) if (flags & libc::O_APPEND) == 0 => {}
-        _ => return libc::EBADF,
-    }
-    // Must be a regular file. glibc maps an fstat failure to EBADF (not errno).
-    let mut st: libc::stat = unsafe { core::mem::zeroed() };
-    if unsafe { syscall::sys_fstat(fd, (&mut st as *mut libc::stat).cast()) }.is_err() {
-        return libc::EBADF;
-    }
-    let fmt = st.st_mode & libc::S_IFMT;
-    if fmt == libc::S_IFIFO {
-        return libc::ESPIPE;
-    }
-    if fmt != libc::S_IFREG {
-        return libc::ENODEV;
-    }
-    let st_size = st.st_size as i64;
-
-    if len == 0 {
-        // A zero-length request can only extend (never shrink) the file.
-        if st_size < offset {
-            return match unsafe { syscall::sys_ftruncate(fd, offset) } {
-                Ok(()) => 0,
-                Err(e) => e,
-            };
-        }
-        return 0;
-    }
-
-    // Write stride: the filesystem block size, capped at 4096. NFS may report a
-    // much larger block size that would leave holes after the loop, so glibc
-    // caps it; a zero block size falls back to 512.
-    let increment: i64 = {
-        let mut f: syscall::StatFs = unsafe { core::mem::zeroed() };
-        if let Err(e) = unsafe { syscall::sys_fstatfs(fd, &mut f as *mut syscall::StatFs) } {
-            return e;
-        }
-        if f.f_bsize == 0 {
-            512
-        } else if f.f_bsize < 4096 {
-            f.f_bsize
-        } else {
-            4096
-        }
-    };
-
-    // Touch one byte per block. The first probe is aligned to the final byte of
-    // the leading partial block, then steps by `increment`.
-    let mut off = offset + (len - 1) % increment;
-    while len > 0 {
-        len -= increment;
-        let mut need_write = true;
-        if off < st_size {
-            let mut c: u8 = 0;
-            match unsafe { syscall::sys_pread64(fd, &mut c as *mut u8, 1, off) } {
-                // A non-zero byte means the block is already allocated — skip it.
-                Ok(rsize) => need_write = !(rsize == 1 && c != 0),
-                Err(e) => return e,
-            }
-        }
-        if need_write {
-            let zero: u8 = 0;
-            match unsafe { syscall::sys_pwrite64(fd, &zero as *const u8, 1, off) } {
-                Ok(1) => {}
-                // A 1-byte pwrite to a regular file writes 1 or errors; a short
-                // count is degenerate. glibc returns errno; surface EIO.
-                Ok(_) => return libc::EIO,
-                Err(e) => return e,
-            }
-        }
-        off += increment;
-    }
-    0
-}
-
 /// `posix_fallocate` — allocate file space.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_fallocate(
@@ -12383,11 +11483,6 @@ pub unsafe extern "C" fn posix_fallocate(
 
     let rc = match syscall::sys_fallocate(fd, 0, offset, len) {
         Ok(()) => 0,
-        // glibc (sysdeps/unix/sysv/linux/posix_fallocate.c) falls back to a
-        // generic zero-fill emulation ONLY on EOPNOTSUPP — filesystems without
-        // native fallocate support. Every other error, ENOSYS included, is
-        // returned to the caller unchanged.
-        Err(e) if e == libc::EOPNOTSUPP => unsafe { internal_fallocate_emulate(fd, offset, len) },
         Err(e) => e,
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
@@ -12397,15 +11492,6 @@ pub unsafe extern "C" fn posix_fallocate(
 /// `posix_madvise` — POSIX advisory information on memory usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int {
-    // Linux's MADV_DONTNEED is DESTRUCTIVE (it zero-fills private anonymous pages
-    // on the next access), but POSIX_MADV_DONTNEED is merely advisory. glibc
-    // therefore IGNORES POSIX_MADV_DONTNEED entirely — returning 0 without any
-    // syscall (even for an invalid address) — rather than destroy the caller's
-    // data. (POSIX_MADV_DONTNEED == MADV_DONTNEED == 4 on Linux, so a passthrough
-    // would silently zero memory.)
-    if advice == libc::POSIX_MADV_DONTNEED {
-        return 0;
-    }
     let (_, decision) = runtime_policy::decide(
         ApiFamily::IoFd,
         addr as usize,
@@ -13425,11 +12511,10 @@ unsafe fn parse_ether_addr(asc: *const c_char, out: *mut EtherAddrBytes) -> bool
     if asc.is_null() || out.is_null() {
         return false;
     }
-    // Borrowed (no-alloc): the core parser consumes the bytes read-only.
-    let Some(bytes) = (unsafe { read_c_string_bytes_ref(asc) }) else {
+    let Some(bytes) = (unsafe { read_c_string_bytes(asc) }) else {
         return false;
     };
-    match frankenlibc_core::ether::parse_ether_addr(bytes) {
+    match frankenlibc_core::ether::parse_ether_addr(&bytes) {
         Some(octet) => {
             unsafe { (*out).octet = octet };
             true
@@ -13509,9 +12594,9 @@ fn hstrerror_message_ptr(err: c_int) -> *const c_char {
     match err {
         _ if err < 0 => c"Resolver internal error".as_ptr(),
         0 => c"Resolver Error 0 (no error)".as_ptr(),
-        1 => c"Unknown host".as_ptr(),             // HOST_NOT_FOUND
+        1 => c"Unknown host".as_ptr(), // HOST_NOT_FOUND
         2 => c"Host name lookup failure".as_ptr(), // TRY_AGAIN
-        3 => c"Unknown server error".as_ptr(),     // NO_RECOVERY
+        3 => c"Unknown server error".as_ptr(), // NO_RECOVERY
         4 => c"No address associated with name".as_ptr(), // NO_DATA / NO_ADDRESS
         _ => c"Unknown resolver error".as_ptr(),
     }
@@ -14389,8 +13474,6 @@ pub unsafe extern "C" fn getmntent_r(
         };
 
         // Check whether all four NUL-terminated strings fit in caller's buffer.
-        // Octal unescaping only ever shrinks a field, so the raw lengths are a
-        // safe upper bound on the bytes actually written.
         let needed = fields.fsname.len()
             + 1
             + fields.dir.len()
@@ -14403,19 +13486,16 @@ pub unsafe extern "C" fn getmntent_r(
             continue;
         }
 
-        // Pack NUL-terminated strings into caller buffer, decoding glibc's octal
-        // escapes (\040 etc.) as we copy — getmntent_r returns the unescaped
-        // field values.
+        // Pack NUL-terminated strings into caller buffer.
         let buf_u8 = buf as *mut u8;
         let mut off = 0usize;
         let mut pack = |bytes: &[u8]| -> *mut c_char {
             let p = unsafe { buf_u8.add(off) } as *mut c_char;
-            let dst = unsafe { std::slice::from_raw_parts_mut(buf_u8.add(off), bytes.len()) };
-            let written = frankenlibc_core::mntent::unescape_mntent_field(bytes, dst);
             unsafe {
-                *buf_u8.add(off + written) = 0;
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_u8.add(off), bytes.len());
+                *buf_u8.add(off + bytes.len()) = 0;
             }
-            off += written + 1;
+            off += bytes.len() + 1;
             p
         };
         let fsname_ptr = pack(fields.fsname);
@@ -14919,17 +13999,11 @@ pub unsafe extern "C" fn getgrouplist(
     }
 
     unsafe { *ngroups = result.len() as c_int };
-    // glibc copies MIN(found, *ngroups) group IDs into the caller's buffer
-    // unconditionally — including when it overflows and returns -1 — so a
-    // caller that inspects the partial result (or the common "fill what fits"
-    // pattern) sees the same prefix glibc would write. fl previously left the
-    // buffer untouched on overflow.
-    let to_write = result.len().min(max_groups);
-    for (i, &gid) in result.iter().take(to_write).enumerate() {
-        unsafe { *groups.add(i) = gid };
-    }
     if result.len() > max_groups {
         return -1;
+    }
+    for (i, &gid) in result.iter().enumerate() {
+        unsafe { *groups.add(i) = gid };
     }
     result.len() as c_int
 }
@@ -15220,46 +14294,32 @@ fn with_getpass_buf<R>(callback: impl FnOnce(&mut [c_char; GETPASS_MAX]) -> R) -
     }
 }
 
-/// POSIX `getpass` — read a password with terminal echo disabled.
-///
-/// Prefers `/dev/tty` (read input from and write the prompt to the controlling
-/// terminal). When `/dev/tty` cannot be opened — daemons, cron, `setsid`,
-/// containers with no controlling terminal — glibc does NOT fail: it falls back
-/// to reading from stdin (fd 0) and writing the prompt to stderr (fd 2), with no
-/// echo toggle (the `tcgetattr` simply fails on a non-tty). fl now mirrors that
-/// fallback instead of returning NULL.
+/// POSIX `getpass` — read a password from /dev/tty with echo disabled.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     let tty = b"/dev/tty\0";
-    // (in_fd, out_fd, owns_fd): own a freshly-opened /dev/tty, else borrow the
-    // stdin/stderr fds (which must NOT be closed here).
-    let (in_fd, out_fd, owns_fd) =
-        match unsafe { syscall::sys_open(tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
-            Ok(fd) => (fd, fd, true),
-            Err(_) => (0, 2, false),
-        };
+    let fd = match unsafe { syscall::sys_open(tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
+        Ok(fd) => fd,
+        Err(_) => return std::ptr::null_mut(),
+    };
 
-    // Write prompt to the output channel.
+    // Write prompt
     if !prompt.is_null() {
         let Some(prompt_bytes) = (unsafe { read_c_string_bytes(prompt) }) else {
             unsafe { set_abi_errno(libc::EINVAL) };
-            if owns_fd {
-                let _ = syscall::sys_close(in_fd);
-            }
+            let _ = syscall::sys_close(fd);
             return std::ptr::null_mut();
         };
-        let _ = unsafe { syscall::sys_write(out_fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
+        let _ = unsafe { syscall::sys_write(fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
     }
 
-    // Disable echo via ioctl (TCGETS=0x5401, TCSETS=0x5402) on the INPUT fd.
-    // On the stdin fallback this tcgetattr fails on a non-tty, so echo handling
-    // is skipped entirely — matching glibc.
+    // Disable echo via ioctl (TCGETS=0x5401, TCSETS=0x5402)
     const TCGETS: usize = 0x5401;
     const TCSETS: usize = 0x5402;
     const ECHO_FLAG: u32 = 0o10; // ECHO in termios c_lflag
     let mut termios_buf = [0u8; 60]; // struct termios size on Linux
     let saved_ok =
-        unsafe { syscall::sys_ioctl(in_fd, TCGETS, termios_buf.as_mut_ptr() as usize) }.is_ok();
+        unsafe { syscall::sys_ioctl(fd, TCGETS, termios_buf.as_mut_ptr() as usize) }.is_ok();
 
     if saved_ok {
         let mut modified = termios_buf;
@@ -15272,15 +14332,15 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
         );
         let new_lflag = lflag & !ECHO_FLAG;
         modified[lflag_offset..lflag_offset + 4].copy_from_slice(&new_lflag.to_ne_bytes());
-        let _ = unsafe { syscall::sys_ioctl(in_fd, TCSETS, modified.as_ptr() as usize) };
+        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS, modified.as_ptr() as usize) };
     }
 
-    // Read password from the input channel.
+    // Read password
     let result = with_getpass_buf(|buf| {
         let mut pos = 0usize;
         loop {
             let mut ch = 0u8;
-            let n = match unsafe { syscall::sys_read(in_fd, &mut ch as *mut u8, 1) } {
+            let n = match unsafe { syscall::sys_read(fd, &mut ch as *mut u8, 1) } {
                 Ok(n) => n as isize,
                 Err(_) => -1,
             };
@@ -15296,17 +14356,14 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
         buf.as_mut_ptr()
     });
 
-    // Restore terminal settings + emit the swallowed newline only when echo was
-    // actually disabled (i.e. a real tty). On the stdin fallback glibc writes no
-    // trailing newline.
+    // Restore terminal settings
     if saved_ok {
-        let _ = unsafe { syscall::sys_ioctl(in_fd, TCSETS, termios_buf.as_ptr() as usize) };
-        let _ = unsafe { syscall::sys_write(out_fd, b"\n".as_ptr(), 1) };
+        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS, termios_buf.as_ptr() as usize) };
+        // Print newline since echo was off
+        let _ = unsafe { syscall::sys_write(fd, b"\n".as_ptr(), 1) };
     }
 
-    if owns_fd {
-        let _ = syscall::sys_close(in_fd);
-    }
+    let _ = syscall::sys_close(fd);
     result
 }
 
@@ -16285,29 +15342,23 @@ pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
     if path.is_null() {
         return DOT.as_ptr() as *mut c_char;
     }
-    // Read the path via a borrowed slice (strlen + slice) instead of `read_c_string_bytes`,
-    // which allocated a fresh Vec copy on every call — basename runs in path-processing
-    // loops and the copy made it 13-16x glibc (~55 ns vs ~4 ns). The slice is used ONLY to
-    // compute the component offsets and is dropped (block scope) BEFORE the in-place NUL
-    // write, so it never aliases the mutation of `path`.
-    // SAFETY: path non-null (checked above) and NUL-terminated (C contract).
-    let (end, start) = {
-        let bytes = unsafe { core::ffi::CStr::from_ptr(path) }.to_bytes();
-        if bytes.is_empty() {
-            return DOT.as_ptr() as *mut c_char;
-        }
-        let mut end = bytes.len();
-        while end > 0 && bytes[end - 1] == b'/' {
-            end -= 1;
-        }
-        if end == 0 {
-            return SLASH.as_ptr() as *mut c_char;
-        }
-        let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
-            Some(pos) => pos + 1,
-            None => 0,
-        };
-        (end, start)
+    let Some(bytes) = (unsafe { read_c_string_bytes(path) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return DOT.as_ptr() as *mut c_char;
+    };
+    if bytes.is_empty() {
+        return DOT.as_ptr() as *mut c_char;
+    }
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return SLASH.as_ptr() as *mut c_char;
+    }
+    let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
+        Some(pos) => pos + 1,
+        None => 0,
     };
     unsafe { *path.add(end) = 0 };
     unsafe { path.add(start) }
@@ -16363,32 +15414,42 @@ pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
 // ---------------------------------------------------------------------------
 
 /// GNU `getpt` — open a pseudoterminal master.
-///
-/// glibc defines this as exactly `posix_openpt(O_RDWR)` — `/dev/ptmx` opened with
-/// O_RDWR and NOTHING else. The previous O_NOCTTY|O_CLOEXEC additions diverged
-/// observably: glibc's getpt fd has FD_CLOEXEC clear, so it survives exec().
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpt() -> c_int {
-    unsafe { posix_openpt(libc::O_RDWR) }
+    static PTMX: &[u8] = b"/dev/ptmx\0";
+    match unsafe {
+        syscall::sys_openat(
+            libc::AT_FDCWD,
+            PTMX.as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
+            0,
+        )
+    } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// POSIX `ptsname_r` — get slave PTY name (reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
-    if buf.is_null() {
+    let effective_buflen = tracked_output_capacity(buf, buflen);
+    if buf.is_null() || buflen == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
     }
-    // glibc does the TIOCGPTN ioctl BEFORE checking buflen — so a non-master fd
-    // yields ENOTTY (it maps the ioctl's EINVAL to ENOTTY), and buflen==0 on a
-    // valid master yields ERANGE (from the length check), not EINVAL.
-    let effective_buflen = tracked_output_capacity(buf, buflen);
+    if effective_buflen == 0 {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return libc::ERANGE;
+    }
     let mut pty_num: c_uint = 0;
     const TIOCGPTN: usize = 0x80045430;
     if let Err(e) =
         unsafe { syscall::sys_ioctl(fd, TIOCGPTN, &mut pty_num as *mut c_uint as usize) }
     {
-        let e = if e == libc::EINVAL { libc::ENOTTY } else { e };
         unsafe { set_abi_errno(e) };
         return e;
     }
@@ -16442,38 +15503,21 @@ fn with_cuserid_buf<R>(f: impl FnOnce(&mut [u8; CUSERID_BUFSIZE]) -> R) -> R {
     }
 }
 
-fn cuserid_name_for_uid(uid: u32) -> Vec<u8> {
-    crate::pwd_abi::lookup_passwd_by_uid(uid)
-        .map(|entry| entry.pw_name)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| {
-            if uid == 0 {
-                b"root".to_vec()
-            } else {
-                b"user".to_vec()
-            }
-        })
-}
-
-fn copy_cuserid_name(dst: &mut [u8; CUSERID_BUFSIZE], name: &[u8]) {
-    let len = name.len().min(dst.len() - 1);
-    dst[..len].copy_from_slice(&name[..len]);
-    dst[len] = 0;
-}
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cuserid(s: *mut c_char) -> *mut c_char {
     let uid = syscall::sys_getuid();
-    let name = cuserid_name_for_uid(uid);
+    let name = if uid == 0 { "root" } else { "user" };
     if s.is_null() {
         return with_cuserid_buf(|buf| {
-            copy_cuserid_name(buf, &name);
+            let len = name.len().min(buf.len() - 1);
+            buf[..len].copy_from_slice(&name.as_bytes()[..len]);
+            buf[len] = 0;
             buf.as_mut_ptr() as *mut c_char
         });
     }
-    let len = name.len().min(CUSERID_BUFSIZE - 1);
+    let len = name.len().min(8);
     unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr().cast::<c_char>(), s, len);
+        std::ptr::copy_nonoverlapping(name.as_ptr() as *const c_char, s, len);
         *s.add(len) = 0;
     };
     s
@@ -16500,39 +15544,17 @@ pub unsafe extern "C" fn sockatmark(sockfd: c_int) -> c_int {
 /// POSIX `tempnam` — create a unique temporary file name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut c_char {
-    // glibc tempnam routes through __path_search(try_tmpdir=1): the directory
-    // is chosen by precedence $TMPDIR (via secure_getenv) > the `dir` argument
-    // > P_tmpdir ("/tmp"), and each candidate is used only if it is an existing
-    // directory; if none is, errno=ENOENT and the call fails. fl previously
-    // ignored TMPDIR and skipped the existence checks. bd-7rbh4r.
-    use std::os::unix::ffi::OsStrExt as _;
-    let is_existing_dir = |p: &[u8]| -> bool {
-        !p.is_empty() && std::path::Path::new(std::ffi::OsStr::from_bytes(p)).is_dir()
-    };
-    let tmpdir_env: Option<Vec<u8>> = {
-        let p = unsafe { crate::stdlib_abi::secure_getenv(b"TMPDIR\0".as_ptr() as *const c_char) };
-        if p.is_null() {
-            None
-        } else {
-            unsafe { read_c_string_bytes(p) }
+    let dir_bytes = if dir.is_null() {
+        std::borrow::Cow::Borrowed(b"/tmp".as_slice())
+    } else {
+        match unsafe { read_c_string_bytes(dir) } {
+            Some(bytes) => std::borrow::Cow::Owned(bytes),
+            None => {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                std::borrow::Cow::Borrowed(b"/tmp".as_slice())
+            }
         }
     };
-    let dir_arg: Option<Vec<u8>> = if dir.is_null() {
-        None
-    } else {
-        unsafe { read_c_string_bytes(dir) }
-    };
-    let chosen_dir: Vec<u8> = if let Some(t) = tmpdir_env.filter(|t| is_existing_dir(t)) {
-        t
-    } else if let Some(d) = dir_arg.filter(|d| is_existing_dir(d)) {
-        d
-    } else if is_existing_dir(b"/tmp") {
-        b"/tmp".to_vec()
-    } else {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        return std::ptr::null_mut();
-    };
-    let dir_bytes: Vec<u8> = chosen_dir;
     let pfx_bytes = if pfx.is_null() {
         std::borrow::Cow::Borrowed(b"tmp".as_slice())
     } else {
@@ -16654,38 +15676,11 @@ pub unsafe extern "C" fn ptrace(
     addr: *mut c_void,
     data: *mut c_void,
 ) -> c_long {
-    // glibc bridges the PEEK requests (PEEKTEXT=1/PEEKDATA=2/PEEKUSER=3): the
-    // kernel writes the peeked word through the `data` pointer and returns 0, but
-    // the C API expects the word as the RETURN value. So glibc redirects `data`
-    // to a local, returns that word, and clears errno (the word may legitimately
-    // be -1). Without this, ptrace(PTRACE_PEEKDATA, .., NULL) faults / returns 0.
-    let is_peek = (1..=3).contains(&request);
-    if is_peek {
-        let mut word: c_long = 0;
-        match unsafe {
-            syscall::sys_ptrace(
-                request,
-                pid,
-                addr as usize,
-                &mut word as *mut c_long as usize,
-            )
-        } {
-            Ok(_) => {
-                unsafe { set_abi_errno(0) };
-                word
-            }
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                -1
-            }
-        }
-    } else {
-        match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
-            Ok(v) => v as c_long,
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                -1
-            }
+    match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
+        Ok(v) => v as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
         }
     }
 }
@@ -18467,35 +17462,6 @@ fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R 
     }
 }
 
-/// Write NUL-terminated alias strings into `buf[off..buf_len]` and populate
-/// `ptrs` (NULL-terminated) with pointers to them, mirroring glibc's
-/// s_aliases/p_aliases tables. Truncates silently when either the byte
-/// budget or the pointer table is exhausted. `buf` is a raw pointer into a
-/// distinct field from `ptrs`, so the writes do not alias.
-unsafe fn pack_aliases_into(
-    buf: *mut u8,
-    buf_len: usize,
-    mut off: usize,
-    ptrs: &mut [*mut c_char],
-    aliases: &[Vec<u8>],
-) {
-    let cap = ptrs.len().saturating_sub(1);
-    let mut n = 0usize;
-    for alias in aliases {
-        if n >= cap || off + alias.len() + 1 > buf_len {
-            break;
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
-            *buf.add(off + alias.len()) = 0;
-        }
-        ptrs[n] = unsafe { buf.add(off) } as *mut c_char;
-        off += alias.len() + 1;
-        n += 1;
-    }
-    ptrs[n] = std::ptr::null_mut();
-}
-
 /// Parse the next service entry into the entry_buf.
 ///
 /// struct servent layout (x86_64, 32 bytes):
@@ -18553,20 +17519,16 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
             );
             *buf.add(off + entry.protocol.len()) = 0;
         }
-        off += entry.protocol.len() + 1;
 
-        // Aliases (glibc fills s_aliases from the trailing /etc/services fields)
-        let buf_len = state.entry_buf.len();
-        unsafe {
-            pack_aliases_into(buf, buf_len, off, &mut state.aliases_ptrs, &entry.aliases);
-        }
+        // Aliases: NULL-terminated
+        state.aliases_ptrs[0] = std::ptr::null_mut();
 
         // Fill struct servent
         let ptrs = buf as *mut *mut c_char;
         unsafe {
             *ptrs = name_ptr; // s_name
             *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // s_aliases
-            *(buf.add(16) as *mut c_int) = entry.port.to_be() as c_int; // s_port (NBO: htons)
+            *(buf.add(16) as *mut c_int) = (entry.port as c_int).to_be(); // s_port (NBO)
             *(buf.add(24) as *mut *mut c_char) = proto_ptr; // s_proto
         }
 
@@ -18621,7 +17583,7 @@ struct NetIterState {
     reader: Option<std::io::BufReader<std::fs::File>>,
     line_buf: Vec<u8>,
     entry_buf: [u8; 512],
-    aliases_ptrs: [*mut c_char; 16],
+    aliases_ptrs: [*mut c_char; 2],
 }
 
 impl NetIterState {
@@ -18630,7 +17592,7 @@ impl NetIterState {
             reader: None,
             line_buf: Vec::new(),
             entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 16],
+            aliases_ptrs: [std::ptr::null_mut(); 2],
         }
     }
 }
@@ -18674,8 +17636,9 @@ fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
 /// returns the canonical (name, number) tuple in the form the local
 /// netent fillers consume. Returns `None` for blank/comment/malformed
 /// lines.
-fn parse_networks_line(line: &[u8]) -> Option<frankenlibc_core::resolv::NetworkEntry> {
-    frankenlibc_core::resolv::parse_networks_line(line)
+fn parse_networks_line(line: &[u8]) -> Option<(Vec<u8>, u32)> {
+    let entry = frankenlibc_core::resolv::parse_networks_line(line)?;
+    Some((entry.name, entry.number))
 }
 
 /// Fill a netent struct in the entry buffer.
@@ -18685,12 +17648,7 @@ fn parse_networks_line(line: &[u8]) -> Option<frankenlibc_core::resolv::NetworkE
 ///   n_aliases:  *mut *mut c_char (offset 8)
 ///   n_addrtype: c_int          (offset 16)
 ///   n_net:      u32            (offset 20)
-unsafe fn fill_netent_buf(
-    state: &mut NetIterState,
-    name: &[u8],
-    net: u32,
-    aliases: &[Vec<u8>],
-) -> *mut c_void {
+unsafe fn fill_netent_buf(state: &mut NetIterState, name: &[u8], net: u32) -> *mut c_void {
     let str_offset = 24usize;
     let needed = str_offset + name.len() + 1;
     if needed > state.entry_buf.len() {
@@ -18702,16 +17660,7 @@ unsafe fn fill_netent_buf(
         std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
         *buf.add(str_offset + name.len()) = 0;
     }
-    let buf_len = state.entry_buf.len();
-    unsafe {
-        pack_aliases_into(
-            buf,
-            buf_len,
-            str_offset + name.len() + 1,
-            &mut state.aliases_ptrs,
-            aliases,
-        );
-    }
+    state.aliases_ptrs[0] = std::ptr::null_mut();
 
     let ptrs = buf as *mut *mut c_char;
     unsafe {
@@ -18737,11 +17686,13 @@ unsafe fn net_iter_next(state: &mut NetIterState) -> *mut c_void {
             Err(_) => return std::ptr::null_mut(),
             Ok(_) => {}
         }
-        // parse_networks_line returns an owned entry, so it no longer borrows
-        // state.line_buf once it returns — pass its fields straight through.
-        if let Some(entry) = parse_networks_line(&state.line_buf) {
-            let result =
-                unsafe { fill_netent_buf(state, &entry.name, entry.number, &entry.aliases) };
+        // Parse and extract values before passing state to fill_netent_buf
+        if let Some((name, net)) = parse_networks_line(&state.line_buf) {
+            // Copy name to stack to avoid borrowing state.line_buf through fill
+            let mut name_copy = [0u8; 256];
+            let nlen = name.len().min(255);
+            name_copy[..nlen].copy_from_slice(&name[..nlen]);
+            let result = unsafe { fill_netent_buf(state, &name_copy[..nlen], net) };
             if !result.is_null() {
                 return result;
             }
@@ -18795,16 +17746,10 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
         Err(_) => return std::ptr::null_mut(),
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some(entry) = parse_networks_line(line)
-            && (entry.name.eq_ignore_ascii_case(&needle)
-                || entry
-                    .aliases
-                    .iter()
-                    .any(|a| a.eq_ignore_ascii_case(&needle)))
+        if let Some((pname, net)) = parse_networks_line(line)
+            && pname.eq_ignore_ascii_case(&needle)
         {
-            return with_net_iter_state(|state| unsafe {
-                fill_netent_buf(state, &entry.name, entry.number, &entry.aliases)
-            });
+            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, net) });
         }
     }
     std::ptr::null_mut()
@@ -18812,26 +17757,16 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
 
 /// `getnetbyaddr` — look up network by address in /etc/networks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyaddr(net: u32, addrtype: c_int) -> *mut c_void {
-    // glibc's files backend matches when `n_net == net` AND
-    // `(type == AF_UNSPEC || n_addrtype == type)`. Every /etc/networks
-    // entry has addrtype AF_INET, so only AF_INET or the AF_UNSPEC(0)
-    // wildcard can match (verified against host glibc: types 0 and 2
-    // match, all others -> NULL).
-    if addrtype != libc::AF_INET && addrtype != libc::AF_UNSPEC {
-        return std::ptr::null_mut();
-    }
+pub unsafe extern "C" fn getnetbyaddr(net: u32, _type: c_int) -> *mut c_void {
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some(entry) = parse_networks_line(line)
-            && entry.number == net
+        if let Some((pname, pnet)) = parse_networks_line(line)
+            && pnet == net
         {
-            return with_net_iter_state(|state| unsafe {
-                fill_netent_buf(state, &entry.name, entry.number, &entry.aliases)
-            });
+            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, pnet) });
         }
     }
     std::ptr::null_mut()
@@ -18848,7 +17783,7 @@ struct ProtoIterState {
     line_buf: Vec<u8>,
     /// Thread-local protoent + string data for non-reentrant getprotoent.
     entry_buf: [u8; 512],
-    aliases_ptrs: [*mut c_char; 16], // NULL-terminated alias pointer table
+    aliases_ptrs: [*mut c_char; 2], // NULL-terminated alias list (empty)
 }
 
 impl ProtoIterState {
@@ -18857,7 +17792,7 @@ impl ProtoIterState {
             reader: None,
             line_buf: Vec::new(),
             entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 16],
+            aliases_ptrs: [std::ptr::null_mut(); 2],
         }
     }
 }
@@ -18948,9 +17883,6 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
             None => continue,
         };
 
-        // Remaining tokens are aliases (glibc fills p_aliases from them).
-        let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
-
         // struct protoent is 24 bytes; strings packed after
         let str_offset = 24usize;
         let needed = str_offset + name.len() + 1;
@@ -18967,12 +17899,8 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
             *buf.add(str_offset + name.len()) = 0;
         }
 
-        // Aliases, packed after the name string.
-        let alias_off = str_offset + name.len() + 1;
-        let buf_len = state.entry_buf.len();
-        unsafe {
-            pack_aliases_into(buf, buf_len, alias_off, &mut state.aliases_ptrs, &aliases);
-        }
+        // Set up NULL-terminated aliases list (empty for now)
+        state.aliases_ptrs[0] = std::ptr::null_mut();
 
         // Fill struct protoent
         let ptrs = buf as *mut *mut c_char;
@@ -20882,16 +19810,10 @@ pub unsafe extern "C" fn fmtmsg(
             return -1;
         }
     };
-    // Resolve the severity to its printed label (predefined 0..=4 or a custom
-    // class registered via addseverity); an unknown severity is MM_NOTOK, just
-    // like an ill-formed label.
-    let sev_name = match fmtmsg_resolve_severity(severity) {
-        Ok(name) => name,
-        Err(()) => return -1,
-    };
-    if label_bytes
-        .as_deref()
-        .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
+    if !frankenlibc_core::fmtmsg::valid_severity(severity)
+        || label_bytes
+            .as_deref()
+            .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
     {
         return -1;
     }
@@ -20917,9 +19839,9 @@ pub unsafe extern "C" fn fmtmsg(
                 return -1;
             }
         };
-        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message_named(
+        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message(
             label_bytes.as_deref(),
-            sev_name.as_deref(),
+            severity,
             text_bytes.as_deref(),
             action_bytes.as_deref(),
             tag_bytes.as_deref(),
@@ -21080,68 +20002,7 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     };
 
     let record_size = std::mem::size_of::<libc::utmpx>();
-
-    // glibc pututxline overwrites an existing matching record in place (and
-    // only appends when there is no match) — fl previously always appended,
-    // accumulating duplicate entries. Mirror glibc's match rules: RUN_LVL/
-    // BOOT_TIME/OLD_TIME/NEW_TIME match by ut_type alone; the process types
-    // (INIT/LOGIN/USER/DEAD_PROCESS) match when BOTH records are process types
-    // AND ut_id is equal (__utmp_equal). glibc searches from the current shared
-    // position; fl has no shared utmp fd, so search from the start for the
-    // first match (same observable no-duplicates result). bd-mx8ikd.
-    let new_type = unsafe { (*ut).ut_type };
-    let new_id = unsafe { (*ut).ut_id };
-    let by_type_only = matches!(
-        new_type,
-        libc::RUN_LVL | libc::BOOT_TIME | libc::OLD_TIME | libc::NEW_TIME
-    );
-    let new_is_process = matches!(
-        new_type,
-        libc::INIT_PROCESS | libc::LOGIN_PROCESS | libc::USER_PROCESS | libc::DEAD_PROCESS
-    );
-
-    // Scan existing records for the first match.
-    let mut match_offset: Option<i64> = None;
-    if by_type_only || new_is_process {
-        let _ = syscall::sys_lseek(fd, 0, libc::SEEK_SET);
-        let mut offset: i64 = 0;
-        loop {
-            let mut rec: libc::utmpx = unsafe { std::mem::zeroed() };
-            match unsafe {
-                syscall::sys_read(fd, &mut rec as *mut libc::utmpx as *mut u8, record_size)
-            } {
-                Ok(n) if n as usize == record_size => {
-                    let ft = rec.ut_type;
-                    let matched = if by_type_only {
-                        ft == new_type
-                    } else {
-                        matches!(
-                            ft,
-                            libc::INIT_PROCESS
-                                | libc::LOGIN_PROCESS
-                                | libc::USER_PROCESS
-                                | libc::DEAD_PROCESS
-                        ) && rec.ut_id == new_id
-                    };
-                    if matched {
-                        match_offset = Some(offset);
-                        break;
-                    }
-                    offset += record_size as i64;
-                }
-                _ => break, // EOF or short read
-            }
-        }
-    }
-
-    match match_offset {
-        Some(off) => {
-            let _ = syscall::sys_lseek(fd, off, libc::SEEK_SET);
-        }
-        None => {
-            let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
-        }
-    }
+    let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
     let written = match unsafe { syscall::sys_write(fd, ut as *const u8, record_size) } {
         Ok(n) => n as isize,
         Err(_) => -1,
@@ -21328,40 +20189,8 @@ pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
 /// Linux `closefrom` — close all fd >= lowfd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn closefrom(lowfd: c_int) {
-    let l = lowfd.max(0);
-    // Preferred path: close_range (kernel 5.9+) closes the whole [l, ~0] range
-    // in one call.
-    if unsafe { syscall::sys_close_range(l as u32, !0u32, 0) }.is_ok() {
-        return;
-    }
-    // Fallback for kernels without close_range (it returns ENOSYS): glibc's
-    // __closefrom_fallback closes every descriptor at or above lowfd. fl
-    // previously discarded the error and silently closed nothing — leaving
-    // inherited fds open (a real leak before exec). Close each fd in
-    // [l, RLIMIT_NOFILE) individually; EBADF on unopened fds is harmless.
-    // bd-6br349.
-    let max_fd: c_int = {
-        let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-        match unsafe {
-            syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr() as *mut u8)
-        } {
-            Ok(()) => {
-                let r = unsafe { rlim.assume_init() };
-                if r.rlim_cur == libc::RLIM_INFINITY {
-                    65536
-                } else {
-                    // Cap the loop bound; valid fds are < rlim_cur.
-                    r.rlim_cur.min(1 << 20) as c_int
-                }
-            }
-            Err(_) => 4096,
-        }
-    };
-    let mut fd = l;
-    while fd < max_fd {
-        let _ = syscall::sys_close(fd);
-        fd += 1;
-    }
+    // close_range syscall (kernel 5.9+)
+    let _ = syscall::sys_close_range(lowfd as u32, !0u32, 0);
 }
 
 /// POSIX `clock_getcpuclockid` — get CPU-time clock for a process.
@@ -21376,10 +20205,13 @@ pub unsafe extern "C" fn clock_getcpuclockid(
     if clock_id.is_null() {
         return libc::EINVAL;
     }
-    // Kernel CPUCLOCK formula: clock_id = ~pid << 3 | CPUCLOCK_SCHED (=2),
-    // encoding the PID into the clock ID. glibc applies this for EVERY pid,
-    // INCLUDING 0 (the calling process) — it does NOT substitute
-    // CLOCK_PROCESS_CPUTIME_ID, so clock_getcpuclockid(0) yields 0xFFFFFFFA, not 2.
+    // If pid is 0, use CLOCK_PROCESS_CPUTIME_ID directly.
+    if pid == 0 {
+        unsafe { *clock_id = libc::CLOCK_PROCESS_CPUTIME_ID };
+        return 0;
+    }
+    // Kernel CPUCLOCK formula: clock_id = ~pid << 3 | CPUCLOCK_SCHED (=2)
+    // This encodes the PID into the clock ID for process-specific CPU time.
     let cid: libc::clockid_t = (!pid as libc::clockid_t) << 3 | 2;
     // Validate the clock exists by calling clock_getres.
     let mut ts = libc::timespec {
@@ -21419,76 +20251,11 @@ pub unsafe extern "C" fn bsd_signal(sig: c_int, handler: libc::sighandler_t) -> 
     unsafe { crate::signal_abi::signal(sig, handler) }
 }
 
-/// User-registered custom severity classes for `fmtmsg`/`addseverity`
-/// (severity code -> printed label). The four XSI severities (HALT=1, ERROR=2,
-/// WARNING=3, INFO=4) and MM_NOSEV=0 are predefined and live in
-/// `frankenlibc_core::fmtmsg`; only severities > MM_INFO can be registered here.
-static FMTMSG_SEVERITIES: std::sync::Mutex<Vec<(c_int, Vec<u8>)>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// MM_INFO — the highest predefined severity; anything <= it is reserved.
-const FMTMSG_MM_INFO: c_int = 4;
-const FMTMSG_MM_OK: c_int = 0;
-const FMTMSG_MM_NOTOK: c_int = -1;
-
-/// XSI `addseverity` — add, change, or remove a `fmtmsg` severity class.
-///
-/// Mirrors glibc (stdlib/fmtmsg.c): a non-null `string` adds severity `severity`
-/// (or updates it if already registered); a null `string` removes it. The four
-/// predefined severities (1..=4) and MM_NOSEV (0) cannot be added to or removed
-/// (severity <= MM_INFO is reserved). Returns MM_OK (0) / MM_NOTOK (-1).
+/// XSI `addseverity` — add/modify message severity level.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn addseverity(severity: c_int, string: *const c_char) -> c_int {
-    let mut reg = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
-    let existing = reg.iter().position(|(s, _)| *s == severity);
-
-    if string.is_null() {
-        // Removal: cannot remove a predefined/reserved class, and the class must
-        // already be registered.
-        if severity <= FMTMSG_MM_INFO {
-            return FMTMSG_MM_NOTOK;
-        }
-        match existing {
-            Some(idx) => {
-                reg.remove(idx);
-                FMTMSG_MM_OK
-            }
-            None => FMTMSG_MM_NOTOK,
-        }
-    } else {
-        let bytes = unsafe { scan_c_string(string, None) };
-        let label = unsafe { std::slice::from_raw_parts(string as *const u8, bytes.0) }.to_vec();
-        if let Some(idx) = existing {
-            // Re-registering an existing custom severity updates its label.
-            reg[idx].1 = label;
-            FMTMSG_MM_OK
-        } else if severity <= FMTMSG_MM_INFO {
-            // Reserved range (0..=4) cannot be (re)defined.
-            FMTMSG_MM_NOTOK
-        } else {
-            reg.push((severity, label));
-            FMTMSG_MM_OK
-        }
-    }
-}
-
-/// Resolve a `fmtmsg` severity code to its printed label.
-///
-/// Returns `Ok(None)` for MM_NOSEV (0, valid, no label printed), `Ok(Some(name))`
-/// for a predefined or registered custom severity, and `Err(())` when the code is
-/// neither predefined nor registered (invalid -> `fmtmsg` must fail with MM_NOTOK).
-fn fmtmsg_resolve_severity(severity: c_int) -> Result<Option<Vec<u8>>, ()> {
-    if severity == 0 {
-        return Ok(None); // MM_NOSEV: valid, prints no severity component
-    }
-    if let Some(name) = frankenlibc_core::fmtmsg::severity_name(severity) {
-        return Ok(Some(name.as_bytes().to_vec()));
-    }
-    let reg = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
-    reg.iter()
-        .find(|(s, _)| *s == severity)
-        .map(|(_, label)| Some(label.clone()))
-        .ok_or(())
+pub unsafe extern "C" fn addseverity(_severity: c_int, _string: *const c_char) -> c_int {
+    // Stub: severity management for fmtmsg. No-op is safe.
+    0
 }
 
 // ===========================================================================
@@ -21656,100 +20423,12 @@ pub unsafe extern "C" fn dn_expand(
     wire_len.unwrap_or(0) as c_int
 }
 
-/// Shared engine for the resolver name-packers (`dn_comp`, `ns_name_pack`,
-/// `ns_name_compress` and their `__`-prefixed twins): pack the uncompressed
-/// wire name `src_wire` into `dst[..dstsiz]`, emitting RFC 1035 compression
-/// pointers against names already recorded in `dnptrs`, and record the new
-/// name when glibc would. Returns bytes written, or -1 (errno EMSGSIZE).
-///
-/// `dnptrs[0]` is the message origin; subsequent entries (up to `lastdnptr` or
-/// a NULL) point at names already emitted. Both arrays may be NULL to disable
-/// compression. Faithful to BIND/glibc `ns_name_pack` + `dn_find`.
-///
-/// # Safety
-/// `dst` must be valid for `dstsiz` bytes; when compression is enabled the
-/// region `[dnptrs[0], dst)` must be readable (the message written so far), per
-/// the resolver dn_comp contract.
-pub(crate) unsafe fn pack_name_with_dnptrs(
-    src_wire: &[u8],
-    dst: *mut u8,
-    dstsiz: usize,
-    dnptrs: *mut *mut u8,
-    lastdnptr: *mut *mut u8,
-) -> c_int {
-    if dst.is_null() || dstsiz == 0 {
-        return -1;
-    }
-
-    let mut compress = false;
-    let mut msg_origin: *mut u8 = std::ptr::null_mut();
-    let mut out_off = 0usize;
-    let mut offsets: Vec<usize> = Vec::new();
-
-    if !dnptrs.is_null() {
-        let origin = unsafe { *dnptrs };
-        if !origin.is_null() {
-            let diff = (dst as isize).wrapping_sub(origin as isize);
-            // Defensive: only enable compression for a sane forward offset.
-            if diff >= 0 && (diff as usize) <= 0x1_0000 {
-                out_off = diff as usize;
-                msg_origin = origin;
-                compress = true;
-                // Gather offsets of names recorded so far (dnptrs[1..]).
-                let mut p = unsafe { dnptrs.add(1) };
-                while lastdnptr.is_null() || p < lastdnptr {
-                    let entry = unsafe { *p };
-                    if entry.is_null() {
-                        break;
-                    }
-                    let d = (entry as isize).wrapping_sub(origin as isize);
-                    if d >= 0 && (d as usize) < out_off {
-                        offsets.push(d as usize);
-                    }
-                    p = unsafe { p.add(1) };
-                }
-            }
-        }
-    }
-
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
-    // `msg_prefix` = [origin, dst) and `out` = [dst, dst+dstsiz) are disjoint.
-    let msg_prefix: &[u8] = if compress {
-        unsafe { std::slice::from_raw_parts(msg_origin, out_off) }
-    } else {
-        &[]
-    };
-
-    match frankenlibc_core::resolv::dns_name::name_pack_compressed(
-        src_wire, out, msg_prefix, &offsets, out_off, compress,
-    ) {
-        Ok((written, recorded)) => {
-            if recorded.is_some() && !dnptrs.is_null() && !lastdnptr.is_null() {
-                unsafe {
-                    let mut slot = dnptrs.add(1);
-                    while slot < lastdnptr && !(*slot).is_null() {
-                        slot = slot.add(1);
-                    }
-                    // glibc records only when there is room for the entry AND a
-                    // trailing NULL terminator (`cpp < lastdnptr - 1`).
-                    if slot < lastdnptr.sub(1) {
-                        *slot = dst;
-                        *(slot.add(1)) = std::ptr::null_mut();
-                    }
-                }
-            }
-            written as c_int
-        }
-        Err(_) => -1,
-    }
-}
-
 /// `dn_comp` — compress a domain name into DNS wire format (RFC 1035).
 ///
-/// Converts a presentation domain name (`exp_dn`) to wire-format labels in
-/// `comp_dn[..length]`, emitting compression pointers for suffixes already
-/// present in the message via `dnptrs` (BIND/glibc semantics). Returns the
-/// number of bytes written to `comp_dn`, or -1 on error.
+/// Native implementation: converts a dotted domain name (`exp_dn`) into
+/// wire-format labels in `comp_dn[..length]`, optionally adding compression
+/// pointers using previously seen names in `dnptrs`.
+/// Returns the number of bytes written to `comp_dn`, or -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dn_comp(
     exp_dn: *const c_char,
@@ -21765,26 +20444,68 @@ pub unsafe extern "C" fn dn_comp(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     };
-    // Presentation -> uncompressed wire (handles \. and \DDD escapes, like
-    // glibc's ns_name_pton inside ns_name_compress).
-    let mut wire = [0u8; 256]; // NS_MAXCDNAME
-    let wire_len =
-        match frankenlibc_core::resolv::dns_name::name_pton(name_bytes.as_slice(), &mut wire) {
-            Ok(n) => n,
-            Err(_) => {
-                unsafe { set_abi_errno(errno::EINVAL) };
-                return -1;
-            }
-        };
-    unsafe {
-        pack_name_with_dnptrs(
-            &wire[..wire_len],
-            comp_dn,
-            length as usize,
-            dnptrs,
-            lastdnptr,
-        )
+    let name_bytes = name_bytes.as_slice();
+    let out = unsafe { std::slice::from_raw_parts_mut(comp_dn, length as usize) };
+
+    // Handle root domain ("" or ".").
+    if name_bytes.is_empty() || (name_bytes.len() == 1 && name_bytes[0] == b'.') {
+        if out.is_empty() {
+            return -1;
+        }
+        out[0] = 0;
+        return 1;
     }
+
+    // Split into labels.
+    let name_str = if name_bytes.last() == Some(&b'.') {
+        &name_bytes[..name_bytes.len() - 1]
+    } else {
+        name_bytes
+    };
+
+    let mut out_off = 0usize;
+    for label in name_str.split(|&b| b == b'.') {
+        if label.is_empty() || label.len() > 63 {
+            return -1;
+        }
+        // Need: 1 (length) + label.len() bytes + at least 1 more for root terminator.
+        if out_off + 1 + label.len() + 1 > out.len() {
+            return -1;
+        }
+        out[out_off] = label.len() as u8;
+        out_off += 1;
+        out[out_off..out_off + label.len()].copy_from_slice(label);
+        out_off += label.len();
+    }
+
+    // Root terminator.
+    if out_off >= out.len() {
+        return -1;
+    }
+    out[out_off] = 0;
+    out_off += 1;
+
+    // If dnptrs is provided and there's room, record this name for future compression.
+    // (Simple implementation: we don't do compression pointer matching, just record.)
+    if !dnptrs.is_null() && !lastdnptr.is_null() {
+        // Find first NULL slot in dnptrs array.
+        let mut slot = dnptrs;
+        unsafe {
+            while slot < lastdnptr && !(*slot).is_null() {
+                slot = slot.add(1);
+            }
+            if slot < lastdnptr {
+                *slot = comp_dn;
+                // NULL-terminate the array if there's room.
+                let next = slot.add(1);
+                if next < lastdnptr {
+                    *next = std::ptr::null_mut();
+                }
+            }
+        }
+    }
+
+    out_off as c_int
 }
 
 // ===========================================================================
@@ -23408,7 +22129,6 @@ const ARGP_HELP_POST_DOC: c_uint = 0x20;
 const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
 const ARGP_HELP_EXIT_ERR: c_uint = 0x100;
 const ARGP_HELP_EXIT_OK: c_uint = 0x200;
-const ARGP_NO_EXIT: c_uint = 0x20;
 const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
 const ARGP_HELP_STATE_NON_RENDERING_FLAGS: c_uint =
     ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR | ARGP_HELP_EXIT_OK;
@@ -23570,108 +22290,6 @@ unsafe fn argp_write_diagnostic(state: *mut c_void, message: &[u8], errnum: c_in
     unsafe { argp_write_bytes(stream, &line) }
 }
 
-type ArgpVersionHook = unsafe extern "C" fn(*mut libc::FILE, *mut ArgpStateHeader);
-
-#[inline]
-unsafe fn argp_default_stdout() -> *mut libc::FILE {
-    unsafe { crate::stdio_abi::stdout.cast::<libc::FILE>() }
-}
-
-#[inline]
-unsafe fn argp_default_stderr() -> *mut libc::FILE {
-    unsafe { crate::stdio_abi::stderr.cast::<libc::FILE>() }
-}
-
-unsafe fn argp_write_version(state: &mut ArgpStateHeader) -> bool {
-    let hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
-    if !hook.is_null() {
-        let hook: ArgpVersionHook = unsafe { core::mem::transmute(hook) };
-        unsafe { hook(state.out_stream, state) };
-        return true;
-    }
-
-    let version = unsafe { crate::glibc_internal_abi::argp_program_version };
-    let Some(version) = (unsafe { argp_read_text(version) }) else {
-        return false;
-    };
-    if version.is_empty() {
-        return false;
-    }
-    unsafe { argp_write_text_line(state.out_stream, &version) }
-}
-
-unsafe fn argp_handle_builtin_version(
-    argp: *const c_void,
-    argc: c_int,
-    argv: *mut *mut c_char,
-    flags: c_uint,
-    arg_index: *mut c_int,
-    input: *mut c_void,
-) -> Option<c_int> {
-    if argc <= 1 || argv.is_null() {
-        return None;
-    }
-    let version = unsafe { crate::glibc_internal_abi::argp_program_version };
-    let hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
-    if version.is_null() && hook.is_null() {
-        return None;
-    }
-
-    for i in 1..(argc as usize) {
-        let arg = unsafe { *argv.add(i) };
-        let Some(bytes) = (unsafe { argp_read_text(arg) }) else {
-            continue;
-        };
-        if bytes != b"--version" {
-            continue;
-        }
-
-        let name = unsafe { *argv }.cast::<c_char>();
-        let mut state = ArgpStateHeader {
-            root_argp: argp,
-            argc,
-            argv,
-            next: i as c_int + 1,
-            flags,
-            arg_num: 0,
-            quoted: 0,
-            input,
-            child_inputs: core::ptr::null_mut(),
-            hook: core::ptr::null_mut(),
-            name,
-            err_stream: unsafe { argp_default_stderr() },
-            out_stream: unsafe { argp_default_stdout() },
-            pstate: core::ptr::null_mut(),
-        };
-
-        if !unsafe { argp_write_version(&mut state) } {
-            unsafe { set_abi_errno(libc::EIO) };
-            return Some(libc::EIO);
-        }
-        if !arg_index.is_null() {
-            unsafe { *arg_index = state.next };
-        }
-        if flags & ARGP_NO_EXIT == 0 {
-            unsafe { crate::stdlib_abi::exit(0) };
-        }
-        return Some(0);
-    }
-
-    None
-}
-
-#[inline]
-unsafe fn argp_exit_if_requested(state: *mut c_void, status: c_int) {
-    if status == 0 || state.is_null() {
-        return;
-    }
-
-    let state = unsafe { &*(state as *const ArgpStateHeader) };
-    if state.flags & ARGP_NO_EXIT == 0 {
-        unsafe { crate::stdlib_abi::exit(status) };
-    }
-}
-
 /// `argp_parse` — parse arguments using argp framework.
 ///
 /// Native phase-1 support handles the common zeroed `struct argp` case as a
@@ -23681,19 +22299,13 @@ pub unsafe extern "C" fn argp_parse(
     argp: *const c_void,
     argc: c_int,
     argv: *mut *mut c_char,
-    flags: libc::c_uint,
+    _flags: libc::c_uint,
     arg_index: *mut c_int,
-    input: *mut c_void,
+    _input: *mut c_void,
 ) -> c_int {
     if argp.is_null() || argc < 0 || (argc > 0 && argv.is_null()) {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
-    }
-
-    if let Some(rc) =
-        unsafe { argp_handle_builtin_version(argp, argc, argv, flags, arg_index, input) }
-    {
-        return rc;
     }
 
     let header = unsafe { &*(argp as *const ArgpHeader) };
@@ -23766,15 +22378,13 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
     if !unsafe { argp_write_diagnostic(state, &rendered, 0) } {
         unsafe { set_abi_errno(libc::EIO) };
     }
-    let status = unsafe { crate::glibc_internal_abi::argp_err_exit_status };
-    unsafe { argp_exit_if_requested(state, status) };
 }
 
 /// `argp_failure` — report a bounded formatted parsing failure diagnostic.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_failure(
     state: *mut c_void,
-    status: c_int,
+    _status: c_int,
     errnum: c_int,
     fmt: *const c_char,
     mut args: ...
@@ -23795,7 +22405,6 @@ pub unsafe extern "C" fn argp_failure(
     if !unsafe { argp_write_diagnostic(state, &rendered, errnum) } {
         unsafe { set_abi_errno(libc::EIO) };
     }
-    unsafe { argp_exit_if_requested(state, status) };
 }
 
 /// `argp_state_help` — print bounded phase-1 help from state.
@@ -24293,64 +22902,12 @@ pub unsafe extern "C" fn semtimedop(
 // Scheduler CPU / misc Linux
 // ===========================================================================
 
-/// rseq fast path for `sched_getcpu`: read the kernel-updated `cpu_id` from the per-thread
-/// `struct rseq` that glibc (>= 2.35) registers, exactly as glibc's own `sched_getcpu` does — a
-/// single `%fs`-relative load (~2 ns) vs the vDSO getcpu (~17 ns). `__rseq_offset` (TP-relative)
-/// and `__rseq_size` are process-global constants glibc exports; dlsym'd once. `None` when rseq
-/// isn't registered (old glibc, standalone fl, non-x86_64, or a not-yet-initialized/failed
-/// `cpu_id`) ⇒ the caller falls back to the vDSO/syscall path. Byte-identical: `cpu_id` is the same
-/// current-CPU number `getcpu` returns; a NULL-safe read of our own thread's TCB.
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn rseq_cpu_id() -> Option<c_int> {
-    use std::sync::OnceLock;
-    // Some(TP-relative byte offset of the rseq area) once glibc's rseq is confirmed registered
-    // with a `cpu_id` field (offset 4, so the area must be >= 8 bytes); None if unavailable.
-    static RSEQ_OFFSET: OnceLock<Option<isize>> = OnceLock::new();
-    let offset = (*RSEQ_OFFSET.get_or_init(|| unsafe {
-        let off = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_offset".as_ptr());
-        let size = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_size".as_ptr());
-        if off.is_null() || size.is_null() || *(size as *const u32) < 8 {
-            return None;
-        }
-        Some(*(off as *const isize))
-    }))?;
-    // TP = %fs:0 (glibc TCB self-pointer, invariant per thread); rseq area = TP + __rseq_offset;
-    // `cpu_id` is at byte offset 4 within `struct rseq`.
-    let tp: usize;
-    // SAFETY: %fs:0 is the glibc TCB self-pointer on x86_64 Linux; reading it is always valid.
-    unsafe {
-        core::arch::asm!("mov {tp}, fs:[0]", tp = out(reg) tp, options(nostack, readonly));
-    }
-    let cpu_ptr = (tp as isize).wrapping_add(offset).wrapping_add(4) as *const u32;
-    // SAFETY: glibc registered a >= 8-byte rseq area at this TP-relative offset; the kernel keeps
-    // `cpu_id` current. Volatile so each call re-reads the (migration-varying) value.
-    let cpu = unsafe { core::ptr::read_volatile(cpu_ptr) } as i32;
-    // RSEQ_CPU_ID_UNINITIALIZED (-1) / _REGISTRATION_FAILED (-2) ⇒ fall back.
-    (cpu >= 0).then_some(cpu)
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-#[inline]
-fn rseq_cpu_id() -> Option<c_int> {
-    None
-}
-
 /// `sched_getcpu` — get CPU that the calling thread is running on.
 ///
-/// rseq fast path (glibc parity): read the kernel-maintained `cpu_id` from glibc's registered
-/// per-thread `struct rseq` (a `%fs` load). On a miss, the `__vdso_getcpu` route avoids the
-/// `SYS_getcpu` trap; then the raw `getcpu(2)` syscall. Byte-identical: every path yields the same
-/// current CPU; `cpu` is our own valid stack slot.
+/// Native implementation using `getcpu(2)` syscall.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getcpu() -> c_int {
-    if let Some(cpu) = rseq_cpu_id() {
-        return cpu;
-    }
     let mut cpu: c_uint = 0;
-    if unsafe { crate::time_abi::vdso_getcpu(&mut cpu, std::ptr::null_mut()) }.is_some() {
-        return cpu as c_int;
-    }
     match unsafe { syscall::sys_getcpu(&mut cpu, std::ptr::null_mut()) } {
         Ok(()) => cpu as c_int,
         Err(e) => {
@@ -24660,10 +23217,7 @@ pub unsafe extern "C" fn getutmpx(_u: *const c_void, _ux: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigblock(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
-    // Zero-extend the low 32 bits (glibc's sigset_set_old_mask does
-    // `(unsigned int) mask`). A plain `mask as u64` would SIGN-extend a mask
-    // with bit 31 set, wrongly blocking signals 33-64. bd-z1wq9a.
-    let new_set = (mask as u32) as u64;
+    let new_set = mask as u64;
     match unsafe {
         syscall::sys_rt_sigprocmask(
             libc::SIG_BLOCK,
@@ -24690,10 +23244,7 @@ pub unsafe extern "C" fn siggetmask() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
-    // Zero-extend the low 32 bits (glibc's sigset_set_old_mask does
-    // `(unsigned int) mask`). A plain `mask as u64` would SIGN-extend a mask
-    // with bit 31 set, wrongly blocking signals 33-64. bd-z1wq9a.
-    let new_set = (mask as u32) as u64;
+    let new_set = mask as u64;
     match unsafe {
         syscall::sys_rt_sigprocmask(
             libc::SIG_SETMASK,
@@ -24876,75 +23427,10 @@ pub unsafe extern "C" fn sysv_signal(
     }
 }
 
-/// `sigset` — reliable signal disposition (XSI). Unlike `sysv_signal` (one-shot
-/// SA_RESETHAND|SA_NODEFER), `sigset` installs a PERSISTENT handler that is
-/// blocked during its own execution (sa_flags == 0), handles the SIG_HOLD
-/// disposition (block the signal), unblocks the signal otherwise, and returns
-/// SIG_HOLD when the signal had been blocked. Mirrors glibc sysdeps/posix/
-/// sigset.c. bd-566mlx.
+/// `sigset` — reliable signal (XSI extension).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigset(sig: c_int, disp: libc::sighandler_t) -> libc::sighandler_t {
-    const SIG_HOLD: libc::sighandler_t = 2; // glibc <signal.h>
-    if sig <= 0 || sig > 64 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return libc::SIG_ERR;
-    }
-    let bit: u64 = 1u64 << ((sig - 1) as u32);
-    let mut oset: u64 = 0;
-
-    if disp == SIG_HOLD {
-        // Add the signal to the current mask.
-        if unsafe {
-            syscall::sys_rt_sigprocmask(
-                libc::SIG_BLOCK,
-                (&bit as *const u64).cast(),
-                (&mut oset as *mut u64).cast(),
-                std::mem::size_of::<u64>(),
-            )
-        }
-        .is_err()
-        {
-            return libc::SIG_ERR;
-        }
-        // Already blocked -> report SIG_HOLD; else return the current handler.
-        if oset & bit != 0 {
-            return SIG_HOLD;
-        }
-        let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
-        if unsafe { crate::signal_abi::sigaction(sig, std::ptr::null(), &mut oact) } < 0 {
-            return libc::SIG_ERR;
-        }
-        return oact.sa_sigaction;
-    }
-
-    // Install a persistent handler (sa_flags == 0: not reset on delivery, and
-    // the signal is blocked while the handler runs).
-    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
-    act.sa_sigaction = disp;
-    act.sa_flags = 0;
-    let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
-    if unsafe { crate::signal_abi::sigaction(sig, &act, &mut oact) } < 0 {
-        return libc::SIG_ERR;
-    }
-    // Remove the signal from the current mask.
-    if unsafe {
-        syscall::sys_rt_sigprocmask(
-            libc::SIG_UNBLOCK,
-            (&bit as *const u64).cast(),
-            (&mut oset as *mut u64).cast(),
-            std::mem::size_of::<u64>(),
-        )
-    }
-    .is_err()
-    {
-        return libc::SIG_ERR;
-    }
-    // If the signal had been blocked, glibc returns SIG_HOLD, else the old handler.
-    if oset & bit != 0 {
-        SIG_HOLD
-    } else {
-        oact.sa_sigaction
-    }
+    unsafe { sysv_signal(sig, disp) }
 }
 
 // ===========================================================================
@@ -25641,8 +24127,9 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
     let Some(input_bytes) = (unsafe { read_c_string_bytes(string) }) else {
         return 8;
     };
-    // An empty (but non-NULL) input matches no template — glibc reports 7
-    // ("no matching line"), not 8 ("invalid spec"); let it fall through.
+    if input_bytes.is_empty() {
+        return 8;
+    }
     let mut input = Vec::with_capacity(input_bytes.len() + 1);
     input.extend_from_slice(&input_bytes);
     input.push(0);
@@ -25683,9 +24170,7 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         Err(_) => return 5, // read error
     };
 
-    // Try each line as a strptime template. glibc seeds the broken-down time
-    // with sentinels so it can tell which fields the template actually set,
-    // then fills the rest from the current local time (getdate_apply_defaults).
+    // Try each line as a strptime template
     for line in content.split(|&b| b == b'\n') {
         // Skip empty lines
         if line.is_empty() || line.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
@@ -25701,8 +24186,8 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         template.extend_from_slice(&line[..end]);
         template.push(0);
 
-        // Sentinel-init so unset fields are detectable after strptime.
-        unsafe { getdate_sentinel_init(result) };
+        // Initialize result to a clean state
+        unsafe { std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>()) };
 
         let remainder = unsafe {
             crate::time_abi::strptime(
@@ -25718,187 +24203,12 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
                 let offset = rest_addr - input_base;
                 let rest = &input[offset..input_bytes.len()];
                 if rest.iter().all(|&b| b == b' ' || b == b'\t') {
-                    // Matched. Fill unspecified fields from the current local
-                    // time per POSIX/glibc rules; returns 8 on an impossible
-                    // calendar date (e.g. February 30).
-                    let wday_in_template = getdate_template_has_weekday(&template);
-                    return unsafe { getdate_apply_defaults(result, wday_in_template) };
+                    return 0; // success
                 }
             }
         }
     }
     7 // no matching template
-}
-
-/// glibc-style sentinel pattern for `getdate`/`getdate_r`: every field that a
-/// `strptime` template might fill is set to an out-of-range marker so the
-/// default-fill pass can tell "set by the template" from "left untouched".
-unsafe fn getdate_sentinel_init(result: *mut libc::tm) {
-    unsafe {
-        std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>());
-        (*result).tm_sec = -1;
-        (*result).tm_min = -1;
-        (*result).tm_hour = -1;
-        (*result).tm_mday = 0; // valid mday is 1..=31
-        (*result).tm_mon = -1;
-        (*result).tm_year = i32::MIN;
-        (*result).tm_wday = -1;
-        (*result).tm_yday = -1;
-        (*result).tm_isdst = -1;
-    }
-}
-
-/// Days in `month` (0..=11) of calendar `year` (full year, e.g. 2024).
-fn getdate_days_in_month(month: i32, year: i32) -> i32 {
-    const DAYS: [i32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if month == 1 {
-        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-        if leap { 29 } else { 28 }
-    } else if (0..=11).contains(&month) {
-        DAYS[month as usize]
-    } else {
-        31
-    }
-}
-
-/// Fill the fields a matched template left unset from the current local time,
-/// mirroring glibc `getdate`. Returns 0 on success or 8 for an impossible date.
-///
-/// Rules (validated against live glibc, NOW = Tue 2026-06-09):
-///   * time: if no h/m/s field was given, default to the current h/m/s; if any
-///     was given, unspecified lower fields default to 0 ("10:30" -> sec 0).
-///   * year: defaults to the current year (no month/day rollover — "January 05"
-///     stays in the current year even though it is past).
-///   * weekday-only: the next occurrence of that weekday (today if it matches).
-///   * time-only (nothing about the date): today, advanced to tomorrow if the
-///     given time has already passed today.
-///   * an explicit but impossible calendar date (February 30) -> 8.
-///
-/// Note: `tm_isdst` and any DST-driven adjustment come from glibc's *local*
-/// mktime; frankenlibc's mktime is UTC-only (documented TZ scope), so this
-/// matches glibc exactly under TZ=UTC. See bd-2g7oyh.288.
-/// Returns true if a getdate DATEMSK template contains a weekday directive
-/// (%a/%A/%w/%u, with optional E/O modifier). getdate can no longer rely on a
-/// surviving tm_wday sentinel to detect "a weekday was specified", because
-/// strptime now (correctly, like glibc) recomputes tm_wday whenever a
-/// year/month/day field is parsed — which would otherwise make a year-only
-/// input like "2024" look like a weekday spec and reset the year to "now".
-fn getdate_template_has_weekday(template: &[u8]) -> bool {
-    let mut i = 0;
-    while i < template.len() {
-        if template[i] == b'%' {
-            let mut j = i + 1;
-            if j < template.len() && matches!(template[j], b'E' | b'O') {
-                j += 1;
-            }
-            match template.get(j) {
-                Some(b'a') | Some(b'A') | Some(b'w') | Some(b'u') => return true,
-                _ => {}
-            }
-            i = j + 1;
-        } else {
-            i += 1;
-        }
-    }
-    false
-}
-
-unsafe fn getdate_apply_defaults(result: *mut libc::tm, weekday_in_template: bool) -> c_int {
-    // Current local time.
-    let now_secs = unsafe { crate::time_abi::time(std::ptr::null_mut()) };
-    let mut now: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { crate::time_abi::localtime_r(&now_secs, &mut now) };
-
-    let (p_sec, p_min, p_hour, p_mday, p_mon, p_year, p_wday) = unsafe {
-        (
-            (*result).tm_sec,
-            (*result).tm_min,
-            (*result).tm_hour,
-            (*result).tm_mday,
-            (*result).tm_mon,
-            (*result).tm_year,
-            (*result).tm_wday,
-        )
-    };
-    let sec_set = p_sec != -1;
-    let min_set = p_min != -1;
-    let hour_set = p_hour != -1;
-    let mday_set = p_mday != 0;
-    let mon_set = p_mon != -1;
-    let year_set = p_year != i32::MIN;
-    // A weekday counts as "specified" only when the template actually contained a
-    // weekday directive — NOT merely because strptime recomputed tm_wday from the
-    // parsed date (see getdate_template_has_weekday).
-    let _ = p_wday;
-    let wday_set = weekday_in_template;
-
-    // Time fields.
-    let any_time = sec_set || min_set || hour_set;
-    let (hour, min, sec) = if any_time {
-        (
-            if hour_set { p_hour } else { 0 },
-            if min_set { p_min } else { 0 },
-            if sec_set { p_sec } else { 0 },
-        )
-    } else {
-        (now.tm_hour, now.tm_min, now.tm_sec)
-    };
-
-    // Date fields.
-    let date_given = mon_set || mday_set;
-    let mut year = if year_set { p_year } else { now.tm_year };
-    let mut mon = if mon_set { p_mon } else { now.tm_mon };
-    let mut mday = if mday_set { p_mday } else { now.tm_mday };
-
-    // Validate an explicitly given calendar date before any normalization
-    // (glibc reports error 8 for February 30 et al., rather than rolling over).
-    if mday_set {
-        if !(0..=11).contains(&mon) {
-            return 8;
-        }
-        let dim = getdate_days_in_month(mon, year.saturating_add(1900));
-        if p_mday < 1 || p_mday > dim {
-            return 8;
-        }
-    }
-
-    if wday_set && !date_given {
-        // Weekday-only: next occurrence (today if today's weekday matches).
-        year = now.tm_year;
-        mon = now.tm_mon;
-        let delta = (((p_wday - now.tm_wday) % 7) + 7) % 7;
-        mday = now.tm_mday + delta;
-    } else if !date_given {
-        // Nothing explicit about the date (time-only, or year-only): start
-        // from today's month/day.
-        mon = now.tm_mon;
-        mday = now.tm_mday;
-    }
-
-    unsafe {
-        (*result).tm_sec = sec;
-        (*result).tm_min = min;
-        (*result).tm_hour = hour;
-        (*result).tm_mday = mday;
-        (*result).tm_mon = mon;
-        (*result).tm_year = year;
-        (*result).tm_isdst = -1;
-        (*result).tm_wday = 0;
-        (*result).tm_yday = 0;
-
-        // Time-only with the *hour* already past today -> roll to tomorrow.
-        // glibc (time/getdate.c) advances the day iff the parsed hour is strictly
-        // before the current hour (`tp->tm_hour - tm.tm_hour < 0`); it compares at
-        // hour granularity only, NOT the full (hour,min,sec) tuple, and gates on a
-        // set hour with no month/mday/weekday given.
-        if !date_given && !wday_set && hour_set && hour < now.tm_hour {
-            (*result).tm_mday += 1;
-        }
-
-        // Normalize: recompute tm_wday/tm_yday and carry any day/month overflow.
-        crate::time_abi::mktime(result);
-    }
-    0
 }
 
 /// `getdate` — convert a date string to struct tm using DATEMSK templates.
@@ -26058,12 +24368,7 @@ thread_local! {
 /// emit the remaining bytes as `(size_t)-3` without consuming input. Resumes an
 /// incomplete multibyte sequence from `ps` across calls.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mbrtoc8(
-    pc8: *mut u8,
-    s: *const c_char,
-    n: usize,
-    ps: *mut c_void,
-) -> usize {
+pub unsafe extern "C" fn mbrtoc8(pc8: *mut u8, s: *const c_char, n: usize, ps: *mut c_void) -> usize {
     use frankenlibc_core::string::wchar::{Utf8Step, utf8_decode_step};
     const INCOMPLETE: usize = usize::MAX - 1; // (size_t)-2
     const PENDING: usize = usize::MAX - 2; // (size_t)-3
@@ -26150,33 +24455,9 @@ pub unsafe extern "C" fn mbrtoc8(
 // pkey extras
 // ===========================================================================
 
-const PKEY_REGISTER_COUNT: c_int = 16;
-const PKEY_RIGHTS_MASK: c_int = 0x3;
-
-#[inline]
-fn checked_pkey_register_index(pkey: c_int) -> Option<u32> {
-    if !(0..PKEY_REGISTER_COUNT).contains(&pkey) {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return None;
-    }
-    Some(pkey as u32)
-}
-
-#[inline]
-fn pkey_rights_are_valid(rights: c_int) -> bool {
-    if rights & !PKEY_RIGHTS_MASK != 0 {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return false;
-    }
-    true
-}
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
-    let Some(register_index) = checked_pkey_register_index(pkey) else {
-        return -1;
-    };
     // Read PKRU register via RDPKRU
     // Fallback: use the syscall interface
     let pkru: u32;
@@ -26190,19 +24471,13 @@ pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
         );
     }
     // Extract the 2 bits for this pkey
-    let shift = register_index * 2;
+    let shift = pkey as u32 * 2;
     ((pkru >> shift) & 0x3) as c_int
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
-    let Some(register_index) = checked_pkey_register_index(pkey) else {
-        return -1;
-    };
-    if !pkey_rights_are_valid(rights) {
-        return -1;
-    }
     let mut pkru: u32;
     let edx: u32;
     unsafe {
@@ -26214,7 +24489,7 @@ pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
             out("edx") edx,
         );
     }
-    let shift = register_index * 2;
+    let shift = pkey as u32 * 2;
     pkru &= !(0x3 << shift);
     pkru |= (rights as u32 & 0x3) << shift;
     unsafe {
@@ -26427,7 +24702,6 @@ pub unsafe extern "C" fn gethostent_r(
 unsafe fn fill_netent_r(
     name: &[u8],
     net: u32,
-    aliases: &[Vec<u8>],
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -26440,11 +24714,21 @@ unsafe fn fill_netent_r(
     }
 
     let effective_buflen = tracked_output_capacity(buf, buflen);
+    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
     let name_len = match name.len().checked_add(1) {
         Some(len) => len,
         None => return libc::ERANGE,
     };
-    if name_len > effective_buflen {
+    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
+    let needed = match alias_offset.checked_add(alias_ptr_size) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
+    if needed > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -26454,18 +24738,13 @@ unsafe fn fill_netent_r(
         std::ptr::copy_nonoverlapping(name.as_ptr(), buf_u8, name.len());
         *buf_u8.add(name.len()) = 0;
     }
-
-    let aliases_ptr = match unsafe {
-        crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases)
-    } {
-        Some(p) => p,
-        None => return libc::ERANGE,
-    };
+    // NULL-terminated aliases
+    unsafe { *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut() };
 
     let ent = result_buf.cast::<NetEnt>();
     unsafe {
         (*ent).n_name = buf;
-        (*ent).n_aliases = aliases_ptr;
+        (*ent).n_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
         (*ent).n_addrtype = libc::AF_INET;
         (*ent).n_net = net;
     }
@@ -26477,7 +24756,7 @@ unsafe fn fill_netent_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetbyaddr_r(
     net: u32,
-    addrtype: c_int,
+    _type: c_int,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -26491,31 +24770,15 @@ pub unsafe extern "C" fn getnetbyaddr_r(
     if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
         return libc::EINVAL;
     }
-    // Match glibc: an entry matches when net matches AND
-    // (type == AF_UNSPEC || addrtype == AF_INET) — the AF_UNSPEC(0)
-    // wildcard plus the only family /etc/networks entries carry.
-    if addrtype != libc::AF_INET && addrtype != libc::AF_UNSPEC {
-        return 0;
-    }
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
         Err(_) => return 0,
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some(entry) = parse_networks_line(line)
-            && entry.number == net
+        if let Some((pname, pnet)) = parse_networks_line(line)
+            && pnet == net
         {
-            return unsafe {
-                fill_netent_r(
-                    &entry.name,
-                    entry.number,
-                    &entry.aliases,
-                    result_buf,
-                    buf,
-                    buflen,
-                    result,
-                )
-            };
+            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
         }
     }
     0
@@ -26550,24 +24813,10 @@ pub unsafe extern "C" fn getnetbyname_r(
         Err(_) => return 0,
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some(entry) = parse_networks_line(line)
-            && (entry.name.eq_ignore_ascii_case(needle.as_slice())
-                || entry
-                    .aliases
-                    .iter()
-                    .any(|a| a.eq_ignore_ascii_case(needle.as_slice())))
+        if let Some((pname, pnet)) = parse_networks_line(line)
+            && pname.eq_ignore_ascii_case(needle.as_slice())
         {
-            return unsafe {
-                fill_netent_r(
-                    &entry.name,
-                    entry.number,
-                    &entry.aliases,
-                    result_buf,
-                    buf,
-                    buflen,
-                    result,
-                )
-            };
+            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
         }
     }
     0
@@ -26610,18 +24859,8 @@ pub unsafe extern "C" fn getnetent_r(
                 Err(_) => return libc::ENOENT,
                 Ok(_) => {}
             }
-            if let Some(entry) = parse_networks_line(&state.line_buf) {
-                return unsafe {
-                    fill_netent_r(
-                        &entry.name,
-                        entry.number,
-                        &entry.aliases,
-                        result_buf,
-                        buf,
-                        buflen,
-                        result,
-                    )
-                };
+            if let Some((pname, pnet)) = parse_networks_line(&state.line_buf) {
+                return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
             }
         }
     })
@@ -26634,7 +24873,6 @@ pub unsafe extern "C" fn getnetent_r(
 unsafe fn fill_protoent_r(
     name: &[u8],
     proto: c_int,
-    aliases: &[Vec<u8>],
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -26646,13 +24884,23 @@ unsafe fn fill_protoent_r(
         return libc::EINVAL;
     }
 
-    // Layout: name\0 alias strings\0.. <align> NULL-terminated ptr table.
+    // Need room for: name + NUL + aligned null-terminated alias pointer.
     let effective_buflen = tracked_output_capacity(buf, buflen);
+    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
     let name_len = match name.len().checked_add(1) {
         Some(len) => len,
         None => return libc::ERANGE,
     };
-    if name_len > effective_buflen {
+    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
+    let needed = match alias_offset.checked_add(alias_ptr_size) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
+    if needed > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -26663,18 +24911,16 @@ unsafe fn fill_protoent_r(
         *buf_u8.add(name.len()) = 0;
     }
 
-    let aliases_ptr = match unsafe {
-        crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases)
-    } {
-        Some(p) => p,
-        None => return libc::ERANGE,
-    };
+    // Aliases: NULL-terminated list after p_name (just a single NULL ptr).
+    unsafe {
+        *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut();
+    }
 
     // Fill struct protoent.
     let ent = result_buf.cast::<libc::protoent>();
     unsafe {
         (*ent).p_name = buf;
-        (*ent).p_aliases = aliases_ptr;
+        (*ent).p_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
         (*ent).p_proto = proto;
     }
 
@@ -26705,41 +24951,40 @@ pub unsafe extern "C" fn getprotobyname_r(
         return libc::EINVAL;
     }
 
-    // Borrowed, allocation-free needle read. `read_c_string_bytes` is
-    // `read_c_string_bytes_ref(..).to_vec()`: it malloc'd a `Vec` for the name on every call.
-    // The slice is only read inside this call (the lookup compares it, then bytes are copied
-    // into the caller buffer), so it never outlives `name` — exactly what
-    // `read_c_string_bytes_ref` requires.
-    // SAFETY: same bounded-read contract (rejects non-NUL-terminated input).
-    let Some(needle) = (unsafe { read_c_string_bytes_ref(name) }) else {
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
         return libc::EINVAL;
     };
+    let content = match std::fs::read(PROTOCOLS_PATH) {
+        Ok(c) => c,
+        Err(_) => return 0, // not found, result stays NULL (glibc behavior)
+    };
 
-    // Shared generation-stamped parsed index (resolv_abi), the same one the non-reentrant
-    // `getprotobyname` uses — it already agrees on name+alias matching, canonical name, and
-    // alias list, so this keeps the two in lockstep by construction rather than by having a
-    // second call site of the core parser. Replaces a per-call `std::fs::read(PROTOCOLS_PATH)`
-    // + linear `lookup_protocol_by_name` scan: this entry point re-read and re-parsed the
-    // whole file on EVERY call and never reached `BackendFileCache`. A backend read error
-    // still reports "not found" with `*result` left NULL (glibc behavior), exactly as before.
-    // Borrow the cache entry rather than cloning it: a `ProtocolEntry` clone is a name
-    // `Vec<u8>` plus a `Vec<Vec<u8>>` of aliases, i.e. 3+ malloc/free pairs per call
-    // through the interposed allocator. A `perf` frame table put ~92% of this function's
-    // self time in allocator bookkeeping.
-    match crate::resolv_abi::with_protocol_entry_by_name(needle, |entry| unsafe {
-        fill_protoent_r(
-            &entry.name,
-            entry.number,
-            &entry.aliases,
-            result_buf,
-            buf,
-            buflen,
-            result,
-        )
-    }) {
-        Ok(Some(rc)) => rc,
-        Ok(None) | Err(_) => 0, // not found, result stays NULL (glibc behavior)
+    for line in content.split(|&b| b == b'\n') {
+        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+            &line[..pos]
+        } else {
+            line
+        };
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+        let pname = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let pnum_str = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        if pname.eq_ignore_ascii_case(needle.as_slice())
+            && let Some(num) = std::str::from_utf8(pnum_str)
+                .ok()
+                .and_then(|s| s.parse::<c_int>().ok())
+        {
+            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
+        }
     }
+    0 // not found, result stays NULL (glibc behavior)
 }
 
 /// `getprotobynumber_r` — reentrant protocol lookup by number.
@@ -26764,169 +25009,37 @@ pub unsafe extern "C" fn getprotobynumber_r(
         return libc::EINVAL;
     }
 
-    // Shared generation-stamped parsed number index, borrowed not cloned; see
-    // `getprotobyname_r` above.
-    match crate::resolv_abi::with_protocol_entry_by_number(proto, |entry| unsafe {
-        fill_protoent_r(
-            &entry.name,
-            entry.number,
-            &entry.aliases,
-            result_buf,
-            buf,
-            buflen,
-            result,
-        )
-    }) {
-        Ok(Some(rc)) => rc,
-        Ok(None) | Err(_) => 0,
-    }
-}
-
-/// Bench-only: the immediately-previous `getprotobyname_r` — indexed (so it does NOT re-read
-/// the file), but cloning the `ProtocolEntry` out of the cache and paying the per-call
-/// `PathBuf` in `refresh_source_path_from_env`. This is the ORIG arm for the
-/// allocation-elision lever, distinct from `getprotobyname_r_legacy_fs_per_call_for_bench`,
-/// which is the pre-index arm.
-///
-/// # Safety
-/// Same contract as `getprotobyname_r`.
-#[doc(hidden)]
-pub unsafe fn getprotobyname_r_cloning_for_bench(
-    name: *const c_char,
-    result_buf: *mut c_void,
-    buf: *mut c_char,
-    buflen: usize,
-    result: *mut *mut c_void,
-) -> c_int {
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if name.is_null()
-        || result_buf.is_null()
-        || buf.is_null()
-        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
-    {
-        return libc::EINVAL;
-    }
-
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
-        return libc::EINVAL;
-    };
-
-    // Reconstruct the pre-lever allocation traffic exactly: the old
-    // `refresh_source_path_from_env` built and dropped one `PathBuf` per call...
-    crate::resolv_abi::bench_protocols_pathbuf_refresh_alloc();
-    // ...and the old lookup cloned the whole `ProtocolEntry` out of the cache.
-    match crate::resolv_abi::lookup_protocol_entry_by_name(needle.as_slice()) {
-        Ok(Some(entry)) => unsafe {
-            fill_protoent_r(
-                &entry.name,
-                entry.number,
-                &entry.aliases,
-                result_buf,
-                buf,
-                buflen,
-                result,
-            )
-        },
-        Ok(None) | Err(_) => 0,
-    }
-}
-
-/// Bench-only: the pre-index `getprotobyname_r` (per-call `std::fs::read(PROTOCOLS_PATH)` +
-/// linear `lookup_protocol_by_name` scan), retained verbatim so `glibc_baseline_bench` can
-/// measure ORIG vs patched in the SAME binary.
-///
-/// # Safety
-/// Same contract as `getprotobyname_r`.
-#[doc(hidden)]
-pub unsafe fn getprotobyname_r_legacy_fs_per_call_for_bench(
-    name: *const c_char,
-    result_buf: *mut c_void,
-    buf: *mut c_char,
-    buflen: usize,
-    result: *mut *mut c_void,
-) -> c_int {
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if name.is_null()
-        || result_buf.is_null()
-        || buf.is_null()
-        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
-    {
-        return libc::EINVAL;
-    }
-
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
-        return libc::EINVAL;
-    };
     let content = match std::fs::read(PROTOCOLS_PATH) {
         Ok(c) => c,
         Err(_) => return 0,
     };
 
-    match frankenlibc_core::resolv::lookup_protocol_by_name(&content, needle.as_slice()) {
-        Some(entry) => unsafe {
-            fill_protoent_r(
-                &entry.name,
-                entry.number,
-                &entry.aliases,
-                result_buf,
-                buf,
-                buflen,
-                result,
-            )
-        },
-        None => 0,
+    for line in content.split(|&b| b == b'\n') {
+        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+            &line[..pos]
+        } else {
+            line
+        };
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+        let pname = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let pnum_str = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        if let Some(num) = std::str::from_utf8(pnum_str)
+            .ok()
+            .and_then(|s| s.parse::<c_int>().ok())
+            .filter(|&n| n == proto)
+        {
+            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
+        }
     }
-}
-
-/// Bench-only: the pre-index `getprotobynumber_r`. See
-/// `getprotobyname_r_legacy_fs_per_call_for_bench`.
-///
-/// # Safety
-/// Same contract as `getprotobynumber_r`.
-#[doc(hidden)]
-pub unsafe fn getprotobynumber_r_legacy_fs_per_call_for_bench(
-    proto: c_int,
-    result_buf: *mut c_void,
-    buf: *mut c_char,
-    buflen: usize,
-    result: *mut *mut c_void,
-) -> c_int {
-    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
-        return libc::EINVAL;
-    }
-    unsafe { *result = std::ptr::null_mut() };
-    if result_buf.is_null()
-        || buf.is_null()
-        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
-    {
-        return libc::EINVAL;
-    }
-
-    let content = match std::fs::read(PROTOCOLS_PATH) {
-        Ok(c) => c,
-        Err(_) => return 0,
-    };
-
-    match frankenlibc_core::resolv::lookup_protocol_by_number(&content, proto) {
-        Some(entry) => unsafe {
-            fill_protoent_r(
-                &entry.name,
-                entry.number,
-                &entry.aliases,
-                result_buf,
-                buf,
-                buflen,
-                result,
-            )
-        },
-        None => 0,
-    }
+    0
 }
 
 /// `getprotoent_r` — reentrant sequential protocol entry read.
@@ -26992,10 +25105,7 @@ pub unsafe extern "C" fn getprotoent_r(
                 .ok()
                 .and_then(|s| s.parse::<c_int>().ok())
             {
-                let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
-                return unsafe {
-                    fill_protoent_r(pname, num, &aliases, result_buf, buf, buflen, result)
-                };
+                return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
             }
         }
     })
@@ -27050,8 +25160,10 @@ pub unsafe extern "C" fn getservent_r(
                 None => continue,
             };
 
-            // Pack into caller-supplied buffer: name\0 proto\0 aliases\0.. <align> ptr[].
+            // Pack into caller-supplied buffer: name + protocol + aligned NULL alias ptr.
             let effective_buflen = tracked_output_capacity(buf, buflen);
+            let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+            let alias_ptr_align = core::mem::align_of::<*mut c_char>();
             let name_end = match entry.name.len().checked_add(1) {
                 Some(offset) => offset,
                 None => return libc::ERANGE,
@@ -27063,7 +25175,15 @@ pub unsafe extern "C" fn getservent_r(
                 Some(offset) => offset,
                 None => return libc::ERANGE,
             };
-            if proto_end > effective_buflen {
+            let alias_off = match aligned_output_offset(buf, proto_end, alias_ptr_align) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+            let total_needed = match alias_off.checked_add(alias_ptr_size) {
+                Some(needed) => needed,
+                None => return libc::ERANGE,
+            };
+            if total_needed > effective_buflen {
                 return libc::ERANGE;
             }
 
@@ -27085,23 +25205,14 @@ pub unsafe extern "C" fn getservent_r(
                 *buf_u8.add(name_end + entry.protocol.len()) = 0;
             }
 
-            let aliases_ptr = match unsafe {
-                crate::inet_abi::pack_caller_aliases(
-                    buf,
-                    effective_buflen,
-                    proto_end,
-                    &entry.aliases,
-                )
-            } {
-                Some(p) => p,
-                None => return libc::ERANGE,
-            };
+            let aliases_ptr = unsafe { buf_u8.add(alias_off) } as *mut *mut c_char;
+            unsafe { *aliases_ptr = std::ptr::null_mut() };
 
             let ent = result_buf.cast::<libc::servent>();
             unsafe {
                 (*ent).s_name = name_ptr;
                 (*ent).s_aliases = aliases_ptr;
-                (*ent).s_port = entry.port.to_be() as c_int; // NBO: htons
+                (*ent).s_port = (entry.port as c_int).to_be();
                 (*ent).s_proto = proto_ptr;
             }
 
@@ -27523,21 +25634,14 @@ pub unsafe extern "C" fn isnan(x: f64) -> c_int {
     if x.is_nan() { 1 } else { 0 }
 }
 
-/// Obsolete SVID `scalb(x, fn)` — like `scalbn` but the binary exponent is a
-/// floating value. Mirrors glibc's public SVID contract: a NON-INTEGER exponent
-/// yields NaN + FE_INVALID + EDOM (the naive `x * 2^exp` returned a bogus finite
-/// value, e.g. `scalb(3, 2.5)` -> 16.97 instead of NaN), integer exponents report
-/// ERANGE on finite nonzero overflow/underflow, and infinite exponents use the
-/// `x*fn` / `x/(-fn)` forms so e.g. `scalb(inf, -inf)` -> NaN+INVALID+EDOM.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalb(x: f64, exp: f64) -> f64 {
-    crate::math_abi::scalb_svid_impl(x, exp)
+    x * (2.0f64).powf(exp)
 }
 
-/// `scalbf` — single-precision SVID `scalb`. Same `__ieee754_scalbf` semantics.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbf(x: f32, exp: f32) -> f32 {
-    crate::math_abi::scalbf_svid_impl(x, exp)
+    x * (2.0f32).powf(exp)
 }
 
 // ===========================================================================

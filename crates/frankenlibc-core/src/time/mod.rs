@@ -537,6 +537,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_compact_14(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_rfc3164(
         fmt, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
     ) {
@@ -547,6 +550,13 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     ) {
         return n;
     }
+    if fmt == b"%c"
+        && let Some(n) = format_strftime_c_locale_datetime(
+            bd.tm_wday, bd.tm_mon, bd.tm_mday, bd.tm_year, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+        )
+    {
+        return n;
+    }
     if let Some(n) = format_strftime_ymdhm(fmt, bd, buf) {
         return n;
     }
@@ -554,6 +564,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         return n;
     }
     if let Some(n) = format_strftime_mdy(fmt, bd, buf) {
+        return n;
+    }
+    if let Some(n) = format_strftime_dmy(fmt, bd, buf) {
         return n;
     }
     if let Some(n) = format_strftime_simple_numeric(fmt, bd, buf) {
@@ -1140,10 +1153,22 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
         return None;
     }
 
-    if !(0..=23).contains(&bd.tm_hour)
-        || !(0..=59).contains(&bd.tm_min)
-        || !(0..=60).contains(&bd.tm_sec)
-    {
+    format_strftime_hms_time(bd.tm_hour, bd.tm_min, bd.tm_sec, buf)
+}
+
+/// Emit normalized 24-hour time for the exact `%H:%M:%S` / `%T` family.
+///
+/// The leap-second-inclusive 24 by 60 by 61 domain is finite and independent
+/// of locale. Non-normalized fields return `None` so callers can preserve the
+/// general format interpreter's extended behavior.
+#[inline]
+pub fn format_strftime_hms_time(
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
         return None;
     }
 
@@ -1152,15 +1177,44 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
         return Some(0);
     }
 
-    let hour = bd.tm_hour as u32;
-    let minute = bd.tm_min as u32;
-    let second = bd.tm_sec as u32;
-
-    write_two_digits(&mut buf[0..2], hour);
+    write_two_digits(&mut buf[0..2], hour as u32);
     buf[2] = b':';
-    write_two_digits(&mut buf[3..5], minute);
+    write_two_digits(&mut buf[3..5], minute as u32);
     buf[5] = b':';
-    write_two_digits(&mut buf[6..8], second);
+    write_two_digits(&mut buf[6..8], second as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+/// Emit the normalized C-locale `%r` language `%I:%M:%S %p`.
+///
+/// The 24-hour input domain maps directly to one of two fixed AM/PM suffixes;
+/// non-normalized fields retain the generic formatter through `None` fallback.
+#[inline]
+pub fn format_strftime_hms_12_time(
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
+        return None;
+    }
+    const OUT_LEN: usize = 11;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    let hour_12 = match hour % 12 {
+        0 => 12,
+        value => value,
+    };
+    write_two_digits(&mut buf[0..2], hour_12 as u32);
+    buf[2] = b':';
+    write_two_digits(&mut buf[3..5], minute as u32);
+    buf[5] = b':';
+    write_two_digits(&mut buf[6..8], second as u32);
+    buf[8] = b' ';
+    buf[9..11].copy_from_slice(if hour < 12 { b"AM" } else { b"PM" });
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -1281,6 +1335,108 @@ pub fn format_strftime_http_date(
     Some(OUT_LEN)
 }
 
+/// Emit the exact C-locale `%c` representation `%a %b %e %H:%M:%S %Y`.
+///
+/// `%c` normally enters the locale/configuration interpreter, expands another
+/// format, and recursively walks eight directives and literals. FrankenLibC's
+/// process locale is the C locale, so normalized fields and a four-digit year
+/// define a closed finite transducer with one fixed 24-byte output. Inputs
+/// outside that certified domain return `None` and retain the general path.
+#[allow(clippy::too_many_arguments)] // Scalar projection is the closed-transducer boundary.
+#[inline]
+pub fn format_strftime_c_locale_datetime(
+    weekday: i32,
+    month: i32,
+    day: i32,
+    year_since_1900: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = i64::from(year_since_1900) + 1900;
+    if !(0..=6).contains(&weekday)
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(1000..=9999).contains(&year)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 24;
+    if buf.len() <= OUT_LEN {
+        // The generic formatter's partial writes on failure remain untouched.
+        return None;
+    }
+
+    buf[0..3].copy_from_slice(WDAY_NAMES[weekday as usize]);
+    buf[3] = b' ';
+    buf[4..7].copy_from_slice(MON_NAMES[month as usize]);
+    buf[7] = b' ';
+    if day < 10 {
+        buf[8] = b' ';
+        buf[9] = b'0' + day as u8;
+    } else {
+        write_two_digits(&mut buf[8..10], day as u32);
+    }
+    buf[10] = b' ';
+    write_two_digits(&mut buf[11..13], hour as u32);
+    buf[13] = b':';
+    write_two_digits(&mut buf[14..16], minute as u32);
+    buf[16] = b':';
+    write_two_digits(&mut buf[17..19], second as u32);
+    buf[19] = b' ';
+    let year = year as u32;
+    buf[20] = b'0' + (year / 1000) as u8;
+    buf[21] = b'0' + ((year / 100) % 10) as u8;
+    buf[22] = b'0' + ((year / 10) % 10) as u8;
+    buf[23] = b'0' + (year % 10) as u8;
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+/// Resolve one unmodified C-locale name conversion to its fixed byte string.
+///
+/// `field` is `tm_wday` for `%a`/`%A` and `tm_mon` for `%b`/`%B`/`%h`.
+/// Out-of-domain fields deliberately preserve the general formatter's `?`.
+#[inline]
+pub fn strftime_c_locale_name(conversion: u8, field: i32) -> Option<&'static [u8]> {
+    Some(match conversion {
+        b'a' => {
+            if (0..=6).contains(&field) {
+                WDAY_NAMES[field as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'A' => {
+            if (0..=6).contains(&field) {
+                WDAY_FULL_NAMES[field as usize].as_bytes()
+            } else {
+                b"?"
+            }
+        }
+        b'b' | b'h' => {
+            if (0..=11).contains(&field) {
+                MON_NAMES[field as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'B' => {
+            if (0..=11).contains(&field) {
+                MON_FULL_NAMES[field as usize].as_bytes()
+            } else {
+                b"?"
+            }
+        }
+        _ => return None,
+    })
+}
+
 /// Emit one C-locale full weekday name for the exact `%A` transducer leaf.
 #[inline]
 pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
@@ -1375,25 +1531,32 @@ pub fn format_strftime_day_of_year(yday: i32, buf: &mut [u8]) -> Option<usize> {
 
 #[inline]
 fn format_strftime_hm(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
-    // "%H:%M" (== the `%R` expansion) — a very common clock/log format. Without
-    // this it fell to the two-pass `#[inline(never)]` `format_strftime_simple_numeric`
-    // and ran ~1.6x its own `%H:%M:%S` fast path (and lost ~1.2x to glibc), even
-    // though it produces LESS output. Single-pass exact match, mirroring
-    // `format_strftime_hms`; byte-identical (out-of-range fields -> None -> the
-    // same simple_numeric/general path as before).
     if fmt != b"%H:%M" {
         return None;
     }
-    if !(0..=23).contains(&bd.tm_hour) || !(0..=59).contains(&bd.tm_min) {
+
+    format_strftime_hm_time(bd.tm_hour, bd.tm_min, buf)
+}
+
+/// Emit normalized 24-hour time for the exact `%H:%M` / `%R` family.
+///
+/// The 24 by 60 input domain is a finite, locale-independent transducer. Fields
+/// outside that domain return `None`, allowing the generic formatter to retain
+/// its existing behavior for non-normalized caller input.
+#[inline]
+pub fn format_strftime_hm_time(hour: i32, minute: i32, buf: &mut [u8]) -> Option<usize> {
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
         return None;
     }
+
     const OUT_LEN: usize = 5;
     if buf.len() <= OUT_LEN {
         return Some(0);
     }
-    write_two_digits(&mut buf[0..2], bd.tm_hour as u32);
+
+    write_two_digits(&mut buf[0..2], hour as u32);
     buf[2] = b':';
-    write_two_digits(&mut buf[3..5], bd.tm_min as u32);
+    write_two_digits(&mut buf[3..5], minute as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -1408,11 +1571,24 @@ fn format_strftime_ymd(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     if fmt != b"%Y-%m-%d" {
         return None;
     }
-    let year = bd.tm_year as i64 + 1900;
-    if !(1000..=9999).contains(&year)
-        || !(0..=11).contains(&bd.tm_mon)
-        || !(1..=31).contains(&bd.tm_mday)
-    {
+
+    format_strftime_ymd_date(bd.tm_year, bd.tm_mon, bd.tm_mday, buf)
+}
+
+/// Emit the normalized four-digit ISO date used by `%Y-%m-%d` and `%F`.
+///
+/// The finite year/month/day domain is locale-independent. Non-normalized
+/// fields return `None` so callers retain the generic formatter's extended
+/// year and malformed-field behavior.
+#[inline]
+pub fn format_strftime_ymd_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     const OUT_LEN: usize = 10;
@@ -1425,9 +1601,9 @@ fn format_strftime_ymd(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     buf[2] = b'0' + ((year / 10) % 10) as u8;
     buf[3] = b'0' + (year % 10) as u8;
     buf[4] = b'-';
-    write_two_digits(&mut buf[5..7], (bd.tm_mon + 1) as u32);
+    write_two_digits(&mut buf[5..7], (month + 1) as u32);
     buf[7] = b'-';
-    write_two_digits(&mut buf[8..10], bd.tm_mday as u32);
+    write_two_digits(&mut buf[8..10], day as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -1482,20 +1658,103 @@ fn format_strftime_mdy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     if fmt != b"%m/%d/%Y" {
         return None;
     }
-    let year = bd.tm_year as i64 + 1900;
-    if !(1000..=9999).contains(&year)
-        || !(0..=11).contains(&bd.tm_mon)
-        || !(1..=31).contains(&bd.tm_mday)
-    {
+
+    format_strftime_mdy_date(bd.tm_year, bd.tm_mon, bd.tm_mday, buf)
+}
+
+/// Emits the normalized, locale-independent `%m/%d/%Y` date language.
+///
+/// Four-digit years and normalized calendar fields form the certified fast
+/// domain. Callers must retain the general formatter for inputs outside it.
+#[inline]
+pub fn format_strftime_mdy_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     const OUT_LEN: usize = 10;
     if buf.len() <= OUT_LEN {
         return Some(0);
     }
-    write_two_digits(&mut buf[0..2], (bd.tm_mon + 1) as u32);
+    write_two_digits(&mut buf[0..2], (month + 1) as u32);
     buf[2] = b'/';
-    write_two_digits(&mut buf[3..5], bd.tm_mday as u32);
+    write_two_digits(&mut buf[3..5], day as u32);
+    buf[5] = b'/';
+    let year = year as u32;
+    buf[6] = b'0' + ((year / 1000) % 10) as u8;
+    buf[7] = b'0' + ((year / 100) % 10) as u8;
+    buf[8] = b'0' + ((year / 10) % 10) as u8;
+    buf[9] = b'0' + (year % 10) as u8;
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+/// Emits the normalized `%m/%d/%y` date language used by exact `%D`.
+///
+/// The four-digit normalized input domain keeps the fast leaf aligned with the
+/// existing date transducers; the emitted year is its POSIX two-digit residue.
+#[inline]
+pub fn format_strftime_mdy_short_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    const OUT_LEN: usize = 8;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    write_two_digits(&mut buf[0..2], (month + 1) as u32);
+    buf[2] = b'/';
+    write_two_digits(&mut buf[3..5], day as u32);
+    buf[5] = b'/';
+    write_two_digits(&mut buf[6..8], year.rem_euclid(100) as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn format_strftime_dmy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    if fmt != b"%d/%m/%Y" {
+        return None;
+    }
+
+    format_strftime_dmy_date(bd.tm_year, bd.tm_mon, bd.tm_mday, buf)
+}
+
+/// Emits the normalized, locale-independent `%d/%m/%Y` date language.
+///
+/// Four-digit years and normalized calendar fields form the certified fast
+/// domain. Callers must retain the general formatter for inputs outside it.
+#[inline]
+pub fn format_strftime_dmy_date(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year) || !(0..=11).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    const OUT_LEN: usize = 10;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    write_two_digits(&mut buf[0..2], day as u32);
+    buf[2] = b'/';
+    write_two_digits(&mut buf[3..5], (month + 1) as u32);
     buf[5] = b'/';
     let year = year as u32;
     buf[6] = b'0' + ((year / 1000) % 10) as u8;
@@ -1512,13 +1771,33 @@ fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -
         return None;
     }
 
-    let year = bd.tm_year as i64 + 1900;
+    format_strftime_numeric_datetime(
+        bd.tm_year, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+    )
+}
+
+/// Emits the normalized, locale-independent `%Y-%m-%d %H:%M:%S` language.
+///
+/// The accepted domain is deliberately closed: four-digit calendar years,
+/// normalized month/day/hour/minute fields, and POSIX's leap-second value 60.
+/// Callers must fall back to the general formatter when this returns `None`.
+#[inline]
+pub fn format_strftime_numeric_datetime(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
     if !(1000..=9999).contains(&year)
-        || !(0..=11).contains(&bd.tm_mon)
-        || !(1..=31).contains(&bd.tm_mday)
-        || !(0..=23).contains(&bd.tm_hour)
-        || !(0..=59).contains(&bd.tm_min)
-        || !(0..=60).contains(&bd.tm_sec)
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
     {
         return None;
     }
@@ -1529,11 +1808,11 @@ fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -
     }
 
     let year = year as u32;
-    let month = (bd.tm_mon + 1) as u32;
-    let day = bd.tm_mday as u32;
-    let hour = bd.tm_hour as u32;
-    let minute = bd.tm_min as u32;
-    let second = bd.tm_sec as u32;
+    let month = (month + 1) as u32;
+    let day = day as u32;
+    let hour = hour as u32;
+    let minute = minute as u32;
+    let second = second as u32;
 
     buf[0] = b'0' + ((year / 1000) % 10) as u8;
     buf[1] = b'0' + ((year / 100) % 10) as u8;
@@ -1549,6 +1828,62 @@ fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -
     write_two_digits(&mut buf[14..16], minute);
     buf[16] = b':';
     write_two_digits(&mut buf[17..19], second);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn format_strftime_compact_14(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    if fmt != b"%Y%m%d%H%M%S" {
+        return None;
+    }
+
+    format_strftime_compact_datetime(
+        bd.tm_year, bd.tm_mon, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, buf,
+    )
+}
+
+/// Emits the normalized, locale-independent `%Y%m%d%H%M%S` language.
+///
+/// This is the compact representation of the same closed field domain as
+/// [`format_strftime_numeric_datetime`]. Callers retain the general formatter
+/// as the fallback for non-normalized fields.
+#[inline]
+pub fn format_strftime_compact_datetime(
+    tm_year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let year = tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year)
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 14;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    let year = year as u32;
+    buf[0] = b'0' + ((year / 1000) % 10) as u8;
+    buf[1] = b'0' + ((year / 100) % 10) as u8;
+    buf[2] = b'0' + ((year / 10) % 10) as u8;
+    buf[3] = b'0' + (year % 10) as u8;
+    write_two_digits(&mut buf[4..6], (month + 1) as u32);
+    write_two_digits(&mut buf[6..8], day as u32);
+    write_two_digits(&mut buf[8..10], hour as u32);
+    write_two_digits(&mut buf[10..12], minute as u32);
+    write_two_digits(&mut buf[12..14], second as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
@@ -1956,6 +2291,39 @@ mod tests {
     }
 
     #[test]
+    fn strftime_c_locale_name_selects_all_states() {
+        for (weekday, short, full) in [
+            (0, b"Sun".as_slice(), b"Sunday".as_slice()),
+            (1, b"Mon".as_slice(), b"Monday".as_slice()),
+            (2, b"Tue".as_slice(), b"Tuesday".as_slice()),
+            (3, b"Wed".as_slice(), b"Wednesday".as_slice()),
+            (4, b"Thu".as_slice(), b"Thursday".as_slice()),
+            (5, b"Fri".as_slice(), b"Friday".as_slice()),
+            (6, b"Sat".as_slice(), b"Saturday".as_slice()),
+        ] {
+            assert_eq!(strftime_c_locale_name(b'a', weekday), Some(short));
+            assert_eq!(strftime_c_locale_name(b'A', weekday), Some(full));
+        }
+        for month in 0..=11 {
+            assert_eq!(
+                strftime_c_locale_name(b'b', month),
+                Some(MON_NAMES[month as usize].as_slice())
+            );
+            assert_eq!(
+                strftime_c_locale_name(b'h', month),
+                Some(MON_NAMES[month as usize].as_slice())
+            );
+            assert_eq!(
+                strftime_c_locale_name(b'B', month),
+                Some(MON_FULL_NAMES[month as usize].as_bytes())
+            );
+        }
+        assert_eq!(strftime_c_locale_name(b'A', -1), Some(b"?".as_slice()));
+        assert_eq!(strftime_c_locale_name(b'B', 12), Some(b"?".as_slice()));
+        assert_eq!(strftime_c_locale_name(b'Y', 2024), None);
+    }
+
+    #[test]
     fn strftime_full_weekday_exact_all_states() {
         let mut bd = epoch_to_broken_down(1_704_067_200);
         let expected = [
@@ -2299,6 +2667,71 @@ mod tests {
     }
 
     #[test]
+    fn strftime_c_locale_datetime_exact_and_fallback_boundaries() {
+        let mut bd = epoch_to_broken_down(1_700_000_000);
+        bd.tm_wday = 2;
+        bd.tm_mon = 10;
+        bd.tm_mday = 14;
+        bd.tm_year = 123;
+        bd.tm_hour = 22;
+        bd.tm_min = 13;
+        bd.tm_sec = 20;
+        let expected = b"Tue Nov 14 22:13:20 2023";
+
+        let mut buf = [0x55u8; 25];
+        assert_eq!(format_strftime(b"%c", &bd, &mut buf), 24);
+        assert_eq!(&buf[..24], expected);
+        assert_eq!(buf[24], 0);
+
+        let mut direct_short = [0x55u8; 24];
+        assert_eq!(
+            format_strftime_c_locale_datetime(
+                bd.tm_wday,
+                bd.tm_mon,
+                bd.tm_mday,
+                bd.tm_year,
+                bd.tm_hour,
+                bd.tm_min,
+                bd.tm_sec,
+                &mut direct_short,
+            ),
+            None
+        );
+        assert_eq!(direct_short, [0x55; 24]);
+        for capacity in 0usize..=24 {
+            let mut short = [0x55u8; 25];
+            assert_eq!(format_strftime(b"%c", &bd, &mut short[..capacity]), 0);
+            let prefix_len = capacity.saturating_sub(1);
+            assert_eq!(&short[..prefix_len], &expected[..prefix_len]);
+            assert!(short[prefix_len..].iter().all(|byte| *byte == 0x55));
+        }
+
+        for (weekday, month, day, year, hour, minute, second) in [
+            (-1, 10, 14, 123, 22, 13, 20),
+            (7, 10, 14, 123, 22, 13, 20),
+            (2, -1, 14, 123, 22, 13, 20),
+            (2, 12, 14, 123, 22, 13, 20),
+            (2, 10, 0, 123, 22, 13, 20),
+            (2, 10, 32, 123, 22, 13, 20),
+            (2, 10, 14, -901, 22, 13, 20),
+            (2, 10, 14, 8100, 22, 13, 20),
+            (2, 10, 14, 123, -1, 13, 20),
+            (2, 10, 14, 123, 24, 13, 20),
+            (2, 10, 14, 123, 22, -1, 20),
+            (2, 10, 14, 123, 22, 60, 20),
+            (2, 10, 14, 123, 22, 13, -1),
+            (2, 10, 14, 123, 22, 13, 61),
+        ] {
+            assert_eq!(
+                format_strftime_c_locale_datetime(
+                    weekday, month, day, year, hour, minute, second, &mut buf,
+                ),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn strftime_day_of_year_exact_all_states_and_boundaries() {
         let mut bd = epoch_to_broken_down(1_704_067_200);
         for yday in 0..=365 {
@@ -2332,6 +2765,42 @@ mod tests {
         assert_eq!(n, 19);
         assert_eq!(&buf[..19], b"2024-01-01 14:30:45");
         assert_eq!(buf[19], 0);
+    }
+
+    #[test]
+    fn strftime_compact_14_exact_fit() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0x55u8; 15];
+        let n = format_strftime(b"%Y%m%d%H%M%S", &bd, &mut buf);
+
+        assert_eq!(n, 14);
+        assert_eq!(&buf[..14], b"20240101143045");
+        assert_eq!(buf[14], 0);
+    }
+
+    #[test]
+    fn strftime_dmy_exact_fit() {
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0x55u8; 11];
+        let n = format_strftime(b"%d/%m/%Y", &bd, &mut buf);
+
+        assert_eq!(n, 10);
+        assert_eq!(&buf[..10], b"01/01/2024");
+        assert_eq!(buf[10], 0);
+    }
+
+    #[test]
+    fn strftime_mdy_exact_fit() {
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0x55u8; 11];
+        let n = format_strftime(b"%m/%d/%Y", &bd, &mut buf);
+
+        assert_eq!(n, 10);
+        assert_eq!(&buf[..10], b"01/01/2024");
+        assert_eq!(buf[10], 0);
     }
 
     #[test]
@@ -2371,6 +2840,23 @@ mod tests {
         let n = format_strftime(b"%H:%M:%S", &bd, &mut buf);
 
         assert_eq!(&buf[..n], b"99:30:45");
+    }
+
+    #[test]
+    fn strftime_hm_fast_path_exact_fit() {
+        let mut buf = [0x55u8; 6];
+
+        assert_eq!(format_strftime_hm_time(0, 59, &mut buf), Some(5));
+        assert_eq!(&buf, b"00:59\0");
+    }
+
+    #[test]
+    fn strftime_hm_fast_path_rejects_non_normalized_fields() {
+        let mut buf = [0x55u8; 6];
+
+        assert_eq!(format_strftime_hm_time(24, 0, &mut buf), None);
+        assert_eq!(format_strftime_hm_time(0, 60, &mut buf), None);
+        assert_eq!(buf, [0x55u8; 6]);
     }
 
     #[test]

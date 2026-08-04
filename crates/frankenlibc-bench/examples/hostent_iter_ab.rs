@@ -17,10 +17,15 @@
 //!       -p frankenlibc-bench --features abi-bench --bench hostent_iter_ab -- --noplot`
 
 use std::ffi::{CStr, c_int, c_void};
+use std::fmt::Write as _;
 use std::hint::black_box;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
 use frankenlibc_abi::resolv_abi as fl;
+use sha2::{Digest, Sha256};
 
 const SAMPLES: usize = 240;
 const WARMUP: usize = 40;
@@ -193,7 +198,163 @@ fn verify(h: &HostIter) {
     }
 }
 
+#[derive(Debug)]
+struct ObjectIdentity {
+    path: PathBuf,
+    bytes: u64,
+    sha256: String,
+}
+
+fn sha256_file(path: &Path) -> Result<ObjectIdentity, String> {
+    let path = std::fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize {}: {error}", path.display()))?;
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("read identity object {}: {error}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut sha256 = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut sha256, "{byte:02x}").expect("write SHA-256 hex");
+    }
+    Ok(ObjectIdentity {
+        path,
+        bytes: bytes.len() as u64,
+        sha256,
+    })
+}
+
+fn symbol_object(symbol: *const c_void) -> Result<ObjectIdentity, String> {
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    if unsafe { libc::dladdr(symbol, &mut info) } == 0 || info.dli_fname.is_null() {
+        return Err("dladdr could not identify serving object".to_owned());
+    }
+    let path = unsafe { CStr::from_ptr(info.dli_fname) };
+    sha256_file(Path::new(std::ffi::OsStr::from_bytes(path.to_bytes())))
+}
+
+fn print_identity(role: &str, identity: &ObjectIdentity) {
+    println!(
+        "{role}_OBJECT path={} bytes={} sha256={}",
+        identity.path.display(),
+        identity.bytes,
+        identity.sha256,
+    );
+}
+
+fn observed_threads() -> usize {
+    std::fs::read_dir("/proc/self/task")
+        .map(|entries| entries.count())
+        .unwrap_or(0)
+}
+
+fn dynamic_symbol_is_exported(path: &Path, requested: &str) -> Result<bool, String> {
+    let output = Command::new("nm")
+        .args(["-D", "--defined-only"])
+        .arg(path)
+        .output()
+        .map_err(|error| format!("run nm on {}: {error}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "nm -D --defined-only {} failed: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        line.split_whitespace()
+            .next_back()
+            .and_then(|symbol| symbol.split('@').next())
+            == Some(requested)
+    }))
+}
+
+fn run_surface_audit() -> ! {
+    let benchmark_identity =
+        sha256_file(&std::env::current_exe().expect("resolve benchmark executable"))
+            .expect("hash benchmark executable");
+    print_identity("BENCH_ELF", &benchmark_identity);
+    println!(
+        "HOST_IDENTITY hostname={} loadavg={} pid={}",
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_else(|_| "unknown".to_owned()),
+        std::fs::read_to_string("/proc/loadavg")
+            .map(|value| value
+                .split_whitespace()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(","))
+            .unwrap_or_else(|_| "unknown".to_owned()),
+        std::process::id(),
+    );
+
+    let host_handle = unsafe {
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            c"libc.so.6".as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL,
+        )
+    };
+    assert!(!host_handle.is_null(), "dlmopen host libc failed");
+    let host_gethostent = unsafe { libc::dlsym(host_handle, c"gethostent".as_ptr()) };
+    assert!(
+        !host_gethostent.is_null(),
+        "host libc does not export public gethostent"
+    );
+    let host_private_gethtent = unsafe { libc::dlsym(host_handle, c"_gethtent".as_ptr()) };
+    let incumbent_identity =
+        symbol_object(host_gethostent.cast_const()).expect("identify host libc object");
+    print_identity("INCUMBENT", &incumbent_identity);
+
+    let target_dir = std::env::var_os("FRANKENLIBC_BENCH_TARGET_DIR")
+        .or_else(|| std::env::var_os("CARGO_TARGET_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target"));
+    let fl_path = target_dir.join("release/libfrankenlibc_abi.so");
+    let fl_identity = sha256_file(&fl_path).expect("hash FrankenLibC shared object");
+    print_identity("FL", &fl_identity);
+    let fl_gethostent = dynamic_symbol_is_exported(&fl_identity.path, "gethostent")
+        .expect("audit FrankenLibC public gethostent export");
+    assert!(
+        fl_gethostent,
+        "FrankenLibC does not export public gethostent"
+    );
+    let fl_private_gethtent = dynamic_symbol_is_exported(&fl_identity.path, "_gethtent")
+        .expect("audit FrankenLibC private _gethtent export");
+
+    println!("INCUMBENT_LINKAGE explicit_dlmopen_local symbol=gethostent");
+    println!("FL_LINKAGE elf_dynamic_symbol_table tool=nm symbol=gethostent");
+    println!(
+        "STRUCTURAL_SURFACE requested_symbol=_gethtent \
+         incumbent_present={} fl_deployed_present={} \
+         nearest_incumbent_symbol=gethostent nearest_fl_symbol=gethostent",
+        !host_private_gethtent.is_null(),
+        fl_private_gethtent,
+    );
+    assert!(
+        host_private_gethtent.is_null(),
+        "host glibc unexpectedly exports _gethtent"
+    );
+    assert!(
+        fl_private_gethtent,
+        "deployed FrankenLibC does not export its private _gethtent extension"
+    );
+    let threads_observed = observed_threads();
+    println!("THREADS_OBSERVED symbol=_gethtent phase=surface_audit count={threads_observed}");
+    eprintln!(
+        "INCUMBENT_COVERAGE_BLOCKED phase=incumbent_resolution symbol=_gethtent \
+         reason=host_glibc_has_no_same_symbol fl_deployed_symbol_present=true \
+         threads_observed={threads_observed} \
+         historical_comparison=direct_rust_private__gethtent_vs_public_glibc_gethostent"
+    );
+    std::process::exit(2);
+}
+
 fn main() {
+    if std::env::args_os().any(|argument| argument == "--surface-audit") {
+        run_surface_audit();
+    }
+
     let h = host_iter();
     verify(h);
 

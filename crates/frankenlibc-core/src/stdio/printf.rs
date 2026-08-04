@@ -1970,7 +1970,7 @@ const POW5_FIXED: [u128; 10] = [
 /// using integer arithmetic. The fast path is deliberately capped to precision <= 9
 /// and a 64-bit result so the downstream decimal emission is tiny and the fallback
 /// remains responsible for large/edge dtoa cases.
-pub(crate) fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
+pub fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
     if precision == 0 || precision > 9 {
         return None;
     }
@@ -2025,7 +2025,7 @@ fn round_shift_right_ties_even(n: u128, shift: u32) -> Option<u128> {
     q.checked_add(round_up as u128)
 }
 
-pub(crate) fn decimal_digits_u128(mut value: u128, tmp: &mut [u8; 40]) -> &[u8] {
+pub fn decimal_digits_u128(mut value: u128, tmp: &mut [u8; 40]) -> &[u8] {
     let mut i = tmp.len();
     loop {
         i -= 1;

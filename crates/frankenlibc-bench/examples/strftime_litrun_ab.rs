@@ -65,6 +65,10 @@ const CASES: &[Case] = &[
         format: b"%H:%M:%S\0",
     },
     Case {
+        label: "hms_12_exact",
+        format: b"%I:%M:%S %p\0",
+    },
+    Case {
         label: "literal_long",
         format: b"a longer literal string of text with no percent directives at all here\0",
     },
@@ -76,6 +80,30 @@ const CASES: &[Case] = &[
         label: "mixed_general",
         format: b"prefix %A suffix\0",
     },
+    Case {
+        label: "mixed_month_general",
+        format: b"prefix %B suffix\0",
+    },
+    Case {
+        label: "weekday_abbrev",
+        format: b"%a\0",
+    },
+    Case {
+        label: "weekday_full",
+        format: b"%A\0",
+    },
+    Case {
+        label: "month_abbrev",
+        format: b"%b\0",
+    },
+    Case {
+        label: "month_full",
+        format: b"%B\0",
+    },
+    Case {
+        label: "month_alias_h",
+        format: b"%h\0",
+    },
     // Real-world shapes. The exact-leaf family already beats glibc (0.448-0.675) while
     // `mixed_general` — one directive wrapped in literal text — loses 11.7x on a 227 ns
     // frame. These probe where the boundary actually falls for formats people write:
@@ -86,16 +114,44 @@ const CASES: &[Case] = &[
         format: b"%F\0",
     },
     Case {
+        label: "alias_D",
+        format: b"%D\0",
+    },
+    Case {
+        label: "alias_x",
+        format: b"%x\0",
+    },
+    Case {
+        label: "date_iso",
+        format: b"%Y-%m-%d\0",
+    },
+    Case {
         label: "alias_T",
         format: b"%T\0",
+    },
+    Case {
+        label: "alias_X",
+        format: b"%X\0",
     },
     Case {
         label: "alias_R",
         format: b"%R\0",
     },
     Case {
+        label: "alias_r",
+        format: b"%r\0",
+    },
+    Case {
         label: "date_slash_dmy",
         format: b"%d/%m/%Y\0",
+    },
+    Case {
+        label: "date_slash_mdy",
+        format: b"%m/%d/%Y\0",
+    },
+    Case {
+        label: "date_slash_mdy_short",
+        format: b"%m/%d/%y\0",
     },
     Case {
         label: "compact_14",
@@ -110,6 +166,13 @@ const CASES: &[Case] = &[
     Case {
         label: "http_date",
         format: b"%a, %d %b %Y %H:%M:%S GMT\0",
+    },
+    // Canonical C-locale date/time representation. glibc resolves the locale's
+    // D_T_FMT and interprets its nested format on every call; this is the
+    // closed-language target for a straight-line FrankenLibC transducer.
+    Case {
+        label: "locale_datetime",
+        format: b"%c\0",
     },
 ];
 
@@ -289,6 +352,112 @@ fn verify_one(host: StrftimeFn, case: &Case, tm: &libc::tm) {
 
 fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     verify_one(host, case, tm);
+    if matches!(case.label, "hm_exact" | "alias_R") {
+        for hour in [0, 23] {
+            for minute in [0, 59] {
+                let mut probe = *tm;
+                probe.tm_hour = hour;
+                probe.tm_min = minute;
+                verify_one(host, case, &probe);
+            }
+        }
+    }
+
+    if matches!(
+        case.label,
+        "hms_exact" | "hms_12_exact" | "alias_T" | "alias_X" | "alias_r"
+    ) {
+        for hour in [0, 11, 12, 23] {
+            for minute in [0, 59] {
+                for second in [0, 59, 60] {
+                    let mut probe = *tm;
+                    probe.tm_hour = hour;
+                    probe.tm_min = minute;
+                    probe.tm_sec = second;
+                    verify_one(host, case, &probe);
+                }
+            }
+        }
+    }
+
+    if case.label == "mixed_general" {
+        for weekday in 0..=6 {
+            let mut probe = *tm;
+            probe.tm_wday = weekday;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if case.label == "mixed_month_general" {
+        for month in 0..=11 {
+            let mut probe = *tm;
+            probe.tm_mon = month;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if matches!(case.label, "weekday_abbrev" | "weekday_full") {
+        for weekday in 0..=6 {
+            let mut probe = *tm;
+            probe.tm_wday = weekday;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if matches!(case.label, "month_abbrev" | "month_full" | "month_alias_h") {
+        for month in 0..=11 {
+            let mut probe = *tm;
+            probe.tm_mon = month;
+            verify_one(host, case, &probe);
+        }
+    }
+
+    if matches!(case.label, "numeric_19" | "compact_14") {
+        for year in [1000, 9999] {
+            for month in 0..=11 {
+                for day in [1, 9, 10, 31] {
+                    for hour in [0, 23] {
+                        for minute in [0, 59] {
+                            for second in [0, 59, 60] {
+                                let mut probe = *tm;
+                                probe.tm_year = year - 1900;
+                                probe.tm_mon = month;
+                                probe.tm_mday = day;
+                                probe.tm_hour = hour;
+                                probe.tm_min = minute;
+                                probe.tm_sec = second;
+                                verify_one(host, case, &probe);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if matches!(
+        case.label,
+        "alias_D"
+            | "alias_F"
+            | "alias_x"
+            | "date_iso"
+            | "date_slash_dmy"
+            | "date_slash_mdy"
+            | "date_slash_mdy_short"
+    ) {
+        for year in [1000, 9999] {
+            for month in 0..=11 {
+                for day in [1, 9, 10, 31] {
+                    let mut probe = *tm;
+                    probe.tm_year = year - 1900;
+                    probe.tm_mon = month;
+                    probe.tm_mday = day;
+                    verify_one(host, case, &probe);
+                }
+            }
+        }
+    }
+
     if case.label == "syslog_ts" {
         for month in 0..=11 {
             for day in [1, 9, 10, 31] {
@@ -310,6 +479,32 @@ fn verify(host: StrftimeFn, case: &Case, tm: &libc::tm) {
     }
 
     if case.label == "http_date" {
+        for weekday in 0..=6 {
+            for month in 0..=11 {
+                for day in [1, 9, 10, 31] {
+                    for year in [1000, 9999] {
+                        for hour in [0, 23] {
+                            for minute in [0, 59] {
+                                for second in [0, 59, 60] {
+                                    let mut probe = *tm;
+                                    probe.tm_wday = weekday;
+                                    probe.tm_mon = month;
+                                    probe.tm_mday = day;
+                                    probe.tm_year = year - 1900;
+                                    probe.tm_hour = hour;
+                                    probe.tm_min = minute;
+                                    probe.tm_sec = second;
+                                    verify_one(host, case, &probe);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if case.label == "locale_datetime" {
         for weekday in 0..=6 {
             for month in 0..=11 {
                 for day in [1, 9, 10, 31] {

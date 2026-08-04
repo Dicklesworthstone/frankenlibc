@@ -143,13 +143,6 @@ pub struct AllocatorLogRecord {
     pub cache_hit_rate_permille: u16,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PendingHotAccounting {
-    ptr: usize,
-    size: usize,
-    bin: usize,
-}
-
 /// Global allocator state.
 ///
 /// Manages the central heap, bin freelists, and coordination with
@@ -168,10 +161,6 @@ pub struct MallocState {
     /// magazine. This preserves LIFO order while avoiding Vec traffic for
     /// one-live-object malloc/free cycles.
     thread_cache_hot_slots: [Option<usize>; NUM_SIZE_CLASSES],
-    /// Single checked-out hot-slot allocation accounted lazily. Public
-    /// snapshots include this slot; the eager counters are materialized before
-    /// any non-exact hot-cycle shape.
-    pending_hot_accounting: Option<PendingHotAccounting>,
     /// Thread cache.
     thread_cache: ThreadCache,
     /// Active large-allocation metadata keyed by backend pointer.
@@ -213,7 +202,6 @@ impl MallocState {
             central_bins,
             elimination: Arc::new(EliminationArray::new()),
             thread_cache_hot_slots: [None; NUM_SIZE_CLASSES],
-            pending_hot_accounting: None,
             thread_cache: ThreadCache::new(),
             large_allocations: LargeAllocator::new(),
             large_fast_active: None,
@@ -251,28 +239,6 @@ impl MallocState {
         ((self.thread_cache_hits.saturating_mul(1000)) / total) as u16
     }
 
-    #[inline]
-    fn logs_level_enabled(&self, level: AllocatorLogLevel) -> bool {
-        (level as u8) >= (self.min_log_level as u8)
-    }
-
-    #[inline]
-    fn trace_logs_enabled(&self) -> bool {
-        self.logs_level_enabled(AllocatorLogLevel::Trace)
-    }
-
-    #[inline]
-    fn elimination_handoff_possible(&self) -> bool {
-        #[cfg(test)]
-        {
-            Arc::strong_count(&self.elimination) > 1
-        }
-        #[cfg(not(test))]
-        {
-            false
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn record_lifecycle(
         &mut self,
@@ -289,7 +255,7 @@ impl MallocState {
         // what keeps the malloc/free hot path (all `Trace`) free of per-op log
         // work at the default `Warn` level. Fieldless enum, declaration order
         // Trace(0)<Debug<Info<Warn<Error(4).
-        if !self.logs_level_enabled(level) {
+        if (level as u8) < (self.min_log_level as u8) {
             return;
         }
         let decision_id = self.next_log_decision_id();
@@ -305,8 +271,8 @@ impl MallocState {
             bin,
             outcome,
             details: details.into(),
-            active_count: self.observed_active_count(),
-            total_allocated: self.observed_total_allocated(),
+            active_count: self.active_count,
+            total_allocated: self.total_allocated,
             thread_cache_hits: self.thread_cache_hits,
             thread_cache_misses: self.thread_cache_misses,
             central_bin_hits: self.central_bin_hits,
@@ -324,62 +290,13 @@ impl MallocState {
     }
 
     fn can_track_allocation(&self, size: usize) -> bool {
-        self.observed_total_allocated().checked_add(size).is_some()
-            && self.observed_active_count().checked_add(1).is_some()
+        self.total_allocated.checked_add(size).is_some()
+            && self.active_count.checked_add(1).is_some()
     }
 
     fn track_allocation(&mut self, size: usize) {
-        self.materialize_pending_hot_accounting();
         self.total_allocated += size;
         self.active_count += 1;
-    }
-
-    fn observed_total_allocated(&self) -> usize {
-        self.pending_hot_accounting
-            .map_or(self.total_allocated, |pending| {
-                self.total_allocated.saturating_add(pending.size)
-            })
-    }
-
-    fn observed_active_count(&self) -> usize {
-        self.active_count + usize::from(self.pending_hot_accounting.is_some())
-    }
-
-    fn track_hot_slot_allocation(&mut self, ptr: usize, size: usize, bin: SizeClassIndex) {
-        self.materialize_pending_hot_accounting();
-        self.pending_hot_accounting = Some(PendingHotAccounting {
-            ptr,
-            size,
-            bin: bin.get(),
-        });
-    }
-
-    fn clear_pending_hot_accounting(
-        &mut self,
-        ptr: usize,
-        size: usize,
-        bin: SizeClassIndex,
-    ) -> bool {
-        if self.pending_hot_accounting
-            == Some(PendingHotAccounting {
-                ptr,
-                size,
-                bin: bin.get(),
-            })
-        {
-            self.pending_hot_accounting = None;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn materialize_pending_hot_accounting(&mut self) {
-        if let Some(pending) = self.pending_hot_accounting {
-            self.pending_hot_accounting = None;
-            self.total_allocated += pending.size;
-            self.active_count += 1;
-        }
     }
 
     /// Allocates `size` bytes of memory using the given backend.
@@ -504,16 +421,6 @@ impl MallocState {
         };
 
         let bin_usize = bin.get();
-        let trace_certificate_enabled = self.trace_logs_enabled();
-        if !trace_certificate_enabled
-            && size_class::is_exact_size_class(size, bin)
-            && let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take()
-        {
-            self.thread_cache_hits += 1;
-            self.track_hot_slot_allocation(ptr, size, bin);
-            return Some(ptr);
-        }
-
         let class_size = size_class::size_for_index(bin);
         let class_membership_valid = class_size >= size && class_size > 0;
         // The size-class certificate is diagnostic only (the allocation proceeds
@@ -521,6 +428,8 @@ impl MallocState {
         // certificate rows are dropped; avoid evaluating the SOS polynomial on
         // that hot path. Trace mode still records the byte-identical certificate,
         // and cheap violation prechecks preserve Warn rows for bad mappings.
+        let trace_certificate_enabled =
+            (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8);
         if trace_certificate_enabled
             || size_class_certificate_may_violate(size, class_size, class_membership_valid)
         {
@@ -552,19 +461,17 @@ impl MallocState {
         // Try thread cache first
         if let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take() {
             self.thread_cache_hits += 1;
-            self.track_hot_slot_allocation(ptr, size, bin);
-            if trace_certificate_enabled {
-                self.record_lifecycle(
-                    AllocatorLogLevel::Trace,
-                    "malloc",
-                    "alloc",
-                    Some(ptr),
-                    Some(size),
-                    Some(bin_usize),
-                    "success",
-                    "path=thread_cache",
-                );
-            }
+            self.track_allocation(size);
+            self.record_lifecycle(
+                AllocatorLogLevel::Trace,
+                "malloc",
+                "alloc",
+                Some(ptr),
+                Some(size),
+                Some(bin_usize),
+                "success",
+                "path=thread_cache",
+            );
             return Some(ptr);
         }
         if let Some(ptr) = self.thread_cache.alloc_index(bin) {
@@ -670,52 +577,21 @@ impl MallocState {
         let size = if size == 0 { 1 } else { size };
         let mut ptr = ptr;
 
-        if let Some(pending) = self.pending_hot_accounting
-            && pending.ptr == ptr
-            && pending.size == size
-            && !self.trace_logs_enabled()
-            && self.thread_cache_hot_slots[pending.bin].is_none()
-        {
-            self.pending_hot_accounting = None;
-            self.thread_cache_hot_slots[pending.bin] = Some(ptr);
-            return;
-        }
-
         let Some(bin) = size_class::small_bin_index(size) else {
-            let removed_alloc = if self
+            let removed = if self
                 .large_fast_active
                 .as_ref()
                 .is_some_and(|alloc| alloc.base == ptr)
             {
-                Some(
-                    self.large_fast_active
-                        .take()
-                        .expect("fast active slot existed"),
-                )
+                let _ = self
+                    .large_fast_active
+                    .take()
+                    .expect("fast active slot existed");
+                true
             } else {
-                let alloc = self.large_allocations.lookup(ptr).cloned();
-                if alloc.is_some() {
-                    let removed = self.large_allocations.free(ptr);
-                    debug_assert!(removed);
-                }
-                alloc
+                self.large_allocations.free(ptr)
             };
-
-            let Some(removed_alloc) = removed_alloc else {
-                self.record_lifecycle(
-                    AllocatorLogLevel::Warn,
-                    "free",
-                    "free",
-                    Some(ptr),
-                    Some(size),
-                    Some(NUM_SIZE_CLASSES),
-                    "unknown_free_pointer",
-                    "path=large_allocator;metadata_missing",
-                );
-                return;
-            };
-
-            self.total_allocated = self.total_allocated.saturating_sub(removed_alloc.user_size);
+            self.total_allocated = self.total_allocated.saturating_sub(size);
             self.active_count = self.active_count.saturating_sub(1);
             free_fn(ptr);
             self.record_lifecycle(
@@ -723,30 +599,30 @@ impl MallocState {
                 "free",
                 "free",
                 Some(ptr),
-                Some(removed_alloc.user_size),
+                Some(size),
                 Some(NUM_SIZE_CLASSES),
                 "success",
-                "path=large_allocator;metadata_removed",
+                if removed {
+                    "path=large_allocator;metadata_removed"
+                } else {
+                    "path=large_allocator;metadata_missing"
+                },
             );
             return;
         };
         let bin_usize = bin.get();
 
-        let cleared_pending_hot_accounting = self.clear_pending_hot_accounting(ptr, size, bin);
-        if !cleared_pending_hot_accounting {
-            self.materialize_pending_hot_accounting();
-            self.total_allocated = self.total_allocated.saturating_sub(size);
-            self.active_count = self.active_count.saturating_sub(1);
-        }
+        self.total_allocated = self.total_allocated.saturating_sub(size);
+        self.active_count = self.active_count.saturating_sub(1);
 
         // A single-owned elimination array cannot have a waiting consumer; once
         // another handle exists, preserve the existing elimination-first order.
-        if self.elimination_handoff_possible() {
+        if Arc::strong_count(&self.elimination) > 1 {
             match self.elimination.try_offer(bin_usize, ptr) {
                 OfferOutcome::Matched(meta) => {
                     // Detail string only when the Trace row survives the gate —
                     // skips a heap `format!` on every elimination-matched free.
-                    if self.trace_logs_enabled() {
+                    if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
                         self.record_lifecycle(
                             AllocatorLogLevel::Trace,
                             "free",
@@ -771,29 +647,19 @@ impl MallocState {
             }
         }
 
-        if cleared_pending_hot_accounting
-            && !self.trace_logs_enabled()
-            && self.thread_cache_hot_slots[bin_usize].is_none()
-        {
-            self.thread_cache_hot_slots[bin_usize] = Some(ptr);
-            return;
-        }
-
         let cached = self.cache_small_object(bin, ptr);
 
         if cached {
-            if self.trace_logs_enabled() {
-                self.record_lifecycle(
-                    AllocatorLogLevel::Trace,
-                    "free",
-                    "free",
-                    Some(ptr),
-                    Some(size),
-                    Some(bin_usize),
-                    "success",
-                    "path=thread_cache",
-                );
-            }
+            self.record_lifecycle(
+                AllocatorLogLevel::Trace,
+                "free",
+                "free",
+                Some(ptr),
+                Some(size),
+                Some(bin_usize),
+                "success",
+                "path=thread_cache",
+            );
         } else {
             // Thread cache full, spill to central bin or backend
             self.spills_to_central += 1;
@@ -847,12 +713,12 @@ impl MallocState {
 
     /// Returns the total bytes currently allocated (user-requested).
     pub fn total_allocated(&self) -> usize {
-        self.observed_total_allocated()
+        self.total_allocated
     }
 
     /// Returns the total number of active allocations.
     pub fn active_count(&self) -> usize {
-        self.observed_active_count()
+        self.active_count
     }
 
     /// Returns the total number of active large allocations.
@@ -1238,60 +1104,6 @@ mod tests {
     }
 
     #[test]
-    fn hot_slot_lazy_accounting_is_exact_and_materializes_before_next_shape() {
-        let mut state = MallocState::new();
-        let size = 64;
-        let bin = size_class::small_bin_index(size).expect("64B allocation has a small bin");
-        let mut next_ptr = 0x3200_0000usize;
-
-        let ptr = state
-            .malloc(size, |class_size| {
-                next_ptr = next_ptr.wrapping_add(class_size.max(1));
-                Some(next_ptr)
-            })
-            .expect("initial allocation must succeed");
-        state.free(ptr, size, |_| {});
-
-        let reused = state
-            .malloc(size, |_| {
-                unreachable!(
-                    // ubs:ignore — hot slot should satisfy the one-live cycle
-                    "hot slot allocation must not call backend"
-                )
-            })
-            .expect("hot slot reuse must succeed");
-        assert_eq!(reused, ptr);
-        assert_eq!(state.active_count(), 1);
-        assert_eq!(state.total_allocated(), size);
-        assert_eq!(state.active_count, 0);
-        assert_eq!(state.total_allocated, 0);
-        assert_eq!(
-            state.pending_hot_accounting,
-            Some(PendingHotAccounting {
-                ptr,
-                size,
-                bin: bin.get()
-            })
-        );
-
-        let second = state
-            .malloc(size * 2, |class_size| {
-                next_ptr = next_ptr.wrapping_add(class_size.max(1));
-                Some(next_ptr)
-            })
-            .expect("second allocation must succeed");
-        assert_ne!(second, reused);
-        assert_eq!(state.pending_hot_accounting, None);
-        assert_eq!(state.active_count(), 2);
-        assert_eq!(state.total_allocated(), size * 3);
-
-        state.free(reused, size, |_| {});
-        state.free(second, size * 2, |_| {});
-        assert_eq!(state.active_count(), 0);
-        assert_eq!(state.total_allocated(), 0);
-    }
-
-    #[test]
     fn hot_cycle_lifecycle_record_sha256_is_stable() {
         let mut state = MallocState::new();
         state.set_min_log_level(AllocatorLogLevel::Trace);
@@ -1456,33 +1268,6 @@ mod tests {
         assert_eq!(state.total_large_mapped(), 0);
         assert_eq!(backend_allocations, 1);
         assert_eq!(state.total_allocated(), 0);
-    }
-
-    #[test]
-    fn test_large_free_unknown_pointer_does_not_release_backend_or_accounting() {
-        let mut state = MallocState::new();
-        let size = size_class::MAX_SMALL_SIZE + 1;
-        let ptr = state.malloc(size, test_alloc).unwrap();
-        let unknown = ptr.wrapping_add(size).max(1);
-        let mut backend_called = false;
-
-        state.free(unknown, size, |_| {
-            backend_called = true;
-        });
-
-        assert!(!backend_called);
-        assert_eq!(state.active_count(), 1);
-        assert_eq!(state.total_allocated(), size);
-        assert_eq!(state.active_large_count(), 1);
-        assert!(state.large_allocation(ptr).is_some());
-        let last = state
-            .lifecycle_logs()
-            .last()
-            .expect("unknown large free must record a warning");
-        assert_eq!(last.outcome, "unknown_free_pointer");
-        assert_eq!(last.details, "path=large_allocator;metadata_missing");
-
-        state.free(ptr, size, |p| test_free(p, size));
     }
 
     #[test]
