@@ -39,19 +39,42 @@ pub trait FsOps {
     fn read_dir(&self, path: &[u8], visit_entry: &mut dyn FnMut(&[u8])) -> bool;
 }
 
-/// Drive a POSIX `nftw`-style tree walk rooted at `root`.
+/// How a [`walk_tree`] run ended.
 ///
-/// Returns:
-///   - `-1` if the root could not be stat'd (POSIX: "shall return -1
-///     if it cannot start the walk")
-///   - the first non-zero return from `visit` (which short-circuits)
-///   - `0` if the entire walk completed
+/// `ftw`/`nftw` answer `-1` in two unrelated situations — the walk never
+/// started, and the caller's own callback returned `-1` — and glibc treats
+/// them differently: only the first touches `errno`. Collapsing both into a
+/// bare `-1` would make that distinction unrecoverable at the ABI boundary,
+/// so the outcome is reported structurally instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalkOutcome {
+    /// The root could not be stat'd, so no entry was ever visited (POSIX:
+    /// "shall return -1 if it cannot start the walk"). The caller owns
+    /// reporting `errno`.
+    RootUnreadable,
+    /// The walk ran. The payload is what `ftw`/`nftw` must return: `0` for a
+    /// complete walk, otherwise the callback return value that ended it.
+    Completed(i32),
+}
+
+impl WalkOutcome {
+    /// The `c_int` an `ftw`/`nftw` caller sees. Note this is lossy by design:
+    /// `RootUnreadable` and `Completed(-1)` both render as `-1`.
+    pub const fn as_c_int(self) -> i32 {
+        match self {
+            WalkOutcome::RootUnreadable => -1,
+            WalkOutcome::Completed(value) => value,
+        }
+    }
+}
+
+/// Drive a POSIX `nftw`-style tree walk rooted at `root`.
 ///
 /// `visit(path, stat, type_flag, level, base)` is called for every
 /// entry encountered; `level` is depth from root (0 for root) and
 /// `base` is the byte index of the basename inside `path` (matching
 /// POSIX `FTW.base`).
-pub fn walk_tree<F, V>(root: &[u8], fs: &F, flags: WalkFlags, mut visit: V) -> i32
+pub fn walk_tree<F, V>(root: &[u8], fs: &F, flags: WalkFlags, mut visit: V) -> WalkOutcome
 where
     F: FsOps,
     V: FnMut(&[u8], &F::Stat, WalkType, usize, usize) -> i32,
@@ -64,13 +87,13 @@ where
     };
     let root_stat = match probe {
         Some(s) => s,
-        None => return -1,
+        None => return WalkOutcome::RootUnreadable,
     };
     let root_dev = root_stat.dev_id();
-    match walk_rec(root, fs, flags, &mut visit, 0, root_dev) {
+    WalkOutcome::Completed(match walk_rec(root, fs, flags, &mut visit, 0, root_dev) {
         WalkControl::Stop(r) => r,
         WalkControl::Continue | WalkControl::SkipSubtree | WalkControl::SkipSiblings => 0,
-    }
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -363,7 +386,7 @@ mod tests {
             visits.push((p.to_vec(), t));
             0
         });
-        assert_eq!(r, 0);
+        assert_eq!(r, WalkOutcome::Completed(0));
         // Pre-order: root visited before children
         let paths: Vec<&[u8]> = visits.iter().map(|(p, _)| p.as_slice()).collect();
         assert!(paths.contains(&b"/root".as_slice()));
@@ -378,7 +401,35 @@ mod tests {
     fn walk_nonexistent_root_returns_minus_one() {
         let fs = build_simple_fs();
         let r = walk_tree(b"/nope", &fs, WalkFlags::NONE, |_, _, _, _, _| 0);
-        assert_eq!(r, -1);
+        assert_eq!(r, WalkOutcome::RootUnreadable);
+        assert_eq!(r.as_c_int(), -1);
+    }
+
+    #[test]
+    fn walk_distinguishes_a_minus_one_callback_from_an_unreadable_root() {
+        // Both render as -1 to the C caller, but only the unreadable root may
+        // set errno, so ftw/nftw have to be able to tell them apart.
+        let fs = build_simple_fs();
+        let from_callback = walk_tree(b"/root", &fs, WalkFlags::NONE, |_, _, _, _, _| -1);
+        let from_root = walk_tree(b"/nope", &fs, WalkFlags::NONE, |_, _, _, _, _| 0);
+        assert_eq!(from_callback, WalkOutcome::Completed(-1));
+        assert_eq!(from_root, WalkOutcome::RootUnreadable);
+        assert_ne!(from_callback, from_root);
+        assert_eq!(from_callback.as_c_int(), from_root.as_c_int());
+    }
+
+    #[test]
+    fn walk_actionretval_minus_one_is_not_an_action() {
+        // -1 is none of FTW_CONTINUE/STOP/SKIP_SUBTREE/SKIP_SIBLINGS, so under
+        // FTW_ACTIONRETVAL it aborts the walk and propagates verbatim.
+        let fs = build_simple_fs();
+        let mut count = 0;
+        let r = walk_tree(b"/root", &fs, WalkFlags::ACTIONRETVAL, |_, _, _, _, _| {
+            count += 1;
+            if count == 2 { -1 } else { 0 }
+        });
+        assert_eq!(r, WalkOutcome::Completed(-1));
+        assert_eq!(count, 2);
     }
 
     #[test]
@@ -389,7 +440,7 @@ mod tests {
             count += 1;
             if count == 2 { 42 } else { 0 }
         });
-        assert_eq!(r, 42);
+        assert_eq!(r, WalkOutcome::Completed(42));
         assert_eq!(count, 2);
     }
 
@@ -401,7 +452,7 @@ mod tests {
             visits.push(p.to_vec());
             if p == b"/root/b.txt" { 1 } else { 0 }
         });
-        assert_eq!(r, 1);
+        assert_eq!(r, WalkOutcome::Completed(1));
         assert!(visits.iter().any(|p| p == b"/root/a.txt"));
         assert!(visits.iter().any(|p| p == b"/root/b.txt"));
         assert!(!visits.iter().any(|p| p == b"/root/sub"));
@@ -415,7 +466,7 @@ mod tests {
             visits.push(p.to_vec());
             if p == b"/root/sub" { 2 } else { 0 }
         });
-        assert_eq!(r, 0);
+        assert_eq!(r, WalkOutcome::Completed(0));
         assert!(visits.iter().any(|p| p == b"/root/sub"));
         assert!(!visits.iter().any(|p| p == b"/root/sub/c.txt"));
     }
@@ -428,7 +479,7 @@ mod tests {
             visits.push(p.to_vec());
             if p == b"/root/a.txt" { 3 } else { 0 }
         });
-        assert_eq!(r, 0);
+        assert_eq!(r, WalkOutcome::Completed(0));
         assert!(visits.iter().any(|p| p == b"/root/a.txt"));
         assert!(!visits.iter().any(|p| p == b"/root/b.txt"));
         assert!(!visits.iter().any(|p| p == b"/root/sub"));
@@ -442,7 +493,7 @@ mod tests {
             visits.push((p.to_vec(), t));
             0
         });
-        assert_eq!(r, 0);
+        assert_eq!(r, WalkOutcome::Completed(0));
         // Find /root/sub and /root: must appear with DirPostOrder type
         // and AFTER all their children
         let sub_idx = visits
