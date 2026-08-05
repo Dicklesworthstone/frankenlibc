@@ -20480,8 +20480,126 @@ pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
 /// Linux `closefrom` — close all fd >= lowfd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn closefrom(lowfd: c_int) {
-    // close_range syscall (kernel 5.9+)
-    let _ = syscall::sys_close_range(lowfd as u32, !0u32, 0);
+    // glibc clamps a negative lowfd to 0 and closes everything. Casting it
+    // straight to u32 instead would ask close_range to start at ~4 billion,
+    // which closes nothing at all.
+    let low = lowfd.max(0) as u32;
+
+    // close_range needs kernel 5.9+, and can also be denied by a seccomp
+    // filter. Discarding the result here is what made closefrom a silent no-op
+    // on those systems, leaving every descriptor open across the exec that the
+    // caller was trying to protect. bd-6br349.
+    if syscall::sys_close_range(low, !0u32, 0).is_ok() {
+        return;
+    }
+    if closefrom_proc_fallback(low) {
+        return;
+    }
+    closefrom_rlimit_fallback(low);
+}
+
+/// Close every descriptor at or above `low` by walking `/proc/self/fd`.
+///
+/// Returns false when /proc is not available (a chroot or a minimal container),
+/// which is the only case where the caller needs the cruder rlimit sweep.
+///
+/// Public so the conformance gate can drive this path directly: on any kernel
+/// new enough to run the tests, `close_range` succeeds and this code would
+/// otherwise never execute.
+pub fn closefrom_proc_fallback(low: u32) -> bool {
+    const AT_FDCWD: i32 = -100;
+    const O_RDONLY: i32 = 0;
+    const O_DIRECTORY: i32 = 0o200000;
+    const O_CLOEXEC: i32 = 0o2000000;
+
+    // SAFETY: the path is a literal NUL-terminated C string.
+    let dirfd = match unsafe {
+        syscall::sys_openat(
+            AT_FDCWD,
+            c"/proc/self/fd".as_ptr().cast::<u8>(),
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC,
+            0,
+        )
+    } {
+        Ok(fd) => fd,
+        Err(_) => return false,
+    };
+
+    // linux_dirent64: d_ino u64, d_off i64, d_reclen u16, d_type u8, then the
+    // NUL-terminated name.
+    const RECLEN_OFF: usize = 16;
+    const NAME_OFF: usize = 19;
+    let mut buf = [0u8; 4096];
+    loop {
+        // SAFETY: buf is a live, writable array of exactly this length.
+        let n = match unsafe { syscall::sys_getdents64(dirfd, buf.as_mut_ptr(), buf.len()) } {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        let mut off = 0usize;
+        while off + NAME_OFF <= n {
+            let reclen =
+                u16::from_ne_bytes([buf[off + RECLEN_OFF], buf[off + RECLEN_OFF + 1]]) as usize;
+            if reclen == 0 || off + reclen > n {
+                break;
+            }
+            // Parse the name as a descriptor number; "." and ".." simply fail
+            // to parse and are skipped along with anything else unexpected.
+            let name = &buf[off + NAME_OFF..off + reclen];
+            let mut fd: u32 = 0;
+            let mut digits = 0u32;
+            for &b in name {
+                if b == 0 {
+                    break;
+                }
+                if !b.is_ascii_digit() {
+                    digits = 0;
+                    break;
+                }
+                fd = match fd
+                    .checked_mul(10)
+                    .and_then(|v| v.checked_add((b - b'0') as u32))
+                {
+                    Some(v) => v,
+                    None => {
+                        digits = 0;
+                        break;
+                    }
+                };
+                digits += 1;
+            }
+            // Never close the descriptor we are iterating through.
+            if digits > 0 && fd >= low && fd as i32 != dirfd {
+                let _ = syscall::sys_close(fd as i32);
+            }
+            off += reclen;
+        }
+    }
+
+    let _ = syscall::sys_close(dirfd);
+    true
+}
+
+/// Last resort when /proc is unmounted: close every descriptor from `low` up to
+/// the soft RLIMIT_NOFILE, which is the highest one this process could hold.
+///
+/// Public for the same reason as [`closefrom_proc_fallback`].
+pub fn closefrom_rlimit_fallback(low: u32) {
+    // struct rlimit { rlim_cur: u64, rlim_max: u64 } on every supported target.
+    let mut rlim = [0u64; 2];
+    // SAFETY: rlim points to a two-word buffer, the layout the kernel writes.
+    if unsafe { syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr().cast()) }
+        .is_err()
+    {
+        return;
+    }
+    // RLIM_INFINITY would mean an unbounded loop; the kernel caps a process at
+    // far fewer descriptors than that, so clamp to a sane ceiling.
+    let maxfd = rlim[0].min(u32::from(u16::MAX) as u64 * 16) as u32;
+    for fd in low..maxfd {
+        let _ = syscall::sys_close(fd as i32);
+    }
 }
 
 /// POSIX `clock_getcpuclockid` — get CPU-time clock for a process.
