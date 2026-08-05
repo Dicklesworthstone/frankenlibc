@@ -278,6 +278,252 @@ fn sigpending_child_invocation() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// bd-wh14ly — SIGCANCEL/SIGSETXID are deleted from every set handed to
+// sigprocmask
+// ---------------------------------------------------------------------------
+//
+// glibc's `__sigprocmask` filters signals 32 (SIGCANCEL) and 33 (SIGSETXID) out
+// of any set it is given, so a caller can never block the signals glibc's own
+// thread cancellation and setxid broadcast ride on:
+//
+// ```c
+// if (set != NULL && (__sigismember (set, SIGCANCEL) || __sigismember (set, SIGSETXID)))
+//   { local = *set; __sigdelset (&local, SIGCANCEL); __sigdelset (&local, SIGSETXID);
+//     set = &local; }
+// ```
+//
+// fl passed the caller's set straight to `rt_sigprocmask`, so a caller COULD
+// block 32/33, and `pthread_sigmask` inherited the gap by delegation.
+//
+// These arms compare the mask the KERNEL ends up holding after fl and after
+// glibc, read back through a pure query rather than through the function under
+// test — an implementation with a mistaken view of the mask would otherwise
+// report that same mistaken view. Sets are built by writing the kernel word
+// directly, because `sigaddset` rejects signals 32 and 33 outright and so cannot
+// express the case under test.
+//
+// Each arm forks, because it sets the mask to a fixed value rather than
+// save/restoring around the shared lock, and because glibc is reached by dlsym:
+// the `extern "C"` declarations above bind to fl's own exported symbols in a
+// release test build, where `no_mangle` is active, which would measure fl
+// against itself. `glibc_mask_fn` asserts the two entry points are distinct.
+
+type MaskFn = unsafe extern "C" fn(c_int, *const libc::sigset_t, *mut libc::sigset_t) -> c_int;
+
+unsafe extern "C" {
+    fn dlopen(filename: *const i8, flag: c_int) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
+}
+
+fn glibc_mask_fn(name: &std::ffi::CStr, fl_addr: usize) -> MaskFn {
+    unsafe {
+        let h = dlopen(c"libc.so.6".as_ptr(), 2 /* RTLD_NOW */);
+        assert!(!h.is_null(), "dlopen(libc.so.6) failed");
+        let s = dlsym(h, name.as_ptr());
+        assert!(!s.is_null(), "dlsym({name:?}) failed");
+        assert_ne!(
+            s as usize, fl_addr,
+            "{name:?} resolved to fl's own symbol — the arms are not distinct"
+        );
+        std::mem::transmute::<*mut c_void, MaskFn>(s)
+    }
+}
+
+/// The calling thread's blocked-signal mask as the KERNEL holds it, via a pure
+/// query (`set` is NULL, so nothing is changed and no filtering applies).
+fn kernel_blocked_mask() -> u64 {
+    let mut oset: libc::sigset_t = unsafe { core::mem::zeroed() };
+    let rc = unsafe { libc::sigprocmask(SIG_BLOCK, std::ptr::null(), &mut oset) };
+    assert_eq!(rc, 0, "sigprocmask query failed");
+    // The kernel fills the first 8 bytes; the rest of sigset_t is padding.
+    let mut word = [0u8; 8];
+    unsafe {
+        std::ptr::copy_nonoverlapping((&raw const oset).cast::<u8>(), word.as_mut_ptr(), 8)
+    };
+    u64::from_ne_bytes(word)
+}
+
+/// Build a `sigset_t` whose kernel word is exactly `bits`.
+///
+/// Written directly rather than through `sigaddset`, which returns EINVAL for
+/// signals 32 and 33 and therefore cannot construct the sets these arms need.
+fn sigset_from_bits(bits: u64) -> libc::sigset_t {
+    let mut set: libc::sigset_t = unsafe { core::mem::zeroed() };
+    let src = bits.to_ne_bytes();
+    unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), (&raw mut set).cast::<u8>(), src.len()) };
+    set
+}
+
+/// Read `n` bytes the forked child wrote through a pipe, asserting a clean exit.
+fn child_report<const N: usize, F: FnOnce(c_int)>(body: F) -> [u8; N] {
+    let mut fds = [0 as c_int; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+    let (r, w) = (fds[0], fds[1]);
+
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0, "fork failed");
+    if child == 0 {
+        unsafe { libc::close(r) };
+        body(w);
+        unsafe { libc::_exit(1) };
+    }
+
+    unsafe { libc::close(w) };
+    let mut buf = [0u8; N];
+    let n = unsafe { libc::read(r, buf.as_mut_ptr().cast(), N) };
+    unsafe { libc::close(r) };
+    let mut status: c_int = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(child, &mut status, 0) },
+        child,
+        "waitpid failed"
+    );
+    assert!(
+        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        "child did not report cleanly (status {status:#x})"
+    );
+    assert_eq!(n, N as isize, "short read from child");
+    buf
+}
+
+/// Run `f(SIG_SETMASK, &set_of(bits), NULL)` in a forked child and return the
+/// kernel mask it was left with. SIG_SETMASK rather than SIG_BLOCK so the result
+/// is exactly the (filtered) requested set, independent of whatever mask the
+/// harness thread happened to be running under.
+fn resulting_mask(f: MaskFn, bits: u64) -> u64 {
+    let set = sigset_from_bits(bits);
+    let buf = child_report::<8, _>(|w| unsafe {
+        f(SIG_SETMASK, &set, std::ptr::null_mut());
+        let m = kernel_blocked_mask().to_ne_bytes();
+        let n = libc::write(w, m.as_ptr().cast(), m.len());
+        libc::_exit(if n == m.len() as isize { 0 } else { 1 });
+    });
+    u64::from_ne_bytes(buf)
+}
+
+const SIGCANCEL_BIT: u64 = 1 << 31; // signal 32
+const SIGSETXID_BIT: u64 = 1 << 32; // signal 33
+const SIGUSR1_BIT: u64 = 1 << (libc::SIGUSR1 as u64 - 1);
+const SIGUSR2_BIT: u64 = 1 << (libc::SIGUSR2 as u64 - 1);
+
+/// The reserved bits alone, together, mixed with an ordinary signal, and an
+/// ordinary-only control that must still end up blocked — so an implementation
+/// that clears too much fails as loudly as one that clears nothing.
+const RESERVED_SETS: &[(u64, &str)] = &[
+    (SIGCANCEL_BIT, "SIGCANCEL (32) only"),
+    (SIGSETXID_BIT, "SIGSETXID (33) only"),
+    (SIGCANCEL_BIT | SIGSETXID_BIT, "SIGCANCEL + SIGSETXID"),
+    (
+        SIGCANCEL_BIT | SIGSETXID_BIT | SIGUSR1_BIT,
+        "SIGCANCEL + SIGSETXID + SIGUSR1",
+    ),
+    (SIGUSR1_BIT | SIGUSR2_BIT, "SIGUSR1 + SIGUSR2 (control)"),
+    (u64::MAX, "all bits"),
+    (0, "empty"),
+];
+
+#[test]
+fn sigprocmask_filters_reserved_signals_like_glibc() {
+    let g = glibc_mask_fn(c"sigprocmask", fl::sigprocmask as *const () as usize);
+    for &(bits, label) in RESERVED_SETS {
+        let mg = resulting_mask(g, bits);
+        let mf = resulting_mask(fl::sigprocmask, bits);
+        assert_eq!(
+            mf, mg,
+            "sigprocmask(SIG_SETMASK, {label}) left a different kernel mask: \
+             fl={mf:#018x} glibc={mg:#018x}"
+        );
+    }
+}
+
+#[test]
+fn pthread_sigmask_filters_reserved_signals_like_glibc() {
+    let g = glibc_mask_fn(c"pthread_sigmask", fl::pthread_sigmask as *const () as usize);
+    for &(bits, label) in RESERVED_SETS {
+        let mg = resulting_mask(g, bits);
+        let mf = resulting_mask(fl::pthread_sigmask, bits);
+        assert_eq!(
+            mf, mg,
+            "pthread_sigmask(SIG_SETMASK, {label}) left a different kernel mask: \
+             fl={mf:#018x} glibc={mg:#018x}"
+        );
+    }
+}
+
+#[test]
+fn sigprocmask_never_blocks_sigcancel_or_sigsetxid() {
+    // States what the differential arms enforce, so a regression reads as the
+    // bug rather than as two opaque hex words. The pre-fix implementation handed
+    // the set to the kernel unfiltered and left both bits set.
+    let mf = resulting_mask(fl::sigprocmask, SIGCANCEL_BIT | SIGSETXID_BIT | SIGUSR1_BIT);
+    assert_eq!(
+        mf & SIGCANCEL_BIT,
+        0,
+        "sigprocmask blocked signal 32 (SIGCANCEL), which glibc deletes from every set \
+         handed to it (mask {mf:#018x})"
+    );
+    assert_eq!(
+        mf & SIGSETXID_BIT,
+        0,
+        "sigprocmask blocked signal 33 (SIGSETXID), which glibc deletes from every set \
+         handed to it (mask {mf:#018x})"
+    );
+    // Negative case: the filter must delete exactly those two bits, not swallow
+    // the request. An implementation that ignored the set entirely, or zeroed
+    // it, would satisfy the two assertions above and fail this one.
+    assert_eq!(
+        mf & SIGUSR1_BIT,
+        SIGUSR1_BIT,
+        "sigprocmask dropped the ordinary signal in the same set (mask {mf:#018x})"
+    );
+}
+
+#[test]
+fn sigprocmask_filters_a_copy_and_reports_the_kernel_old_mask() {
+    // The filter must be visible nowhere but the kernel: the caller's `set` is
+    // read-only input (glibc filters a local copy), and `oldset` reports what
+    // the kernel actually held.
+    let requested = SIGCANCEL_BIT | SIGSETXID_BIT | SIGUSR1_BIT;
+    let set = sigset_from_bits(requested);
+    let base = sigset_from_bits(SIGUSR2_BIT);
+
+    let buf = child_report::<24, _>(|w| unsafe {
+        // Establish a known starting mask, then overwrite it.
+        fl::sigprocmask(SIG_SETMASK, &base, std::ptr::null_mut());
+
+        let mut oldset: libc::sigset_t = core::mem::zeroed();
+        let rc = fl::sigprocmask(SIG_SETMASK, &set, &mut oldset);
+
+        let mut old_word = [0u8; 8];
+        std::ptr::copy_nonoverlapping((&raw const oldset).cast::<u8>(), old_word.as_mut_ptr(), 8);
+        let mut set_word = [0u8; 8];
+        std::ptr::copy_nonoverlapping((&raw const set).cast::<u8>(), set_word.as_mut_ptr(), 8);
+
+        let out = [
+            rc as i64 as u64,
+            u64::from_ne_bytes(old_word),
+            u64::from_ne_bytes(set_word),
+        ];
+        let bytes = std::slice::from_raw_parts(out.as_ptr().cast::<u8>(), 24);
+        let n = libc::write(w, bytes.as_ptr().cast(), 24);
+        libc::_exit(if n == 24 { 0 } else { 1 });
+    });
+
+    let word = |i: usize| u64::from_ne_bytes(buf[i * 8..i * 8 + 8].try_into().unwrap());
+    let (rc, oldset, caller_set) = (word(0), word(1), word(2));
+    assert_eq!(rc, 0, "sigprocmask reported failure ({rc})");
+    assert_eq!(
+        oldset, SIGUSR2_BIT,
+        "oldset should report the mask the kernel held ({SIGUSR2_BIT:#018x}), got {oldset:#018x}"
+    );
+    assert_eq!(
+        caller_set, requested,
+        "sigprocmask modified the caller's set in place ({requested:#018x} -> \
+         {caller_set:#018x}); glibc filters a local copy"
+    );
+}
+
 #[test]
 fn sigprocmask_diff_coverage_report() {
     let _ = core::ptr::null::<c_void>();

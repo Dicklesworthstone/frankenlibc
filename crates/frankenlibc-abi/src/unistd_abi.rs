@@ -23906,8 +23906,9 @@ pub unsafe extern "C" fn getutmpx(_u: *const c_void, _ux: *mut c_void) {
 ///   refusal to block SIGKILL and SIGSTOP.
 #[inline]
 fn bsd_mask_to_sigset(mask: c_int) -> u64 {
-    const SIGCANCEL_BIT: u64 = 1 << 31; // signal 32
-    (mask as u32 as u64) & !SIGCANCEL_BIT
+    // Bit 31 (SIGCANCEL) is the only reserved bit a 32-bit mask can reach; the
+    // constant names both so the rule stays defined in exactly one place.
+    (mask as u32 as u64) & !frankenlibc_core::signal::GLIBC_RESERVED_SIGNAL_MASK
 }
 
 /// `sigblock` — block signals (deprecated, use sigprocmask).

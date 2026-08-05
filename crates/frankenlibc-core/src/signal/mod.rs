@@ -41,6 +41,17 @@ pub fn glibc_reserved_signal(signum: i32) -> bool {
     signum == 32 || signum == 33
 }
 
+/// The same two reserved signals as a kernel `sigset_t` word-0 bitmask: bit 31
+/// is SIGCANCEL (32) and bit 32 is SIGSETXID (33), since signal `n` occupies bit
+/// `n - 1`.
+///
+/// glibc's `__sigprocmask` deletes both from any set handed to it, so a caller
+/// can never block the signals glibc's own thread-cancellation and setxid
+/// broadcast machinery rides on. Callers that build a kernel mask directly —
+/// rather than through `sigaddset`, which rejects these signals outright — clear
+/// this mask so the rule has a single definition.
+pub const GLIBC_RESERVED_SIGNAL_MASK: u64 = (1 << 31) | (1 << 32);
+
 /// Returns `true` if `signum` can have a user-defined handler installed.
 ///
 /// SIGKILL and SIGSTOP cannot be caught, blocked, or ignored.

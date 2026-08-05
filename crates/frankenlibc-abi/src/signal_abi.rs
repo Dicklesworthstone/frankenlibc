@@ -901,13 +901,31 @@ pub unsafe extern "C" fn sigprocmask(
     }
 
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+
+    // glibc deletes SIGCANCEL (32) and SIGSETXID (33) from every set handed to
+    // sigprocmask, so a caller can never block the signals its own thread
+    // cancellation and setxid broadcast ride on. Substitute a filtered copy only
+    // when one of those bits is actually set, matching glibc's own shape: the
+    // common call passes the caller's pointer straight through untouched.
+    //
+    // Only word 0 matters — `kernel_sigset_size` is 8, so that is all the kernel
+    // reads, and both reserved bits (31 and 32) live in it.
+    let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
+    let mut filtered: libc::c_ulong = 0;
+    let mut effective_set = set as *const u8;
+    if !set.is_null() {
+        // SAFETY: a non-null `sigset_t` is at least one `c_ulong` wide, and
+        // glibc's `__sigprocmask` reads the caller's set here for the same
+        // membership test, so this dereferences no more than the incumbent.
+        let word0 = unsafe { *(set as *const libc::c_ulong) };
+        if word0 & reserved != 0 {
+            filtered = word0 & !reserved;
+            effective_set = (&raw const filtered).cast::<u8>();
+        }
+    }
+
     let rc = match unsafe {
-        raw_syscall::sys_rt_sigprocmask(
-            how,
-            set as *const u8,
-            oldset as *mut u8,
-            kernel_sigset_size,
-        )
+        raw_syscall::sys_rt_sigprocmask(how, effective_set, oldset as *mut u8, kernel_sigset_size)
     } {
         Ok(()) => 0,
         Err(e) => {
