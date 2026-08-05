@@ -387,12 +387,29 @@ fn child_report<const N: usize, F: FnOnce(c_int)>(body: F) -> [u8; N] {
     buf
 }
 
+/// Drive one pure query (`set` is NULL, so nothing changes) through `f` on the
+/// calling thread BEFORE forking.
+///
+/// fl's entry points reach `__errno_location`, whose fallback path takes a
+/// global mutex and allocates, and `runtime_policy`, which is lazily built. If
+/// that first-touch happens inside a child forked from this multithreaded
+/// harness, the child can deadlock on a lock another test thread held at fork
+/// time — which is exactly what `pthread_sigmask` did, because it reads errno on
+/// every call while `sigprocmask` only touches it on failure. The child forks
+/// from this thread and inherits its TLS, so warming here means the child finds
+/// the slot already built.
+fn prewarm(f: MaskFn) {
+    let mut warm: libc::sigset_t = unsafe { core::mem::zeroed() };
+    unsafe { f(SIG_BLOCK, std::ptr::null(), &mut warm) };
+}
+
 /// Run `f(SIG_SETMASK, &set_of(bits), NULL)` in a forked child and return the
 /// kernel mask it was left with. SIG_SETMASK rather than SIG_BLOCK so the result
 /// is exactly the (filtered) requested set, independent of whatever mask the
 /// harness thread happened to be running under.
 fn resulting_mask(f: MaskFn, bits: u64) -> u64 {
     let set = sigset_from_bits(bits);
+    prewarm(f);
     let buf = child_report::<8, _>(|w| unsafe {
         f(SIG_SETMASK, &set, std::ptr::null_mut());
         let m = kernel_blocked_mask().to_ne_bytes();
@@ -487,6 +504,7 @@ fn sigprocmask_filters_a_copy_and_reports_the_kernel_old_mask() {
     let requested = SIGCANCEL_BIT | SIGSETXID_BIT | SIGUSR1_BIT;
     let set = sigset_from_bits(requested);
     let base = sigset_from_bits(SIGUSR2_BIT);
+    prewarm(fl::sigprocmask);
 
     let buf = child_report::<24, _>(|w| unsafe {
         // Establish a known starting mask, then overwrite it.
