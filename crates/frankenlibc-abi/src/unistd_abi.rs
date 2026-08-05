@@ -20263,9 +20263,118 @@ fn with_utmpx_buf<R>(f: impl FnOnce(&mut libc::utmpx) -> R) -> R {
     }
 }
 
-/// `pututxline` — write utmpx entry.
+/// Compare two fixed-width utmpx char fields with `strncmp` semantics: equal up
+/// to the bound, stopping at the first NUL.
+fn utmpx_field_eq(a: &[c_char], b: &[c_char]) -> bool {
+    for i in 0..a.len().min(b.len()) {
+        if a[i] != b[i] {
+            return false;
+        }
+        if a[i] == 0 {
+            return true;
+        }
+    }
+    true
+}
+
+/// Does the record already in the file get superseded by the new one?
 ///
-/// Native: appends the entry to the utmp file.
+/// This is glibc's `internal_getut_r` + `__utmp_equal` rule, verified against
+/// live glibc 2.42 on a scratch utmpx file:
+///
+/// * RUN_LVL / BOOT_TIME / OLD_TIME / NEW_TIME match on **type alone** — a
+///   second BOOT_TIME replaces the first even with a different `ut_id`.
+/// * Otherwise both records must be in the process class (INIT/LOGIN/USER/DEAD),
+///   which is why a DEAD_PROCESS overwrites the USER_PROCESS it closes out.
+/// * Within that class, `ut_id` decides when both are non-empty (so the same id
+///   on a different line still matches, and the stored line is updated);
+///   otherwise the comparison falls back to `ut_line`.
+fn utmpx_supersedes(existing: &libc::utmpx, new: &libc::utmpx) -> bool {
+    const RUN_LVL: i16 = 1;
+    const BOOT_TIME: i16 = 2;
+    const NEW_TIME: i16 = 3;
+    const OLD_TIME: i16 = 4;
+    const INIT_PROCESS: i16 = 5;
+    const LOGIN_PROCESS: i16 = 6;
+    const USER_PROCESS: i16 = 7;
+    const DEAD_PROCESS: i16 = 8;
+
+    if matches!(new.ut_type, RUN_LVL | BOOT_TIME | OLD_TIME | NEW_TIME) {
+        return existing.ut_type == new.ut_type;
+    }
+
+    let in_process_class = |t: i16| {
+        matches!(
+            t,
+            INIT_PROCESS | LOGIN_PROCESS | USER_PROCESS | DEAD_PROCESS
+        )
+    };
+    if !(in_process_class(existing.ut_type) && in_process_class(new.ut_type)) {
+        return false;
+    }
+
+    if existing.ut_id[0] != 0 && new.ut_id[0] != 0 {
+        utmpx_field_eq(&existing.ut_id, &new.ut_id)
+    } else {
+        utmpx_field_eq(&existing.ut_line, &new.ut_line)
+    }
+}
+
+/// Byte offset `ut` should be written at: the first record it supersedes at or
+/// after `start`, or end-of-file when there is none.
+///
+/// The search begins at the caller's current read cursor rather than at the top
+/// of the file, because glibc's does. Verified against live glibc 2.42 with the
+/// same two writes either side of a rewind:
+///
+/// ```text
+/// setutxent(); put(alice id=t1); put(bob id=t1)              -> TWO records
+/// setutxent(); put(alice id=t1); setutxent(); put(bob id=t1) -> ONE record
+/// ```
+///
+/// The second write in the first script does not see the first, because the
+/// cursor is already past it. Searching from 0 unconditionally would collapse
+/// that to one record and silently lose an entry a caller expected to keep.
+///
+/// # Safety
+///
+/// `fd` must be a readable descriptor and `ut` a valid `utmpx`.
+unsafe fn utmpx_slot_offset(
+    fd: i32,
+    ut: *const libc::utmpx,
+    record_size: usize,
+    start: i64,
+) -> i64 {
+    let new = unsafe { &*ut };
+    let mut offset: i64 = start;
+    if syscall::sys_lseek(fd, start, libc::SEEK_SET).is_err() {
+        return 0;
+    }
+    loop {
+        let mut buf: libc::utmpx = unsafe { std::mem::zeroed() };
+        let n = match unsafe { syscall::sys_read(fd, (&raw mut buf).cast::<u8>(), record_size) } {
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        if n != record_size {
+            // Short read: end of file, or a truncated trailing record that a
+            // full-size write from here would repair anyway.
+            break;
+        }
+        if utmpx_supersedes(&buf, new) {
+            return offset;
+        }
+        offset += record_size as i64;
+    }
+    // No match: append. Ask the kernel rather than trusting the walk, so a file
+    // whose length is not a whole number of records still gets a clean append.
+    syscall::sys_lseek(fd, 0, libc::SEEK_END).unwrap_or(offset)
+}
+
+/// `pututxline` — write a utmpx entry.
+///
+/// Overwrites the first record the entry supersedes, appending only when there
+/// is none — see [`utmpx_supersedes`] for the matching rule.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx {
     if ut.is_null() {
@@ -20293,12 +20402,30 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     };
 
     let record_size = std::mem::size_of::<libc::utmpx>();
-    let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
+
+    // glibc does NOT simply append: it looks for an existing record the new one
+    // supersedes and overwrites it in place, appending only when no match is
+    // found. Blindly appending grows utmp without bound and leaves stale
+    // sessions visible to who(1)/last(1). bd-mx8ikd.
+    let start = with_utmp_state(|state| state.offset as i64);
+    let offset = unsafe { utmpx_slot_offset(fd, ut, record_size, start) };
+    let _ = syscall::sys_lseek(fd, offset, libc::SEEK_SET);
     let written = match unsafe { syscall::sys_write(fd, ut as *const u8, record_size) } {
         Ok(n) => n as isize,
         Err(_) => -1,
     };
     let _ = syscall::sys_close(fd);
+
+    if written as usize == record_size {
+        // Leave the cursor just past the record written, as glibc does, so a
+        // following pututxline searches from here; and drop the read cache,
+        // which no longer reflects the file.
+        with_utmp_state(|state| {
+            state.offset = (offset as usize) + record_size;
+            state.loaded = false;
+            state.data.clear();
+        });
+    }
 
     if written as usize == record_size {
         with_utmpx_buf(|buf| {
