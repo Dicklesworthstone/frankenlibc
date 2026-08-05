@@ -7014,6 +7014,99 @@ fn strtonum_null_nptr_returns_zero_with_invalid() {
     assert_eq!(msg, b"invalid");
 }
 
+// --- strtonum errno contract (bd-7pas8q) ------------------------------------
+//
+// The arms above pin the errstr channel only. OpenBSD strtonum also reports
+// through errno -- EINVAL for invalid input or an inverted min/max, ERANGE for
+// out-of-range -- and errno is the ONLY channel a caller has when it passes a
+// NULL errstr, which OpenBSD documents as a supported use. errno is
+// thread-local, so these run safely under the harness's parallel threads.
+
+/// Run `f` with errno cleared and return `(value, errno)`.
+fn strtonum_with_errno(f: impl FnOnce() -> std::ffi::c_longlong) -> (std::ffi::c_longlong, c_int) {
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe { *__errno_location() = 0 };
+    let v = f();
+    (v, unsafe { *__errno_location() })
+}
+
+#[test]
+fn strtonum_invalid_input_sets_einval() {
+    let s = c"not-a-number";
+    let mut errstr: *const c_char = ptr::null();
+    let (v, err) = strtonum_with_errno(|| unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) });
+    assert_eq!(v, 0);
+    assert_eq!(err, libc::EINVAL, "invalid input must set errno=EINVAL");
+}
+
+#[test]
+fn strtonum_null_nptr_sets_einval() {
+    let mut errstr: *const c_char = ptr::null();
+    let (v, err) = strtonum_with_errno(|| unsafe { strtonum(ptr::null(), 0, 100, &mut errstr) });
+    assert_eq!(v, 0);
+    assert_eq!(err, libc::EINVAL, "NULL nptr must set errno=EINVAL");
+}
+
+#[test]
+fn strtonum_out_of_range_sets_erange() {
+    let small = c"5";
+    let mut errstr: *const c_char = ptr::null();
+    let (v, err) = strtonum_with_errno(|| unsafe { strtonum(small.as_ptr(), 10, 20, &mut errstr) });
+    assert_eq!(v, 0);
+    assert_eq!(err, libc::ERANGE, "too small must set errno=ERANGE");
+
+    let large = c"50";
+    let (v, err) = strtonum_with_errno(|| unsafe { strtonum(large.as_ptr(), 0, 10, &mut errstr) });
+    assert_eq!(v, 0);
+    assert_eq!(err, libc::ERANGE, "too large must set errno=ERANGE");
+}
+
+#[test]
+fn strtonum_inverted_range_sets_einval() {
+    // minval > maxval is a caller bug, not a range violation: OpenBSD reports
+    // it as "invalid"/EINVAL rather than ERANGE, even for a parseable number.
+    let s = c"42";
+    let mut errstr: *const c_char = ptr::null();
+    let (v, err) = strtonum_with_errno(|| unsafe { strtonum(s.as_ptr(), 100, 10, &mut errstr) });
+    assert_eq!(v, 0);
+    assert_eq!(err, libc::EINVAL, "minval > maxval must set errno=EINVAL");
+}
+
+#[test]
+fn strtonum_sets_errno_even_with_null_errstr() {
+    // The case that motivated the bead: with errstr NULL there is no other
+    // failure channel, so an implementation that only wrote errstr left the
+    // caller unable to detect failure at all.
+    let s = c"not-a-number";
+    let (v, err) = strtonum_with_errno(|| unsafe { strtonum(s.as_ptr(), 0, 100, ptr::null_mut()) });
+    assert_eq!(v, 0);
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "failure with a NULL errstr must still be visible through errno"
+    );
+}
+
+#[test]
+fn strtonum_success_preserves_caller_errno() {
+    // OpenBSD saves errno on entry and restores it on success, so a successful
+    // parse is errno-transparent: it must not leak ERANGE (or anything else)
+    // from its own internal conversion into the caller's errno.
+    let sentinel = libc::ENOTTY;
+    let s = c"42";
+    let mut errstr: *const c_char = ptr::null();
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe { *__errno_location() = sentinel };
+    let v = unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) };
+    let err = unsafe { *__errno_location() };
+    assert_eq!(v, 42);
+    assert!(errstr.is_null());
+    assert_eq!(
+        err, sentinel,
+        "a successful strtonum must leave the caller's errno untouched"
+    );
+}
+
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strtonum_rejects_tracked_unterminated_input() {
