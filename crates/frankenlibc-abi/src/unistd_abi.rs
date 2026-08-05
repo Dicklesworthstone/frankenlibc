@@ -23763,11 +23763,31 @@ pub unsafe extern "C" fn getutmpx(_u: *const c_void, _ux: *mut c_void) {
 // Legacy BSD signals
 // ===========================================================================
 
+/// Widen a BSD 4.2 `int` signal mask into a kernel `sigset_t` word.
+///
+/// Two things that `mask as u64` gets wrong:
+///
+/// * Sign. glibc widens through `(unsigned int)`, so `sigblock(-1)` means
+///   "signals 1..32", not "signals 1..64". Sign-extending would reach signals
+///   33..64, which this API cannot name at all.
+/// * SIGCANCEL. glibc's `sigprocmask` deletes signals 32 and 33 from any set
+///   handed to it, because they drive its own thread cancellation and setxid
+///   machinery, so a caller can never block them by accident. Bit 31 is the
+///   only one of the two a 32-bit mask can reach. Measured on live glibc 2.42:
+///   `sigblock(-1)` leaves SigBlk at 0x000000007ffbfeff — upper word clear
+///   (zero-extension) and bit 31 clear (SIGCANCEL), alongside the kernel's own
+///   refusal to block SIGKILL and SIGSTOP.
+#[inline]
+fn bsd_mask_to_sigset(mask: c_int) -> u64 {
+    const SIGCANCEL_BIT: u64 = 1 << 31; // signal 32
+    (mask as u32 as u64) & !SIGCANCEL_BIT
+}
+
 /// `sigblock` — block signals (deprecated, use sigprocmask).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigblock(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
-    let new_set = mask as u64;
+    let new_set = bsd_mask_to_sigset(mask);
     match unsafe {
         syscall::sys_rt_sigprocmask(
             libc::SIG_BLOCK,
@@ -23794,7 +23814,7 @@ pub unsafe extern "C" fn siggetmask() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
-    let new_set = mask as u64;
+    let new_set = bsd_mask_to_sigset(mask);
     match unsafe {
         syscall::sys_rt_sigprocmask(
             libc::SIG_SETMASK,
