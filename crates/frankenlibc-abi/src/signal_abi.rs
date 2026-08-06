@@ -1593,6 +1593,21 @@ pub unsafe extern "C" fn sigrelse(sig: c_int) -> c_int {
 /// `sigignore` — set signal disposition to SIG_IGN (XSI obsolete).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
+    // The KERNEL accepts signals 32 and 33 in rt_sigaction — they are ordinary
+    // real-time signals as far as it is concerned. It is glibc that reserves
+    // them for SIGCANCEL/SIGSETXID, and its sigignore rejects them with EINVAL.
+    // Going straight to the syscall therefore SUCCEEDS where glibc fails, so
+    // the libc-level rule has to be applied here.
+    //
+    // sighold and sigrelse get this for free by routing through sigaddset,
+    // which already refuses reserved signals; sigignore builds a sigaction
+    // directly and so bypassed it. Measured on live glibc 2.42: all three
+    // return -1/EINVAL for 0, -1, 32, 33, 65 and 9999, and 0 for 64. bd-5zrf92.
+    if !signal_core::valid_signal(sig) || signal_core::glibc_reserved_signal(sig) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     sa.sa_sigaction = libc::SIG_IGN;
     sa.sa_flags = 0;
