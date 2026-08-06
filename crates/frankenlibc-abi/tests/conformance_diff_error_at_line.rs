@@ -676,3 +676,178 @@ fn error_at_line_null_filename_keeps_the_space_separator() {
         String::from_utf8_lossy(&empty_out)
     );
 }
+
+// ---------------------------------------------------------------------------
+// flush_stdout (bd-7zdmvd)
+//
+// glibc's error()/error_at_line() call flush_stdout() before writing to stderr,
+// so a program's buffered stdout output is ordered AHEAD of the diagnostic
+// rather than surfacing later at an arbitrary point.
+//
+// Observed on live glibc 2.42 with stdout and stderr joined to one pipe (so
+// stdout is fully buffered) and a marker written to stdout first:
+//
+//   error(0,0,"msg")  -> "MARKER" then "PROG: msg\n"     (flushed first)
+//   warnx("msg")      -> "p3: msg\n" then "MARKER"       (never flushes)
+//
+// warnx is therefore a ready-made negative control: same harness, same
+// buffering, one function flushes and one does not. Without it, an arm that
+// could not observe flushing at all would pass by accident.
+//
+// Each arm joins fd 1 and fd 2 to a single pipe, so ordering is directly
+// observable, and flushes both impls' streams inside the redirect window — the
+// unflushed marker then lands in the same pipe, just AFTER the message, which
+// is exactly the distinction under test and leaves no buffered residue behind.
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn warnx(fmt: *const c_char, ...);
+}
+
+/// glibc's `stdout` FILE*.
+fn glibc_stdout() -> *mut std::ffi::c_void {
+    unsafe {
+        let h = dlopen(c"libc.so.6".as_ptr(), 2 /* RTLD_NOW */);
+        assert!(!h.is_null(), "dlopen(libc.so.6) failed");
+        let slot = dlsym(h, c"stdout".as_ptr()).cast::<*mut std::ffi::c_void>();
+        assert!(!slot.is_null(), "dlsym(stdout) failed");
+        *slot
+    }
+}
+
+fn fl_stdout() -> *mut std::ffi::c_void {
+    frankenlibc_abi::io_internal_abi::native_stdio_stream_ptr(1)
+}
+
+/// Run `f` with fd 1 AND fd 2 joined to one pipe, then return everything
+/// written, in order. Both impls' streams are flushed before the fds are
+/// restored, so anything a non-flushing callee left buffered still arrives —
+/// after the diagnostic instead of before it.
+fn capture_stdout_and_stderr<F: FnOnce()>(f: F) -> Vec<u8> {
+    let _guard = CAPTURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut fds = [0i32; 2];
+    unsafe { libc::pipe(fds.as_mut_ptr()) };
+    let saved_out = unsafe { libc::dup(1) };
+    let saved_err = unsafe { libc::dup(2) };
+    unsafe {
+        libc::dup2(fds[1], 1);
+        libc::dup2(fds[1], 2);
+    }
+    f();
+    unsafe {
+        libc::fflush(std::ptr::null_mut());
+        frankenlibc_abi::stdio_abi::fflush(fl_stdout());
+        libc::dup2(saved_out, 1);
+        libc::dup2(saved_err, 2);
+        libc::close(saved_out);
+        libc::close(saved_err);
+        libc::close(fds[1]);
+    }
+    let mut out = Vec::new();
+    let mut file = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    let _ = file.read_to_end(&mut out);
+    out
+}
+
+const MARKER: &[u8] = b"MARKER";
+
+#[test]
+fn error_flushes_buffered_stdout_before_the_diagnostic() {
+    let marker = CString::new("MARKER").unwrap();
+    let fmt = CString::new("msg").unwrap();
+
+    let g = capture_stdout_and_stderr(|| unsafe {
+        libc::fputs(marker.as_ptr(), glibc_stdout().cast());
+        error(0, 0, fmt.as_ptr());
+    });
+    let f = capture_stdout_and_stderr(|| unsafe {
+        frankenlibc_abi::stdio_abi::fputs(marker.as_ptr(), fl_stdout());
+        frankenlibc_abi::stdlib_abi::error(0, 0, fmt.as_ptr());
+    });
+
+    assert_eq!(
+        f,
+        g,
+        "error() stdout/stderr interleaving: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&g)
+    );
+    // Assert what the ORACLE produced, not just that the arms agree: if both
+    // impls stopped flushing, the equality above would still hold.
+    assert!(
+        g.starts_with(MARKER),
+        "glibc should flush buffered stdout ahead of the diagnostic, got {:?}",
+        String::from_utf8_lossy(&g)
+    );
+    assert!(
+        f.starts_with(MARKER),
+        "fl left buffered stdout behind the diagnostic, got {:?}",
+        String::from_utf8_lossy(&f)
+    );
+}
+
+#[test]
+fn error_at_line_flushes_buffered_stdout_before_the_diagnostic() {
+    let marker = CString::new("MARKER").unwrap();
+    let file = CString::new("f.c").unwrap();
+    let fmt = CString::new("msg").unwrap();
+
+    let g = capture_stdout_and_stderr(|| unsafe {
+        libc::fputs(marker.as_ptr(), glibc_stdout().cast());
+        error_at_line(0, 0, file.as_ptr(), 7, fmt.as_ptr());
+    });
+    let f = capture_stdout_and_stderr(|| unsafe {
+        frankenlibc_abi::stdio_abi::fputs(marker.as_ptr(), fl_stdout());
+        frankenlibc_abi::stdlib_abi::error_at_line(0, 0, file.as_ptr(), 7, fmt.as_ptr());
+    });
+
+    assert_eq!(
+        f,
+        g,
+        "error_at_line() stdout/stderr interleaving: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&g)
+    );
+    assert!(
+        g.starts_with(MARKER),
+        "glibc should flush buffered stdout ahead of the diagnostic, got {:?}",
+        String::from_utf8_lossy(&g)
+    );
+    assert!(
+        f.starts_with(MARKER),
+        "fl left buffered stdout behind the diagnostic, got {:?}",
+        String::from_utf8_lossy(&f)
+    );
+}
+
+#[test]
+fn warnx_does_not_flush_stdout_so_the_arms_above_can_fail() {
+    // Negative control for the two arms above, in the same harness: err.h's
+    // warnx writes to stderr WITHOUT flushing stdout, so its marker must arrive
+    // AFTER the message. If this arm ever shows the marker first, the harness
+    // has stopped distinguishing flushed from unflushed and the error() arms
+    // above are vacuous.
+    let marker = CString::new("MARKER").unwrap();
+    let fmt = CString::new("msg").unwrap();
+
+    let g = capture_stdout_and_stderr(|| unsafe {
+        libc::fputs(marker.as_ptr(), glibc_stdout().cast());
+        warnx(fmt.as_ptr());
+    });
+    let f = capture_stdout_and_stderr(|| unsafe {
+        frankenlibc_abi::stdio_abi::fputs(marker.as_ptr(), fl_stdout());
+        frankenlibc_abi::err_abi::warnx(fmt.as_ptr());
+    });
+
+    assert!(
+        g.ends_with(MARKER),
+        "glibc's warnx must NOT flush stdout, so the marker should trail the \
+         message; got {:?}",
+        String::from_utf8_lossy(&g)
+    );
+    assert!(
+        f.ends_with(MARKER),
+        "fl's warnx must NOT flush stdout either; got {:?}",
+        String::from_utf8_lossy(&f)
+    );
+}
