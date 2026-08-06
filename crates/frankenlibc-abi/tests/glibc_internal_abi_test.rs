@@ -5924,24 +5924,66 @@ use frankenlibc_abi::glibc_internal_abi::__libc_fatal;
 
 static LIBC_FATAL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Exit code the child uses if `__libc_fatal` ever RETURNS instead of aborting.
+/// Without it a non-aborting child would fall back into libtest, duplicate the
+/// harness output and then be indistinguishable from a hang.
+const LIBC_FATAL_CHILD_RETURNED: c_int = 101;
+
+/// These three arms fork out of a MULTI-THREADED libtest process, so the child
+/// inherits only the forking thread — any fl lock (errno, runtime_policy) that
+/// another test thread happened to hold at fork time is frozen held in the
+/// child. `LIBC_FATAL_TEST_LOCK` serializes the three arms against each other
+/// but cannot exclude the other ~270 tests, so the child can legitimately be
+/// slow, and under load it can be VERY slow.
+///
+/// A 5-second deadline here is what made bd-3aktsp look like a flake: the same
+/// target came out 272/0 twice in isolation and 271/1 inside a 54-target
+/// parallel run on a shared worker, on the identical commit. A wall-clock
+/// threshold that a busy machine can cross is not a test result. The deadline
+/// is now generous enough that crossing it means genuinely wedged, and every
+/// outcome is reported as WHAT it was rather than as one undifferentiated
+/// timeout, so the next occurrence is attributable instead of anonymous.
 fn wait_for_sigabrt_child(pid: libc::pid_t) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(60);
     let mut status: c_int = 0;
     loop {
         let waited = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
         if waited == pid {
-            assert!(libc::WIFSIGNALED(status));
-            assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+            if libc::WIFEXITED(status) {
+                let code = libc::WEXITSTATUS(status);
+                assert_ne!(
+                    code, LIBC_FATAL_CHILD_RETURNED,
+                    "__libc_fatal RETURNED to its caller instead of aborting"
+                );
+                panic!("child {pid} exited with code {code} instead of raising SIGABRT");
+            }
+            assert!(
+                libc::WIFSIGNALED(status),
+                "child {pid} neither exited nor was signalled; status={status:#x}"
+            );
+            assert_eq!(
+                libc::WTERMSIG(status),
+                libc::SIGABRT,
+                "child {pid} died of signal {}, not SIGABRT",
+                libc::WTERMSIG(status)
+            );
             return;
         }
         assert_eq!(waited, 0, "waitpid failed while waiting for child {pid}");
 
         if Instant::now() >= deadline {
+            // Distinguish "still running" from "already a zombie we raced" so a
+            // future failure names its own cause.
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
             unsafe {
                 let _ = libc::kill(pid, libc::SIGKILL);
                 let _ = libc::waitpid(pid, &mut status, 0);
             }
-            panic!("child {pid} did not terminate with SIGABRT before timeout; status={status}");
+            panic!(
+                "child {pid} did not raise SIGABRT within 60s (still alive: {alive}); \
+                 status after SIGKILL={status:#x}. A child that is alive but never aborts \
+                 is wedged on an fl lock held by another thread at fork time, NOT slow."
+            );
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -5960,6 +6002,9 @@ fn libc_fatal_aborts_child_with_message() {
     if pid == 0 {
         let msg = c"frankenlibc test fatal\n";
         unsafe { __libc_fatal(msg.as_ptr()) };
+        // Unreachable if the contract holds. _exit (not return) so a breach is
+        // reported as a breach instead of re-entering libtest in a forked child.
+        unsafe { libc::_exit(LIBC_FATAL_CHILD_RETURNED) };
     }
     wait_for_sigabrt_child(pid);
 }
@@ -5973,6 +6018,7 @@ fn libc_fatal_null_message_still_aborts_with_fallback() {
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
         unsafe { __libc_fatal(std::ptr::null()) };
+        unsafe { libc::_exit(LIBC_FATAL_CHILD_RETURNED) };
     }
     wait_for_sigabrt_child(pid);
 }
@@ -5987,6 +6033,7 @@ fn libc_fatal_unterminated_message_still_aborts_with_fallback() {
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
         unsafe { __libc_fatal(raw_message) };
+        unsafe { libc::_exit(LIBC_FATAL_CHILD_RETURNED) };
     }
     wait_for_sigabrt_child(pid);
     unsafe {

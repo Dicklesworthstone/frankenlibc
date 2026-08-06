@@ -740,7 +740,8 @@ impl FastFixedMemRead {
                 .is_ok()
             {
                 dst[..n].copy_from_slice(&self.data[pos..pos + n]);
-                self.eof.store(nl.is_none() && want > avail, Ordering::Release);
+                self.eof
+                    .store(nl.is_none() && want > avail, Ordering::Release);
                 return Some(n);
             }
         }
@@ -2642,20 +2643,29 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 
 #[doc(hidden)]
 pub unsafe fn fflush_managed_only_for_abort() -> c_int {
-    // Snapshot the cells under ONE short try-lock, then flush stream-by-stream via
-    // try_lock on each cell (abort context: never block on any lock a dying thread
-    // may hold — neither the map's nor a stream's).
-    let cells: Vec<StreamCell> = {
-        let Ok(reg) = registry().try_lock() else {
-            return libc::EOF;
-        };
-        sorted_stream_ids(&reg)
-            .into_iter()
-            .filter_map(|id| reg.streams.get(&id).cloned())
-            .collect()
+    // Abort context: never block on any lock a dying thread may hold — neither
+    // the map's nor a stream's — and, just as importantly, NEVER ALLOCATE.
+    //
+    // This used to snapshot the cells into a Vec so the registry lock could be
+    // released before flushing. Every lock on that path was already a try_lock,
+    // so it could not deadlock on a lock — but the snapshot itself called into
+    // fl's own allocator, and a forked child inherits the allocator's lock
+    // frozen-held if any other thread was inside malloc at fork time. That is a
+    // hard hang with no try_lock to fall back on, and it is what wedged
+    // libc_fatal_null_message_still_aborts_with_fallback and its two siblings
+    // (bd-3aktsp): measured "still alive: true" after 60s, i.e. stuck, not slow.
+    //
+    // Iterating the map in place removes the allocation entirely. Holding the
+    // registry lock across the per-stream try_locks introduces no deadlock,
+    // because every acquisition here is still a try_lock and simply skips a
+    // stream it cannot take. Iteration order is unspecified rather than sorted;
+    // for a best-effort pre-abort flush that is immaterial, and it is strictly
+    // better than not flushing at all because we could not allocate.
+    let Ok(reg) = registry().try_lock() else {
+        return libc::EOF;
     };
     let mut overall_rc = 0;
-    for cell in cells {
+    for cell in reg.streams.values() {
         if let Some(mut s) = cell.try_lock() {
             let success = unsafe { flush_stream(&mut s) };
             if !success {
@@ -2680,7 +2690,11 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            return if unsafe { flush_stream(&mut s) } { 0 } else { libc::EOF };
+            return if unsafe { flush_stream(&mut s) } {
+                0
+            } else {
+                libc::EOF
+            };
         }
     }
     if !stream.is_null() {
@@ -4135,7 +4149,11 @@ enum SeekErr {
 /// offset. No `decide`/`observe` — the callers own membrane accounting (the fast path elides it
 /// exactly as the other cached fast paths do). `s` must be a non-cookie non-mem fd stream (both
 /// call sites guarantee this). Byte-identical to the original inline block.
-unsafe fn fd_seek_locked(s: &mut StdioStream, offset: c_long, whence: c_int) -> Result<(), SeekErr> {
+unsafe fn fd_seek_locked(
+    s: &mut StdioStream,
+    offset: c_long,
+    whence: c_int,
+) -> Result<(), SeekErr> {
     // Flush pending writes and discard read buffer.
     let pending = s.prepare_seek();
     let fd = s.fd();
@@ -4143,7 +4161,11 @@ unsafe fn fd_seek_locked(s: &mut StdioStream, offset: c_long, whence: c_int) -> 
         let mut written = 0usize;
         while written < pending.len() {
             let rc = unsafe {
-                sys_write_fd(fd, pending[written..].as_ptr().cast(), pending.len() - written)
+                sys_write_fd(
+                    fd,
+                    pending[written..].as_ptr().cast(),
+                    pending.len() - written,
+                )
             };
             if rc < 0 {
                 let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
