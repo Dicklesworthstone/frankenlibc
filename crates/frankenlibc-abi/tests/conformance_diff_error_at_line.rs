@@ -226,13 +226,13 @@ fn error_without_hook_still_prints_the_default_prefix() {
     // impls must fall back to their own "<progname>" prefix, so those arms are
     // detecting the hook rather than a prefix that never appears.
     //
-    // Deliberately NOT a byte-for-byte comparison against glibc: fl resolves
-    // its program name to "unknown" where glibc uses argv[0], a separate
-    // pre-existing defect (bd-ul4pyl) that already fails
-    // error_at_line_matches_glibc above and would swamp this control with an
-    // unrelated diff. What this arm owns is the hook, so it asserts the two
-    // properties that distinguish "hook ran" from "hook cleared" and leaves
-    // the progname text to the arm that is about the progname text.
+    // This arm was originally property-based rather than byte-for-byte, because
+    // fl resolved its program name to "unknown" where glibc uses argv[0] and the
+    // unrelated diff would have swamped the control. That defect (bd-ul4pyl) is
+    // fixed — fl now prints program_invocation_name — so the control is back to
+    // full byte equality, which subsumes both properties. The property
+    // assertions are kept alongside it so a regression still reports WHICH half
+    // moved (hook leaked vs prefix wrong) instead of one opaque byte diff.
     let fmt = CString::new("boom").unwrap();
     let (g, f) = with_progname_hook(std::ptr::null_mut(), || {
         let g = capture_inner(|| unsafe { error(0, 0, fmt.as_ptr()) });
@@ -258,5 +258,113 @@ fn error_without_hook_still_prints_the_default_prefix() {
         g.ends_with(b": boom\n"),
         "expected a default '<progname>: boom' line, got {:?}",
         String::from_utf8_lossy(&g)
+    );
+    assert_eq!(
+        f,
+        g,
+        "with the hook cleared the default prefix must match glibc byte for byte: \
+         fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&g)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// progname resolution (bd-ul4pyl)
+//
+// glibc's error.c does `#define program_name program_invocation_name` and
+// prints that -- the FULL argv[0]. fl printed program_invocation_short_name
+// (the basename), and since fl's CRT startup does not run in an rlib test
+// binary that global was null too, so the prefix came out as the literal
+// "unknown". Both halves are fixed: error()/error_at_line() now read the full
+// name, with a /proc/self/cmdline fallback for when startup has not published
+// it.
+//
+// error_matches_glibc above already compares the whole line byte for byte. This
+// arm names the specific value, against glibc's own globals read live by dlsym,
+// so a regression says "we printed the basename" rather than showing two long
+// paths that differ somewhere.
+// ---------------------------------------------------------------------------
+
+/// Read a `char *` global out of live glibc.
+fn glibc_progname_global(name: &std::ffi::CStr) -> Vec<u8> {
+    unsafe {
+        let h = dlopen(c"libc.so.6".as_ptr(), 2 /* RTLD_NOW */);
+        assert!(!h.is_null(), "dlopen(libc.so.6) failed");
+        let slot = dlsym(h, name.as_ptr()).cast::<*const c_char>();
+        assert!(!slot.is_null(), "dlsym({name:?}) failed");
+        let s = *slot;
+        assert!(!s.is_null(), "{name:?} is null in this process");
+        std::ffi::CStr::from_ptr(s).to_bytes().to_vec()
+    }
+}
+
+#[test]
+fn error_prefix_is_the_full_argv0_not_its_basename() {
+    let full = glibc_progname_global(c"program_invocation_name");
+    let short = glibc_progname_global(c"program_invocation_short_name");
+    // Guard the discriminator itself: if the test binary were invoked as a bare
+    // name these two would coincide and the arm below could not tell the bug
+    // from the fix.
+    assert_ne!(
+        full,
+        short,
+        "this arm needs argv[0] to have a directory component to discriminate \
+         full from basename; got {:?}",
+        String::from_utf8_lossy(&full)
+    );
+
+    let fmt = CString::new("boom").unwrap();
+    let f = capture(|| unsafe { frankenlibc_abi::stdlib_abi::error(0, 0, fmt.as_ptr()) });
+
+    let mut expected = full.clone();
+    expected.extend_from_slice(b": boom\n");
+    assert_eq!(
+        f,
+        expected,
+        "error() should prefix program_invocation_name: fl={:?} expected={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&expected)
+    );
+
+    // The two shapes the pre-fix code actually produced.
+    let mut basename_prefix = short.clone();
+    basename_prefix.extend_from_slice(b": ");
+    assert!(
+        !f.starts_with(&basename_prefix),
+        "error() printed the basename {:?}, not the full argv[0]",
+        String::from_utf8_lossy(&short)
+    );
+    assert!(
+        !f.starts_with(b"unknown: "),
+        "error() fell back to the literal \"unknown\" prefix; the progname ladder \
+         did not resolve a name"
+    );
+}
+
+#[test]
+fn error_at_line_prefix_is_the_full_argv0_not_its_basename() {
+    let full = glibc_progname_global(c"program_invocation_name");
+    let short = glibc_progname_global(c"program_invocation_short_name");
+    assert_ne!(full, short, "argv[0] needs a directory component here");
+
+    let file = CString::new("parse.c").unwrap();
+    let fmt = CString::new("syntax error").unwrap();
+    let f = capture(|| unsafe {
+        frankenlibc_abi::stdlib_abi::error_at_line(0, 0, file.as_ptr(), 12, fmt.as_ptr())
+    });
+
+    let mut expected = full.clone();
+    expected.extend_from_slice(b":parse.c:12: syntax error\n");
+    assert_eq!(
+        f,
+        expected,
+        "error_at_line() should prefix program_invocation_name: fl={:?} expected={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&expected)
+    );
+    assert!(
+        !f.starts_with(b"unknown:"),
+        "error_at_line() fell back to the literal \"unknown\" prefix"
     );
 }

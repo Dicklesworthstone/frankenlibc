@@ -78,6 +78,45 @@ fn proc_cmdline_progname() -> Option<Vec<u8>> {
     (!basename.is_empty()).then(|| basename.to_vec())
 }
 
+/// Returns the FULL program name — `argv[0]` as given, not its basename.
+///
+/// This is what `program_invocation_name` holds, and what `error()` /
+/// `error_at_line()` print, as distinct from the basename `warn`/`err` use.
+/// Same fallback ladder as [`get_progname`] and for the same reason: our CRT
+/// startup path does not run under unit tests or interpose-style loading, so the
+/// published global can be null. `/proc/self/comm` is deliberately NOT in this
+/// ladder — Linux truncates it to `TASK_COMM_LEN`, which would silently produce
+/// a wrong full name rather than an obviously missing one.
+pub(crate) fn get_progname_full() -> Vec<u8> {
+    use std::sync::OnceLock;
+    static FALLBACK_FULL_PROGNAME: OnceLock<Vec<u8>> = OnceLock::new();
+
+    let published =
+        crate::startup_abi::program_invocation_name.load(std::sync::atomic::Ordering::Acquire);
+    if !published.is_null() {
+        // SAFETY: startup publishes `argv[0]` storage for process lifetime; the
+        // scan is still capped so a bad embedder cannot make diagnostics walk
+        // memory.
+        let (len, terminated) =
+            unsafe { scan_c_string(published, Some(MAX_PUBLISHED_PROGNAME_BYTES)) };
+        if terminated && len > 0 {
+            // SAFETY: `scan_c_string` reported `len` readable bytes at `published`.
+            let bytes = unsafe { core::slice::from_raw_parts(published.cast::<u8>(), len) };
+            return bytes.to_vec();
+        }
+    }
+
+    FALLBACK_FULL_PROGNAME
+        .get_or_init(|| proc_cmdline_argv0().unwrap_or_else(|| b"?".to_vec()))
+        .clone()
+}
+
+fn proc_cmdline_argv0() -> Option<Vec<u8>> {
+    let cmdline = std::fs::read("/proc/self/cmdline").ok()?;
+    let argv0 = cmdline.split(|&b| b == 0).next()?;
+    (!argv0.is_empty()).then(|| argv0.to_vec())
+}
+
 fn proc_comm_progname() -> Option<Vec<u8>> {
     let name = std::fs::read("/proc/self/comm").ok()?;
     let trimmed: Vec<u8> = name
@@ -509,3 +548,9 @@ pub unsafe extern "C" fn err_set_exit(func: Option<ErrExitHook>) -> Option<ErrEx
     *cell = func;
     prev
 }
+
+// No inline `#[cfg(test)]` module here: lib.rs declares this module as
+// `#[cfg(not(test))] pub mod err_abi;`, so anything gated on `test` in this file
+// is never compiled and a unit test placed here would silently never run.
+// Coverage for the progname helpers lives in tests/conformance_diff_error_at_line.rs,
+// which links the crate normally and drives them through the real ABI entry points.

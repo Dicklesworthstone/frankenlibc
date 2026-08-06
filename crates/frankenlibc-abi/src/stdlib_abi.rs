@@ -4959,10 +4959,15 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
 // Batch: GNU hash table (hsearch) — Implemented
 // ===========================================================================
 
-use std::sync::atomic::Ordering as AtomicOrdering;
-
-fn get_program_short_name() -> *const c_char {
-    crate::startup_abi::program_invocation_short_name.load(AtomicOrdering::Acquire)
+/// The program-name prefix `error()` and `error_at_line()` print.
+///
+/// glibc's error.c does `#define program_name program_invocation_name` and
+/// prints that — the FULL `argv[0]`, not the basename that `warn`/`err` use.
+/// Verified against live glibc 2.42: a binary at /tmp/probe prints
+/// "/tmp/probe:parse.c:12: syntax error", while its
+/// program_invocation_short_name is "probe". bd-ul4pyl.
+fn get_program_name_for_error() -> Vec<u8> {
+    crate::err_abi::get_progname_full()
 }
 
 /// POSIX hash action for `hsearch`.
@@ -5050,20 +5055,8 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
         ));
     }
 
-    let progname = {
-        let p = get_program_short_name();
-        if p.is_null() {
-            "unknown"
-        } else {
-            let (len, terminated) = unsafe { scan_c_string(p, known_remaining(p as usize)) };
-            if !terminated {
-                "unknown"
-            } else {
-                let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len) };
-                std::str::from_utf8(bytes).unwrap_or("unknown")
-            }
-        }
-    };
+    let progname = get_program_name_for_error();
+    let progname = String::from_utf8_lossy(&progname);
 
     // glibc: when error_print_progname is set it REPLACES the "progname: "
     // prefix (the hook writes its own text to stderr); otherwise print the
@@ -5180,16 +5173,8 @@ pub unsafe extern "C" fn error_at_line(
         ));
     }
 
-    let progname = {
-        let p = get_program_short_name();
-        if !p.is_null() {
-            unsafe { read_bounded_cstr_bytes(p) }
-                .and_then(|bytes| String::from_utf8(bytes).ok())
-                .unwrap_or_else(|| "unknown".to_string())
-        } else {
-            "unknown".to_string()
-        }
-    };
+    let progname = get_program_name_for_error();
+    let progname = String::from_utf8_lossy(&progname);
 
     // glibc replaces the "progname:" prefix with the error_print_progname hook
     // when set; the file:line part is still printed afterwards. bd-xqg5il.
