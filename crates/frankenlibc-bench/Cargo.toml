@@ -421,10 +421,15 @@ name = "sched_getcpu_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
 
-# qsort integer-radix prefix gate: wasted-attempt cost vs gate cost, 1 process.
-[[bench]]
-name = "qsort_gate_ab_bench"
-harness = false
+# RETIRED 2026-08-06 (bd-25bzch): the `qsort_gate_ab_bench` stanza stood here.
+# It measured the qsort integer-radix PREFIX GATE, and that lane is gone —
+# 51c39dec3 replaced the design with the i32 fast lane, so the bench called
+# `__bench_integer_radix_attempt`/`__bench_integer_order_gate`, which no longer
+# exist, and had not compiled since. Its full_qsort_fl/full_qsort_glibc arms
+# duplicate glibc_baseline_bench and the three qsort_*_ab benches below.
+# The source was MOVED, not deleted, to the session scratchpad — the path is
+# recorded on bd-25bzch. The stanza goes with it: a [[bench]] entry naming a
+# file that is not there is itself a red target.
 
 # qsort fallback: fl custom pdqsort vs std sort_unstable vs glibc, 1 process.
 [[bench]]
