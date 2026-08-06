@@ -92,19 +92,46 @@ def shell_lines(text):
             continue
         yield n, code
 
-# ---- 1..3: shell scripts -------------------------------------------------
-for p in sorted(root.joinpath('scripts').rglob('*.sh')):
+# ---- 1..3: shell scripts, REPO-WIDE --------------------------------------
+# Scanning only scripts/ would leave 25 shell files in packaging/, tests/ and
+# tools/ unguarded — a regression guard with a hole in it is how the thing it
+# guards comes back.
+SKIP_DIRS = ('target/', '.git/', 'legacy_glibc_code/', 'artifacts/', 'node_modules/')
+def shell_scripts():
+    for q in sorted(root.rglob('*.sh')):
+        rel = q.relative_to(root).as_posix()
+        if any(rel.startswith(d) for d in SKIP_DIRS) or '/.rch-target-' in ('/'+rel):
+            continue
+        if rel.startswith('.rch-target-'):
+            continue
+        yield q
+
+for p in shell_scripts():
     text = p.read_text(errors='replace')
     scanned += 1
     code = list(shell_lines(text))
-    has_pipefail = any(re.search(r'set\s+-[a-zA-Z]*o\s+pipefail|set\s+-o\s+pipefail', l) for _, l in code)
+    SET_PF = re.compile(r'set\s+-[a-zA-Z]*o\s+pipefail|set\s+-o\s+pipefail')
+    UNSET_PF = re.compile(r'set\s+\+[a-zA-Z]*o\s+pipefail|set\s+\+o\s+pipefail')
+    pf_line = next((n for n, l in code if SET_PF.search(l)), None)
+    has_pipefail = pf_line is not None
     # A file meant to be SOURCED must not impose shell options on its caller.
     sourced = 'ntended to be sourced' in text
-    uses_pipe = any(PIPE.search(l) for _, l in code)
+    first_pipe = next((n for n, l in code if PIPE.search(l) and not EXPLICIT_DISCARD.search(l)), None)
+    uses_pipe = first_pipe is not None
     rel = p.relative_to(root).as_posix()
 
     if uses_pipe and not has_pipefail and not sourced:
         findings.append((rel, 0, "uses pipelines but never sets `-o pipefail`"))
+
+    # pipefail set only AFTER pipelines have already run protects nothing.
+    if has_pipefail and uses_pipe and first_pipe < pf_line:
+        findings.append((rel, first_pipe,
+                         f"pipeline runs BEFORE `-o pipefail` is set (line {pf_line}) — unprotected"))
+
+    # Turning it back off re-arms the hazard for everything below.
+    for n, l in code:
+        if UNSET_PF.search(l):
+            findings.append((rel, n, "`set +o pipefail` re-arms the trap for the rest of the file"))
 
     # UNDER pipefail these constructs are CORRECT: the pipeline already returns
     # the first failing stage's status, so `cmd | tail && ...` and `rc=$?` after
@@ -130,20 +157,64 @@ for p in sorted(root.joinpath('scripts').rglob('*.sh')):
             break
 
 # ---- 4: GitHub workflows -------------------------------------------------
+# Only `shell: bash` gets `bash --noprofile --norc -eo pipefail {0}`. The
+# IMPLICIT default is `bash -e {0}` — no pipefail. `sh` and any custom command
+# string lose it too unless it says so itself. Resolved per step, because a
+# step-level `shell:` overrides the job's, which overrides the workflow's.
+def shell_has_pipefail(val):
+    if val is None:
+        return None                      # inherit
+    if val == 'bash':
+        return True                      # GitHub adds -eo pipefail
+    return 'pipefail' in str(val)        # custom command string must say so
+
 wf_dir = root/'.github'/'workflows'
 if wf_dir.is_dir():
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
     for p in sorted(wf_dir.glob('*.y*ml')):
         text = p.read_text(errors='replace')
         scanned += 1
         rel = p.relative_to(root).as_posix()
-        pipes = sum(1 for l in text.splitlines() if PIPE.search(strip_comment(l)))
-        if pipes == 0:
+
+        if yaml is None:
+            has_defaults = re.search(r'^defaults:\s*$', text, re.M) and re.search(r'^\s+shell:\s*bash\s*$', text, re.M)
+            if not has_defaults and any(PIPE.search(strip_comment(l)) for l in text.splitlines()):
+                findings.append((rel, 0, "pipes without `defaults: run: shell: bash` (PyYAML absent; coarse check)"))
             continue
-        has_defaults = re.search(r'^defaults:\s*$', text, re.M) and re.search(r'^\s+shell:\s*bash\s*$', text, re.M)
-        if not has_defaults:
-            findings.append((rel, 0,
-                f"{pipes} piped lines but no `defaults: run: shell: bash` — GitHub runs steps as "
-                f"`bash -e {{0}}` WITHOUT pipefail, so a pipe to `tee` masks the command's failure"))
+
+        try:
+            doc = yaml.safe_load(text) or {}
+        except Exception as exc:
+            findings.append((rel, 0, f"could not parse as YAML: {exc}"))
+            continue
+
+        wf_shell = ((doc.get('defaults') or {}).get('run') or {}).get('shell')
+        for job_name, job in (doc.get('jobs') or {}).items():
+            if not isinstance(job, dict):
+                continue
+            job_shell = ((job.get('defaults') or {}).get('run') or {}).get('shell')
+            for i, step in enumerate(job.get('steps') or []):
+                if not isinstance(step, dict) or 'run' not in step:
+                    continue
+                body = str(step.get('run') or '')
+                if not any(PIPE.search(strip_comment(l)) for l in body.splitlines()):
+                    continue
+                for lvl in (step.get('shell'), job_shell, wf_shell):
+                    ok = shell_has_pipefail(lvl)
+                    if ok is not None:
+                        break
+                else:
+                    ok = None
+                if ok:
+                    continue
+                where = f"job `{job_name}` step {i+1}" + (f" ({step['name']})" if step.get('name') else '')
+                findings.append((rel, 0,
+                    f"{where} pipes, but its effective shell has no pipefail — "
+                    f"GitHub's implicit default is `bash -e {{0}}`, so a pipe to `tee` masks the "
+                    f"command's failure. Set `defaults: run: shell: bash`."))
 
 # ---- verdict -------------------------------------------------------------
 if scanned == 0:
