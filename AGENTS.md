@@ -46,9 +46,33 @@ too weak to catch a defect that was still live. Before closing on such a comment
 3. **If the source is right but nothing could fail on the original bug, the bead is not done** —
    write the gate, then close on it.
 
-Two commits on 2026-06-26 (`e634aff2a`, `bd829b12f`) silently deleted ~1300 lines of unrelated
-shipped work, including tests; that is why the sweep's premises decayed. `git log -S '<expression>'
--- <file>` names the adding and deleting commit in one command. See bd-bldxfy.
+**THREE** commits on 2026-06-26 silently deleted shipped work: `e634aff2a` and `bd829b12f`
+(~1300 lines, including tests), and `517d0a233` — found 2026-08-06, **−6914 lines**, larger than
+the other two combined, which took the entire f128 math engine and the C23 `fromfp` family with it.
+That is why the sweep's premises decayed. `git log -S '<expression>' -- <file>` names the adding
+and deleting commit in one command. See bd-bldxfy, bd-ocwiw9.
+
+Audit this class by **per-commit deletion size, never by reading commit messages** — all three
+messages are accurate about what they *added*. `git log --shortstat` and flag any commit whose
+deletions dwarf its insertions.
+
+### A bead may not close on a gate whose COMPILATION was not observed
+
+This is the rule that would have caught all of the above, and it has now been broken four times:
+bd-9z5ikz, bd-8f6gck, bd-t5d6h2 and bd-r71n1b all closed on gates that could not link — so the
+gates reported nothing while the fix was reverted underneath them. **An unlinkable target is
+silent, not green.**
+
+Concretely:
+
+- **`cargo check --all-targets` STOPS at the first failing target.** On 2026-08-06 it reported 2
+  failures; with `--keep-going` the true count was **62**. Always pass `--keep-going`, or you are
+  measuring where cargo gave up rather than what is broken.
+- Before closing, run the named gate and **observe it compile and execute**. Quote its
+  `test result:` line in the closure, not a `cargo check` that never built it.
+- A `test result: ok.` line is **not** sufficient on its own: libtest prints exactly that for a
+  filter matching zero tests (`0 passed; …; 296 filtered out`). Assert a non-zero passed count.
+  See bd-1l9rlp.
 
 ---
 
