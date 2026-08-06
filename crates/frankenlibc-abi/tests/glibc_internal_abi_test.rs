@@ -237,6 +237,8 @@ unsafe extern "C" {
     ) -> c_int;
     #[link_name = "vlimit"]
     fn host_vlimit(resource: c_int, value: c_int) -> c_int;
+    #[link_name = "inet6_opt_init"]
+    fn host_inet6_opt_init(extbuf: *mut c_void, extlen: c_int) -> c_int;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,39 +528,287 @@ fn obsolete_module_syscall_stubs_match_host_enosys() {
     }
 }
 
+/// `ustat` is NOT an ENOSYS stub, which is what this arm used to assert while it
+/// was dark. glibc 2.28 dropped the header declaration but kept the compat
+/// symbol, and that symbol is still a plain wrapper over the live `ustat`
+/// syscall. Measured against glibc 2.42 on Linux 6.17 in this process:
+///
+///   ustat(0, buf)         -> -1 / EINVAL   (device 0 has no mounted superblock)
+///   ustat(dev("/"), buf)  ->  0 / errno untouched
+///   ustat(dev("/"), NULL) -> -1 / EFAULT
+///
+/// The unknown-device arm is the one that bites a blanket-ENOSYS
+/// implementation: EINVAL is produced by the kernel's superblock lookup, so a
+/// stub cannot fake it without actually issuing the syscall.
+#[test]
+fn ustat_matches_host_for_unknown_and_mounted_devices() {
+    // struct ustat is 32 bytes; the kernel zeroes all of it and then fills only
+    // f_tfree (offset 0) and f_tinode (offset 8), so bytes 16..32 are a
+    // deterministic all-zero witness that the write actually came from the
+    // kernel through our pointer.
+    const USTAT_SIZE: usize = 32;
+    const KERNEL_ZEROED_TAIL: std::ops::Range<usize> = 16..32;
+
+    unsafe {
+        let mut host_buf = [0xAAu8; USTAT_SIZE];
+        let mut fl_buf = [0xAAu8; USTAT_SIZE];
+
+        // --- unknown device -------------------------------------------------
+        *libc::__errno_location() = 0;
+        let host_unknown = host_ustat(0, host_buf.as_mut_ptr().cast());
+        let host_unknown_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_unknown = ustat(0, fl_buf.as_mut_ptr().cast());
+        let fl_unknown_errno = errno_value();
+
+        assert_eq!(
+            (fl_unknown, fl_unknown_errno),
+            (host_unknown, host_unknown_errno),
+            "ustat(0) diverges from host"
+        );
+        assert_eq!(
+            (fl_unknown, fl_unknown_errno),
+            (-1, libc::EINVAL),
+            "oracle said EINVAL for an unmounted device; ENOSYS here means the syscall was never issued"
+        );
+        // Nothing was written on the failure path, by either side.
+        assert_eq!(fl_buf, [0xAAu8; USTAT_SIZE]);
+        assert_eq!(host_buf, [0xAAu8; USTAT_SIZE]);
+
+        // --- mounted device -------------------------------------------------
+        let mut root_stat = std::mem::zeroed::<libc::stat>();
+        assert_eq!(libc::stat(c"/".as_ptr(), &mut root_stat), 0);
+        let root_dev = root_stat.st_dev;
+
+        *libc::__errno_location() = 0;
+        let host_mounted = host_ustat(root_dev, host_buf.as_mut_ptr().cast());
+        let host_mounted_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_mounted = ustat(root_dev, fl_buf.as_mut_ptr().cast());
+        let fl_mounted_errno = errno_value();
+
+        assert_eq!(
+            (fl_mounted, fl_mounted_errno),
+            (host_mounted, host_mounted_errno),
+            "ustat(dev of /) diverges from host"
+        );
+        if host_mounted == 0 {
+            // f_tfree/f_tinode are live counters and can move between the two
+            // calls on a busy filesystem, so only the kernel-zeroed tail is
+            // compared for equality — but both sides must have been written.
+            assert_eq!(
+                fl_buf[KERNEL_ZEROED_TAIL], host_buf[KERNEL_ZEROED_TAIL],
+                "kernel-zeroed tail differs between fl and host"
+            );
+            assert_eq!(fl_buf[KERNEL_ZEROED_TAIL], [0u8; 16]);
+            assert_ne!(
+                fl_buf[..8],
+                [0xAAu8; 8],
+                "fl left the buffer untouched — the syscall never wrote through our pointer"
+            );
+        }
+
+        // --- NULL destination on a device the kernel accepts ----------------
+        *libc::__errno_location() = 0;
+        let host_null = host_ustat(root_dev, ptr::null_mut());
+        let host_null_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_null = ustat(root_dev, ptr::null_mut());
+        let fl_null_errno = errno_value();
+
+        assert_eq!(
+            (fl_null, fl_null_errno),
+            (host_null, host_null_errno),
+            "ustat(dev of /, NULL) diverges from host"
+        );
+    }
+}
+
+/// `vtimes` is NOT an ENOSYS stub either — that assertion was the second one
+/// hiding behind the `ustat` failure in this same arm. glibc keeps it as a live
+/// `getrusage` wrapper. Measured against glibc 2.42 in this process:
+///
+///   vtimes(NULL, NULL)  -> 0, errno untouched
+///   vtimes(buf, NULL)   -> 0, and 40 bytes of `struct vtimes` are filled
+///                          EXCEPT words 3 (vm_ixrss) and 4 (vm_maxrss), which
+///                          glibc declares but never assigns
+///
+/// The counters are live, so nothing here compares fl's numbers to a constant.
+/// Each fl call is SANDWICHED between two host calls and must land inside the
+/// bracket they define. That is what pins the unit: the header calls it 1/HZ
+/// (=1/100 here) but it is really 1/60, and after a fifth of a second of burned
+/// CPU a 1/100 reading sits far outside a 1/60 bracket.
+#[test]
+fn vtimes_matches_host_getrusage_sampling() {
+    const WORDS: usize = 10;
+    const SENTINEL: u8 = 0xAA;
+    // Words glibc leaves alone; every other word is a monotone rusage counter.
+    const UNASSIGNED: [usize; 2] = [3, 4];
+
+    fn words_of(buf: &[u8; WORDS * 4]) -> [i32; WORDS] {
+        std::array::from_fn(|i| i32::from_ne_bytes(buf[i * 4..i * 4 + 4].try_into().unwrap()))
+    }
+
+    unsafe {
+        // --- both NULL: pure return/errno contract --------------------------
+        *libc::__errno_location() = 0;
+        let host_null = host_vtimes(ptr::null_mut(), ptr::null_mut());
+        let host_null_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_null = vtimes(ptr::null_mut(), ptr::null_mut());
+        let fl_null_errno = errno_value();
+
+        assert_eq!(
+            (fl_null, fl_null_errno),
+            (host_null, host_null_errno),
+            "vtimes(NULL, NULL) diverges from host"
+        );
+        assert_eq!(
+            (fl_null, fl_null_errno),
+            (0, 0),
+            "oracle said success; -1/ENOSYS here means vtimes is still a stub"
+        );
+
+        // Burn enough user CPU that a 1/HZ reading cannot be mistaken for a
+        // 1/60 one (0.2 s is 12 units at 1/60 and 20 at 1/100).
+        let mut spin = 0u64;
+        let mut usage = std::mem::zeroed::<libc::rusage>();
+        loop {
+            for _ in 0..200_000 {
+                spin = std::hint::black_box(spin.wrapping_mul(6364136223846793005).wrapping_add(1));
+            }
+            assert_eq!(libc::getrusage(libc::RUSAGE_SELF, &mut usage), 0);
+            if usage.ru_utime.tv_sec > 0 || usage.ru_utime.tv_usec >= 200_000 {
+                break;
+            }
+        }
+
+        // --- RUSAGE_SELF, fl bracketed by two host samples ------------------
+        for who_is_child in [false, true] {
+            let mut before = [SENTINEL; WORDS * 4];
+            let mut fl_buf = [SENTINEL; WORDS * 4];
+            let mut after = [SENTINEL; WORDS * 4];
+
+            let (b, f, a) = if who_is_child {
+                (
+                    host_vtimes(ptr::null_mut(), before.as_mut_ptr().cast()),
+                    vtimes(ptr::null_mut(), fl_buf.as_mut_ptr().cast()),
+                    host_vtimes(ptr::null_mut(), after.as_mut_ptr().cast()),
+                )
+            } else {
+                (
+                    host_vtimes(before.as_mut_ptr().cast(), ptr::null_mut()),
+                    vtimes(fl_buf.as_mut_ptr().cast(), ptr::null_mut()),
+                    host_vtimes(after.as_mut_ptr().cast(), ptr::null_mut()),
+                )
+            };
+            assert_eq!((b, f, a), (0, 0, 0), "child={who_is_child}: call failed");
+
+            let (before, fl_words, after) =
+                (words_of(&before), words_of(&fl_buf), words_of(&after));
+            let untouched = i32::from_ne_bytes([SENTINEL; 4]);
+            for i in 0..WORDS {
+                if UNASSIGNED.contains(&i) {
+                    assert_eq!(
+                        (before[i], fl_words[i], after[i]),
+                        (untouched, untouched, untouched),
+                        "child={who_is_child}: word {i} must be left to the caller"
+                    );
+                    continue;
+                }
+                assert_ne!(
+                    fl_words[i], untouched,
+                    "child={who_is_child}: word {i} was never written"
+                );
+                // Every remaining field is a monotone rusage counter, so fl's
+                // sample must sit inside the bracket the host's two samples
+                // define — a wrong time unit lands outside it.
+                assert!(
+                    before[i] <= fl_words[i] && fl_words[i] <= after[i],
+                    "child={who_is_child}: word {i} = {} outside host bracket [{}, {}]",
+                    fl_words[i],
+                    before[i],
+                    after[i]
+                );
+            }
+            if !who_is_child {
+                assert!(
+                    fl_words[0] > 0,
+                    "burned CPU should be visible in vm_utime, got {}",
+                    fl_words[0]
+                );
+            }
+        }
+    }
+}
+
+/// `sprofil` is the third arm that was hiding behind `ustat` in this test — it
+/// asserted ENOSYS, and glibc succeeds. Measured against glibc 2.42:
+///
+///   sprofil(NULL, 0, NULL, 0)  -> 0, errno untouched
+///   sprofil(NULL, 0, &tv,  0)  -> 0, tv = {0, 1000000 / __profile_frequency()}
+///
+/// The `tvp` arm is the one that bites a bare `return 0`: glibc reports the
+/// sampling period there whatever `profcnt` says. The enable path (profcnt > 0)
+/// is deliberately not exercised — glibc dereferences `profp` without checking
+/// it and segfaults, so there is no host answer to compare against.
+/// fl does not deliver samples yet either way; that gap is bd-br5a1b.
+#[test]
+fn sprofil_reports_the_sampling_period_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_result = host_sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0);
+        let host_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_result = sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0);
+        let fl_errno = errno_value();
+
+        assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+        assert_eq!(
+            (fl_result, fl_errno),
+            (0, 0),
+            "oracle said success; -1/ENOSYS here means sprofil is still a stub"
+        );
+
+        let sentinel = libc::timeval {
+            tv_sec: -1,
+            tv_usec: -1,
+        };
+        let mut host_tv = sentinel;
+        let mut fl_tv = sentinel;
+
+        assert_eq!(
+            host_sprofil(ptr::null_mut(), 0, (&raw mut host_tv).cast(), 0),
+            0
+        );
+        assert_eq!(sprofil(ptr::null_mut(), 0, (&raw mut fl_tv).cast(), 0), 0);
+
+        assert_eq!(
+            (fl_tv.tv_sec, fl_tv.tv_usec),
+            (host_tv.tv_sec, host_tv.tv_usec),
+            "sampling period written to tvp diverges from host"
+        );
+        assert_eq!(
+            (fl_tv.tv_sec, fl_tv.tv_usec),
+            (0, (1_000_000 / __profile_frequency()) as libc::suseconds_t),
+            "period must be 1/__profile_frequency() seconds, not the sentinel"
+        );
+    }
+}
+
 #[test]
 fn obsolete_kernel_accounting_stubs_match_host_enosys() {
     unsafe {
-        *libc::__errno_location() = 0;
-        let host_ustat_result = host_ustat(0, ptr::null_mut());
-        let host_ustat_errno = *libc::__errno_location();
-
-        clear_errno();
-        *libc::__errno_location() = 0;
-        let fl_ustat_result = ustat(0, ptr::null_mut());
-        let fl_ustat_errno = errno_value();
-
-        assert_eq!(
-            (fl_ustat_result, fl_ustat_errno),
-            (host_ustat_result, host_ustat_errno)
-        );
-        assert_eq!((fl_ustat_result, fl_ustat_errno), (-1, libc::ENOSYS));
-
-        *libc::__errno_location() = 0;
-        let host_vtimes_result = host_vtimes(ptr::null_mut(), ptr::null_mut());
-        let host_vtimes_errno = *libc::__errno_location();
-
-        clear_errno();
-        *libc::__errno_location() = 0;
-        let fl_vtimes_result = vtimes(ptr::null_mut(), ptr::null_mut());
-        let fl_vtimes_errno = errno_value();
-
-        assert_eq!(
-            (fl_vtimes_result, fl_vtimes_errno),
-            (host_vtimes_result, host_vtimes_errno)
-        );
-        assert_eq!((fl_vtimes_result, fl_vtimes_errno), (-1, libc::ENOSYS));
-
         *libc::__errno_location() = 0;
         let host_nfs_result = host_nfsservctl(0, ptr::null_mut(), ptr::null_mut());
         let host_nfs_errno = *libc::__errno_location();
@@ -573,21 +823,6 @@ fn obsolete_kernel_accounting_stubs_match_host_enosys() {
             (host_nfs_result, host_nfs_errno)
         );
         assert_eq!((fl_nfs_result, fl_nfs_errno), (-1, libc::ENOSYS));
-
-        *libc::__errno_location() = 0;
-        let host_sprofil_result = host_sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0);
-        let host_sprofil_errno = *libc::__errno_location();
-
-        clear_errno();
-        *libc::__errno_location() = 0;
-        let fl_sprofil_result = sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0);
-        let fl_sprofil_errno = errno_value();
-
-        assert_eq!(
-            (fl_sprofil_result, fl_sprofil_errno),
-            (host_sprofil_result, host_sprofil_errno)
-        );
-        assert_eq!((fl_sprofil_result, fl_sprofil_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
         let host_sysctl_result = host_sysctl(
@@ -2138,13 +2373,58 @@ fn inet6_opt_init_returns_header_size() {
     assert_eq!(ret, 2);
 }
 
+/// This arm used to assert that `inet6_opt_init` ZEROES the first two header
+/// bytes. It does not, and neither does glibc — the name
+/// `inet6_opt_init_initializes_buffer` encoded a premise nobody had measured
+/// while the target was dark. Measured against live glibc 2.42 in this process:
+///
+///   extlen=8    -> 2, extbuf[0] untouched, extbuf[1] = 0    (8/8 - 1)
+///   extlen=16   -> 2, extbuf[0] untouched, extbuf[1] = 1
+///   extlen=64   -> 2, extbuf[0] untouched, extbuf[1] = 7
+///   extlen=2040 -> 2, extbuf[0] untouched, extbuf[1] = 254  (largest accepted)
+///   extlen=0 / 15 / -8 / 2056 -> -1, buffer untouched
+///   extbuf=NULL -> 2 for ANY extlen, including 0
+///
+/// The next-header byte (`ip6h_nxt`) is the caller's to fill in; only
+/// `ip6h_len` is written, and it is derived from the BUFFER length, not from
+/// however much of it eventually gets used.
 #[test]
-fn inet6_opt_init_initializes_buffer() {
-    let mut buf = [0xFFu8; 16];
-    let ret = unsafe { inet6_opt_init(buf.as_mut_ptr() as *mut _, buf.len() as i32) };
-    assert_eq!(ret, 2);
-    assert_eq!(buf[0], 0); // Next Header.
-    assert_eq!(buf[1], 0); // Header Ext Length.
+fn inet6_opt_init_matches_host_header_length_encoding() {
+    const FILL: u8 = 0xFF;
+
+    for extlen in [8i32, 16, 64, 2040, 0, 15, -8, 2056] {
+        let mut host_buf = [FILL; 2048];
+        let mut fl_buf = [FILL; 2048];
+
+        let host_ret = unsafe { host_inet6_opt_init(host_buf.as_mut_ptr().cast(), extlen) };
+        let fl_ret = unsafe { inet6_opt_init(fl_buf.as_mut_ptr().cast(), extlen) };
+
+        assert_eq!(fl_ret, host_ret, "return diverges at extlen={extlen}");
+        assert_eq!(fl_buf, host_buf, "buffer diverges at extlen={extlen}");
+
+        if host_ret == 2 {
+            // Positive multiple of 8, at most 256*8: header ext length in
+            // 8-octet units minus the leading 8.
+            assert_eq!(fl_buf[1], (extlen / 8 - 1) as u8, "ip6h_len at {extlen}");
+            assert_eq!(
+                fl_buf[0], FILL,
+                "ip6h_nxt must stay the caller's at {extlen}"
+            );
+        } else {
+            assert_eq!(fl_ret, -1, "unexpected return at extlen={extlen}");
+            assert_eq!(fl_buf[0], FILL, "rejected extlen={extlen} must not write");
+            assert_eq!(fl_buf[1], FILL, "rejected extlen={extlen} must not write");
+        }
+    }
+
+    // A NULL extbuf reports the header size for ANY extlen — glibc never even
+    // range-checks it, so the rejection above is buffer-conditional.
+    for extlen in [0i32, 15, 16, 2056] {
+        let host_ret = unsafe { host_inet6_opt_init(ptr::null_mut(), extlen) };
+        let fl_ret = unsafe { inet6_opt_init(ptr::null_mut(), extlen) };
+        assert_eq!(fl_ret, host_ret, "NULL extbuf diverges at extlen={extlen}");
+        assert_eq!(fl_ret, 2, "NULL extbuf must report sizeof(struct ip6_hbh)");
+    }
 }
 
 #[test]
@@ -5778,18 +6058,28 @@ fn profiling_frequency_and_profil_safe_defaults_are_stable() {
     assert_eq!(fl_frequency, host_frequency);
     assert_eq!(fl_frequency, 100);
 
+    // profil(NULL, 0, ...) disables profiling and succeeds without touching
+    // errno on either side. That contract is only observable if each arm's OWN
+    // errno slot is preseeded with the sentinel: fl and host keep separate
+    // errno locations, and this arm used to seed the host's and then CLEAR
+    // fl's, so it compared a survived EAGAIN against a zero it had just
+    // written itself. Seed both, then require both to still read EAGAIN.
     unsafe {
         *libc::__errno_location() = libc::EAGAIN;
         let host_result = host_profil(ptr::null_mut(), 0, 0, 0);
         let host_errno = *libc::__errno_location();
 
-        clear_errno();
+        *__errno_location() = libc::EAGAIN;
         *libc::__errno_location() = libc::EAGAIN;
         let fl_result = profil(ptr::null_mut(), 0, 0, 0);
         let fl_errno = errno_value();
 
         assert_eq!((fl_result, fl_errno), (host_result, host_errno));
-        assert_eq!((fl_result, fl_errno), (0, libc::EAGAIN));
+        assert_eq!(
+            (fl_result, fl_errno),
+            (0, libc::EAGAIN),
+            "profil must succeed and leave the caller's errno alone"
+        );
     }
 }
 

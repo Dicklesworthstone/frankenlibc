@@ -5224,7 +5224,18 @@ pub unsafe extern "C" fn profil(
     let _ = (buf, bufsiz, offset, scale);
     0 // success no-op
 }
-// sprofil: not available on Linux — return ENOSYS
+/// `sprofil` — multi-region PC-sample profiling.
+///
+/// glibc does NOT report ENOSYS here, which is what fl returned while this arm
+/// was dark. Measured against glibc 2.42: `sprofil(NULL, 0, NULL, 0)` succeeds
+/// with errno untouched, and a non-NULL `tvp` receives the sampling period
+/// `{0, 1000000 / __profile_frequency()}` — `{0, 10000}` on this host —
+/// independently of `profcnt`.
+///
+/// Like `profil` next door, fl accepts and reports the period but does not
+/// itself deliver samples; bd-br5a1b tracks the real sampling engine. glibc
+/// dereferences `profp` unconditionally once `profcnt` is non-zero and
+/// segfaults on a NULL one — fl returns the safe default instead.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sprofil(
     profp: *mut c_void,
@@ -5232,11 +5243,15 @@ pub unsafe extern "C" fn sprofil(
     tvp: *mut c_void,
     flags: c_uint,
 ) -> c_int {
-    let _ = (profp, profcnt, tvp, flags);
-    unsafe {
-        crate::errno_abi::set_abi_errno(libc::ENOSYS);
+    let _ = (profp, profcnt, flags);
+    if !tvp.is_null() && !tracked_output_too_short(tvp, size_of::<libc::timeval>()) {
+        let period = libc::timeval {
+            tv_sec: 0,
+            tv_usec: (1_000_000 / unsafe { __profile_frequency() }) as _,
+        };
+        unsafe { tvp.cast::<libc::timeval>().write(period) };
     }
-    -1
+    0
 }
 
 // Misc POSIX functions
@@ -7691,13 +7706,38 @@ pub unsafe extern "C" fn uselib(_library: *const c_char) -> c_int {
     unsafe { set_abi_errno(libc::ENOSYS) };
     -1
 }
-// ustat: removed in Linux 4.18 — return ENOSYS
+/// `ustat` — legacy per-device filesystem statistics.
+///
+/// glibc dropped this from its headers in 2.28 but still ships the compat
+/// symbol, and it is still a plain wrapper over the live `ustat` syscall
+/// (`fs/statfs.c`). Measured on glibc 2.42 / Linux 6.17: `ustat(0, buf)` is
+/// `-1/EINVAL` because device 0 has no mounted superblock — NOT `ENOSYS`.
+/// The syscall is absent from the aarch64 generic ABI, where `ENOSYS` is right.
+///
+/// The kernel writes a 32-byte `struct ustat`, so a tracked destination that
+/// cannot hold one is refused with `EFAULT` rather than letting the kernel
+/// write past it.
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ustat(dev: c_uint, ubuf: *mut c_void) -> c_int {
-    let _ = (dev, ubuf);
-    unsafe {
-        crate::errno_abi::set_abi_errno(libc::ENOSYS);
+pub unsafe extern "C" fn ustat(dev: libc::dev_t, ubuf: *mut c_void) -> c_int {
+    const USTAT_SIZE: usize = 32;
+    if !ubuf.is_null() && tracked_output_too_short(ubuf, USTAT_SIZE) {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EFAULT) };
+        return -1;
     }
+    match unsafe { raw_syscall::sys_ustat(dev as usize, ubuf.cast::<u8>()) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ustat(_dev: libc::dev_t, _ubuf: *mut c_void) -> c_int {
+    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     -1
 }
 // utime: forward to libc
@@ -7756,14 +7796,79 @@ pub unsafe extern "C" fn vlimit(resource: c_int, value: c_int) -> c_int {
     limit.rlim_cur = value as libc::rlim_t;
     unsafe { crate::resource_abi::setrlimit(resource, &limit) }
 }
-// vtimes: obsolete BSD process times — return ENOSYS
+/// `struct vtimes` is ten 32-bit fields (40 bytes). glibc fills only eight of
+/// them from `getrusage`; word 3 (`vm_ixrss`) and word 4 (`vm_maxrss`) are
+/// declared but never assigned, so whatever the caller left there survives.
+const VTIMES_WORDS: usize = 10;
+const VTIMES_SIZE: usize = VTIMES_WORDS * 4;
+
+/// Convert a `timeval` to vtimes' unit.
+///
+/// The header calls these "units of 1/HZ seconds", which is wrong: measured
+/// against live glibc 2.42 on a CLK_TCK=100 host, the unit is 1/60 s. Bracketing
+/// 84 successive carry points of `vm_utime` against `getrusage` located every
+/// one of them at `k * 1000000/60` microseconds to within a few microseconds —
+/// e.g. k=31 fell in [516664, 516666] where 1e6*31/60 = 516666.7, while the
+/// 16667-per-unit and 16666-per-unit variants predict 516677 and 516646.
+#[inline]
+fn timeval_to_vtimes(sec: i64, usec: i64) -> i32 {
+    (sec * 60 + (usec * 60) / 1_000_000) as i32
+}
+
+/// `vtimes` — obsolete BSD process resource usage.
+///
+/// NOT an ENOSYS stub, which is what fl returned while this arm was dark: glibc
+/// keeps it as a live wrapper that samples `getrusage` into the caller's
+/// `struct vtimes`. Measured on glibc 2.42: `vtimes(NULL, NULL)` returns 0 with
+/// errno untouched, and a filled struct leaves words 3 and 4 exactly as the
+/// caller had them.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vtimes(current: *mut c_void, child: *mut c_void) -> c_int {
-    let _ = (current, child);
-    unsafe {
-        crate::errno_abi::set_abi_errno(libc::ENOSYS);
+    unsafe fn fill(dest: *mut c_void, who: c_int) -> Result<(), i32> {
+        if tracked_output_too_short(dest, VTIMES_SIZE) {
+            return Err(libc::EFAULT);
+        }
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        unsafe {
+            raw_syscall::sys_getrusage(who, (&raw mut usage).cast::<u8>())?;
+        }
+        let words = dest.cast::<i32>();
+        unsafe {
+            words.write(timeval_to_vtimes(
+                usage.ru_utime.tv_sec as i64,
+                usage.ru_utime.tv_usec as i64,
+            ));
+            words.add(1).write(timeval_to_vtimes(
+                usage.ru_stime.tv_sec as i64,
+                usage.ru_stime.tv_usec as i64,
+            ));
+            words.add(2).write(usage.ru_idrss as i32);
+            // Words 3 (vm_ixrss) and 4 (vm_maxrss) are deliberately skipped —
+            // glibc never assigns them, and a test that fills the buffer with a
+            // sentinel can see the difference.
+            words.add(5).write(usage.ru_majflt as i32);
+            words.add(6).write(usage.ru_minflt as i32);
+            words.add(7).write(usage.ru_nswap as i32);
+            words.add(8).write(usage.ru_inblock as i32);
+            words.add(9).write(usage.ru_oublock as i32);
+        }
+        Ok(())
     }
-    -1
+
+    let mut result = Ok(());
+    if !current.is_null() {
+        result = unsafe { fill(current, libc::RUSAGE_SELF) };
+    }
+    if result.is_ok() && !child.is_null() {
+        result = unsafe { fill(child, libc::RUSAGE_CHILDREN) };
+    }
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // Legacy BSD/V7 regex (re_comp/re_exec) — shared compiled-pattern state. These

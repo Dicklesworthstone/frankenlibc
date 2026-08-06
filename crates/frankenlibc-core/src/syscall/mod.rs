@@ -1814,6 +1814,10 @@ pub const SYS_IOPL: usize = 172;
 pub const SYS_MODIFY_LDT: usize = 154;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_USELIB: usize = 134;
+// Still live in the kernel (fs/statfs.c); only glibc's header exposure was
+// dropped in 2.28. Absent from the aarch64 generic syscall ABI.
+#[cfg(target_arch = "x86_64")]
+pub const SYS_USTAT: usize = 136;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FUTIMESAT: usize = 261;
 
@@ -7909,6 +7913,23 @@ pub unsafe fn sys_modify_ldt(func: i32, ptr: *mut u8, bytecount: usize) -> Resul
 #[allow(unsafe_code)]
 pub unsafe fn sys_uselib(library: *const u8) -> Result<(), i32> {
     let ret = unsafe { raw::syscall1(SYS_USELIB, library as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `ustat(dev, ubuf)` — legacy filesystem statistics by device number. x86_64 only.
+///
+/// The kernel resolves `dev` to a mounted superblock and rejects an unknown
+/// device with `EINVAL` before it ever touches `ubuf`; a NULL `ubuf` on a
+/// *known* device is what yields `EFAULT`.
+///
+/// # Safety
+///
+/// `ubuf` must be null or point to a writable `struct ustat` (32 bytes).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_ustat(dev: usize, ubuf: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_USTAT, dev, ubuf as usize) };
     syscall_result(ret).map(|_| ())
 }
 
