@@ -195,41 +195,16 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 unsafe extern "C" {
-    #[link_name = "bdflush"]
-    fn host_bdflush(func: c_int, data: libc::c_long) -> c_int;
     #[link_name = "chflags"]
     fn host_chflags(path: *const c_char, flags: libc::c_ulong) -> c_int;
-    #[link_name = "create_module"]
-    fn host_create_module(name: *const c_char, size: libc::size_t) -> libc::c_long;
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
     #[link_name = "__profile_frequency"]
     fn host_profile_frequency() -> c_int;
     #[link_name = "__libc_sa_len"]
     fn host_libc_sa_len(af: u16) -> c_int;
-    #[link_name = "fattach"]
-    fn host_fattach(fd: c_int, path: *const c_char) -> c_int;
     #[link_name = "fchflags"]
     fn host_fchflags(fd: c_int, flags: libc::c_ulong) -> c_int;
-    #[link_name = "fdetach"]
-    fn host_fdetach(path: *const c_char) -> c_int;
-    #[link_name = "get_kernel_syms"]
-    fn host_get_kernel_syms(table: *mut c_void) -> c_int;
-    #[link_name = "getmsg"]
-    fn host_getmsg(
-        fd: c_int,
-        ctlptr: *mut c_void,
-        dataptr: *mut c_void,
-        flags: *mut c_int,
-    ) -> c_int;
-    #[link_name = "getpmsg"]
-    fn host_getpmsg(
-        fd: c_int,
-        ctlptr: *mut c_void,
-        dataptr: *mut c_void,
-        bandp: *mut c_int,
-        flags: *mut c_int,
-    ) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
     #[link_name = "res_hnok"]
@@ -240,29 +215,6 @@ unsafe extern "C" {
     fn host_res_mailok(dn: *const c_char) -> c_int;
     #[link_name = "res_ownok"]
     fn host_res_ownok(dn: *const c_char) -> c_int;
-    #[link_name = "isastream"]
-    fn host_isastream(fd: c_int) -> c_int;
-    #[link_name = "putmsg"]
-    fn host_putmsg(fd: c_int, ctlptr: *const c_void, dataptr: *const c_void, flags: c_int)
-    -> c_int;
-    #[link_name = "putpmsg"]
-    fn host_putpmsg(
-        fd: c_int,
-        ctlptr: *const c_void,
-        dataptr: *const c_void,
-        band: c_int,
-        flags: c_int,
-    ) -> c_int;
-    #[link_name = "nfsservctl"]
-    fn host_nfsservctl(cmd: c_int, argp: *mut c_void, resp: *mut c_void) -> c_int;
-    #[link_name = "query_module"]
-    fn host_query_module(
-        name: *const c_char,
-        which: c_int,
-        buf: *mut c_void,
-        bufsize: libc::size_t,
-        ret: *mut libc::size_t,
-    ) -> c_int;
     #[link_name = "stty"]
     fn host_stty(fd: c_int, params: *const c_void) -> c_int;
     #[link_name = "revoke"]
@@ -283,26 +235,77 @@ unsafe extern "C" {
         offset: libc::size_t,
         scale: libc::c_uint,
     ) -> c_int;
-    #[link_name = "sstk"]
-    fn host_sstk(increment: c_int) -> c_int;
-    #[link_name = "sysctl"]
-    fn host_sysctl(
-        args: *mut c_int,
-        nlen: c_int,
-        oldval: *mut c_void,
-        oldlenp: *mut libc::size_t,
-        newval: *mut c_void,
-        newlen: libc::size_t,
-    ) -> c_int;
-    #[link_name = "uselib"]
-    fn host_uselib(library: *const c_char) -> c_int;
-    #[link_name = "ustat"]
-    fn host_ustat(dev: libc::dev_t, ubuf: *mut c_void) -> c_int;
     #[link_name = "vlimit"]
     fn host_vlimit(resource: c_int, value: c_int) -> c_int;
-    #[link_name = "vtimes"]
-    fn host_vtimes(current: *mut c_void, child: *mut c_void) -> c_int;
 }
+
+// ---------------------------------------------------------------------------
+// Host oracles for symbols glibc 2.42 keeps only as COMPAT versions (bd-r71n1b)
+//
+// These 17 entry points are still IN libc.so.6, but with no default version:
+//
+//   nm -D libc.so.6 | grep -w isastream  ->  isastream@GLIBC_2.2.5    single @
+//   nm -D libc.so.6 | grep -w vlimit     ->  vlimit@@GLIBC_2.2.5      double @, fine
+//
+// A plain `extern "C" { fn isastream(..); }` therefore fails to LINK, which took
+// this entire 293-test binary dark after the glibc 2.42 upgrade — invisible,
+// because a target that does not build cannot fail a run that does not name it.
+//
+// `dlsym` does not help: it resolves the DEFAULT version and returns null when
+// there is none. Measured on this host — dlsym=null, dlvsym=FOUND for every one
+// of them. So each is resolved at runtime with `dlvsym(.., "GLIBC_2.2.5")`,
+// wrapped in a function of the SAME name and signature the extern block used, so
+// no call site changes and the arms keep asserting exactly what they did before.
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn dlvsym(handle: *mut c_void, symbol: *const c_char, version: *const c_char) -> *mut c_void;
+}
+
+/// Resolve a compat-only libc symbol, or fail loudly.
+///
+/// A null here means the host dropped the symbol entirely rather than demoting
+/// it, which is a different situation from the one this shim exists for and
+/// should be seen rather than silently skipped.
+fn compat_sym(name: &CStr) -> *mut c_void {
+    let h = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW) };
+    assert!(!h.is_null(), "dlopen(libc.so.6) failed");
+    let p = unsafe { dlvsym(h, name.as_ptr(), c"GLIBC_2.2.5".as_ptr()) };
+    assert!(
+        !p.is_null(),
+        "dlvsym({name:?}, GLIBC_2.2.5) failed — the symbol is gone, not merely compat-only"
+    );
+    p
+}
+
+macro_rules! compat_host_fn {
+    ($wrapper:ident, $sym:expr, ($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty) => {
+        #[allow(non_snake_case)]
+        unsafe fn $wrapper($($arg: $ty),*) -> $ret {
+            type F = unsafe extern "C" fn($($ty),*) -> $ret;
+            let f: F = unsafe { core::mem::transmute(compat_sym($sym)) };
+            unsafe { f($($arg),*) }
+        }
+    };
+}
+
+compat_host_fn!(host_bdflush, c"bdflush", (func: c_int, data: libc::c_long) -> c_int);
+compat_host_fn!(host_create_module, c"create_module", (name: *const c_char, size: libc::size_t) -> libc::c_long);
+compat_host_fn!(host_fattach, c"fattach", (fd: c_int, path: *const c_char) -> c_int);
+compat_host_fn!(host_fdetach, c"fdetach", (path: *const c_char) -> c_int);
+compat_host_fn!(host_get_kernel_syms, c"get_kernel_syms", (table: *mut c_void) -> c_int);
+compat_host_fn!(host_getmsg, c"getmsg", (fd: c_int, ctlptr: *mut c_void, dataptr: *mut c_void, flags: *mut c_int) -> c_int);
+compat_host_fn!(host_getpmsg, c"getpmsg", (fd: c_int, ctlptr: *mut c_void, dataptr: *mut c_void, bandp: *mut c_int, flags: *mut c_int) -> c_int);
+compat_host_fn!(host_isastream, c"isastream", (fd: c_int) -> c_int);
+compat_host_fn!(host_nfsservctl, c"nfsservctl", (cmd: c_int, argp: *mut c_void, resp: *mut c_void) -> c_int);
+compat_host_fn!(host_putmsg, c"putmsg", (fd: c_int, ctlptr: *const c_void, dataptr: *const c_void, flags: c_int) -> c_int);
+compat_host_fn!(host_putpmsg, c"putpmsg", (fd: c_int, ctlptr: *const c_void, dataptr: *const c_void, band: c_int, flags: c_int) -> c_int);
+compat_host_fn!(host_query_module, c"query_module", (name: *const c_char, which: c_int, buf: *mut c_void, bufsize: libc::size_t, ret: *mut libc::size_t) -> c_int);
+compat_host_fn!(host_sstk, c"sstk", (increment: c_int) -> c_int);
+compat_host_fn!(host_sysctl, c"sysctl", (args: *mut c_int, nlen: c_int, oldval: *mut c_void, oldlenp: *mut libc::size_t, newval: *mut c_void, newlen: libc::size_t) -> c_int);
+compat_host_fn!(host_uselib, c"uselib", (library: *const c_char) -> c_int);
+compat_host_fn!(host_ustat, c"ustat", (dev: libc::dev_t, ubuf: *mut c_void) -> c_int);
+compat_host_fn!(host_vtimes, c"vtimes", (current: *mut c_void, child: *mut c_void) -> c_int);
 
 const LIM_NORAISE: c_int = 0;
 const LIM_CORE: c_int = 5;
