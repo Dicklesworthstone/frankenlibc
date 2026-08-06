@@ -5405,95 +5405,232 @@ const FP_INT_TONEARESTFROMZERO: c_int = 3;
 #[allow(dead_code)]
 const FP_INT_TONEAREST: c_int = 4;
 
-fn fromfp_impl(x: f64, rnd: c_int, width: u32) -> f64 {
-    if x.is_nan() || x.is_infinite() {
-        return f64::NAN;
-    }
-    let r = match rnd {
+/// Raise FE_INEXACT via a safe force_eval (1/3 is inexact). Used by the
+/// fromfpx/ufromfpx variants when the kept (in-range) result differs from x.
+#[inline]
+#[allow(dead_code)]
+fn raise_inexact_f64() {
+    let _ = core::hint::black_box(core::hint::black_box(1.0_f64) / core::hint::black_box(3.0_f64));
+}
+
+/// 2^n for n in 0..=64, exact and FE-flag-free (bit construction). `2f64.powi(n)`
+/// with a runtime n lowers to a libm pow call that raises FE_INEXACT even though
+/// 2^n is exact, which would pollute fromfp's flag contract.
+#[inline]
+fn pow2_exact(n: u32) -> f64 {
+    f64::from_bits((1023u64 + n as u64) << 52)
+}
+
+/// Round in the requested FP_INT direction WITHOUT raising FP exceptions.
+/// `fromfp` must raise only FE_INVALID (the *x variants add FE_INEXACT
+/// explicitly), so the rounding itself must be flag-free. ceil/floor/trunc
+/// lower to suppress-precision roundsd; round-half-away/even are built from
+/// trunc + exact integer arithmetic (x - trunc(x) is exact; adding ±1 to an
+/// integer-valued f64 is exact). `f64::round` is NOT used: it raises INEXACT.
+#[inline]
+fn fromfp_round(x: f64, rnd: c_int) -> f64 {
+    match rnd {
         FP_INT_UPWARD => x.ceil(),
         FP_INT_DOWNWARD => x.floor(),
         FP_INT_TOWARDZERO => x.trunc(),
-        FP_INT_TONEARESTFROMZERO => x.round(),
-        _ => {
-            let r = x.round();
-            if (x - r).abs() == 0.5 {
-                if (r as i64) % 2 != 0 {
-                    r - r.signum()
-                } else {
-                    r
-                }
+        FP_INT_TONEARESTFROMZERO => {
+            let t = x.trunc();
+            if (x - t).abs() >= 0.5 {
+                t + x.signum()
             } else {
-                r
+                t
             }
         }
-    };
-    if width == 0 || width > 64 {
-        return f64::NAN;
+        _ => {
+            // FP_INT_TONEAREST: round half to even.
+            let t = x.trunc();
+            let af = (x - t).abs();
+            if af < 0.5 {
+                t
+            } else if af > 0.5 {
+                t + x.signum()
+            } else if (t as i64) % 2 == 0 {
+                t // tie: t already even
+            } else {
+                t + x.signum()
+            }
+        }
     }
-    let max = if width >= 64 {
+}
+
+/// Shared core for fromfp/fromfpx. Matches glibc: round x in the requested
+/// direction to a signed integer of `width` bits; NaN/±inf and out-of-range
+/// results raise FE_INVALID and return glibc's clamp (max for NaN/+inf/overflow,
+/// min for -inf/underflow). With `inexact`, also raise FE_INEXACT when the kept
+/// result differs from x (the fromfpx variant).
+const FE_INVALID_BIT: c_int = 0x01;
+const FE_INEXACT_BIT: c_int = 0x20;
+
+unsafe extern "C" {
+    fn feraiseexcept(excepts: c_int) -> c_int;
+    fn feclearexcept(excepts: c_int) -> c_int;
+    fn fetestexcept(excepts: c_int) -> c_int;
+}
+
+/// Set the FP exception state for the fromfp family to EXACTLY the caller's
+/// pre-existing flags plus `want` (FE_INVALID/FE_INEXACT). The decision logic
+/// itself performs FP arithmetic (rounding, 2^w construction) that can raise
+/// spurious flags; computing the intended flags as pure booleans and then
+/// stamping them here makes the contract exact regardless.
+#[inline]
+fn fromfp_set_flags(entry: c_int, want: c_int) {
+    unsafe {
+        feclearexcept(FE_INVALID_BIT | FE_INEXACT_BIT);
+        let f = (entry & (FE_INVALID_BIT | FE_INEXACT_BIT)) | want;
+        if f != 0 {
+            feraiseexcept(f);
+        }
+    }
+}
+
+fn fromfp_core(x: f64, rnd: c_int, width: u32, inexact: bool) -> i64 {
+    let entry = unsafe { fetestexcept(FE_INVALID_BIT | FE_INEXACT_BIT) };
+    let w = width.min(64);
+    if w == 0 {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return 0;
+    }
+    // Signed `width`-bit target range [min, max] = [-2^(w-1), 2^(w-1)-1], held
+    // as exact integers (no float rounding of the bound — that was the old bug:
+    // the f64 model clamped a width-64 overflow to 2^63 with a spurious
+    // FE_INEXACT, where glibc returns exactly 2^63-1 with FE_INVALID only).
+    let max: i64 = if w == 64 {
         i64::MAX
     } else {
-        (1i64 << (width - 1)) - 1
+        (1i64 << (w - 1)) - 1
     };
-    let min = if width >= 64 {
+    let min: i64 = if w == 64 {
         i64::MIN
     } else {
-        -(1i64 << (width - 1))
+        -(1i64 << (w - 1))
     };
-    let ri = r as i64;
-    if ri < min || ri > max { f64::NAN } else { r }
-}
-fn fromfpf_impl(x: f32, rnd: c_int, width: u32) -> f32 {
-    fromfp_impl(x as f64, rnd, width) as f32
-}
-fn ufromfp_impl(x: f64, rnd: c_int, width: u32) -> f64 {
-    if x.is_nan() || x.is_infinite() || x < 0.0 {
-        return f64::NAN;
+    // 2^(w-1) as an exact f64 — the first out-of-range high value, used only to
+    // classify the (integer-valued) rounded result, never as the return value.
+    let thresh_hi = pow2_exact(w - 1);
+
+    if x.is_nan() {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return max;
     }
-    let r = fromfp_impl(x, rnd, 64);
-    if r.is_nan() || r < 0.0 {
-        return f64::NAN;
+    if x.is_infinite() {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return if x > 0.0 { max } else { min };
     }
-    if width == 0 || width > 64 {
-        return f64::NAN;
+    let r = fromfp_round(x, rnd); // exact integer-valued f64, raises no flags
+    if r >= thresh_hi {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return max;
     }
-    let max = if width >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << width) - 1
-    };
-    if (r as u64) > max { f64::NAN } else { r }
+    if r < -thresh_hi {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return min;
+    }
+    // In range: r is an integer-valued f64 in [min, max] (|r| < 2^63), so the
+    // cast is exact. fromfpx (inexact=true) reports FE_INEXACT when rounding
+    // changed the value; fromfp (inexact=false) never does. The float->int cast
+    // (cvttsd2si) can itself raise a spurious FE_INEXACT, so it must run BEFORE
+    // the final flag stamp — fromfp_set_flags clears and re-raises the exact set.
+    let inx = if inexact && r != x { FE_INEXACT_BIT } else { 0 };
+    let result = r as i64;
+    fromfp_set_flags(entry, inx);
+    result
 }
-fn ufromfpf_impl(x: f32, rnd: c_int, width: u32) -> f32 {
-    ufromfp_impl(x as f64, rnd, width) as f32
+
+/// Shared core for ufromfp/ufromfpx. Unsigned range [0, 2^width-1]; negatives
+/// that round into range are valid (e.g. ufromfp(-0.4, UPWARD) = 0). Returns the
+/// rounded value as a `uintmax_t`, matching glibc.
+fn ufromfp_core(x: f64, rnd: c_int, width: u32, inexact: bool) -> u64 {
+    let entry = unsafe { fetestexcept(FE_INVALID_BIT | FE_INEXACT_BIT) };
+    let w = width.min(64);
+    if w == 0 {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return 0;
+    }
+    let max: u64 = if w == 64 { u64::MAX } else { (1u64 << w) - 1 };
+    let thresh_hi = pow2_exact(w); // 2^w as exact f64 — first out-of-range value
+
+    if x.is_nan() {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return max;
+    }
+    if x.is_infinite() {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return if x > 0.0 { max } else { 0 };
+    }
+    let r = fromfp_round(x, rnd);
+    if r >= thresh_hi {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return max;
+    }
+    if r < 0.0 {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return 0;
+    }
+    // In range: r is an integer-valued f64 in [0, 2^64), cast is exact. The
+    // cvttsd2usi cast can raise a spurious FE_INEXACT, so cast BEFORE stamping.
+    let inx = if inexact && r != x { FE_INEXACT_BIT } else { 0 };
+    let result = r as u64;
+    fromfp_set_flags(entry, inx);
+    result
+}
+
+fn fromfp_impl(x: f64, rnd: c_int, width: u32) -> i64 {
+    fromfp_core(x, rnd, width, false)
+}
+fn fromfpx_impl(x: f64, rnd: c_int, width: u32) -> i64 {
+    fromfp_core(x, rnd, width, true)
+}
+// f32 input widens to f64 losslessly, so the rounding/clamp is identical.
+fn fromfpf_impl(x: f32, rnd: c_int, width: u32) -> i64 {
+    fromfp_core(x as f64, rnd, width, false)
+}
+fn fromfpxf_impl(x: f32, rnd: c_int, width: u32) -> i64 {
+    fromfp_core(x as f64, rnd, width, true)
+}
+fn ufromfp_impl(x: f64, rnd: c_int, width: u32) -> u64 {
+    ufromfp_core(x, rnd, width, false)
+}
+fn ufromfpx_impl(x: f64, rnd: c_int, width: u32) -> u64 {
+    ufromfp_core(x, rnd, width, true)
+}
+fn ufromfpf_impl(x: f32, rnd: c_int, width: u32) -> u64 {
+    ufromfp_core(x as f64, rnd, width, false)
+}
+fn ufromfpxf_impl(x: f32, rnd: c_int, width: u32) -> u64 {
+    ufromfp_core(x as f64, rnd, width, true)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfp(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfp(x: f64, rnd: c_int, width: u32) -> i64 {
     fromfp_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf(x: f32, rnd: c_int, width: u32) -> f32 {
+pub unsafe extern "C" fn fromfpf(x: f32, rnd: c_int, width: u32) -> i64 {
     fromfpf_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpl(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpl(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf32(x: f32, rnd: c_int, width: u32) -> f32 {
+pub unsafe extern "C" fn fromfpf32(x: f32, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpf(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf32x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpf32x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf64(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpf64(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf64x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpf64x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5501,31 +5638,31 @@ pub unsafe extern "C" fn fromfpf128(x: f128, rnd: c_int, width: u32) -> i64 {
     fromfp_signed_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfp(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfp(x: f64, rnd: c_int, width: u32) -> u64 {
     ufromfp_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf(x: f32, rnd: c_int, width: u32) -> f32 {
+pub unsafe extern "C" fn ufromfpf(x: f32, rnd: c_int, width: u32) -> u64 {
     ufromfpf_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpl(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpl(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf32(x: f32, rnd: c_int, width: u32) -> f32 {
+pub unsafe extern "C" fn ufromfpf32(x: f32, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpf(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf32x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpf32x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf64(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpf64(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf64x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpf64x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5533,31 +5670,31 @@ pub unsafe extern "C" fn ufromfpf128(x: f128, rnd: c_int, width: u32) -> u64 {
     fromfp_unsigned_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpx(x: f64, rnd: c_int, width: u32) -> f64 {
-    fromfp_impl(x, rnd, width)
+pub unsafe extern "C" fn fromfpx(x: f64, rnd: c_int, width: u32) -> i64 {
+    fromfpx_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf(x: f32, rnd: c_int, width: u32) -> f32 {
-    fromfpf_impl(x, rnd, width)
+pub unsafe extern "C" fn fromfpxf(x: f32, rnd: c_int, width: u32) -> i64 {
+    fromfpxf_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxl(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpxl(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf32(x: f32, rnd: c_int, width: u32) -> f32 {
+pub unsafe extern "C" fn fromfpxf32(x: f32, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpxf(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf32x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpxf32x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf64(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpxf64(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf64x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn fromfpxf64x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5566,31 +5703,31 @@ pub unsafe extern "C" fn fromfpxf128(x: f128, rnd: c_int, width: u32) -> i64 {
     fromfp_signed_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpx(x: f64, rnd: c_int, width: u32) -> f64 {
-    ufromfp_impl(x, rnd, width)
+pub unsafe extern "C" fn ufromfpx(x: f64, rnd: c_int, width: u32) -> u64 {
+    ufromfpx_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf(x: f32, rnd: c_int, width: u32) -> f32 {
-    ufromfpf_impl(x, rnd, width)
+pub unsafe extern "C" fn ufromfpxf(x: f32, rnd: c_int, width: u32) -> u64 {
+    ufromfpxf_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxl(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpxl(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf32(x: f32, rnd: c_int, width: u32) -> f32 {
+pub unsafe extern "C" fn ufromfpxf32(x: f32, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpxf(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf32x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpxf32x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf64(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpxf64(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf64x(x: f64, rnd: c_int, width: u32) -> f64 {
+pub unsafe extern "C" fn ufromfpxf64x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
