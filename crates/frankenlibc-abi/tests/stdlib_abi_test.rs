@@ -9805,3 +9805,147 @@ fn bd_jt6vm_pidfile_signal_locked_malformed_pid_returns_einval() {
     drop(file);
     let _ = std::fs::remove_file(&path);
 }
+
+// ---------------------------------------------------------------------------
+// Restored host-differential arms (bd-cb59r9)
+//
+// These existed and were deleted by bd829b12f (2026-06-26 23:34:25, "stdlib/
+// random: glibc-exact System V random types"), which cut 332 lines from this
+// file while describing only random-generator work. A deleted test cannot fail,
+// so nothing flagged it; six of the eleven casualties were later re-discovered
+// and re-filed as fresh "missing coverage" beads. Recovered with
+//   git diff bd829b12f..bd829b12f~1 -- crates/frankenlibc-abi/tests/stdlib_abi_test.rs
+// rather than rewritten. Audit: bd-bldxfy.
+//
+// RETIRED, NOT RESTORED: getdomainname_null_pointer_matches_host_errno asserted
+// that glibc's getdomainname(NULL, 1) returns -1/EFAULT. Re-measured on live
+// glibc 2.42 before restoring it — the call SEGFAULTS (a C probe exits 139),
+// which is what bd-crp0rw independently established. Its premise is refuted, so
+// restoring it would crash this binary rather than test anything. It stays
+// deleted deliberately.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ctermid_matches_host_static_and_caller_buffers() {
+    let host_static = unsafe { libc::ctermid(ptr::null_mut()) };
+    let abi_static = unsafe { ctermid(ptr::null_mut()) };
+    assert!(!host_static.is_null());
+    assert!(!abi_static.is_null());
+    let host_static_value = unsafe { CStr::from_ptr(host_static) };
+    let abi_static_value = unsafe { CStr::from_ptr(abi_static) };
+    assert_eq!(abi_static_value.to_bytes(), host_static_value.to_bytes());
+
+    let mut host_buf = [0 as c_char; 32];
+    let mut abi_buf = [0 as c_char; 32];
+    let host_out = unsafe { libc::ctermid(host_buf.as_mut_ptr()) };
+    let abi_out = unsafe { ctermid(abi_buf.as_mut_ptr()) };
+    assert_eq!(host_out, host_buf.as_mut_ptr());
+    assert_eq!(abi_out, abi_buf.as_mut_ptr());
+    let host_buf_value = unsafe { CStr::from_ptr(host_buf.as_ptr()) };
+    let abi_buf_value = unsafe { CStr::from_ptr(abi_buf.as_ptr()) };
+    assert_eq!(abi_buf_value.to_bytes(), host_buf_value.to_bytes());
+}
+
+#[test]
+fn pathconf_and_fpathconf_match_host_for_root_limits() {
+    let root = c"/";
+    for name in [libc::_PC_NAME_MAX, libc::_PC_PATH_MAX] {
+        let host = unsafe { libc::pathconf(root.as_ptr(), name) };
+        assert!(
+            host > 0,
+            "host pathconf(/, {name}) should expose a positive stable limit"
+        );
+        let abi = unsafe { pathconf(root.as_ptr(), name) };
+        assert_eq!(abi, host, "pathconf(/, {name}) should match host libc");
+    }
+
+    let fd = unsafe { libc::open(root.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(fd >= 0, "opening / as a directory should succeed");
+    for name in [libc::_PC_NAME_MAX, libc::_PC_PATH_MAX] {
+        let host = unsafe { libc::fpathconf(fd, name) };
+        assert!(
+            host > 0,
+            "host fpathconf(/, {name}) should expose a positive stable limit"
+        );
+        let abi = unsafe { fpathconf(fd, name) };
+        assert_eq!(abi, host, "fpathconf(/, {name}) should match host libc");
+    }
+    let _ = unsafe { libc::close(fd) };
+}
+
+#[test]
+fn qgcvt_matches_shared_percent_g_renderer_across_precision_boundary() {
+    let values = [
+        0.0,
+        -0.0,
+        3.141592653589793,
+        9.9999e-5,
+        999_999.5,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ];
+    let precisions = [-2, 0, 1, 6, 17, 18, 512, libc::c_int::MAX];
+
+    for value in values {
+        for ndigit in precisions {
+            let prec = (ndigit.max(0) as usize).min(512);
+            let expected = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
+            let mut buf = [0 as libc::c_char; 640];
+            let result = unsafe { qgcvt(value, ndigit, buf.as_mut_ptr()) };
+            let actual = unsafe { std::ffi::CStr::from_ptr(result) };
+            assert_eq!(
+                actual.to_bytes(),
+                expected.as_bytes(),
+                "qgcvt({value:?}, {ndigit})"
+            );
+        }
+    }
+}
+
+#[test]
+fn sched_getcpu_rseq_matches_pinned_cpu_and_syscall() {
+    // Verifies the rseq `cpu_id` fast path is CORRECT (not merely non-negative): pin this thread
+    // to a single CPU from its own affinity set, yield, then sched_getcpu (rseq) must report
+    // exactly that CPU and agree with the raw SYS_getcpu syscall.
+    unsafe {
+        let sz = std::mem::size_of::<libc::cpu_set_t>();
+        let mut orig: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(0, sz, &mut orig) != 0 {
+            return; // can't query affinity — skip
+        }
+        let mut target = -1i32;
+        for c in 0..libc::CPU_SETSIZE {
+            if libc::CPU_ISSET(c as usize, &orig) {
+                target = c;
+                break;
+            }
+        }
+        if target < 0 {
+            return;
+        }
+        let mut one: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(target as usize, &mut one);
+        if libc::sched_setaffinity(0, sz, &one) != 0 {
+            return; // couldn't pin (cpuset/permission) — skip
+        }
+        libc::sched_yield();
+        let mut sys_cpu: u32 = u32::MAX;
+        libc::syscall(
+            libc::SYS_getcpu,
+            &mut sys_cpu as *mut u32,
+            std::ptr::null_mut::<u32>(),
+            std::ptr::null_mut::<libc::c_void>(),
+        );
+        let fl_cpu = sched_getcpu();
+        // Restore the original affinity before asserting.
+        let _ = libc::sched_setaffinity(0, sz, &orig);
+
+        assert_eq!(fl_cpu, target, "sched_getcpu must report the pinned CPU");
+        assert_eq!(
+            fl_cpu as u32, sys_cpu,
+            "sched_getcpu (rseq) must equal the SYS_getcpu syscall on a pinned thread"
+        );
+    }
+}
