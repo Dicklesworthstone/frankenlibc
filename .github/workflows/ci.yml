@@ -19,6 +19,19 @@ concurrency:
   group: frankenlibc-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# REQUIRED, not cosmetic. Without an explicit `shell: bash`, GitHub runs `run:`
+# steps as `bash -e {0}` — WITHOUT pipefail. This workflow pipes 31 gate
+# invocations through `tee` to capture logs, e.g.
+#     scripts/ci.sh 2>&1 | tee artifacts/ci/core-gates.log
+# and a pipeline's status is its LAST command's, so `tee` succeeding made every
+# one of those steps report success no matter what the gate returned. Naming the
+# shell explicitly gives `bash --noprofile --norc -eo pipefail {0}`, so the
+# gate's own failure propagates. See bd-5n7ks2 — same defect that produced a
+# "CHECK OK" over a failed `git apply`, here at CI scale.
+defaults:
+  run:
+    shell: bash
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

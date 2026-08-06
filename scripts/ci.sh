@@ -107,8 +107,20 @@ scripts/check_separation_logic_annotations.sh --strict
 echo "PASS"
 echo ""
 
-echo "--- cargo check --workspace --all-targets ---"
-run_remote_cargo check --workspace --all-targets
+# --keep-going is load-bearing: without it cargo stops at the FIRST failing
+# target and reports a fraction of the damage. Measured 2026-08-06 — bare
+# --all-targets reported 2 broken targets, --keep-going found 68.
+echo "--- cargo check --workspace --all-targets --keep-going ---"
+run_remote_cargo check --workspace --all-targets --keep-going
+echo "PASS"
+echo ""
+
+# The workspace check above cannot see the A/B perf harnesses: frankenlibc-abi
+# is an optional dependency of frankenlibc-bench, so every harness that uses it
+# is `required-features = ["abi-bench"]` and cargo SKIPS it unless the feature is
+# on. A configuration nobody builds is a configuration nobody tests. (bd-25bzch)
+echo "--- abi-bench feature build gate ---"
+bash scripts/check_abi_bench_feature_build.sh
 echo "PASS"
 echo ""
 
