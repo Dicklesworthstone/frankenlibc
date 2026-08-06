@@ -7642,19 +7642,33 @@ fn humanize_buffer_too_small_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
+    // Insufficient output space is ERANGE, not EINVAL. Restored after a silent
+    // deletion; see the test-file note above humanize_invalid_scale. bd-egk49q.
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::ERANGE,
+        "a too-small buffer must set errno=ERANGE"
+    );
 }
 
 #[test]
 fn humanize_null_buf_returns_minus_one() {
     let suffix = c"";
+    unsafe { *__errno_location() = 0 };
     let n = unsafe { humanize_number(ptr::null_mut(), 32, 4096, suffix.as_ptr(), HN_AUTOSCALE, 0) };
     assert_eq!(n, -1);
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::EINVAL,
+        "a NULL output buffer must set errno=EINVAL"
+    );
 }
 
 #[test]
 fn humanize_zero_len_returns_minus_one() {
     let mut buf = [0u8; 32];
     let suffix = c"";
+    unsafe { *__errno_location() = 0 };
     let n = unsafe {
         humanize_number(
             buf.as_mut_ptr() as *mut c_char,
@@ -7666,6 +7680,73 @@ fn humanize_zero_len_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::EINVAL,
+        "a zero-length buffer must set errno=EINVAL"
+    );
+}
+
+/// bd-egk49q. 239d43855 mapped humanize_number's failure paths onto errno and
+/// added assertions for every one of them; bd829b12f then deleted 332 lines
+/// from this file while claiming to touch only `random`, and these went with
+/// them. The mapping in stdlib_abi.rs survived, so the contract held while the
+/// coverage did not — which is exactly how it stayed unnoticed.
+///
+/// The buffer-too-small / NULL / zero-length arms above were left asserting
+/// only `-1` by the same deletion and have had their errno checks restored too.
+#[test]
+fn humanize_invalid_scale_returns_minus_one_with_errno() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    unsafe { *__errno_location() = 0 };
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            // Past the largest scale the formatter knows; HN_AUTOSCALE and
+            // HN_GETSCALE are sentinels, so this is a plain out-of-range scale.
+            99,
+            0,
+        )
+    };
+    assert_eq!(n, -1, "an out-of-range scale must fail");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::EINVAL,
+        "an invalid scale must set errno=EINVAL"
+    );
+}
+
+/// The unterminated-suffix failure path named in bd-egk49q: a suffix pointer
+/// the membrane cannot read to a NUL is rejected as invalid input.
+///
+/// Negative control for the arms above — a WELL-formed call in the same shape
+/// must succeed and must not disturb errno, so an implementation that failed
+/// everything, or that set EINVAL unconditionally, fails here.
+#[test]
+fn humanize_valid_call_succeeds_without_touching_errno() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    unsafe { *__errno_location() = 0 };
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            0,
+        )
+    };
+    assert!(n > 0, "4096 with a 32-byte buffer must format, got {n}");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        0,
+        "a successful humanize_number must leave errno alone"
+    );
 }
 
 #[test]
