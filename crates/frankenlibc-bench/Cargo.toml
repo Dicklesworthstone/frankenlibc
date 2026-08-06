@@ -756,3 +756,311 @@ required-features = ["abi-bench"]
 [[example]]
 name = "tokenize_loop_ab"
 required-features = ["abi-bench"]
+
+# Declared 2026-08-06 (bd-25bzch). These 60 examples import frankenlibc_abi,
+# which is an OPTIONAL dependency behind the abi-bench feature. Without this
+# declaration cargo builds them WITHOUT that dependency and they fail on
+# "unresolved import frankenlibc_abi" — 60 of the 68 broken targets a
+# --keep-going workspace check found. With it, cargo skips them unless the
+# feature is on, and scripts/check_abi_bench_feature_build.sh is what then
+# builds them, so the skip does not become silence.
+
+[[example]]
+name = "basename_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "casecmp_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "cexp_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "fnmatch_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "fputs_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "gen_ascii_ctype"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "localtime_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "malloc_resolve_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "mathf64_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "mbstowcs_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memchr_asm_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memchr_largen_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memcmp_align"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memcpy_align"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memcpy_direct_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memcpy_large"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memfrob_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memmove_bwd_align"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memmove_fwd_align"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memmove_ov_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memset_align"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "memset_direct_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "regex_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strcasecmp_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strchr_largen_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strcmp_align"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strcmp_largen_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strcpy_fused_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strcspn_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strfmon_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strfromd_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strftime_litrun_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strlen_gate_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strlen_largen_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strlen_memchr_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strncpy_fused_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strnlen_largen_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strptime_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strrchr_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strstr_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strtod_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strtol_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "strverscmp_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "textdomain_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "time_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcschr_len_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcscmp_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcsftime_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcstod_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcstod_longbuf_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcstod_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcstol_longbuf_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wcstol_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wide_copyset_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wide_ctype_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wide_search_survey"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wmemchr_sweep"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wmemcpy_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wmemmove_repro"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "wordexp_ab"
+harness = false
+required-features = ["abi-bench"]
