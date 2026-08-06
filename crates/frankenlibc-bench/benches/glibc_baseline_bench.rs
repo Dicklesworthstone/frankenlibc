@@ -1024,57 +1024,22 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
             },
         );
 
-        // ORIG for the allocation-elision lever: indexed, but clones the cache entry.
-        bench_op(
-            &mut group,
-            BenchMeta {
-                profile_id: "getprotobyname_r_tcp",
-                impl_label: "frankenlibc_legacy_orig",
-                api_family: "resolver",
-                symbol: "getprotobyname_r",
-                workload: "reentrant lookup tcp into caller buffer",
-                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
-            },
-            || {
-                let rc = unsafe {
-                    frankenlibc_abi::unistd_abi::getprotobyname_r_cloning_for_bench(
-                        proto.as_ptr(),
-                        (&raw mut r_protoent).cast::<c_void>(),
-                        rp_buf.as_mut_ptr(),
-                        rp_buf.len(),
-                        (&raw mut rp_result).cast::<*mut c_void>(),
-                    )
-                };
-                black_box(rc);
-                black_box(rp_result);
-            },
-        );
-
-        // Historical anchor: the pre-index arm that re-read /etc/protocols per call.
-        bench_op(
-            &mut group,
-            BenchMeta {
-                profile_id: "getprotobyname_r_tcp",
-                impl_label: "frankenlibc_legacy_fs",
-                api_family: "resolver",
-                symbol: "getprotobyname_r",
-                workload: "reentrant lookup tcp into caller buffer",
-                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
-            },
-            || {
-                let rc = unsafe {
-                    frankenlibc_abi::unistd_abi::getprotobyname_r_legacy_fs_per_call_for_bench(
-                        proto.as_ptr(),
-                        (&raw mut r_protoent).cast::<c_void>(),
-                        rp_buf.as_mut_ptr(),
-                        rp_buf.len(),
-                        (&raw mut rp_result).cast::<*mut c_void>(),
-                    )
-                };
-                black_box(rc);
-                black_box(rp_result);
-            },
-        );
+        // The two `frankenlibc_legacy_*` anchors that used to sit here — the
+        // cloning arm and the re-read-/etc/protocols-per-call arm — were dropped
+        // when e634aff2a deleted the implementation hooks they called
+        // (`getprotobyname_r_cloning_for_bench`,
+        // `getprotobyname_r_legacy_fs_per_call_for_bench`). That deletion is
+        // what made this whole bench uncompilable for six weeks (bd-5ibpa3).
+        //
+        // They are NOT restored, deliberately. Both were fl-vs-fl anchors, and a
+        // self-speedup is MAINTENANCE, not a campaign result; resurrecting dead
+        // implementations purely to benchmark them would manufacture arms rather
+        // than measure the shipping one. The arms that decide anything —
+        // `frankenlibc_abi` against live `host_glibc`, below — are untouched and
+        // now run again.
+        //
+        // The sibling getservbyname_r/getservbyport_r groups keep their legacy
+        // anchors because their hooks still exist; nothing here changes those.
 
         bench_op(
             &mut group,
