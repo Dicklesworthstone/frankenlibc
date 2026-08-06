@@ -91,6 +91,14 @@ bash scripts/check_ci_rch_cargo_policy.sh --validate-only
 echo "PASS"
 echo ""
 
+# Guards the construct that let a failing gate report success: a status taken
+# from the wrong command. Runs early and costs nothing, because everything after
+# it in this file is only as trustworthy as its own exit status. (bd-5n7ks2)
+echo "--- pipeline exit-status gate ---"
+bash scripts/check_pipeline_exit_status.sh
+echo "PASS"
+echo ""
+
 run_eik_gate "evidence ledger chain" scripts/check_evidence_ledger.sh
 run_eik_gate "evidence freshness e-process" scripts/check_evidence_freshness.sh
 run_eik_gate "gate drift changepoint" scripts/check_gate_drift.sh
