@@ -15860,30 +15860,105 @@ pub unsafe extern "C" fn sockatmark(sockfd: c_int) -> c_int {
 // tempnam — Implemented
 // ---------------------------------------------------------------------------
 
+/// Does `path` name an existing directory? glibc's `direxists`, which is a
+/// `stat` plus `S_ISDIR` — note a path that exists but is NOT a directory is
+/// rejected exactly like one that does not exist.
+fn tempnam_direxists(path: &[u8]) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    if path.is_empty() {
+        return false;
+    }
+    let p = std::path::Path::new(std::ffi::OsStr::from_bytes(path));
+    std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+/// glibc's `__path_search(..., try_tmpdir = 1)` directory selection, which
+/// `tempnam` uses and `tmpnam` does not.
+///
+/// The order is the surprising part and is measured, not assumed — live glibc
+/// 2.42, with tdA and tdB both existing:
+///
+///   TMPDIR unset,  dir = tdA              -> tdA
+///   TMPDIR unset,  dir = /nonexistent     -> /tmp      (bad dir is skipped)
+///   TMPDIR = tdB,  dir = NULL             -> tdB
+///   TMPDIR = tdB,  dir = tdA              -> tdB       (TMPDIR OUTRANKS dir)
+///   TMPDIR = bad,  dir = tdA              -> tdA
+///   TMPDIR = bad,  dir = NULL             -> /tmp
+///
+/// So TMPDIR is consulted FIRST and wins over the caller's argument whenever it
+/// names a real directory — the opposite of the "argument overrides the
+/// environment" intuition. Returns None (caller reports ENOENT) when nothing
+/// usable exists, matching glibc's `-1`/ENOENT path.
+///
+/// `TMPDIR` is read through `secure_getenv`, as glibc does, so a set-user-ID
+/// program cannot be redirected by a hostile environment. bd-7rbh4r.
+fn tempnam_path_search_dir(dir: Option<&[u8]>) -> Option<Vec<u8>> {
+    // P_tmpdir on glibc/Linux. glibc has a second branch comparing P_tmpdir
+    // against "/tmp", which is dead on this platform because they are equal.
+    const P_TMPDIR: &[u8] = b"/tmp";
+
+    let tmpdir = unsafe {
+        let key = c"TMPDIR";
+        let v = crate::stdlib_abi::secure_getenv(key.as_ptr());
+        if v.is_null() {
+            None
+        } else {
+            read_c_string_bytes(v)
+        }
+    };
+    if let Some(t) = tmpdir
+        && tempnam_direxists(&t)
+    {
+        return Some(t);
+    }
+    if let Some(d) = dir
+        && tempnam_direxists(d)
+    {
+        return Some(d.to_vec());
+    }
+    tempnam_direxists(P_TMPDIR).then(|| P_TMPDIR.to_vec())
+}
+
 /// POSIX `tempnam` — create a unique temporary file name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut c_char {
-    let dir_bytes = if dir.is_null() {
-        std::borrow::Cow::Borrowed(b"/tmp".as_slice())
+    let caller_dir = if dir.is_null() {
+        None
     } else {
         match unsafe { read_c_string_bytes(dir) } {
-            Some(bytes) => std::borrow::Cow::Owned(bytes),
+            Some(bytes) => Some(bytes),
             None => {
                 unsafe { set_abi_errno(libc::EINVAL) };
-                std::borrow::Cow::Borrowed(b"/tmp".as_slice())
+                None
             }
         }
     };
-    let pfx_bytes = if pfx.is_null() {
-        std::borrow::Cow::Borrowed(b"tmp".as_slice())
+    let Some(dir_bytes) = tempnam_path_search_dir(caller_dir.as_deref()) else {
+        // glibc's __path_search sets ENOENT and fails when it cannot find any
+        // usable directory; tempnam propagates that as a NULL return.
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return std::ptr::null_mut();
+    };
+
+    // glibc: an absent OR EMPTY prefix becomes "file" (not "tmp"), and any
+    // longer prefix is truncated to 5 bytes. Measured on live glibc 2.42:
+    //   tempnam(NULL, NULL)         -> /tmp/fileXXXXXX
+    //   tempnam(NULL, "")           -> /tmp/fileXXXXXX
+    //   tempnam(NULL, "abcdefghij") -> /tmp/abcdeXXXXXX
+    let pfx_read = if pfx.is_null() {
+        None
     } else {
         match unsafe { read_c_string_bytes(pfx) } {
-            Some(bytes) => std::borrow::Cow::Owned(bytes),
+            Some(bytes) => Some(bytes),
             None => {
                 unsafe { set_abi_errno(libc::EINVAL) };
-                std::borrow::Cow::Borrowed(b"tmp".as_slice())
+                None
             }
         }
+    };
+    let pfx_bytes: std::borrow::Cow<[u8]> = match pfx_read {
+        Some(bytes) if !bytes.is_empty() => std::borrow::Cow::Owned(bytes),
+        _ => std::borrow::Cow::Borrowed(b"file".as_slice()),
     };
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
