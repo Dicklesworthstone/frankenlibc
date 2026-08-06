@@ -4006,29 +4006,103 @@ pub unsafe extern "C" fn tanpif64x(x: f64) -> f64 {
     unsafe { tanpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanpif128(x: f64) -> f64 {
-    unsafe { tanpi(x) }
+pub unsafe extern "C" fn tanpif128(x: f128) -> f128 {
+    // glibc s_tanpi_template, on the byte-exact tanl.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    if x.abs() < EPS {
+        return PI * x;
+    }
+    if x.is_infinite() {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+    }
+    let mut y = x - 2.0 * (0.5 * x).round();
+    let mut absy = y.abs();
+    if absy == 0.0 {
+        return (0.0f128).copysign(x);
+    } else if absy == 1.0 {
+        return (0.0f128).copysign(-x);
+    } else if absy == 0.5 {
+        set_range_errno();
+        return 1.0 / (0.0f128).copysign(y);
+    } else if absy > 0.5 {
+        y -= (1.0f128).copysign(y);
+        absy = y.abs();
+    }
+    if absy <= 0.25 {
+        tanl_f128(PI * y)
+    } else {
+        (1.0 / tanl_f128(PI * (0.5 - absy))).copysign(y)
+    }
 }
 
 // --- roundeven ---
 
+// Round to nearest integer, ties to EVEN, implemented purely in the integer
+// (bit) domain. Unlike a float-arithmetic formulation (x.round() + tie fixup +
+// `as i64` casts), this raises NO floating-point exceptions: glibc's roundeven
+// is the IEEE roundToIntegralTiesToEven operation, which never signals
+// FE_INEXACT (even on non-integers) nor FE_INVALID (on infinities). The earlier
+// implementation produced bit-exact results but spuriously raised FE_INEXACT on
+// every non-integer and FE_INVALID on ±inf (the float->int cast), diverging from
+// glibc's exception-free contract.
 fn roundeven_impl(x: f64) -> f64 {
-    let r = x.round();
-    if (x - r).abs() == 0.5 {
-        let r2 = if x > 0.0 { x.floor() } else { x.ceil() };
-        if (r2 as i64) % 2 == 0 { r2 } else { r }
-    } else {
-        r
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000_0000_0000;
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    // |x| >= 2^52 (and inf/NaN): already integral, return unchanged.
+    if e >= 1023 + 52 {
+        return x;
     }
+    // |x| < 1: result is ±0 (|x| <= 0.5, ties-to-even rounds 0.5 to 0) or ±1.
+    if e < 1023 {
+        let mag = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
+        let r = if mag > 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    // 1 <= |x| < 2^52: split mantissa into integer/fractional bits.
+    let frac_bits = 1075 - e; // 1..=52 fractional mantissa bits
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    // Round up when above the halfway point, or exactly halfway with an odd
+    // integer (ties to even). Integer add carries naturally into the exponent.
+    let round_up = frac > half || (frac == half && (int_part & (1u64 << frac_bits)) != 0);
+    let out = if round_up {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    };
+    f64::from_bits(out)
 }
 fn roundevenf_impl(x: f32) -> f32 {
-    let r = x.round();
-    if (x - r).abs() == 0.5f32 {
-        let r2 = if x > 0.0f32 { x.floor() } else { x.ceil() };
-        if (r2 as i32) % 2 == 0 { r2 } else { r }
-    } else {
-        r
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000;
+    let e = ((bits >> 23) & 0xff) as i32;
+    // |x| >= 2^23 (and inf/NaN): already integral.
+    if e >= 127 + 23 {
+        return x;
     }
+    // |x| < 1: ±0 or ±1.
+    if e < 127 {
+        let mag = f32::from_bits(bits & 0x7fff_ffff);
+        let r = if mag > 0.5 { 1.0_f32 } else { 0.0_f32 };
+        return f32::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 150 - e; // 1..=23 fractional mantissa bits
+    let half = 1u32 << (frac_bits - 1);
+    let frac_mask = (1u32 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let round_up = frac > half || (frac == half && (int_part & (1u32 << frac_bits)) != 0);
+    let out = if round_up {
+        int_part + (1u32 << frac_bits)
+    } else {
+        int_part
+    };
+    f32::from_bits(out)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundeven(x: f64) -> f64 {
@@ -5820,8 +5894,10 @@ pub unsafe extern "C" fn lgammaf64x_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lgammaf128_r(x: f64, signgamp: *mut c_int) -> f64 {
-    unsafe { lgamma_r(x, signgamp) }
+pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
+    // ABI-correct binary128 surface; the Bessel/gamma quad kernels are still a
+    // tracked parity gap, so preserve the existing f64 implementation quality.
+    unsafe { lgamma_r(x as f64, signgamp) as f128 }
 }
 
 // =========================================================================
@@ -6379,19 +6455,26 @@ pub unsafe extern "C" fn dfmal(x: f64, y: f64, z: f64) -> f64 {
 // Type-generic narrowing operations
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf32x(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    // _Float32x is `double` on x86_64, so this equals f32addf64/fadd; route
+    // through fadd for correct single rounding.
+    unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf64(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    // Identical operation to `fadd` (f32 = round(x+y)). Route through it so this
+    // explicit-width spelling gets the correct single rounding (round-to-odd),
+    // not the double-rounding `(x+y) as f32`.
+    unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf64x(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    // _Float64x is f64 in fl, so this is the same op as f32addf64/fadd; route
+    // through fadd for correct single rounding (not double-rounding).
+    unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32addf128(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+pub unsafe extern "C" fn f32addf128(x: f128, y: f128) -> f32 {
+    nadd_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xaddf64(x: f64, y: f64) -> f64 {
@@ -6420,19 +6503,20 @@ pub unsafe extern "C" fn f64xaddf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf32x(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf64(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    // Route through `fdiv` for correct single rounding (round-to-odd).
+    unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf64x(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32divf128(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+pub unsafe extern "C" fn f32divf128(x: f128, y: f128) -> f32 {
+    ndiv_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xdivf64(x: f64, y: f64) -> f64 {
@@ -6460,19 +6544,20 @@ pub unsafe extern "C" fn f64xdivf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf32x(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf64(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    // Route through `fmul` for correct single rounding (round-to-odd).
+    unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf64x(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32mulf128(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+pub unsafe extern "C" fn f32mulf128(x: f128, y: f128) -> f32 {
+    nmul_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xmulf64(x: f64, y: f64) -> f64 {
@@ -6500,23 +6585,20 @@ pub unsafe extern "C" fn f64xmulf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf32x(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf64(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    // Route through `fsqrt` for correct single rounding (round-to-odd).
+    unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf64x(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32sqrtf128(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+pub unsafe extern "C" fn f32sqrtf128(x: f128) -> f32 {
+    nsqrt_ro_f128(x) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xsqrtf64(x: f64) -> f64 {
@@ -6544,19 +6626,20 @@ pub unsafe extern "C" fn f64xsqrtf128(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf32x(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf64(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    // Route through `fsub` for correct single rounding (round-to-odd).
+    unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf64x(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32subf128(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+pub unsafe extern "C" fn f32subf128(x: f128, y: f128) -> f32 {
+    nsub_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xsubf64(x: f64, y: f64) -> f64 {
@@ -6584,23 +6667,20 @@ pub unsafe extern "C" fn f64xsubf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf32x(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf64(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    // Route through `ffma` for correct single rounding (round-to-odd).
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf64x(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32fmaf128(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+pub unsafe extern "C" fn f32fmaf128(x: f128, y: f128, z: f128) -> f32 {
+    nfma_ro_f128(x, y, z) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xfmaf64(x: f64, y: f64, z: f64) -> f64 {
@@ -13190,14 +13270,14 @@ pub unsafe extern "C" fn __gammal_r_finite(x: f64, signgamp: *mut c_int) -> f64 
     unsafe { crate::math_abi::lgamma_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __gammaf128_r_finite(x: f64, signgamp: *mut c_int) -> f64 {
-    unsafe { crate::math_abi::lgamma_r(x, signgamp) }
+pub unsafe extern "C" fn __gammaf128_r_finite(x: f128, signgamp: *mut c_int) -> f128 {
+    unsafe { crate::math_abi::lgammaf128_r(x, signgamp) }
 }
 
 // __finite classification variants (f128)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __finitef128(x: f64) -> c_int {
-    frankenlibc_core::math::finite(x)
+pub unsafe extern "C" fn __finitef128(x: f128) -> c_int {
+    (((x.to_bits() >> 112) & 0x7fff) != 0x7fff) as c_int
 }
 
 #[cfg(test)]
