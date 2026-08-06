@@ -722,7 +722,16 @@ fn streams_compatibility_stubs_match_host_enosys() {
 
 #[test]
 fn isastream_matches_host_default_for_regular_and_invalid_fds() {
-    for fd in [0, -1] {
+    // Linux has no STREAMS, so a VALID descriptor always answers 0 — but glibc
+    // validates the descriptor first and an invalid one is EBADF, not 0. The
+    // old expectation was a flat (0, 0) for BOTH fds, which encoded fl's bug
+    // (it ignored `fd` entirely) as the contract. Measured on live glibc 2.42,
+    // via dlvsym since isastream is compat-only:
+    //   isastream(-1) -> -1, errno 9 (EBADF)
+    //   isastream( 0) ->  0, errno 0
+    //   isastream( 1) ->  0, errno 0
+    // bd-86hcwh.
+    for (fd, expected) in [(0, (0, 0)), (-1, (-1, libc::EBADF))] {
         unsafe {
             *libc::__errno_location() = 0;
             let host_result = host_isastream(fd);
@@ -738,7 +747,14 @@ fn isastream_matches_host_default_for_regular_and_invalid_fds() {
                 (host_result, host_errno),
                 "isastream({fd}) should match host libc"
             );
-            assert_eq!((fl_result, fl_errno), (0, 0));
+            // Assert what the ORACLE produced as well: if fl and the host both
+            // regressed to ignoring the descriptor, the equality above would
+            // still hold, which is exactly how this went unnoticed.
+            assert_eq!(
+                (host_result, host_errno),
+                expected,
+                "isastream({fd}): glibc 2.42 was measured to give {expected:?}"
+            );
         }
     }
 }
@@ -876,12 +892,37 @@ fn res_hnok_accepts_valid_hostnames() {
 
 #[test]
 fn res_hnok_rejects_invalid_hostnames() {
-    for raw in ["bad_host.com", "bad host"] {
+    // The premise "an underscore makes a hostname invalid" is WRONG for glibc's
+    // res_hnok, and this arm used to assert it. Measured on live glibc 2.42:
+    //
+    //   res_hnok("bad_host.com")     = 1   underscore is ACCEPTED
+    //   res_hnok("good.example.com") = 1
+    //   res_hnok("bad host")         = 0   space
+    //   res_hnok("-lead.com")        = 0   label starting with '-'
+    //   res_hnok("a..b")             = 0   empty label
+    //
+    // res_hnok is deliberately lenient — it is a transport-level sanity check,
+    // not an RFC-1123 validator. fl already agreed with the host on every one of
+    // these; only the expectation was wrong, which is why this showed up the
+    // moment the target was relit (bd-r71n1b) rather than as a real defect.
+    // Corrected against measurement, not relaxed to whatever passed. bd-86hcwh.
+    for (raw, expected) in [
+        ("bad host", 0),
+        ("-lead.com", 0),
+        ("a..b", 0),
+        ("bad_host.com", 1),
+        ("good.example.com", 1),
+    ] {
         let name = CString::new(raw).unwrap();
         let host = unsafe { host_res_hnok(name.as_ptr()) };
         let fl = unsafe { res_hnok(name.as_ptr()) };
-        assert_eq!(fl, host, "res_hnok({raw})");
-        assert_eq!(fl, 0, "res_hnok({raw}) expected rejection");
+        assert_eq!(fl, host, "res_hnok({raw}): fl and host disagree");
+        // Assert what the ORACLE produced too: if both sides ever started
+        // accepting everything, the equality above would still hold.
+        assert_eq!(
+            host, expected,
+            "res_hnok({raw}): glibc 2.42 was measured to return {expected}"
+        );
     }
 
     assert_eq!(unsafe { res_hnok(ptr::null()) }, 0);

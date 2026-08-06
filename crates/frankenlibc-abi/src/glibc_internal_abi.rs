@@ -6125,7 +6125,20 @@ pub unsafe extern "C" fn iruserok_af(
 // isastream: STREAMS not supported on Linux — always return 0
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isastream(fd: c_int) -> c_int {
-    let _ = fd;
+    // Linux has no STREAMS, so the answer is always "no" — but glibc still
+    // VALIDATES the descriptor first and fails on a bad one. fl ignored `fd`
+    // entirely and reported success for anything, including -1.
+    //
+    // Measured on live glibc 2.42 (dlvsym'd, since isastream is compat-only):
+    //   isastream(-1) -> -1, errno 9 (EBADF)
+    //   isastream(0)  ->  0, errno 0
+    //   isastream(1)  ->  0, errno 0
+    // bd-86hcwh.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    if let Err(e) = unsafe { raw_syscall::sys_fstat(fd, (&mut stat) as *mut _ as *mut u8) } {
+        unsafe { crate::errno_abi::set_abi_errno(e) };
+        return -1;
+    }
     0
 }
 // isctype: native — same as __isctype
