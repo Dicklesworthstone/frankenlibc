@@ -5184,11 +5184,25 @@ pub unsafe extern "C" fn error_at_line(
         let _ = write!(out, "{progname}:");
     }
 
+    // glibc prints the "%s:%d: " file/line group only when file_name is
+    // non-NULL, and a single space in its place when it is NULL — so a NULL
+    // filename still yields "progname: message", not "progname:message".
+    // Measured on live glibc 2.42:
+    //   ("f.c", 7) -> "PROG:f.c:7: with file"
+    //   (NULL,  7) -> "PROG: null file"
+    //   ("",    7) -> "PROG::7: empty file"   (empty name still prints ":7: ")
+    // The space is emitted regardless of error_print_progname, which replaces
+    // only the "progname:" part. bd-0qltjh.
     if !filename.is_null()
         && let Some(filename_bytes) = unsafe { read_bounded_cstr_bytes(filename) }
         && let Ok(f) = std::str::from_utf8(&filename_bytes)
     {
         let _ = write!(out, "{f}:{linenum}: ");
+    } else {
+        // Also covers a non-NULL filename the membrane could not read to a NUL:
+        // glibc would have dereferenced it, and the closest safe rendering is
+        // the one it uses when there is no file name at all.
+        let _ = write!(out, " ");
     }
 
     if !fmt.is_null()
