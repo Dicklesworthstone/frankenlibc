@@ -6359,41 +6359,69 @@ pub unsafe extern "C" fn fadd(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn faddl(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdiv(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    let q = x / y;
+    // Exact / non-finite results need no round-to-odd. q == 0 (incl finite/±inf
+    // and true underflow below f64 range) is exact-to-f32; the fma residual
+    // would also be NaN for a ±inf divisor (0*inf), so guard it.
+    if !q.is_finite() || q == 0.0 {
+        return q as f32;
+    }
+    let r = frankenlibc_core::math::fma(-q, y, x); // x - q*y, exact residual numerator
+    if !r.is_finite() {
+        return q as f32;
+    }
+    // sign(E - q) = sign(r / y) = sign(r) * sign(y)
+    let resid = if r == 0.0 {
+        0.0
+    } else if (r > 0.0) == (y > 0.0) {
+        1.0
+    } else {
+        -1.0
+    };
+    narrow_round_odd(q, resid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdivl(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmul(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    let p = x * y;
+    let resid = frankenlibc_core::math::fma(x, y, -p); // exact x*y - p
+    narrow_round_odd(p, resid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmull(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsqrt(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    let s = frankenlibc_core::math::sqrt(x);
+    if !s.is_finite() || s == 0.0 {
+        return s as f32;
+    }
+    let r = frankenlibc_core::math::fma(-s, s, x); // x - s^2; sign(E - s) = sign(r) since s>0
+    narrow_round_odd(s, r)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsqrtl(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsub(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    let ny = -y;
+    let s = x + ny;
+    let bb = s - x; // 2Sum residual of x-y
+    let resid = (x - (s - bb)) + (ny - bb);
+    narrow_round_odd(s, resid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsubl(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ffma(x: f64, y: f64, z: f64) -> f32 {

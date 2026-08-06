@@ -134,6 +134,18 @@ fn c23_narrow_matches_glibc() {
         1.0 + (2f64.powi(-23)),
         (2f64.powi(-24)) + (2f64.powi(-53))
     );
+    // The witness above is INERT: naive `(x - y) as f32` and the correctly
+    // single-rounded result agree on it, so it cannot fail, and fsub survived
+    // six weeks as a plain double-rounding cast with this gate green. Measured
+    // against live glibc, this one does discriminate — glibc 0x3f800001,
+    // naive double-rounding 0x3f800000:
+    chk2!(
+        "fsub",
+        fl::fsub,
+        g_fsub,
+        1.0 + (2f64.powi(-24)),
+        -(2f64.powi(-60))
+    );
     chk2!(
         "fmul",
         fl::fmul,
