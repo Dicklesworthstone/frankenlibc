@@ -45,6 +45,189 @@ fn set_range_errno() {
     unsafe { set_abi_errno(libc::ERANGE) };
 }
 
+/// Unbiased base-2 exponent of a finite, nonzero binary128 value (its `logb`),
+/// handling subnormals via the mantissa's leading-zero count. Caller guarantees
+/// the value is finite and nonzero.
+#[inline]
+fn f128_unbiased_exp(bits: u128) -> i32 {
+    let exp_field = ((bits >> 112) & 0x7fff) as i32;
+    if exp_field == 0 {
+        // Subnormal: value = mantissa * 2^-16494; the leading set bit fixes the
+        // exponent. mantissa is a 112-bit value held in a u128.
+        let mant = bits & ((1u128 << 112) - 1);
+        -16367 - (mant.leading_zeros() as i32)
+    } else {
+        exp_field - 16383
+    }
+}
+
+/// Round to integral, nearest-even — for `rintf128`. glibc's `__rintf128` rounds
+/// to nearest-even REGARDLESS of the dynamic FP rounding mode (verified: under
+/// FE_DOWNWARD, rintf128(1.5) is still 2.0), unlike nearbyint/lrint/llrint which
+/// do honor the mode. We match that quirk.
+fn round_f128_nearest(x: f128) -> f128 {
+    x.round_ties_even()
+}
+
+#[cfg(test)]
+unsafe extern "C" {
+    fn fegetround() -> c_int;
+}
+
+#[inline]
+fn active_rounding_mode() -> c_int {
+    #[cfg(not(test))]
+    {
+        // SAFETY: Reads the process-local floating-point environment without
+        // mutating it.
+        unsafe { crate::fenv_abi::fegetround() }
+    }
+
+    #[cfg(test)]
+    {
+        // SAFETY: Unit-test builds intentionally hide `fenv_abi` to avoid
+        // exporting libc-shadowing symbols, so read the host fenv oracle.
+        unsafe { fegetround() }
+    }
+}
+
+/// Round to integral in the current FP rounding direction — for
+/// nearbyint/lrint/llrint, which (unlike rintf128) honor the FE_* mode.
+fn round_f128_current_mode(x: f128) -> f128 {
+    // x86 FE_*: TONEAREST=0, DOWNWARD=0x400, UPWARD=0x800, TOWARDZERO=0xc00.
+    match active_rounding_mode() {
+        0x400 => x.floor(),
+        0x800 => x.ceil(),
+        0xc00 => x.trunc(),
+        _ => x.round_ties_even(),
+    }
+}
+
+/// Convert an already-integral binary128 to i64, saturating like glibc's
+/// lround/lrint: NaN and positive overflow -> i64::MAX, negative overflow ->
+/// i64::MIN (no errno; FE_INVALID only).
+fn f128_to_i64_sat(r: f128) -> i64 {
+    if r.is_nan() {
+        i64::MAX
+    } else {
+        r as i64 // saturating float->int cast
+    }
+}
+
+/// Round a binary128 to integral per a C23 `FP_INT_*` direction argument:
+/// 0=UPWARD, 1=DOWNWARD, 2=TOWARDZERO, 3=TONEARESTFROMZERO (half away from zero),
+/// 4=TONEAREST (half to even). Used by the fromfp family.
+fn round_dir_f128(x: f128, rnd: c_int) -> f128 {
+    match rnd {
+        0 => x.ceil(),
+        1 => x.floor(),
+        2 => x.trunc(),
+        3 => x.round(),
+        _ => x.round_ties_even(),
+    }
+}
+
+/// `fromfp`/`fromfpx` core for binary128 -> intmax_t. Rounds per `rnd`, then if
+/// the result is out of the signed `width`-bit range (or x is non-finite),
+/// raises EDOM and SATURATES (positive/NaN -> max, negative -> min), matching
+/// glibc. (fromfpx additionally raises FE_INEXACT, which we leave to the FPU.)
+fn fromfp_signed_f128(x: f128, rnd: c_int, width: u32) -> i64 {
+    if width == 0 {
+        // A 0-bit integer has no representable values: always a range error.
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    let smax: i64 = if width >= 64 {
+        i64::MAX
+    } else {
+        (1i64 << (width - 1)) - 1
+    };
+    let smin: i64 = if width >= 64 {
+        i64::MIN
+    } else {
+        -(1i64 << (width - 1))
+    };
+    if x.is_nan() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return smax;
+    }
+    let r = round_dir_f128(x, rnd);
+    if r.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if r > 0.0 { smax } else { smin };
+    }
+    if r > smax as f128 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return smax;
+    }
+    if r < smin as f128 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return smin;
+    }
+    r as i64
+}
+
+/// `ufromfp`/`ufromfpx` core for binary128 -> uintmax_t. Negative results clamp
+/// to 0, overflow clamps to the unsigned `width`-bit max, both with EDOM.
+fn fromfp_unsigned_f128(x: f128, rnd: c_int, width: u32) -> u64 {
+    if width == 0 {
+        // A 0-bit integer has no representable values: always a range error.
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    let umax: u64 = if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    if x.is_nan() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return umax;
+    }
+    let r = round_dir_f128(x, rnd);
+    if r.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if r > 0.0 { umax } else { 0 };
+    }
+    if r < 0.0 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    if r > umax as f128 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return umax;
+    }
+    r as u64
+}
+
+/// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
+/// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
+/// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
+/// underflow (magnitude increased from 0), so it sets no errno.
+#[inline]
+fn nextafter_range_error_f64(x: f64, r: f64) -> bool {
+    if x.is_nan() || r.is_nan() {
+        return false;
+    }
+    if x.is_finite() && r.is_infinite() {
+        return true; // overflow
+    }
+    let sub_or_zero = r == 0.0 || r.abs() < f64::MIN_POSITIVE;
+    sub_or_zero && r.abs() < x.abs() // underflow (magnitude decreased)
+}
+
+#[inline]
+fn nextafter_range_error_f32(x: f32, r: f32) -> bool {
+    if x.is_nan() || r.is_nan() {
+        return false;
+    }
+    if x.is_finite() && r.is_infinite() {
+        return true;
+    }
+    let sub_or_zero = r == 0.0 || r.abs() < f32::MIN_POSITIVE;
+    sub_or_zero && r.abs() < x.abs()
+}
+
 #[inline]
 fn scaling_range_error_f64(x: f64, out: f64) -> bool {
     x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
@@ -1708,6 +1891,15 @@ pub struct CDoubleComplex {
     pub im: f64,
 }
 
+/// ABI-compatible `_Complex _Float128` (verified to match the C ABI: a 32-byte
+/// repr(C) struct of two f128 passes/returns identically to glibc's type).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CFloat128Complex {
+    pub re: f128,
+    pub im: f128,
+}
+
 /// ABI-compatible `float complex`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2216,7 +2408,10 @@ fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
                 let re = if rx.is_sign_negative() { -rc } else { rc };
                 return (re, rs);
             }
-            return (math::sinh(rx) * math::cos(ix), math::cosh(rx) * math::sin(ix));
+            return (
+                math::sinh(rx) * math::cos(ix),
+                math::cosh(rx) * math::sin(ix),
+            );
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
@@ -2265,7 +2460,10 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
                 let im = if rx.is_sign_negative() { -rs } else { rs };
                 return (rc, im);
             }
-            return (math::cosh(rx) * math::cos(ix), math::sinh(rx) * math::sin(ix));
+            return (
+                math::cosh(rx) * math::cos(ix),
+                math::sinh(rx) * math::sin(ix),
+            );
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
@@ -2290,7 +2488,14 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
         return (f64::INFINITY, f64::NAN);
     }
     // rx is NaN.
-    (f64::NAN, if ix == 0.0 { f64::copysign(0.0, ix) } else { f64::NAN })
+    (
+        f64::NAN,
+        if ix == 0.0 {
+            f64::copysign(0.0, ix)
+        } else {
+            f64::NAN
+        },
+    )
 }
 
 // --- creal / cimag / conj / carg / cabs ---
@@ -3089,8 +3294,9 @@ pub unsafe extern "C" fn fmaximumf64x(x: f64, y: f64) -> f64 {
     fmaximum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximumf128(x: f64, y: f64) -> f64 {
-    fmaximum_impl(x, y)
+pub unsafe extern "C" fn fmaximumf128(x: f128, y: f128) -> f128 {
+    // C23 fmaximum = IEEE-754-2019 maximum: NaN-propagating, +0 > -0.
+    x.maximum(y)
 }
 
 // --- fmaximum_num exports ---
@@ -3124,8 +3330,15 @@ pub unsafe extern "C" fn fmaximum_numf64x(x: f64, y: f64) -> f64 {
     fmaximum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximum_numf128(x: f64, y: f64) -> f64 {
-    fmaximum_num_impl(x, y)
+pub unsafe extern "C" fn fmaximum_numf128(x: f128, y: f128) -> f128 {
+    // C23 fmaximum_num: like fmaximum but a NaN operand is ignored.
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else {
+        x.maximum(y)
+    }
 }
 
 // --- fmaximum_mag exports ---
@@ -3159,8 +3372,19 @@ pub unsafe extern "C" fn fmaximum_magf64x(x: f64, y: f64) -> f64 {
     fmaximum_mag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximum_magf128(x: f64, y: f64) -> f64 {
-    fmaximum_mag_impl(x, y)
+pub unsafe extern "C" fn fmaximum_magf128(x: f128, y: f128) -> f128 {
+    // Greater magnitude; NaN propagates; equal magnitude defers to fmaximum.
+    if x.is_nan() || y.is_nan() {
+        return x.maximum(y);
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax > ay {
+        x
+    } else if ay > ax {
+        y
+    } else {
+        x.maximum(y)
+    }
 }
 
 // --- fmaximum_mag_num exports ---
@@ -3194,8 +3418,22 @@ pub unsafe extern "C" fn fmaximum_mag_numf64x(x: f64, y: f64) -> f64 {
     fmaximum_mag_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximum_mag_numf128(x: f64, y: f64) -> f64 {
-    fmaximum_mag_num_impl(x, y)
+pub unsafe extern "C" fn fmaximum_mag_numf128(x: f128, y: f128) -> f128 {
+    // Greater magnitude, NaN ignored; equal magnitude defers to fmaximum_num.
+    if x.is_nan() {
+        return y;
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax > ay {
+        x
+    } else if ay > ax {
+        y
+    } else {
+        x.maximum(y)
+    }
 }
 
 // --- fminimum exports ---
@@ -3229,8 +3467,9 @@ pub unsafe extern "C" fn fminimumf64x(x: f64, y: f64) -> f64 {
     fminimum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimumf128(x: f64, y: f64) -> f64 {
-    fminimum_impl(x, y)
+pub unsafe extern "C" fn fminimumf128(x: f128, y: f128) -> f128 {
+    // C23 fminimum = IEEE-754-2019 minimum: NaN-propagating, -0 < +0.
+    x.minimum(y)
 }
 
 // --- fminimum_num exports ---
@@ -3264,8 +3503,15 @@ pub unsafe extern "C" fn fminimum_numf64x(x: f64, y: f64) -> f64 {
     fminimum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimum_numf128(x: f64, y: f64) -> f64 {
-    fminimum_num_impl(x, y)
+pub unsafe extern "C" fn fminimum_numf128(x: f128, y: f128) -> f128 {
+    // C23 fminimum_num: like fminimum but a NaN operand is ignored.
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else {
+        x.minimum(y)
+    }
 }
 
 // --- fminimum_mag exports ---
@@ -3299,8 +3545,19 @@ pub unsafe extern "C" fn fminimum_magf64x(x: f64, y: f64) -> f64 {
     fminimum_mag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimum_magf128(x: f64, y: f64) -> f64 {
-    fminimum_mag_impl(x, y)
+pub unsafe extern "C" fn fminimum_magf128(x: f128, y: f128) -> f128 {
+    // Lesser magnitude; NaN propagates; equal magnitude defers to fminimum.
+    if x.is_nan() || y.is_nan() {
+        return x.minimum(y);
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < ay {
+        x
+    } else if ay < ax {
+        y
+    } else {
+        x.minimum(y)
+    }
 }
 
 // --- fminimum_mag_num exports ---
@@ -3334,8 +3591,22 @@ pub unsafe extern "C" fn fminimum_mag_numf64x(x: f64, y: f64) -> f64 {
     fminimum_mag_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimum_mag_numf128(x: f64, y: f64) -> f64 {
-    fminimum_mag_num_impl(x, y)
+pub unsafe extern "C" fn fminimum_mag_numf128(x: f128, y: f128) -> f128 {
+    // Lesser magnitude, NaN ignored; equal magnitude defers to fminimum_num.
+    if x.is_nan() {
+        return y;
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < ay {
+        x
+    } else if ay < ax {
+        y
+    } else {
+        x.minimum(y)
+    }
 }
 
 // =========================================================================
@@ -3374,8 +3645,15 @@ pub unsafe extern "C" fn acospif64x(x: f64) -> f64 {
     unsafe { acospi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acospif128(x: f64) -> f64 {
-    unsafe { acospi(x) }
+pub unsafe extern "C" fn acospif128(x: f128) -> f128 {
+    // glibc s_acospi_template: acos(x)/pi, EDOM if |x|>1, clamp to [.,1].
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    if x.abs() > 1.0 {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    let ret = acos_f128(x) / PI;
+    if ret > 1.0 { 1.0 } else { ret }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinpi(x: f64) -> f64 {
@@ -3408,8 +3686,25 @@ pub unsafe extern "C" fn asinpif64x(x: f64) -> f64 {
     unsafe { asinpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinpif128(x: f64) -> f64 {
-    unsafe { asinpi(x) }
+pub unsafe extern "C" fn asinpif128(x: f128) -> f128 {
+    // glibc s_asinpi_template: EDOM if |x|>1, else asin(x)/pi, clamp to ±0.5.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    if !(x.abs() <= 1.0) {
+        if x.is_nan() {
+            return (x - x) / (x - x); // propagate input NaN
+        }
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    let ret = asin_f128(x) / PI;
+    if x != 0.0 && ret == 0.0 {
+        set_range_errno();
+    }
+    if ret.abs() > 0.5 {
+        (0.5f128).copysign(ret)
+    } else {
+        ret
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanpi(x: f64) -> f64 {
@@ -3442,8 +3737,18 @@ pub unsafe extern "C" fn atanpif64x(x: f64) -> f64 {
     unsafe { atanpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atanpif128(x: f64) -> f64 {
-    unsafe { atanpi(x) }
+pub unsafe extern "C" fn atanpif128(x: f128) -> f128 {
+    // glibc s_atanpi_template: atan(x)/pi, ERANGE on nonzero→0 underflow, ±0.5 clamp.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    let ret = atan_f128(x) / PI;
+    if x != 0.0 && ret == 0.0 {
+        set_range_errno();
+    }
+    if ret.abs() > 0.5 {
+        (0.5f128).copysign(ret)
+    } else {
+        ret
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2pi(x: f64, y: f64) -> f64 {
@@ -3476,16 +3781,67 @@ pub unsafe extern "C" fn atan2pif64x(x: f64, y: f64) -> f64 {
     unsafe { atan2pi(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atan2pif128(x: f64, y: f64) -> f64 {
-    unsafe { atan2pi(x, y) }
+pub unsafe extern "C" fn atan2pif128(y: f128, x: f128) -> f128 {
+    // glibc s_atan2pi_template: atan2(y,x)/pi, ERANGE underflow, ±1 clamp.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    let ret = atan2_f128(y, x) / PI;
+    if ret == 0.0 && y != 0.0 && x.is_finite() {
+        set_range_errno();
+    }
+    if ret.abs() > 1.0 {
+        (1.0f128).copysign(ret)
+    } else {
+        ret
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Re-raise FE_INVALID on the cold pi-function domain path (x = ±inf).
+#[inline]
+fn pi_fn_raise_invalid_f64() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+}
+#[inline]
+fn pi_fn_raise_invalid_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0_f32) / core::hint::black_box(0.0_f32));
+}
+
+// C23 pi-scaled trig: sinpi(x)=sin(pi*x), cospi(x)=cos(pi*x), tanpi(x)=tan(pi*x),
+// computed via the exact identity f(n+r) with n=round(x), r=x-n in [-0.5,0.5]
+// (exact by Sterbenz for |x|<2^53). This yields EXACT results at integer and
+// half-integer arguments (sinpi(1)=+0, cospi(0.5)=+0, tanpi(0.5)=+inf) and
+// stays correct for huge arguments where the naive sin(x*PI) loses all
+// precision. |x|>=2^53 is always an even integer: sinpi=±0, cospi=1, tanpi=±0.
 pub unsafe extern "C" fn cospi(x: f64) -> f64 {
-    unsafe { cos(x * std::f64::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    if x.abs() >= 9007199254740992.0 {
+        return 1.0; // even integer → cos(pi*even)=+1
+    }
+    let n = x.round();
+    let r = x - n;
+    let n_odd = (n as i64) & 1 != 0;
+    if r == 0.0 {
+        return if n_odd { -1.0 } else { 1.0 };
+    }
+    if r == 0.5 || r == -0.5 {
+        return 0.0; // cos at odd multiple of pi/2 is +0
+    }
+    let c = frankenlibc_core::math::cos(r * std::f64::consts::PI);
+    if n_odd { -c } else { c }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospif(x: f32) -> f32 {
-    unsafe { cosf(x * std::f32::consts::PI) }
+    // glibc computes cospif in double precision and rounds once. Doing the
+    // arg-reduction in f32 loses enormous ULP near cospi's zeros (x = k+0.5),
+    // where cosf amplifies the f32 `r*pi` rounding error (up to ~28000 ULP).
+    // Routing through the f64 cospi is byte-exact vs glibc (0 ULP over a
+    // 400k-point sweep), and the f64 path handles NaN/inf/large-x identically.
+    unsafe { cospi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospil(x: f64) -> f64 {
@@ -3508,16 +3864,59 @@ pub unsafe extern "C" fn cospif64x(x: f64) -> f64 {
     unsafe { cospi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cospif128(x: f64) -> f64 {
-    unsafe { cospi(x) }
+pub unsafe extern "C" fn cospif128(x: f128) -> f128 {
+    // glibc s_cospi_template, on the byte-exact sinl/cosl.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    if x.abs() < EPS {
+        return 1.0;
+    }
+    if x.is_infinite() {
+        set_domain_errno();
+    }
+    let xr = (x - 2.0 * (0.5 * x).round()).abs();
+    if xr <= 0.25 {
+        cosl_f128(PI * xr)
+    } else if xr == 0.5 {
+        0.0
+    } else if xr <= 0.75 {
+        sinl_f128(PI * (0.5 - xr))
+    } else {
+        -cosl_f128(PI * (1.0 - xr))
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
-    unsafe { sin(x * std::f64::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    if x.abs() >= 9007199254740992.0 {
+        // even integer → sin(pi*even)=±0 with sign of x
+        return if x.is_sign_negative() { -0.0 } else { 0.0 };
+    }
+    let n = x.round();
+    let r = x - n;
+    let n_odd = (n as i64) & 1 != 0;
+    if r == 0.0 {
+        return if x.is_sign_negative() { -0.0 } else { 0.0 };
+    }
+    if r == 0.5 || r == -0.5 {
+        let m = if r > 0.0 { 1.0 } else { -1.0 };
+        return if n_odd { -m } else { m };
+    }
+    let s = frankenlibc_core::math::sin(r * std::f64::consts::PI);
+    if n_odd { -s } else { s }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpif(x: f32) -> f32 {
-    unsafe { sinf(x * std::f32::consts::PI) }
+    // Compute in double + round once, matching glibc (byte-exact, 0 ULP); the
+    // direct f32 arg-reduction is up to ~1 ULP off. The f64 sinpi handles
+    // NaN/inf (FE_INVALID)/large-x and signed-zero identically.
+    unsafe { sinpi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpil(x: f64) -> f64 {
@@ -3540,16 +3939,51 @@ pub unsafe extern "C" fn sinpif64x(x: f64) -> f64 {
     unsafe { sinpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinpif128(x: f64) -> f64 {
-    unsafe { sinpi(x) }
+pub unsafe extern "C" fn sinpif128(x: f128) -> f128 {
+    // glibc s_sinpi_template, on the byte-exact sinl/cosl.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    if x.abs() < EPS {
+        return PI * x;
+    }
+    if x.is_infinite() {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+    }
+    let y = x - 2.0 * (0.5 * x).round();
+    let absy = y.abs();
+    if absy == 0.0 || absy == 1.0 {
+        (0.0f128).copysign(x)
+    } else if absy <= 0.25 {
+        sinl_f128(PI * y)
+    } else if absy <= 0.75 {
+        cosl_f128(PI * (0.5 - absy)).copysign(y)
+    } else {
+        sinl_f128(PI * (1.0 - absy)).copysign(y)
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
-    unsafe { tan(x * std::f64::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    // tanpi = sinpi/cospi: the (-1)^n factors cancel, the half-integer pole
+    // becomes ±1/±0 (auto-raising FE_DIVBYZERO → ±inf), and the integer zero
+    // becomes ±0/±1 with the correct sign.
+    let s = unsafe { sinpi(x) };
+    let c = unsafe { cospi(x) };
+    s / c
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpif(x: f32) -> f32 {
-    unsafe { tanf(x * std::f32::consts::PI) }
+    // Compute in double + round once, matching glibc (byte-exact, 0 ULP); the
+    // direct f32 path loses huge ULP near tanpi's poles. The f64 tanpi raises
+    // FE_DIVBYZERO at the poles and FE_INVALID on inf.
+    unsafe { tanpi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpil(x: f64) -> f64 {
@@ -3625,15 +4059,16 @@ pub unsafe extern "C" fn roundevenf64x(x: f64) -> f64 {
     unsafe { roundeven(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn roundevenf128(x: f64) -> f64 {
-    unsafe { roundeven(x) }
+pub unsafe extern "C" fn roundevenf128(x: f128) -> f128 {
+    x.round_ties_even()
 }
 
 // --- nextdown / nextup ---
 
 fn nextdown_impl(x: f64) -> f64 {
-    if x.is_nan() {
-        return x;
+    let xb = x.to_bits();
+    if (xb & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000 && (xb & 0x000f_ffff_ffff_ffff) != 0 {
+        return f64::from_bits(xb | 0x0008_0000_0000_0000); // quiet a signaling NaN
     }
     if x == f64::NEG_INFINITY {
         return f64::NEG_INFINITY;
@@ -3716,8 +4151,8 @@ pub unsafe extern "C" fn nextdownf64x(x: f64) -> f64 {
     unsafe { nextdown(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nextdownf128(x: f64) -> f64 {
-    unsafe { nextdown(x) }
+pub unsafe extern "C" fn nextdownf128(x: f128) -> f128 {
+    x.next_down()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextup(x: f64) -> f64 {
@@ -3748,8 +4183,8 @@ pub unsafe extern "C" fn nextupf64x(x: f64) -> f64 {
     unsafe { nextup(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nextupf128(x: f64) -> f64 {
-    unsafe { nextup(x) }
+pub unsafe extern "C" fn nextupf128(x: f128) -> f128 {
+    x.next_up()
 }
 
 // --- rsqrt (1/sqrt) ---
@@ -3784,20 +4219,49 @@ pub unsafe extern "C" fn rsqrtf64x(x: f64) -> f64 {
     unsafe { rsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rsqrtf128(x: f64) -> f64 {
-    unsafe { rsqrt(x) }
+pub unsafe extern "C" fn rsqrtf128(x: f128) -> f128 {
+    // glibc s_rsqrt: errno on islessequal(x,0) (false for NaN), then 1/sqrt(x).
+    if x <= 0.0 {
+        if x < 0.0 {
+            set_domain_errno();
+            // sqrtl(negative) is the canonical NEGATIVE qNaN on glibc; 1/that
+            // propagates the same NaN. (Rust's f128 sqrt yields a +qNaN, so we
+            // produce glibc's bit pattern explicitly.)
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+        }
+        set_range_errno();
+    }
+    1.0 / x.sqrt()
 }
 
 // --- llogb (long ilogb) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llogb(x: f64) -> c_long {
-    let r = unsafe { ilogb(x) };
-    r as c_long
+    // `llogb` shares `ilogb`'s exponent result for finite normal/subnormal
+    // inputs, but its special-case sentinels are the `long` variants, not the
+    // `int` ones: glibc returns FP_LLOGB0 (LONG_MIN) for 0, FP_LLOGBNAN
+    // (LONG_MIN) for NaN, and LONG_MAX for infinity — whereas a plain
+    // `ilogb(x) as c_long` would widen INT_MIN/INT_MAX and report the wrong
+    // sentinel. ilogb already raised FE_INVALID for these inputs.
+    map_ilogb_to_llogb(unsafe { ilogb(x) })
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llogbf(x: f32) -> c_long {
-    let r = unsafe { ilogbf(x) };
-    r as c_long
+    map_ilogb_to_llogb(unsafe { ilogbf(x) })
+}
+
+/// Widen an `ilogb` result to the `llogb` return type, translating the
+/// `int`-width special sentinels (FP_ILOGB0/FP_ILOGBNAN = INT_MIN, infinity =
+/// INT_MAX) to their `long`-width counterparts. Finite exponents (|e| <= 16383
+/// even for long double) are far from the i32 extremes, so only the sentinels
+/// are remapped.
+#[inline]
+fn map_ilogb_to_llogb(r: c_int) -> c_long {
+    match r {
+        c_int::MIN => c_long::MIN, // FP_ILOGB0 / FP_ILOGBNAN -> FP_LLOGB0 / FP_LLOGBNAN
+        c_int::MAX => c_long::MAX, // infinity
+        other => other as c_long,
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llogbl(x: f64) -> c_long {
@@ -3820,8 +4284,19 @@ pub unsafe extern "C" fn llogbf64x(x: f64) -> c_long {
     unsafe { llogb(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn llogbf128(x: f64) -> c_long {
-    unsafe { llogb(x) }
+pub unsafe extern "C" fn llogbf128(x: f128) -> c_long {
+    let bits = x.to_bits();
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if mant == 0 { c_long::MAX } else { c_long::MIN }; // inf, nan (FP_LLOGBNAN)
+    }
+    if exp_field == 0 && mant == 0 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return c_long::MIN; // FP_LLOGB0
+    }
+    f128_unbiased_exp(bits) as c_long
 }
 
 // --- logp1, log2p1, log10p1 (C23 aliases) ---
@@ -3854,8 +4329,15 @@ pub unsafe extern "C" fn logp1f64x(x: f64) -> f64 {
     unsafe { logp1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logp1f128(x: f64) -> f64 {
-    unsafe { logp1(x) }
+pub unsafe extern "C" fn logp1f128(x: f128) -> f128 {
+    // C23 logp1 is an exact alias of log1p.
+    let r = log1pl_f128(x);
+    if x == -1.0 {
+        set_range_errno();
+    } else if x < -1.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1(x: f64) -> f64 {
@@ -3888,8 +4370,20 @@ pub unsafe extern "C" fn log2p1f64x(x: f64) -> f64 {
     unsafe { log2p1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2p1f128(x: f64) -> f64 {
-    unsafe { log2p1(x) }
+pub unsafe extern "C" fn log2p1f128(x: f128) -> f128 {
+    // glibc s_log2p1_template: log2(e)·log1p(x), linear near 0.
+    const LOG2E: f128 = 1.442695040888963407359924681001892137f128;
+    if x <= -1.0 {
+        if x == -1.0 {
+            set_range_errno();
+        } else {
+            set_domain_errno();
+        }
+    }
+    if x.abs() < f128::from_bits(16269u128 << 112) {
+        return LOG2E * x; // |x| < EPSILON/4 = 2^-114
+    }
+    LOG2E * log1pl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1(x: f64) -> f64 {
@@ -3922,18 +4416,52 @@ pub unsafe extern "C" fn log10p1f64x(x: f64) -> f64 {
     unsafe { log10p1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10p1f128(x: f64) -> f64 {
-    unsafe { log10p1(x) }
+pub unsafe extern "C" fn log10p1f128(x: f128) -> f128 {
+    // glibc s_log10p1_template: log10(e)·log1p(x), linear near 0.
+    const LOG10E: f128 = 0.434294481903251827651128918916605082f128;
+    if x <= -1.0 {
+        if x == -1.0 {
+            set_range_errno();
+        } else {
+            set_domain_errno();
+        }
+    }
+    if x.abs() < f128::from_bits(16269u128 << 112) {
+        let ret = LOG10E * x; // |x| < EPSILON/4
+        if x != 0.0 && ret == 0.0 {
+            set_range_errno();
+        }
+        return ret;
+    }
+    LOG10E * log1pl_f128(x)
 }
 
 // --- exp2m1, exp10m1 (C23) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1(x: f64) -> f64 {
-    unsafe { expm1(x * std::f64::consts::LN_2) }
+    // C23 2^x - 1. The naive expm1(x*LN_2) amplifies the LN_2 round-off in the
+    // argument reduction by the exponential, diverging from glibc by hundreds of
+    // ULP for large |x| (e.g. 703 ULP at x~956). Away from 0, 2^x is far from 1 so
+    // exp2(x) - 1 is benign and tracks glibc's correctly-rounded exp2 to 0 ULP;
+    // only inside |x| < 1 (where 1 is within an ULP of the result) is expm1 needed
+    // to avoid catastrophic cancellation. NaN/inf flow through exp2 unchanged.
+    // Negative saturation: 2^x - 1 rounds to exactly -1.0 for x <= -54 (2^-54 <
+    // half-ULP(1) = 2^-53); glibc returns -1.0. Skip the exp2 call (exp2m1(-inf)=-1).
+    if x <= -54.0 {
+        return -1.0;
+    }
+    if x.abs() < 1.0 {
+        unsafe { expm1(x * std::f64::consts::LN_2) }
+    } else {
+        unsafe { exp2(x) - 1.0 }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1f(x: f32) -> f32 {
-    unsafe { expm1f(x * std::f32::consts::LN_2) }
+    // Compute in double + round once, matching glibc (byte-exact); the f32
+    // split path is ~2 ULP off. The f64 exp2m1 keeps the C23 overflow/underflow
+    // and clamping semantics.
+    unsafe { exp2m1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1l(x: f64) -> f64 {
@@ -3956,16 +4484,35 @@ pub unsafe extern "C" fn exp2m1f64x(x: f64) -> f64 {
     unsafe { exp2m1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2m1f128(x: f64) -> f64 {
-    unsafe { exp2m1(x) }
+pub unsafe extern "C" fn exp2m1f128(x: f128) -> f128 {
+    const LN2: f128 = 0.6931471805599453094172321214581765680755f128;
+    if x.abs() < 1.0 {
+        expm1l_f128(x * LN2)
+    } else {
+        (unsafe { exp2f128(x) }) - 1.0
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1(x: f64) -> f64 {
-    unsafe { expm1(x * std::f64::consts::LN_10) }
+    // C23 10^x - 1. Same argument-reduction hazard as exp2m1 (naive form diverges
+    // ~1080 ULP at x~301). exp10(x) - 1 matches glibc to 0 ULP for |x| >= 0.5;
+    // inside that band expm1(x*LN_10) avoids the near-1 cancellation.
+    // Negative saturation: 10^x - 1 rounds to exactly -1.0 for x <= -17 (10^-17 =
+    // 1e-17 < half-ULP(1) = 1.11e-16); glibc returns -1.0. Skip the exp10 call.
+    if x <= -17.0 {
+        return -1.0;
+    }
+    if x.abs() < 0.5 {
+        unsafe { expm1(x * std::f64::consts::LN_10) }
+    } else {
+        unsafe { exp10(x) - 1.0 }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1f(x: f32) -> f32 {
-    unsafe { expm1f(x * std::f32::consts::LN_10) }
+    // Compute in double + round once, matching glibc (byte-exact); the f32
+    // split path is ~3 ULP off.
+    unsafe { exp10m1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1l(x: f64) -> f64 {
@@ -3988,17 +4535,44 @@ pub unsafe extern "C" fn exp10m1f64x(x: f64) -> f64 {
     unsafe { exp10m1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp10m1f128(x: f64) -> f64 {
-    unsafe { exp10m1(x) }
+pub unsafe extern "C" fn exp10m1f128(x: f128) -> f128 {
+    // glibc s_exp10m1_template: small |x| via expm1(ln10·x), large via exp10.
+    const M_LN10: f128 = 2.302585092994045684017991454684364208f128;
+    if x >= -0.5 && x <= 0.5 {
+        expm1l_f128(M_LN10 * x)
+    } else if x > 39.0 {
+        // M_MANT_DIG/3 + 2 = 113/3 + 2 = 39
+        let ret = exp10l_f128(x);
+        if !ret.is_finite() && x.is_finite() {
+            set_range_errno();
+        }
+        ret
+    } else if x < -39.0 {
+        -1.0
+    } else {
+        exp10l_f128(x) - 1.0
+    }
 }
 
 // --- compoundn ((1+x)^n) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn compoundn(x: f64, n: i64) -> f64 {
+    // C23 7.12.7.1: compoundn(x, n) = (1+x)^n is defined only for x >= -1;
+    // x < -1 is a domain error (NaN + FE_INVALID). For x >= -1, pow already
+    // gives the exact contract: pow(anything,0)=1 (incl NaN/inf), pow(0,n<0)=
+    // inf+DBZ, NaN propagation.
+    if x < -1.0 {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
     frankenlibc_core::math::pow(1.0 + x, n as f64)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn compoundnf(x: f32, n: i64) -> f32 {
+    if x < -1.0 {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
     frankenlibc_core::math::powf(1.0f32 + x, n as f32)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4022,8 +4596,8 @@ pub unsafe extern "C" fn compoundnf64x(x: f64, n: i64) -> f64 {
     unsafe { compoundn(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn compoundnf128(x: f64, n: i64) -> f64 {
-    unsafe { compoundn(x, n) }
+pub unsafe extern "C" fn compoundnf128(x: f128, n: i64) -> f128 {
+    compoundn_f128(x, n)
 }
 
 // --- pown (x^n integer) ---
@@ -4056,26 +4630,52 @@ pub unsafe extern "C" fn pownf64x(x: f64, n: i64) -> f64 {
     unsafe { pown(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pownf128(x: f64, n: i64) -> f64 {
-    unsafe { pown(x, n) }
+pub unsafe extern "C" fn pownf128(x: f128, n: i64) -> f128 {
+    // glibc s_pown: for MANT_DIG(113) >= 63, pown(x,n) = pow(x, (f128)n) exactly.
+    let ret = powl_f128(x, n as f128);
+    if !ret.is_finite() {
+        if x.is_finite() {
+            set_range_errno();
+        }
+    } else if ret == 0.0 && x.is_finite() && x != 0.0 {
+        set_range_errno();
+    }
+    ret
 }
 
 // --- powr (x^y for positive x) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powr(x: f64, y: f64) -> f64 {
-    if x < 0.0 {
-        f64::NAN
-    } else {
-        frankenlibc_core::math::pow(x, y)
+    // C23 7.12.7.2: powr(x, y) = exp(y*log(x)), defined for x >= 0. Unlike pow,
+    // powr propagates NaN in BOTH args (powr(NaN,0)=NaN, not 1) and the
+    // indeterminate forms 0^0, inf^0, 1^±inf are domain errors (NaN+INVALID).
+    if x.is_nan() || y.is_nan() {
+        return f64::NAN;
     }
+    if x < 0.0 {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    if (x == 0.0 && y == 0.0) || (x.is_infinite() && y == 0.0) || (x == 1.0 && y.is_infinite()) {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    frankenlibc_core::math::pow(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powrf(x: f32, y: f32) -> f32 {
-    if x < 0.0f32 {
-        f32::NAN
-    } else {
-        frankenlibc_core::math::powf(x, y)
+    if x.is_nan() || y.is_nan() {
+        return f32::NAN;
     }
+    if x < 0.0f32 {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    if (x == 0.0 && y == 0.0) || (x.is_infinite() && y == 0.0) || (x == 1.0 && y.is_infinite()) {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    frankenlibc_core::math::powf(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powrl(x: f64, y: f64) -> f64 {
@@ -4098,24 +4698,81 @@ pub unsafe extern "C" fn powrf64x(x: f64, y: f64) -> f64 {
     unsafe { powr(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn powrf128(x: f64, y: f64) -> f64 {
-    unsafe { powr(x, y) }
+pub unsafe extern "C" fn powrf128(x: f128, y: f128) -> f128 {
+    // glibc s_powr: powr(x,y) = |x|^y (x>0 required), exp(y·log x) semantics.
+    if x < 0.0
+        || (x == 0.0 && y == 0.0)
+        || (x == 1.0 && y.is_infinite())
+        || (x.is_infinite() && y == 0.0)
+    {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // neg qNaN
+    }
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    let x = x.abs();
+    let ret = powl_f128(x, y);
+    if !ret.is_finite() {
+        if x.is_finite() && y.is_finite() {
+            set_range_errno();
+        }
+    } else if ret == 0.0 && x.is_finite() && x != 0.0 && y.is_finite() {
+        set_range_errno();
+    }
+    ret
 }
 
 // --- rootn (nth root) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootn(x: f64, n: i64) -> f64 {
+    // C23 7.12.7.4: rootn(x, n) = x^(1/n). Naive pow(x, 1/n) is wrong for
+    // negative x with ODD n (the real n-th root exists, e.g. rootn(-8,3)=-2,
+    // but pow(-8, 0.333…)=NaN). Handle the sign explicitly.
     if n == 0 {
+        pi_fn_raise_invalid_f64(); // rootn(x,0) is a domain error
         return f64::NAN;
     }
-    frankenlibc_core::math::pow(x, 1.0 / n as f64)
+    if x.is_nan() {
+        return x;
+    }
+    if x < 0.0 {
+        if n & 1 == 0 {
+            pi_fn_raise_invalid_f64(); // even root of a negative is undefined
+            return f64::NAN;
+        }
+        return -frankenlibc_core::math::pow(-x, 1.0 / n as f64);
+    }
+    let r = frankenlibc_core::math::pow(x, 1.0 / n as f64);
+    // pow(-0.0, +/-frac) loses the sign for an odd root; restore it.
+    if x == 0.0 && (n & 1 != 0) {
+        r.copysign(x)
+    } else {
+        r
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootnf(x: f32, n: i64) -> f32 {
     if n == 0 {
+        pi_fn_raise_invalid_f32();
         return f32::NAN;
     }
-    frankenlibc_core::math::powf(x, 1.0f32 / n as f32)
+    if x.is_nan() {
+        return x;
+    }
+    if x < 0.0 {
+        if n & 1 == 0 {
+            pi_fn_raise_invalid_f32();
+            return f32::NAN;
+        }
+        return -frankenlibc_core::math::powf(-x, 1.0f32 / n as f32);
+    }
+    let r = frankenlibc_core::math::powf(x, 1.0f32 / n as f32);
+    if x == 0.0 && (n & 1 != 0) {
+        r.copysign(x)
+    } else {
+        r
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootnl(x: f64, n: i64) -> f64 {
@@ -4138,54 +4795,108 @@ pub unsafe extern "C" fn rootnf64x(x: f64, n: i64) -> f64 {
     unsafe { rootn(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rootnf128(x: f64, n: i64) -> f64 {
-    unsafe { rootn(x, n) }
+pub unsafe extern "C" fn rootnf128(x: f128, y: i64) -> f128 {
+    // glibc s_rootn: x^(1/y) for integer y, sign-preserving, via powl with an
+    // extended-precision 1/y split. NaN qNaN = x86 negative pattern.
+    const NEG_QNAN: u128 = (0xffff_u128 << 112) | (1u128 << 111);
+    if y == 0 {
+        set_domain_errno(); // domain error even for NaN x
+        return f128::from_bits(NEG_QNAN);
+    }
+    if x.is_nan() {
+        return x + x;
+    }
+    if x < 0.0 && (y & 1) == 0 {
+        set_domain_errno();
+        return f128::from_bits(NEG_QNAN);
+    }
+    if x.is_infinite() {
+        return if y > 0 { x } else { 1.0 / x }; // X<0 ⇒ Y odd
+    }
+    if x == 0.0 {
+        if y > 0 {
+            return if (y & 1) == 0 { 0.0 } else { x };
+        } else {
+            set_range_errno();
+            return 1.0 / (if (y & 1) == 0 { 0.0 } else { x });
+        }
+    }
+    if y == 1 {
+        return x;
+    }
+    if y == -1 {
+        let ret = 1.0 / x;
+        if ret.is_infinite() {
+            set_range_errno();
+        }
+        return ret;
+    }
+    let ax = x.abs();
+    let yf = y as f128;
+    if y >= 4 * 16384 || y <= -4 * 16384 {
+        return powl_f128(ax, 1.0 / yf).copysign(x);
+    }
+    let qhi = 1.0 / yf;
+    let qlo = (-qhi).mul_add(yf, 1.0) / yf; // fma(-qhi, y, 1) / y
+    (powl_f128(ax, qhi) * powl_f128(ax, qlo)).copysign(x)
 }
 
 // --- fmaxmag / fminmag (C23) ---
 
+// glibc fmaxmag/fminmag: the non-NaN argument wins when one is NaN, and on an
+// equal-magnitude tie the result is the larger/smaller VALUE — `if x > y`, NOT
+// fmax. fmax(+0,-0) yields +0, but glibc fmaxmag(+0,-0) is -0 (`+0 > -0` is
+// false, so it returns y). Using fmax/fmin here was a signed-zero parity bug.
 fn fmaxmag_impl(x: f64, y: f64) -> f64 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax > ay {
+    if ax > ay || ay.is_nan() {
         x
-    } else if ay > ax {
+    } else if ay > ax || ax.is_nan() {
         y
+    } else if x > y {
+        x
     } else {
-        unsafe { fmax(x, y) }
+        y
     }
 }
 fn fmaxmagf_impl(x: f32, y: f32) -> f32 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax > ay {
+    if ax > ay || ay.is_nan() {
         x
-    } else if ay > ax {
+    } else if ay > ax || ax.is_nan() {
         y
+    } else if x > y {
+        x
     } else {
-        unsafe { fmaxf(x, y) }
+        y
     }
 }
 fn fminmag_impl(x: f64, y: f64) -> f64 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax < ay {
+    if ax < ay || ay.is_nan() {
         x
-    } else if ay < ax {
+    } else if ay < ax || ax.is_nan() {
         y
+    } else if x < y {
+        x
     } else {
-        unsafe { fmin(x, y) }
+        y
     }
 }
 fn fminmagf_impl(x: f32, y: f32) -> f32 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax < ay {
+    if ax < ay || ay.is_nan() {
         x
-    } else if ay < ax {
+    } else if ay < ax || ax.is_nan() {
         y
+    } else if x < y {
+        x
     } else {
-        unsafe { fminf(x, y) }
+        y
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4217,8 +4928,24 @@ pub unsafe extern "C" fn fmaxmagf64x(x: f64, y: f64) -> f64 {
     unsafe { fmaxmag(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaxmagf128(x: f64, y: f64) -> f64 {
-    unsafe { fmaxmag(x, y) }
+pub unsafe extern "C" fn fmaxmagf128(x: f128, y: f128) -> f128 {
+    // Greater magnitude; equal magnitude or a NaN operand defers to fmax.
+    if x.is_nan() {
+        return if y.is_nan() { x } else { y };
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax > ay {
+        x
+    } else if ay > ax {
+        y
+    } else if x > y {
+        x
+    } else {
+        y
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminmag(x: f64, y: f64) -> f64 {
@@ -4249,8 +4976,24 @@ pub unsafe extern "C" fn fminmagf64x(x: f64, y: f64) -> f64 {
     unsafe { fminmag(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminmagf128(x: f64, y: f64) -> f64 {
-    unsafe { fminmag(x, y) }
+pub unsafe extern "C" fn fminmagf128(x: f128, y: f128) -> f128 {
+    // Lesser magnitude; equal magnitude or a NaN operand defers to fmin.
+    if x.is_nan() {
+        return if y.is_nan() { x } else { y };
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < ay {
+        x
+    } else if ay < ax {
+        y
+    } else if x < y {
+        x
+    } else {
+        y
+    }
 }
 
 // --- totalorder / totalordermag (IEEE 754-2019) ---
@@ -4276,6 +5019,26 @@ fn totalorderf_impl(x: *const f32, y: *const f32) -> c_int {
     let b_tc = if bi < 0 { bi ^ i32::MAX } else { bi };
     if a_tc <= b_tc { 1 } else { 0 }
 }
+fn totalorderf128_impl(x: *const f128, y: *const f128) -> c_int {
+    const SIGN_MASK: u128 = 1u128 << 127;
+
+    // SAFETY: C totalorderf128 has glibc's pointer contract: both arguments
+    // must point to valid binary128 objects for the duration of the call.
+    let a = unsafe { *x }.to_bits();
+    // SAFETY: same pointer contract as above for the second operand.
+    let b = unsafe { *y }.to_bits();
+    let a_key = if (a & SIGN_MASK) != 0 {
+        !a
+    } else {
+        a | SIGN_MASK
+    };
+    let b_key = if (b & SIGN_MASK) != 0 {
+        !b
+    } else {
+        b | SIGN_MASK
+    };
+    if a_key <= b_key { 1 } else { 0 }
+}
 fn totalordermag_impl(x: *const f64, y: *const f64) -> c_int {
     let a = unsafe { (*x).abs() };
     let b = unsafe { (*y).abs() };
@@ -4285,6 +5048,16 @@ fn totalordermagf_impl(x: *const f32, y: *const f32) -> c_int {
     let a = unsafe { (*x).abs() };
     let b = unsafe { (*y).abs() };
     totalorderf_impl(&a as *const f32, &b as *const f32)
+}
+fn totalordermagf128_impl(x: *const f128, y: *const f128) -> c_int {
+    const SIGN_MASK: u128 = 1u128 << 127;
+
+    // SAFETY: C totalordermagf128 has glibc's pointer contract: both arguments
+    // must point to valid binary128 objects for the duration of the call.
+    let a = f128::from_bits(unsafe { *x }.to_bits() & !SIGN_MASK);
+    // SAFETY: same pointer contract as above for the second operand.
+    let b = f128::from_bits(unsafe { *y }.to_bits() & !SIGN_MASK);
+    totalorderf128_impl(&a as *const f128, &b as *const f128)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn totalorder(x: *const f64, y: *const f64) -> c_int {
@@ -4315,8 +5088,8 @@ pub unsafe extern "C" fn totalorderf64x(x: *const f64, y: *const f64) -> c_int {
     totalorder_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn totalorderf128(x: *const f64, y: *const f64) -> c_int {
-    totalorder_impl(x, y)
+pub unsafe extern "C" fn totalorderf128(x: *const f128, y: *const f128) -> c_int {
+    totalorderf128_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn totalordermag(x: *const f64, y: *const f64) -> c_int {
@@ -4347,29 +5120,62 @@ pub unsafe extern "C" fn totalordermagf64x(x: *const f64, y: *const f64) -> c_in
     totalordermag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn totalordermagf128(x: *const f64, y: *const f64) -> c_int {
-    totalordermag_impl(x, y)
+pub unsafe extern "C" fn totalordermagf128(x: *const f128, y: *const f128) -> c_int {
+    totalordermagf128_impl(x, y)
 }
 
 // --- canonicalize (C23 IEEE 754) ---
 
 fn canonicalize_impl(cx: *mut f64, x: *const f64) -> c_int {
-    let val = unsafe { *x };
+    // Every IEEE binary64 value is canonical, so canonicalize always succeeds
+    // (returns 0). The only transformation glibc applies is quieting a
+    // signaling NaN (set the mantissa MSB) — preserving sign and payload.
+    let mut bits = unsafe { *x }.to_bits();
+    let is_nan = (bits & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000
+        && (bits & 0x000f_ffff_ffff_ffff) != 0;
+    if is_nan {
+        bits |= 0x0008_0000_0000_0000; // quiet bit
+    }
     if !cx.is_null() {
         unsafe {
-            *cx = val;
+            *cx = f64::from_bits(bits);
         }
     }
-    if val.is_nan() { 1 } else { 0 }
+    0
 }
 fn canonicalizef_impl(cx: *mut f32, x: *const f32) -> c_int {
-    let val = unsafe { *x };
+    let mut bits = unsafe { *x }.to_bits();
+    let is_nan = (bits & 0x7f80_0000) == 0x7f80_0000 && (bits & 0x007f_ffff) != 0;
+    if is_nan {
+        bits |= 0x0040_0000; // quiet bit
+    }
     if !cx.is_null() {
         unsafe {
-            *cx = val;
+            *cx = f32::from_bits(bits);
         }
     }
-    if val.is_nan() { 1 } else { 0 }
+    0
+}
+fn canonicalizef128_impl(cx: *mut f128, x: *const f128) -> c_int {
+    const EXP_MASK: u128 = 0x7fff_u128 << 112;
+    const FRAC_MASK: u128 = (1u128 << 112) - 1;
+    const QUIET_BIT: u128 = 1u128 << 111;
+
+    // SAFETY: C canonicalizef128 requires `x` to point to a valid binary128
+    // input object. A null `cx` is allowed and handled below.
+    let mut bits = unsafe { *x }.to_bits();
+    let is_nan = (bits & EXP_MASK) == EXP_MASK && (bits & FRAC_MASK) != 0;
+    if is_nan {
+        bits |= QUIET_BIT;
+    }
+    if !cx.is_null() {
+        // SAFETY: `cx` was checked non-null above; the C API requires it to
+        // point to writable binary128 storage when supplied.
+        unsafe {
+            *cx = f128::from_bits(bits);
+        }
+    }
+    0
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn canonicalize(cx: *mut f64, x: *const f64) -> c_int {
@@ -4400,8 +5206,8 @@ pub unsafe extern "C" fn canonicalizef64x(cx: *mut f64, x: *const f64) -> c_int 
     canonicalize_impl(cx, x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn canonicalizef128(cx: *mut f64, x: *const f64) -> c_int {
-    canonicalize_impl(cx, x)
+pub unsafe extern "C" fn canonicalizef128(cx: *mut f128, x: *const f128) -> c_int {
+    canonicalizef128_impl(cx, x)
 }
 
 // --- getpayload / setpayload / setpayloadsig (C23) ---
@@ -4491,8 +5297,16 @@ pub unsafe extern "C" fn getpayloadf64x(x: *const f64) -> f64 {
     getpayload_impl(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getpayloadf128(x: *const f64) -> f64 {
-    getpayload_impl(x)
+pub unsafe extern "C" fn getpayloadf128(x: *const f128) -> f128 {
+    let bits = unsafe { (*x).to_bits() };
+    let exp = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp == 0x7fff && mant != 0 {
+        // NaN: payload is the significand bits below the quiet bit (bit 111).
+        (mant & ((1u128 << 111) - 1)) as f128
+    } else {
+        -1.0
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpayload(res: *mut f64, pl: f64) -> c_int {
@@ -4523,8 +5337,17 @@ pub unsafe extern "C" fn setpayloadf64x(res: *mut f64, pl: f64) -> c_int {
     setpayload_impl(res, pl)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setpayloadf128(res: *mut f64, pl: f64) -> c_int {
-    setpayload_impl(res, pl)
+pub unsafe extern "C" fn setpayloadf128(res: *mut f128, pl: f128) -> c_int {
+    // Quiet NaN with payload pl (an integer in [0, 2^111)); else *res = +0, rc 1.
+    let two111 = f128::from_bits((111u128 + 16383) << 112);
+    if pl.is_finite() && pl >= 0.0 && pl == pl.trunc() && pl < two111 {
+        let payload = pl as u128;
+        unsafe { *res = f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111) | payload) };
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpayloadsig(res: *mut f64, pl: f64) -> c_int {
@@ -4555,8 +5378,18 @@ pub unsafe extern "C" fn setpayloadsigf64x(res: *mut f64, pl: f64) -> c_int {
     setpayloadsig_impl(res, pl)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setpayloadsigf128(res: *mut f64, pl: f64) -> c_int {
-    setpayloadsig_impl(res, pl)
+pub unsafe extern "C" fn setpayloadsigf128(res: *mut f128, pl: f128) -> c_int {
+    // Signaling NaN with payload pl (an integer in [1, 2^111) — must be nonzero
+    // so the result is a NaN, not infinity); else *res = +0, rc 1.
+    let two111 = f128::from_bits((111u128 + 16383) << 112);
+    if pl.is_finite() && pl >= 1.0 && pl == pl.trunc() && pl < two111 {
+        let payload = pl as u128;
+        unsafe { *res = f128::from_bits((0x7fff_u128 << 112) | payload) };
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
+    }
 }
 
 // --- fromfp / ufromfp / fromfpx / ufromfpx (C23) ---
@@ -4664,8 +5497,8 @@ pub unsafe extern "C" fn fromfpf64x(x: f64, rnd: c_int, width: u32) -> f64 {
     unsafe { fromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf128(x: f64, rnd: c_int, width: u32) -> f64 {
-    unsafe { fromfp(x, rnd, width) }
+pub unsafe extern "C" fn fromfpf128(x: f128, rnd: c_int, width: u32) -> i64 {
+    fromfp_signed_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfp(x: f64, rnd: c_int, width: u32) -> f64 {
@@ -4696,8 +5529,8 @@ pub unsafe extern "C" fn ufromfpf64x(x: f64, rnd: c_int, width: u32) -> f64 {
     unsafe { ufromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf128(x: f64, rnd: c_int, width: u32) -> f64 {
-    unsafe { ufromfp(x, rnd, width) }
+pub unsafe extern "C" fn ufromfpf128(x: f128, rnd: c_int, width: u32) -> u64 {
+    fromfp_unsigned_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fromfpx(x: f64, rnd: c_int, width: u32) -> f64 {
@@ -4728,8 +5561,9 @@ pub unsafe extern "C" fn fromfpxf64x(x: f64, rnd: c_int, width: u32) -> f64 {
     unsafe { fromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf128(x: f64, rnd: c_int, width: u32) -> f64 {
-    unsafe { fromfpx(x, rnd, width) }
+pub unsafe extern "C" fn fromfpxf128(x: f128, rnd: c_int, width: u32) -> i64 {
+    // Same value/errno as fromfp; the distinguishing FE_INEXACT flag is omitted.
+    fromfp_signed_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfpx(x: f64, rnd: c_int, width: u32) -> f64 {
@@ -4760,8 +5594,9 @@ pub unsafe extern "C" fn ufromfpxf64x(x: f64, rnd: c_int, width: u32) -> f64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf128(x: f64, rnd: c_int, width: u32) -> f64 {
-    unsafe { ufromfpx(x, rnd, width) }
+pub unsafe extern "C" fn ufromfpxf128(x: f128, rnd: c_int, width: u32) -> u64 {
+    // Same value/errno as ufromfp; FE_INEXACT flag omitted.
+    fromfp_unsigned_f128(x, rnd, width)
 }
 
 // --- clog10 (complex log base 10) ---
@@ -4817,8 +5652,13 @@ pub unsafe extern "C" fn clog10f64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog10(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clog10f128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { clog10(z) }
+pub unsafe extern "C" fn clog10f128(z: CFloat128Complex) -> CFloat128Complex {
+    const LN10: f128 = 2.302585092994045684017991454684364208f128;
+    let r = clog_f128(z);
+    CFloat128Complex {
+        re: r.re / LN10,
+        im: r.im / LN10,
+    }
 }
 
 // --- lgamma*_r width variants ---
@@ -5119,9 +5959,190 @@ pub unsafe extern "C" fn scalbl(x: f64, y: f64) -> f64 {
 // C23 narrowing math functions
 // =========================================================================
 
+/// Boldo–Melquiond round-to-odd: `(x OP y) as f32` double-rounds (round the
+/// exact result to f64, then to f32), which disagrees with the C23 contract of
+/// a SINGLE correct rounding to f32 — e.g. fadd(1+2^-24, 2^-53) double-rounds
+/// to 1.0 but the correctly-rounded f32 is 1.0000001. Given the f64
+/// round-to-nearest result `t` and the SIGN of the exact residual (E - t)
+/// carried in `resid` (resid == 0 ⟺ E is exactly t), nudge `t` to an
+/// odd-significand f64 toward the residual before the f32 cast. Since f64 has
+/// 53 > 2*24+1 bits, round-to-odd-to-f64 then round-to-nearest-to-f32 equals
+/// the single correctly-rounded f32 of E.
+#[inline]
+fn narrow_round_odd(t: f64, resid: f64) -> f32 {
+    if !t.is_finite() || resid == 0.0 {
+        return t as f32;
+    }
+    let ro = if t.to_bits() & 1 == 1 {
+        t // already odd: it is the round-to-odd value
+    } else {
+        let dir = if resid > 0.0 {
+            f64::INFINITY
+        } else {
+            f64::NEG_INFINITY
+        };
+        frankenlibc_core::math::nextafter(t, dir)
+    };
+    ro as f32
+}
+
+/// Round-to-odd for binary128: given the round-to-nearest f128 result `t` and
+/// the exact residual `resid` (sign of E - t; resid==0 ⟺ E is exactly t), nudge
+/// `t` to an odd-significand f128 on E's side. Casting the result to f64 or f32
+/// then gives the single correctly-rounded narrow value — f128's 113 bits
+/// exceed 2·53+2, so the otherwise-double rounding (f128→f64/f32 cast) is
+/// defeated. This is the wide-operand analogue of `narrow_round_odd`, used by
+/// the C23 `fN{op}f128` narrowing functions.
+#[inline]
+fn narrow_round_odd_f128(t: f128, resid: f128) -> f128 {
+    if !t.is_finite() || resid == 0.0 {
+        return t;
+    }
+    if t == 0.0 {
+        // Underflow to zero: the round-to-odd value is the smallest subnormal
+        // toward E (sign matches the residual; +0/-0 are consistent with it).
+        let sign = if resid < 0.0 { 1u128 << 127 } else { 0 };
+        return f128::from_bits(sign | 1);
+    }
+    if t.to_bits() & 1 == 1 {
+        return t; // already odd
+    }
+    // Step one ULP toward E. Toward +inf raises the bit pattern for positive t
+    // and lowers it for negative t (the format is monotone in bits per sign).
+    let bits = t.to_bits();
+    let positive = bits >> 127 == 0;
+    let toward_pos = resid > 0.0;
+    let nb = if toward_pos == positive {
+        bits + 1
+    } else {
+        bits - 1
+    };
+    f128::from_bits(nb)
+}
+
+/// On x86_64/glibc an invalid operation on non-NaN operands yields the
+/// canonical NEGATIVE qNaN (0xffff8…), whereas Rust's f128 software arithmetic
+/// yields a positive qNaN. When `r` is NaN but no operand was NaN (a freshly
+/// raised invalid op), return glibc's negative qNaN; otherwise pass `r` through
+/// unchanged (NaN-propagation and finite/inf results are already correct).
+#[inline]
+fn fixup_invalid_nan_f128(r: f128, operand_nan: bool) -> f128 {
+    if r.is_nan() && !operand_nan {
+        f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+    } else {
+        r
+    }
+}
+
+// C23 narrowing from binary128 operands: compute the operation in f128 (one
+// correct rounding to f128), recover the exact residual, then round-to-odd so
+// the f64/f32 cast lands on the single correctly-rounded narrow result.
+#[inline]
+fn nadd_ro_f128(x: f128, y: f128) -> f128 {
+    let s = x + y;
+    if s.is_nan() {
+        return fixup_invalid_nan_f128(s, x.is_nan() || y.is_nan());
+    }
+    let bb = s - x; // 2Sum (Knuth): exact residual of x+y
+    let resid = (x - (s - bb)) + (y - bb);
+    narrow_round_odd_f128(s, resid)
+}
+#[inline]
+fn nsub_ro_f128(x: f128, y: f128) -> f128 {
+    let ny = -y;
+    let s = x + ny;
+    if s.is_nan() {
+        return fixup_invalid_nan_f128(s, x.is_nan() || y.is_nan());
+    }
+    let bb = s - x;
+    let resid = (x - (s - bb)) + (ny - bb);
+    narrow_round_odd_f128(s, resid)
+}
+#[inline]
+fn nmul_ro_f128(x: f128, y: f128) -> f128 {
+    let p = x * y;
+    if !p.is_finite() {
+        // overflow/NaN in f128 ⇒ also overflow/NaN narrowed
+        return fixup_invalid_nan_f128(p, x.is_nan() || y.is_nan());
+    }
+    let resid = x.mul_add(y, -p); // exact x*y - p
+    narrow_round_odd_f128(p, resid)
+}
+#[inline]
+fn ndiv_ro_f128(x: f128, y: f128) -> f128 {
+    let q = x / y;
+    if !q.is_finite() || q == 0.0 {
+        return fixup_invalid_nan_f128(q, x.is_nan() || y.is_nan());
+    }
+    let r = (-q).mul_add(y, x); // x - q*y, exact residual numerator
+    if !r.is_finite() {
+        return q;
+    }
+    // sign(E - q) = sign(r / y) = sign(r) * sign(y)
+    let resid = if r == 0.0 {
+        0.0
+    } else if (r > 0.0) == (y > 0.0) {
+        1.0
+    } else {
+        -1.0
+    };
+    narrow_round_odd_f128(q, resid)
+}
+#[inline]
+fn nsqrt_ro_f128(x: f128) -> f128 {
+    let s = x.sqrt();
+    if !s.is_finite() || s == 0.0 {
+        return fixup_invalid_nan_f128(s, x.is_nan());
+    }
+    let r = (-s).mul_add(s, x); // x - s^2; sign(E - s) = sign(r) since s>0
+    narrow_round_odd_f128(s, r)
+}
+#[inline]
+fn nfma_ro_f128(x: f128, y: f128, z: f128) -> f128 {
+    // 0·inf (either order) is an invalid operation: x86/glibc yield the
+    // canonical NEGATIVE qNaN regardless of the addend z.
+    if (x == 0.0 && y.is_infinite()) || (x.is_infinite() && y == 0.0) {
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    let r = x.mul_add(y, z); // correctly-rounded f128 fma
+    if !r.is_finite() {
+        return fixup_invalid_nan_f128(r, x.is_nan() || y.is_nan() || z.is_nan());
+    }
+    let u1 = x * y;
+    if !u1.is_finite() {
+        return r;
+    }
+    // ErrFma (Boldo–Muller): exact x*y+z = r + e1 + e2.
+    let u2 = x.mul_add(y, -u1); // exact x*y - u1
+    let a1 = z + u2;
+    let bz = a1 - z;
+    let a2 = (z - (a1 - bz)) + (u2 - bz);
+    let b1 = u1 + a1;
+    let bu = b1 - u1;
+    let b2 = (u1 - (b1 - bu)) + (a1 - bu);
+    let gamma = (b1 - r) + b2;
+    let e1 = gamma + a2;
+    let e2 = a2 - (e1 - gamma);
+    let mut resid = if e1 != 0.0 { e1 } else { e2 };
+    // When x·y underflows f128 entirely (flushed to 0) but is mathematically
+    // nonzero, the ErrFma above loses it — yet its sign still tips a round-to-
+    // odd tie (exact result exactly on a narrow midpoint). Restore that sign.
+    if resid == 0.0 && u1 == 0.0 && x != 0.0 && y != 0.0 && x.is_finite() && y.is_finite() {
+        resid = if (x > 0.0) == (y > 0.0) {
+            f128::MIN_POSITIVE
+        } else {
+            -f128::MIN_POSITIVE
+        };
+    }
+    narrow_round_odd_f128(r, resid)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fadd(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    let s = x + y;
+    let bb = s - x; // 2Sum (Knuth): exact residual of x+y
+    let resid = (x - (s - bb)) + (y - bb);
+    narrow_round_odd(s, resid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn faddl(x: f64, y: f64) -> f32 {
@@ -5163,13 +6184,35 @@ pub unsafe extern "C" fn fsubl(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ffma(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    use frankenlibc_core::math::fma as fma64;
+    // C23 ffma: round the EXACT x*y+z a SINGLE time to f32. `fma(x,y,z) as f32`
+    // double-rounds. Recover the sign of the exact residual via Boldo–Muller
+    // ErrFma, then apply round-to-odd (see narrow_round_odd).
+    let r = fma64(x, y, z);
+    if !r.is_finite() {
+        return r as f32;
+    }
+    // 2Prod: x*y = u1 + u2 exact (u1 finite here, since r is finite).
+    let u1 = x * y;
+    let u2 = fma64(x, y, -u1);
+    // 2Sum(z, u2) = (a1, a2)
+    let a1 = z + u2;
+    let bz = a1 - z;
+    let a2 = (z - (a1 - bz)) + (u2 - bz);
+    // 2Sum(u1, a1) = (b1, b2)
+    let b1 = u1 + a1;
+    let bu = b1 - u1;
+    let b2 = (u1 - (b1 - bu)) + (a1 - bu);
+    let gamma = (b1 - r) + b2;
+    // FastTwoSum(gamma, a2) = (e1, e2): exact x*y+z = r + e1 + e2.
+    let e1 = gamma + a2;
+    let e2 = a2 - (e1 - gamma);
+    let resid = if e1 != 0.0 { e1 } else { e2 };
+    narrow_round_odd(r, resid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ffmal(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn daddl(x: f64, y: f64) -> f64 {
@@ -5222,16 +6265,17 @@ pub unsafe extern "C" fn f32xaddf64x(x: f64, y: f64) -> f64 {
     x + y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xaddf128(x: f64, y: f64) -> f64 {
-    x + y
+pub unsafe extern "C" fn f32xaddf128(x: f128, y: f128) -> f64 {
+    // _Float32x is `double` (f64) on x86_64.
+    nadd_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64addf64x(x: f64, y: f64) -> f64 {
     x + y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64addf128(x: f64, y: f64) -> f64 {
-    x + y
+pub unsafe extern "C" fn f64addf128(x: f128, y: f128) -> f64 {
+    nadd_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xaddf128(x: f64, y: f64) -> f64 {
@@ -5262,16 +6306,16 @@ pub unsafe extern "C" fn f32xdivf64x(x: f64, y: f64) -> f64 {
     x / y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xdivf128(x: f64, y: f64) -> f64 {
-    x / y
+pub unsafe extern "C" fn f32xdivf128(x: f128, y: f128) -> f64 {
+    ndiv_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64divf64x(x: f64, y: f64) -> f64 {
     x / y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64divf128(x: f64, y: f64) -> f64 {
-    x / y
+pub unsafe extern "C" fn f64divf128(x: f128, y: f128) -> f64 {
+    ndiv_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xdivf128(x: f64, y: f64) -> f64 {
@@ -5302,16 +6346,16 @@ pub unsafe extern "C" fn f32xmulf64x(x: f64, y: f64) -> f64 {
     x * y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xmulf128(x: f64, y: f64) -> f64 {
-    x * y
+pub unsafe extern "C" fn f32xmulf128(x: f128, y: f128) -> f64 {
+    nmul_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64mulf64x(x: f64, y: f64) -> f64 {
     x * y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64mulf128(x: f64, y: f64) -> f64 {
-    x * y
+pub unsafe extern "C" fn f64mulf128(x: f128, y: f128) -> f64 {
+    nmul_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xmulf128(x: f64, y: f64) -> f64 {
@@ -5346,16 +6390,16 @@ pub unsafe extern "C" fn f32xsqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xsqrtf128(x: f64) -> f64 {
-    unsafe { sqrt(x) }
+pub unsafe extern "C" fn f32xsqrtf128(x: f128) -> f64 {
+    nsqrt_ro_f128(x) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64sqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64sqrtf128(x: f64) -> f64 {
-    unsafe { sqrt(x) }
+pub unsafe extern "C" fn f64sqrtf128(x: f128) -> f64 {
+    nsqrt_ro_f128(x) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xsqrtf128(x: f64) -> f64 {
@@ -5386,16 +6430,16 @@ pub unsafe extern "C" fn f32xsubf64x(x: f64, y: f64) -> f64 {
     x - y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xsubf128(x: f64, y: f64) -> f64 {
-    x - y
+pub unsafe extern "C" fn f32xsubf128(x: f128, y: f128) -> f64 {
+    nsub_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64subf64x(x: f64, y: f64) -> f64 {
     x - y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64subf128(x: f64, y: f64) -> f64 {
-    x - y
+pub unsafe extern "C" fn f64subf128(x: f128, y: f128) -> f64 {
+    nsub_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xsubf128(x: f64, y: f64) -> f64 {
@@ -5430,16 +6474,16 @@ pub unsafe extern "C" fn f32xfmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xfmaf128(x: f64, y: f64, z: f64) -> f64 {
-    unsafe { fma(x, y, z) }
+pub unsafe extern "C" fn f32xfmaf128(x: f128, y: f128, z: f128) -> f64 {
+    nfma_ro_f128(x, y, z) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64fmaf128(x: f64, y: f64, z: f64) -> f64 {
-    unsafe { fma(x, y, z) }
+pub unsafe extern "C" fn f64fmaf128(x: f128, y: f128, z: f128) -> f64 {
+    nfma_ro_f128(x, y, z) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xfmaf128(x: f64, y: f64, z: f64) -> f64 {
@@ -5471,8 +6515,13 @@ pub unsafe extern "C" fn __iseqsigl(x: f64, y: f64) -> c_int {
     if x == y { 1 } else { 0 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __iseqsigf128(x: f64, y: f64) -> c_int {
-    if x == y { 1 } else { 0 }
+pub unsafe extern "C" fn __iseqsigf128(x: f128, y: f128) -> c_int {
+    // Signaling equality: a NaN operand is a domain error (EDOM + FE_INVALID).
+    if x.is_nan() || y.is_nan() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    (x == y) as c_int
 }
 
 fn is_signaling_nan_f64(x: f64) -> bool {
@@ -5502,8 +6551,12 @@ pub unsafe extern "C" fn __issignalingl(x: f64) -> c_int {
     if is_signaling_nan_f64(x) { 1 } else { 0 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __issignalingf128(x: f64) -> c_int {
-    if is_signaling_nan_f64(x) { 1 } else { 0 }
+pub unsafe extern "C" fn __issignalingf128(x: f128) -> c_int {
+    // Signaling NaN: max exponent, nonzero mantissa, quiet bit (bit 111) clear.
+    let b = x.to_bits();
+    let exp = (b >> 112) & 0x7fff;
+    let mant = b & ((1u128 << 112) - 1);
+    (exp == 0x7fff && mant != 0 && (mant >> 111) & 1 == 0) as c_int
 }
 
 #[allow(non_upper_case_globals)]
@@ -5547,8 +6600,8 @@ pub unsafe extern "C" fn acosf64x(x: f64) -> f64 {
     unsafe { acos(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acosf128(x: f64) -> f64 {
-    unsafe { acos(x) }
+pub unsafe extern "C" fn acosf128(x: f128) -> f128 {
+    acos_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acoshf32(x: f32) -> f32 {
@@ -5567,8 +6620,12 @@ pub unsafe extern "C" fn acoshf64x(x: f64) -> f64 {
     unsafe { acosh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acoshf128(x: f64) -> f64 {
-    unsafe { acosh(x) }
+pub unsafe extern "C" fn acoshf128(x: f128) -> f128 {
+    // glibc acosh wrapper: EDOM for x<1 (genuine NaN inputs carry no errno).
+    if x < 1.0 {
+        set_domain_errno();
+    }
+    acoshl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinf32(x: f32) -> f32 {
@@ -5587,8 +6644,8 @@ pub unsafe extern "C" fn asinf64x(x: f64) -> f64 {
     unsafe { asin(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinf128(x: f64) -> f64 {
-    unsafe { asin(x) }
+pub unsafe extern "C" fn asinf128(x: f128) -> f128 {
+    asin_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinhf32(x: f32) -> f32 {
@@ -5607,8 +6664,8 @@ pub unsafe extern "C" fn asinhf64x(x: f64) -> f64 {
     unsafe { asinh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinhf128(x: f64) -> f64 {
-    unsafe { asinh(x) }
+pub unsafe extern "C" fn asinhf128(x: f128) -> f128 {
+    asinhl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanf32(x: f32) -> f32 {
@@ -5627,8 +6684,8 @@ pub unsafe extern "C" fn atanf64x(x: f64) -> f64 {
     unsafe { atan(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atanf128(x: f64) -> f64 {
-    unsafe { atan(x) }
+pub unsafe extern "C" fn atanf128(x: f128) -> f128 {
+    atan_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanhf32(x: f32) -> f32 {
@@ -5647,8 +6704,15 @@ pub unsafe extern "C" fn atanhf64x(x: f64) -> f64 {
     unsafe { atanh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atanhf128(x: f64) -> f64 {
-    unsafe { atanh(x) }
+pub unsafe extern "C" fn atanhf128(x: f128) -> f128 {
+    // glibc atanh wrapper: ERANGE pole at |x|==1, EDOM for |x|>1.
+    let ax = x.abs();
+    if ax == 1.0 {
+        set_range_errno();
+    } else if ax > 1.0 {
+        set_domain_errno();
+    }
+    atanhl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cbrtf32(x: f32) -> f32 {
@@ -5667,8 +6731,8 @@ pub unsafe extern "C" fn cbrtf64x(x: f64) -> f64 {
     unsafe { cbrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cbrtf128(x: f64) -> f64 {
-    unsafe { cbrt(x) }
+pub unsafe extern "C" fn cbrtf128(x: f128) -> f128 {
+    cbrt_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ceilf32(x: f32) -> f32 {
@@ -5687,8 +6751,8 @@ pub unsafe extern "C" fn ceilf64x(x: f64) -> f64 {
     unsafe { ceil(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ceilf128(x: f64) -> f64 {
-    unsafe { ceil(x) }
+pub unsafe extern "C" fn ceilf128(x: f128) -> f128 {
+    x.ceil()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cosf32(x: f32) -> f32 {
@@ -5707,8 +6771,8 @@ pub unsafe extern "C" fn cosf64x(x: f64) -> f64 {
     unsafe { cos(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cosf128(x: f64) -> f64 {
-    unsafe { cos(x) }
+pub unsafe extern "C" fn cosf128(x: f128) -> f128 {
+    cosl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn coshf32(x: f32) -> f32 {
@@ -5727,8 +6791,12 @@ pub unsafe extern "C" fn coshf64x(x: f64) -> f64 {
     unsafe { cosh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn coshf128(x: f64) -> f64 {
-    unsafe { cosh(x) }
+pub unsafe extern "C" fn coshf128(x: f128) -> f128 {
+    let r = coshl_f128(x);
+    if x.is_finite() && r.is_infinite() {
+        set_range_errno(); // overflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn erff32(x: f32) -> f32 {
@@ -5747,8 +6815,8 @@ pub unsafe extern "C" fn erff64x(x: f64) -> f64 {
     unsafe { erf(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn erff128(x: f64) -> f64 {
-    unsafe { erf(x) }
+pub unsafe extern "C" fn erff128(x: f128) -> f128 {
+    erfl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn erfcf32(x: f32) -> f32 {
@@ -5767,8 +6835,8 @@ pub unsafe extern "C" fn erfcf64x(x: f64) -> f64 {
     unsafe { erfc(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn erfcf128(x: f64) -> f64 {
-    unsafe { erfc(x) }
+pub unsafe extern "C" fn erfcf128(x: f128) -> f128 {
+    erfcl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn expf32(x: f32) -> f32 {
@@ -5787,8 +6855,14 @@ pub unsafe extern "C" fn expf64x(x: f64) -> f64 {
     unsafe { exp(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn expf128(x: f64) -> f64 {
-    unsafe { exp(x) }
+pub unsafe extern "C" fn expf128(x: f128) -> f128 {
+    let r = expl_f128(x);
+    // glibc's exp wrapper: ERANGE on overflow (finite x → inf) / underflow
+    // (finite x → 0). x == -inf → 0 legitimately (x not finite, no errno).
+    if x.is_finite() && (r.is_infinite() || r == 0.0) {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10f32(x: f32) -> f32 {
@@ -5807,8 +6881,12 @@ pub unsafe extern "C" fn exp10f64x(x: f64) -> f64 {
     unsafe { exp10(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp10f128(x: f64) -> f64 {
-    unsafe { exp10(x) }
+pub unsafe extern "C" fn exp10f128(x: f128) -> f128 {
+    let r = exp10l_f128(x);
+    if x.is_finite() && (r.is_infinite() || r == 0.0) {
+        set_range_errno(); // overflow / underflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2f32(x: f32) -> f32 {
@@ -5827,8 +6905,13 @@ pub unsafe extern "C" fn exp2f64x(x: f64) -> f64 {
     unsafe { exp2(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2f128(x: f64) -> f64 {
-    unsafe { exp2(x) }
+pub unsafe extern "C" fn exp2f128(x: f128) -> f128 {
+    const LN2: f128 = 0.6931471805599453094172321214581765680755f128;
+    let r = expl_f128(x * LN2);
+    if x.is_finite() && (r.is_infinite() || r == 0.0) {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn expm1f32(x: f32) -> f32 {
@@ -5847,8 +6930,12 @@ pub unsafe extern "C" fn expm1f64x(x: f64) -> f64 {
     unsafe { expm1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn expm1f128(x: f64) -> f64 {
-    unsafe { expm1(x) }
+pub unsafe extern "C" fn expm1f128(x: f128) -> f128 {
+    let r = expm1l_f128(x);
+    if x.is_finite() && r.is_infinite() {
+        set_range_errno(); // overflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fabsf32(x: f32) -> f32 {
@@ -5867,8 +6954,8 @@ pub unsafe extern "C" fn fabsf64x(x: f64) -> f64 {
     unsafe { fabs(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fabsf128(x: f64) -> f64 {
-    unsafe { fabs(x) }
+pub unsafe extern "C" fn fabsf128(x: f128) -> f128 {
+    f128::from_bits(x.to_bits() & !(1u128 << 127))
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn floorf32(x: f32) -> f32 {
@@ -5887,8 +6974,8 @@ pub unsafe extern "C" fn floorf64x(x: f64) -> f64 {
     unsafe { floor(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn floorf128(x: f64) -> f64 {
-    unsafe { floor(x) }
+pub unsafe extern "C" fn floorf128(x: f128) -> f128 {
+    x.floor()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf32(x: f32) -> f32 {
@@ -5907,8 +6994,8 @@ pub unsafe extern "C" fn lgammaf64x(x: f64) -> f64 {
     unsafe { lgamma(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lgammaf128(x: f64) -> f64 {
-    unsafe { lgamma(x) }
+pub unsafe extern "C" fn lgammaf128(x: f128) -> f128 {
+    unsafe { lgamma(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logf32(x: f32) -> f32 {
@@ -5927,8 +7014,15 @@ pub unsafe extern "C" fn logf64x(x: f64) -> f64 {
     unsafe { log(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logf128(x: f64) -> f64 {
-    unsafe { log(x) }
+pub unsafe extern "C" fn logf128(x: f128) -> f128 {
+    let r = logl_f128(x);
+    // glibc log wrapper: pole error ERANGE at 0, domain error EDOM for x<0.
+    if x == 0.0 {
+        set_range_errno();
+    } else if x < 0.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10f32(x: f32) -> f32 {
@@ -5947,8 +7041,14 @@ pub unsafe extern "C" fn log10f64x(x: f64) -> f64 {
     unsafe { log10(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10f128(x: f64) -> f64 {
-    unsafe { log10(x) }
+pub unsafe extern "C" fn log10f128(x: f128) -> f128 {
+    let r = log10l_f128(x);
+    if x == 0.0 {
+        set_range_errno(); // pole
+    } else if x < 0.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log1pf32(x: f32) -> f32 {
@@ -5967,8 +7067,15 @@ pub unsafe extern "C" fn log1pf64x(x: f64) -> f64 {
     unsafe { log1p(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log1pf128(x: f64) -> f64 {
-    unsafe { log1p(x) }
+pub unsafe extern "C" fn log1pf128(x: f128) -> f128 {
+    let r = log1pl_f128(x);
+    // glibc log1p wrapper: ERANGE pole at x==-1, EDOM for x<-1.
+    if x == -1.0 {
+        set_range_errno();
+    } else if x < -1.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2f32(x: f32) -> f32 {
@@ -5987,8 +7094,14 @@ pub unsafe extern "C" fn log2f64x(x: f64) -> f64 {
     unsafe { log2(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2f128(x: f64) -> f64 {
-    unsafe { log2(x) }
+pub unsafe extern "C" fn log2f128(x: f128) -> f128 {
+    let r = log2l_f128(x);
+    if x == 0.0 {
+        set_range_errno(); // pole
+    } else if x < 0.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logbf32(x: f32) -> f32 {
@@ -6007,8 +7120,17 @@ pub unsafe extern "C" fn logbf64x(x: f64) -> f64 {
     unsafe { logb(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logbf128(x: f64) -> f64 {
-    unsafe { logb(x) }
+pub unsafe extern "C" fn logbf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff {
+        return if mant == 0 { x.abs() } else { x }; // inf -> +inf, nan -> nan
+    }
+    if exp_field == 0 && mant == 0 {
+        return f128::from_bits(0xffff_u128 << 112); // logb(0) = -inf
+    }
+    f128_unbiased_exp(bits) as f128
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nearbyintf32(x: f32) -> f32 {
@@ -6027,8 +7149,8 @@ pub unsafe extern "C" fn nearbyintf64x(x: f64) -> f64 {
     unsafe { nearbyint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nearbyintf128(x: f64) -> f64 {
-    unsafe { nearbyint(x) }
+pub unsafe extern "C" fn nearbyintf128(x: f128) -> f128 {
+    round_f128_current_mode(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rintf32(x: f32) -> f32 {
@@ -6047,8 +7169,8 @@ pub unsafe extern "C" fn rintf64x(x: f64) -> f64 {
     unsafe { rint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rintf128(x: f64) -> f64 {
-    unsafe { rint(x) }
+pub unsafe extern "C" fn rintf128(x: f128) -> f128 {
+    round_f128_nearest(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundf32(x: f32) -> f32 {
@@ -6067,8 +7189,8 @@ pub unsafe extern "C" fn roundf64x(x: f64) -> f64 {
     unsafe { round(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn roundf128(x: f64) -> f64 {
-    unsafe { round(x) }
+pub unsafe extern "C" fn roundf128(x: f128) -> f128 {
+    x.round()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinf32(x: f32) -> f32 {
@@ -6087,8 +7209,8 @@ pub unsafe extern "C" fn sinf64x(x: f64) -> f64 {
     unsafe { sin(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinf128(x: f64) -> f64 {
-    unsafe { sin(x) }
+pub unsafe extern "C" fn sinf128(x: f128) -> f128 {
+    sinl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinhf32(x: f32) -> f32 {
@@ -6107,8 +7229,12 @@ pub unsafe extern "C" fn sinhf64x(x: f64) -> f64 {
     unsafe { sinh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinhf128(x: f64) -> f64 {
-    unsafe { sinh(x) }
+pub unsafe extern "C" fn sinhf128(x: f128) -> f128 {
+    let r = sinhl_f128(x);
+    if x.is_finite() && r.is_infinite() {
+        set_range_errno(); // overflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrtf32(x: f32) -> f32 {
@@ -6127,8 +7253,9 @@ pub unsafe extern "C" fn sqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sqrtf128(x: f64) -> f64 {
-    unsafe { sqrt(x) }
+pub unsafe extern "C" fn sqrtf128(x: f128) -> f128 {
+    // The f128 sqrt intrinsic is IEEE correctly-rounded (byte-exact vs glibc).
+    x.sqrt()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanf32(x: f32) -> f32 {
@@ -6147,8 +7274,8 @@ pub unsafe extern "C" fn tanf64x(x: f64) -> f64 {
     unsafe { tan(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanf128(x: f64) -> f64 {
-    unsafe { tan(x) }
+pub unsafe extern "C" fn tanf128(x: f128) -> f128 {
+    tanl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanhf32(x: f32) -> f32 {
@@ -6167,8 +7294,8 @@ pub unsafe extern "C" fn tanhf64x(x: f64) -> f64 {
     unsafe { tanh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanhf128(x: f64) -> f64 {
-    unsafe { tanh(x) }
+pub unsafe extern "C" fn tanhf128(x: f128) -> f128 {
+    tanhl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tgammaf32(x: f32) -> f32 {
@@ -6187,8 +7314,8 @@ pub unsafe extern "C" fn tgammaf64x(x: f64) -> f64 {
     unsafe { tgamma(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tgammaf128(x: f64) -> f64 {
-    unsafe { tgamma(x) }
+pub unsafe extern "C" fn tgammaf128(x: f128) -> f128 {
+    unsafe { tgamma(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn truncf32(x: f32) -> f32 {
@@ -6207,8 +7334,8 @@ pub unsafe extern "C" fn truncf64x(x: f64) -> f64 {
     unsafe { trunc(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn truncf128(x: f64) -> f64 {
-    unsafe { trunc(x) }
+pub unsafe extern "C" fn truncf128(x: f128) -> f128 {
+    x.trunc()
 }
 
 // --- binary real (f64,f64→f64, f32,f32→f32) ---
@@ -6229,8 +7356,8 @@ pub unsafe extern "C" fn atan2f64x(x: f64, y: f64) -> f64 {
     unsafe { atan2(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atan2f128(x: f64, y: f64) -> f64 {
-    unsafe { atan2(x, y) }
+pub unsafe extern "C" fn atan2f128(y: f128, x: f128) -> f128 {
+    atan2_f128(y, x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn copysignf32(x: f32, y: f32) -> f32 {
@@ -6249,8 +7376,9 @@ pub unsafe extern "C" fn copysignf64x(x: f64, y: f64) -> f64 {
     unsafe { copysign(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn copysignf128(x: f64, y: f64) -> f64 {
-    unsafe { copysign(x, y) }
+pub unsafe extern "C" fn copysignf128(x: f128, y: f128) -> f128 {
+    let sign = y.to_bits() & (1u128 << 127);
+    f128::from_bits((x.to_bits() & !(1u128 << 127)) | sign)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdimf32(x: f32, y: f32) -> f32 {
@@ -6269,8 +7397,19 @@ pub unsafe extern "C" fn fdimf64x(x: f64, y: f64) -> f64 {
     unsafe { fdim(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fdimf128(x: f64, y: f64) -> f64 {
-    unsafe { fdim(x, y) }
+pub unsafe extern "C" fn fdimf128(x: f128, y: f128) -> f128 {
+    if x.is_nan() || y.is_nan() {
+        return x + y; // NaN propagation
+    }
+    if x > y {
+        let d = x - y;
+        if d.is_infinite() && x.is_finite() && y.is_finite() {
+            set_range_errno();
+        }
+        d
+    } else {
+        0.0
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxf32(x: f32, y: f32) -> f32 {
@@ -6289,8 +7428,18 @@ pub unsafe extern "C" fn fmaxf64x(x: f64, y: f64) -> f64 {
     unsafe { fmax(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaxf128(x: f64, y: f64) -> f64 {
-    unsafe { fmax(x, y) }
+pub unsafe extern "C" fn fmaxf128(x: f128, y: f128) -> f128 {
+    // glibc: isgreaterequal(x,y) ? x : y (returns the first arg on a ±0 tie,
+    // unlike Rust's .max() which prefers +0).
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else if x < y {
+        y
+    } else {
+        x
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminf32(x: f32, y: f32) -> f32 {
@@ -6309,8 +7458,15 @@ pub unsafe extern "C" fn fminf64x(x: f64, y: f64) -> f64 {
     unsafe { fmin(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminf128(x: f64, y: f64) -> f64 {
-    unsafe { fmin(x, y) }
+pub unsafe extern "C" fn fminf128(x: f128, y: f128) -> f128 {
+    // glibc: x < y ? x : y (returns the second arg on a ±0 tie).
+    if x.is_nan() {
+        y
+    } else if y.is_nan() || x < y {
+        x
+    } else {
+        y
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf32(x: f32, y: f32) -> f32 {
@@ -6329,8 +7485,10 @@ pub unsafe extern "C" fn fmodf64x(x: f64, y: f64) -> f64 {
     unsafe { fmod(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmodf128(x: f64, y: f64) -> f64 {
-    unsafe { fmod(x, y) }
+pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
+    // The f128 `%` operator is the IEEE fmod (exact remainder); glibc fmod sets
+    // no errno (FE_INVALID only) for the nan-producing cases, matching this.
+    x % y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hypotf32(x: f32, y: f32) -> f32 {
@@ -6349,8 +7507,13 @@ pub unsafe extern "C" fn hypotf64x(x: f64, y: f64) -> f64 {
     unsafe { hypot(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn hypotf128(x: f64, y: f64) -> f64 {
-    unsafe { hypot(x, y) }
+pub unsafe extern "C" fn hypotf128(x: f128, y: f128) -> f128 {
+    let r = hypot_f128(x, y);
+    // glibc's hypot wrapper sets ERANGE when finite operands overflow to inf.
+    if r.is_infinite() && x.is_finite() && y.is_finite() {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafterf32(x: f32, y: f32) -> f32 {
@@ -6369,8 +7532,21 @@ pub unsafe extern "C" fn nextafterf64x(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nextafterf128(x: f64, y: f64) -> f64 {
-    unsafe { nextafter(x, y) }
+pub unsafe extern "C" fn nextafterf128(x: f128, y: f128) -> f128 {
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    if x == y {
+        return y;
+    }
+    let r = if x < y { x.next_up() } else { x.next_down() };
+    // glibc raises ERANGE when the result's exponent field is 0 (subnormal or
+    // zero) or it overflowed a finite x to infinity.
+    let r_exp = (r.to_bits() >> 112) & 0x7fff;
+    if (x.is_finite() && r.is_infinite()) || (r_exp == 0 && x != 0.0) {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powf32(x: f32, y: f32) -> f32 {
@@ -6389,8 +7565,21 @@ pub unsafe extern "C" fn powf64x(x: f64, y: f64) -> f64 {
     unsafe { pow(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn powf128(x: f64, y: f64) -> f64 {
-    unsafe { pow(x, y) }
+pub unsafe extern "C" fn powf128(x: f128, y: f128) -> f128 {
+    let z = powl_f128(x, y);
+    // glibc w_pow wrapper: EDOM (neg**non-int), ERANGE (pole/overflow/underflow).
+    if !z.is_finite() {
+        if x.is_finite() && y.is_finite() {
+            if z.is_nan() {
+                set_domain_errno();
+            } else {
+                set_range_errno();
+            }
+        }
+    } else if z == 0.0 && x.is_finite() && x != 0.0 && y.is_finite() {
+        set_range_errno();
+    }
+    z
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remainderf32(x: f32, y: f32) -> f32 {
@@ -6408,9 +7597,39 @@ pub unsafe extern "C" fn remainderf64(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn remainderf64x(x: f64, y: f64) -> f64 {
     unsafe { remainder(x, y) }
 }
+/// IEEE remainder for binary128: x - n*y where n = round-to-nearest-even(x/y).
+/// Exact (built from fmod + an exact tie-break), no rounding.
+fn remainder_f128(x: f128, y: f128) -> f128 {
+    let ax = x.abs();
+    let ay = y.abs();
+    let mut r = ax % ay; // fmod: r in [0, ay)
+    let two_r = r + r; // exact (no overflow: r < ay)
+    if two_r > ay {
+        r -= ay;
+    } else if two_r == ay {
+        // Tie -> round to even quotient. The quotient n is even iff
+        // fmod(ax, 2*ay) < ay (mod-2y keeps the low quotient bit).
+        let two_ay = ay + ay;
+        if ax % two_ay >= ay {
+            r -= ay;
+        }
+    }
+    if x.is_sign_negative() { -r } else { r }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn remainderf128(x: f64, y: f64) -> f64 {
-    unsafe { remainder(x, y) }
+pub unsafe extern "C" fn remainderf128(x: f128, y: f128) -> f128 {
+    let ax = x.abs();
+    let ay = y.abs();
+    if x.is_nan() || y.is_nan() {
+        return x + y; // NaN propagation, no errno
+    }
+    if ay == 0.0 || ax.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        // glibc returns a negative quiet NaN for the domain error.
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    remainder_f128(x, y)
 }
 
 // --- ternary real ---
@@ -6431,8 +7650,9 @@ pub unsafe extern "C" fn fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaf128(x: f64, y: f64, z: f64) -> f64 {
-    unsafe { fma(x, y, z) }
+pub unsafe extern "C" fn fmaf128(x: f128, y: f128, z: f128) -> f128 {
+    // The f128 fused-multiply-add intrinsic is IEEE correctly-rounded.
+    x.mul_add(y, z)
 }
 
 // --- unary → c_int ---
@@ -6453,8 +7673,19 @@ pub unsafe extern "C" fn ilogbf64x(x: f64) -> c_int {
     unsafe { ilogb(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ilogbf128(x: f64) -> c_int {
-    unsafe { ilogb(x) }
+pub unsafe extern "C" fn ilogbf128(x: f128) -> c_int {
+    let bits = x.to_bits();
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if mant == 0 { c_int::MAX } else { c_int::MIN }; // inf -> INT_MAX, nan -> FP_ILOGBNAN
+    }
+    if exp_field == 0 && mant == 0 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return c_int::MIN; // FP_ILOGB0
+    }
+    f128_unbiased_exp(bits)
 }
 
 // --- unary → c_long ---
@@ -6475,8 +7706,8 @@ pub unsafe extern "C" fn lrintf64x(x: f64) -> c_long {
     unsafe { lrint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lrintf128(x: f64) -> c_long {
-    unsafe { lrint(x) }
+pub unsafe extern "C" fn lrintf128(x: f128) -> c_long {
+    f128_to_i64_sat(round_f128_current_mode(x))
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lroundf32(x: f32) -> c_long {
@@ -6495,8 +7726,8 @@ pub unsafe extern "C" fn lroundf64x(x: f64) -> c_long {
     unsafe { lround(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lroundf128(x: f64) -> c_long {
-    unsafe { lround(x) }
+pub unsafe extern "C" fn lroundf128(x: f128) -> c_long {
+    f128_to_i64_sat(x.round())
 }
 
 // --- unary → i64 ---
@@ -6517,8 +7748,8 @@ pub unsafe extern "C" fn llrintf64x(x: f64) -> i64 {
     unsafe { llrint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn llrintf128(x: f64) -> i64 {
-    unsafe { llrint(x) }
+pub unsafe extern "C" fn llrintf128(x: f128) -> i64 {
+    f128_to_i64_sat(round_f128_current_mode(x))
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llroundf32(x: f32) -> i64 {
@@ -6537,8 +7768,8 @@ pub unsafe extern "C" fn llroundf64x(x: f64) -> i64 {
     unsafe { llround(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn llroundf128(x: f64) -> i64 {
-    unsafe { llround(x) }
+pub unsafe extern "C" fn llroundf128(x: f128) -> i64 {
+    f128_to_i64_sat(x.round())
 }
 
 // --- frexp-like (f, *mut c_int → f) ---
@@ -6559,8 +7790,24 @@ pub unsafe extern "C" fn frexpf64x(x: f64, exp: *mut c_int) -> f64 {
     unsafe { frexp(x, exp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn frexpf128(x: f64, exp: *mut c_int) -> f64 {
-    unsafe { frexp(x, exp) }
+pub unsafe extern "C" fn frexpf128(x: f128, exp: *mut c_int) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    if e == 0x7fff || x == 0.0 {
+        // inf / nan / signed zero: *exp = 0, value unchanged.
+        unsafe { *exp = 0 };
+        return x;
+    }
+    let (norm_bits, base_exp) = if e == 0 {
+        // Subnormal: renormalize via x * 2^113, then back out the 113.
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        (xn.to_bits(), ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113)
+    } else {
+        (bits, e)
+    };
+    unsafe { *exp = base_exp - 16382 };
+    // Mantissa in [0.5, 1): force the exponent field to 0x3FFE.
+    f128::from_bits((norm_bits & !(0x7fffu128 << 112)) | (0x3FFEu128 << 112))
 }
 
 // --- ldexp/scalbn-like (f, c_int → f) ---
@@ -6581,8 +7828,8 @@ pub unsafe extern "C" fn ldexpf64x(x: f64, n: c_int) -> f64 {
     unsafe { ldexp(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ldexpf128(x: f64, n: c_int) -> f64 {
-    unsafe { ldexp(x, n) }
+pub unsafe extern "C" fn ldexpf128(x: f128, n: c_int) -> f128 {
+    scalbn_f128(x, n as i64)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbnf32(x: f32, n: c_int) -> f32 {
@@ -6601,8 +7848,3403 @@ pub unsafe extern "C" fn scalbnf64x(x: f64, n: c_int) -> f64 {
     unsafe { scalbn(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scalbnf128(x: f64, n: c_int) -> f64 {
-    unsafe { scalbn(x, n) }
+pub unsafe extern "C" fn scalbnf128(x: f128, n: c_int) -> f128 {
+    scalbn_f128(x, n as i64)
+}
+
+/// x * 2^n for binary128, via glibc's staged FP-multiply (so the FPU performs
+/// the single correct rounding for subnormal/overflow results), then ERANGE on
+/// an inf or zero result coming from a finite nonzero x.
+fn scalbn_f128(x: f128, n: i64) -> f128 {
+    let p_big = f128::from_bits(0x7ffe_u128 << 112); // 2^16383
+    let p_min = f128::from_bits(1u128 << 112); // 2^-16382 (smallest normal)
+    let p_renorm = f128::from_bits((113u128 + 16383) << 112); // 2^113
+    let orig_nonzero_finite = x != 0.0 && x.is_finite();
+    let mut x = x;
+    let mut n = n;
+    if n > 16383 {
+        x *= p_big;
+        n -= 16383;
+        if n > 16383 {
+            x *= p_big;
+            n -= 16383;
+            if n > 16383 {
+                n = 16383;
+            }
+        }
+    } else if n < -16382 {
+        x *= p_min * p_renorm;
+        n += 16382 - 113;
+        if n < -16382 {
+            x *= p_min * p_renorm;
+            n += 16382 - 113;
+            if n < -16382 {
+                n = -16382;
+            }
+        }
+    }
+    let scale = f128::from_bits(((n + 16383) as u128) << 112);
+    let r = x * scale;
+    // glibc range error: overflow to inf, or a nonzero value flushed to zero.
+    if orig_nonzero_finite && (r.is_infinite() || r == 0.0) {
+        set_range_errno();
+    }
+    r
+}
+
+/// Cube root for binary128 — verbatim port of glibc's ldbl-128 `__cbrtl`
+/// (Cephes/Moshier, sysdeps/ieee754/ldbl-128/s_cbrtl.c): extract power of two
+/// with frexp, a degree-5 polynomial on the mantissa in [0.5,1), multiply by
+/// cbrt(2^{e mod 3}), reapply the exponent with ldexp, then three Newton
+/// iterations `x -= (x - z/x²)/3`. Uses only IEEE-correctly-rounded f128
+/// `+ - * /` plus exact frexp/ldexp, so it is byte-exact vs glibc cbrtf128.
+fn cbrt_f128(x: f128) -> f128 {
+    const CBRT2: f128 = 1.259921049894873164767210607278228350570251f128;
+    const CBRT4: f128 = 1.587401051968199474751705639272308260391493f128;
+    const CBRT2I: f128 = 0.7937005259840997373758528196361541301957467f128;
+    const CBRT4I: f128 = 0.6299605249474365823836053036391141752851257f128;
+    const THIRD: f128 = 0.3333333333333333333333333333333333333333f128;
+
+    if !x.is_finite() {
+        return x + x;
+    }
+    if x == 0.0 {
+        return x; // preserves the sign of zero
+    }
+    let (mut x, sign) = if x > 0.0 { (x, 1) } else { (-x, -1) };
+    let z = x;
+
+    // frexp: split into mantissa in [0.5,1) and a power-of-two exponent e.
+    let mut e: i32;
+    {
+        let bits = x.to_bits();
+        let ef = ((bits >> 112) & 0x7fff) as i32;
+        let (norm_bits, base_exp) = if ef == 0 {
+            let xn = x * f128::from_bits((113u128 + 16383) << 112); // *2^113
+            (xn.to_bits(), ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113)
+        } else {
+            (bits, ef)
+        };
+        e = base_exp - 16382;
+        x = f128::from_bits((norm_bits & !(0x7fffu128 << 112)) | (0x3FFEu128 << 112));
+    }
+
+    // Approximate cube root of the mantissa, peak relative error 1.2e-6.
+    x = ((((1.3584464340920900529734e-1f128 * x - 6.3986917220457538402318e-1f128) * x
+        + 1.2875551670318751538055e0f128)
+        * x
+        - 1.4897083391357284957891e0f128)
+        * x
+        + 1.3304961236013647092521e0f128)
+        * x
+        + 3.7568280825958912391243e-1f128;
+
+    // exponent divided by 3, scaling the mantissa by cbrt(2^rem).
+    let rem;
+    if e >= 0 {
+        rem = e % 3;
+        e /= 3;
+        if rem == 1 {
+            x *= CBRT2;
+        } else if rem == 2 {
+            x *= CBRT4;
+        }
+    } else {
+        e = -e;
+        rem = e % 3;
+        e /= 3;
+        if rem == 1 {
+            x *= CBRT2I;
+        } else if rem == 2 {
+            x *= CBRT4I;
+        }
+        e = -e;
+    }
+
+    x = scalbn_f128(x, e as i64);
+
+    // Newton iteration, three times.
+    x -= (x - (z / (x * x))) * THIRD;
+    x -= (x - (z / (x * x))) * THIRD;
+    x -= (x - (z / (x * x))) * THIRD;
+
+    if sign < 0 { -x } else { x }
+}
+
+/// True iff `x` is a signaling NaN (binary128): NaN with the quiet bit clear.
+fn is_signaling_f128(x: f128) -> bool {
+    let b = x.to_bits();
+    (b >> 112) & 0x7fff == 0x7fff && (b & ((1u128 << 112) - 1)) != 0 && (b & (1u128 << 111)) == 0
+}
+
+/// Borges' "MyHypot3" correction kernel (arXiv:1904.09481). Inputs must be
+/// pre-adjusted so ax >= ay >= 0 and squaring ax, ay, (ax-ay) neither overflows
+/// nor underflows. Uses f128 sqrt + correctly-rounded `+ - * /`.
+fn hypot_kernel_f128(ax: f128, ay: f128) -> f128 {
+    let mut h = (ax * ax + ay * ay).sqrt();
+    let (t1, t2);
+    if h <= 2.0 * ay {
+        let delta = h - ay;
+        t1 = ax * (2.0 * delta - ax);
+        t2 = (delta - 2.0 * (ax - ay)) * delta;
+    } else {
+        let delta = h - ax;
+        t1 = 2.0 * delta * (ax - 2.0 * ay);
+        t2 = (4.0 * delta - ay) * ay + delta * delta;
+    }
+    h -= (t1 + t2) / (2.0 * h);
+    h
+}
+
+/// Euclidean distance for binary128 — verbatim port of glibc's ldbl-128
+/// `__ieee754_hypotl` (Borges' MyHypot3): scale huge/tiny/widely-varying
+/// operands into a safe range, run the correction kernel, unscale. Byte-exact
+/// vs glibc; does NOT set errno (the finite alias — the errno wrapper layers on
+/// top in `hypotf128`).
+fn hypot_f128(x: f128, y: f128) -> f128 {
+    let scale = f128::from_bits(8080u128 << 112); // 2^-8303
+    let large_val = f128::from_bits((24574u128 << 112) | 0x6a09_e667_f3bc_c908_b2fb_1366_ea95); // 0x1.6a09e667f3bcc908b2fb1366ea95p+8191
+    let tiny_val = f128::from_bits(8192u128 << 112); // 2^-8191
+    let eps = f128::from_bits(16269u128 << 112); // 2^-114
+
+    if !x.is_finite() || !y.is_finite() {
+        if (x.is_infinite() || y.is_infinite()) && !is_signaling_f128(x) && !is_signaling_f128(y) {
+            return f128::INFINITY;
+        }
+        return x + y;
+    }
+
+    let x = x.abs();
+    let y = y.abs();
+    let ax = if x < y { y } else { x };
+    let ay = if x < y { x } else { y };
+
+    // ax huge: scale both down.
+    if ax > large_val {
+        if ay <= ax * eps {
+            return ax + ay;
+        }
+        return hypot_kernel_f128(ax * scale, ay * scale) / scale;
+    }
+    // ay tiny: scale both up.
+    if ay < tiny_val {
+        if ax >= ay / eps {
+            return ax + ay;
+        }
+        return hypot_kernel_f128(ax / scale, ay / scale) * scale;
+    }
+    // Common case.
+    if ay <= ax * eps {
+        return ax + ay;
+    }
+    hypot_kernel_f128(ax, ay)
+}
+
+/// arctan(k/8) for k = 0..=82, plus pi/2 at index 83 — glibc ldbl-128 table.
+#[rustfmt::skip]
+static ATAN_TBL_F128: [f128; 84] = [
+    0.0000000000000000000000000000000000000000E0f128,
+    1.2435499454676143503135484916387102557317E-1f128,
+    2.4497866312686415417208248121127581091414E-1f128,
+    3.5877067027057222039592006392646049977698E-1f128,
+    4.6364760900080611621425623146121440202854E-1f128,
+    5.5859931534356243597150821640166127034645E-1f128,
+    6.4350110879328438680280922871732263804151E-1f128,
+    7.1882999962162450541701415152590465395142E-1f128,
+    7.8539816339744830961566084581987572104929E-1f128,
+    8.4415398611317100251784414827164750652594E-1f128,
+    8.9605538457134395617480071802993782702458E-1f128,
+    9.4200004037946366473793717053459358607166E-1f128,
+    9.8279372324732906798571061101466601449688E-1f128,
+    1.0191413442663497346383429170230636487744E0f128,
+    1.0516502125483736674598673120862998296302E0f128,
+    1.0808390005411683108871567292171998202703E0f128,
+    1.1071487177940905030170654601785370400700E0f128,
+    1.1309537439791604464709335155363278047493E0f128,
+    1.1525719972156675180401498626127513797495E0f128,
+    1.1722738811284763866005949441337046149712E0f128,
+    1.1902899496825317329277337748293183376012E0f128,
+    1.2068173702852525303955115800565576303133E0f128,
+    1.2220253232109896370417417439225704908830E0f128,
+    1.2360594894780819419094519711090786987027E0f128,
+    1.2490457723982544258299170772810901230778E0f128,
+    1.2610933822524404193139408812473357720101E0f128,
+    1.2722973952087173412961937498224804940684E0f128,
+    1.2827408797442707473628852511364955306249E0f128,
+    1.2924966677897852679030914214070816845853E0f128,
+    1.3016288340091961438047858503666855921414E0f128,
+    1.3101939350475556342564376891719053122733E0f128,
+    1.3182420510168370498593302023271362531155E0f128,
+    1.3258176636680324650592392104284756311844E0f128,
+    1.3329603993374458675538498697331558093700E0f128,
+    1.3397056595989995393283037525895557411039E0f128,
+    1.3460851583802539310489409282517796256512E0f128,
+    1.3521273809209546571891479413898128509842E0f128,
+    1.3578579772154994751124898859640585287459E0f128,
+    1.3633001003596939542892985278250991189943E0f128,
+    1.3684746984165928776366381936948529556191E0f128,
+    1.3734007669450158608612719264449611486510E0f128,
+    1.3780955681325110444536609641291551522494E0f128,
+    1.3825748214901258580599674177685685125566E0f128,
+    1.3868528702577214543289381097042486034883E0f128,
+    1.3909428270024183486427686943836432060856E0f128,
+    1.3948567013423687823948122092044222644895E0f128,
+    1.3986055122719575950126700816114282335732E0f128,
+    1.4021993871854670105330304794336492676944E0f128,
+    1.4056476493802697809521934019958079881002E0f128,
+    1.4089588955564736949699075250792569287156E0f128,
+    1.4121410646084952153676136718584891599630E0f128,
+    1.4152014988178669079462550975833894394929E0f128,
+    1.4181469983996314594038603039700989523716E0f128,
+    1.4209838702219992566633046424614466661176E0f128,
+    1.4237179714064941189018190466107297503086E0f128,
+    1.4263547484202526397918060597281265695725E0f128,
+    1.4288992721907326964184700745371983590908E0f128,
+    1.4313562697035588982240194668401779312122E0f128,
+    1.4337301524847089866404719096698873648610E0f128,
+    1.4360250423171655234964275337155008780675E0f128,
+    1.4382447944982225979614042479354815855386E0f128,
+    1.4403930189057632173997301031392126865694E0f128,
+    1.4424730991091018200252920599377292525125E0f128,
+    1.4444882097316563655148453598508037025938E0f128,
+    1.4464413322481351841999668424758804165254E0f128,
+    1.4483352693775551917970437843145232637695E0f128,
+    1.4501726582147939000905940595923466567576E0f128,
+    1.4519559822271314199339700039142990228105E0f128,
+    1.4536875822280323362423034480994649820285E0f128,
+    1.4553696664279718992423082296859928222270E0f128,
+    1.4570043196511885530074841089245667532358E0f128,
+    1.4585935117976422128825857356750737658039E0f128,
+    1.4601391056210009726721818194296893361233E0f128,
+    1.4616428638860188872060496086383008594310E0f128,
+    1.4631064559620759326975975316301202111560E0f128,
+    1.4645314639038178118428450961503371619177E0f128,
+    1.4659193880646627234129855241049975398470E0f128,
+    1.4672716522843522691530527207287398276197E0f128,
+    1.4685896086876430842559640450619880951144E0f128,
+    1.4698745421276027686510391411132998919794E0f128,
+    1.4711276743037345918528755717617308518553E0f128,
+    1.4723501675822635384916444186631899205983E0f128,
+    1.4735431285433308455179928682541563973416E0f128,
+    1.5707963267948966192313216916397514420986E0f128,
+];
+
+/// Arctangent for binary128 — verbatim port of glibc's ldbl-128 Cephes/Moshier
+/// `__atanl` (sysdeps/ieee754/ldbl-128/s_atanl.c). Range-reduce x into a table
+/// cell arctan(k/8), reduce the residual with the arctan subtraction identity
+/// `t = (x - k/8)/(1 + x·k/8)`, evaluate a rational `t + t³·p(t²)/q(t²)`, and
+/// add back the table value. Fully self-contained (no other transcendental),
+/// only f128 `+ - * /`, so byte-exact vs glibc.
+fn atan_f128(x: f128) -> f128 {
+    const P0: f128 = -4.283708356338736809269381409828726405572E1f128;
+    const P1: f128 = -8.636132499244548540964557273544599863825E1f128;
+    const P2: f128 = -5.713554848244551350855604111031839613216E1f128;
+    const P3: f128 = -1.371405711877433266573835355036413750118E1f128;
+    const P4: f128 = -8.638214309119210906997318946650189640184E-1f128;
+    const Q0: f128 = 1.285112506901621042780814422948906537959E2f128;
+    const Q1: f128 = 3.361907253914337187957855834229672347089E2f128;
+    const Q2: f128 = 3.180448303864130128268191635189365331680E2f128;
+    const Q3: f128 = 1.307244136980865800160844625025280344686E2f128;
+    const Q4: f128 = 2.173623741810414221251136181221172551416E1f128;
+
+    let bits = x.to_bits();
+    let w0 = (bits >> 96) as u32;
+    let sign = w0 & 0x8000_0000 != 0;
+    let k0 = w0 & 0x7fff_ffff;
+
+    // NaN / Infinity.
+    if k0 >= 0x7fff_0000 {
+        if x.is_nan() {
+            return x + x;
+        }
+        return if sign {
+            -ATAN_TBL_F128[83]
+        } else {
+            ATAN_TBL_F128[83]
+        };
+    }
+    // |x| < 2^-58: atan(x) == x to full precision.
+    if k0 <= 0x3fc5_0000 {
+        return x;
+    }
+    // |x| > 2^115: saturate to +/- pi/2.
+    if k0 >= 0x4072_0000 {
+        return if sign {
+            -ATAN_TBL_F128[83]
+        } else {
+            ATAN_TBL_F128[83]
+        };
+    }
+
+    let x = if sign { -x } else { x };
+    let (k, t) = if k0 >= 0x4002_4800 {
+        // |x| >= 10.25: t = -1/x, table cell pi/2.
+        (83usize, -1.0 / x)
+    } else {
+        // Index of nearest table element (asymmetric round per fdlibm).
+        let ki = (8.0 * x + 0.25) as i32;
+        let u = 0.125 * (ki as f128);
+        (ki as usize, (x - u) / (1.0 + x * u))
+    };
+
+    let u = t * t;
+    let p = ((((P4 * u) + P3) * u + P2) * u + P1) * u + P0;
+    let q = ((((u + Q4) * u + Q3) * u + Q2) * u + Q1) * u + Q0;
+    let u = t * u * p / q + t;
+    let u = ATAN_TBL_F128[k] + u;
+    if sign { -u } else { u }
+}
+
+/// Two-argument arctangent for binary128 — verbatim port of glibc's ldbl-128
+/// `__ieee754_atan2l` (sysdeps/ieee754/ldbl-128/e_atan2l.c). All the IEEE
+/// special cases, then quadrant placement of `__atanl(|y/x|)`. Depends only on
+/// the byte-exact `atan_f128` plus algebraic f128 ops, so it is byte-exact.
+fn atan2_f128(y: f128, x: f128) -> f128 {
+    const TINY: f128 = 1.0e-4900f128;
+    const PI_O_4: f128 = 7.85398163397448309615660845819875699e-01f128;
+    const PI_O_2: f128 = 1.57079632679489661923132169163975140e+00f128;
+    const PI: f128 = 3.14159265358979323846264338327950280e+00f128;
+    const PI_LO: f128 = 8.67181013012378102479704402604335225e-35f128;
+    let zero = 0.0f128;
+
+    let xb = x.to_bits();
+    let yb = y.to_bits();
+    let hx = (xb >> 64) as i64;
+    let lx = xb as u64;
+    let hy = (yb >> 64) as i64;
+    let ly = yb as u64;
+    let ix = hx & 0x7fff_ffff_ffff_ffff;
+    let iy = hy & 0x7fff_ffff_ffff_ffff;
+
+    // x or y is NaN.
+    if (ix as u64 | ((lx | lx.wrapping_neg()) >> 63)) > 0x7fff_0000_0000_0000
+        || (iy as u64 | ((ly | ly.wrapping_neg()) >> 63)) > 0x7fff_0000_0000_0000
+    {
+        return x + y;
+    }
+    if hx == 0x3fff_0000_0000_0000 && lx == 0 {
+        return atan_f128(y); // x == 1.0
+    }
+    let m = ((hy >> 63) & 1) | ((hx >> 62) & 2); // 2*sign(x)+sign(y)
+
+    // y == 0.
+    if iy == 0 && ly == 0 {
+        return match m {
+            0 | 1 => y,      // atan(+-0,+anything) = +-0
+            2 => PI + TINY,  // atan(+0,-anything) = pi
+            _ => -PI - TINY, // atan(-0,-anything) = -pi
+        };
+    }
+    // x == 0.
+    if ix == 0 && lx == 0 {
+        return if hy < 0 {
+            -PI_O_2 - TINY
+        } else {
+            PI_O_2 + TINY
+        };
+    }
+    // x is INF.
+    if ix == 0x7fff_0000_0000_0000 {
+        if iy == 0x7fff_0000_0000_0000 {
+            return match m {
+                0 => PI_O_4 + TINY,
+                1 => -PI_O_4 - TINY,
+                2 => 3.0 * PI_O_4 + TINY,
+                _ => -3.0 * PI_O_4 - TINY,
+            };
+        }
+        return match m {
+            0 => zero,
+            1 => -zero,
+            2 => PI + TINY,
+            _ => -PI - TINY,
+        };
+    }
+    // y is INF.
+    if iy == 0x7fff_0000_0000_0000 {
+        return if hy < 0 {
+            -PI_O_2 - TINY
+        } else {
+            PI_O_2 + TINY
+        };
+    }
+
+    // Compute y/x.
+    let k = (iy - ix) >> 48;
+    let z = if k > 120 {
+        PI_O_2 + 0.5 * PI_LO // |y/x| > 2^120
+    } else if hx < 0 && k < -120 {
+        zero // |y|/x < -2^120
+    } else {
+        atan_f128((y / x).abs())
+    };
+    match m {
+        0 => z,                                             // atan(+,+)
+        1 => f128::from_bits(z.to_bits() ^ (1u128 << 127)), // atan(-,+) = -z
+        2 => PI - (z - PI_LO),                              // atan(+,-)
+        _ => (z - PI_LO) - PI,                              // atan(-,-)
+    }
+}
+
+/// Arcsine for binary128 — verbatim port of glibc's ldbl-128 Sun/fdlibm
+/// `__ieee754_asinl` (e_asinl.c). Three rational approximations by range
+/// (|x|<0.5 via pS/qS, [0.5625±] via rS/sS, |x|>=0.625 via sqrt((1-|x|)/2) +
+/// pS/qS with a hi/lo split of the sqrt). Self-contained (only sqrtl +
+/// algebraic f128 ops); polynomials written as sequential Horner statements
+/// that reproduce glibc's exact mul-then-add operation order, so byte-exact.
+#[allow(clippy::excessive_precision)]
+fn asin_f128(x: f128) -> f128 {
+    const PIO2_HI: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PIO2_LO: f128 = 4.3359050650618905123985220130216759843812E-35f128;
+    const PIO4_HI: f128 = 7.8539816339744830961566084581987569936977E-1f128;
+    const PS0: f128 = -8.358099012470680544198472400254596543711E2f128;
+    const PS1: f128 = 3.674973957689619490312782828051860366493E3f128;
+    const PS2: f128 = -6.730729094812979665807581609853656623219E3f128;
+    const PS3: f128 = 6.643843795209060298375552684423454077633E3f128;
+    const PS4: f128 = -3.817341990928606692235481812252049415993E3f128;
+    const PS5: f128 = 1.284635388402653715636722822195716476156E3f128;
+    const PS6: f128 = -2.410736125231549204856567737329112037867E2f128;
+    const PS7: f128 = 2.219191969382402856557594215833622156220E1f128;
+    const PS8: f128 = -7.249056260830627156600112195061001036533E-1f128;
+    const PS9: f128 = 1.055923570937755300061509030361395604448E-3f128;
+    const QS0: f128 = -5.014859407482408326519083440151745519205E3f128;
+    const QS1: f128 = 2.430653047950480068881028451580393430537E4f128;
+    const QS2: f128 = -4.997904737193653607449250593976069726962E4f128;
+    const QS3: f128 = 5.675712336110456923807959930107347511086E4f128;
+    const QS4: f128 = -3.881523118339661268482937768522572588022E4f128;
+    const QS5: f128 = 1.634202194895541569749717032234510811216E4f128;
+    const QS6: f128 = -4.151452662440709301601820849901296953752E3f128;
+    const QS7: f128 = 5.956050864057192019085175976175695342168E2f128;
+    const QS8: f128 = -4.175375777334867025769346564600396877176E1f128;
+    const RS0: f128 = -5.619049346208901520945464704848780243887E0f128;
+    const RS1: f128 = 4.460504162777731472539175700169871920352E1f128;
+    const RS2: f128 = -1.317669505315409261479577040530751477488E2f128;
+    const RS3: f128 = 1.626532582423661989632442410808596009227E2f128;
+    const RS4: f128 = -3.144806644195158614904369445440583873264E1f128;
+    const RS5: f128 = -9.806674443470740708765165604769099559553E1f128;
+    const RS6: f128 = 5.708468492052010816555762842394927806920E1f128;
+    const RS7: f128 = 1.396540499232262112248553357962639431922E1f128;
+    const RS8: f128 = -1.126243289311910363001762058295832610344E1f128;
+    const RS9: f128 = -4.956179821329901954211277873774472383512E-1f128;
+    const RS10: f128 = 3.313227657082367169241333738391762525780E-1f128;
+    const SS0: f128 = -4.645814742084009935700221277307007679325E0f128;
+    const SS1: f128 = 3.879074822457694323970438316317961918430E1f128;
+    const SS2: f128 = -1.221986588013474694623973554726201001066E2f128;
+    const SS3: f128 = 1.658821150347718105012079876756201905822E2f128;
+    const SS4: f128 = -4.804379630977558197953176474426239748977E1f128;
+    const SS5: f128 = -1.004296417397316948114344573811562952793E2f128;
+    const SS6: f128 = 7.530281592861320234941101403870010111138E1f128;
+    const SS7: f128 = 1.270735595411673647119592092304357226607E1f128;
+    const SS8: f128 = -1.815144839646376500705105967064792930282E1f128;
+    const SS9: f128 = -7.821597334910963922204235247786840828217E-2f128;
+    const ASINR5625: f128 = 5.9740641664535021430381036628424864397707E-1f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127)); // |x|
+
+    if ix >= 0x3fff_0000 {
+        // |x| >= 1
+        if ix == 0x3fff_0000 && (xb & ((1u128 << 96) - 1)) == 0 {
+            return x * PIO2_HI + x * PIO2_LO; // asin(±1) = ±pi/2
+        }
+        if x.is_nan() {
+            return (x - x) / (x - x); // propagate the input NaN
+        }
+        // asin(|x|>1): glibc's (x-x)/(x-x) is the canonical NEGATIVE qNaN on x86.
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+
+    let mut flag = false;
+    let t;
+    if ix < 0x3ffe_0000 {
+        // |x| < 0.5
+        if ix < 0x3fc6_0000 {
+            return x; // |x| < 2^-57: asin(x) == x
+        }
+        t = x * x;
+        flag = true;
+    } else if ix < 0x3ffe_4000 {
+        // |x| < 0.625: asin(0.5625 + tt) = asinr5625 + tt·rS(tt)/sS(tt)
+        let tt = absx - 0.5625;
+        let mut p = RS10 * tt + RS9;
+        p = p * tt + RS8;
+        p = p * tt + RS7;
+        p = p * tt + RS6;
+        p = p * tt + RS5;
+        p = p * tt + RS4;
+        p = p * tt + RS3;
+        p = p * tt + RS2;
+        p = p * tt + RS1;
+        p = p * tt + RS0;
+        p = p * tt;
+        let mut q = tt + SS9;
+        q = q * tt + SS8;
+        q = q * tt + SS7;
+        q = q * tt + SS6;
+        q = q * tt + SS5;
+        q = q * tt + SS4;
+        q = q * tt + SS3;
+        q = q * tt + SS2;
+        q = q * tt + SS1;
+        q = q * tt + SS0;
+        let r = ASINR5625 + p / q;
+        return if neg { -r } else { r };
+    } else {
+        // 1 > |x| >= 0.625
+        let w = 1.0 - absx;
+        t = w * 0.5;
+    }
+
+    // pS/qS rational on t.
+    let mut p = PS9 * t + PS8;
+    p = p * t + PS7;
+    p = p * t + PS6;
+    p = p * t + PS5;
+    p = p * t + PS4;
+    p = p * t + PS3;
+    p = p * t + PS2;
+    p = p * t + PS1;
+    p = p * t + PS0;
+    p = p * t;
+    let mut q = t + QS8;
+    q = q * t + QS7;
+    q = q * t + QS6;
+    q = q * t + QS5;
+    q = q * t + QS4;
+    q = q * t + QS3;
+    q = q * t + QS2;
+    q = q * t + QS1;
+    q = q * t + QS0;
+
+    if flag {
+        let w = p / q;
+        return x + x * w;
+    }
+
+    let s = t.sqrt();
+    let tres;
+    if ix >= 0x3ffe_f333 {
+        // |x| > 0.975
+        let w = p / q;
+        tres = PIO2_HI - (2.0 * (s + s * w) - PIO2_LO);
+    } else {
+        // hi/lo split of s: clear the low 64 mantissa bits.
+        let w = f128::from_bits(s.to_bits() & (!0u128 << 64));
+        let c = (t - w * w) / (s + w);
+        let r = p / q;
+        let pp = 2.0 * s * r - (PIO2_LO - 2.0 * c);
+        let qq = PIO4_HI - 2.0 * w;
+        tres = PIO4_HI - (pp - qq);
+    }
+    if neg { -tres } else { tres }
+}
+
+/// Arccosine for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_acosl`
+/// (e_acosl.c). Five range branches: |x|<2^-113 → pi/2; |x|<0.4375 via
+/// pS/qS (acos = pi/2 - asin); [0.4375±] via P/Q; [0.5625±] via rS/sS (acos-
+/// specific signs); |x|>=0.625 via acos = 2·asin(sqrt((1-|x|)/2)) with an
+/// extended-precision sqrt correction. Self-contained (only sqrtl + algebraic
+/// f128); sequential-Horner polynomials reproduce glibc's op order → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn acos_f128(x: f128) -> f128 {
+    const PIO2_HI: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PIO2_LO: f128 = 4.3359050650618905123985220130216759843812E-35f128;
+    const RS0: f128 = 5.619049346208901520945464704848780243887E0f128;
+    const RS1: f128 = -4.460504162777731472539175700169871920352E1f128;
+    const RS2: f128 = 1.317669505315409261479577040530751477488E2f128;
+    const RS3: f128 = -1.626532582423661989632442410808596009227E2f128;
+    const RS4: f128 = 3.144806644195158614904369445440583873264E1f128;
+    const RS5: f128 = 9.806674443470740708765165604769099559553E1f128;
+    const RS6: f128 = -5.708468492052010816555762842394927806920E1f128;
+    const RS7: f128 = -1.396540499232262112248553357962639431922E1f128;
+    const RS8: f128 = 1.126243289311910363001762058295832610344E1f128;
+    const RS9: f128 = 4.956179821329901954211277873774472383512E-1f128;
+    const RS10: f128 = -3.313227657082367169241333738391762525780E-1f128;
+    const SS0: f128 = -4.645814742084009935700221277307007679325E0f128;
+    const SS1: f128 = 3.879074822457694323970438316317961918430E1f128;
+    const SS2: f128 = -1.221986588013474694623973554726201001066E2f128;
+    const SS3: f128 = 1.658821150347718105012079876756201905822E2f128;
+    const SS4: f128 = -4.804379630977558197953176474426239748977E1f128;
+    const SS5: f128 = -1.004296417397316948114344573811562952793E2f128;
+    const SS6: f128 = 7.530281592861320234941101403870010111138E1f128;
+    const SS7: f128 = 1.270735595411673647119592092304357226607E1f128;
+    const SS8: f128 = -1.815144839646376500705105967064792930282E1f128;
+    const SS9: f128 = -7.821597334910963922204235247786840828217E-2f128;
+    const ACOSR5625: f128 = 9.7338991014954640492751132535550279812151E-1f128;
+    const PIMACOSR5625: f128 = 2.1682027434402468335351320579240000860757E0f128;
+    const P0: f128 = 2.177690192235413635229046633751390484892E0f128;
+    const P1: f128 = -2.848698225706605746657192566166142909573E1f128;
+    const P2: f128 = 1.040076477655245590871244795403659880304E2f128;
+    const P3: f128 = -1.400087608918906358323551402881238180553E2f128;
+    const P4: f128 = 2.221047917671449176051896400503615543757E1f128;
+    const P5: f128 = 9.643714856395587663736110523917499638702E1f128;
+    const P6: f128 = -5.158406639829833829027457284942389079196E1f128;
+    const P7: f128 = -1.578651828337585944715290382181219741813E1f128;
+    const P8: f128 = 1.093632715903802870546857764647931045906E1f128;
+    const P9: f128 = 5.448925479898460003048760932274085300103E-1f128;
+    const P10: f128 = -3.315886001095605268470690485170092986337E-1f128;
+    const Q0: f128 = -1.958219113487162405143608843774587557016E0f128;
+    const Q1: f128 = 2.614577866876185080678907676023269360520E1f128;
+    const Q2: f128 = -9.990858606464150981009763389881793660938E1f128;
+    const Q3: f128 = 1.443958741356995763628660823395334281596E2f128;
+    const Q4: f128 = -3.206441012484232867657763518369723873129E1f128;
+    const Q5: f128 = -1.048560885341833443564920145642588991492E2f128;
+    const Q6: f128 = 6.745883931909770880159915641984874746358E1f128;
+    const Q7: f128 = 1.806809656342804436118449982647641392951E1f128;
+    const Q8: f128 = -1.770150690652438294290020775359580915464E1f128;
+    const Q9: f128 = -5.659156469628629327045433069052560211164E-1f128;
+    const ACOSR4375: f128 = 1.1179797320499710475919903296900511518755E0f128;
+    const PIMACOSR4375: f128 = 2.0236129215398221908706530535894517323217E0f128;
+    const PS0: f128 = -8.358099012470680544198472400254596543711E2f128;
+    const PS1: f128 = 3.674973957689619490312782828051860366493E3f128;
+    const PS2: f128 = -6.730729094812979665807581609853656623219E3f128;
+    const PS3: f128 = 6.643843795209060298375552684423454077633E3f128;
+    const PS4: f128 = -3.817341990928606692235481812252049415993E3f128;
+    const PS5: f128 = 1.284635388402653715636722822195716476156E3f128;
+    const PS6: f128 = -2.410736125231549204856567737329112037867E2f128;
+    const PS7: f128 = 2.219191969382402856557594215833622156220E1f128;
+    const PS8: f128 = -7.249056260830627156600112195061001036533E-1f128;
+    const PS9: f128 = 1.055923570937755300061509030361395604448E-3f128;
+    const QS0: f128 = -5.014859407482408326519083440151745519205E3f128;
+    const QS1: f128 = 2.430653047950480068881028451580393430537E4f128;
+    const QS2: f128 = -4.997904737193653607449250593976069726962E4f128;
+    const QS3: f128 = 5.675712336110456923807959930107347511086E4f128;
+    const QS4: f128 = -3.881523118339661268482937768522572588022E4f128;
+    const QS5: f128 = 1.634202194895541569749717032234510811216E4f128;
+    const QS6: f128 = -4.151452662440709301601820849901296953752E3f128;
+    const QS7: f128 = 5.956050864057192019085175976175695342168E2f128;
+    const QS8: f128 = -4.175375777334867025769346564600396877176E1f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127)); // |x|
+
+    if ix >= 0x3fff_0000 {
+        // |x| >= 1
+        if ix == 0x3fff_0000 && (xb & ((1u128 << 96) - 1)) == 0 {
+            // |x| == 1
+            return if !neg {
+                0.0
+            } else {
+                2.0 * PIO2_HI + 2.0 * PIO2_LO
+            }; // acos(1)=0 / acos(-1)=pi
+        }
+        if x.is_nan() {
+            return (x - x) / (x - x);
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // acos(|x|>1) NaN
+    }
+
+    if ix < 0x3ffe_0000 {
+        // |x| < 0.5
+        if ix < 0x3f8e_0000 {
+            return PIO2_HI + PIO2_LO; // |x| < 2^-113
+        }
+        if ix < 0x3ffd_e000 {
+            // |x| < 0.4375 — acos via asin(x).
+            let z = x * x;
+            let mut p = PS9 * z + PS8;
+            p = p * z + PS7;
+            p = p * z + PS6;
+            p = p * z + PS5;
+            p = p * z + PS4;
+            p = p * z + PS3;
+            p = p * z + PS2;
+            p = p * z + PS1;
+            p = p * z + PS0;
+            p = p * z;
+            let mut q = z + QS8;
+            q = q * z + QS7;
+            q = q * z + QS6;
+            q = q * z + QS5;
+            q = q * z + QS4;
+            q = q * z + QS3;
+            q = q * z + QS2;
+            q = q * z + QS1;
+            q = q * z + QS0;
+            let r = x + x * p / q;
+            return PIO2_HI - (r - PIO2_LO);
+        }
+        // 0.4375 <= |x| < 0.5 via P/Q.
+        let t = absx - 0.4375;
+        let mut p = P10 * t + P9;
+        p = p * t + P8;
+        p = p * t + P7;
+        p = p * t + P6;
+        p = p * t + P5;
+        p = p * t + P4;
+        p = p * t + P3;
+        p = p * t + P2;
+        p = p * t + P1;
+        p = p * t + P0;
+        p = p * t;
+        let mut q = t + Q9;
+        q = q * t + Q8;
+        q = q * t + Q7;
+        q = q * t + Q6;
+        q = q * t + Q5;
+        q = q * t + Q4;
+        q = q * t + Q3;
+        q = q * t + Q2;
+        q = q * t + Q1;
+        q = q * t + Q0;
+        let r = p / q;
+        return if neg { PIMACOSR4375 - r } else { ACOSR4375 + r };
+    }
+
+    if ix < 0x3ffe_4000 {
+        // |x| < 0.625 via rS/sS.
+        let t = absx - 0.5625;
+        let mut p = RS10 * t + RS9;
+        p = p * t + RS8;
+        p = p * t + RS7;
+        p = p * t + RS6;
+        p = p * t + RS5;
+        p = p * t + RS4;
+        p = p * t + RS3;
+        p = p * t + RS2;
+        p = p * t + RS1;
+        p = p * t + RS0;
+        p = p * t;
+        let mut q = t + SS9;
+        q = q * t + SS8;
+        q = q * t + SS7;
+        q = q * t + SS6;
+        q = q * t + SS5;
+        q = q * t + SS4;
+        q = q * t + SS3;
+        q = q * t + SS2;
+        q = q * t + SS1;
+        q = q * t + SS0;
+        let pq = p / q;
+        return if neg {
+            PIMACOSR5625 - pq
+        } else {
+            ACOSR5625 + pq
+        };
+    }
+
+    // |x| >= 0.625 via acos = 2·asin(sqrt((1-|x|)/2)).
+    let z = (1.0 - absx) * 0.5;
+    let s = z.sqrt();
+    // Extended-precision sqrt correction (split f1 = high 64 bits of s).
+    let f1 = f128::from_bits(s.to_bits() & (!0u128 << 64));
+    let f2 = s - f1;
+    let mut w = z - f1 * f1;
+    w = w - 2.0 * f1 * f2;
+    w = w - f2 * f2;
+    w = w / (2.0 * s);
+    let mut p = PS9 * z + PS8;
+    p = p * z + PS7;
+    p = p * z + PS6;
+    p = p * z + PS5;
+    p = p * z + PS4;
+    p = p * z + PS3;
+    p = p * z + PS2;
+    p = p * z + PS1;
+    p = p * z + PS0;
+    p = p * z;
+    let mut q = z + QS8;
+    q = q * z + QS7;
+    q = q * z + QS6;
+    q = q * z + QS5;
+    q = q * z + QS4;
+    q = q * z + QS3;
+    q = q * z + QS2;
+    q = q * z + QS1;
+    q = q * z + QS0;
+    let r = s + (w + s * p / q);
+    let w2 = if neg { PIO2_HI + (PIO2_LO - r) } else { r };
+    2.0 * w2
+}
+
+/// `logtbl[k] = ln(t) - (t-1)` for t = 0.5 + (k+26)/128, k = 0..=91 — glibc
+/// ldbl-128 e_logl.c lookup table. Index 38 is exactly 0 (the `ZERO` anchor).
+#[rustfmt::skip]
+static LOG_TBL_F128: [f128; 92] = [
+    -5.5345593589352099112142921677820359632418E-2f128,
+    -5.2108257402767124761784665198737642086148E-2f128,
+    -4.8991686870576856279407775480686721935120E-2f128,
+    -4.5993270766361228596215288742353061431071E-2f128,
+    -4.3110481649613269682442058976885699556950E-2f128,
+    -4.0340872319076331310838085093194799765520E-2f128,
+    -3.7682072451780927439219005993827431503510E-2f128,
+    -3.5131785416234343803903228503274262719586E-2f128,
+    -3.2687785249045246292687241862699949178831E-2f128,
+    -3.0347913785027239068190798397055267411813E-2f128,
+    -2.8110077931525797884641940838507561326298E-2f128,
+    -2.5972247078357715036426583294246819637618E-2f128,
+    -2.3932450635346084858612873953407168217307E-2f128,
+    -2.1988775689981395152022535153795155900240E-2f128,
+    -2.0139364778244501615441044267387667496733E-2f128,
+    -1.8382413762093794819267536615342902718324E-2f128,
+    -1.6716169807550022358923589720001638093023E-2f128,
+    -1.5138929457710992616226033183958974965355E-2f128,
+    -1.3649036795397472900424896523305726435029E-2f128,
+    -1.2244881690473465543308397998034325468152E-2f128,
+    -1.0924898127200937840689817557742469105693E-2f128,
+    -9.6875626072830301572839422532631079809328E-3f128,
+    -8.5313926245226231463436209313499745894157E-3f128,
+    -7.4549452072765973384933565912143044991706E-3f128,
+    -6.4568155251217050991200599386801665681310E-3f128,
+    -5.5356355563671005131126851708522185605193E-3f128,
+    -4.6900728132525199028885749289712348829878E-3f128,
+    -3.9188291218610470766469347968659624282519E-3f128,
+    -3.2206394539524058873423550293617843896540E-3f128,
+    -2.5942708080877805657374888909297113032132E-3f128,
+    -2.0385211375711716729239156839929281289086E-3f128,
+    -1.5522183228760777967376942769773768850872E-3f128,
+    -1.1342191863606077520036253234446621373191E-3f128,
+    -7.8340854719967065861624024730268350459991E-4f128,
+    -4.9869831458030115699628274852562992756174E-4f128,
+    -2.7902661731604211834685052867305795169688E-4f128,
+    -1.2335696813916860754951146082826952093496E-4f128,
+    -3.0677461025892873184042490943581654591817E-5f128,
+    0.0000000000000000000000000000000000000000E0f128,
+    -3.0359557945051052537099938863236321874198E-5f128,
+    -1.2081346403474584914595395755316412213151E-4f128,
+    -2.7044071846562177120083903771008342059094E-4f128,
+    -4.7834133324631162897179240322783590830326E-4f128,
+    -7.4363569786340080624467487620270965403695E-4f128,
+    -1.0654639687057968333207323853366578860679E-3f128,
+    -1.4429854811877171341298062134712230604279E-3f128,
+    -1.8753781835651574193938679595797367137975E-3f128,
+    -2.3618380914922506054347222273705859653658E-3f128,
+    -2.9015787624124743013946600163375853631299E-3f128,
+    -3.4938307889254087318399313316921940859043E-3f128,
+    -4.1378413103128673800485306215154712148146E-3f128,
+    -4.8328735414488877044289435125365629849599E-3f128,
+    -5.5782063183564351739381962360253116934243E-3f128,
+    -6.3731336597098858051938306767880719015261E-3f128,
+    -7.2169643436165454612058905294782949315193E-3f128,
+    -8.1090214990427641365934846191367315083867E-3f128,
+    -9.0486422112807274112838713105168375482480E-3f128,
+    -1.0035177140880864314674126398350812606841E-2f128,
+    -1.1067990155502102718064936259435676477423E-2f128,
+    -1.2146457974158024928196575103115488672416E-2f128,
+    -1.3269969823361415906628825374158424754308E-2f128,
+    -1.4437927104692837124388550722759686270765E-2f128,
+    -1.5649743073340777659901053944852735064621E-2f128,
+    -1.6904842527181702880599758489058031645317E-2f128,
+    -1.8202661505988007336096407340750378994209E-2f128,
+    -1.9542647000370545390701192438691126552961E-2f128,
+    -2.0924256670080119637427928803038530924742E-2f128,
+    -2.2346958571309108496179613803760727786257E-2f128,
+    -2.3810230892650362330447187267648486279460E-2f128,
+    -2.5313561699385640380910474255652501521033E-2f128,
+    -2.6856448685790244233704909690165496625399E-2f128,
+    -2.8438398935154170008519274953860128449036E-2f128,
+    -3.0058928687233090922411781058956589863039E-2f128,
+    -3.1717563112854831855692484086486099896614E-2f128,
+    -3.3413836095418743219397234253475252001090E-2f128,
+    -3.5147290019036555862676702093393332533702E-2f128,
+    -3.6917475563073933027920505457688955423688E-2f128,
+    -3.8723951502862058660874073462456610731178E-2f128,
+    -4.0566284516358241168330505467000838017425E-2f128,
+    -4.2444048996543693813649967076598766917965E-2f128,
+    -4.4356826869355401653098777649745233339196E-2f128,
+    -4.6304207416957323121106944474331029996141E-2f128,
+    -4.8285787106164123613318093945035804818364E-2f128,
+    -5.0301169421838218987124461766244507342648E-2f128,
+    -5.2349964705088137924875459464622098310997E-2f128,
+    -5.4431789996103111613753440311680967840214E-2f128,
+    -5.6546268881465384189752786409400404404794E-2f128,
+    -5.8693031345788023909329239565012647817664E-2f128,
+    -6.0871713627532018185577188079210189048340E-2f128,
+    -6.3081958078862169742820420185833800925568E-2f128,
+    -6.5323413029406789694910800219643791556918E-2f128,
+    -6.7595732653791419081537811574227049288168E-2f128,
+];
+
+/// Natural log for binary128 — verbatim port of glibc's ldbl-128
+/// `__ieee754_logl` (e_logl.c, Cody & Waite): frexp to [0.703125,1.40625),
+/// pick a table point t = 0.5+(k+26)/128, write log(u) = log(t) + log(1+z) with
+/// z = (u-t)/t, sum a degree-15 series for log(1+z) plus the tabulated
+/// log(t)-(t-1) and e·ln2 (split ln2a+ln2b). A near-1 interval skips the table
+/// to dodge cancellation. Self-contained (only frexp + algebraic f128 ops), so
+/// byte-exact. Builds the table argument t via direct exponent-field bits.
+#[allow(clippy::excessive_precision)]
+fn logl_f128(x: f128) -> f128 {
+    const L3: f128 = 3.333333333333333333333333333333336096926E-1f128;
+    const L4: f128 = -2.499999999999999999999999999486853077002E-1f128;
+    const L5: f128 = 1.999999999999999999999999998515277861905E-1f128;
+    const L6: f128 = -1.666666666666666666666798448356171665678E-1f128;
+    const L7: f128 = 1.428571428571428571428808945895490721564E-1f128;
+    const L8: f128 = -1.249999999999999987884655626377588149000E-1f128;
+    const L9: f128 = 1.111111111111111093947834982832456459186E-1f128;
+    const L10: f128 = -1.000000000000532974938900317952530453248E-1f128;
+    const L11: f128 = 9.090909090915566247008015301349979892689E-2f128;
+    const L12: f128 = -8.333333211818065121250921925397567745734E-2f128;
+    const L13: f128 = 7.692307559897661630807048686258659316091E-2f128;
+    const L14: f128 = -7.144242754190814657241902218399056829264E-2f128;
+    const L15: f128 = 6.668057591071739754844678883223432347481E-2f128;
+    const LN2A: f128 = 6.93145751953125e-1f128;
+    const LN2B: f128 = 1.4286068203094172321214581765680755001344E-6f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let k0 = w0 & 0x7fff_ffff;
+    // log(0) = -inf.
+    if k0 == 0 && (xb & ((1u128 << 96) - 1)) == 0 {
+        return -0.5 / 0.0;
+    }
+    // log(x<0) = NaN (negative qNaN on x86; genuine NaN inputs propagate).
+    if w0 & 0x8000_0000 != 0 {
+        if x.is_nan() {
+            return x + x;
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    // log(+inf) = +inf; log(+nan) = nan.
+    if k0 >= 0x7fff_0000 {
+        return x + x;
+    }
+
+    // frexp: mantissa in [0.5,1), exponent e.
+    let bits = x.to_bits();
+    let ef = ((bits >> 112) & 0x7fff) as i32;
+    let (u_frexp, mut e) = if ef == 0 {
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        let efn = ((xn.to_bits() >> 112) & 0x7fff) as i32;
+        (
+            f128::from_bits((xn.to_bits() & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112)),
+            efn - 113 - 16382,
+        )
+    } else {
+        (
+            f128::from_bits((bits & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112)),
+            ef - 16382,
+        )
+    };
+
+    let ub0 = u_frexp.to_bits();
+    let m = ((ub0 >> 96) as u32 & 0xffff) | 0x10000;
+    let mut k: i32;
+    let t;
+    let u_val;
+    if m < 0x16800 {
+        k = ((m - 0xff00) >> 9) as i32;
+        t = f128::from_bits(((0x3fff_0000u32.wrapping_add((k as u32) << 9)) as u128) << 96);
+        u_val = f128::from_bits(ub0 + (0x10000u128 << 96)); // w0 += 0x10000
+        e -= 1;
+        k += 64;
+    } else {
+        k = ((m - 0xfe00) >> 10) as i32;
+        t = f128::from_bits(((0x3ffe_0000u32.wrapping_add((k as u32) << 10)) as u128) << 96);
+        u_val = u_frexp;
+    }
+
+    let z;
+    let mut tval = t;
+    let mut kk = k;
+    let mut ee = e;
+    if x <= 1.0078125 && x >= 0.9921875 {
+        if x == 1.0 {
+            return 0.0;
+        }
+        z = x - 1.0;
+        kk = 64;
+        tval = 1.0;
+        ee = 0;
+    } else {
+        z = (u_val - t) / t;
+    }
+
+    let w = z * z;
+    let mut y = L15 * z + L14;
+    y = y * z + L13;
+    y = y * z + L12;
+    y = y * z + L11;
+    y = y * z + L10;
+    y = y * z + L9;
+    y = y * z + L8;
+    y = y * z + L7;
+    y = y * z + L6;
+    y = y * z + L5;
+    y = y * z + L4;
+    y = y * z + L3;
+    y = y * z * w; // (poly) * z * w
+    y -= 0.5 * w;
+    y += (ee as f128) * LN2B;
+    y += z;
+    y += LOG_TBL_F128[(kk - 26) as usize];
+    y += tval - 1.0;
+    y += (ee as f128) * LN2A;
+    y
+}
+
+/// Add `k` to the 15-bit biased exponent field of a binary128, matching glibc's
+/// `ieee.exponent += k` bitfield arithmetic (wraps mod 2^15). Callers keep the
+/// result in the normal range (the `unsafe`/scale split in expl guarantees it).
+#[inline]
+fn add_exp_field_f128(v: f128, k: i32) -> f128 {
+    let bits = v.to_bits();
+    let exp = ((bits >> 112) & 0x7fff) as i32;
+    let new_exp = ((exp + k) as u32 & 0x7fff) as u128;
+    f128::from_bits((bits & !(0x7fff_u128 << 112)) | (new_exp << 112))
+}
+
+/// e^x for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_expl`
+/// (e_expl.c): reduce x = n·ln2 + (arg1 table) + (arg2 table) + r with two
+/// 256/32768-spaced tables (t_expl.h), evaluate a degree-7 Chebyshev poly for
+/// e^r-1, recombine 2^n · e^(arg1) · e^(arg2) via direct exponent-field adds.
+/// The fenv save/restore (round-to-nearest, exception hold) is omitted: the
+/// default environment is already round-to-nearest and only the value is gated.
+/// Uses only algebraic f128 ops + the table, so byte-exact in default rounding.
+#[allow(clippy::excessive_precision)]
+fn expl_f128(x: f128) -> f128 {
+    use crate::expl_table::{EXPL_TABLE, T_EXPL_ARG1, T_EXPL_ARG2, T_EXPL_RES1, T_EXPL_RES2};
+    const HIMARK: f128 = 11356.523406294143949491931077970765f128;
+    const LOMARK: f128 = -11433.4627433362978788372438434526231f128;
+    const THREEP96: f128 = 237684487542793012780631851008.0f128;
+    const THREEP103: f128 = 30423614405477505635920876929024.0f128;
+    const THREEP111: f128 = 7788445287802241442795744493830144.0f128;
+    const M_1_LN2: f128 = 1.44269504088896340735992468100189204f128;
+    const M_LN2_0: f128 = 0.693147180559945309417232121457981864f128;
+    const M_LN2_1: f128 = -1.94704509238074995158795957333327386E-31f128;
+    const TINY: f128 = 1.0e-4900f128;
+    const TWO16383: f128 = 5.94865747678615882542879663314003565E+4931f128;
+    const TWO8: f128 = 256.0f128;
+    const TWO15: f128 = 32768.0f128;
+    const P1: f128 = 0.5f128;
+    const P2: f128 = 1.66666666666666666666666666666666683E-01f128;
+    const P3: f128 = 4.16666666666666666666654902320001674E-02f128;
+    const P4: f128 = 8.33333333333333333333314659767198461E-03f128;
+    const P5: f128 = 1.38888888889899438565058018857254025E-03f128;
+    const P6: f128 = 1.98412698413981650382436541785404286E-04f128;
+
+    if x < HIMARK && x > LOMARK {
+        // Calculate n.
+        let mut n = x * M_1_LN2 + THREEP111;
+        n -= THREEP111;
+        let mut x = x - n * M_LN2_0;
+        let mut xl = n * M_LN2_1;
+
+        // Calculate t/256, then tval1.
+        let mut t = x + THREEP103;
+        t -= THREEP103;
+        let tval1 = (t * TWO8) as i32;
+        x -= EXPL_TABLE[(T_EXPL_ARG1 as i32 + 2 * tval1) as usize];
+        xl -= EXPL_TABLE[(T_EXPL_ARG1 as i32 + 2 * tval1 + 1) as usize];
+
+        // Calculate t/32768, then tval2.
+        t = x + THREEP96;
+        t -= THREEP96;
+        let tval2 = (t * TWO15) as i32;
+        x -= EXPL_TABLE[(T_EXPL_ARG2 as i32 + 2 * tval2) as usize];
+        xl -= EXPL_TABLE[(T_EXPL_ARG2 as i32 + 2 * tval2 + 1) as usize];
+
+        x += xl;
+
+        // ex2 = 2^n_0 · e^(arg1) · e^(arg2).
+        let mut ex2 = EXPL_TABLE[(T_EXPL_RES1 as i32 + tval1) as usize]
+            * EXPL_TABLE[(T_EXPL_RES2 as i32 + tval2) as usize];
+        let n_i = n as i32;
+        // 'unsafe_n' is true iff n_1 != 0 (i.e. |n| would overflow a single add).
+        let unsafe_n = n_i.abs() >= 15000;
+        let shift = if unsafe_n { 1 } else { 0 };
+        ex2 = add_exp_field_f128(ex2, n_i >> shift);
+        // scale = 2^n_1.
+        let scale = add_exp_field_f128(1.0, n_i - (n_i >> shift));
+
+        // Degree-7 Chebyshev poly for e^x2 - 1.
+        let x22 = x + x * x * (P1 + x * (P2 + x * (P3 + x * (P4 + x * (P5 + x * P6)))));
+
+        let result = x22 * ex2 + ex2;
+        if !unsafe_n {
+            result
+        } else {
+            result * scale // math_check_force_underflow_nonneg: flag only
+        }
+    } else if x < HIMARK {
+        // x <= lomark (incl -inf).
+        if x.is_infinite() {
+            0.0 // e^-inf = 0
+        } else {
+            TINY * TINY // underflow
+        }
+    } else {
+        // x >= himark, or x is NaN/+inf: overflow / propagate.
+        TWO16383 * x
+    }
+}
+
+/// e^x - 1 for binary128 — verbatim port of glibc's ldbl-128 `__expm1l`
+/// (s_expm1l.c, Cephes): for x>=64 plain expl; else reduce x = ln2·(k+r) and
+/// evaluate exp(r)-1 via a P/Q rational, then 2^k·(qx+1)-1. Self-contained given
+/// the byte-exact expl_f128; only algebraic f128 ops otherwise → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn expm1l_f128(x: f128) -> f128 {
+    const P0: f128 = 2.943520915569954073888921213330863757240E8f128;
+    const P1: f128 = -5.722847283900608941516165725053359168840E7f128;
+    const P2: f128 = 8.944630806357575461578107295909719817253E6f128;
+    const P3: f128 = -7.212432713558031519943281748462837065308E5f128;
+    const P4: f128 = 4.578962475841642634225390068461943438441E4f128;
+    const P5: f128 = -1.716772506388927649032068540558788106762E3f128;
+    const P6: f128 = 4.401308817383362136048032038528753151144E1f128;
+    const P7: f128 = -4.888737542888633647784737721812546636240E-1f128;
+    const Q0: f128 = 1.766112549341972444333352727998584753865E9f128;
+    const Q1: f128 = -7.848989743695296475743081255027098295771E8f128;
+    const Q2: f128 = 1.615869009634292424463780387327037251069E8f128;
+    const Q3: f128 = -2.019684072836541751428967854947019415698E7f128;
+    const Q4: f128 = 1.682912729190313538934190635536631941751E6f128;
+    const Q5: f128 = -9.615511549171441430850103489315371768998E4f128;
+    const Q6: f128 = 3.697714952261803935521187272204485251835E3f128;
+    const Q7: f128 = -8.802340681794263968892934703309274564037E1f128;
+    const C1: f128 = 6.93145751953125E-1f128;
+    const C2: f128 = 1.428606820309417232121458176568075500134E-6f128;
+    const MINARG: f128 = -7.9018778583833765273564461846232128760607E1f128;
+    const BIG: f128 = 1e4932f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let sign = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+
+    // Positive and exp large: exp(x)-1 == exp(x) in f128.
+    if !sign && ix >= 0x4006_0000 {
+        return expl_f128(x);
+    }
+    // inf / NaN (positive inf already handled above, so this is -inf or NaN).
+    if ix >= 0x7fff_0000 {
+        if (xb & ((1u128 << 112) - 1)) == 0 {
+            return -1.0; // expm1(-inf) = -1
+        }
+        return x + x; // NaN
+    }
+    // expm1(±0) = ±0.
+    if ix == 0 && (xb & ((1u128 << 112) - 1)) == 0 {
+        return x;
+    }
+    // Very negative: result -> -1.
+    if x < MINARG {
+        return 4.0 / BIG - 1.0;
+    }
+    // Tiny: expm1(x) == x.
+    if x.abs() < f128::from_bits(16270u128 << 112) {
+        return x; // |x| < 2^-113
+    }
+
+    // Reduce x = ln2 (k + remainder), |remainder| <= 1/2.
+    let ln2 = C1 + C2;
+    let pf = (0.5 + x / ln2).floor();
+    let k = pf as i32;
+    let mut xr = x - pf * C1;
+    xr -= pf * C2;
+
+    // exp(remainder ln2) - 1 via P/Q.
+    let mut px = P7 * xr + P6;
+    px = px * xr + P5;
+    px = px * xr + P4;
+    px = px * xr + P3;
+    px = px * xr + P2;
+    px = px * xr + P1;
+    px = px * xr + P0;
+    px *= xr;
+    let mut qx = xr + Q7;
+    qx = qx * xr + Q6;
+    qx = qx * xr + Q5;
+    qx = qx * xr + Q4;
+    qx = qx * xr + Q3;
+    qx = qx * xr + Q2;
+    qx = qx * xr + Q1;
+    qx = qx * xr + Q0;
+    let xx = xr * xr;
+    let qx = xr + (0.5 * xx + xx * px / qx);
+
+    // exp(x)-1 = 2^k (qx+1) - 1 = 2^k qx + 2^k - 1.
+    let p2k = scalbn_f128(1.0, k as i64);
+    p2k * qx + (p2k - 1.0)
+}
+
+/// Hyperbolic cosine for binary128 — verbatim port of glibc ldbl-128
+/// `__ieee754_coshl` (e_coshl.c): range-split cosh via expm1l (small) / expl
+/// (mid/large) / expl(x/2)² (near overflow). Built on byte-exact expm1l_f128 +
+/// expl_f128 → byte-exact. Overflow returns +inf.
+#[allow(clippy::excessive_precision)]
+fn coshl_f128(x: f128) -> f128 {
+    const HUGE: f128 = 1.0e4900f128;
+    const OVF_THRESH: f128 = 1.1357216553474703894801348310092223067821E4f128;
+    let xb = x.to_bits();
+    let ex = (xb >> 96) as u32 & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    if ex >= 0x7fff_0000 {
+        return x * x; // |x| for ±inf/NaN
+    }
+    if ex < 0x3ffd_62e4 {
+        if ex < 0x3fb8_0000 {
+            return 1.0; // cosh(tiny) = 1
+        }
+        let t = expm1l_f128(absx);
+        let w = 1.0 + t;
+        return 1.0 + (t * t) / (w + w);
+    }
+    if ex < 0x4004_4000 {
+        let t = expl_f128(absx);
+        return 0.5 * t + 0.5 / t;
+    }
+    if ex <= 0x400c_62e3 {
+        return 0.5 * expl_f128(absx);
+    }
+    if absx <= OVF_THRESH {
+        let w = expl_f128(0.5 * absx);
+        let t = 0.5 * w;
+        return t * w;
+    }
+    HUGE * HUGE // overflow
+}
+
+/// Hyperbolic sine for binary128 — verbatim port of glibc ldbl-128
+/// `__ieee754_sinhl` (e_sinhl.c): sign·0.5·range-split via expm1l / expl. Built
+/// on byte-exact expm1l_f128 + expl_f128 → byte-exact. Overflow returns ±inf.
+#[allow(clippy::excessive_precision)]
+fn sinhl_f128(x: f128) -> f128 {
+    const SHUGE: f128 = 1.0e4931f128;
+    const OVF_THRESH: f128 = 1.1357216553474703894801348310092223067821E4f128;
+    let xb = x.to_bits();
+    let jx = (xb >> 96) as u32;
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7fff_0000 {
+        return x + x; // inf/nan
+    }
+    let h: f128 = if jx & 0x8000_0000 != 0 { -0.5 } else { 0.5 };
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    if ix <= 0x4004_4000 {
+        if ix < 0x3fc6_0000 {
+            return x; // sinh(tiny) = x (shuge + x > 1 always holds)
+        }
+        let t = expm1l_f128(absx);
+        if ix < 0x3fff_0000 {
+            return h * (2.0 * t - t * t / (t + 1.0));
+        }
+        return h * (t + t / (t + 1.0));
+    }
+    if ix <= 0x400c_62e3 {
+        return h * expl_f128(absx);
+    }
+    if absx <= OVF_THRESH {
+        let w = expl_f128(0.5 * absx);
+        let t = h * w;
+        return t * w;
+    }
+    x * SHUGE // overflow
+}
+
+/// Hyperbolic tangent for binary128 — verbatim port of glibc ldbl-128 `__tanhl`
+/// (s_tanhl.c): tanh via expm1l(±2|x|), saturating to ±1 for |x|>=40. Built on
+/// byte-exact expm1l_f128 → byte-exact. No errno (tanh never over/underflows to
+/// a range error).
+#[allow(clippy::excessive_precision)]
+fn tanhl_f128(x: f128) -> f128 {
+    const TINY: f128 = 1.0e-4900f128;
+    let xb = x.to_bits();
+    let jx = (xb >> 96) as u32;
+    let ix = jx & 0x7fff_ffff;
+    let neg = jx & 0x8000_0000 != 0;
+
+    if ix >= 0x7fff_0000 {
+        // tanh(±inf) = ±1; tanh(NaN) = NaN.
+        return if neg { 1.0 / x - 1.0 } else { 1.0 / x + 1.0 };
+    }
+
+    let z;
+    if ix < 0x4004_4000 {
+        if x == 0.0 {
+            return x; // ±0
+        }
+        if ix < 0x3fc6_0000 {
+            return x * (1.0 + TINY); // |x| < 2^-57
+        }
+        let absx = f128::from_bits(xb & !(1u128 << 127));
+        if ix >= 0x3fff_0000 {
+            let t = expm1l_f128(2.0 * absx);
+            z = 1.0 - 2.0 / (t + 2.0);
+        } else {
+            let t = expm1l_f128(-2.0 * absx);
+            z = -t / (t + 2.0);
+        }
+    } else {
+        z = 1.0 - TINY; // |x| > 40 → ±1
+    }
+    if neg { -z } else { z }
+}
+
+/// log(1+x) for binary128 — verbatim port of glibc's ldbl-128 `__log1pl`
+/// (s_log1pl.c, Cephes): for |e|>2 the z=2(x-1)/(x+1) form with the R/S
+/// rational, otherwise log(1+x)=x-.5x²+x³·P(x)/Q(x). Self-contained (frexp +
+/// algebraic f128 ops) → byte-exact. Sequential-Horner polynomials.
+#[allow(clippy::excessive_precision)]
+fn log1pl_f128(xm1: f128) -> f128 {
+    const P12: f128 = 1.538612243596254322971797716843006400388E-6f128;
+    const P11: f128 = 4.998469661968096229986658302195402690910E-1f128;
+    const P10: f128 = 2.321125933898420063925789532045674660756E1f128;
+    const P9: f128 = 4.114517881637811823002128927449878962058E2f128;
+    const P8: f128 = 3.824952356185897735160588078446136783779E3f128;
+    const P7: f128 = 2.128857716871515081352991964243375186031E4f128;
+    const P6: f128 = 7.594356839258970405033155585486712125861E4f128;
+    const P5: f128 = 1.797628303815655343403735250238293741397E5f128;
+    const P4: f128 = 2.854829159639697837788887080758954924001E5f128;
+    const P3: f128 = 3.007007295140399532324943111654767187848E5f128;
+    const P2: f128 = 2.014652742082537582487669938141683759923E5f128;
+    const P1: f128 = 7.771154681358524243729929227226708890930E4f128;
+    const P0: f128 = 1.313572404063446165910279910527789794488E4f128;
+    const Q11: f128 = 4.839208193348159620282142911143429644326E1f128;
+    const Q10: f128 = 9.104928120962988414618126155557301584078E2f128;
+    const Q9: f128 = 9.147150349299596453976674231612674085381E3f128;
+    const Q8: f128 = 5.605842085972455027590989944010492125825E4f128;
+    const Q7: f128 = 2.248234257620569139969141618556349415120E5f128;
+    const Q6: f128 = 6.132189329546557743179177159925690841200E5f128;
+    const Q5: f128 = 1.158019977462989115839826904108208787040E6f128;
+    const Q4: f128 = 1.514882452993549494932585972882995548426E6f128;
+    const Q3: f128 = 1.347518538384329112529391120390701166528E6f128;
+    const Q2: f128 = 7.777690340007566932935753241556479363645E5f128;
+    const Q1: f128 = 2.626900195321832660448791748036714883242E5f128;
+    const Q0: f128 = 3.940717212190338497730839731583397586124E4f128;
+    const R5: f128 = -8.828896441624934385266096344596648080902E-1f128;
+    const R4: f128 = 8.057002716646055371965756206836056074715E1f128;
+    const R3: f128 = -2.024301798136027039250415126250455056397E3f128;
+    const R2: f128 = 2.048819892795278657810231591630928516206E4f128;
+    const R1: f128 = -8.977257995689735303686582344659576526998E4f128;
+    const R0: f128 = 1.418134209872192732479751274970992665513E5f128;
+    const S5: f128 = -1.186359407982897997337150403816839480438E2f128;
+    const S4: f128 = 3.998526750980007367835804959888064681098E3f128;
+    const S3: f128 = -5.748542087379434595104154610899551484314E4f128;
+    const S2: f128 = 4.001557694070773974936904547424676279307E5f128;
+    const S1: f128 = -1.332535117259762928288745111081235577029E6f128;
+    const S0: f128 = 1.701761051846631278975701529965589676574E6f128;
+    const C1: f128 = 6.93145751953125E-1f128;
+    const C2: f128 = 1.428606820309417232121458176568075500134E-6f128;
+    const SQRTH: f128 = 0.7071067811865475244008443621048490392848f128;
+
+    let xb = xm1.to_bits();
+    let hx = (xb >> 96) as u32;
+    if (hx & 0x7fff_ffff) >= 0x7fff_0000 {
+        // +inf→+inf, NaN→NaN; -inf→NaN (glibc's -inf+inf is the negative qNaN).
+        if xm1.is_infinite() && (hx & 0x8000_0000) != 0 {
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+        }
+        return xm1 + xm1.abs();
+    }
+    if (hx & 0x7fff_ffff) == 0 && (xb & ((1u128 << 96) - 1)) == 0 {
+        return xm1; // ±0
+    }
+    if (hx & 0x7fff_ffff) < 0x3f8e_0000 {
+        return xm1; // tiny: (int)xm1 == 0
+    }
+
+    let mut x = if xm1 >= f128::from_bits(16496u128 << 112) {
+        xm1
+    } else {
+        xm1 + 1.0
+    };
+    if x <= 0.0 {
+        if x == 0.0 {
+            return -1.0 / 0.0; // log1p(-1) = -inf
+        }
+        // x < -1 → NaN (glibc's 0/(x-x) is the canonical NEGATIVE qNaN on x86).
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+
+    // frexp x (>0) into [0.5,1).
+    let bits = x.to_bits();
+    let ef = ((bits >> 112) & 0x7fff) as i32;
+    let mut e;
+    if ef == 0 {
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        e = ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113 - 16382;
+        x = f128::from_bits((xn.to_bits() & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    } else {
+        e = ef - 16382;
+        x = f128::from_bits((bits & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    }
+
+    if e > 2 || e < -2 {
+        let y;
+        let zz;
+        if x < SQRTH {
+            e -= 1;
+            let z = x - 0.5;
+            y = 0.5 * z + 0.5;
+            zz = z;
+        } else {
+            let mut z = x - 0.5;
+            z -= 0.5;
+            y = 0.5 * x + 0.5;
+            zz = z;
+        }
+        let xr = zz / y;
+        let z = xr * xr;
+        let mut r = R5 * z + R4;
+        r = r * z + R3;
+        r = r * z + R2;
+        r = r * z + R1;
+        r = r * z + R0;
+        let mut s = z + S5;
+        s = s * z + S4;
+        s = s * z + S3;
+        s = s * z + S2;
+        s = s * z + S1;
+        s = s * z + S0;
+        let mut zr = xr * (z * r / s);
+        zr += (e as f128) * C2;
+        zr += xr;
+        zr += (e as f128) * C1;
+        return zr;
+    }
+
+    // log(1+x) = x - .5x^2 + x^3 P(x)/Q(x).
+    let xr = if x < SQRTH {
+        e -= 1;
+        if e != 0 { 2.0 * x - 1.0 } else { xm1 }
+    } else if e != 0 {
+        x - 1.0
+    } else {
+        xm1
+    };
+    let z = xr * xr;
+    let mut r = P12 * xr + P11;
+    r = r * xr + P10;
+    r = r * xr + P9;
+    r = r * xr + P8;
+    r = r * xr + P7;
+    r = r * xr + P6;
+    r = r * xr + P5;
+    r = r * xr + P4;
+    r = r * xr + P3;
+    r = r * xr + P2;
+    r = r * xr + P1;
+    r = r * xr + P0;
+    let mut s = xr + Q11;
+    s = s * xr + Q10;
+    s = s * xr + Q9;
+    s = s * xr + Q8;
+    s = s * xr + Q7;
+    s = s * xr + Q6;
+    s = s * xr + Q5;
+    s = s * xr + Q4;
+    s = s * xr + Q3;
+    s = s * xr + Q2;
+    s = s * xr + Q1;
+    s = s * xr + Q0;
+    let mut y = xr * (z * r / s);
+    y += (e as f128) * C2;
+    let mut zr = y - 0.5 * z;
+    zr += xr;
+    zr += (e as f128) * C1;
+    zr
+}
+
+/// Shared Cephes log coefficients (glibc ldbl-128 e_log2l.c / e_log10l.c):
+/// ln(1+x) = x - x²/2 + x³·P(x)/Q(x) and log(x) = z + z³·R(z²)/S(z²). Ascending
+/// index = ascending power; Q,S are monic (implicit leading 1).
+#[rustfmt::skip]
+static LOGB_P: [f128; 13] = [
+    1.313572404063446165910279910527789794488E4f128,
+    7.771154681358524243729929227226708890930E4f128,
+    2.014652742082537582487669938141683759923E5f128,
+    3.007007295140399532324943111654767187848E5f128,
+    2.854829159639697837788887080758954924001E5f128,
+    1.797628303815655343403735250238293741397E5f128,
+    7.594356839258970405033155585486712125861E4f128,
+    2.128857716871515081352991964243375186031E4f128,
+    3.824952356185897735160588078446136783779E3f128,
+    4.114517881637811823002128927449878962058E2f128,
+    2.321125933898420063925789532045674660756E1f128,
+    4.998469661968096229986658302195402690910E-1f128,
+    1.538612243596254322971797716843006400388E-6f128,
+];
+#[rustfmt::skip]
+static LOGB_Q: [f128; 12] = [
+    3.940717212190338497730839731583397586124E4f128,
+    2.626900195321832660448791748036714883242E5f128,
+    7.777690340007566932935753241556479363645E5f128,
+    1.347518538384329112529391120390701166528E6f128,
+    1.514882452993549494932585972882995548426E6f128,
+    1.158019977462989115839826904108208787040E6f128,
+    6.132189329546557743179177159925690841200E5f128,
+    2.248234257620569139969141618556349415120E5f128,
+    5.605842085972455027590989944010492125825E4f128,
+    9.147150349299596453976674231612674085381E3f128,
+    9.104928120962988414618126155557301584078E2f128,
+    4.839208193348159620282142911143429644326E1f128,
+];
+#[rustfmt::skip]
+static LOGB_R: [f128; 6] = [
+    1.418134209872192732479751274970992665513E5f128,
+    -8.977257995689735303686582344659576526998E4f128,
+    2.048819892795278657810231591630928516206E4f128,
+    -2.024301798136027039250415126250455056397E3f128,
+    8.057002716646055371965756206836056074715E1f128,
+    -8.828896441624934385266096344596648080902E-1f128,
+];
+#[rustfmt::skip]
+static LOGB_S: [f128; 6] = [
+    1.701761051846631278975701529965589676574E6f128,
+    -1.332535117259762928288745111081235577029E6f128,
+    4.001557694070773974936904547424676279307E5f128,
+    -5.748542087379434595104154610899551484314E4f128,
+    3.998526750980007367835804959888064681098E3f128,
+    -1.186359407982897997337150403816839480438E2f128,
+];
+
+/// Horner: p[n]·xⁿ + … + p[0]. Matches glibc's `neval`.
+#[inline]
+fn neval_f128(x: f128, p: &[f128]) -> f128 {
+    let n = p.len() - 1;
+    let mut y = p[n];
+    for i in (0..n).rev() {
+        y = y * x + p[i];
+    }
+    y
+}
+/// Monic Horner: xⁿ⁺¹ + p[n]·xⁿ + … + p[0]. Matches glibc's `deval`.
+#[inline]
+fn deval_f128(x: f128, p: &[f128]) -> f128 {
+    let n = p.len() - 1;
+    let mut y = x + p[n];
+    for i in (0..n).rev() {
+        y = y * x + p[i];
+    }
+    y
+}
+
+/// Shared Cephes log reduction (glibc ldbl-128 e_log2l/e_log10l): handle the
+/// IEEE special cases, then frexp + the R/S (|e|>2) or P/Q form. Returns
+/// Err(special-value) for 0/neg/inf/NaN/1, else Ok((y, xm, e)) — the reduced
+/// log of the fraction `y`, the reduced argument `xm`, and the binary exponent
+/// `e`, which each `logN` then combines with its own base constants.
+#[allow(clippy::excessive_precision)]
+fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
+    const SQRTH: f128 = 7.071067811865475244008443621048490392848359E-1f128;
+    let bits = x.to_bits();
+    let hx = (bits >> 64) as i64;
+    let lx = bits as u64;
+    if (hx & 0x7fff_ffff_ffff_ffff) == 0 && lx == 0 {
+        return Err(-1.0 / x.abs()); // logN(±0) = -inf
+    }
+    if hx < 0 {
+        if x.is_nan() {
+            return Err((x - x) / (x - x));
+        }
+        return Err(f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))); // x<0 NaN
+    }
+    if hx >= 0x7fff_0000_0000_0000 {
+        return Err(x + x); // +inf / NaN
+    }
+    if x == 1.0 {
+        return Err(0.0);
+    }
+
+    // frexp into [0.5,1).
+    let xb = x.to_bits();
+    let ef = ((xb >> 112) & 0x7fff) as i32;
+    let mut e;
+    let mut xm;
+    if ef == 0 {
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        e = ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113 - 16382;
+        xm = f128::from_bits((xn.to_bits() & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    } else {
+        e = ef - 16382;
+        xm = f128::from_bits((xb & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    }
+
+    let y;
+    if e > 2 || e < -2 {
+        let yy;
+        if xm < SQRTH {
+            e -= 1;
+            let z = xm - 0.5;
+            yy = 0.5 * z + 0.5;
+            xm = z / yy;
+        } else {
+            let mut z = xm - 0.5;
+            z -= 0.5;
+            yy = 0.5 * xm + 0.5;
+            xm = z / yy;
+        }
+        let z = xm * xm;
+        y = xm * (z * neval_f128(z, &LOGB_R) / deval_f128(z, &LOGB_S));
+    } else {
+        if xm < SQRTH {
+            e -= 1;
+            xm = 2.0 * xm - 1.0;
+        } else {
+            xm -= 1.0;
+        }
+        let z = xm * xm;
+        let yy = xm * (z * neval_f128(xm, &LOGB_P) / deval_f128(xm, &LOGB_Q));
+        y = yy - 0.5 * z;
+    }
+    Ok((y, xm, e))
+}
+
+/// log2 for binary128 — glibc ldbl-128 `__ieee754_log2l`: combine via
+/// LOG2EA = log2(e)-1 plus the integer exponent. Byte-exact.
+#[allow(clippy::excessive_precision)]
+fn log2l_f128(x: f128) -> f128 {
+    const LOG2EA: f128 = 4.4269504088896340735992468100189213742664595E-1f128;
+    let (y, xm, e) = match cephes_log_reduce_f128(x) {
+        Ok(t) => t,
+        Err(v) => return v,
+    };
+    let mut z = y * LOG2EA;
+    z += xm * LOG2EA;
+    z += y;
+    z += xm;
+    z += e as f128;
+    z
+}
+
+/// log10 for binary128 — glibc ldbl-128 `__ieee754_log10l`: combine via
+/// log10(e) split (L10EA+L10EB) and log10(2) split (L102A+L102B). Byte-exact.
+#[allow(clippy::excessive_precision)]
+fn log10l_f128(x: f128) -> f128 {
+    const L102A: f128 = 0.3125f128;
+    const L102B: f128 = -1.14700043360188047862611052755069732318101185E-2f128;
+    const L10EA: f128 = 0.5f128;
+    const L10EB: f128 = -6.570551809674817234887108108339491770560299E-2f128;
+    let (y, xm, e) = match cephes_log_reduce_f128(x) {
+        Ok(t) => t,
+        Err(v) => return v,
+    };
+    let ef = e as f128;
+    let mut z = y * L10EB;
+    z += xm * L10EB;
+    z += ef * L102B;
+    z += y * L10EA;
+    z += xm * L10EA;
+    z += ef * L102A;
+    z
+}
+
+/// Inverse hyperbolic tangent for binary128 — port of glibc `__ieee754_atanhl`
+/// (e_atanhl.c): atanh via 0.5·log1p. Built on byte-exact log1pl_f128 →
+/// byte-exact. ±1 is a pole (±inf), |x|>1 is NaN (negative qNaN on x86).
+#[allow(clippy::excessive_precision)]
+fn atanhl_f128(x: f128) -> f128 {
+    let xb = x.to_bits();
+    let jx = (xb >> 96) as u32;
+    let ix = jx & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    if ix >= 0x3fff_0000 {
+        if absx == 1.0 {
+            return x / 0.0; // atanh(±1) = ±inf
+        }
+        if x.is_nan() {
+            return (x - x) / (x - x);
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // |x|>1 NaN
+    }
+    if ix < 0x3fc6_0000 {
+        return x; // |x| < 2^-57
+    }
+    let t = if ix < 0x3ffe_0000 {
+        let t2 = absx + absx;
+        0.5 * log1pl_f128(t2 + t2 * absx / (1.0 - absx))
+    } else {
+        0.5 * log1pl_f128((absx + absx) / (1.0 - absx))
+    };
+    if jx & 0x8000_0000 != 0 { -t } else { t }
+}
+
+/// Inverse hyperbolic cosine for binary128 — port of glibc `__ieee754_acoshl`
+/// (e_acoshl.c): logl(2x) for huge, logl/log1pl mid forms with sqrtl. Built on
+/// byte-exact logl_f128 + log1pl_f128 → byte-exact. x<1 is NaN (EDOM).
+#[allow(clippy::excessive_precision)]
+fn acoshl_f128(x: f128) -> f128 {
+    const LN2: f128 = 0.6931471805599453094172321214581766f128;
+    let bits = x.to_bits();
+    let hx = (bits >> 64) as i64;
+    let lx = bits as u64;
+    if hx < 0x3fff_0000_0000_0000 {
+        // x < 1 (incl negatives); NaN inputs propagate, else negative qNaN.
+        if x.is_nan() {
+            return (x - x) / (x - x);
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    } else if hx >= 0x4035_0000_0000_0000 {
+        if hx >= 0x7fff_0000_0000_0000 {
+            return x + x; // inf/NaN
+        }
+        return logl_f128(x) + LN2; // acosh(huge) = log(2x)
+    } else if hx == 0x3fff_0000_0000_0000 && lx == 0 {
+        return 0.0; // acosh(1) = 0
+    } else if hx > 0x4000_0000_0000_0000 {
+        let t = x * x;
+        logl_f128(2.0 * x - 1.0 / (x + (t - 1.0).sqrt()))
+    } else {
+        let t = x - 1.0;
+        log1pl_f128(t + (2.0 * t + t * t).sqrt())
+    }
+}
+
+/// Inverse hyperbolic sine for binary128 — port of glibc `__asinhl`
+/// (s_asinhl.c): logl(2x)+ln2 for huge, logl/log1pl mid forms with sqrtl. Built
+/// on byte-exact logl_f128 + log1pl_f128 → byte-exact. No errno (entire-domain).
+#[allow(clippy::excessive_precision)]
+fn asinhl_f128(x: f128) -> f128 {
+    const LN2: f128 = 6.931471805599453094172321214581765681e-1f128;
+    let xb = x.to_bits();
+    let sign = (xb >> 96) as u32;
+    let ix = sign & 0x7fff_ffff;
+    if ix == 0x7fff_0000 {
+        return x + x; // inf/NaN
+    }
+    if ix < 0x3fc7_0000 {
+        return x; // |x| < 2^-56
+    }
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    let w = if ix > 0x4035_0000 {
+        logl_f128(absx) + LN2 // |x| > 2^54
+    } else if ix > 0x4000_0000 {
+        let t = absx;
+        logl_f128(2.0 * t + 1.0 / ((x * x + 1.0).sqrt() + t)) // 2 < |x| <= 2^54
+    } else {
+        let t = x * x;
+        log1pl_f128(absx + t / (1.0 + (1.0 + t).sqrt())) // |x| <= 2
+    };
+    if sign & 0x8000_0000 != 0 { -w } else { w }
+}
+
+/// Clear the low 59 mantissa bits of a binary128 (glibc's `w3=0; w2&=0xf8000000`
+/// hi/lo split, keeping ~53 high significand bits).
+#[inline]
+fn pow_hi59_f128(v: f128) -> f128 {
+    f128::from_bits(v.to_bits() & (!0u128 << 59))
+}
+/// Top 32 bits of a binary128 as a signed word (glibc `parts32.w0`).
+#[inline]
+fn pow_w0_f128(v: f128) -> i32 {
+    (v.to_bits() >> 96) as i32
+}
+/// Replace the top 32 bits of a binary128 with `w` (glibc `parts32.w0 = w`).
+#[inline]
+fn pow_setw0_f128(v: f128, w: u32) -> f128 {
+    f128::from_bits((v.to_bits() & ((1u128 << 96) - 1)) | ((w as u128) << 96))
+}
+
+/// x^y for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_powl`
+/// (e_powl.c, fdlibm-style): the full special-case lattice, then log2(x) in two
+/// pieces via the LN/LD rational and 2/(3·log2) scaling, y·log2(x) in simulated
+/// extended precision, and 2^n·exp(y'·log2) via the PN/PD rational. Self-
+/// contained (only sqrtl/scalbn + algebraic f128) → byte-exact. Uses only
+/// decimal coefficients + word-level hi/lo splits (pow_hi59_f128).
+#[allow(clippy::excessive_precision)]
+fn powl_f128(x: f128, y: f128) -> f128 {
+    const BP: [f128; 2] = [1.0, 1.5];
+    const DP_H: [f128; 2] = [0.0, 5.8496250072115607565592654282227158546448E-1f128];
+    const DP_L: [f128; 2] = [0.0, 1.0579781240112554492329533686862998106046E-16f128];
+    const ZERO: f128 = 0.0;
+    const ONE: f128 = 1.0;
+    const TWO: f128 = 2.0;
+    const TWO113: f128 = 1.0384593717069655257060992658440192E34f128;
+    const HUGE: f128 = 1.0e3000f128;
+    const TINY: f128 = 1.0e-3000f128;
+    const LN: [f128; 5] = [
+        -3.0779177200290054398792536829702930623200E1f128,
+        6.5135778082209159921251824580292116201640E1f128,
+        -4.6312921812152436921591152809994014413540E1f128,
+        1.2510208195629420304615674658258363295208E1f128,
+        -9.9266909031921425609179910128531667336670E-1f128,
+    ];
+    const LD: [f128; 5] = [
+        -5.129862866715009066465422805058933131960E1f128,
+        1.452015077564081884387441590064272782044E2f128,
+        -1.524043275549860505277434040464085593165E2f128,
+        7.236063513651544224319663428634139768808E1f128,
+        -1.494198912340228235853027849917095580053E1f128,
+    ];
+    const PN: [f128; 5] = [
+        5.081801691915377692446852383385968225675E8f128,
+        9.360895299872484512023336636427675327355E6f128,
+        4.213701282274196030811629773097579432957E4f128,
+        5.201006511142748908655720086041570288182E1f128,
+        9.088368420359444263703202925095675982530E-3f128,
+    ];
+    const PD: [f128; 4] = [
+        3.049081015149226615468111430031590411682E9f128,
+        1.069833887183886839966085436512368982758E8f128,
+        8.259257717868875207333991924545445705394E5f128,
+        1.872583833284143212651746812884298360922E3f128,
+    ];
+    const LG2: f128 = 6.9314718055994530941723212145817656807550E-1f128;
+    const LG2_H: f128 = 6.9314718055994528622676398299518041312695E-1f128;
+    const LG2_L: f128 = 2.3190468138462996154948554638754786504121E-17f128;
+    const OVT: f128 = 8.0085662595372944372e-0017f128;
+    const CP: f128 = 9.6179669392597560490661645400126142495110E-1f128;
+    const CP_H: f128 = 9.6179669392597555432899980587535537779331E-1f128;
+    const CP_L: f128 = 5.0577616648125906047157785230014751039424E-17f128;
+
+    let xbits = x.to_bits();
+    let ybits = y.to_bits();
+    let hx = pow_w0_f128(x);
+    let mut ix = (hx as u32) & 0x7fff_ffff;
+    let hy = pow_w0_f128(y);
+    let iy = (hy as u32) & 0x7fff_ffff;
+    let x_low96_nz = (xbits & ((1u128 << 96) - 1)) != 0;
+    let y_low96_nz = (ybits & ((1u128 << 96) - 1)) != 0;
+
+    // y == 0: x**0 = 1 (unless x sNaN).
+    if iy == 0 && !y_low96_nz && !is_signaling_f128(x) {
+        return ONE;
+    }
+    // 1**y = 1; -1**+-inf = 1.
+    if x == ONE && !is_signaling_f128(y) {
+        return ONE;
+    }
+    if x == -1.0 && iy == 0x7fff_0000 && !y_low96_nz {
+        return ONE;
+    }
+    // +-NaN -> x+y.
+    if ix > 0x7fff_0000
+        || (ix == 0x7fff_0000 && x_low96_nz)
+        || iy > 0x7fff_0000
+        || (iy == 0x7fff_0000 && y_low96_nz)
+    {
+        return x + y;
+    }
+
+    // yisint: 0 not-int, 1 odd int, 2 even int (only matters for x<0).
+    let mut yisint = 0;
+    if hx < 0 {
+        if iy >= 0x4070_0000 {
+            yisint = 2;
+        } else if iy >= 0x3fff_0000 {
+            if y.floor() == y {
+                let z = 0.5 * y;
+                yisint = if z.floor() == z { 2 } else { 1 };
+            }
+        }
+    }
+
+    // special value of y
+    if !y_low96_nz {
+        if iy == 0x7fff_0000 {
+            if ix == 0x3fff_0000 && !x_low96_nz {
+                // +-1**inf = NaN (x86 negative qNaN; NaN inputs handled above).
+                return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+            } else if ix >= 0x3fff_0000 {
+                return if hy >= 0 { y } else { ZERO };
+            } else {
+                return if hy < 0 { -y } else { ZERO };
+            }
+        }
+        if iy == 0x3fff_0000 {
+            return if hy < 0 { ONE / x } else { x };
+        }
+        if hy == 0x4000_0000 {
+            return x * x; // y == 2
+        }
+        if hy == 0x3ffe_0000 && hx >= 0 {
+            return x.sqrt(); // y == 0.5, x >= +0
+        }
+    }
+
+    let mut ax = x.abs();
+    // special value of x (x is +-0, +-inf, +-1)
+    if !x_low96_nz && (ix == 0x7fff_0000 || ix == 0 || ix == 0x3fff_0000) {
+        let mut z = ax;
+        if hy < 0 {
+            z = ONE / z;
+        }
+        if hx < 0 {
+            if ix == 0x3fff_0000 && yisint == 0 {
+                // (-1)**non-int = NaN (x86 negative qNaN).
+                z = f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+            } else if yisint == 1 {
+                z = -z;
+            }
+        }
+        return z;
+    }
+
+    // (x<0)**(non-int) = NaN (x86 negative qNaN; NaN inputs handled above).
+    if (((hx as u32) >> 31).wrapping_sub(1) | (yisint as u32)) == 0 {
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+
+    // sign of result (-ve ** odd) = -1.
+    let mut sgn = ONE;
+    if (((hx as u32) >> 31).wrapping_sub(1) | ((yisint as u32).wrapping_sub(1))) == 0 {
+        sgn = -ONE;
+    }
+
+    // |y| huge -> over/underflow if x not close to 1.
+    if iy > 0x401d_654b {
+        if iy > 0x407d_654b {
+            if ix <= 0x3ffe_ffff {
+                return if hy < 0 { HUGE * HUGE } else { TINY * TINY };
+            }
+            if ix >= 0x3fff_0000 {
+                return if hy > 0 { HUGE * HUGE } else { TINY * TINY };
+            }
+        }
+        if ix < 0x3ffe_ffff {
+            return if hy < 0 {
+                sgn * HUGE * HUGE
+            } else {
+                sgn * TINY * TINY
+            };
+        }
+        if ix > 0x3fff_0000 {
+            return if hy > 0 {
+                sgn * HUGE * HUGE
+            } else {
+                sgn * TINY * TINY
+            };
+        }
+    }
+
+    let mut y = y;
+    let ay = if y > ZERO { y } else { -y };
+    let p128 = f128::from_bits(16255u128 << 112); // 2^-128
+    if ay < p128 {
+        y = if y < ZERO { -p128 } else { p128 };
+    }
+
+    let mut n: i32 = 0;
+    // subnormal x
+    if ix < 0x0001_0000 {
+        ax *= TWO113;
+        n -= 113;
+        ix = pow_w0_f128(ax) as u32;
+    }
+    n += ((ix >> 16) as i32) - 0x3fff;
+    let j = (ix & 0x0000_ffff) as i32;
+    // determine interval
+    ix = (j as u32) | 0x3fff_0000;
+    let k: usize;
+    if j <= 0x3988 {
+        k = 0; // |x| < sqrt(3/2)
+    } else if j < 0xbb67 {
+        k = 1; // |x| < sqrt(3)
+    } else {
+        k = 0;
+        n += 1;
+        ix -= 0x0001_0000;
+    }
+    ax = pow_setw0_f128(ax, ix);
+
+    // s = (x-bp)/(x+bp)
+    let mut u = ax - BP[k];
+    let v = ONE / (ax + BP[k]);
+    let s = u * v;
+    let mut s_h = pow_hi59_f128(s);
+    // t_h = ax + bp[k] high
+    let mut t_h = pow_hi59_f128(ax + BP[k]);
+    let mut t_l = ax - (t_h - BP[k]);
+    let mut s_l = v * ((u - s_h * t_h) - s_h * t_l);
+    // log(ax)
+    let mut s2 = s * s;
+    u = LN[0] + s2 * (LN[1] + s2 * (LN[2] + s2 * (LN[3] + s2 * LN[4])));
+    let mut vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
+    let mut r = s2 * s2 * u / vv;
+    r += s_l * (s_h + s);
+    s2 = s_h * s_h;
+    t_h = pow_hi59_f128(3.0 + s2 + r);
+    t_l = r - ((t_h - 3.0) - s2);
+    // u+v = s*(1+...)
+    u = s_h * t_h;
+    let mut v2 = s_l * t_h + t_l * s;
+    // 2/(3log2)*(s+...)
+    let mut p_h = pow_hi59_f128(u + v2);
+    let mut p_l = v2 - (p_h - u);
+    let z_h = CP_H * p_h;
+    let z_l = CP_L * p_h + p_l * CP + DP_L[k];
+    // log2(ax) = n + dp_h + z_h + z_l
+    let t: f128 = n as f128;
+    let mut t1 = pow_hi59_f128(((z_h + z_l) + DP_H[k]) + t);
+    let t2 = z_l - (((t1 - t) - DP_H[k]) - z_h);
+
+    // split y into y1+y2 and compute (y1+y2)*(t1+t2)
+    let y1 = pow_hi59_f128(y);
+    p_l = (y - y1) * t1 + y * t2;
+    p_h = y1 * t1;
+    let mut z = p_l + p_h;
+    let mut j2 = pow_w0_f128(z);
+    let z_low96_nz = (z.to_bits() & ((1u128 << 96) - 1)) != 0;
+    if j2 >= 0x400d_0000 {
+        // z >= 16384
+        if (j2 != 0x400d_0000) || z_low96_nz {
+            return sgn * HUGE * HUGE; // overflow
+        } else if p_l + OVT > z - p_h {
+            return sgn * HUGE * HUGE;
+        }
+    } else if (j2 & 0x7fff_ffff) >= 0x400d_01b9 {
+        // z <= -16495
+        if (((j2 as u32).wrapping_sub(0xc00d_01bc)) != 0) || z_low96_nz {
+            return sgn * TINY * TINY; // underflow
+        } else if p_l <= z - p_h {
+            return sgn * TINY * TINY;
+        }
+    }
+
+    // compute 2**(p_h+p_l)
+    let i = j2 & 0x7fff_ffff;
+    let _k2 = (i >> 16).wrapping_sub(0x3fff);
+    n = 0;
+    if i > 0x3ffe_0000 {
+        // |z| > 0.5: n = [z + 0.5]
+        n = (z + 0.5).floor() as i32;
+        let tn: f128 = n as f128;
+        p_h -= tn;
+    }
+    let mut t = pow_hi59_f128(p_l + p_h);
+    u = t * LG2_H;
+    let v = (p_l - (t - p_h)) * LG2 + t * LG2_L;
+    z = u + v;
+    let w = v - (z - u);
+    // exp(z)
+    t = z * z;
+    u = PN[0] + t * (PN[1] + t * (PN[2] + t * (PN[3] + t * PN[4])));
+    let vexp = PD[0] + t * (PD[1] + t * (PD[2] + t * (PD[3] + t)));
+    t1 = z - t * u / vexp;
+    r = (z * t1) / (t1 - TWO) - (w + z * w);
+    z = ONE - (r - z);
+    j2 = pow_w0_f128(z);
+    j2 = j2.wrapping_add(n << 16);
+    if (j2 >> 16) <= 0 {
+        z = scalbn_f128(z, n as i64); // subnormal output
+    } else {
+        z = pow_setw0_f128(z, j2 as u32);
+    }
+    sgn * z
+}
+
+/// 10^x for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_exp10l`
+/// (e_exp10l.c): split arg into hi/lo (clearing the low 57 mantissa bits), form
+/// arg·ln(10) in extended precision, and return expl(hi)·expl(lo). Built on the
+/// byte-exact expl_f128 → byte-exact. The two ln(10)-split constants are the
+/// exact f128 values of glibc's hex-float literals.
+#[allow(clippy::excessive_precision)]
+fn exp10l_f128(arg: f128) -> f128 {
+    // log10_high = 0x2.4d763776aaa2bp0, log10_low = 0x5.ba95b58ae0b4c28a38a3fb3e7698p-60
+    let log10_high = f128::from_bits(0x400026bb1bbb55515800000000000000u128);
+    let log10_low = f128::from_bits(0x3fc56ea56d62b82d30a28e28fecf9da6u128);
+    const M_LN10: f128 = 2.302585092994045684017991454684364208f128;
+
+    if !arg.is_finite() {
+        return expl_f128(arg); // inf→+inf (or 0 via expl(-inf)), NaN→NaN
+    }
+    if arg < -4974.0 {
+        return f128::MIN_POSITIVE * f128::MIN_POSITIVE; // underflow → 0
+    }
+    if arg > 4933.0 {
+        return f128::MAX * f128::MAX; // overflow → inf
+    }
+    if arg.abs() < f128::from_bits(16267u128 << 112) {
+        return 1.0; // |arg| < 2^-116
+    }
+
+    let arg_high = f128::from_bits(arg.to_bits() & ((!0u128 << 64) | 0xfe00_0000_0000_0000));
+    let arg_low = arg - arg_high;
+    let exp_high = arg_high * log10_high;
+    let exp_low = arg_high * log10_low + arg_low * M_LN10;
+    expl_f128(exp_high) * expl_f128(exp_low)
+}
+
+/// (1+x)^y for binary128 integer y — verbatim port of glibc's `__compoundn`
+/// (s_compoundn.c). Split 1+x into hi/lo (sign of lo == sign of x), pown(xhi,y),
+/// then multiply by (1+xlo/xhi)^y via a compensated log1p(xlo/xhi) sum and exp.
+/// NUM_PARTS=1 for binary128 (113-bit), so the multi-part machinery collapses to
+/// a single 6-element mul3_split + compensated summation. Built on the
+/// byte-exact powl_f128 + expl_f128 → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn compoundn_f128(x: f128, y: i64) -> f128 {
+    const NEG_QNAN: u128 = (0xffff_u128 << 112) | (1u128 << 111);
+    const EPS_P65: f128 = f128::from_bits(16206u128 << 112); // 2^-112 · 2^-65 = 2^-177
+    const EPS_P33: f128 = f128::from_bits(16238u128 << 112); // 2^-112 · 2^-33 = 2^-145
+    fn add_split(a: f128, b: f128) -> (f128, f128) {
+        let hi = a + b;
+        let lo = (a - hi) + b;
+        (hi, lo)
+    }
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let cmp_abs = |p: &f128, q: &f128| p.abs().partial_cmp(&q.abs()).unwrap();
+
+    if is_signaling_f128(x) {
+        return x + x;
+    }
+    if x < -1.0 {
+        set_domain_errno();
+        return f128::from_bits(NEG_QNAN);
+    }
+    if y == 0 {
+        return 1.0;
+    }
+    if x.is_nan() {
+        return x;
+    }
+    if x == -1.0 {
+        if y > 0 {
+            return 0.0;
+        }
+        set_range_errno();
+        return 1.0 / 0.0;
+    }
+    if x.is_infinite() {
+        return if y > 0 { x } else { 0.0 }; // x>-1 ⇒ +inf
+    }
+    if y == 1 {
+        let ret = 1.0 + x;
+        if ret.is_infinite() {
+            set_range_errno();
+        }
+        return ret;
+    }
+
+    // X finite > -1, Y not 0 or 1.
+    let (mut xhi, mut xlo) = if x >= 1.0 {
+        add_split(x, 1.0)
+    } else {
+        add_split(1.0, x)
+    };
+    if xlo != 0.0 && (sb(xlo) != sb(x)) {
+        let xhi_n = if sb(x) {
+            xhi.next_up()
+        } else {
+            xhi.next_down()
+        };
+        xlo += xhi - xhi_n;
+        xhi = xhi_n;
+    }
+    let mut ret = powl_f128(xhi, y as f128); // __pown(xhi, y)
+    let big_enough = |num: f128| {
+        if xhi >= 1.0 {
+            num.abs() >= xhi * EPS_P65
+        } else {
+            xhi <= num.abs() / EPS_P65
+        }
+    };
+    if ret.is_finite() && ret != 0.0 && big_enough(xlo) {
+        let qhi = xlo / xhi;
+        let xlo_rem = (-qhi).mul_add(xhi, xlo); // fma(-qhi, xhi, xlo)
+        let qlo = if big_enough(xlo_rem) {
+            xlo_rem / xhi
+        } else {
+            0.0
+        };
+        let nqhi2 = if qhi.abs() >= EPS_P33 {
+            qhi * qhi * -0.5
+        } else {
+            0.0
+        };
+
+        // mul3_split: parts add up to a·(qhi + qlo + nqhi2). NUM_PARTS == 1.
+        let a = y as f128;
+        let mut parts = [0.0f128; 6];
+        parts[0] = a * qhi;
+        parts[1] = a.mul_add(qhi, -parts[0]);
+        parts[2] = a * qlo;
+        parts[3] = a.mul_add(qlo, -parts[2]);
+        parts[4] = a * nqhi2;
+        parts[5] = a.mul_add(nqhi2, -parts[4]);
+        parts.sort_by(cmp_abs);
+        // Compensated cascade up.
+        for i in 0..=4 {
+            let (hi, lo) = add_split(parts[i + 1], parts[i]);
+            parts[i + 1] = hi;
+            parts[i] = lo;
+            parts[i + 1..6].sort_by(cmp_abs);
+        }
+        // Compensated cascade down, packing into the top.
+        let mut dstpos: usize = 5;
+        for i in 1..=5usize {
+            let src = 5 - i;
+            if parts[dstpos] == 0.0 {
+                parts[dstpos] = parts[src];
+                parts[src] = 0.0;
+            } else {
+                let (hi, lo) = add_split(parts[dstpos], parts[src]);
+                parts[dstpos] = hi;
+                parts[src] = lo;
+                if parts[src] != 0.0 {
+                    if src + 1 < dstpos {
+                        parts[dstpos - 1] = parts[src];
+                        parts[src] = 0.0;
+                    }
+                    dstpos -= 1;
+                }
+            }
+        }
+        ret *= expl_f128(parts[5]) * expl_f128(parts[4]);
+    }
+    if ret.is_infinite() {
+        ret = f128::MAX * f128::MAX;
+    } else if ret == 0.0 {
+        ret = f128::MIN_POSITIVE * f128::MIN_POSITIVE;
+    }
+    if ret.is_infinite() || ret == 0.0 {
+        set_range_errno();
+    }
+    ret
+}
+
+/// Payne–Hanek style reduction kernel — verbatim port of glibc/fdlibm
+/// `__kernel_rem_pio2` (dbl-64 k_rem_pio2.c). Computes x·(2/pi) mod 1 in f64
+/// multi-precision (24-bit limbs) using the caller's `ipio2` table; returns the
+/// low 3 bits of the integer part and writes the fractional remainder into `y`.
+#[allow(clippy::needless_range_loop)]
+fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32) -> i32 {
+    use crate::trig_tables::TWO_OVER_PI as IPIO2;
+    use frankenlibc_core::math::scalbn as fscalbn;
+    const INIT_JK: [i32; 4] = [2, 3, 4, 6];
+    const PIO2: [f64; 8] = [
+        1.57079625129699707031e+00,
+        7.54978941586159635335e-08,
+        5.39030252995776476554e-15,
+        3.28200341580791294123e-22,
+        1.27065575308067607349e-29,
+        1.22933308981111328932e-36,
+        2.73370053816464559624e-44,
+        2.16741683877804819444e-51,
+    ];
+    const TWO24: f64 = 1.67772160000000000000e+07;
+    const TWON24: f64 = 5.96046447753906250000e-08;
+
+    let mut iq = [0i32; 20];
+    let mut f = [0.0f64; 20];
+    let mut fq = [0.0f64; 20];
+    let mut q = [0.0f64; 20];
+
+    let jk = INIT_JK[prec as usize];
+    let jp = jk;
+    let jx = nx - 1;
+    let mut jv = (e0 - 3) / 24;
+    if jv < 0 {
+        jv = 0;
+    }
+    let mut q0 = e0 - 24 * (jv + 1);
+
+    // f[0..=jx+jk]
+    let mut j = jv - jx;
+    let m = jx + jk;
+    for i in 0..=m {
+        f[i as usize] = if j < 0 { 0.0 } else { IPIO2[j as usize] as f64 };
+        j += 1;
+    }
+    // q[0..=jk]
+    for i in 0..=jk {
+        let mut fw = 0.0;
+        for jj in 0..=jx {
+            fw += x[jj as usize] * f[(jx + i - jj) as usize];
+        }
+        q[i as usize] = fw;
+    }
+
+    let mut jz = jk;
+    let mut z;
+    let mut n;
+    let mut ih;
+    loop {
+        // distill q[] into iq[] reversingly
+        let mut i = 0i32;
+        let mut jj = jz;
+        z = q[jz as usize];
+        while jj > 0 {
+            let fw = ((TWON24 * z) as i32) as f64;
+            iq[i as usize] = (z - TWO24 * fw) as i32;
+            z = q[(jj - 1) as usize] + fw;
+            i += 1;
+            jj -= 1;
+        }
+        // compute n
+        z = fscalbn(z, q0);
+        z -= 8.0 * (z * 0.125).floor();
+        n = z as i32;
+        z -= n as f64;
+        ih = 0;
+        if q0 > 0 {
+            let ii = iq[(jz - 1) as usize] >> (24 - q0);
+            n += ii;
+            iq[(jz - 1) as usize] -= ii << (24 - q0);
+            ih = iq[(jz - 1) as usize] >> (23 - q0);
+        } else if q0 == 0 {
+            ih = iq[(jz - 1) as usize] >> 23;
+        } else if z >= 0.5 {
+            ih = 2;
+        }
+
+        if ih > 0 {
+            n += 1;
+            let mut carry = 0;
+            for i in 0..jz {
+                let jb = iq[i as usize];
+                if carry == 0 {
+                    if jb != 0 {
+                        carry = 1;
+                        iq[i as usize] = 0x1000000 - jb;
+                    }
+                } else {
+                    iq[i as usize] = 0xffffff - jb;
+                }
+            }
+            if q0 > 0 {
+                match q0 {
+                    1 => iq[(jz - 1) as usize] &= 0x7fffff,
+                    2 => iq[(jz - 1) as usize] &= 0x3fffff,
+                    _ => {}
+                }
+            }
+            if ih == 2 {
+                z = 1.0 - z;
+                if carry != 0 {
+                    z -= fscalbn(1.0, q0);
+                }
+            }
+        }
+
+        if z == 0.0 {
+            let mut jbit = 0;
+            let mut i = jz - 1;
+            while i >= jk {
+                jbit |= iq[i as usize];
+                i -= 1;
+            }
+            if jbit == 0 {
+                let mut k = 1;
+                while iq[(jk - k) as usize] == 0 {
+                    k += 1;
+                }
+                for i in (jz + 1)..=(jz + k) {
+                    f[(jx + i) as usize] = IPIO2[(jv + i) as usize] as f64;
+                    let mut fw = 0.0;
+                    for jj in 0..=jx {
+                        fw += x[jj as usize] * f[(jx + i - jj) as usize];
+                    }
+                    q[i as usize] = fw;
+                }
+                jz += k;
+                continue;
+            }
+        }
+        break;
+    }
+
+    // chop off zero terms
+    if z == 0.0 {
+        jz -= 1;
+        q0 -= 24;
+        while iq[jz as usize] == 0 {
+            jz -= 1;
+            q0 -= 24;
+        }
+    } else {
+        z = fscalbn(z, -q0);
+        if z >= TWO24 {
+            let fw = ((TWON24 * z) as i32) as f64;
+            iq[jz as usize] = (z - TWO24 * fw) as i32;
+            jz += 1;
+            q0 += 24;
+            iq[jz as usize] = fw as i32;
+        } else {
+            iq[jz as usize] = z as i32;
+        }
+    }
+
+    // convert integer chunks to fp
+    let mut fw = fscalbn(1.0, q0);
+    let mut i = jz;
+    while i >= 0 {
+        q[i as usize] = fw * (iq[i as usize] as f64);
+        fw *= TWON24;
+        i -= 1;
+    }
+    // PIo2 * q
+    let mut i = jz;
+    while i >= 0 {
+        let mut s = 0.0;
+        let mut k = 0;
+        while k <= jp && k <= jz - i {
+            s += PIO2[k as usize] * q[(i + k) as usize];
+            k += 1;
+        }
+        fq[(jz - i) as usize] = s;
+        i -= 1;
+    }
+
+    // compress fq[] into y[]
+    match prec {
+        0 => {
+            let mut s = 0.0;
+            let mut i = jz;
+            while i >= 0 {
+                s += fq[i as usize];
+                i -= 1;
+            }
+            y[0] = if ih == 0 { s } else { -s };
+        }
+        1 | 2 => {
+            let mut fv = 0.0;
+            let mut i = jz;
+            while i >= 0 {
+                fv += fq[i as usize];
+                i -= 1;
+            }
+            y[0] = if ih == 0 { fv } else { -fv };
+            fv = fq[0] - fv;
+            for i in 1..=jz {
+                fv += fq[i as usize];
+            }
+            y[1] = if ih == 0 { fv } else { -fv };
+        }
+        _ => {
+            let mut i = jz;
+            while i > 0 {
+                let fv = fq[(i - 1) as usize] + fq[i as usize];
+                fq[i as usize] += fq[(i - 1) as usize] - fv;
+                fq[(i - 1) as usize] = fv;
+                i -= 1;
+            }
+            let mut i = jz;
+            while i > 1 {
+                let fv = fq[(i - 1) as usize] + fq[i as usize];
+                fq[i as usize] += fq[(i - 1) as usize] - fv;
+                fq[(i - 1) as usize] = fv;
+                i -= 1;
+            }
+            let mut fw2 = 0.0;
+            let mut i = jz;
+            while i >= 2 {
+                fw2 += fq[i as usize];
+                i -= 1;
+            }
+            if ih == 0 {
+                y[0] = fq[0];
+                y[1] = fq[1];
+                y[2] = fw2;
+            } else {
+                y[0] = -fq[0];
+                y[1] = -fq[1];
+                y[2] = -fw2;
+            }
+        }
+    }
+    n & 7
+}
+
+/// sin/cos kernel for binary128 on a reduced argument x (+ tail y) — verbatim
+/// port of glibc `__kernel_sincosl` (k_sincosl.c): degree-16/17 Chebyshev for
+/// |x| < 0.1484375, else a table lookup (SINCOSL_TABLE, 83 points) of sin/cos at
+/// a nearby h plus a degree-10/11 correction for l = x - h. Returns (sin, cos).
+#[allow(clippy::excessive_precision)]
+fn kernel_sincosl_f128(x: f128, y: f128, iy: i32) -> (f128, f128) {
+    use crate::trig_tables::SINCOSL_TABLE as TBL;
+    const ONE: f128 = 1.0f128;
+    const SCOS1: f128 = -5.00000000000000000000000000000000000E-01f128;
+    const SCOS2: f128 = 4.16666666666666666666666666556146073E-02f128;
+    const SCOS3: f128 = -1.38888888888888888888309442601939728E-03f128;
+    const SCOS4: f128 = 2.48015873015862382987049502531095061E-05f128;
+    const SCOS5: f128 = -2.75573112601362126593516899592158083E-07f128;
+    const COS1: f128 = -4.99999999999999999999999999999999759E-01f128;
+    const COS2: f128 = 4.16666666666666666666666666651287795E-02f128;
+    const COS3: f128 = -1.38888888888888888888888742314300284E-03f128;
+    const COS4: f128 = 2.48015873015873015867694002851118210E-05f128;
+    const COS5: f128 = -2.75573192239858811636614709689300351E-07f128;
+    const COS6: f128 = 2.08767569877762248667431926878073669E-09f128;
+    const COS7: f128 = -1.14707451049343817400420280514614892E-11f128;
+    const COS8: f128 = 4.77810092804389587579843296923533297E-14f128;
+    const SSIN1: f128 = -1.66666666666666666666666666666666659E-01f128;
+    const SSIN2: f128 = 8.33333333333333333333333333146298442E-03f128;
+    const SSIN3: f128 = -1.98412698412698412697726277416810661E-04f128;
+    const SSIN4: f128 = 2.75573192239848624174178393552189149E-06f128;
+    const SSIN5: f128 = -2.50521016467996193495359189395805639E-08f128;
+    const SIN1: f128 = -1.66666666666666666666666666666666538e-01f128;
+    const SIN2: f128 = 8.33333333333333333333333333307532934e-03f128;
+    const SIN3: f128 = -1.98412698412698412698412534478712057e-04f128;
+    const SIN4: f128 = 2.75573192239858906520896496653095890e-06f128;
+    const SIN5: f128 = -2.50521083854417116999224301266655662e-08f128;
+    const SIN6: f128 = 1.60590438367608957516841576404938118e-10f128;
+    const SIN7: f128 = -7.64716343504264506714019494041582610e-13f128;
+    const SIN8: f128 = 2.81068754939739570236322404393398135e-15f128;
+    // SINCOSL_COS_HI=0, COS_LO=1, SIN_HI=2, SIN_LO=3.
+
+    let ix64 = (x.to_bits() >> 64) as i64;
+    let tix = (((ix64 as u64) >> 32) as u32) & !0x8000_0000;
+    if tix < 0x3ffc_3000 {
+        // |x| < 0.1484375
+        if tix < 0x3fc6_0000 {
+            return (x, ONE); // |x| < 2^-57: (int)x == 0
+        }
+        let z = x * x;
+        let sinx = x + x
+            * (z * (SIN1
+                + z * (SIN2
+                    + z * (SIN3 + z * (SIN4 + z * (SIN5 + z * (SIN6 + z * (SIN7 + z * SIN8))))))));
+        let cosx = ONE
+            + z * (COS1
+                + z * (COS2
+                    + z * (COS3 + z * (COS4 + z * (COS5 + z * (COS6 + z * (COS7 + z * COS8)))))));
+        return (sinx, cosx);
+    }
+
+    let index0 = 0x3ffe_u32.wrapping_sub(tix >> 16);
+    let hix = (tix.wrapping_add(0x200u32 << index0)) & (0xfffffc00u32 << index0);
+    let (mut xr, mut yr) = (x, y);
+    if ix64 < 0 {
+        xr = -xr;
+        yr = -yr;
+    }
+    let index: usize = match index0 {
+        0 => (((45u32 << 10).wrapping_add(hix).wrapping_sub(0x3ffe0000)) >> 8) as usize,
+        1 => (((13u32 << 11).wrapping_add(hix).wrapping_sub(0x3ffd0000)) >> 9) as usize,
+        _ => ((hix.wrapping_sub(0x3ffc3000)) >> 10) as usize,
+    };
+
+    let h = f128::from_bits((hix as u128) << 96);
+    let l = if iy != 0 { yr - (h - xr) } else { xr - h };
+    let z = l * l;
+    let sin_l = l * (ONE + z * (SSIN1 + z * (SSIN2 + z * (SSIN3 + z * (SSIN4 + z * SSIN5)))));
+    let cos_l_m1 = z * (SCOS1 + z * (SCOS2 + z * (SCOS3 + z * (SCOS4 + z * SCOS5))));
+
+    let cos_hi = TBL[index];
+    let cos_lo = TBL[index + 1];
+    let sin_hi = TBL[index + 2];
+    let sin_lo = TBL[index + 3];
+    let zz = sin_hi + (sin_lo + (sin_hi * cos_l_m1) + (cos_hi * sin_l));
+    let sinx = if ix64 < 0 { -zz } else { zz };
+    let cosx = cos_hi + (cos_lo - (sin_hi * sin_l - cos_hi * cos_l_m1));
+    (sinx, cosx)
+}
+
+/// Reduce x mod pi/2 for binary128 — port of glibc `__ieee754_rem_pio2l`:
+/// fast Cody–Waite for |x| < 3pi/4, else the multi-precision kernel. Returns
+/// (n mod 4, y_hi, y_lo) with x = n·(pi/2) + (y_hi + y_lo).
+fn rem_pio2l_f128(x: f128) -> (i32, f128, f128) {
+    const PI_2_1: f128 = f128::from_bits(0x3fff921fb54442d18469898cc51701b8u128);
+    const PI_2_1T: f128 = f128::from_bits(0x3f8ccd129024e088a67cc74020bbea64u128);
+    let bits = x.to_bits();
+    let hx = (bits >> 64) as i64;
+    let lx = bits as u64;
+    let ix = hx & 0x7fff_ffff_ffff_ffff;
+
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return (0, x, 0.0); // |x| <= pi/4
+    }
+    if ix < 0x4000_2d97_c7f3_321d {
+        // |x| in (pi/4, 3pi/4): one Cody–Waite step.
+        if hx > 0 {
+            let z = x - PI_2_1;
+            let y0 = z - PI_2_1T;
+            return (1, y0, (z - y0) - PI_2_1T);
+        } else {
+            let z = x + PI_2_1;
+            let y0 = z + PI_2_1T;
+            return (-1, y0, (z - y0) + PI_2_1T);
+        }
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        let y0 = x - x; // inf/nan
+        return (0, y0, y0);
+    }
+
+    // Large argument: split the 113-bit mantissa into five 24-bit doubles.
+    let exp = (ix >> 48) - 16383 - 23;
+    let ixu = ix as u64;
+    let mut tx = [0.0f64; 8];
+    tx[0] = (((ixu >> 25) & 0x7fffff) | 0x800000) as f64;
+    tx[1] = ((ixu >> 1) & 0xffffff) as f64;
+    tx[2] = (((ixu << 23) | (lx >> 41)) & 0xffffff) as f64;
+    tx[3] = ((lx >> 17) & 0xffffff) as f64;
+    tx[4] = ((lx << 7) & 0xffffff) as f64;
+    let nx = if (lx << 7) & 0xffffff != 0 { 5 } else { 4 };
+    let n = {
+        let (txin, txout) = tx.split_at_mut(5);
+        kernel_rem_pio2(txin, txout, exp as i32, nx, 3)
+    };
+    let t = (tx[6] as f128) + (tx[7] as f128);
+    let w = tx[5] as f128;
+    if hx >= 0 {
+        let y0 = w + t;
+        (n, y0, t - (y0 - w))
+    } else {
+        let y0 = -(w + t);
+        (-n, y0, -t - (y0 + w))
+    }
+}
+
+/// True iff `x` is +/- infinity (binary128) — for the trig EDOM check.
+#[inline]
+fn is_inf_f128(x: f128) -> bool {
+    (x.to_bits() & !(1u128 << 127)) == (0x7fff_u128 << 112)
+}
+
+/// sin for binary128 — glibc s_sinl: kernel for |x|<=pi/4, else reduce mod pi/2.
+fn sinl_f128(x: f128) -> f128 {
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return kernel_sincosl_f128(x, 0.0, 0).0;
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        if is_inf_f128(x) {
+            set_domain_errno();
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+        }
+        return x - x; // NaN propagate
+    }
+    let (n, y0, y1) = rem_pio2l_f128(x);
+    let (s, c) = kernel_sincosl_f128(y0, y1, 1);
+    match n & 3 {
+        0 => s,
+        1 => c,
+        2 => -s,
+        _ => -c,
+    }
+}
+
+/// cos for binary128 — glibc s_cosl.
+fn cosl_f128(x: f128) -> f128 {
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return kernel_sincosl_f128(x, 0.0, 0).1;
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        if is_inf_f128(x) {
+            set_domain_errno();
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+        }
+        return x - x; // NaN propagate
+    }
+    let (n, y0, y1) = rem_pio2l_f128(x);
+    let (s, c) = kernel_sincosl_f128(y0, y1, 1);
+    match n & 3 {
+        0 => c,
+        1 => -s,
+        2 => -c,
+        _ => s,
+    }
+}
+
+/// tan/cot kernel for binary128 — verbatim port of glibc `__kernel_tanl`
+/// (k_tanl.c): tan(x+y) for the reduced argument via x + x³·T(x²)/U(x²), with a
+/// pi/4 fold for |x|>=0.674 and the accurate -1/(x+r) cotangent form when iy=-1.
+#[allow(clippy::excessive_precision)]
+fn kernel_tanl_f128(x: f128, y: f128, iy: i32) -> f128 {
+    const ONE: f128 = 1.0f128;
+    const PIO4HI: f128 = 7.8539816339744830961566084581987569936977E-1f128;
+    const PIO4LO: f128 = 2.1679525325309452561992610065108379921906E-35f128;
+    const TH: f128 = 3.333333333333333333333333333333333333333E-1f128;
+    const T0: f128 = -1.813014711743583437742363284336855889393E7f128;
+    const T1: f128 = 1.320767960008972224312740075083259247618E6f128;
+    const T2: f128 = -2.626775478255838182468651821863299023956E4f128;
+    const T3: f128 = 1.764573356488504935415411383687150199315E2f128;
+    const T4: f128 = -3.333267763822178690794678978979803526092E-1f128;
+    const U0: f128 = -1.359761033807687578306772463253710042010E8f128;
+    const U1: f128 = 6.494370630656893175666729313065113194784E7f128;
+    const U2: f128 = -4.180787672237927475505536849168729386782E6f128;
+    const U3: f128 = 8.031643765106170040139966622980914621521E4f128;
+    const U4: f128 = -5.323131271912475695157127875560667378597E2f128;
+    let clr_lo64 = |v: f128| f128::from_bits(v.to_bits() & (!0u128 << 64));
+
+    let w0 = (x.to_bits() >> 96) as u32;
+    let ix = w0 & 0x7fff_ffff;
+    if ix < 0x3fc6_0000 {
+        // |x| < 2^-57; (int)x == 0 here.
+        if (ix | ((x.to_bits() & ((1u128 << 96) - 1)) != 0) as u32) == 0 && (iy + 1) == 0 {
+            return ONE / x.abs(); // x==0 && iy==-1: cot(0) = +inf
+        } else if iy == 1 {
+            return x;
+        } else {
+            return -ONE / x;
+        }
+    }
+
+    let mut x = x;
+    let mut y = y;
+    let mut sign = 1;
+    if ix >= 0x3ffe_5942 {
+        if w0 & 0x8000_0000 != 0 {
+            x = -x;
+            y = -y;
+            sign = -1;
+        }
+        let z = PIO4HI - x;
+        let w = PIO4LO - y;
+        x = z + w;
+        y = 0.0;
+    }
+    let z = x * x;
+    let mut r = T0 + z * (T1 + z * (T2 + z * (T3 + z * T4)));
+    let v = U0 + z * (U1 + z * (U2 + z * (U3 + z * (U4 + z))));
+    r /= v;
+    let s = z * x;
+    r = y + z * (s * r + y);
+    r += TH * s;
+    let w = x + r;
+    if ix >= 0x3ffe_5942 {
+        let v = iy as f128;
+        let mut w = v - 2.0 * (x - (w * w / (w + v) - r));
+        if sign < 0 {
+            w = -w;
+        }
+        return w;
+    }
+    if iy == 1 {
+        w
+    } else {
+        // accurate -1/(x+r)
+        let u1 = clr_lo64(w);
+        let v = r - (u1 - x);
+        let z = -1.0 / w;
+        let u = clr_lo64(z);
+        let s = 1.0 + u * u1;
+        u + z * (s + u * v)
+    }
+}
+
+/// sincos with glibc's subnormal shortcut: for |v| <= smallest normal, sin==v
+/// and cos==1 (avoids spurious work); else the byte-exact sinl/cosl.
+#[inline]
+fn sincos_pair_f128(v: f128) -> (f128, f128) {
+    if v.abs() > f128::MIN_POSITIVE {
+        (sinl_f128(v), cosl_f128(v))
+    } else {
+        (v, 1.0)
+    }
+}
+
+/// `rx - rx` matching glibc's x86 NaN sign: inf-inf is the negative qNaN, a NaN
+/// operand propagates.
+#[inline]
+fn sub_self_nan_f128(rx: f128) -> f128 {
+    if rx.is_infinite() {
+        f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+    } else {
+        rx - rx
+    }
+}
+
+/// Complex sine for binary128 — port of glibc's s_csin template:
+/// sin(re)·cosh(im) + i·cos(re)·sinh(im) with overflow staging by exp(t) and the
+/// full inf/NaN lattice. Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn csin_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let negate = sb(x.re);
+    let im = x.im;
+    let rx = x.re.abs();
+    let re_fin = x.re.is_finite();
+
+    let (re, imo);
+    if im.is_finite() {
+        if re_fin {
+            let (mut sinix, mut cosix) = sincos_pair_f128(rx);
+            if negate {
+                sinix = -sinix;
+            }
+            if im.abs() > T {
+                let exp_t = expl_f128(T);
+                let mut ixv = im.abs();
+                if sb(im) {
+                    cosix = -cosix;
+                }
+                ixv -= T;
+                sinix *= exp_t / 2.0;
+                cosix *= exp_t / 2.0;
+                if ixv > T {
+                    ixv -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+                if ixv > T {
+                    re = f128::MAX * sinix;
+                    imo = f128::MAX * cosix;
+                } else {
+                    let ev = expl_f128(ixv);
+                    re = ev * sinix;
+                    imo = ev * cosix;
+                }
+            } else {
+                re = coshl_f128(im) * sinix;
+                imo = sinhl_f128(im) * cosix;
+            }
+        } else if im == 0.0 {
+            re = sub_self_nan_f128(rx);
+            imo = im;
+        } else {
+            re = f128::NAN;
+            imo = f128::NAN;
+        }
+    } else if im.is_infinite() {
+        if x.re == 0.0 {
+            re = (0.0f128).copysign(if negate { -1.0 } else { 1.0 });
+            imo = im;
+        } else if re_fin {
+            let (sinix, cosix) = sincos_pair_f128(rx);
+            let mut rr = f128::INFINITY.copysign(sinix);
+            let mut ii = f128::INFINITY.copysign(cosix);
+            if negate {
+                rr = -rr;
+            }
+            if sb(im) {
+                ii = -ii;
+            }
+            re = rr;
+            imo = ii;
+        } else {
+            re = sub_self_nan_f128(rx);
+            imo = f128::INFINITY;
+        }
+    } else {
+        re = if x.re == 0.0 {
+            (0.0f128).copysign(if negate { -1.0 } else { 1.0 })
+        } else {
+            f128::NAN
+        };
+        imo = f128::NAN;
+    }
+    CFloat128Complex { re, im: imo }
+}
+
+/// Complex hyperbolic cosine for binary128 — port of glibc's s_ccosh template:
+/// cosh(re)·cos(im) + i·sinh(re)·sin(im), overflow-staged, full inf/NaN lattice.
+/// Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn ccosh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let rx = x.re;
+    let im = x.im;
+    let (re, imo);
+    if rx.is_finite() {
+        if im.is_finite() {
+            let (mut sinix, mut cosix) = sincos_pair_f128(im);
+            if rx.abs() > T {
+                let exp_t = expl_f128(T);
+                let mut rxv = rx.abs();
+                if sb(rx) {
+                    sinix = -sinix;
+                }
+                rxv -= T;
+                sinix *= exp_t / 2.0;
+                cosix *= exp_t / 2.0;
+                if rxv > T {
+                    rxv -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+                if rxv > T {
+                    re = f128::MAX * cosix;
+                    imo = f128::MAX * sinix;
+                } else {
+                    let ev = expl_f128(rxv);
+                    re = ev * cosix;
+                    imo = ev * sinix;
+                }
+            } else {
+                re = coshl_f128(rx) * cosix;
+                imo = sinhl_f128(rx) * sinix;
+            }
+        } else {
+            imo = if rx == 0.0 { 0.0 } else { f128::NAN };
+            re = sub_self_nan_f128(im);
+        }
+    } else if rx.is_infinite() {
+        if im.is_finite() && im != 0.0 {
+            let (sinix, cosix) = sincos_pair_f128(im);
+            re = f128::INFINITY.copysign(cosix);
+            imo = f128::INFINITY.copysign(sinix) * (1.0f128).copysign(rx);
+        } else if im == 0.0 {
+            re = f128::INFINITY;
+            imo = im * (1.0f128).copysign(rx);
+        } else {
+            re = f128::INFINITY;
+            imo = sub_self_nan_f128(im);
+        }
+    } else {
+        re = f128::NAN;
+        imo = if im == 0.0 { im } else { f128::NAN };
+    }
+    CFloat128Complex { re, im: imo }
+}
+
+/// Complex hyperbolic sine for binary128 — port of glibc's s_csinh template.
+/// Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn csinh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let negate = sb(x.re);
+    let rx = x.re.abs();
+    let im = x.im;
+    let (re, imo);
+    if rx.is_finite() {
+        if im.is_finite() {
+            let (mut sinix, mut cosix) = sincos_pair_f128(im);
+            if negate {
+                cosix = -cosix;
+            }
+            if rx > T {
+                let exp_t = expl_f128(T);
+                let mut rxv = rx;
+                rxv -= T;
+                sinix *= exp_t / 2.0;
+                cosix *= exp_t / 2.0;
+                if rxv > T {
+                    rxv -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+                if rxv > T {
+                    re = f128::MAX * cosix;
+                    imo = f128::MAX * sinix;
+                } else {
+                    let ev = expl_f128(rxv);
+                    re = ev * cosix;
+                    imo = ev * sinix;
+                }
+            } else {
+                re = sinhl_f128(rx) * cosix;
+                imo = coshl_f128(rx) * sinix;
+            }
+        } else if x.re == 0.0 {
+            re = (0.0f128).copysign(if negate { -1.0 } else { 1.0 });
+            imo = sub_self_nan_f128(im);
+        } else {
+            re = f128::NAN;
+            imo = f128::NAN;
+        }
+    } else if rx.is_infinite() {
+        if im.is_finite() && im != 0.0 {
+            let (sinix, cosix) = sincos_pair_f128(im);
+            let mut rr = f128::INFINITY.copysign(cosix);
+            let ii = f128::INFINITY.copysign(sinix);
+            if negate {
+                rr = -rr;
+            }
+            re = rr;
+            imo = ii;
+        } else if im == 0.0 {
+            re = if negate {
+                -f128::INFINITY
+            } else {
+                f128::INFINITY
+            };
+            imo = im;
+        } else {
+            re = f128::INFINITY;
+            imo = sub_self_nan_f128(im);
+        }
+    } else {
+        re = f128::NAN;
+        imo = if im == 0.0 { im } else { f128::NAN };
+    }
+    CFloat128Complex { re, im: imo }
+}
+
+/// Complex cosine — glibc s_ccos: ccos(z) = ccosh(-im + i·re).
+fn ccos_f128(x: CFloat128Complex) -> CFloat128Complex {
+    ccosh_f128(CFloat128Complex {
+        re: -x.im,
+        im: x.re,
+    })
+}
+
+/// Complex hyperbolic tangent for binary128 — port of glibc's s_ctanh template:
+/// tanh(x+iy) = (sinh x·cosh x + i·sin y·cos y)/(sinh²x + cos²y), with the
+/// subnormal-result staging for |re|>t and the full inf/NaN lattice. Built on
+/// byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn ctanh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 5677.0f128; // (int)((MAX_EXP-1)*ln2/2)
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    let rx = x.re;
+    let im = x.im;
+    if !rx.is_finite() || !im.is_finite() {
+        if rx.is_infinite() {
+            let rre = (1.0f128).copysign(rx);
+            let rim = if im.is_finite() && im.abs() > 1.0 {
+                (0.0f128).copysign(sinl_f128(im) * cosl_f128(im))
+            } else {
+                (0.0f128).copysign(im)
+            };
+            return CFloat128Complex { re: rre, im: rim };
+        } else if im == 0.0 {
+            return x;
+        } else {
+            let rre = if rx == 0.0 { rx } else { f128::NAN };
+            return CFloat128Complex {
+                re: rre,
+                im: f128::NAN,
+            };
+        }
+    }
+    let (sinix, cosix) = sincos_pair_f128(im);
+    if rx.abs() > T {
+        let exp_2t = expl_f128(2.0 * T);
+        let rre = (1.0f128).copysign(rx);
+        let mut rim = 4.0 * sinix * cosix;
+        let rxv = rx.abs() - T;
+        rim /= exp_2t;
+        if rxv > T {
+            rim /= exp_2t;
+        } else {
+            rim /= expl_f128(2.0 * rxv);
+        }
+        CFloat128Complex { re: rre, im: rim }
+    } else {
+        let (sinhrx, coshrx) = if rx.abs() > f128::MIN_POSITIVE {
+            (sinhl_f128(rx), coshl_f128(rx))
+        } else {
+            (rx, 1.0)
+        };
+        let den = if sinhrx.abs() > cosix.abs() * EPS {
+            sinhrx * sinhrx + cosix * cosix
+        } else {
+            cosix * cosix
+        };
+        CFloat128Complex {
+            re: sinhrx * coshrx / den,
+            im: sinix * cosix / den,
+        }
+    }
+}
+
+/// Complex tangent for binary128 — port of glibc's s_ctan template (re↔im mirror
+/// of ctanh). Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn ctan_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 5677.0f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    let rx = x.re;
+    let im = x.im;
+    if !rx.is_finite() || !im.is_finite() {
+        if im.is_infinite() {
+            let rre = if rx.is_finite() && rx.abs() > 1.0 {
+                (0.0f128).copysign(sinl_f128(rx) * cosl_f128(rx))
+            } else {
+                (0.0f128).copysign(rx)
+            };
+            return CFloat128Complex {
+                re: rre,
+                im: (1.0f128).copysign(im),
+            };
+        } else if rx == 0.0 {
+            return x;
+        } else {
+            let rim = if im == 0.0 { im } else { f128::NAN };
+            return CFloat128Complex {
+                re: f128::NAN,
+                im: rim,
+            };
+        }
+    }
+    let (sinrx, cosrx) = sincos_pair_f128(rx);
+    if im.abs() > T {
+        let exp_2t = expl_f128(2.0 * T);
+        let rim = (1.0f128).copysign(im);
+        let mut rre = 4.0 * sinrx * cosrx;
+        let imv = im.abs() - T;
+        rre /= exp_2t;
+        if imv > T {
+            rre /= exp_2t;
+        } else {
+            rre /= expl_f128(2.0 * imv);
+        }
+        CFloat128Complex { re: rre, im: rim }
+    } else {
+        let (sinhix, coshix) = if im.abs() > f128::MIN_POSITIVE {
+            (sinhl_f128(im), coshl_f128(im))
+        } else {
+            (im, 1.0)
+        };
+        let den = if sinhix.abs() > cosrx.abs() * EPS {
+            cosrx * cosrx + sinhix * sinhix
+        } else {
+            cosrx * cosrx
+        };
+        CFloat128Complex {
+            re: sinrx * cosrx / den,
+            im: sinhix * coshix / den,
+        }
+    }
+}
+
+/// Complex exponential for binary128 — port of glibc's s_cexp template:
+/// e^z = e^re·(cos(im) + i·sin(im)) with overflow staging by exp(t) (t =
+/// floor((MAX_EXP-1)·ln2)) and the full inf/NaN lattice. Built on the byte-exact
+/// expl/sinl/cosl → byte-exact (FE_INVALID flag-raising omitted; value gated).
+#[allow(clippy::excessive_precision)]
+fn cexp_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128; // (int)((MAX_EXP-1)*ln2) = (int)(16383*0.693147…) = 11355
+    let rx = x.re;
+    let ix = x.im;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let sincos = |im: f128| -> (f128, f128) {
+        if im.abs() > f128::MIN_POSITIVE {
+            (sinl_f128(im), cosl_f128(im))
+        } else {
+            (im, 1.0)
+        }
+    };
+
+    if rx.is_finite() {
+        if ix.is_finite() {
+            let (mut sinix, mut cosix) = sincos(ix);
+            let mut rxx = rx;
+            if rxx > T {
+                let exp_t = expl_f128(T);
+                rxx -= T;
+                sinix *= exp_t;
+                cosix *= exp_t;
+                if rxx > T {
+                    rxx -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+            }
+            if rxx > T {
+                CFloat128Complex {
+                    re: f128::MAX * cosix,
+                    im: f128::MAX * sinix,
+                }
+            } else {
+                let ev = expl_f128(rxx);
+                CFloat128Complex {
+                    re: ev * cosix,
+                    im: ev * sinix,
+                }
+            }
+        } else {
+            CFloat128Complex {
+                re: f128::NAN,
+                im: f128::NAN,
+            }
+        }
+    } else if rx.is_infinite() {
+        if ix.is_finite() {
+            let value = if sb(rx) { 0.0 } else { f128::INFINITY };
+            if ix == 0.0 {
+                CFloat128Complex { re: value, im: ix }
+            } else {
+                let (sinix, cosix) = sincos(ix);
+                CFloat128Complex {
+                    re: value.copysign(cosix),
+                    im: value.copysign(sinix),
+                }
+            }
+        } else if !sb(rx) {
+            // ix is inf/NaN: imag - imag (inf-inf is the x86 negative qNaN; a NaN
+            // imag propagates with its sign, which Rust's ix-ix would canonicalize).
+            let im = if ix.is_infinite() {
+                f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+            } else {
+                ix
+            };
+            CFloat128Complex {
+                re: f128::INFINITY,
+                im,
+            }
+        } else {
+            CFloat128Complex {
+                re: 0.0,
+                im: (0.0f128).copysign(ix),
+            }
+        }
+    } else {
+        // real NaN
+        if ix == 0.0 {
+            CFloat128Complex {
+                re: f128::NAN,
+                im: ix,
+            }
+        } else {
+            CFloat128Complex {
+                re: f128::NAN,
+                im: f128::NAN,
+            }
+        }
+    }
+}
+
+/// tan for binary128 — glibc s_tanl: kernel for |x|<=pi/4, else reduce mod pi/2
+/// with iy = +1 (n even) / -1 (n odd) selecting tan vs the cotangent form.
+fn tanl_f128(x: f128) -> f128 {
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return kernel_tanl_f128(x, 0.0, 1);
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        if is_inf_f128(x) {
+            set_domain_errno();
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+        }
+        return x - x;
+    }
+    let (n, y0, y1) = rem_pio2l_f128(x);
+    kernel_tanl_f128(y0, y1, 1 - ((n & 1) << 1))
+}
+
+/// erf for binary128 — verbatim port of glibc's ldbl-128 `__erfl` (s_erfl.c):
+/// |x|<0.875 via x + x·TN1/TD1, [0.875,1) via erf_const + TN2/TD2, |x|>=1 via
+/// 1 - erfcl. Self-contained (neval/deval + expl) → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn erfl_f128(x: f128) -> f128 {
+    use crate::erf_tables::{TD1, TD2, TN1, TN2};
+    const EFX: f128 = 1.2837916709551257389615890312154517168810E-1f128;
+    const ERF_CONST: f128 = 0.845062911510467529296875f128;
+    let bits = x.to_bits();
+    let w0 = (bits >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    if ix >= 0x7fff_0000 {
+        let i: i32 = if neg { 2 } else { 0 };
+        return (1 - i) as f128 + 1.0 / x; // erf(±inf)=±1, erf(nan)=nan
+    }
+    if ix >= 0x3fff_0000 {
+        // |x| >= 1
+        if ix >= 0x4003_0000 && !neg {
+            return 1.0; // x >= 16
+        }
+        return 1.0 - erfcl_f128(x);
+    }
+    let a = f128::from_bits(bits & !(1u128 << 127)); // |x|
+    let mut y;
+    if ix < 0x3ffe_c000 {
+        // a < 0.875
+        if ix < 0x3fc6_0000 {
+            // |x| < 2^-57
+            if ix < 0x0008_0000 {
+                return 0.0625 * (16.0 * x + (16.0 * EFX) * x);
+            }
+            return x + EFX * x;
+        }
+        let z = x * x;
+        y = a + a * neval_f128(z, &TN1) / deval_f128(z, &TD1);
+    } else {
+        let a = a - 1.0;
+        y = ERF_CONST + neval_f128(a, &TN2) / deval_f128(a, &TD2);
+    }
+    if neg {
+        y = -y;
+    }
+    y
+}
+
+/// erfc for binary128 — verbatim port of glibc's ldbl-128 `__erfcl` (s_erfl.c):
+/// |x|<1/4 via 1-erfl, [1/4,1.25) via 8 sub-interval rationals about k/8,
+/// [1.25,107) via exp(-z²-0.5625)·exp(...)·p/x with a hi/lo split, else
+/// over/underflow. Self-contained (neval/deval + expl) → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn erfcl_f128(x: f128) -> f128 {
+    use crate::erf_tables::*;
+    const TINY: f128 = 1e-4931f128;
+    const TWO: f128 = 2.0f128;
+    const C13A: f128 = 0.723663330078125f128;
+    const C13B: f128 = 1.0279753638067014931732235184287934646022E-5f128;
+    const C14A: f128 = 0.5958709716796875f128;
+    const C14B: f128 = 1.2118885490201676174914080878232469565953E-5f128;
+    const C15A: f128 = 0.4794921875f128;
+    const C15B: f128 = 7.9346869534623172533461080354712635484242E-6f128;
+    const C16A: f128 = 0.3767547607421875f128;
+    const C16B: f128 = 4.3570693945275513594941232097252997287766E-6f128;
+    const C17A: f128 = 0.2888336181640625f128;
+    const C17B: f128 = 1.0748182422368401062165408589222625794046E-5f128;
+    const C18A: f128 = 0.215911865234375f128;
+    const C18B: f128 = 1.3073705765341685464282101150637224028267E-5f128;
+    const C19A: f128 = 0.15728759765625f128;
+    const C19B: f128 = 1.1609394035130658779364917390740703933002E-5f128;
+    const C20A: f128 = 0.111602783203125f128;
+    const C20B: f128 = 8.9850951672359304215530728365232161564636E-6f128;
+
+    let bits = x.to_bits();
+    let w0 = (bits >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    let absx = f128::from_bits(bits & !(1u128 << 127));
+
+    if ix >= 0x7fff_0000 {
+        return (if neg { 2.0 } else { 0.0 }) + 1.0 / x;
+    }
+    if ix < 0x3ffd_0000 {
+        // |x| < 1/4
+        if ix < 0x3f8d_0000 {
+            return 1.0 - x; // |x| < 2^-114
+        }
+        return 1.0 - erfl_f128(x);
+    }
+    if ix < 0x3fff_4000 {
+        // [1/4, 1.25)
+        let xa = absx;
+        let i = (8.0 * xa) as i32;
+        let y = match i {
+            2 => {
+                let z = xa - 0.25;
+                C13B + z * neval_f128(z, &RNr13) / deval_f128(z, &RDr13) + C13A
+            }
+            3 => {
+                let z = xa - 0.375;
+                C14B + z * neval_f128(z, &RNr14) / deval_f128(z, &RDr14) + C14A
+            }
+            4 => {
+                let z = xa - 0.5;
+                C15B + z * neval_f128(z, &RNr15) / deval_f128(z, &RDr15) + C15A
+            }
+            5 => {
+                let z = xa - 0.625;
+                C16B + z * neval_f128(z, &RNr16) / deval_f128(z, &RDr16) + C16A
+            }
+            6 => {
+                let z = xa - 0.75;
+                C17B + z * neval_f128(z, &RNr17) / deval_f128(z, &RDr17) + C17A
+            }
+            7 => {
+                let z = xa - 0.875;
+                C18B + z * neval_f128(z, &RNr18) / deval_f128(z, &RDr18) + C18A
+            }
+            8 => {
+                let z = xa - 1.0;
+                C19B + z * neval_f128(z, &RNr19) / deval_f128(z, &RDr19) + C19A
+            }
+            _ => {
+                let z = xa - 1.125;
+                C20B + z * neval_f128(z, &RNr20) / deval_f128(z, &RDr20) + C20A
+            }
+        };
+        return if neg { 2.0 - y } else { y };
+    }
+    if ix < 0x4005_ac00 {
+        // 1.25 < |x| < 107
+        if ix >= 0x4002_2000 && neg {
+            return TWO - TINY; // x < -9
+        }
+        let xa = absx;
+        let z = 1.0 / (xa * xa);
+        let i = (8.0 / xa) as i32;
+        let p = match i {
+            1 => neval_f128(z, &RNr2) / deval_f128(z, &RDr2),
+            2 => neval_f128(z, &RNr3) / deval_f128(z, &RDr3),
+            3 => neval_f128(z, &RNr4) / deval_f128(z, &RDr4),
+            4 => neval_f128(z, &RNr5) / deval_f128(z, &RDr5),
+            5 => neval_f128(z, &RNr6) / deval_f128(z, &RDr6),
+            6 => neval_f128(z, &RNr7) / deval_f128(z, &RDr7),
+            7 => neval_f128(z, &RNr8) / deval_f128(z, &RDr8),
+            _ => neval_f128(z, &RNr1) / deval_f128(z, &RDr1),
+        };
+        let zz = f128::from_bits(xa.to_bits() & (!0u128 << 57)); // hi part
+        let r = expl_f128(-zz * zz - 0.5625) * expl_f128((zz - xa) * (zz + xa) + p);
+        if !neg {
+            let ret = r / xa;
+            if ret == 0.0 {
+                set_range_errno();
+            }
+            ret
+        } else {
+            TWO - r / xa
+        }
+    } else if !neg {
+        set_range_errno();
+        TINY * TINY
+    } else {
+        TWO - TINY
+    }
 }
 
 // --- scalbln-like (f, c_long → f) ---
@@ -6623,8 +11265,8 @@ pub unsafe extern "C" fn scalblnf64x(x: f64, n: c_long) -> f64 {
     unsafe { scalbln(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scalblnf128(x: f64, n: c_long) -> f64 {
-    unsafe { scalbln(x, n) }
+pub unsafe extern "C" fn scalblnf128(x: f128, n: c_long) -> f128 {
+    scalbn_f128(x, n)
 }
 
 // --- modf-like (f, *mut f → f) ---
@@ -6645,8 +11287,19 @@ pub unsafe extern "C" fn modff64x(x: f64, iptr: *mut f64) -> f64 {
     unsafe { modf(x, iptr) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn modff128(x: f64, iptr: *mut f64) -> f64 {
-    unsafe { modf(x, iptr) }
+pub unsafe extern "C" fn modff128(x: f128, iptr: *mut f128) -> f128 {
+    if x.is_nan() {
+        unsafe { *iptr = x };
+        return x;
+    }
+    if x.is_infinite() {
+        unsafe { *iptr = x };
+        return f128::from_bits(x.to_bits() & (1u128 << 127)); // signed zero
+    }
+    let t = x.trunc();
+    unsafe { *iptr = t };
+    // The fractional part carries x's sign (so -0 for negative whole numbers).
+    (x - t).copysign(x)
 }
 
 // --- remquo-like (f, f, *mut c_int → f) ---
@@ -6667,8 +11320,33 @@ pub unsafe extern "C" fn remquof64x(x: f64, y: f64, quo: *mut c_int) -> f64 {
     unsafe { remquo(x, y, quo) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn remquof128(x: f64, y: f64, quo: *mut c_int) -> f64 {
-    unsafe { remquo(x, y, quo) }
+pub unsafe extern "C" fn remquof128(x: f128, y: f128, quo: *mut c_int) -> f128 {
+    let ax = x.abs();
+    let ay = y.abs();
+    // Domain / NaN cases: glibc leaves *quo untouched and sets no errno.
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    if ay == 0.0 || ax.is_infinite() {
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // negative qNaN
+    }
+    // Low quotient bits = floor(fmod(ax, 8*ay)/ay) (<=7 exact subtractions),
+    // then round-to-nearest-even adjustment, with the sign of x/y. (8*ay may
+    // overflow to inf, but then ax/ay < 8 so the loop still runs < 8 times.)
+    let mut m = ax % (ay * 8.0f128);
+    let mut qt: i32 = 0;
+    while m >= ay {
+        m -= ay;
+        qt += 1;
+    }
+    let two_r = m + m; // m is now fmod(ax, ay)
+    let round_up = two_r > ay || (two_r == ay && (qt & 1) == 1);
+    // glibc keeps the low 3 quotient bits then adds the round-up carry WITHOUT
+    // re-masking, so the stored value can be 8 (or -8).
+    let n_mod8 = if round_up { qt + 1 } else { qt };
+    let neg_q = x.is_sign_negative() != y.is_sign_negative();
+    unsafe { *quo = if neg_q { -n_mod8 } else { n_mod8 } };
+    remainder_f128(x, y)
 }
 
 // --- sincos-like (f, *mut f, *mut f → void) ---
@@ -6689,8 +11367,39 @@ pub unsafe extern "C" fn sincosf64x(x: f64, s: *mut f64, c: *mut f64) {
     unsafe { sincos(x, s, c) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sincosf128(x: f64, s: *mut f64, c: *mut f64) {
-    unsafe { sincos(x, s, c) }
+pub unsafe extern "C" fn sincosf128(x: f128, s: *mut f128, c: *mut f128) {
+    // glibc s_sincosl.
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    let (sv, cv);
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        let (a, b) = kernel_sincosl_f128(x, 0.0, 0);
+        sv = a;
+        cv = b;
+    } else if ix >= 0x7fff_0000_0000_0000 {
+        let r = if is_inf_f128(x) {
+            set_domain_errno();
+            f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)) // x86 neg qNaN
+        } else {
+            x - x
+        };
+        sv = r;
+        cv = r;
+    } else {
+        let (n, y0, y1) = rem_pio2l_f128(x);
+        let (a, b) = kernel_sincosl_f128(y0, y1, 1);
+        let (s2, c2) = match n & 3 {
+            0 => (a, b),
+            1 => (b, -a),
+            2 => (-a, -b),
+            _ => (-b, a),
+        };
+        sv = s2;
+        cv = c2;
+    }
+    unsafe {
+        *s = sv;
+        *c = cv;
+    }
 }
 
 // --- nan-like (*const c_char → f) ---
@@ -6711,8 +11420,47 @@ pub unsafe extern "C" fn nanf64x(tagp: *const std::ffi::c_char) -> f64 {
     unsafe { nan(tagp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nanf128(tagp: *const std::ffi::c_char) -> f64 {
-    unsafe { nan(tagp) }
+pub unsafe extern "C" fn nanf128(tagp: *const std::ffi::c_char) -> f128 {
+    // Quiet NaN whose payload is the base-0 integer parsed from `tagp` (stopping
+    // at the first invalid digit; empty/NULL/invalid -> payload 0).
+    let mut payload: u128 = 0;
+    if !tagp.is_null() {
+        let mut seq: Vec<u8> = Vec::new();
+        let mut p = tagp.cast::<u8>();
+        for _ in 0..128 {
+            let c = unsafe { *p };
+            if c == 0 {
+                break;
+            }
+            seq.push(c);
+            p = unsafe { p.add(1) };
+        }
+        let (base, digits): (u128, &[u8]) =
+            if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
+                (16, &seq[2..])
+            } else if seq.len() > 1 && seq[0] == b'0' {
+                (8, &seq[1..])
+            } else {
+                (10, &seq[..])
+            };
+        // glibc requires the ENTIRE tag to be a valid integer; any invalid char
+        // (or an empty digit sequence) yields payload 0, not a parsed prefix.
+        let mut val: u128 = 0;
+        let mut valid = !digits.is_empty();
+        for &c in digits {
+            match (c as char).to_digit(base as u32) {
+                Some(d) => val = val.wrapping_mul(base).wrapping_add(d as u128),
+                None => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            payload = val;
+        }
+    }
+    f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111) | (payload & ((1u128 << 111) - 1)))
 }
 
 // --- int-first (c_int, f → f) ---
@@ -6733,8 +11481,8 @@ pub unsafe extern "C" fn jnf64x(n: c_int, x: f64) -> f64 {
     unsafe { jn(n, x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn jnf128(n: c_int, x: f64) -> f64 {
-    unsafe { jn(n, x) }
+pub unsafe extern "C" fn jnf128(n: c_int, x: f128) -> f128 {
+    unsafe { jn(n, x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ynf32(n: c_int, x: f32) -> f32 {
@@ -6753,8 +11501,8 @@ pub unsafe extern "C" fn ynf64x(n: c_int, x: f64) -> f64 {
     unsafe { yn(n, x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ynf128(n: c_int, x: f64) -> f64 {
-    unsafe { yn(n, x) }
+pub unsafe extern "C" fn ynf128(n: c_int, x: f128) -> f128 {
+    unsafe { yn(n, x as f64) as f128 }
 }
 
 // --- Bessel no-int (f64→f64, f32→f32) ---
@@ -6775,8 +11523,8 @@ pub unsafe extern "C" fn j0f64x(x: f64) -> f64 {
     unsafe { j0(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn j0f128(x: f64) -> f64 {
-    unsafe { j0(x) }
+pub unsafe extern "C" fn j0f128(x: f128) -> f128 {
+    unsafe { j0(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn j1f32(x: f32) -> f32 {
@@ -6795,8 +11543,8 @@ pub unsafe extern "C" fn j1f64x(x: f64) -> f64 {
     unsafe { j1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn j1f128(x: f64) -> f64 {
-    unsafe { j1(x) }
+pub unsafe extern "C" fn j1f128(x: f128) -> f128 {
+    unsafe { j1(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y0f32(x: f32) -> f32 {
@@ -6815,8 +11563,8 @@ pub unsafe extern "C" fn y0f64x(x: f64) -> f64 {
     unsafe { y0(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn y0f128(x: f64) -> f64 {
-    unsafe { y0(x) }
+pub unsafe extern "C" fn y0f128(x: f128) -> f128 {
+    unsafe { y0(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1f32(x: f32) -> f32 {
@@ -6835,8 +11583,8 @@ pub unsafe extern "C" fn y1f64x(x: f64) -> f64 {
     unsafe { y1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn y1f128(x: f64) -> f64 {
-    unsafe { y1(x) }
+pub unsafe extern "C" fn y1f128(x: f128) -> f128 {
+    unsafe { y1(x as f64) as f128 }
 }
 
 // --- complex → real ---
@@ -6857,8 +11605,9 @@ pub unsafe extern "C" fn cabsf64x(z: CDoubleComplex) -> f64 {
     unsafe { cabs(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cabsf128(z: CDoubleComplex) -> f64 {
-    unsafe { cabs(z) }
+pub unsafe extern "C" fn cabsf128(z: CFloat128Complex) -> f128 {
+    // cabs delegates to the finite hypot alias (no errno).
+    hypot_f128(z.re, z.im)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cargf32(z: CFloatComplex) -> f32 {
@@ -6877,8 +11626,9 @@ pub unsafe extern "C" fn cargf64x(z: CDoubleComplex) -> f64 {
     unsafe { carg(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cargf128(z: CDoubleComplex) -> f64 {
-    unsafe { carg(z) }
+pub unsafe extern "C" fn cargf128(z: CFloat128Complex) -> f128 {
+    // carg(z) = atan2(cimag(z), creal(z)) — glibc's cargl.
+    atan2_f128(z.im, z.re)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cimagf32(z: CFloatComplex) -> f32 {
@@ -6897,8 +11647,8 @@ pub unsafe extern "C" fn cimagf64x(z: CDoubleComplex) -> f64 {
     unsafe { cimag(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cimagf128(z: CDoubleComplex) -> f64 {
-    unsafe { cimag(z) }
+pub unsafe extern "C" fn cimagf128(z: CFloat128Complex) -> f128 {
+    z.im
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crealf32(z: CFloatComplex) -> f32 {
@@ -6917,8 +11667,8 @@ pub unsafe extern "C" fn crealf64x(z: CDoubleComplex) -> f64 {
     unsafe { creal(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn crealf128(z: CDoubleComplex) -> f64 {
-    unsafe { creal(z) }
+pub unsafe extern "C" fn crealf128(z: CFloat128Complex) -> f128 {
+    z.re
 }
 
 // --- complex → complex ---
@@ -6939,8 +11689,8 @@ pub unsafe extern "C" fn cacosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacos(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cacosf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cacos(z) }
+pub unsafe extern "C" fn cacosf128(z: CFloat128Complex) -> CFloat128Complex {
+    cacos_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacoshf32(z: CFloatComplex) -> CFloatComplex {
@@ -6959,8 +11709,8 @@ pub unsafe extern "C" fn cacoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacosh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cacoshf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cacosh(z) }
+pub unsafe extern "C" fn cacoshf128(z: CFloat128Complex) -> CFloat128Complex {
+    cacosh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinf32(z: CFloatComplex) -> CFloatComplex {
@@ -6979,8 +11729,8 @@ pub unsafe extern "C" fn casinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casin(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn casinf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { casin(z) }
+pub unsafe extern "C" fn casinf128(z: CFloat128Complex) -> CFloat128Complex {
+    casin_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinhf32(z: CFloatComplex) -> CFloatComplex {
@@ -6999,8 +11749,8 @@ pub unsafe extern "C" fn casinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casinh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn casinhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { casinh(z) }
+pub unsafe extern "C" fn casinhf128(z: CFloat128Complex) -> CFloat128Complex {
+    casinh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanf32(z: CFloatComplex) -> CFloatComplex {
@@ -7019,8 +11769,8 @@ pub unsafe extern "C" fn catanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catan(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn catanf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { catan(z) }
+pub unsafe extern "C" fn catanf128(z: CFloat128Complex) -> CFloat128Complex {
+    catan_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanhf32(z: CFloatComplex) -> CFloatComplex {
@@ -7039,8 +11789,8 @@ pub unsafe extern "C" fn catanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catanh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn catanhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { catanh(z) }
+pub unsafe extern "C" fn catanhf128(z: CFloat128Complex) -> CFloat128Complex {
+    catanh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccosf32(z: CFloatComplex) -> CFloatComplex {
@@ -7059,8 +11809,8 @@ pub unsafe extern "C" fn ccosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccos(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ccosf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ccos(z) }
+pub unsafe extern "C" fn ccosf128(z: CFloat128Complex) -> CFloat128Complex {
+    ccos_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccoshf32(z: CFloatComplex) -> CFloatComplex {
@@ -7079,8 +11829,8 @@ pub unsafe extern "C" fn ccoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccosh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ccoshf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ccosh(z) }
+pub unsafe extern "C" fn ccoshf128(z: CFloat128Complex) -> CFloat128Complex {
+    ccosh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cexpf32(z: CFloatComplex) -> CFloatComplex {
@@ -7099,8 +11849,8 @@ pub unsafe extern "C" fn cexpf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cexp(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cexpf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cexp(z) }
+pub unsafe extern "C" fn cexpf128(z: CFloat128Complex) -> CFloat128Complex {
+    cexp_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clogf32(z: CFloatComplex) -> CFloatComplex {
@@ -7119,8 +11869,214 @@ pub unsafe extern "C" fn clogf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clogf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { clog(z) }
+/// x²+y²-1 for binary128 in extended precision — port of glibc `__x2y2m1l`
+/// (compensated sum of the split products and -1). Same machinery as compoundn.
+#[allow(clippy::excessive_precision)]
+fn x2y2m1_f128(x: f128, y: f128) -> f128 {
+    fn add_split(a: f128, b: f128) -> (f128, f128) {
+        let hi = a + b;
+        (hi, (a - hi) + b)
+    }
+    let cmp_abs = |p: &f128, q: &f128| p.abs().partial_cmp(&q.abs()).unwrap();
+    let mut vals = [0.0f128; 5];
+    vals[1] = x * x;
+    vals[0] = x.mul_add(x, -vals[1]);
+    vals[3] = y * y;
+    vals[2] = y.mul_add(y, -vals[3]);
+    vals[4] = -1.0;
+    vals.sort_by(cmp_abs);
+    for i in 0..=3 {
+        let (hi, lo) = add_split(vals[i + 1], vals[i]);
+        vals[i + 1] = hi;
+        vals[i] = lo;
+        vals[i + 1..5].sort_by(cmp_abs);
+    }
+    vals[4] + vals[3] + vals[2] + vals[1] + vals[0]
+}
+
+/// Complex natural log for binary128 — port of glibc's s_clog template:
+/// Re = log|z| via range-split log1p/log (with the x2y2m1 and scaling tricks),
+/// Im = atan2(im, re). Built on byte-exact log1pl/logl/hypot/atan2/scalbn →
+/// byte-exact.
+#[allow(clippy::excessive_precision)]
+fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // 2^-113
+    let rx = z.re;
+    let ix = z.im;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+
+    if rx == 0.0 && ix == 0.0 {
+        let mut imag = if sb(rx) { PI } else { 0.0 };
+        imag = imag.copysign(ix);
+        return CFloat128Complex {
+            re: -1.0 / rx.abs(),
+            im: imag,
+        };
+    }
+    if !rx.is_nan() && !ix.is_nan() {
+        let mut absx = rx.abs();
+        let mut absy = ix.abs();
+        let mut scale = 0i32;
+        if absx < absy {
+            core::mem::swap(&mut absx, &mut absy);
+        }
+        if absx > f128::MAX / 2.0 {
+            scale = -1;
+            absx = scalbn_f128(absx, -1);
+            absy = if absy >= f128::MIN_POSITIVE * 2.0 {
+                scalbn_f128(absy, -1)
+            } else {
+                0.0
+            };
+        } else if absx < f128::MIN_POSITIVE && absy < f128::MIN_POSITIVE {
+            scale = 113;
+            absx = scalbn_f128(absx, 113);
+            absy = scalbn_f128(absy, 113);
+        }
+        let real;
+        if absx == 1.0 && scale == 0 {
+            real = log1pl_f128(absy * absy) / 2.0;
+        } else if absx > 1.0 && absx < 2.0 && absy < 1.0 && scale == 0 {
+            let mut d2m1 = (absx - 1.0) * (absx + 1.0);
+            if absy >= EPS {
+                d2m1 += absy * absy;
+            }
+            real = log1pl_f128(d2m1) / 2.0;
+        } else if absx < 1.0 && absx >= 0.5 && absy < EPS_HALF && scale == 0 {
+            let d2m1 = (absx - 1.0) * (absx + 1.0);
+            real = log1pl_f128(d2m1) / 2.0;
+        } else if absx < 1.0 && absx >= 0.5 && scale == 0 && absx * absx + absy * absy >= 0.5 {
+            let d2m1 = x2y2m1_f128(absx, absy);
+            real = log1pl_f128(d2m1) / 2.0;
+        } else {
+            let d = hypot_f128(absx, absy);
+            real = logl_f128(d) - (scale as f128) * LN2;
+        }
+        return CFloat128Complex {
+            re: real,
+            im: atan2_f128(ix, rx),
+        };
+    }
+    // NaN somewhere (not the both-zero / both-finite cases).
+    let real = if rx.is_infinite() || ix.is_infinite() {
+        f128::INFINITY
+    } else {
+        f128::NAN
+    };
+    CFloat128Complex {
+        re: real,
+        im: f128::NAN,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clogf128(z: CFloat128Complex) -> CFloat128Complex {
+    clog_f128(z)
+}
+
+/// Complex square root for binary128 — port of glibc's s_csqrt template:
+/// scale to avoid over/underflow, d = hypot(re,im), then r,s from
+/// sqrt(0.5·(d±re)) using the identity 2·Re·Im = Im x to dodge cancellation.
+/// Built on byte-exact hypot/sqrt/scalbn → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn csqrt_f128(z: CFloat128Complex) -> CFloat128Complex {
+    let rx = z.re;
+    let ix = z.im;
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = f128::INFINITY;
+            im = ix;
+        } else if rx.is_infinite() {
+            if rx < 0.0 {
+                re = if ix.is_nan() { f128::NAN } else { 0.0 };
+                im = f128::INFINITY.copysign(ix);
+            } else {
+                re = rx;
+                im = if ix.is_nan() {
+                    f128::NAN
+                } else {
+                    (0.0f128).copysign(ix)
+                };
+            }
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+
+    let (re, im);
+    if ix == 0.0 {
+        if rx < 0.0 {
+            re = 0.0;
+            im = (-rx).sqrt().copysign(ix);
+        } else {
+            re = rx.sqrt().abs();
+            im = (0.0f128).copysign(ix);
+        }
+    } else if rx == 0.0 {
+        let r = if ix.abs() >= 2.0 * f128::MIN_POSITIVE {
+            (0.5 * ix.abs()).sqrt()
+        } else {
+            0.5 * (2.0 * ix.abs()).sqrt()
+        };
+        re = r;
+        im = r.copysign(ix);
+    } else {
+        let mut xr = rx;
+        let mut xi = ix;
+        let mut scale = 0i32;
+        if rx.abs() > f128::MAX / 4.0 {
+            scale = 1;
+            xr = scalbn_f128(rx, -2);
+            xi = scalbn_f128(ix, -2);
+        } else if ix.abs() > f128::MAX / 4.0 {
+            scale = 1;
+            xr = if rx.abs() >= 4.0 * f128::MIN_POSITIVE {
+                scalbn_f128(rx, -2)
+            } else {
+                0.0
+            };
+            xi = scalbn_f128(ix, -2);
+        } else if rx.abs() < 2.0 * f128::MIN_POSITIVE && ix.abs() < 2.0 * f128::MIN_POSITIVE {
+            scale = -57; // -((MANT_DIG+1)/2) = -(114/2)
+            xr = scalbn_f128(rx, 114); // -2*scale
+            xi = scalbn_f128(ix, 114);
+        }
+        let d = hypot_f128(xr, xi);
+        let mut r;
+        let mut s;
+        if xr > 0.0 {
+            r = (0.5 * (d + xr)).sqrt();
+            if scale == 1 && xi.abs() < 1.0 {
+                s = xi / r;
+                r = scalbn_f128(r, scale as i64);
+                scale = 0;
+            } else {
+                s = 0.5 * (xi / r);
+            }
+        } else {
+            s = (0.5 * (d - xr)).sqrt();
+            if scale == 1 && xi.abs() < 1.0 {
+                r = (xi / s).abs();
+                s = scalbn_f128(s, scale as i64);
+                scale = 0;
+            } else {
+                r = (0.5 * (xi / s)).abs();
+            }
+        }
+        if scale != 0 {
+            r = scalbn_f128(r, scale as i64);
+            s = scalbn_f128(s, scale as i64);
+        }
+        re = r;
+        im = s.copysign(ix);
+    }
+    CFloat128Complex { re, im }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn conjf32(z: CFloatComplex) -> CFloatComplex {
@@ -7139,8 +12095,12 @@ pub unsafe extern "C" fn conjf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { conj(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn conjf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { conj(z) }
+pub unsafe extern "C" fn conjf128(z: CFloat128Complex) -> CFloat128Complex {
+    // Negate the imaginary part (flip its sign bit, so NaN/inf signs flip too).
+    CFloat128Complex {
+        re: z.re,
+        im: f128::from_bits(z.im.to_bits() ^ (1u128 << 127)),
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cprojf32(z: CFloatComplex) -> CFloatComplex {
@@ -7159,8 +12119,18 @@ pub unsafe extern "C" fn cprojf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cproj(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cprojf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cproj(z) }
+pub unsafe extern "C" fn cprojf128(z: CFloat128Complex) -> CFloat128Complex {
+    // Projection onto the Riemann sphere: if either part is infinite, the result
+    // is (+inf, copysign(0, im)); otherwise z is unchanged.
+    if z.re.is_infinite() || z.im.is_infinite() {
+        let im0 = f128::from_bits(z.im.to_bits() & (1u128 << 127)); // signed zero
+        CFloat128Complex {
+            re: f128::from_bits(0x7fff_u128 << 112),
+            im: im0,
+        }
+    } else {
+        z
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinf32(z: CFloatComplex) -> CFloatComplex {
@@ -7179,8 +12149,8 @@ pub unsafe extern "C" fn csinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csin(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn csinf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { csin(z) }
+pub unsafe extern "C" fn csinf128(z: CFloat128Complex) -> CFloat128Complex {
+    csin_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinhf32(z: CFloatComplex) -> CFloatComplex {
@@ -7199,8 +12169,8 @@ pub unsafe extern "C" fn csinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csinh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn csinhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { csinh(z) }
+pub unsafe extern "C" fn csinhf128(z: CFloat128Complex) -> CFloat128Complex {
+    csinh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csqrtf32(z: CFloatComplex) -> CFloatComplex {
@@ -7219,8 +12189,466 @@ pub unsafe extern "C" fn csqrtf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csqrt(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn csqrtf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { csqrt(z) }
+pub unsafe extern "C" fn csqrtf128(z: CFloat128Complex) -> CFloat128Complex {
+    csqrt_f128(z)
+}
+
+/// Complex inverse hyperbolic tangent for binary128 — port of glibc's s_catanh
+/// template. Self-contained on byte-exact log/log1p/hypot/atan2/x2y2m1 →
+/// byte-exact, including the full inf/NaN/zero lattice and the large-operand and
+/// near-unit-circle precision branches.
+#[allow(clippy::excessive_precision)]
+fn catanh_f128(z: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS = 2^116
+    const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS*EPS = 2^-224
+    const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2 = 2^-113
+    let rx = z.re;
+    let ix = z.im;
+
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = (0.0f128).copysign(rx);
+            im = PI_2.copysign(ix);
+        } else if rx.is_infinite() || rx == 0.0 {
+            re = (0.0f128).copysign(rx);
+            im = if !ix.is_nan() {
+                PI_2.copysign(ix)
+            } else {
+                f128::NAN
+            };
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return z;
+    }
+
+    let re;
+    let im;
+    if rx.abs() >= INV16EPS || ix.abs() >= INV16EPS {
+        im = PI_2.copysign(ix);
+        re = if ix.abs() <= 1.0 {
+            1.0 / rx
+        } else if rx.abs() <= 1.0 {
+            rx / ix / ix
+        } else {
+            let h = hypot_f128(rx / 2.0, ix / 2.0);
+            rx / h / h / 4.0
+        };
+    } else {
+        if rx.abs() == 1.0 && ix.abs() < EPS2 {
+            re = (0.5f128).copysign(rx) * (LN2 - logl_f128(ix.abs()));
+        } else {
+            let i2 = if ix.abs() >= EPS2 { ix * ix } else { 0.0 };
+            let mut num = 1.0 + rx;
+            num = i2 + num * num;
+            let den = 1.0 - rx;
+            let den = i2 + den * den;
+            let f = num / den;
+            if f < 0.5 {
+                re = 0.25 * logl_f128(f);
+            } else {
+                let num4 = 4.0 * rx;
+                re = 0.25 * log1pl_f128(num4 / den);
+            }
+        }
+        let mut absx = rx.abs();
+        let mut absy = ix.abs();
+        if absx < absy {
+            core::mem::swap(&mut absx, &mut absy);
+        }
+        let den_i = if absy < EPS_HALF {
+            let d = (1.0 - absx) * (1.0 + absx);
+            if d == 0.0 { 0.0 } else { d } // glibc canonicalizes -0 → +0 here only
+        } else if absx >= 1.0 {
+            (1.0 - absx) * (1.0 + absx) - absy * absy
+        } else if absx >= 0.75 || absy >= 0.5 {
+            -x2y2m1_f128(absx, absy)
+        } else {
+            (1.0 - absx) * (1.0 + absx) - absy * absy
+        };
+        im = 0.5 * atan2_f128(2.0 * ix, den_i);
+    }
+    CFloat128Complex { re, im }
+}
+
+/// Shared kernel for complex inverse sine/cosine (binary128) — verbatim port of
+/// glibc's `__kernel_casinh` (k_casinh_template.c): reduce to the first quadrant
+/// and compute casinh via many precision-preserving branches built on
+/// log/log1p/hypot/sqrt/atan2/clog/csqrt (all byte-exact). `adj` selects the
+/// real-axis-adjusted variant used by casin/cacos/cacosh. Byte-exact.
+#[allow(clippy::excessive_precision)]
+fn kernel_casinh_f128(x: CFloat128Complex, adj: bool) -> CFloat128Complex {
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const INV_EPS: f128 = f128::from_bits(16495u128 << 112); // 1/EPS = 2^112
+    const EPS_8: f128 = f128::from_bits(16268u128 << 112); // EPS/8 = 2^-115
+    const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS² = 2^-224
+    let imx = x.im; // original signed imaginary part
+    let rx = x.re.abs();
+    let ix = x.im.abs();
+    let rre: f128;
+    let rim: f128;
+
+    if rx >= INV_EPS || ix >= INV_EPS {
+        let (mut yre, mut yim) = (rx, ix);
+        if adj {
+            let t = yre;
+            yre = yim.copysign(imx);
+            yim = t;
+        }
+        let r = clog_f128(CFloat128Complex { re: yre, im: yim });
+        rre = r.re + LN2;
+        rim = r.im;
+    } else if rx >= 0.5 && ix < EPS_8 {
+        let s = hypot_f128(1.0, rx);
+        rre = logl_f128(rx + s);
+        rim = if adj {
+            atan2_f128(s, imx)
+        } else {
+            atan2_f128(ix, s)
+        };
+    } else if rx < EPS_8 && ix >= 1.5 {
+        let s = ((ix + 1.0) * (ix - 1.0)).sqrt();
+        rre = logl_f128(ix + s);
+        rim = if adj {
+            atan2_f128(rx, s.copysign(imx))
+        } else {
+            atan2_f128(s, rx)
+        };
+    } else if ix > 1.0 && ix < 1.5 && rx < 0.5 {
+        if rx < EPS2 {
+            let ix2m1 = (ix + 1.0) * (ix - 1.0);
+            let s = ix2m1.sqrt();
+            rre = log1pl_f128(2.0 * (ix2m1 + ix * s)) / 2.0;
+            rim = if adj {
+                atan2_f128(rx, s.copysign(imx))
+            } else {
+                atan2_f128(s, rx)
+            };
+        } else {
+            let ix2m1 = (ix + 1.0) * (ix - 1.0);
+            let rx2 = rx * rx;
+            let f = rx2 * (2.0 + rx2 + 2.0 * ix * ix);
+            let d = (ix2m1 * ix2m1 + f).sqrt();
+            let dp = d + ix2m1;
+            let dm = f / dp;
+            let r1 = ((dm + rx2) / 2.0).sqrt();
+            let r2 = rx * ix / r1;
+            rre = log1pl_f128(rx2 + dp + 2.0 * (rx * r1 + ix * r2)) / 2.0;
+            rim = if adj {
+                atan2_f128(rx + r1, (ix + r2).copysign(imx))
+            } else {
+                atan2_f128(ix + r2, rx + r1)
+            };
+        }
+    } else if ix == 1.0 && rx < 0.5 {
+        if rx < EPS_8 {
+            rre = log1pl_f128(2.0 * (rx + rx.sqrt())) / 2.0;
+            rim = if adj {
+                atan2_f128(rx.sqrt(), (1.0f128).copysign(imx))
+            } else {
+                atan2_f128(1.0, rx.sqrt())
+            };
+        } else {
+            let d = rx * (4.0 + rx * rx).sqrt();
+            let s1 = ((d + rx * rx) / 2.0).sqrt();
+            let s2 = ((d - rx * rx) / 2.0).sqrt();
+            rre = log1pl_f128(rx * rx + d + 2.0 * (rx * s1 + s2)) / 2.0;
+            rim = if adj {
+                atan2_f128(rx + s1, (1.0 + s2).copysign(imx))
+            } else {
+                atan2_f128(1.0 + s2, rx + s1)
+            };
+        }
+    } else if ix < 1.0 && rx < 0.5 {
+        if ix >= EPS {
+            if rx < EPS2 {
+                let onemix2 = (1.0 + ix) * (1.0 - ix);
+                let s = onemix2.sqrt();
+                rre = log1pl_f128(2.0 * rx / s) / 2.0;
+                rim = if adj {
+                    atan2_f128(s, imx)
+                } else {
+                    atan2_f128(ix, s)
+                };
+            } else {
+                let onemix2 = (1.0 + ix) * (1.0 - ix);
+                let rx2 = rx * rx;
+                let f = rx2 * (2.0 + rx2 + 2.0 * ix * ix);
+                let d = (onemix2 * onemix2 + f).sqrt();
+                let dp = d + onemix2;
+                let dm = f / dp;
+                let r1 = ((dp + rx2) / 2.0).sqrt();
+                let r2 = rx * ix / r1;
+                rre = log1pl_f128(rx2 + dm + 2.0 * (rx * r1 + ix * r2)) / 2.0;
+                rim = if adj {
+                    atan2_f128(rx + r1, (ix + r2).copysign(imx))
+                } else {
+                    atan2_f128(ix + r2, rx + r1)
+                };
+            }
+        } else {
+            let s = hypot_f128(1.0, rx);
+            rre = log1pl_f128(2.0 * rx * (rx + s)) / 2.0;
+            rim = if adj {
+                atan2_f128(s, imx)
+            } else {
+                atan2_f128(ix, s)
+            };
+        }
+    } else {
+        let yre0 = (rx - ix) * (rx + ix) + 1.0;
+        let yim0 = 2.0 * rx * ix;
+        let ys = csqrt_f128(CFloat128Complex { re: yre0, im: yim0 });
+        let (mut yre, mut yim) = (ys.re + rx, ys.im + ix);
+        if adj {
+            let t = yre;
+            yre = yim.copysign(imx);
+            yim = t;
+        }
+        let r = clog_f128(CFloat128Complex { re: yre, im: yim });
+        rre = r.re;
+        rim = r.im;
+    }
+
+    CFloat128Complex {
+        re: rre.copysign(x.re),
+        im: rim.copysign(if adj { 1.0 } else { imx }),
+    }
+}
+
+/// Complex inverse hyperbolic sine — glibc s_casinh dispatcher over the kernel.
+#[allow(clippy::excessive_precision)]
+fn casinh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PI_4: f128 = 0.785398163397448309615660845819875721049f128;
+    let rx = x.re;
+    let ix = x.im;
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = f128::INFINITY.copysign(rx);
+            im = if rx.is_nan() {
+                f128::NAN
+            } else {
+                (if rx.is_infinite() { PI_4 } else { PI_2 }).copysign(ix)
+            };
+        } else if rx.is_nan() || rx.is_infinite() {
+            re = rx;
+            im = if (rx.is_infinite() && !ix.is_nan() && !ix.is_infinite())
+                || (rx.is_nan() && ix == 0.0)
+            {
+                (0.0f128).copysign(ix)
+            } else {
+                f128::NAN
+            };
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return x;
+    }
+    kernel_casinh_f128(x, false)
+}
+
+/// Complex inverse sine — glibc s_casin: casin(z) = via casinh(-i z) rotated.
+#[allow(clippy::excessive_precision)]
+fn casin_f128(x: CFloat128Complex) -> CFloat128Complex {
+    let rx = x.re;
+    let ix = x.im;
+    if rx.is_nan() || ix.is_nan() {
+        if rx == 0.0 {
+            return x;
+        } else if rx.is_infinite() || ix.is_infinite() {
+            return CFloat128Complex {
+                re: f128::NAN,
+                im: f128::INFINITY.copysign(ix),
+            };
+        } else {
+            return CFloat128Complex {
+                re: f128::NAN,
+                im: f128::NAN,
+            };
+        }
+    }
+    let y = casinh_f128(CFloat128Complex { re: -ix, im: rx });
+    CFloat128Complex {
+        re: y.im,
+        im: -y.re,
+    }
+}
+
+/// Complex inverse hyperbolic cosine — glibc s_cacosh dispatcher over the kernel.
+#[allow(clippy::excessive_precision)]
+fn cacosh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PI_4: f128 = 0.785398163397448309615660845819875721049f128;
+    let rx = x.re;
+    let ix = x.im;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = f128::INFINITY;
+            im = if rx.is_nan() {
+                f128::NAN
+            } else if rx.is_infinite() {
+                (if rx < 0.0 { PI - PI_4 } else { PI_4 }).copysign(ix)
+            } else {
+                PI_2.copysign(ix)
+            };
+        } else if rx.is_infinite() {
+            re = f128::INFINITY;
+            im = if !ix.is_nan() && !ix.is_infinite() {
+                (if sb(rx) { PI } else { 0.0 }).copysign(ix)
+            } else {
+                f128::NAN
+            };
+        } else {
+            re = f128::NAN;
+            im = if rx == 0.0 { PI_2 } else { f128::NAN };
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return CFloat128Complex {
+            re: 0.0,
+            im: PI_2.copysign(ix),
+        };
+    }
+    let y = kernel_casinh_f128(CFloat128Complex { re: -ix, im: rx }, true);
+    if sb(ix) {
+        CFloat128Complex {
+            re: y.re,
+            im: -y.im,
+        }
+    } else {
+        CFloat128Complex {
+            re: -y.re,
+            im: y.im,
+        }
+    }
+}
+
+/// Complex inverse cosine — glibc s_cacos: PI/2 - casin(z) on the special path,
+/// else via the kernel.
+#[allow(clippy::excessive_precision)]
+fn cacos_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    let rx = x.re;
+    let ix = x.im;
+    let nan_or_inf = rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite();
+    if nan_or_inf || (rx == 0.0 && ix == 0.0) {
+        let y = casin_f128(x);
+        let mut re = PI_2 - y.re;
+        if re == 0.0 {
+            re = 0.0;
+        }
+        return CFloat128Complex { re, im: -y.im };
+    }
+    let y = kernel_casinh_f128(CFloat128Complex { re: -ix, im: rx }, true);
+    CFloat128Complex { re: y.im, im: y.re }
+}
+
+/// Complex inverse tangent for binary128 — port of glibc's s_catan template
+/// (the re↔im mirror of catanh). Self-contained on byte-exact
+/// log/log1p/hypot/atan2/x2y2m1 → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn catan_f128(z: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS
+    const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS²
+    const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2
+    let rx = z.re;
+    let ix = z.im;
+
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if rx.is_infinite() {
+            re = PI_2.copysign(rx);
+            im = (0.0f128).copysign(ix);
+        } else if ix.is_infinite() {
+            re = if !rx.is_nan() {
+                PI_2.copysign(rx)
+            } else {
+                f128::NAN
+            };
+            im = (0.0f128).copysign(ix);
+        } else if ix == 0.0 {
+            re = f128::NAN;
+            im = (0.0f128).copysign(ix);
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return z;
+    }
+
+    let re;
+    let im;
+    if rx.abs() >= INV16EPS || ix.abs() >= INV16EPS {
+        re = PI_2.copysign(rx);
+        im = if rx.abs() <= 1.0 {
+            1.0 / ix
+        } else if ix.abs() <= 1.0 {
+            ix / rx / rx
+        } else {
+            let h = hypot_f128(rx / 2.0, ix / 2.0);
+            ix / h / h / 4.0
+        };
+    } else {
+        let mut absx = rx.abs();
+        let mut absy = ix.abs();
+        if absx < absy {
+            core::mem::swap(&mut absx, &mut absy);
+        }
+        let den_a = if absy < EPS_HALF {
+            let d = (1.0 - absx) * (1.0 + absx);
+            if d == 0.0 { 0.0 } else { d }
+        } else if absx >= 1.0 {
+            (1.0 - absx) * (1.0 + absx) - absy * absy
+        } else if absx >= 0.75 || absy >= 0.5 {
+            -x2y2m1_f128(absx, absy)
+        } else {
+            (1.0 - absx) * (1.0 + absx) - absy * absy
+        };
+        re = 0.5 * atan2_f128(2.0 * rx, den_a);
+
+        if ix.abs() == 1.0 && rx.abs() < EPS2 {
+            im = (0.5f128).copysign(ix) * (LN2 - logl_f128(rx.abs()));
+        } else {
+            let r2 = if rx.abs() >= EPS2 { rx * rx } else { 0.0 };
+            let mut num = ix + 1.0;
+            num = r2 + num * num;
+            let den = ix - 1.0;
+            let den = r2 + den * den;
+            let f = num / den;
+            if f < 0.5 {
+                im = 0.25 * logl_f128(f);
+            } else {
+                let num4 = 4.0 * ix;
+                im = 0.25 * log1pl_f128(num4 / den);
+            }
+        }
+    }
+    CFloat128Complex { re, im }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanf32(z: CFloatComplex) -> CFloatComplex {
@@ -7239,8 +12667,8 @@ pub unsafe extern "C" fn ctanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctan(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ctanf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ctan(z) }
+pub unsafe extern "C" fn ctanf128(z: CFloat128Complex) -> CFloat128Complex {
+    ctan_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanhf32(z: CFloatComplex) -> CFloatComplex {
@@ -7259,8 +12687,8 @@ pub unsafe extern "C" fn ctanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctanh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ctanhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ctanh(z) }
+pub unsafe extern "C" fn ctanhf128(z: CFloat128Complex) -> CFloat128Complex {
+    ctanh_f128(z)
 }
 
 // --- complex binary → complex ---
@@ -7281,8 +12709,106 @@ pub unsafe extern "C" fn cpowf64x(a: CDoubleComplex, b: CDoubleComplex) -> CDoub
     unsafe { cpow(a, b) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cpowf128(a: CDoubleComplex, b: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cpow(a, b) }
+pub unsafe extern "C" fn cpowf128(a: CFloat128Complex, b: CFloat128Complex) -> CFloat128Complex {
+    // glibc s_cpow: cpow(x,c) = cexp(c * clog(x)). The complex product matches
+    // GCC's __multc3 (C99 Annex G inf/NaN recovery).
+    cexp_f128(cmul_multc3_f128(b, clog_f128(a)))
+}
+
+/// Complex multiply with C99 Annex G semantics (libgcc `__multc3`), so it is
+/// bit-identical to GCC's compiled `_Complex _Float128 *`.
+#[allow(clippy::excessive_precision)]
+fn cmul_multc3_f128(z: CFloat128Complex, w: CFloat128Complex) -> CFloat128Complex {
+    // x86 multiply: 0·inf yields the canonical negative qNaN (Rust gives +qNaN).
+    fn fmul(a: f128, b: f128) -> f128 {
+        if (a == 0.0 && b.is_infinite()) || (a.is_infinite() && b == 0.0) {
+            f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+        } else {
+            a * b
+        }
+    }
+    let mut a = z.re;
+    let mut b = z.im;
+    let mut c = w.re;
+    let mut d = w.im;
+    // NaN-sign-preserving combine: libgcc soft-float returns the NaN operand
+    // with its sign; Rust's f128 +/- canonicalizes to +qNaN, so do it by hand.
+    let neg_qnan = f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    let sgn = |v: f128| (v.to_bits() >> 127) != 0;
+    let sub_pres = |p: f128, q: f128| -> f128 {
+        if p.is_nan() {
+            p
+        } else if q.is_nan() {
+            q
+        } else if p.is_infinite() && q.is_infinite() && sgn(p) == sgn(q) {
+            neg_qnan // inf - inf
+        } else {
+            p - q
+        }
+    };
+    let add_pres = |p: f128, q: f128| -> f128 {
+        if p.is_nan() {
+            p
+        } else if q.is_nan() {
+            q
+        } else if p.is_infinite() && q.is_infinite() && sgn(p) != sgn(q) {
+            neg_qnan // inf + (-inf)
+        } else {
+            p + q
+        }
+    };
+    let ac = fmul(a, c);
+    let bd = fmul(b, d);
+    let ad = fmul(a, d);
+    let bc = fmul(b, c);
+    let mut x = sub_pres(ac, bd);
+    let mut y = add_pres(ad, bc);
+    if x.is_nan() && y.is_nan() {
+        let mut recalc = false;
+        if a.is_infinite() || b.is_infinite() {
+            a = (if a.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(a);
+            b = (if b.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(b);
+            if c.is_nan() {
+                c = (0.0f128).copysign(c);
+            }
+            if d.is_nan() {
+                d = (0.0f128).copysign(d);
+            }
+            recalc = true;
+        }
+        if c.is_infinite() || d.is_infinite() {
+            c = (if c.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(c);
+            d = (if d.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(d);
+            if a.is_nan() {
+                a = (0.0f128).copysign(a);
+            }
+            if b.is_nan() {
+                b = (0.0f128).copysign(b);
+            }
+            recalc = true;
+        }
+        if !recalc && (ac.is_infinite() || bd.is_infinite() || ad.is_infinite() || bc.is_infinite())
+        {
+            if a.is_nan() {
+                a = (0.0f128).copysign(a);
+            }
+            if b.is_nan() {
+                b = (0.0f128).copysign(b);
+            }
+            if c.is_nan() {
+                c = (0.0f128).copysign(c);
+            }
+            if d.is_nan() {
+                d = (0.0f128).copysign(d);
+            }
+            recalc = true;
+        }
+        if recalc {
+            x = fmul(f128::INFINITY, a * c - b * d);
+            y = fmul(f128::INFINITY, a * d + b * c);
+        }
+    }
+    CFloat128Complex { re: x, im: y }
 }
 
 // =========================================================================
@@ -7310,11 +12836,29 @@ macro_rules! finite_unary_f32 {
     };
 }
 
+macro_rules! finite_unary_f128 {
+    ($name:ident, $target:path) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(x: f128) -> f128 {
+            unsafe { $target(x) }
+        }
+    };
+}
+
 macro_rules! finite_binary_f64 {
     ($name:ident, $target:path) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name(x: f64, y: f64) -> f64 {
             $target(x, y)
+        }
+    };
+}
+
+macro_rules! finite_binary_f128 {
+    ($name:ident, $target:path) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(x: f128, y: f128) -> f128 {
+            unsafe { $target(x, y) }
         }
     };
 }
