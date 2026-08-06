@@ -33,6 +33,23 @@ success** — one line, revert, next lever, no retraction narrative.
 Note: the null-gate straddle defect was FOUND here, and the standard the suite now uses for a
 legitimate gate fix is the one this repo set. Hold to it.
 
+### Closing a bead marked "BLOCKER: superseded by `<sha>`" — DO NOT trust the comment
+
+A comment sweep on 2026-08-04 attached `BLOCKER: superseded by <sha>` to many open beads. **Four of
+the first seven audited were wrong** (bd-02gcfy has the per-bead breakdown). Two named fixes that
+had since been silently deleted; one named a gate belonging to a different bead; one named coverage
+too weak to catch a defect that was still live. Before closing on such a comment:
+
+1. **Read the source at HEAD.** A function can survive while a rule inside it was deleted — that is
+   exactly what happened to `syslog`'s setlogmask filter (bd-c7cs3h).
+2. **Open the cited gate** and confirm it drives *this* behaviour, not a neighbouring one.
+3. **If the source is right but nothing could fail on the original bug, the bead is not done** —
+   write the gate, then close on it.
+
+Two commits on 2026-06-26 (`e634aff2a`, `bd829b12f`) silently deleted ~1300 lines of unrelated
+shipped work, including tests; that is why the sweep's premises decayed. `git log -S '<expression>'
+-- <file>` names the adding and deleting commit in one command. See bd-bldxfy.
+
 ---
 
 ## RULE NUMBER 1: NO FILE DELETION
