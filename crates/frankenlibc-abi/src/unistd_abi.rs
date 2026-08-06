@@ -3345,6 +3345,22 @@ fn syslog_connect() -> c_int {
 }
 
 fn syslog_send(priority: c_int, message: &[u8]) {
+    // glibc filters by the setlogmask() priority mask: a message whose level
+    // bit is not set is dropped — (LOG_MASK(LOG_PRI(pri)) & mask) == 0 -> ignore.
+    // fl stored the mask in setlogmask() but never consulted it here. bd-c7cs3h.
+    //
+    // This lives in syslog_send rather than in syslog()/vsyslog() so both share
+    // it, mirroring glibc, where both funnel through __vsyslog_internal. Checked
+    // before the state lock and before any I/O: a filtered message must not even
+    // open the socket.
+    //
+    // Restored after a silent regression — see the gate in
+    // tests/conformance_diff_syslog_mask.rs for why this needs one.
+    let mask = SYSLOG_MASK.load(std::sync::atomic::Ordering::Relaxed);
+    if (1i32 << (priority & 0x07)) & mask == 0 {
+        return;
+    }
+
     let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
 
     let level = priority & 0x07;
