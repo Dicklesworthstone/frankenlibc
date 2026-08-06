@@ -13793,16 +13793,28 @@ pub unsafe extern "C" fn getmntent_r(
             continue;
         }
 
-        // Pack NUL-terminated strings into caller buffer.
+        // Pack NUL-terminated strings into caller buffer, decoding glibc's
+        // mount-table escapes on the way in.
+        //
+        // getmntent_r unescapes \040 space, \011 tab, \012 newline and \134
+        // backslash in every string field, so a mount point may contain
+        // whitespace; anything else (including a backslash before a
+        // non-matching triplet such as \054) is copied verbatim. fl packed the
+        // raw field, so callers saw a literal "/tmp\040dir". bd-bacmxe.
+        //
+        // Decoded straight into the caller's buffer: unescaping only ever
+        // shrinks, so the `needed` bound computed from the raw lengths above
+        // stays a valid upper bound and no scratch allocation is required.
         let buf_u8 = buf as *mut u8;
         let mut off = 0usize;
         let mut pack = |bytes: &[u8]| -> *mut c_char {
             let p = unsafe { buf_u8.add(off) } as *mut c_char;
-            unsafe {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_u8.add(off), bytes.len());
-                *buf_u8.add(off + bytes.len()) = 0;
-            }
-            off += bytes.len() + 1;
+            // SAFETY: the `needed` check above proved `bytes.len() + 1` bytes
+            // remain from `off`, and the decoded form is never longer.
+            let dst = unsafe { std::slice::from_raw_parts_mut(buf_u8.add(off), bytes.len()) };
+            let n = frankenlibc_core::mntent::unescape_mntent_field(bytes, dst);
+            unsafe { *buf_u8.add(off + n) = 0 };
+            off += n + 1;
             p
         };
         let fsname_ptr = pack(fields.fsname);

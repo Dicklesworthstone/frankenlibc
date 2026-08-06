@@ -212,3 +212,77 @@ fn addmntent_encode_matches_glibc() {
         "oracle encoded a space escape"
     );
 }
+
+/// addmntent -> getmntent_r must be the identity, including for every byte the
+/// escape table names (bd-bacmxe).
+///
+/// The two arms above each pin ONE direction against glibc, and a symmetric
+/// defect — escaping and unescaping the same wrong set — satisfies both while
+/// silently corrupting any caller that writes a table and reads it back. That
+/// is exactly the shape of the bug this bead fixed, where the unescape half was
+/// implemented in core but never wired into `getmntent_r`, so the encode arm
+/// passed while decode returned a literal `/tmp\040dir`.
+#[test]
+fn addmntent_getmntent_r_round_trip_is_identity() {
+    // Every escape in the table, plus the literal backslash-triplet that must
+    // NOT be treated as one.
+    let fsname = c"host:/p with space";
+    let dir = c"/m\ttab\nnl\\bs";
+    let mtype = c"nfs";
+    let opts = c"rw,lit=\\054,x";
+
+    let m = Mntent {
+        mnt_fsname: fsname.as_ptr() as *mut c_char,
+        mnt_dir: dir.as_ptr() as *mut c_char,
+        mnt_type: mtype.as_ptr() as *mut c_char,
+        mnt_opts: opts.as_ptr() as *mut c_char,
+        mnt_freq: 3,
+        mnt_passno: 4,
+    };
+
+    let path = tmp_path("rt_f");
+    let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    {
+        let s = unsafe { fl::setmntent(cpath.as_ptr(), c"w".as_ptr()) };
+        assert!(!s.is_null(), "setmntent(w) failed");
+        assert_eq!(unsafe { fl::addmntent(s, (&m as *const Mntent).cast()) }, 0);
+        unsafe { fl::endmntent(s) };
+    }
+
+    let got = read_fl(&cpath);
+    let raw = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+
+    let expect = (
+        cstr(fsname.as_ptr()),
+        cstr(dir.as_ptr()),
+        cstr(mtype.as_ptr()),
+        cstr(opts.as_ptr()),
+        3,
+        4,
+    );
+    assert_eq!(
+        got.len(),
+        1,
+        "round trip should yield exactly one entry, got {got:?}"
+    );
+    assert_eq!(
+        got[0], expect,
+        "addmntent -> getmntent_r lost or altered a field; on-disk line was {:?}",
+        String::from_utf8_lossy(&raw)
+    );
+
+    // The round trip must have gone THROUGH the escape layer, not trivially
+    // succeeded because the writer emitted the bytes verbatim — a file with a
+    // raw space or newline in a field cannot be parsed back correctly at all.
+    assert!(
+        raw.windows(4).any(|w| w == b"\\040"),
+        "the on-disk line should carry an escaped space, got {:?}",
+        String::from_utf8_lossy(&raw)
+    );
+    assert!(
+        raw.windows(4).any(|w| w == b"\\012"),
+        "the on-disk line should carry an escaped newline, got {:?}",
+        String::from_utf8_lossy(&raw)
+    );
+}
