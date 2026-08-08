@@ -18050,7 +18050,10 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
         unsafe {
             *ptrs = name_ptr; // s_name
             *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // s_aliases
-            *(buf.add(16) as *mut c_int) = (entry.port as c_int).to_be(); // s_port (NBO)
+            // s_port (NBO). Swap as u16 THEN widen: `(port as c_int).to_be()` is a
+            // 32-bit swap, which turns port 1 into 0x01000000 (16777216) instead of
+            // htons(1) = 0x0100 (256). See bd-5zait2.
+            *(buf.add(16) as *mut c_int) = entry.port.to_be() as c_int;
             *(buf.add(24) as *mut *mut c_char) = proto_ptr; // s_proto
         }
 
@@ -26141,8 +26144,6 @@ pub unsafe extern "C" fn getservent_r(
 
             // Pack into caller-supplied buffer: name + protocol + aligned NULL alias ptr.
             let effective_buflen = tracked_output_capacity(buf, buflen);
-            let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-            let alias_ptr_align = core::mem::align_of::<*mut c_char>();
             let name_end = match entry.name.len().checked_add(1) {
                 Some(offset) => offset,
                 None => return libc::ERANGE,
@@ -26154,15 +26155,7 @@ pub unsafe extern "C" fn getservent_r(
                 Some(offset) => offset,
                 None => return libc::ERANGE,
             };
-            let alias_off = match aligned_output_offset(buf, proto_end, alias_ptr_align) {
-                Some(offset) => offset,
-                None => return libc::ERANGE,
-            };
-            let total_needed = match alias_off.checked_add(alias_ptr_size) {
-                Some(needed) => needed,
-                None => return libc::ERANGE,
-            };
-            if total_needed > effective_buflen {
+            if proto_end > effective_buflen {
                 return libc::ERANGE;
             }
 
@@ -26184,14 +26177,28 @@ pub unsafe extern "C" fn getservent_r(
                 *buf_u8.add(name_end + entry.protocol.len()) = 0;
             }
 
-            let aliases_ptr = unsafe { buf_u8.add(alias_off) } as *mut *mut c_char;
-            unsafe { *aliases_ptr = std::ptr::null_mut() };
+            // Pack the real aliases after the name/proto strings, the same way
+            // fill_protoent_r does. This previously wrote a bare NULL list, so
+            // s_aliases came back empty for every entry — glibc reports e.g.
+            // discard/tcp with ["sink", "null"] (bd-5zait2).
+            let aliases_ptr = match unsafe {
+                crate::inet_abi::pack_caller_aliases(
+                    buf,
+                    effective_buflen,
+                    proto_end,
+                    &entry.aliases,
+                )
+            } {
+                Some(p) => p,
+                None => return libc::ERANGE,
+            };
 
             let ent = result_buf.cast::<libc::servent>();
             unsafe {
                 (*ent).s_name = name_ptr;
                 (*ent).s_aliases = aliases_ptr;
-                (*ent).s_port = (entry.port as c_int).to_be();
+                // Swap as u16 THEN widen; see the note in `serv_iter_next` (bd-5zait2).
+                (*ent).s_port = entry.port.to_be() as c_int;
                 (*ent).s_proto = proto_ptr;
             }
 

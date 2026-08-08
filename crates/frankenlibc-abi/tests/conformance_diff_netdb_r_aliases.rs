@@ -240,10 +240,21 @@ fn servent_reentrant_matches_glibc() {
     }
     unsafe { flu::endservent() };
     if flist != glist {
+        // Report the FIRST differing entry, not just the lengths: the two lists
+        // can be the same length and still diverge entry-for-entry, in which case
+        // a length-only message says nothing about what is wrong (bd-5zait2).
+        let first_diff = flist
+            .iter()
+            .zip(glist.iter())
+            .enumerate()
+            .find(|(_, (f, g))| f != g)
+            .map(|(i, (f, g))| format!("\n  first differing index {i}:\n    fl:    {f:?}\n    glibc: {g:?}"))
+            .unwrap_or_default();
         mismatches.push(format!(
-            "getservent_r enumeration diverged: fl_len={} glibc_len={}",
+            "getservent_r enumeration diverged: fl_len={} glibc_len={}{}",
             flist.len(),
-            glist.len()
+            glist.len(),
+            first_diff
         ));
     }
 
