@@ -574,7 +574,7 @@ pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
     let had_inexact = exact_op_inexact_guard();
     let out = binary_entry(x, y, 6, frankenlibc_core::math::fmod);
     exact_op_clear_inexact(had_inexact);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    if remainder_family_domain_error(x, y) {
         set_domain_errno();
     }
     out
@@ -585,7 +585,7 @@ pub unsafe extern "C" fn remainder(x: f64, y: f64) -> f64 {
     let had_inexact = exact_op_inexact_guard();
     let out = binary_entry(x, y, 6, frankenlibc_core::math::remainder);
     exact_op_clear_inexact(had_inexact);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    if remainder_family_domain_error(x, y) {
         set_domain_errno();
     }
     out
@@ -725,7 +725,14 @@ pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdim(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::fdim(x, y)
+    let out = frankenlibc_core::math::fdim(x, y);
+    // x - y can overflow from two finite operands (fdim(1e308, -1e308)); glibc
+    // reports ERANGE. An infinite OPERAND is not an overflow, so both must be
+    // finite for this to be a range error.
+    if out.is_infinite() && x.is_finite() && y.is_finite() {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -795,7 +802,9 @@ pub unsafe extern "C" fn scalbln(x: f64, n: i64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::nextafter(x, y)
+    let out = frankenlibc_core::math::nextafter(x, y);
+    nextafter_range_errno(x, out, f64::MIN_POSITIVE);
+    out
 }
 
 /// C99 `nexttoward`: next representable f64 toward a long-double direction.
@@ -805,7 +814,9 @@ pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
     unsafe(no_mangle)
 )]
 pub unsafe extern "C" fn nexttoward(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::nexttoward(x, y)
+    let out = frankenlibc_core::math::nexttoward(x, y);
+    nextafter_range_errno(x, out, f64::MIN_POSITIVE);
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -815,9 +826,10 @@ pub unsafe extern "C" fn ilogb(x: f64) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logb(x: f64) -> f64 {
-    if x == 0.0 {
-        set_range_errno(); // pole error: logb(0) = -Infinity
-    }
+    // NO errno. logb(0) = -inf is a pole, but glibc reports it through
+    // FE_DIVBYZERO alone and leaves errno untouched — C99 logb has no SVID
+    // errno wrapper. The flag itself is raised in core, so dropping the errno
+    // here does not weaken the pole signal.
     frankenlibc_core::math::logb(x)
 }
 
@@ -834,9 +846,9 @@ pub unsafe extern "C" fn remquo(x: f64, y: f64, quo: *mut c_int) -> f64 {
         // SAFETY: caller guarantees `quo` points to valid writable `int`.
         unsafe { *quo = q };
     }
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
-        set_domain_errno();
-    }
+    // NO errno, deliberately. Unlike fmod/remainder (SVID functions carrying an
+    // errno wrapper), C99 remquo has no wrapper in glibc: it sets errno on no
+    // input whatsoever and reports domain cases through FE_INVALID alone.
     rem
 }
 
@@ -911,18 +923,14 @@ pub unsafe extern "C" fn jn(n: c_int, x: f64) -> f64 {
 pub unsafe extern "C" fn y0(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y0);
     // y0(x) for x <= 0 is domain error
-    if x <= 0.0 && x.is_finite() {
-        set_domain_errno();
-    }
+    bessel_y_errno(x.into());
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y1);
-    if x <= 0.0 && x.is_finite() {
-        set_domain_errno();
-    }
+    bessel_y_errno(x.into());
     out
 }
 
@@ -938,9 +946,7 @@ pub unsafe extern "C" fn yn(n: c_int, x: f64) -> f64 {
         0,
     );
     let raw = frankenlibc_core::math::yn(n, x);
-    if x <= 0.0 && x.is_finite() {
-        set_domain_errno();
-    }
+    bessel_y_errno(x.into());
     runtime_policy::observe(
         ApiFamily::MathFenv,
         decision.profile,
@@ -966,7 +972,7 @@ pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
     let had_inexact = exact_op_inexact_guard();
     let out = binary_entry(x, y, 6, frankenlibc_core::math::drem);
     exact_op_clear_inexact(had_inexact);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    if remainder_family_domain_error(x, y) {
         set_domain_errno();
     }
     out
@@ -1253,7 +1259,7 @@ pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
     let had_inexact = exact_op_inexact_guard();
     let out = binary_entry_f32(x, y, 6, frankenlibc_core::math::fmodf);
     exact_op_clear_inexact(had_inexact);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    if remainder_family_domain_error_f32(x, y) {
         set_domain_errno();
     }
     out
@@ -1346,11 +1352,8 @@ pub unsafe extern "C" fn log1pf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logbf(x: f32) -> f32 {
-    let out = unary_entry_f32(x, 4, frankenlibc_core::math::logbf);
-    if x == 0.0 {
-        set_range_errno();
-    }
-    out
+    // NO errno — see logb.
+    unary_entry_f32(x, 4, frankenlibc_core::math::logbf)
 }
 
 // --- Special functions f32 ---
@@ -1497,7 +1500,7 @@ pub unsafe extern "C" fn remainderf(x: f32, y: f32) -> f32 {
     let had_inexact = exact_op_inexact_guard();
     let out = binary_entry_f32(x, y, 5, frankenlibc_core::math::remainderf);
     exact_op_clear_inexact(had_inexact);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    if remainder_family_domain_error_f32(x, y) {
         set_domain_errno();
     }
     out
@@ -1589,7 +1592,10 @@ pub unsafe extern "C" fn scalblnf(x: f32, n: c_long) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafterf(x: f32, y: f32) -> f32 {
-    binary_entry_f32(x, y, 3, frankenlibc_core::math::nextafterf)
+    let out = binary_entry_f32(x, y, 3, frankenlibc_core::math::nextafterf);
+    // f32 result, so the underflow threshold is f32's smallest normal.
+    nextafter_range_errno(x.into(), out.into(), f32::MIN_POSITIVE.into());
+    out
 }
 
 /// C99 `nexttowardf`: next representable f32 toward a long-double direction.
@@ -1598,7 +1604,9 @@ pub unsafe extern "C" fn nextafterf(x: f32, y: f32) -> f32 {
     unsafe(no_mangle)
 )]
 pub unsafe extern "C" fn nexttowardf(x: f32, y: f64) -> f32 {
-    frankenlibc_core::math::nexttowardf(x, y)
+    let out = frankenlibc_core::math::nexttowardf(x, y);
+    nextafter_range_errno(x.into(), out.into(), f32::MIN_POSITIVE.into());
+    out
 }
 
 #[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
@@ -1686,9 +1694,7 @@ pub unsafe extern "C" fn remquof(x: f32, y: f32, quo: *mut c_int) -> f32 {
         // SAFETY: caller guarantees `quo` points to valid writable `int`.
         unsafe { *quo = q };
     }
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
-        set_domain_errno();
-    }
+    // NO errno — see remquo.
     rem
 }
 
@@ -1759,18 +1765,14 @@ pub unsafe extern "C" fn jnf(n: c_int, x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y0f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y0f);
-    if x <= 0.0 && x.is_finite() {
-        set_domain_errno();
-    }
+    bessel_y_errno(x.into());
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y1f);
-    if x <= 0.0 && x.is_finite() {
-        set_domain_errno();
-    }
+    bessel_y_errno(x.into());
     out
 }
 
@@ -1786,9 +1788,7 @@ pub unsafe extern "C" fn ynf(n: c_int, x: f32) -> f32 {
         0,
     );
     let raw = frankenlibc_core::math::ynf(n, x);
-    if x <= 0.0 && x.is_finite() {
-        set_domain_errno();
-    }
+    bessel_y_errno(x.into());
     runtime_policy::observe(
         ApiFamily::MathFenv,
         decision.profile,
@@ -1812,6 +1812,11 @@ pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
     let had_inexact = exact_op_inexact_guard();
     let out = binary_entry_f32(x, y, 4, frankenlibc_core::math::dremf);
     exact_op_clear_inexact(had_inexact);
+    // dremf is remainderf under its SVID name and owes the same EDOM; it was
+    // setting errno on no input at all.
+    if remainder_family_domain_error_f32(x, y) {
+        set_domain_errno();
+    }
     out
 }
 
@@ -5619,6 +5624,72 @@ fn exact_op_inexact_guard() -> c_int {
 fn exact_op_clear_inexact(had_inexact: c_int) {
     if had_inexact == 0 {
         unsafe { feclearexcept(FE_INEXACT_BIT) };
+    }
+}
+
+/// glibc's EDOM rule for the fmod/remainder/drem family: a genuine domain error
+/// is x infinite OR y zero, with NEITHER operand NaN.
+///
+/// The older form, `y == 0.0 || (x.is_infinite() && y.is_finite())`, is wrong in
+/// both directions. It MISSES `fmod(±inf, ±inf)` because it demands y finite,
+/// and it WRONGLY fires for `fmod(NaN, 0)` — a NaN operand must leave errno
+/// untouched, since the NaN result is propagation rather than a domain error.
+///
+/// This rule was shipped once and reverted by 517d0a233 along with the
+/// FE_INEXACT guard above; restored under bd-xkpa5i. Pinned by
+/// conformance_math_errno.
+#[inline]
+fn remainder_family_domain_error(x: f64, y: f64) -> bool {
+    !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0)
+}
+
+/// f32 counterpart of [`remainder_family_domain_error`].
+#[inline]
+fn remainder_family_domain_error_f32(x: f32, y: f32) -> bool {
+    !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0)
+}
+
+/// ERANGE for the nextafter/nexttoward family, whose result steps one
+/// representable value and can leave the normal range in either direction.
+///
+/// `stepped` is the result widened to f64, `from` the starting value widened
+/// the same way; `tiny` is the smallest positive NORMAL of the RESULT's type,
+/// so an f32 result is judged against f32's threshold rather than f64's.
+///
+/// Two exemptions, both load-bearing and both exercised by the gate:
+///   - `from == 0.0`: glibc early-returns before any errno handling, so growing
+///     out of zero into the smallest subnormal is NOT an underflow.
+///     `nextafter(0, 1)` must leave errno at 0.
+///   - `stepped == from`: x == y returns y early, likewise with no errno.
+/// A naive "result is subnormal -> ERANGE" rule violates the first of these.
+#[inline]
+fn nextafter_range_errno(from: f64, stepped: f64, tiny: f64) {
+    if from == 0.0 || !from.is_finite() || stepped.is_nan() || stepped == from {
+        return;
+    }
+    if stepped.is_infinite() || stepped.abs() < tiny {
+        set_range_errno();
+    }
+}
+
+/// errno for the second-kind Bessel functions y0/y1/yn and their f32 siblings.
+///
+/// x == 0 is a POLE, not a domain error: the result is -inf, which is a RANGE
+/// error (ERANGE). Only x < 0 is outside the domain (EDOM). The previous guard
+/// collapsed both into `x <= 0.0 -> EDOM`, so every y*(0) reported the wrong
+/// errno. Pinned by conformance_math_errno (bd-rfy5fv).
+///
+/// f32 callers widen with `.into()`, which is exact and preserves the sign,
+/// zero-ness and finiteness this classification depends on.
+#[inline]
+fn bessel_y_errno(x: f64) {
+    if !x.is_finite() {
+        return;
+    }
+    if x == 0.0 {
+        set_range_errno();
+    } else if x < 0.0 {
+        set_domain_errno();
     }
 }
 
