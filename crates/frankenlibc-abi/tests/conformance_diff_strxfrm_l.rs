@@ -44,9 +44,16 @@ fn strxfrm_l_matches_glibc() {
                 )
             };
             assert_eq!(f, g, "strxfrm_l({s:?}, n={n}) return");
-            // Buffer is only determinate when the full result + NUL fit (return
-            // < n). When n <= src len the C standard leaves dest indeterminate.
-            if n > s.len() {
+            // Buffer is determinate exactly when the transform plus its NUL fit,
+            // i.e. when the RETURN is < n (C17 7.24.4.5p3: if the return is >= n,
+            // the contents of dest are indeterminate). Gate on the measured return
+            // rather than on `n > s.len()`: those coincide only because this gate
+            // runs in the "C" locale, where the transform is the identity copy and
+            // the return happens to equal the source length. Keying on the return
+            // is the standard's own condition and stays correct if this gate is
+            // ever pointed at a locale whose transform expands or contracts.
+            // bd-8omwj4.
+            if g < n {
                 assert_eq!(fd, gd, "strxfrm_l({s:?}, n={n}) buffer");
             }
         }
@@ -79,8 +86,12 @@ fn wcsxfrm_l_matches_glibc() {
                 )
             };
             assert_eq!(f, g, "wcsxfrm_l({s:?}, n={n}) return");
-            // Determinate only when the result + NUL fit (return < n).
-            if n > s.chars().count() {
+            // Same determinacy rule as strxfrm_l above, keyed on the measured
+            // return rather than a character count (bd-8omwj4). For the wide form
+            // the proxy was doubly indirect: `s.chars().count()` is the number of
+            // scalar values in the Rust source string, not the wide-transform
+            // length the standard actually compares against n.
+            if g < n {
                 assert_eq!(fd, gd, "wcsxfrm_l({s:?}, n={n}) buffer");
             }
         }
