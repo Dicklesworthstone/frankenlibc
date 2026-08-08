@@ -18577,18 +18577,49 @@ fn with_host_iter_state<R>(callback: impl FnOnce(&mut HostIterState) -> R) -> R 
     }
 }
 
-/// Parse address text into binary. Returns (address_bytes, af, length).
+/// glibc's **AF_INET view** of an `/etc/hosts` address field, as consumed by the
+/// `gethostent`/`gethostent_r` iterators. Returns (address_bytes, AF_INET, 4),
+/// or `None` for a line the iterator must SKIP.
 ///
-/// Thin shim over `frankenlibc_core::resolv::parse_addr_binary` that
-/// maps the typed `AddrFamily` enum into the `libc::AF_INET` /
-/// `AF_INET6` integer constants the call sites here expect.
-fn parse_addr_binary(addr_str: &str) -> Option<([u8; 16], c_int, c_int)> {
+/// This deliberately never yields `AF_INET6`. `gethostent` has no family
+/// argument, and glibc's files backend answers it in AF_INET only: the IPv6
+/// forms that carry an IPv4 meaning are folded down, and every other IPv6 line
+/// is skipped. `RES_USE_INET6`, the old switch that could change this, was
+/// REMOVED from glibc in 2.25, so there is no supported way to make the public
+/// iterator return AF_INET6. fl previously returned whatever family the line
+/// parsed as, so a stock Ubuntu /etc/hosts yielded 7 entries where glibc yields
+/// 3, with different `h_addrtype`/`h_length`. bd-cl3dw8.
+///
+/// Measured against live glibc `gethostent` AND `gethostent_r` over a
+/// bind-mounted synthetic hosts file (`bwrap --bind <file> /etc/hosts`); both
+/// produced byte-identical output:
+///   ::1, 0:0:0:0:0:0:0:1  -> 127.0.0.1      (IN6_IS_ADDR_LOOPBACK)
+///   ::ffff:1.2.3.4        -> 1.2.3.4        (IN6_IS_ADDR_V4MAPPED)
+///   ::ffff:0102:0304      -> 1.2.3.4        (same, hex spelling)
+///   ::1.2.3.4             -> SKIPPED        (v4-COMPATIBLE is not v4-mapped)
+///   ::0, ::ffff:0:a.b.c.d, 64:ff9b::a.b.c.d, fe80::1, 2001:db8::5 -> SKIPPED
+///
+/// This is the same rule `resolv_abi::next_hosts_ipv4_entry` applies for
+/// `_gethtent` (bd-79p18u); the two iterators must not disagree about what
+/// /etc/hosts contains.
+fn hosts_line_af_inet_addr(addr_str: &str) -> Option<([u8; 16], c_int, c_int)> {
     let (buf, fam, len) = frankenlibc_core::resolv::parse_addr_binary(addr_str)?;
-    let af = match fam {
-        frankenlibc_core::resolv::AddrFamily::Inet4 => libc::AF_INET,
-        frankenlibc_core::resolv::AddrFamily::Inet6 => libc::AF_INET6,
-    };
-    Some((buf, af, len as c_int))
+    match fam {
+        frankenlibc_core::resolv::AddrFamily::Inet4 => Some((buf, libc::AF_INET, len as c_int)),
+        frankenlibc_core::resolv::AddrFamily::Inet6 => {
+            let v6 = std::net::Ipv6Addr::from(buf);
+            // `to_ipv4_mapped` (not `to_ipv4`) is the one that excludes the
+            // v4-compatible form glibc skips.
+            let v4 = if v6.is_loopback() {
+                std::net::Ipv4Addr::LOCALHOST
+            } else {
+                v6.to_ipv4_mapped()?
+            };
+            let mut out = [0u8; 16];
+            out[..4].copy_from_slice(&v4.octets());
+            Some((out, libc::AF_INET, 4))
+        }
+    }
 }
 
 /// Parse the next hosts entry from the reader.
@@ -18628,7 +18659,7 @@ unsafe fn host_iter_next(state: &mut HostIterState) -> *mut c_void {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let (addr_bin, af, addr_len) = match parse_addr_binary(addr_str) {
+        let (addr_bin, af, addr_len) = match hosts_line_af_inet_addr(addr_str) {
             Some(v) => v,
             None => continue,
         };
@@ -25642,7 +25673,7 @@ pub unsafe extern "C" fn gethostent_r(
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let (addr_bin, af, addr_len) = match parse_addr_binary(addr_str) {
+            let (addr_bin, af, addr_len) = match hosts_line_af_inet_addr(addr_str) {
                 Some(v) => v,
                 None => continue,
             };

@@ -5224,3 +5224,110 @@ fn ipv6_loopback_line_becomes_127_0_0_1_in_both() {
         );
     }
 }
+
+// ===========================================================================
+// bd-cl3dw8 — the PUBLIC gethostent/gethostent_r must reproduce glibc's
+// AF_INET-only view of /etc/hosts, exactly as `_gethtent` does (bd-79p18u).
+//
+// fl used to emit whatever family each line parsed as, so a stock Ubuntu
+// /etc/hosts gave 7 entries (2 IPv4 + 5 IPv6) where glibc gives 3, with a
+// different h_addrtype and h_length. glibc's iterator has no family argument
+// and answers in AF_INET only; RES_USE_INET6, the switch that could once change
+// that, was removed from glibc in 2.25.
+// ===========================================================================
+
+/// Drain fl's public `gethostent` into (name, addrtype, length, ipv4-octets).
+fn fl_public_hostent_view() -> Vec<(String, c_int, c_int, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: single-threaded drain; each entry is read before the next call.
+    unsafe {
+        unistd_abi::sethostent(0);
+        loop {
+            let h = unistd_abi::gethostent().cast::<libc::hostent>();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            let mut octets = [0u8; 4];
+            let first = *(*h).h_addr_list;
+            assert!(!first.is_null(), "fl entry {name} has an empty address list");
+            let n = ((*h).h_length as usize).min(4);
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), n);
+            out.push((name, (*h).h_addrtype, (*h).h_length, octets));
+        }
+        unistd_abi::endhostent();
+    }
+    out
+}
+
+/// Same shape from host glibc.
+fn glibc_public_hostent_view() -> Vec<(String, c_int, c_int, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: as above, against host glibc.
+    unsafe {
+        sethostent(0);
+        loop {
+            let h = gethostent();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            let mut octets = [0u8; 4];
+            let first = *(*h).h_addr_list;
+            assert!(!first.is_null(), "glibc entry {name} has an empty address list");
+            let n = ((*h).h_length as usize).min(4);
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), n);
+            out.push((name, (*h).h_addrtype, (*h).h_length, octets));
+        }
+        endhostent();
+    }
+    out
+}
+
+#[test]
+fn public_gethostent_matches_glibc_af_inet_view() {
+    // Same lock as the _gethtent arms: fl honours the process-wide hosts
+    // override that with_resolver_backends installs, glibc does not.
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let glibc = glibc_public_hostent_view();
+    let fl = fl_public_hostent_view();
+
+    assert_eq!(
+        fl.len(),
+        glibc.len(),
+        "gethostent entry count diverged: fl={} glibc={}\n  fl:    {:?}\n  glibc: {:?}",
+        fl.len(),
+        glibc.len(),
+        fl,
+        glibc
+    );
+    assert_eq!(fl, glibc, "public gethostent diverged from glibc");
+
+    // Positive fact, independent of fl==glibc: glibc's iterator is AF_INET-only,
+    // so a joint regression to AF_INET6 still fails here.
+    for (name, af, len, _) in &glibc {
+        assert_eq!(*af, libc::AF_INET, "oracle: glibc entry {name} must be AF_INET");
+        assert_eq!(*len, 4, "oracle: glibc entry {name} must have h_length 4");
+    }
+    for (name, af, len, _) in &fl {
+        assert_eq!(*af, libc::AF_INET, "fl entry {name} must be AF_INET, not AF_INET6");
+        assert_eq!(*len, 4, "fl entry {name} must have h_length 4");
+    }
+}
+
+/// The two fl iterators must not disagree with each other about what
+/// /etc/hosts contains: `_gethtent` (bd-79p18u) and the public `gethostent`
+/// implement the same rule in different files, so they are pinned together.
+#[test]
+fn public_gethostent_agrees_with_gethtent() {
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let public: Vec<(String, [u8; 4])> = fl_public_hostent_view()
+        .into_iter()
+        .map(|(n, _, _, o)| (n, o))
+        .collect();
+    let private = fl_hosts_af_inet();
+    assert_eq!(
+        public, private,
+        "fl's public gethostent and private _gethtent disagree about /etc/hosts"
+    );
+}
