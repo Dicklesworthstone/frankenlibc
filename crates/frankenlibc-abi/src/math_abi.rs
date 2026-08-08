@@ -571,7 +571,9 @@ pub unsafe extern "C" fn rint(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
+    let had_inexact = exact_op_inexact_guard();
     let out = binary_entry(x, y, 6, frankenlibc_core::math::fmod);
+    exact_op_clear_inexact(had_inexact);
     if y == 0.0 || (x.is_infinite() && y.is_finite()) {
         set_domain_errno();
     }
@@ -580,7 +582,9 @@ pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remainder(x: f64, y: f64) -> f64 {
+    let had_inexact = exact_op_inexact_guard();
     let out = binary_entry(x, y, 6, frankenlibc_core::math::remainder);
+    exact_op_clear_inexact(had_inexact);
     if y == 0.0 || (x.is_infinite() && y.is_finite()) {
         set_domain_errno();
     }
@@ -823,7 +827,9 @@ pub unsafe extern "C" fn logb(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remquo(x: f64, y: f64, quo: *mut c_int) -> f64 {
+    let had_inexact = exact_op_inexact_guard();
     let (rem, q) = frankenlibc_core::math::remquo(x, y);
+    exact_op_clear_inexact(had_inexact);
     if !quo.is_null() {
         // SAFETY: caller guarantees `quo` points to valid writable `int`.
         unsafe { *quo = q };
@@ -957,7 +963,9 @@ pub unsafe extern "C" fn finite(x: f64) -> c_int {
 /// BSD `drem()` — alias for `remainder()`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
+    let had_inexact = exact_op_inexact_guard();
     let out = binary_entry(x, y, 6, frankenlibc_core::math::drem);
+    exact_op_clear_inexact(had_inexact);
     if y == 0.0 || (x.is_infinite() && y.is_finite()) {
         set_domain_errno();
     }
@@ -1231,7 +1239,9 @@ pub unsafe extern "C" fn truncf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
+    let had_inexact = exact_op_inexact_guard();
     let out = binary_entry_f32(x, y, 6, frankenlibc_core::math::fmodf);
+    exact_op_clear_inexact(had_inexact);
     if y == 0.0 || (x.is_infinite() && y.is_finite()) {
         set_domain_errno();
     }
@@ -1473,7 +1483,9 @@ pub unsafe extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remainderf(x: f32, y: f32) -> f32 {
+    let had_inexact = exact_op_inexact_guard();
     let out = binary_entry_f32(x, y, 5, frankenlibc_core::math::remainderf);
+    exact_op_clear_inexact(had_inexact);
     if y == 0.0 || (x.is_infinite() && y.is_finite()) {
         set_domain_errno();
     }
@@ -1656,7 +1668,9 @@ pub unsafe extern "C" fn __frankenlibc_nexttowardl_x86_64(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remquof(x: f32, y: f32, quo: *mut c_int) -> f32 {
+    let had_inexact = exact_op_inexact_guard();
     let (rem, q) = frankenlibc_core::math::remquof(x, y);
+    exact_op_clear_inexact(had_inexact);
     if !quo.is_null() {
         // SAFETY: caller guarantees `quo` points to valid writable `int`.
         unsafe { *quo = q };
@@ -1784,7 +1798,10 @@ pub unsafe extern "C" fn finitef(x: f32) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
-    binary_entry_f32(x, y, 4, frankenlibc_core::math::dremf)
+    let had_inexact = exact_op_inexact_guard();
+    let out = binary_entry_f32(x, y, 4, frankenlibc_core::math::dremf);
+    exact_op_clear_inexact(had_inexact);
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5548,6 +5565,29 @@ unsafe extern "C" {
     fn feraiseexcept(excepts: c_int) -> c_int;
     fn feclearexcept(excepts: c_int) -> c_int;
     fn fetestexcept(excepts: c_int) -> c_int;
+}
+
+/// fmod/remainder/remquo/drem are EXACT operations: they raise FE_INVALID on a
+/// domain error (y == 0 or x infinite) but must NEVER raise FE_INEXACT. fl's
+/// kernel/membrane can leave a spurious FE_INEXACT on the NaN-producing domain
+/// path (flags 0x21 where glibc gives 0x01), so the wrappers snapshot
+/// FE_INEXACT on entry and clear it iff the caller had not already set it.
+/// Pinned by conformance_diff_fmod_rem_flags.
+///
+/// Restored under bd-wq67e2: this pair and all eight of its call sites were
+/// deleted by 517d0a233 (670 insertions, 6914 deletions), whose message
+/// describes only what it added.
+#[inline]
+fn exact_op_inexact_guard() -> c_int {
+    let raised = unsafe { fetestexcept(FE_INEXACT_BIT) };
+    raised & FE_INEXACT_BIT
+}
+
+#[inline]
+fn exact_op_clear_inexact(had_inexact: c_int) {
+    if had_inexact == 0 {
+        unsafe { feclearexcept(FE_INEXACT_BIT) };
+    }
 }
 
 /// Set the FP exception state for the fromfp family to EXACTLY the caller's
