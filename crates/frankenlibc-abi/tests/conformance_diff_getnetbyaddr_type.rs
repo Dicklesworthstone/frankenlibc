@@ -1,11 +1,18 @@
 //! Differential gate for getnetbyaddr address-type matching vs glibc.
 //!
-//! glibc's files backend matches a /etc/networks entry only when BOTH
-//! `n_net == net` AND `n_addrtype == type`. Every entry parsed from
-//! /etc/networks carries `n_addrtype == AF_INET`, so a query with any
-//! other address family (AF_INET6, an arbitrary integer, 0) finds
+//! glibc's files backend matches a /etc/networks entry when `n_net == net`
+//! AND `(type == AF_UNSPEC || n_addrtype == type)`. Every entry parsed from
+//! /etc/networks carries `n_addrtype == AF_INET`, so AF_INET and AF_UNSPEC
+//! match while any other family (AF_INET6, an arbitrary integer) finds
 //! nothing and returns NULL. fl previously ignored the `type` argument
 //! entirely, so it returned a match for every type.
+//!
+//! CORRECTION: this header used to claim that type 0 also "finds nothing".
+//! That is wrong, and the claim survived because nothing measured it — 0 is
+//! AF_UNSPEC, a WILDCARD. Live glibc returns "link-local" for
+//! getnetbyaddr(0xa9fe0000, 0). A first fix written from the old comment
+//! rejected AF_UNSPEC and this gate caught it, which is the reason the type
+//! matrix below deliberately includes 0.
 //!
 //! Both fl and glibc read the same fixed `/etc/networks`, so this gate
 //! compares fl's getnetbyaddr directly against the live host glibc
@@ -91,6 +98,39 @@ fn getnetbyaddr_type_matches_glibc() {
             let f = name_of(unsafe { fl::getnetbyaddr(net, ty).cast::<NetEnt>() });
             if g != f {
                 mismatches.push(format!("net=0x{net:08x} type={ty}: glibc={g:?} fl={f:?}"));
+            }
+        }
+    }
+
+    // The REENTRANT path is a separate implementation with the same rule, and
+    // it had the same bug. The pre-existing getnetbyaddr_r tests only ever pass
+    // AF_INET, so nothing exercised the family check — this arm is what makes
+    // the _r fix evidence rather than an assumption.
+    for &net in &nets {
+        for &ty in &types {
+            let g = name_of(g_getbyaddr(net, ty));
+
+            let mut ent = std::mem::MaybeUninit::<NetEnt>::zeroed();
+            let mut scratch = [0 as c_char; 1024];
+            let mut res: *mut c_void = std::ptr::null_mut();
+            let mut h_err: c_int = 0;
+            let rc = unsafe {
+                fl::getnetbyaddr_r(
+                    net,
+                    ty,
+                    ent.as_mut_ptr().cast::<c_void>(),
+                    scratch.as_mut_ptr(),
+                    scratch.len(),
+                    &mut res,
+                    &mut h_err,
+                )
+            };
+            assert_eq!(rc, 0, "getnetbyaddr_r(0x{net:08x}, {ty}) returned rc={rc}");
+            let f = name_of(res.cast::<NetEnt>());
+            if g != f {
+                mismatches.push(format!(
+                    "_r net=0x{net:08x} type={ty}: glibc={g:?} fl={f:?}"
+                ));
             }
         }
     }

@@ -18534,7 +18534,20 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
 
 /// `getnetbyaddr` — look up network by address in /etc/networks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyaddr(net: u32, _type: c_int) -> *mut c_void {
+pub unsafe extern "C" fn getnetbyaddr(net: u32, addr_type: c_int) -> *mut c_void {
+    // glibc's files backend matches when n_net == net AND
+    //     (type == AF_UNSPEC || n_addrtype == type)
+    // fill_netent_buf stamps every /etc/networks entry with n_addrtype =
+    // AF_INET, so AF_INET and AF_UNSPEC match while any other family finds
+    // nothing. The type argument used to be ignored outright (it was named
+    // `_type`), so fl matched EVERY family — getnetbyaddr(0xa9fe0000, AF_INET6)
+    // answered "link-local" where glibc returns NULL.
+    //
+    // AF_UNSPEC is a WILDCARD here, not a rejection. Measured against live
+    // glibc: getnetbyaddr(0xa9fe0000, 0) returns "link-local".
+    if addr_type != libc::AF_UNSPEC && addr_type != libc::AF_INET {
+        return std::ptr::null_mut();
+    }
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
@@ -26075,7 +26088,7 @@ unsafe fn fill_netent_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetbyaddr_r(
     net: u32,
-    _type: c_int,
+    addr_type: c_int,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -26088,6 +26101,12 @@ pub unsafe extern "C" fn getnetbyaddr_r(
     unsafe { *result = std::ptr::null_mut() };
     if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
         return libc::EINVAL;
+    }
+    // Same address-family rule as the non-reentrant getnetbyaddr: AF_UNSPEC is
+    // a wildcard, AF_INET matches, anything else finds nothing. Returns 0 with
+    // *result left NULL, which is this API's not-found contract.
+    if addr_type != libc::AF_UNSPEC && addr_type != libc::AF_INET {
+        return 0;
     }
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
