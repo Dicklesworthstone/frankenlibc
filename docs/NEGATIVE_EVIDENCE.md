@@ -17885,6 +17885,49 @@ correcting was never bd-qds9jk's; it is HEAD's.
 - **AND HEAD IS THE THING THAT IS WRONG.** The 100-sample HEAD run below is a real measurement of a
   real regression, not a failure to reproduce an old one. It is filed as **bd-870h4v**.
 
+- **CAUSE FOUND AND FIXED (be12f2191).** `e634aff2a` — the same Jun-26 silent deletion that took
+  `internal_fallocate_emulate` (bd-om1s58) and this bench's own hooks (bd-5ibpa3) — reverted
+  bd-qds9jk's shipped lever. At HEAD `getprotobyname_r`/`getprotobynumber_r` did
+  `std::fs::read(PROTOCOLS_PATH)` plus a linear re-parse **on every call**, while
+  `with_protocol_entry_by_name`/`_by_number` sat in `resolv_abi.rs` as dead code (clippy:
+  "never used"). It broke conformance as well as speed: the revert dropped the `aliases` argument
+  from `fill_protoent_r`, so `p_aliases` came back empty, and
+  `conformance_diff_protoent_r_aliases` was **RED at HEAD** (`0 passed; 1 failed`) — green
+  (`1 passed; 0 failed`) after the restore.
+
+- **RECOVERY, SAME WORKER `hz2`, SAME ARM POSITION (first), THREE TREE STATES.** This is the
+  quantity worth trusting here, because it is one arm compared against itself across trees rather
+  than a cross-arm ratio:
+
+  | tree | fl arm p50 |
+  |---|---|
+  | `fc181036f` (shipped) | 1824.380 ns |
+  | `HEAD` (reverted) | 4813.640 ns |
+  | `HEAD` + be12f2191 | **1814.419 ns** |
+
+  The fix returns fl to within 0.5% of its 2026-07-10 cost, recovering the full 2.64x.
+
+- **NO vs-glibc RATIO IS CLAIMED FOR THE FIX, AND HERE IS WHY — a harness/fleet finding worth more
+  than the number would have been.** The `frankenlibc_abi_aa_null` arm is byte-identical to the fl
+  arm, so its ratio must be ~1.00 for any cross-arm number from that run to mean anything. It is
+  not stable on this fleet:
+
+  | run | worker | A/A null | host_glibc p50 |
+  |---|---|---|---|
+  | HEAD, pre-fix | (100-sample) | **1.056** | 4202.232 ns |
+  | HEAD+fix | `ovh-a` | **2.23** | 12580.481 ns |
+  | HEAD+fix | `ovh-a` | **2.19** | 8804.102 ns |
+  | HEAD+fix | `hz2` | **1.86** | 7978.423 ns |
+
+  Two byte-identical arms differing by 1.86-2.23x is not noise, and `host_glibc` — always the LAST
+  arm — swung 4202 -> 12580 ns across runs. The three arms in the last run came out monotonically
+  increasing by position (1814 -> 3383 -> 7978), which is the signature of per-arm drift rather
+  than of three different costs. Under that condition the trailing `host_glibc` arm is inflated by
+  an unknown amount, so a vs-glibc ratio taken from these runs would be unearned. The pre-fix
+  1.056 null shows the harness CAN be clean, so this is a fleet/worker condition, not a permanent
+  property. **Anyone quoting a ratio out of `glibc_baseline_bench` must read the A/A arm first and
+  discard the run if it is not ~1.00.**
+
 The HEAD measurement, kept verbatim because it is the regression evidence:
 
 The 2026-07-10 bd-qds9jk row above went unreproducible on 2026-06-26, when e634aff2a deleted the two bench hooks its
