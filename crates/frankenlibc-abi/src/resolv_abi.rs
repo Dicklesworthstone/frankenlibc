@@ -7578,13 +7578,40 @@ fn next_hosts_ipv4_entry(content: &[u8], offset: &mut usize) -> Option<HostsIter
         let Ok(addr_text) = core::str::from_utf8(&addr) else {
             continue;
         };
-        if let Ok(addr) = addr_text.parse::<Ipv4Addr>() {
-            return Some(HostsIterEntry {
-                addr,
-                hostname,
-                aliases: hostnames.collect(),
-            });
-        }
+        let addr = if let Ok(addr) = addr_text.parse::<Ipv4Addr>() {
+            addr
+        } else if let Ok(v6) = addr_text.parse::<Ipv6Addr>() {
+            // glibc's AF_INET view of /etc/hosts does not simply skip every IPv6
+            // line: nss_files folds the two IPv6 forms that HAVE an IPv4 meaning
+            // into AF_INET entries, and drops the rest. Skipping all of them made
+            // `_gethtent` yield 2 entries on a stock Ubuntu /etc/hosts where glibc
+            // yields 3, because the `::1 ip6-localhost` line was dropped instead of
+            // being reported as 127.0.0.1 (bd-79p18u).
+            //
+            // Measured against live glibc `gethostent` over a bind-mounted hosts
+            // file (bwrap), which is the oracle for this contract:
+            //   ::1, 0:0:0:0:0:0:0:1  -> 127.0.0.1     (IN6_IS_ADDR_LOOPBACK)
+            //   ::ffff:1.2.3.4        -> 1.2.3.4       (IN6_IS_ADDR_V4MAPPED)
+            //   ::ffff:0102:0304      -> 1.2.3.4       (same, hex spelling)
+            //   ::1.2.3.4             -> SKIPPED       (v4-COMPATIBLE is not mapped)
+            //   ::0, ::ffff:0:a.b.c.d, 64:ff9b::a.b.c.d, fe80::1, 2001:db8::5 -> SKIPPED
+            // so the rule is exactly V4MAPPED or LOOPBACK, and `to_ipv4_mapped`
+            // (unlike `to_ipv4`) is the one that excludes the v4-compatible form.
+            if v6.is_loopback() {
+                Ipv4Addr::LOCALHOST
+            } else if let Some(mapped) = v6.to_ipv4_mapped() {
+                mapped
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+        return Some(HostsIterEntry {
+            addr,
+            hostname,
+            aliases: hostnames.collect(),
+        });
     }
     None
 }

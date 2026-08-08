@@ -5041,3 +5041,148 @@ fn getnameinfo_strict_fast_matches_full_membrane_path() {
         }
     }
 }
+
+// ===========================================================================
+// bd-79p18u — `_gethtent` must reproduce glibc's AF_INET view of /etc/hosts.
+//
+// fl yielded 2 entries on a stock Ubuntu /etc/hosts where glibc's `gethostent`
+// yields 3: `next_hosts_ipv4_entry` did `addr_text.parse::<Ipv4Addr>()` and
+// skipped every line that failed, so `::1 ip6-localhost ip6-loopback` was
+// dropped. glibc does not skip it — nss_files folds the IPv6 forms that have an
+// IPv4 meaning into AF_INET entries and drops only the rest.
+//
+// The oracle is host glibc's `gethostent`, which glibc really does export
+// (`nm -D libc.so.6` shows gethostent@@GLIBC_2.2.5). In a debug/test build fl's
+// entrypoints are not `no_mangle`, so `libc::gethostent` here binds to glibc
+// while `resolv_abi::_gethtent` is fl's — a live, in-process, no-mock A/B over
+// whatever /etc/hosts this machine actually has.
+// ===========================================================================
+
+// The `libc` crate does not bind the /etc/hosts iterator, so declare it. This
+// resolves to host glibc: fl's own entrypoints carry `no_mangle` only in release
+// builds (`#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`), so in a test
+// build there is no fl symbol of these names to interpose.
+unsafe extern "C" {
+    fn sethostent(stayopen: c_int);
+    fn gethostent() -> *mut libc::hostent;
+    fn endhostent();
+}
+
+/// Drain host glibc's `gethostent` into (name, ipv4-octets) pairs.
+fn glibc_hosts_af_inet() -> Vec<(String, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: single-threaded drain of the host iterator; pointers are read
+    // before the next call invalidates them.
+    unsafe {
+        sethostent(0);
+        loop {
+            let h = gethostent();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            assert_eq!(
+                (*h).h_addrtype,
+                libc::AF_INET,
+                "glibc gethostent returned a non-AF_INET entry for {name}"
+            );
+            assert_eq!((*h).h_length, 4, "AF_INET entry with length != 4");
+            let first = *(*h).h_addr_list;
+            assert!(!first.is_null(), "entry {name} has an empty address list");
+            let mut octets = [0u8; 4];
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), 4);
+            out.push((name, octets));
+        }
+        endhostent();
+    }
+    out
+}
+
+/// Drain fl's `_gethtent` into the same shape.
+fn fl_hosts_af_inet() -> Vec<(String, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: same contract as above, against fl's iterator.
+    unsafe {
+        resolv_abi::_sethtent(0);
+        loop {
+            let h = resolv_abi::_gethtent().cast::<libc::hostent>();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            assert_eq!((*h).h_addrtype, libc::AF_INET, "fl entry {name} not AF_INET");
+            assert_eq!((*h).h_length, 4, "fl entry {name} length != 4");
+            let first = *(*h).h_addr_list;
+            assert!(!first.is_null(), "fl entry {name} has an empty address list");
+            let mut octets = [0u8; 4];
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), 4);
+            out.push((name, octets));
+        }
+    }
+    out
+}
+
+#[test]
+fn gethtent_matches_glibc_gethostent_af_inet_view() {
+    let glibc = glibc_hosts_af_inet();
+    let fl = fl_hosts_af_inet();
+
+    assert_eq!(
+        fl.len(),
+        glibc.len(),
+        "entry count diverged: fl={} glibc={}\n  fl:    {:?}\n  glibc: {:?}",
+        fl.len(),
+        glibc.len(),
+        fl,
+        glibc
+    );
+    assert_eq!(
+        fl, glibc,
+        "AF_INET /etc/hosts view diverged from glibc gethostent"
+    );
+}
+
+/// The specific rule the bug violated, asserted against the oracle rather than
+/// against a hardcoded expectation: any IPv6 loopback line in /etc/hosts must
+/// surface as an AF_INET 127.0.0.1 entry in BOTH implementations. Skipped (not
+/// silently passed) when this machine's /etc/hosts has no such line, so the test
+/// can never report success for a case it did not actually exercise.
+#[test]
+fn ipv6_loopback_line_becomes_127_0_0_1_in_both() {
+    let hosts = match std::fs::read_to_string("/etc/hosts") {
+        Ok(text) => text,
+        Err(_) => return,
+    };
+    let v6_loopback_names: Vec<String> = hosts
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or(""))
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let addr = fields.next()?;
+            let parsed = addr.parse::<std::net::Ipv6Addr>().ok()?;
+            if !parsed.is_loopback() {
+                return None;
+            }
+            Some(fields.next()?.to_string())
+        })
+        .collect();
+
+    if v6_loopback_names.is_empty() {
+        eprintln!("no IPv6 loopback line in /etc/hosts; nothing to assert");
+        return;
+    }
+
+    let glibc = glibc_hosts_af_inet();
+    let fl = fl_hosts_af_inet();
+    for name in &v6_loopback_names {
+        let want = (name.clone(), [127u8, 0, 0, 1]);
+        assert!(
+            glibc.contains(&want),
+            "oracle drift: glibc did not map the ::1 line {name} to 127.0.0.1 (got {glibc:?})"
+        );
+        assert!(
+            fl.contains(&want),
+            "fl dropped the ::1 line {name} instead of mapping it to 127.0.0.1 (got {fl:?})"
+        );
+    }
+}
