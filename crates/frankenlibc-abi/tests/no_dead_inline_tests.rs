@@ -29,7 +29,6 @@ use std::path::{Path, PathBuf};
 /// raw text — the same comment-blindness the support-matrix scanner had in
 /// bd-4habm0 — and the ratchet's own `cleaned` check caught the mistake.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
-    ("c11threads_abi", 5),
     ("fenv_abi", 11),
     ("glibc_internal_abi", 4),
     ("grp_abi", 2),
@@ -40,10 +39,15 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("termios_abi", 6),
     ("wchar_abi", 2),
 ];
-// BURNED DOWN (bd-xh08pf): unistd_abi (1) — its lone assertion only touched the
-// public `res_init`, so it relocated unchanged to
-// tests/resolv_abi_test.rs::res_init_reports_success_bd_xh08pf and now runs.
-// 54 -> 53 stranded tests, 11 -> 10 modules.
+// BURNED DOWN (bd-xh08pf):
+//   unistd_abi (1)     -> tests/resolv_abi_test.rs::res_init_reports_success_bd_xh08pf
+//                         (pure relocation; only touched the public `res_init`)
+//   c11threads_abi (5) -> tests/c11threads_abi_test.rs
+//                         (3 relocated unchanged; 2 rewritten against public
+//                          entry points instead of widening the ABI surface to
+//                          reach `pthread_rc_to_thrd` and the THRD_*/MTX_*
+//                          constants)
+// 54 -> 48 stranded tests, 11 -> 9 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

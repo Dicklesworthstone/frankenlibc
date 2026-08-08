@@ -462,48 +462,13 @@ pub unsafe extern "C" fn call_once(flag: *mut OnceFlag, func: Option<extern "C" 
 // Tests
 // ===========================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pthread_rc_mapping() {
-        assert_eq!(pthread_rc_to_thrd(0), THRD_SUCCESS);
-        assert_eq!(pthread_rc_to_thrd(libc::ETIMEDOUT), THRD_TIMEDOUT);
-        assert_eq!(pthread_rc_to_thrd(libc::EBUSY), THRD_BUSY);
-        assert_eq!(pthread_rc_to_thrd(libc::EAGAIN), THRD_NOMEM);
-        assert_eq!(pthread_rc_to_thrd(libc::ENOMEM), THRD_NOMEM);
-        assert_eq!(pthread_rc_to_thrd(libc::EINVAL), THRD_ERROR);
-    }
-
-    #[test]
-    fn constants_match_c11_spec() {
-        // C11 defines thrd_success = 0
-        assert_eq!(THRD_SUCCESS, 0);
-        assert_eq!(THRD_BUSY, 1);
-        // glibc `<threads.h>` defines mtx_plain=0, mtx_recursive=1, mtx_timed=2.
-        assert_eq!(MTX_PLAIN, 0);
-        assert_eq!(MTX_RECURSIVE, 1);
-        assert_eq!(MTX_TIMED, 2);
-    }
-
-    #[test]
-    fn thrd_current_returns_nonzero() {
-        let tid = thrd_current();
-        // On Linux, pthread_self() always returns a non-zero value.
-        assert_ne!(tid, 0);
-    }
-
-    #[test]
-    fn thrd_equal_same_thread() {
-        let tid = thrd_current();
-        assert_ne!(thrd_equal(tid, tid), 0);
-    }
-
-    #[test]
-    fn mtx_init_rejects_invalid_flags() {
-        let mut mtx: MtxT = unsafe { std::mem::zeroed() };
-        let rc = unsafe { mtx_init(&mut mtx as *mut MtxT, 0x4) };
-        assert_eq!(rc, THRD_ERROR);
-    }
-}
+// MOVED: the five assertions that lived here now run in
+// tests/c11threads_abi_test.rs (bd-xh08pf).
+//
+// This module is declared `#[cfg(not(test))]` in lib.rs, so the inline
+// `#[cfg(test)]` block was dead by construction and had never executed. Three
+// tests moved unchanged. The other two read module-private items
+// (`pthread_rc_to_thrd`, the `THRD_*`/`MTX_*` constants); rather than widen the
+// ABI surface to keep them compiling, they were rewritten to assert the same
+// contract through public entry points, which is what callers actually observe.
+// tests/no_dead_inline_tests.rs enforces that no new block appears here.
