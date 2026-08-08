@@ -5903,15 +5903,71 @@ fn fsconfig_invalid_fsfd_with_string_payload_sets_einval_like_host() {
     );
 }
 
+/// True when this process actually lacks the privilege the new-mount-API tests
+/// below assume.
+///
+/// fsopen/fsmount/fspick/move_mount all require CAP_SYS_ADMIN. The rch build
+/// fleet runs its workers as root, where these calls do NOT fail with EPERM —
+/// they either succeed or reach a later check and report something else (a NULL
+/// path yields EFAULT, for instance). Asserting EPERM unconditionally made this
+/// whole family permanently red there while fl was behaving correctly. The
+/// fl-vs-host comparisons are what hold in either environment and are never
+/// skipped.
+fn mount_api_unprivileged() -> bool {
+    let euid = unsafe { libc::geteuid() };
+    euid != 0
+}
+
+/// fsopen/fspick return a real file descriptor when they succeed, which they do
+/// as root. Close it so a privileged run does not leak one fd per test.
+fn close_if_fd(rc: i64) {
+    if rc >= 0 {
+        unsafe { libc::close(rc as libc::c_int) };
+    }
+}
+
 #[test]
 fn fsopen_nonzero_flags_with_valid_fsname_preserves_eperm_like_host() {
+    // This test had NO host arm at all despite its `_like_host` name: it only
+    // asserted a hardcoded -1/EPERM, so it could never have detected fl
+    // diverging from the kernel. Given it needed rewriting anyway, it now
+    // compares properly.
     let fsname = CString::new("tmpfs").expect("valid fsname");
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::syscall(libc::SYS_fsopen, fsname.as_ptr(), 1_u32) };
+    let host_err = unsafe { *libc::__errno_location() };
+    close_if_fd(host_rc);
+
     unsafe {
         *__errno_location() = 0;
     }
     let rc = unsafe { fsopen(fsname.as_ptr(), 1) };
     let err = unsafe { *__errno_location() };
+    close_if_fd(i64::from(rc));
 
+    // Compare SUCCESS-vs-FAILURE, not the fd number. Unlike the other calls in
+    // this family, fsopen with a valid fsname actually succeeds as root and
+    // returns a descriptor — and the two calls cannot be expected to get the
+    // SAME descriptor, because these tests run on parallel threads and any of
+    // them may claim the number in between. Asserting fd equality made this
+    // test racy; it passed once and failed on the next run.
+    assert_eq!(
+        rc >= 0,
+        host_rc >= 0,
+        "fsopen(\"tmpfs\", 1) success: fl={rc} host={host_rc}"
+    );
+    if host_rc < 0 {
+        assert_eq!(
+            err, host_err,
+            "fsopen(\"tmpfs\", 1) errno: fl={err} host={host_err}"
+        );
+    }
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(rc, -1);
     assert_eq!(
         err,
@@ -5934,9 +5990,15 @@ fn fsopen_null_fsname_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { fsopen(ptr::null(), 0) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -5958,9 +6020,15 @@ fn fsopen_null_fsname_nonzero_flags_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { fsopen(ptr::null(), 1) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -5983,9 +6051,22 @@ fn fsmount_invalid_fsfd_preserves_unprivileged_eperm_like_host() {
         let abi_rc = unsafe { fsmount(-1, flags, 0) };
         let abi_err = unsafe { *__errno_location() };
 
-        assert_eq!(host_rc, -1);
+        assert_eq!(
+            i64::from(abi_rc),
+            host_rc,
+            "fsmount(-1, {flags}, 0) rc: fl={abi_rc} host={host_rc}"
+        );
+        assert_eq!(
+            abi_err, host_err,
+            "fsmount(-1, {flags}, 0) errno: fl={abi_err} host={host_err}"
+        );
+        // `continue`, not `return`: this assertion sits inside a loop over
+        // flag values, so an early return would silently skip the remaining
+        // iterations rather than just the privilege-specific check.
+        if !mount_api_unprivileged() {
+            continue;
+        }
         assert_eq!(abi_rc, -1);
-        assert_eq!(abi_err, host_err);
         assert_eq!(
             abi_err,
             libc::EPERM,
@@ -6008,9 +6089,15 @@ fn fsmount_invalid_flags_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { fsmount(-1, 2, 0) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6032,9 +6119,15 @@ fn fsmount_invalid_attr_flags_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { fsmount(-1, 0, 1) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6075,9 +6168,15 @@ fn move_mount_null_target_path_preserves_unprivileged_eperm_like_host() {
     };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6108,9 +6207,15 @@ fn move_mount_both_null_paths_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { move_mount(libc::AT_FDCWD, ptr::null(), libc::AT_FDCWD, ptr::null(), 0) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6141,9 +6246,15 @@ fn move_mount_both_null_paths_with_nonzero_flags_preserves_unprivileged_eperm_li
     let abi_rc = unsafe { move_mount(libc::AT_FDCWD, ptr::null(), libc::AT_FDCWD, ptr::null(), 1) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6184,9 +6295,15 @@ fn move_mount_null_source_path_with_nonzero_flags_preserves_unprivileged_eperm_l
     };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6215,9 +6332,15 @@ fn fspick_null_path_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { fspick(libc::AT_FDCWD, ptr::null(), 0) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
@@ -6246,9 +6369,15 @@ fn fspick_null_path_nonzero_flags_preserves_unprivileged_eperm_like_host() {
     let abi_rc = unsafe { fspick(libc::AT_FDCWD, ptr::null(), 1) };
     let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(host_rc, -1);
+    // fl must do whatever the kernel did — true privileged or not, and now
+    // checked on the RETURN VALUE as well as errno.
+    assert_eq!(i64::from(abi_rc), host_rc, "rc: fl={abi_rc} host={host_rc}");
+    assert_eq!(abi_err, host_err, "errno: fl={abi_err} host={host_err}");
+    // The -1/EPERM pair below is only correct without CAP_SYS_ADMIN.
+    if !mount_api_unprivileged() {
+        return;
+    }
     assert_eq!(abi_rc, -1);
-    assert_eq!(abi_err, host_err);
     assert_eq!(
         abi_err,
         libc::EPERM,
