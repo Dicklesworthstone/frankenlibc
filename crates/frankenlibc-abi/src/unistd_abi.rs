@@ -18269,9 +18269,33 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
             );
             *buf.add(off + entry.protocol.len()) = 0;
         }
+        off += entry.protocol.len() + 1;
 
-        // Aliases: NULL-terminated
-        state.aliases_ptrs[0] = std::ptr::null_mut();
+        // Aliases. These were previously dropped on the floor — s_aliases was
+        // always an empty list — so every multi-name service enumerated wrong
+        // against glibc (discard/2304/tcp lost "sink" and "null"). The parser
+        // has always returned them; only this packing step ignored them.
+        //
+        // Copied into the same scratch buffer after the protocol string, then
+        // pointed at by the NULL-terminated aliases array. Both bounds are
+        // enforced: at most aliases_ptrs.len() - 1 entries (the last slot is the
+        // terminator), and nothing is copied that would overrun entry_buf.
+        let max_aliases = state.aliases_ptrs.len() - 1;
+        let mut alias_count = 0usize;
+        for alias in entry.aliases.iter().take(max_aliases) {
+            if off + alias.len() + 1 > state.entry_buf.len() {
+                break;
+            }
+            let alias_ptr = unsafe { buf.add(off) } as *mut c_char;
+            unsafe {
+                std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
+                *buf.add(off + alias.len()) = 0;
+            }
+            off += alias.len() + 1;
+            state.aliases_ptrs[alias_count] = alias_ptr;
+            alias_count += 1;
+        }
+        state.aliases_ptrs[alias_count] = std::ptr::null_mut();
 
         // Fill struct servent
         let ptrs = buf as *mut *mut c_char;
@@ -18536,7 +18560,12 @@ struct ProtoIterState {
     line_buf: Vec<u8>,
     /// Thread-local protoent + string data for non-reentrant getprotoent.
     entry_buf: [u8; 512],
-    aliases_ptrs: [*mut c_char; 2], // NULL-terminated alias list (empty)
+    /// NULL-terminated alias list. Sized 16 (15 aliases + terminator): this was
+    /// 2, i.e. room for a SINGLE alias, which silently truncated real
+    /// /etc/protocols lines — "rspf 73 RSPF CPHB" lost CPHB. The widest lines on
+    /// a stock Debian/Ubuntu /etc/protocols and /etc/services carry well under
+    /// 15, and entry_buf remains the real backstop.
+    aliases_ptrs: [*mut c_char; 16],
 }
 
 impl ProtoIterState {
@@ -18545,7 +18574,7 @@ impl ProtoIterState {
             reader: None,
             line_buf: Vec::new(),
             entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 2],
+            aliases_ptrs: [std::ptr::null_mut(); 16],
         }
     }
 }
@@ -18643,6 +18672,21 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
             continue;
         }
 
+        // Everything after the protocol number is an alias. These were parsed
+        // and thrown away — the list was hardcoded empty ("empty for now") — so
+        // p_aliases never reported anything, the same defect the services
+        // iterator had. Collected before entry_buf is touched so the borrow of
+        // line_buf ends cleanly.
+        let mut alias_fields: [&[u8]; 8] = [&[]; 8];
+        let mut alias_n = 0usize;
+        for field in fields {
+            if alias_n == alias_fields.len().min(state.aliases_ptrs.len() - 1) {
+                break;
+            }
+            alias_fields[alias_n] = field;
+            alias_n += 1;
+        }
+
         let buf = state.entry_buf.as_mut_ptr();
 
         // Copy name string after struct
@@ -18651,9 +18695,25 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
             std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
             *buf.add(str_offset + name.len()) = 0;
         }
+        let mut off = str_offset + name.len() + 1;
 
-        // Set up NULL-terminated aliases list (empty for now)
-        state.aliases_ptrs[0] = std::ptr::null_mut();
+        // NULL-terminated aliases list, bounded by both the pointer array and
+        // the scratch buffer.
+        let mut alias_count = 0usize;
+        for alias in alias_fields.iter().take(alias_n) {
+            if off + alias.len() + 1 > state.entry_buf.len() {
+                break;
+            }
+            let alias_ptr = unsafe { buf.add(off) } as *mut c_char;
+            unsafe {
+                std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
+                *buf.add(off + alias.len()) = 0;
+            }
+            off += alias.len() + 1;
+            state.aliases_ptrs[alias_count] = alias_ptr;
+            alias_count += 1;
+        }
+        state.aliases_ptrs[alias_count] = std::ptr::null_mut();
 
         // Fill struct protoent
         let ptrs = buf as *mut *mut c_char;
