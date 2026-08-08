@@ -4973,19 +4973,19 @@ pub unsafe fn sys_mkdirat(dirfd: i32, pathname: *const u8, mode: u32) -> Result<
 /// `pathname` must be a valid NUL-terminated string.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_fchmodat(
-    dirfd: i32,
-    pathname: *const u8,
-    mode: u32,
-    flags: i32,
-) -> Result<(), i32> {
+/// NOTE: `fchmodat(2)` takes THREE arguments — there is no flags register. This
+/// wrapper used to accept a `flags: i32` and pass it as a fourth argument, which
+/// the kernel silently ignores; callers reasonably assumed `AT_SYMLINK_NOFOLLOW`
+/// was being honoured when it was being dropped, so `lchmod` chmod'd the symlink
+/// TARGET. The parameter is removed so the signature cannot lie again. Callers
+/// needing flags must use [`sys_fchmodat2`]. bd-f29d1s.
+pub unsafe fn sys_fchmodat(dirfd: i32, pathname: *const u8, mode: u32) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall4(
+        raw::syscall3(
             SYS_FCHMODAT,
             dirfd as usize,
             pathname as usize,
             mode as usize,
-            flags as usize,
         )
     };
     syscall_result(ret).map(|_| ())

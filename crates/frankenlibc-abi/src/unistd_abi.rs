@@ -1449,7 +1449,7 @@ pub unsafe extern "C" fn chmod(path: *const c_char, mode: libc::mode_t) -> c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_fchmodat(libc::AT_FDCWD, path as *const u8, mode, 0) } {
+    let rc = match unsafe { syscall::sys_fchmodat(libc::AT_FDCWD, path as *const u8, mode) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -2026,7 +2026,44 @@ pub unsafe extern "C" fn fchmodat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, flags) } {
+    // The classic `fchmodat(2)` SYSCALL takes only three arguments — there is no
+    // flags register — so passing `flags` to it is silently discarded by the
+    // kernel. That is not a theoretical concern: measured on this host,
+    //   syscall(SYS_fchmodat, AT_FDCWD, <symlink>, 0707, AT_SYMLINK_NOFOLLOW)
+    //   -> rc=0, and the symlink's TARGET went 0644 -> 0707.
+    // so every flag-bearing caller (notably `lchmod`, which exists precisely to
+    // NOT follow symlinks) was chmod'ing the wrong file. Flags must go to
+    // `fchmodat2(2)`, which validates them and implements AT_SYMLINK_NOFOLLOW.
+    // bd-f29d1s.
+    //
+    // Measured glibc contract this reproduces:
+    //   regular file, flags=0                -> 0, mode applied
+    //   regular file, AT_SYMLINK_NOFOLLOW    -> 0, mode applied  (must NOT over-reject)
+    //   symlink,      flags=0                -> 0, TARGET's mode applied (follows)
+    //   symlink,      AT_SYMLINK_NOFOLLOW    -> -1 ENOTSUP, nothing modified
+    //   any other flag bits                  -> -1 EINVAL, nothing modified
+    let res = if flags == 0 {
+        // Universally available, and identical in effect; keeps the common path
+        // off the newer syscall.
+        unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode) }
+    } else {
+        match unsafe { syscall::sys_fchmodat2(dirfd, path as *const u8, mode, flags) } {
+            // Pre-6.6 kernels have no fchmodat2. Fail CLOSED rather than falling
+            // back to the flagless syscall, which would silently follow the
+            // symlink again — the exact defect this guards. Divergence, stated:
+            // glibc reaches a regular file + AT_SYMLINK_NOFOLLOW there via
+            // /proc/self/fd and succeeds, where this returns ENOTSUP. Refusing is
+            // the safe side of that trade, and an lstat-then-chmod fallback would
+            // be racy in precisely the security-sensitive case.
+            Err(e) if e == libc::ENOSYS => Err(if flags == libc::AT_SYMLINK_NOFOLLOW {
+                libc::ENOTSUP
+            } else {
+                libc::EINVAL
+            }),
+            other => other,
+        }
+    };
+    let rc = match res {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
