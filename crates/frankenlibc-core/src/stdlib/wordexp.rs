@@ -26,6 +26,16 @@ pub enum ExpandError {
     /// A `$((...))` arithmetic expansion was malformed. glibc reports this
     /// as `WRDE_SYNTAX`. See [`eval_arith`] for exactly which inputs qualify.
     ArithSyntax,
+    /// `${VAR?word}` / `${VAR:?word}` fired: the parameter was unset (or null,
+    /// with `:`). glibc writes `"<name>: <message>"` to stderr and expands to
+    /// NOTHING, while still returning success — so this is carried as a typed
+    /// outcome rather than a failure, and the caller decides how to render it.
+    NullOrUnset { name: String, message: String },
+    /// A `${...}` form using an operator POSIX/glibc's `wordexp` does not
+    /// implement — e.g. bash's substring `${VAR:1}` or replacement
+    /// `${VAR/a/b}`. glibc reports `WRDE_SYNTAX`; fl used to fall through to a
+    /// literal lookup of the whole braced text and silently expand to nothing.
+    BadSubstitution,
 }
 
 /// Evaluate the inside of a `$((...))` arithmetic expansion the way glibc's
@@ -485,8 +495,44 @@ pub fn expand_braced_param(
                 expand_vars_dyn(word, undef_is_error, lookup_env)
             }
         }
-        // `?` (error if unset/empty) not yet handled — fall back to a plain lookup.
-        _ => plain(lookup_env(content), content),
+        // `${VAR?word}` / `${VAR:?word}` — "indicate error if unset [or null]".
+        //
+        // This used to fall through to `plain(lookup_env(content), content)`,
+        // where `content` is the WHOLE braced text including the operator, so it
+        // looked up an environment variable literally named `FOO:?`, found
+        // nothing, and expanded to nothing. `${FOO:?}` with FOO=bar therefore
+        // produced ZERO words where glibc produces "bar" — the value was
+        // silently dropped on the SUCCESS path, which is the common one.
+        //
+        // Measured against live glibc (FOO=bar, EMPTY="", UNSET_ONE unset):
+        //   ${FOO:?}  ${FOO?}  ${FOO:?msg}          -> ["bar"]
+        //   ${EMPTY:?}                              -> [] + stderr "EMPTY: parameter null or not set"
+        //   ${EMPTY?}                               -> []  (set-but-null is not an error without `:`)
+        //   ${UNSET_ONE:?} ${UNSET_ONE?}            -> [] + stderr "UNSET_ONE: parameter null or not set"
+        //   ${UNSET_ONE:?custom message}            -> [] + stderr "UNSET_ONE: custom message"
+        // Note the return code is 0 in every one of those — wordexp reports this
+        // condition by diagnostic and an empty expansion, not by an error code.
+        Some(b'?') => {
+            if test {
+                let msg = if word.is_empty() {
+                    "parameter null or not set".to_string()
+                } else {
+                    expand_vars_dyn(word, undef_is_error, lookup_env)?
+                };
+                Err(ExpandError::NullOrUnset {
+                    name: name.to_string(),
+                    message: msg,
+                })
+            } else {
+                Ok(raw.unwrap_or_default())
+            }
+        }
+        // Only `-`, `=`, `+` and `?` (each optionally preceded by `:`) exist in
+        // POSIX parameter expansion; `#`/`%` were handled above. Anything else
+        // is bash-only syntax that glibc rejects — measured: `${FOO:1}` gives
+        // WRDE_SYNTAX(5), where fl used to look up a variable literally named
+        // "FOO:1", find nothing, and expand to zero words. bd-xyjzl0.
+        _ => Err(ExpandError::BadSubstitution),
     }
 }
 

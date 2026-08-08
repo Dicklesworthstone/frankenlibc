@@ -6873,8 +6873,23 @@ fn expand_tilde(word: &str) -> String {
         if let Ok(home) = std::env::var("HOME") {
             return format!("{home}{suffix}");
         }
+        return word.to_string();
     }
-    // ~user → lookup (simplified: just return as-is if we can't resolve)
+    // `~user` → that user's home directory from the passwd backend. This was
+    // previously a TODO that returned the word unchanged, so `~root` stayed
+    // literal where glibc gives "/root". Measured against live glibc:
+    //   ~root  -> /root      ~root/sub -> /root/sub     ~bin -> /bin
+    //   ~nosuchuser -> ~nosuchuser     (unknown user stays LITERAL, rc=0)
+    //   a~root -> a~root                (tilde only applies at word start)
+    // bd-xyjzl0.
+    if let Ok(content) = std::fs::read("/etc/passwd")
+        && let Some(entry) = frankenlibc_core::pwd::lookup_by_name(&content, user.as_bytes())
+        && let Ok(dir) = core::str::from_utf8(&entry.pw_dir)
+    {
+        return format!("{dir}{suffix}");
+    }
+    // Unknown user (or an unreadable / non-UTF-8 backend): leave the word alone,
+    // which is what glibc does rather than erroring.
     word.to_string()
 }
 
@@ -6889,12 +6904,19 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
     frankenlibc_core::stdlib::wordexp::expand_vars(word, undef_is_error, |name| {
         std::env::var(name).ok()
     })
-    .map_err(|e| match e {
-        frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => WRDE_BADVAL,
+    .or_else(|e| match e {
+        frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => Err(WRDE_BADVAL),
         // glibc reports a malformed `$((...))` as WRDE_SYNTAX — measured for
         // `$((1+))`, `$(( ))`, `$((abc))`, `$((1/0))`, `$((~5))`, `$((!0))`
         // and `$((SETVAR+1))`. bd-yb9f9r.
-        frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax => WRDE_SYNTAX,
+        frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax
+        | frankenlibc_core::stdlib::wordexp::ExpandError::BadSubstitution => Err(WRDE_SYNTAX),
+        // See the split-mask expander: a fired `?` is a diagnostic plus an empty
+        // expansion, not an error return. bd-xyjzl0.
+        frankenlibc_core::stdlib::wordexp::ExpandError::NullOrUnset { name, message } => {
+            eprintln!("{name}: {message}");
+            Ok(String::new())
+        }
     })
 }
 
@@ -6997,6 +7019,20 @@ fn expand_vars_with_split_mask_dyn(
                                 split_unquoted_expansions,
                             );
                         }
+                    }
+                    // `${VAR?word}` / `${VAR:?word}` firing is NOT an error
+                    // return: glibc writes the diagnostic to stderr and expands
+                    // to nothing, with wordexp still reporting success
+                    // (measured: `${UNSET:?}` -> rc=0, zero words). bd-xyjzl0.
+                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::NullOrUnset {
+                        name,
+                        message,
+                    }) => {
+                        eprintln!("{name}: {message}");
+                    }
+                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax)
+                    | Err(frankenlibc_core::stdlib::wordexp::ExpandError::BadSubstitution) => {
+                        return Err(WRDE_SYNTAX);
                     }
                     Err(_) => return Err(WRDE_BADVAL),
                 }
