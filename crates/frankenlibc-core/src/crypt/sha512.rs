@@ -7,13 +7,21 @@
 //! prefix parser and [`crate::crypt::base64::encode`] for output
 //! formatting.
 //!
-//! Implementation note: a previous abi inline copy had three typos in
-//! the final-hash byte transposition table (indices `[55]`, `[60]`,
-//! `[61]` should be `[56]`, `[61]`, `[62]` per Drepper's spec).
-//! This port uses the correct indices, so output now matches real
-//! glibc/libcrypt — see [`bd-shc-epic`] for context.
+//! Implementation note (corrected, bd-9n50f2): this module previously claimed
+//! it "uses the correct indices, so output now matches real glibc/libcrypt".
+//! It did not. The step-6 transposition table was off by one from row 14
+//! onward, consuming `f[55]` twice and `f[62]` never, and the shared
+//! crypt-base64 encoder packed each 3-byte group in reverse. Digests were the
+//! right length with the right alphabet and entirely wrong content, for `$6$`,
+//! `$5$` and `$1$` alike, so no real `/etc/shadow` entry could verify. Both are
+//! fixed and the output is now byte-identical to live libxcrypt, checked by
+//! `conformance_diff_crypt_failure_token`.
 //!
-//! [`bd-shc-epic`]: ../../../../../../.beads/issues.jsonl
+//! The claim survived because every test here compares fl against fl — shape,
+//! determinism, and a "characterization" test that pins whatever the code
+//! currently emits. A wrong-but-deterministic implementation satisfies all of
+//! them. Byte-equality against a live oracle is the only assertion that could
+//! have failed, and it now exists.
 
 use sha2::{Digest, Sha512};
 
@@ -110,10 +118,18 @@ pub fn sha512_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     }
 
     // Step 6: Output formatting via crypt-base64 byte transposition.
-    // Indices match the existing abi inline implementation — preserving
-    // bug-for-bug compatibility (rows 14, 18, 19 differ from Drepper's
-    // published spec by 1; investigation tracked separately in
-    // bd-sha-typo-investigation if confirmed against real glibc).
+    //
+    // These indices are Drepper's, verified against live libxcrypt. They used to
+    // be copied from an earlier abi inline implementation under a comment
+    // claiming "bug-for-bug compatibility ... rows 14, 18, 19 differ from
+    // Drepper's published spec by 1". That was wrong twice over: the divergence
+    // ran from row 14 through row 20, not three scattered rows, and there was no
+    // compatibility to preserve — the output matched nothing. Every high index
+    // from row 14 on was one too small (55,56,57,58,59,60,61 where the spec says
+    // 56,57,58,59,60,61,62), so `f[55]` was consumed TWICE and `f[62]` never at
+    // all. That is provably wrong without consulting any oracle: this is a
+    // permutation of bytes 0..=62, so each must appear exactly once — which is
+    // now asserted by `transposition_table_is_a_permutation` below. bd-9n50f2.
     let f = &c_input;
     let reordered: Vec<u8> = [
         (f[0], f[21], f[42]),
@@ -130,13 +146,13 @@ pub fn sha512_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
         (f[53], f[11], f[32]),
         (f[12], f[33], f[54]),
         (f[34], f[55], f[13]),
-        (f[55], f[14], f[35]),
-        (f[15], f[36], f[56]),
-        (f[37], f[57], f[16]),
-        (f[58], f[17], f[38]),
-        (f[18], f[39], f[59]),
-        (f[40], f[60], f[19]),
-        (f[61], f[20], f[41]),
+        (f[56], f[14], f[35]),
+        (f[15], f[36], f[57]),
+        (f[37], f[58], f[16]),
+        (f[59], f[17], f[38]),
+        (f[18], f[39], f[60]),
+        (f[40], f[61], f[19]),
+        (f[62], f[20], f[41]),
     ]
     .iter()
     .flat_map(|(a, b, c)| [*a, *b, *c])
@@ -234,5 +250,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The step-6 table is a PERMUTATION of digest bytes 0..=62 (byte 63 is
+    /// emitted separately as the 2-char tail). Each index must therefore appear
+    /// exactly once. This is checkable without any oracle, and it alone would
+    /// have caught bd-9n50f2: the shipped table used f[55] twice and never used
+    /// f[62], so every $6$ digest was wrong in its last 16 characters.
+    ///
+    /// The table is transcribed here rather than shared with the hashing code so
+    /// that a future edit to one and not the other is a test failure. Keep them
+    /// in sync.
+    #[test]
+    fn transposition_table_is_a_permutation() {
+        const TABLE: [(usize, usize, usize); 21] = [
+            (0, 21, 42),
+            (22, 43, 1),
+            (44, 2, 23),
+            (3, 24, 45),
+            (25, 46, 4),
+            (47, 5, 26),
+            (6, 27, 48),
+            (28, 49, 7),
+            (50, 8, 29),
+            (9, 30, 51),
+            (31, 52, 10),
+            (53, 11, 32),
+            (12, 33, 54),
+            (34, 55, 13),
+            (56, 14, 35),
+            (15, 36, 57),
+            (37, 58, 16),
+            (59, 17, 38),
+            (18, 39, 60),
+            (40, 61, 19),
+            (62, 20, 41),
+        ];
+        let mut seen = [0u8; 63];
+        for (a, b, c) in TABLE {
+            for i in [a, b, c] {
+                assert!(i < 63, "index {i} is outside the permuted range 0..=62");
+                seen[i] += 1;
+            }
+        }
+        let dup: Vec<usize> = (0..63).filter(|&i| seen[i] > 1).collect();
+        let missing: Vec<usize> = (0..63).filter(|&i| seen[i] == 0).collect();
+        assert!(
+            dup.is_empty() && missing.is_empty(),
+            "step-6 table is not a permutation of 0..=62: duplicated {dup:?}, missing {missing:?}"
+        );
     }
 }

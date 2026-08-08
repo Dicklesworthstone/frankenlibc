@@ -109,7 +109,13 @@ pub fn sha256_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     .collect();
 
     let mut encoded = base64::encode(&reordered, 40);
-    let last = [f[30], f[31]];
+    // Drepper's final group for $5$ is b64_from_24bit(0, alt_result[31],
+    // alt_result[30], 3), i.e. B1 = f[31] and B0 = f[30]. With the group
+    // packed big-endian and right-aligned, that is the byte order below.
+    // It used to read [f[30], f[31]], which was correct ONLY against the old
+    // reversed encoder — fixing the encoder without flipping this pair would
+    // have moved the bug rather than removed it. bd-9n50f2.
+    let last = [f[31], f[30]];
     encoded.push_str(&base64::encode(&last, 3));
 
     let salt_str = core::str::from_utf8(salt).unwrap_or("");

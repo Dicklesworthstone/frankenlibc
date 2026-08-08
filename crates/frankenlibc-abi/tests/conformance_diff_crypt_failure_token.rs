@@ -135,49 +135,59 @@ fn crypt_failure_token_never_equals_the_setting() {
     assert_eq!(t1.as_deref(), Some("*0"), "salt *1 must yield *0");
 }
 
-/// fl must not have regressed the SUCCESS path into the token: for the
-/// algorithms it implements it must still return a real hash. Without this,
-/// returning `*0` unconditionally would satisfy every assertion above.
+/// fl's digests must be BYTE-IDENTICAL to libxcrypt's for every algorithm it
+/// implements. This is the property `crypt` exists for: its only real use is
+/// `strcmp(crypt(password, stored), stored)`, so a digest that is merely
+/// well-formed authenticates nobody.
 ///
-/// This asserts SHAPE, not byte-equality with libxcrypt. fl's `$6$` digest is
-/// currently well-formed but content-different from libxcrypt's — a separate and
-/// much larger defect (fl cannot verify a real /etc/shadow entry), filed on its
-/// own bead. Asserting equality here would make this gate fail for a reason
-/// bd-r9ihvq is not about; asserting nothing would let the token swallow the
-/// success path. Shape is the property this bead needs, so shape is what it
-/// checks, and the divergence is printed for the record rather than hidden.
+/// This arm was shape-only while bd-9n50f2 was open — fl's digests were the
+/// right length, prefix and alphabet but the wrong content for all three
+/// algorithms, because the shared crypt-base64 encoder packed each 3-byte group
+/// in reverse. It is equality now that the encoder is fixed.
+///
+/// The matrix deliberately includes the cases most likely to expose a padding or
+/// grouping error rather than only the happy path: an empty key, a key longer
+/// than one digest block, a short salt, a full-length salt, and an explicit
+/// `rounds=` parameter.
 #[test]
-fn crypt_supported_algorithms_still_produce_real_hashes() {
-    for salt in ["$6$saltsalt$", "$5$saltsalt$", "$1$saltsalt$"] {
-        let (h_out, _) = host_crypt("password", salt);
-        let (f_out, _) = fl_crypt("password", salt);
-        let h = h_out.expect("libxcrypt hash");
-        let f = f_out.expect("fl hash");
-
-        assert!(
-            h.starts_with(salt),
-            "oracle: libxcrypt hash {h:?} should carry its setting {salt:?}"
-        );
-        // The anti-vacuity core: a real hash, not the failure token, and not a
-        // bare echo of the setting.
-        assert_ne!(f, "*0", "crypt({salt:?}) returned the failure token");
-        assert_ne!(f, "*1", "crypt({salt:?}) returned the failure token");
-        assert!(
-            f.starts_with(salt) && f.len() > salt.len() + 10,
-            "crypt({salt:?}) did not return a real hash: {f:?}"
-        );
-        assert_eq!(
-            f.len(),
-            h.len(),
-            "crypt({salt:?}) hash length differs from libxcrypt: fl={} host={}",
-            f.len(),
-            h.len()
-        );
-
-        if f != h {
-            eprintln!("NOTE crypt({salt:?}) digest differs from libxcrypt (separate defect):");
-            eprintln!("  fl:        {f}");
-            eprintln!("  libxcrypt: {h}");
+fn crypt_supported_algorithms_match_libxcrypt_byte_for_byte() {
+    let keys: &[&str] = &["", "a", "password", &"x".repeat(200)];
+    let salts: &[&str] = &[
+        "$1$saltsalt$",
+        "$1$ab$",
+        "$5$saltsalt$",
+        "$5$ab$",
+        "$5$rounds=1000$saltsalt$",
+        "$6$saltsalt$",
+        "$6$ab$",
+        "$6$rounds=1000$saltsalt$",
+    ];
+    let mut compared = 0usize;
+    for &salt in salts {
+        for &key in keys {
+            let (h_out, _) = host_crypt(key, salt);
+            let h = h_out.unwrap_or_else(|| panic!("oracle: libxcrypt NULL for {salt:?}"));
+            // Only compare where the oracle actually produced a hash; if a
+            // setting is rejected upstream it belongs to the other test.
+            if h == "*0" || h == "*1" {
+                continue;
+            }
+            let (f_out, _) = fl_crypt(key, salt);
+            let f = f_out.unwrap_or_else(|| panic!("fl returned NULL for {salt:?}"));
+            assert_ne!(f, "*0", "crypt(key.len={}, {salt:?}) returned the failure token", key.len());
+            assert_ne!(f, "*1", "crypt(key.len={}, {salt:?}) returned the failure token", key.len());
+            assert_eq!(
+                f,
+                h,
+                "crypt(key.len={}, {salt:?}) digest mismatch\n  fl:        {f}\n  libxcrypt: {h}",
+                key.len()
+            );
+            compared += 1;
         }
     }
+    // Guard against the whole matrix being skipped by an oracle change.
+    assert!(
+        compared >= 20,
+        "only {compared} (key, salt) pairs were actually compared; the matrix went inert"
+    );
 }

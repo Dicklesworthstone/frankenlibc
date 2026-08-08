@@ -10,33 +10,42 @@ pub const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh
 
 /// Encode `input` to a `n_chars`-long crypt(3)-style base-64 string.
 ///
-/// Bytes are accumulated into a 32-bit window with the LEAST-
-/// significant bits filled first; 6-bit groups are extracted and
-/// emitted as alphabet characters until either `n_chars` characters
-/// have been produced or `input` is exhausted. If `input` doesn't
-/// produce enough characters, the result is padded out with the
-/// alphabet's first character (`'.'`).
+/// `input` is consumed in **groups of three bytes**, each group packed
+/// BIG-ENDIAN into a 24-bit word — first byte most significant — and then
+/// emitted as characters least-significant 6 bits first. That is exactly
+/// glibc's `b64_from_24bit(B2, B1, B0, N)` and FreeBSD's `to64(s, v, n)`
+/// with `v = (B2 << 16) | (B1 << 8) | B0`. A short final group is
+/// RIGHT-aligned, so its last byte is `B0`: `[x]` gives `x`, `[x, y]`
+/// gives `(x << 8) | y`.
+///
+/// The grouping is the whole point and is why the byte-transposition tables
+/// in `md5`/`sha256`/`sha512` list their indices in triples. This function
+/// previously accumulated a single running LITTLE-endian bit stream across
+/// the entire input, which packs each triple in the opposite order — i.e.
+/// `(B0 << 16) | (B1 << 8) | B2`. Every digest it produced was therefore
+/// well-formed, correct length, correct alphabet, and WRONG, for all three
+/// algorithms at once, so no real `/etc/shadow` hash could ever verify.
+/// bd-9n50f2.
 pub fn encode(input: &[u8], n_chars: usize) -> String {
     if n_chars == 0 {
         return String::new();
     }
     let mut result = String::with_capacity(n_chars);
-    let mut val: u32 = 0;
-    let mut bits = 0u32;
-    for &b in input {
-        val |= (b as u32) << bits;
-        bits += 8;
-        while bits >= 6 && result.len() < n_chars {
-            result.push(ALPHABET[(val & 0x3F) as usize] as char);
-            val >>= 6;
-            bits -= 6;
-        }
+    for group in input.chunks(3) {
         if result.len() >= n_chars {
             break;
         }
-    }
-    if bits > 0 && result.len() < n_chars {
-        result.push(ALPHABET[(val & 0x3F) as usize] as char);
+        let mut word: u32 = 0;
+        for &b in group {
+            word = (word << 8) | b as u32;
+        }
+        // A full group yields 4 characters; the caller sizes `n_chars` so the
+        // final (possibly short) group emits exactly what is left.
+        let take = (n_chars - result.len()).min(4);
+        for _ in 0..take {
+            result.push(ALPHABET[(word & 0x3F) as usize] as char);
+            word >>= 6;
+        }
     }
     while result.len() < n_chars {
         result.push(ALPHABET[0] as char);
@@ -77,14 +86,33 @@ mod tests {
     }
 
     #[test]
-    fn encode_packs_least_significant_first() {
-        // Input [0x01, 0x00, 0x00]. After byte 0:
-        //   val = 0x01, bits = 8 → emit (val & 0x3F) = 1 → '/'.
-        //   val = 0x00, bits = 2.
-        // After byte 1: val = 0x00, bits = 10 → emit '.', '.'.
-        // After byte 2: similar.
-        let s = encode(&[0x01, 0x00, 0x00], 4);
-        assert_eq!(s.as_bytes()[0], b'/');
+    fn encode_packs_group_big_endian_and_emits_lsb_first() {
+        // This test previously asserted the first character of
+        // encode([0x01, 0x00, 0x00], 4) was '/', i.e. that 0x01 landed in the
+        // LOW 6 bits — the little-endian-stream behaviour that made every crypt
+        // digest wrong (bd-9n50f2). It was a faithful description of the bug, so
+        // it is replaced rather than adjusted.
+        //
+        // Reference semantics (glibc b64_from_24bit / FreeBSD to64): a 3-byte
+        // group (B2, B1, B0) becomes w = (B2 << 16) | (B1 << 8) | B0, and the
+        // characters come out least-significant 6 bits FIRST.
+        //
+        // For [0x01, 0x00, 0x00]: w = 0x010000 = 65536.
+        //   65536        & 63 = 0  -> ALPHABET[0]  = '.'
+        //   (65536 >> 6)  & 63 = 0  -> '.'
+        //   (65536 >> 12) & 63 = 16 -> ALPHABET[16] = 'E'
+        //   (65536 >> 18) & 63 = 0  -> '.'
+        assert_eq!(encode(&[0x01, 0x00, 0x00], 4), "..E.");
+
+        // And the low byte really is the last one in the group:
+        // [0x00, 0x00, 0x01] -> w = 1 -> '/' then '.', '.', '.'.
+        assert_eq!(encode(&[0x00, 0x00, 0x01], 4), "/...");
+
+        // A short final group is RIGHT-aligned, so its last byte is B0. This is
+        // what makes the md5 tail (`[f11]`, 2 chars) and the sha256 tail
+        // (`[f31, f30]`, 3 chars) come out in glibc's order.
+        assert_eq!(encode(&[0x01], 2), "/.");
+        assert_eq!(encode(&[0x00, 0x01], 3), "/..");
     }
 
     #[test]
