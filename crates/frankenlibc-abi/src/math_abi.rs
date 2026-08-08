@@ -4420,8 +4420,10 @@ pub unsafe extern "C" fn log2p1(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1f(x: f32) -> f32 {
-    let r = unsafe { log1pf(x) };
-    r / std::f32::consts::LN_2
+    // glibc computes in double + rounds once; the f32 path (log1pf(x)/LN_2_f32)
+    // is ~2 ULP off. Routing through f64 log2p1 is byte-exact (0 ULP).
+    // Restored: 517d0a233 reverted this to the f32 form (bd-6x4jt0).
+    unsafe { log2p1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1l(x: f64) -> f64 {
@@ -4466,8 +4468,10 @@ pub unsafe extern "C" fn log10p1(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1f(x: f32) -> f32 {
-    let r = unsafe { log1pf(x) };
-    r / std::f32::consts::LN_10
+    // Compute in double + round once, matching glibc (byte-exact); the f32 path
+    // (log1pf(x)/LN_10_f32) is ~2 ULP off.
+    // Restored: 517d0a233 reverted this to the f32 form (bd-6x4jt0).
+    unsafe { log10p1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1l(x: f64) -> f64 {
