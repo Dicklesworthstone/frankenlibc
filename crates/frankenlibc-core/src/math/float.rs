@@ -19,7 +19,10 @@ pub fn floor(x: f64) -> f64 {
 
 #[inline]
 pub fn round(x: f64) -> f64 {
-    libm::round(x)
+    // Bit-manipulation form, not libm's `+0.5` arithmetic: the latter is
+    // value-correct but spuriously raises FE_INEXACT, which C F.10.6.6 forbids
+    // for this family. Pinned by conformance_diff_round_exact_flags.
+    round_exact(x)
 }
 
 #[inline]
@@ -152,16 +155,53 @@ pub fn llrint(x: f64) -> i64 {
     round_to_i64_x86(libm::rint(x))
 }
 
+/// Round half away from zero using only bit manipulation, raising NO floating
+/// point exceptions.
+///
+/// `libm::round` rounds via `+0.5` arithmetic, which spuriously raises
+/// FE_INEXACT. C F.10.6.6 specifies that the `round` and `l*round` families do
+/// not raise FE_INEXACT, so a value-correct-but-flag-wrong result is still a
+/// conformance defect: glibc reports flags 0x0 for `lround(0.5)` where the
+/// arithmetic form reports 0x20. Pinned by `conformance_diff_lround_flags`.
+#[inline]
+pub(crate) fn round_exact(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000_0000_0000;
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    if e >= 1023 + 52 {
+        // |x| >= 2^52, plus the infinities and NaN: already integral.
+        return x;
+    }
+    if e < 1023 {
+        // |x| < 1 rounds to ±0 below 0.5 and ±1 at or above it (ties away).
+        let mag = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
+        let r = if mag >= 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 1075 - e;
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    // A carry out of the mantissa lands in the exponent field, which is exactly
+    // the increment that case needs (1.9999.. -> 2.0).
+    let out = if (bits & frac_mask) >= half {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    };
+    f64::from_bits(out)
+}
+
 /// Round to nearest integer (away from zero), return as `i64`.
 #[inline]
 pub fn lround(x: f64) -> i64 {
-    round_to_i64_x86(libm::round(x))
+    round_to_i64_x86(round_exact(x))
 }
 
 /// Round to nearest integer (away from zero), return as `i64`.
 #[inline]
 pub fn llround(x: f64) -> i64 {
-    round_to_i64_x86(libm::round(x))
+    round_to_i64_x86(round_exact(x))
 }
 
 /// Multiply `x` by 2^`exp`.

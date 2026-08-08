@@ -951,7 +951,8 @@ pub fn floorf(x: f32) -> f32 {
 
 #[inline]
 pub fn roundf(x: f32) -> f32 {
-    libm::roundf(x)
+    // See `roundf_exact`: libm's `+0.5` arithmetic spuriously raises FE_INEXACT.
+    roundf_exact(x)
 }
 
 #[inline]
@@ -1074,14 +1075,43 @@ pub fn llrintf(x: f32) -> i64 {
     crate::math::float::round_to_i64_x86(libm::rintf(x) as f64)
 }
 
+/// f32 counterpart of `float::round_exact`: round half away from zero with bit
+/// manipulation only, so no FE_INEXACT is raised. `libm::roundf` uses `+0.5`
+/// arithmetic and does raise it, which C F.10.6.6 forbids for this family.
+#[inline]
+pub(crate) fn roundf_exact(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000;
+    let e = ((bits >> 23) & 0xff) as i32;
+    if e >= 127 + 23 {
+        // |x| >= 2^23, plus the infinities and NaN: already integral.
+        return x;
+    }
+    if e < 127 {
+        let mag = f32::from_bits(bits & 0x7fff_ffff);
+        let r = if mag >= 0.5 { 1.0_f32 } else { 0.0_f32 };
+        return f32::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 150 - e;
+    let half = 1u32 << (frac_bits - 1);
+    let frac_mask = (1u32 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let out = if (bits & frac_mask) >= half {
+        int_part + (1u32 << frac_bits)
+    } else {
+        int_part
+    };
+    f32::from_bits(out)
+}
+
 #[inline]
 pub fn lroundf(x: f32) -> i64 {
-    crate::math::float::round_to_i64_x86(libm::roundf(x) as f64)
+    crate::math::float::round_to_i64_x86(roundf_exact(x) as f64)
 }
 
 #[inline]
 pub fn llroundf(x: f32) -> i64 {
-    crate::math::float::round_to_i64_x86(libm::roundf(x) as f64)
+    crate::math::float::round_to_i64_x86(roundf_exact(x) as f64)
 }
 
 // --- Float decomposition ---
