@@ -7901,17 +7901,17 @@ fn with_crypt_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
     if key.is_null() || salt.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
+        // Cannot inspect the setting, so the plain token applies. (libxcrypt
+        // dereferences these and would crash; returning the token keeps the
+        // never-NULL invariant callers depend on without inventing a hash.)
+        return crypt_failure_token(b"");
     }
 
     let Some(key_bytes) = (unsafe { read_c_string_bytes(key) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
+        return crypt_failure_token(b"");
     };
     let Some(salt_bytes) = (unsafe { read_c_string_bytes(salt) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
+        return crypt_failure_token(b"");
     };
 
     let result = if salt_bytes.starts_with(b"$6$") {
@@ -7921,9 +7921,10 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
     } else {
-        // Traditional DES or unknown — return error (DES is obsolete and insecure)
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
+        // Traditional DES or unknown prefix — not implemented here. Report it the
+        // way libxcrypt reports a rejected setting, not with NULL. (Adding the
+        // missing algorithms themselves is bd-c6ykz1.)
+        return crypt_failure_token(&salt_bytes);
     };
 
     match result {
@@ -7933,11 +7934,37 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
             buf[len] = 0;
             buf.as_mut_ptr() as *mut c_char
         }),
-        None => {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            std::ptr::null_mut()
-        }
+        None => crypt_failure_token(&salt_bytes),
     }
+}
+
+/// libxcrypt's failure representation for `crypt`/`crypt_r`: it NEVER returns
+/// NULL. On a rejected or unsupported setting it returns the two-character
+/// failure token and sets `EINVAL`. The token is `*0`, except when the setting
+/// itself begins with `*0`, in which case it is `*1` — chosen so the result can
+/// never compare equal to the setting that produced it, which is what makes
+/// `strcmp(crypt(pw, stored), stored)` safe to use as an authentication test.
+///
+/// fl previously returned NULL here, so a caller written against libxcrypt's
+/// documented contract would dereference NULL on any bad salt. bd-r9ihvq.
+///
+/// Measured against live libxcrypt (libcrypt.so.1) — every one of these returned
+/// a token, never NULL, always with EINVAL:
+///   "$9$saltsalt$" -> *0     ""   -> *0     "x" -> *0
+///   "!!!not-a-salt!!!" -> *0
+///   "*0" -> *1               "*1" -> *0
+fn crypt_failure_token(salt_bytes: &[u8]) -> *mut c_char {
+    unsafe { set_abi_errno(errno::EINVAL) };
+    let token: &[u8; 2] = if salt_bytes.starts_with(b"*0") {
+        b"*1"
+    } else {
+        b"*0"
+    };
+    with_crypt_buf(|buf| {
+        buf[..2].copy_from_slice(token);
+        buf[2] = 0;
+        buf.as_mut_ptr() as *mut c_char
+    })
 }
 
 // ---------------------------------------------------------------------------
