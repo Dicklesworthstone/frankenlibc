@@ -2968,20 +2968,84 @@ fn get_phys_and_avphys_pages_match_sysinfo_projection() {
 
     let expected_phys = ((info.totalram as u128).saturating_mul(mem_unit) / page_size_u128)
         .min(libc::c_long::MAX as u128) as libc::c_long;
-    let expected_avphys = ((info.freeram as u128).saturating_mul(mem_unit) / page_size_u128)
-        .min(libc::c_long::MAX as u128) as libc::c_long;
+    // (the freeram projection is taken fresh inside the bracket loop below, via
+    // sysinfo_free_pages, rather than from this first sample)
 
+    // TOTAL ram is stable for the life of the process, so it is asserted exactly.
     assert_eq!(get_phys_pages(), expected_phys);
 
-    // Available pages fluctuate and `/proc/meminfo`'s `MemAvailable` (which includes
-    // reclaimable page cache) is generally much higher than `sysinfo`'s `freeram`
-    // (which does not). We just verify it's a sane positive number and >= freeram.
+    // AVAILABLE pages are a different matter (bd-3aktsp). This arm used to assert
+    // `get_avphys_pages() >= sysinfo.freeram`, justified by a comment saying
+    // get_avphys_pages reads `/proc/meminfo` `MemAvailable`, which counts
+    // reclaimable page cache and so runs well above `freeram`. That justification
+    // is STALE: bd-l18p7s changed the implementation to read **MemFree**, which is
+    // the very same quantity `sysinfo.freeram` reports. So both sides of that
+    // inequality became the same metric sampled at two different instants, and on a
+    // busy machine it drifts DOWN as often as up — the arm failed under the fleet's
+    // normal parallel load and passed with `--test-threads 1`, which is what made
+    // a red suite look like noise.
+    //
+    // What is actually guaranteed is asserted instead, in two parts.
+
+    // (a) Durable invariant, true at any instant and under any churn: free RAM is
+    // positive and cannot exceed total RAM.
     let actual_avphys = get_avphys_pages();
     assert!(actual_avphys > 0, "get_avphys_pages() should be > 0");
     assert!(
-        actual_avphys >= expected_avphys,
-        "get_avphys_pages() ({actual_avphys}) should be >= sysinfo freeram ({expected_avphys})"
+        actual_avphys <= expected_phys,
+        "get_avphys_pages() ({actual_avphys}) cannot exceed total pages ({expected_phys})"
     );
+
+    // (b) The real contract — that fl reads the SAME metric as sysinfo.freeram —
+    // checked by BRACKETING: sample sysinfo, then get_avphys_pages(), then sysinfo
+    // again, and require the middle reading to lie between the two outer ones. That
+    // holds however far memory drifts, as long as it drifts monotonically across the
+    // window; non-monotonic jitter inside the window is retried a bounded number of
+    // times. Only a genuinely different metric (e.g. a return to MemAvailable, which
+    // is typically several times larger) fails every attempt.
+    //
+    // `slack` absorbs unit rounding alone: /proc/meminfo is kB -> pages while
+    // sysinfo is bytes -> pages, so the two can differ by a page at the boundary.
+    let slack: libc::c_long = 2;
+    let mut attempts = Vec::new();
+    let mut bracketed = false;
+    for _ in 0..8 {
+        let before = sysinfo_free_pages(page_size);
+        let mid = get_avphys_pages();
+        let after = sysinfo_free_pages(page_size);
+        let (lo, hi) = (before.min(after), before.max(after));
+        attempts.push((lo, mid, hi));
+        if mid >= lo - slack && mid <= hi + slack {
+            bracketed = true;
+            break;
+        }
+    }
+    assert!(
+        bracketed,
+        "get_avphys_pages() never fell between two sysinfo.freeram samples taken \
+         around it in 8 attempts, so it is not reporting MemFree: {attempts:?} \
+         (each tuple is (lo, get_avphys_pages, hi) in pages)"
+    );
+}
+
+/// `sysinfo(2)`'s `freeram` expressed in pages — the quantity `get_avphys_pages`
+/// is contracted to report (bd-l18p7s).
+fn sysinfo_free_pages(page_size: libc::c_long) -> libc::c_long {
+    let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
+    // SAFETY: valid writable pointer for kernel sysinfo payload.
+    assert_eq!(
+        unsafe { raw_syscall::sys_sysinfo(info.as_mut_ptr().cast::<raw_syscall::Sysinfo>()) },
+        Ok(())
+    );
+    // SAFETY: syscall succeeded and initialized `info`.
+    let info = unsafe { info.assume_init() };
+    let mem_unit = if info.mem_unit == 0 {
+        1_u128
+    } else {
+        info.mem_unit as u128
+    };
+    ((info.freeram as u128).saturating_mul(mem_unit) / page_size as u128)
+        .min(libc::c_long::MAX as u128) as libc::c_long
 }
 
 #[test]
