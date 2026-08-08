@@ -1391,8 +1391,18 @@ fn scan_char(
     // Guard against pathological widths that overflow pos + n. Under
     // debug_assertions `usize` add panics; in release it wraps and
     // would skip the bounds check below, reading past input. (bd-35vob)
-    let end = pos.checked_add(n)?;
-    if end > input.len() {
+    let want_end = pos.checked_add(n)?;
+    // CLAMP to what is available rather than failing. glibc's `%Nc` reads what
+    // IS there and succeeds — sscanf("ab", "%5mc") returns 1 having read "ab",
+    // not EOF. fl required the full width and so failed the conversion, which
+    // is the bug this fixes; the WIDE branch above already had the clamping
+    // behaviour, so the two paths were inconsistent with each other as well as
+    // with glibc.
+    //
+    // A total absence of input is still a matching failure (read == 0), which
+    // the engine reports as EOF because nothing remained to convert.
+    let end = want_end.min(input.len());
+    if end == pos {
         return None;
     }
     let chars = input[pos..end].to_vec();
