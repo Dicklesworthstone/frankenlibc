@@ -14,6 +14,31 @@ use std::ffi::{CStr, c_char};
 unsafe extern "C" {
     fn gmtime(t: *const i64) -> *mut libc::tm;
     fn ctime_r(t: *const i64, buf: *mut c_char) -> *mut c_char;
+    fn tzset();
+}
+
+/// Pin the process timezone to UTC before comparing ctime_r.
+///
+/// ctime is `asctime(localtime(t))`, so glibc's answer depends on the machine's
+/// timezone while fl is UTC-only BY DESIGN — time_abi's tzset documents that
+/// "the TZ environment variable is not consulted, and all conversions assume
+/// UTC", and core stamps tm_gmtoff = 0. On a UTC host the two agree and this
+/// gate passes; on the rch fleet (UTC-5) glibc returned
+/// "Wed Dec 31 19:00:00 1969" for epoch 0 against fl's
+/// "Thu Jan  1 00:00:00 1970", so the gate was red for the machine's timezone
+/// rather than for anything fl did wrong.
+///
+/// Setting TZ here CONTROLS that variable instead of dropping the assertion:
+/// the comparison still pins the whole asctime rendering — day and month names,
+/// zero-padded fields, the two-space day, the trailing newline, the 26-byte
+/// buffer contract — which is exactly the part fl implements. fl's LACK of
+/// timezone support is a separate, tracked gap and is deliberately not what
+/// this gate measures.
+fn pin_utc() {
+    unsafe {
+        libc::setenv(c"TZ".as_ptr(), c"UTC".as_ptr(), 1);
+        tzset();
+    }
 }
 
 type TmFields = (i32, i32, i32, i32, i32, i32, i32, i32, i32);
@@ -52,6 +77,7 @@ fn gmtime_matches_glibc() {
 
 #[test]
 fn ctime_r_matches_glibc() {
+    pin_utc();
     for t in [0i64, 1_000_000_000, 1_700_000_000, 2_147_483_647] {
         let mut gb = [0u8; 64];
         let mut fb = [0u8; 64];

@@ -396,6 +396,15 @@ fn diff_glob_basic_patterns() {
     assert!(divs.is_empty(), "glob divergences:\n{}", render_divs(&divs));
 }
 
+/// True when a chmod 0o000 directory is actually unreadable by this process.
+///
+/// Root bypasses permission bits, so the "blocked directory" premise below
+/// simply does not hold there and the errfunc never fires.
+fn glob_errfunc_unprivileged() -> bool {
+    let euid = unsafe { libc::geteuid() };
+    euid != 0
+}
+
 #[test]
 fn diff_glob_errfunc_directory_error_paths() {
     use std::os::unix::fs::PermissionsExt;
@@ -425,16 +434,18 @@ fn diff_glob_errfunc_directory_error_paths() {
         let rc_lc = unsafe { glob_rc_lc(&pat, *flags, Some(recording_glob_errfunc)) };
         let (calls_lc, errno_lc, path_lc) = glob_errfunc_snapshot();
 
-        if rc_fl != rc_lc || rc_fl != *expected_rc {
+        // fl must do whatever glibc did. This half holds regardless of
+        // privilege and is never skipped.
+        if rc_fl != rc_lc {
             divs.push(Divergence {
                 function: "glob errfunc",
                 case: format!("{name}: {pat:?}, flags={flags:#x}, callback={callback_return}"),
                 field: "rc",
                 frankenlibc: format!("{rc_fl}"),
-                glibc: format!("{rc_lc}, expected {expected_rc}"),
+                glibc: format!("{rc_lc}"),
             });
         }
-        if calls_fl != 1 || calls_lc != 1 {
+        if calls_fl != calls_lc {
             divs.push(Divergence {
                 function: "glob errfunc",
                 case: name.to_string(),
@@ -443,13 +454,59 @@ fn diff_glob_errfunc_directory_error_paths() {
                 glibc: format!("{calls_lc}"),
             });
         }
-        if errno_fl == 0 || errno_lc == 0 {
+        if errno_fl != errno_lc {
             divs.push(Divergence {
                 function: "glob errfunc",
                 case: name.to_string(),
                 field: "errno",
                 frankenlibc: format!("{errno_fl}"),
                 glibc: format!("{errno_lc}"),
+            });
+        }
+        if path_fl != path_lc {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: name.to_string(),
+                field: "epath",
+                frankenlibc: format!("{path_fl:?}"),
+                glibc: format!("{path_lc:?}"),
+            });
+        }
+
+        // The rest is the test's PREMISE — that a directory chmod'd 0o000 is
+        // actually unreadable, so glob reports an error through errfunc. Root
+        // ignores permission bits entirely, so on the rch fleet (whose workers
+        // run as root) no error occurs: the callback is never invoked, errno
+        // stays 0, no epath is recorded, and every case returns GLOB_NOMATCH.
+        // The comparison above still passes there because BOTH impls agree.
+        if !glob_errfunc_unprivileged() {
+            continue;
+        }
+        if rc_fl != *expected_rc {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: format!("{name}: {pat:?}, flags={flags:#x}, callback={callback_return}"),
+                field: "rc vs expected",
+                frankenlibc: format!("{rc_fl}"),
+                glibc: format!("expected {expected_rc}"),
+            });
+        }
+        if calls_fl != 1 {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: name.to_string(),
+                field: "callback_calls vs expected",
+                frankenlibc: format!("{calls_fl}"),
+                glibc: "expected 1".to_string(),
+            });
+        }
+        if errno_fl == 0 {
+            divs.push(Divergence {
+                function: "glob errfunc",
+                case: name.to_string(),
+                field: "errno vs expected",
+                frankenlibc: format!("{errno_fl}"),
+                glibc: "expected nonzero".to_string(),
             });
         }
         for (impl_name, path) in [("frankenlibc", path_fl), ("glibc", path_lc)] {
