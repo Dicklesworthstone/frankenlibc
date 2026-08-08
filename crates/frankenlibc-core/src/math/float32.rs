@@ -131,7 +131,15 @@ pub fn atanf(x: f32) -> f32 {
 
 #[inline]
 pub fn atan2f(y: f32, x: f32) -> f32 {
-    libm::atan2f(y, x)
+    // libm's atan2f lands 1 ULP under glibc wherever the result is an exact
+    // multiple of pi — atan2f(inf, 1) gave 1.5707963 against glibc's 1.5707964,
+    // the same f32 pi/2 shortfall already fixed in atanf/asinf/acosf. The
+    // quadrant/signed-zero/infinity table C99 F.10.1.4 specifies is large
+    // (pi/2, pi, pi/4, 3pi/4, and every sign combination), so rather than
+    // hand-write a dozen correctly-rounded constants, evaluate in f64 — where
+    // atan2 already matches glibc bit-for-bit — and round ONCE. The widening is
+    // exact, so every special case falls out with the sign structure intact.
+    crate::math::atan2(f64::from(y), f64::from(x)) as f32
 }
 
 // --- Exponential / logarithmic ---
