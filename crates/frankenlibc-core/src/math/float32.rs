@@ -83,8 +83,21 @@ pub fn tanf(x: f32) -> f32 {
     libm::tanf(x)
 }
 
+/// Correctly-rounded f32 nearest to pi/2, `0x3fc9_0fdb`.
+///
+/// libm returns `0x3fc9_0fda` — one ULP LOW — from the inverse-trig special
+/// values that are exactly pi/2 (`atanf(inf)`, `acosf(±0)`, `asinf(±1)`), where
+/// glibc returns the correctly-rounded value. C99 F.10.1 specifies these as
+/// exact results, not approximations, so the constant is returned directly
+/// rather than left to the kernel. Pinned by conformance_diff_inv_trig_special.
+const FRAC_PI_2_F32: f32 = core::f32::consts::FRAC_PI_2;
+
 #[inline]
 pub fn asinf(x: f32) -> f32 {
+    // asin(±1) = ±pi/2 exactly.
+    if x.abs() == 1.0 {
+        return FRAC_PI_2_F32.copysign(x);
+    }
     libm::asinf(x)
 }
 
@@ -95,11 +108,24 @@ pub fn acosf(x: f32) -> f32 {
     if !(-1.0..=1.0).contains(&x) {
         fe_invalid_f32();
     }
+    // acos(±0) = pi/2 exactly (both zero signs give +pi/2).
+    if x == 0.0 {
+        return FRAC_PI_2_F32;
+    }
+    // acos(-1) = pi exactly; libm is one ULP low here too (0x4049_0fda vs
+    // the correctly-rounded 0x4049_0fdb).
+    if x == -1.0 {
+        return core::f32::consts::PI;
+    }
     libm::acosf(x)
 }
 
 #[inline]
 pub fn atanf(x: f32) -> f32 {
+    // atan(±inf) = ±pi/2 exactly.
+    if x.is_infinite() {
+        return FRAC_PI_2_F32.copysign(x);
+    }
     libm::atanf(x)
 }
 
