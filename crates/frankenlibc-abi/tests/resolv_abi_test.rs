@@ -4717,6 +4717,33 @@ fn bd_dcfj5_etc_hosts_iteration_reads_ipv4_entries() {
         |_| {
             unsafe { _sethtent(1) };
 
+            // The `::1 ipv6-localhost` line is NOT skipped. This test used to
+            // expect `legacy-name` first, which encoded fl's pre-bd-79p18u
+            // behaviour of dropping every IPv6 line. glibc folds the IPv6 forms
+            // that carry an IPv4 meaning into AF_INET entries; measured on this
+            // exact fixture via `bwrap --bind <it> /etc/hosts` + a ctypes drain of
+            // host glibc's gethostent:
+            //   ipv6-localhost  af=2 len=4 127.0.0.1     aliases=[]
+            //   legacy-name     af=2 len=4 203.0.113.8   aliases=[legacy-alias]
+            //   second-name     af=2 len=4 198.51.100.4  aliases=[]
+            //   TOTAL=3
+            // so the expectations below are the oracle's output, not a
+            // regenerated golden.
+            let v6lo = unsafe { _gethtent() };
+            assert!(!v6lo.is_null());
+            let hostent = unsafe { &*(v6lo as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"ipv6-localhost"
+            );
+            let v6lo_addr = unsafe { *hostent.h_addr_list };
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(v6lo_addr.cast::<u8>(), 4) },
+                [127, 0, 0, 1]
+            );
+
             let first = unsafe { _gethtent() };
             assert!(!first.is_null());
             let hostent = unsafe { &*(first as *const libc::hostent) };
@@ -4755,7 +4782,7 @@ fn bd_dcfj5_etc_hosts_iteration_reads_ipv4_entries() {
             let hostent = unsafe { &*(rewound as *const libc::hostent) };
             assert_eq!(
                 unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
-                b"legacy-name"
+                b"ipv6-localhost"
             );
         },
     );
@@ -5124,6 +5151,14 @@ fn fl_hosts_af_inet() -> Vec<(String, [u8; 4])> {
 
 #[test]
 fn gethtent_matches_glibc_gethostent_af_inet_view() {
+    // MUST hold RESOLVER_ENV_LOCK: this compares fl against host glibc over the
+    // machine's REAL /etc/hosts, but fl honours the HOSTS_PATH_ENV override that
+    // `with_resolver_backends` installs process-wide. libtest runs these
+    // concurrently, so without the lock fl reads a sibling test's fixture while
+    // glibc reads /etc/hosts and the comparison is meaningless. This was not
+    // hypothetical — the test passed under a name filter and failed in a
+    // whole-target run.
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let glibc = glibc_hosts_af_inet();
     let fl = fl_hosts_af_inet();
 
@@ -5149,6 +5184,9 @@ fn gethtent_matches_glibc_gethostent_af_inet_view() {
 /// can never report success for a case it did not actually exercise.
 #[test]
 fn ipv6_loopback_line_becomes_127_0_0_1_in_both() {
+    // Same reason as above: fl honours the process-wide hosts override that
+    // sibling tests install, so this must not run concurrently with them.
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let hosts = match std::fs::read_to_string("/etc/hosts") {
         Ok(text) => text,
         Err(_) => return,
