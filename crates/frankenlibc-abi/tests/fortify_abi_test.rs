@@ -1182,6 +1182,68 @@ fn openat64_2_creat_without_mode_aborts_child_process() {
     });
 }
 
+// ---------------------------------------------------------------------------
+// O_TMPFILE half of the mode-required guard (bd-3vz1f8).
+//
+// The guard is `(oflag & O_CREAT) != 0 || (oflag & O_TMPFILE) == O_TMPFILE`, but
+// every abort test above passes O_CREAT, so the second clause was completely
+// untested: deleting it left the whole target green. glibc aborts on it too —
+// its own message names both flags, measured on this host by calling glibc's
+// __open_2 directly in a forked child:
+//   __open_2("/tmp", O_RDONLY)         -> exit 0
+//   __open_2("/tmp", O_CREAT|O_RDONLY) -> SIGABRT
+//   __open_2("/tmp", O_TMPFILE|O_RDWR) -> SIGABRT
+//   *** invalid open call: O_CREAT or O_TMPFILE without mode ***: terminated
+//
+// O_TMPFILE is a multi-bit value that subsumes O_DIRECTORY, which is why the
+// guard tests it with `== O_TMPFILE` rather than `!= 0`; passing it here is what
+// keeps that distinction covered.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open_2(path.as_ptr(), libc::O_TMPFILE | libc::O_RDWR) };
+    });
+}
+
+#[test]
+fn open64_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open64_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open64_2(path.as_ptr(), libc::O_TMPFILE | libc::O_RDWR) };
+    });
+}
+
+#[test]
+fn openat_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe {
+            __openat_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_TMPFILE | libc::O_RDWR,
+            )
+        };
+    });
+}
+
+#[test]
+fn openat64_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat64_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe {
+            __openat64_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_TMPFILE | libc::O_RDWR,
+            )
+        };
+    });
+}
+
 // ===========================================================================
 // FD_SET check: __fdelt_chk
 // ===========================================================================
