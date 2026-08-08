@@ -25870,6 +25870,7 @@ pub unsafe extern "C" fn getnetent_r(
 unsafe fn fill_protoent_r(
     name: &[u8],
     proto: c_int,
+    aliases: &[Vec<u8>],
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -25881,23 +25882,13 @@ unsafe fn fill_protoent_r(
         return libc::EINVAL;
     }
 
-    // Need room for: name + NUL + aligned null-terminated alias pointer.
+    // Layout: name\0 alias strings\0.. <align> NULL-terminated ptr table.
     let effective_buflen = tracked_output_capacity(buf, buflen);
-    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
     let name_len = match name.len().checked_add(1) {
         Some(len) => len,
         None => return libc::ERANGE,
     };
-    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
-        Some(offset) => offset,
-        None => return libc::ERANGE,
-    };
-    let needed = match alias_offset.checked_add(alias_ptr_size) {
-        Some(needed) => needed,
-        None => return libc::ERANGE,
-    };
-    if needed > effective_buflen {
+    if name_len > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -25908,16 +25899,18 @@ unsafe fn fill_protoent_r(
         *buf_u8.add(name.len()) = 0;
     }
 
-    // Aliases: NULL-terminated list after p_name (just a single NULL ptr).
-    unsafe {
-        *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut();
-    }
+    let aliases_ptr = match unsafe {
+        crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
 
     // Fill struct protoent.
     let ent = result_buf.cast::<libc::protoent>();
     unsafe {
         (*ent).p_name = buf;
-        (*ent).p_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
+        (*ent).p_aliases = aliases_ptr;
         (*ent).p_proto = proto;
     }
 
@@ -25951,37 +25944,36 @@ pub unsafe extern "C" fn getprotobyname_r(
     let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
         return libc::EINVAL;
     };
-    let content = match std::fs::read(PROTOCOLS_PATH) {
-        Ok(c) => c,
-        Err(_) => return 0, // not found, result stays NULL (glibc behavior)
-    };
 
-    for line in content.split(|&b| b == b'\n') {
-        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-            &line[..pos]
-        } else {
-            line
-        };
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-        let pname = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let pnum_str = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        if pname.eq_ignore_ascii_case(needle.as_slice())
-            && let Some(num) = std::str::from_utf8(pnum_str)
-                .ok()
-                .and_then(|s| s.parse::<c_int>().ok())
-        {
-            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
-        }
+    // Shared generation-stamped parsed index (resolv_abi), the same one the non-reentrant
+    // `getprotobyname` uses — it already agrees on name+alias matching, canonical name, and
+    // alias list, so this keeps the two in lockstep by construction rather than by having a
+    // second call site of the core parser. Replaces a per-call `std::fs::read(PROTOCOLS_PATH)`
+    // + linear scan: this entry point re-read and re-parsed the whole file on EVERY call and
+    // never reached `BackendFileCache`. A backend read error still reports "not found" with
+    // `*result` left NULL (glibc behavior), exactly as before. Borrow the cache entry rather
+    // than cloning it: a `ProtocolEntry` clone is a name `Vec<u8>` plus a `Vec<Vec<u8>>` of
+    // aliases, i.e. 3+ malloc/free pairs per call through the interposed allocator. A `perf`
+    // frame table put ~92% of this function's self time in allocator bookkeeping.
+    //
+    // RESTORED (bd-870h4v): this is fc181036f's shipped bd-qds9jk implementation. e634aff2a
+    // reverted it to the per-call re-read above while leaving `with_protocol_entry_by_name`
+    // in the tree as dead code, which cost 2.64x on getprotobyname_r_tcp AND dropped alias
+    // support (conformance_diff_protoent_r_aliases was RED at HEAD).
+    match crate::resolv_abi::with_protocol_entry_by_name(needle.as_slice(), |entry| unsafe {
+        fill_protoent_r(
+            &entry.name,
+            entry.number,
+            &entry.aliases,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }) {
+        Ok(Some(rc)) => rc,
+        Ok(None) | Err(_) => 0, // not found, result stays NULL (glibc behavior)
     }
-    0 // not found, result stays NULL (glibc behavior)
 }
 
 /// `getprotobynumber_r` — reentrant protocol lookup by number.
@@ -26006,37 +25998,22 @@ pub unsafe extern "C" fn getprotobynumber_r(
         return libc::EINVAL;
     }
 
-    let content = match std::fs::read(PROTOCOLS_PATH) {
-        Ok(c) => c,
-        Err(_) => return 0,
-    };
-
-    for line in content.split(|&b| b == b'\n') {
-        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-            &line[..pos]
-        } else {
-            line
-        };
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-        let pname = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let pnum_str = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        if let Some(num) = std::str::from_utf8(pnum_str)
-            .ok()
-            .and_then(|s| s.parse::<c_int>().ok())
-            .filter(|&n| n == proto)
-        {
-            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
-        }
+    // Shared generation-stamped parsed number index, borrowed not cloned; see
+    // `getprotobyname_r` above. RESTORED (bd-870h4v) from fc181036f.
+    match crate::resolv_abi::with_protocol_entry_by_number(proto, |entry| unsafe {
+        fill_protoent_r(
+            &entry.name,
+            entry.number,
+            &entry.aliases,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }) {
+        Ok(Some(rc)) => rc,
+        Ok(None) | Err(_) => 0,
     }
-    0
 }
 
 /// `getprotoent_r` — reentrant sequential protocol entry read.
@@ -26102,7 +26079,12 @@ pub unsafe extern "C" fn getprotoent_r(
                 .ok()
                 .and_then(|s| s.parse::<c_int>().ok())
             {
-                return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
+                // Remaining fields on the line are the aliases (bd-870h4v: e634aff2a
+                // dropped these, so p_aliases came back as an empty list).
+                let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
+                return unsafe {
+                    fill_protoent_r(pname, num, &aliases, result_buf, buf, buflen, result)
+                };
             }
         }
     })
