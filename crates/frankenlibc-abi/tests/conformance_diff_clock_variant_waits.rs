@@ -121,3 +121,102 @@ fn clock_variant_waits_reject_bad_clockid_like_glibc() {
         );
     }
 }
+
+/// The half the reject test cannot supply: proof the guard is not over-broad.
+///
+/// `clock_variant_waits_reject_bad_clockid_like_glibc` only ever passes an
+/// INVALID clock, so an implementation that returned `EINVAL` unconditionally —
+/// or one whose guard was widened to reject everything — would satisfy it
+/// completely. That is the shape this repo keeps getting burned by: a gate that
+/// cannot fail for the defect it names. This test pins the other side, that
+/// CLOCK_REALTIME and CLOCK_MONOTONIC are ACCEPTED and reach the wait, against
+/// the same live glibc oracle.
+///
+/// Deadlines are deliberately in the PAST so an accepted clock returns
+/// immediately (`ETIMEDOUT` for the waits) instead of blocking the test.
+/// fl's condvar/mutex paths require fl-managed objects, so each arm initialises
+/// its own primitives with its own `*_init`.
+#[test]
+fn clock_variant_waits_accept_realtime_and_monotonic_like_glibc() {
+    let past = libc::timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
+    for &clk in &[libc::CLOCK_REALTIME, libc::CLOCK_MONOTONIC] {
+        // --- pthread_mutex_clocklock on a FREE mutex: acquires, returns 0. ---
+        let mut gm: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+        let mut fm: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+        unsafe { flp::pthread_mutex_init(&mut fm, std::ptr::null()) };
+        let g_ml = unsafe { g::pthread_mutex_clocklock(&mut gm, clk, &past) };
+        let f_ml = unsafe { flp::pthread_mutex_clocklock(&mut fm, clk, &past) };
+        assert_eq!(g_ml, 0, "oracle: glibc must ACCEPT clk={clk} on a free mutex");
+        assert_ne!(
+            f_ml,
+            libc::EINVAL,
+            "fl rejected the valid clk={clk} on mutex_clocklock — the guard is over-broad"
+        );
+        assert_eq!(f_ml, g_ml, "mutex_clocklock clk={clk}: fl={f_ml} glibc={g_ml}");
+
+        // --- rwlock read/write lock on a FREE rwlock: acquires, returns 0. ---
+        let mut grw: libc::pthread_rwlock_t = unsafe { std::mem::zeroed() };
+        let mut frw: libc::pthread_rwlock_t = unsafe { std::mem::zeroed() };
+        unsafe { flp::pthread_rwlock_init(&mut frw, std::ptr::null()) };
+        let g_rd = unsafe { g::pthread_rwlock_clockrdlock(&mut grw, clk, &past) };
+        let f_rd = unsafe { flp::pthread_rwlock_clockrdlock(&mut frw, clk, &past) };
+        assert_eq!(g_rd, 0, "oracle: glibc must ACCEPT clk={clk} on rdlock");
+        assert_ne!(
+            f_rd,
+            libc::EINVAL,
+            "fl rejected the valid clk={clk} on rwlock_clockrdlock — guard over-broad"
+        );
+        assert_eq!(f_rd, g_rd, "rwlock_clockrdlock clk={clk}");
+
+        let mut grw2: libc::pthread_rwlock_t = unsafe { std::mem::zeroed() };
+        let mut frw2: libc::pthread_rwlock_t = unsafe { std::mem::zeroed() };
+        unsafe { flp::pthread_rwlock_init(&mut frw2, std::ptr::null()) };
+        let g_wr = unsafe { g::pthread_rwlock_clockwrlock(&mut grw2, clk, &past) };
+        let f_wr = unsafe { flp::pthread_rwlock_clockwrlock(&mut frw2, clk, &past) };
+        assert_eq!(g_wr, 0, "oracle: glibc must ACCEPT clk={clk} on wrlock");
+        assert_ne!(
+            f_wr,
+            libc::EINVAL,
+            "fl rejected the valid clk={clk} on rwlock_clockwrlock — guard over-broad"
+        );
+        assert_eq!(f_wr, g_wr, "rwlock_clockwrlock clk={clk}");
+
+        // --- sem_clockwait on an EMPTY semaphore with an expired deadline:
+        //     the clock is accepted, the wait then times out. ---
+        let mut gs = [0u8; 64];
+        let mut fs = [0u8; 64];
+        unsafe { g::sem_init(gs.as_mut_ptr() as *mut c_void, 0, 0) };
+        unsafe { *g::__errno_location() = 0 };
+        let g_sw = unsafe { g::sem_clockwait(gs.as_mut_ptr() as *mut c_void, clk, &past) };
+        let g_se = unsafe { *g::__errno_location() };
+        assert_eq!(
+            (g_sw, g_se),
+            (-1, libc::ETIMEDOUT),
+            "oracle: glibc sem_clockwait must ACCEPT clk={clk} and then time out"
+        );
+
+        unsafe { frankenlibc_abi::unistd_abi::sem_init(fs.as_mut_ptr() as *mut c_void, 0, 0) };
+        unsafe { *g::__errno_location() = 0 };
+        let f_sw = unsafe {
+            flg::sem_clockwait(
+                fs.as_mut_ptr() as *mut c_void,
+                clk,
+                &past as *const _ as *const c_void,
+            )
+        };
+        let f_se = unsafe { *g::__errno_location() };
+        assert_ne!(
+            (f_sw, f_se),
+            (-1, libc::EINVAL),
+            "fl rejected the valid clk={clk} on sem_clockwait — the guard is over-broad"
+        );
+        assert_eq!(
+            (f_sw, f_se),
+            (g_sw, g_se),
+            "sem_clockwait clk={clk}: fl=({f_sw},{f_se}) glibc=({g_sw},{g_se})"
+        );
+    }
+}
