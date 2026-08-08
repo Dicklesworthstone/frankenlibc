@@ -651,6 +651,52 @@ def extract_host_resolve_aliases(source):
     return aliases
 
 
+def strip_rust_comments(text):
+    """Blank out `//`-style and `/* */` comments, preserving offsets and lines.
+
+    Host-delegation detection is a *call* analysis, but every pattern it uses is
+    a plain regex over raw source, so prose inside a doc comment counts as a
+    call. That is not hypothetical: a lock-ordering doc comment in `stream_cell`
+    reading ``for { c=fgetc(in); fputc(c,out); }`` made `stream_cell` a host
+    helper, which transitively made `scanf_core_impl`, `scanf_core` and finally
+    `sscanf` "Implemented but host delegation detected" — a gate failure caused
+    by a comment (bd-4habm0).
+
+    Replacement is space-for-character (newlines kept) so any offset- or
+    line-based reasoning over the result stays aligned with the original.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '/' and i + 1 < n and text[i + 1] == '/':
+            while i < n and text[i] != '\n':
+                out.append(' ')
+                i += 1
+        elif ch == '/' and i + 1 < n and text[i + 1] == '*':
+            # Rust block comments nest.
+            depth = 0
+            while i < n:
+                if text.startswith('/*', i):
+                    depth += 1
+                    out.append('  ')
+                    i += 2
+                elif text.startswith('*/', i):
+                    depth -= 1
+                    out.append('  ')
+                    i += 2
+                    if depth == 0:
+                        break
+                else:
+                    out.append('\n' if text[i] == '\n' else ' ')
+                    i += 1
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
+
 def body_calls_any(body, names):
     """True when body contains a function-style call to any name."""
     for name in names:
@@ -672,7 +718,8 @@ def analyze_module_source(source):
     for name in function_names:
         body = extract_function_body(source, name)
         if body is not None:
-            function_bodies[name] = body
+            # Comment-blind: host delegation is a property of code, not prose.
+            function_bodies[name] = strip_rust_comments(body)
 
     host_helper_functions = set()
     changed = True
@@ -797,11 +844,14 @@ def validate_status(
         warnings.append(PROMOTION_PROOF_WARNING)
     host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
     host_helper_functions = module_analysis.get("host_helper_functions", set())
+    # Comment-blind, matching analyze_module_source: a doc comment that quotes a
+    # call is prose, not delegation (bd-4habm0).
+    code_body = strip_rust_comments(body)
     wraps_host_libc = bool(
-        WRAPS_HOST_LIBC_PATTERN.search(body)
-        or WRAPS_LIBC_CALL_PATTERN.search(body)
-        or body_calls_any(body, host_resolve_aliases)
-        or body_calls_any(body, host_helper_functions)
+        WRAPS_HOST_LIBC_PATTERN.search(code_body)
+        or WRAPS_LIBC_CALL_PATTERN.search(code_body)
+        or body_calls_any(code_body, host_resolve_aliases)
+        or body_calls_any(code_body, host_helper_functions)
     )
 
     if status == "Implemented":
