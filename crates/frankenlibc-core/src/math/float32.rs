@@ -809,11 +809,17 @@ pub fn coshf(x: f32) -> f32 {
     libm::coshf(x)
 }
 
+// Bounds of the WITHDRAWN pure-f32 tanhf fast band (see `tanhf`). Retained,
+// unused, as the record of what the band was: the path was removed for losing
+// 1 ULP against glibc, not because these bounds were wrong. Anyone restoring a
+// fast path here must beat glibc's bits, not merely stay inside this range.
+#[allow(dead_code)]
 const TANHF_FAST_ABS_MIN: f32 = 0.5;
 // Upper bound kept below where `expf(2x)` overflows (2x < 88.7, i.e. x < 44.3);
 // well before that, `(u-1)/(u+1)` self-saturates to ±1 exactly in f32 (the `-1`
 // and `+1` vanish against the huge `u`), so the result is correct for the whole
 // band — including the saturated CASES (e.g. tanhf(20)=1.0).
+#[allow(dead_code)]
 const TANHF_FAST_ABS_MAX: f32 = 40.0;
 
 #[inline]
@@ -823,11 +829,16 @@ pub fn tanhf(x: f32) -> f32 {
     // fast path covers 2x directly on this interval and avoids widening through
     // the f64 exp kernel. The identity is odd, so it serves negative x with no
     // special-casing. Near-0 (cancellation) and tiny/non-finite x defer to libm.
-    if (TANHF_FAST_ABS_MIN..=TANHF_FAST_ABS_MAX).contains(&x.abs()) {
-        let u = expf(2.0 * x);
-        return (u - 1.0) / (u + 1.0);
-    }
-    libm::tanhf(x)
+    // PERF PATH WITHDRAWN. The pure-f32 form `(expf(2x) - 1) / (expf(2x) + 1)`
+    // rounds three times — the expf, the add/sub, and the divide — and lands
+    // 1 ULP below glibc at ordinary arguments: tanhf(-1) gave -0.7615941
+    // against glibc's -0.7615942. Bit parity is not tradeable against speed
+    // (see the parity-absolute rule), so evaluate in f64 and round ONCE.
+    //
+    // Narrowing TANHF_FAST_ABS_MIN/MAX so the failing points miss the fast band
+    // would turn the gate green without making the function correct, which is
+    // gate-gaming; the band is withdrawn wholesale instead.
+    crate::math::tanh(f64::from(x)) as f32
 }
 
 #[inline]
