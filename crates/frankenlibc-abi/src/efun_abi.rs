@@ -315,19 +315,20 @@ pub unsafe extern "C" fn estrtou(
     v
 }
 
-#[cfg(test)]
-pub(crate) mod test_helpers {
-    //! Internal helpers exposed for the integration tests so they
-    //! can flush the global callback to a known state between
-    //! tests.
-    use super::{EFUN_CELL, EFunc};
-
-    pub fn reset_efun() -> Option<EFunc> {
-        let mut cell = EFUN_CELL
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let prev = *cell;
-        *cell = None;
-        prev
-    }
-}
+// REMOVED: a `#[cfg(test)] pub(crate) mod test_helpers` that could never be
+// compiled, let alone used (bd-0z7a1y).
+//
+// This module is declared `#[cfg(not(test))] pub mod efun_abi;` in lib.rs, so an
+// inner `#[cfg(test)]` block is dead BY CONSTRUCTION: the two cfgs are mutually
+// exclusive. In the lib's own test build the whole module is absent; in every
+// other build `cfg(test)` is false. Its doc comment said it was "exposed for the
+// integration tests", which that gate makes impossible — integration tests link
+// the NON-test build, where `cfg(test)` is off.
+//
+// It was also unnecessary. `tests/efun_abi_test.rs` already isolates the global
+// callback with its own `EFUN_TEST_LOCK` and passes 31/31, so nothing was lost.
+//
+// If you need a helper reachable from `tests/`, do NOT reach for `#[cfg(test)]`
+// here — make it ordinary `pub` code, or put the helper in the integration test.
+// `tests/no_dead_inline_tests.rs` enforces that no NEW module acquires this
+// pattern.
