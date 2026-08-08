@@ -159,6 +159,22 @@ pub fn sinh(x: f64) -> f64 {
         let r = (t - 1.0 / t) * 0.5;
         return if x.is_sign_negative() { -r } else { r };
     }
+    // Above ln(DBL_MAX), exp(|x|) overflows even though sinh(|x|) is still
+    // finite, so `0.5 * exp(|x|)` cannot be evaluated directly — libm's result
+    // here sat 1 ULP under glibc (sinh(710) gave 1.1169973830808555e308 against
+    // glibc's ...557e308). glibc splits the exponential so no intermediate
+    // leaves range: t = exp(|x|/2), then (0.5·t)·t = 0.5·exp(|x|).
+    //
+    // The boundary is ln(DBL_MAX) because that is where direct evaluation
+    // actually overflows — not because it is where the gate samples. Inputs
+    // between 700 and ln(DBL_MAX) keep their existing path, which is already
+    // exact there.
+    const LN_DBL_MAX: f64 = 709.782_712_893_384_0;
+    if ax.is_finite() && ax > LN_DBL_MAX {
+        let t = crate::math::exp(0.5 * ax);
+        let r = (0.5 * t) * t;
+        return if x.is_sign_negative() { -r } else { r };
+    }
     libm::sinh(x)
 }
 
@@ -211,6 +227,15 @@ pub fn cosh(x: f64) -> f64 {
     if ax < 700.0 {
         let t = crate::math::exp(ax);
         return (t + 1.0 / t) * 0.5;
+    }
+    // Same overflow split as `sinh`: past ln(DBL_MAX) the single exp overflows
+    // while cosh itself is still finite, and libm landed 1 ULP under glibc
+    // (cosh(710) gave 1.1169973830808555e308 against ...557e308). cosh is even,
+    // so no sign fixup is needed.
+    const LN_DBL_MAX: f64 = 709.782_712_893_384_0;
+    if ax.is_finite() && ax > LN_DBL_MAX {
+        let t = crate::math::exp(0.5 * ax);
+        return (0.5 * t) * t;
     }
     libm::cosh(x)
 }
