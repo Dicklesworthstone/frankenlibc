@@ -927,7 +927,7 @@ pub fn execute_fixture_case(
         | "funlockfile" | "fwrite_unlocked" | "getc" | "getc_unlocked" | "getchar"
         | "getchar_unlocked" | "getdelim" | "getline" | "getw" | "mktemp" | "open_memstream"
         | "pclose" | "popen" | "putc" | "putc_unlocked" | "putchar" | "putchar_unlocked"
-        | "puts" | "putw" | "remove" | "rewind" | "scanf" => {
+        | "puts" | "putw" | "remove" | "rewind" | "scanf" | "vsscanf" => {
             execute_stdio_libio_symbols_case(function, inputs, mode)
         }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
@@ -22756,6 +22756,21 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             });
             Ok(format!("ISOC99_VSSCANF_RC_{rc}_VALUE_{value}"))
         }
+        // POSIX `vsscanf`. There was NO arm for it, which is why it carried zero
+        // fixture coverage and could not be promoted out of WrapsHostLibc even
+        // though its implementation is native (bd-7c4m1x). Deliberately mirrors
+        // the __isoc99_vsscanf arm above so the two are directly comparable —
+        // same input, same format, same destination shape.
+        "vsscanf" => {
+            let input = CString::new("101").map_err(|_| "scanf input has NUL".to_string())?;
+            let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
+            let mut value: c_int = -99;
+            let mut destinations = [&mut value as *mut c_int as *mut c_void];
+            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                frankenlibc_abi::stdio_abi::vsscanf(input.as_ptr(), fmt.as_ptr(), ap)
+            });
+            Ok(format!("VSSCANF_RC_{rc}_VALUE_{value}"))
+        }
         "__isoc99_wscanf" => {
             let fmt = [0i32];
             let rc = unsafe { frankenlibc_abi::isoc_abi::__isoc99_wscanf(fmt.as_ptr()) };
@@ -30532,6 +30547,88 @@ mod tests {
             .expect("ftell output should be integer");
         assert!(pos >= 0);
         assert!(result.host_parity);
+    }
+
+    /// Execute every case in `stdio_libio_wave02.json`.
+    ///
+    /// This file had NO driving test, so its 24 declared cases had never run —
+    /// yet `symbol_fixture_coverage.v1.json` counted them, and the
+    /// `reclassification_requires_conformance` policy accepts that count as the
+    /// "strict+hardened evidence" required to promote a symbol out of
+    /// `WrapsHostLibc`. Coverage was therefore satisfiable by declaration alone
+    /// (bd-7c4m1x).
+    ///
+    /// These cases carry a structured `expected_output`
+    /// (`symbol=…;mode=…;expected=X;actual=X;failure_signature=none`), which is
+    /// what `execute_stdio_libio_symbols_case` produces, so that is the primary
+    /// comparison. The bare token `X` is also asserted to appear as both the
+    /// `expected=` and `actual=` field, so a declaration cannot drift away from
+    /// the token the arm actually computes.
+    #[test]
+    fn stdio_libio_wave02_fixture_cases_execute() {
+        #[derive(Deserialize)]
+        struct WaveCase {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct WaveSet {
+            cases: Vec<WaveCase>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/stdio_libio_wave02.json");
+        let fixture: WaveSet =
+            serde_json::from_str(raw).expect("stdio_libio_wave02 fixture should parse");
+        assert!(
+            !fixture.cases.is_empty(),
+            "wave02 fixture is empty; this test would assert nothing"
+        );
+
+        let mut executed = 0usize;
+        for case in fixture.cases {
+            let expected = case
+                .inputs
+                .get("expected")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("case {} has no inputs.expected token", case.name))
+                .to_string();
+
+            // The declared log line must describe the same token it claims to.
+            for field in ["expected=", "actual="] {
+                let want = format!("{field}{expected}");
+                assert!(
+                    case.expected_output.contains(&want),
+                    "case {}: expected_output {:?} does not carry {:?}",
+                    case.name,
+                    case.expected_output,
+                    want
+                );
+            }
+
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| panic!("fixture case {} failed to execute: {err}", case.name));
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture output mismatch for {} (mode {})",
+                case.name, case.mode
+            );
+            // The token really was produced, not just echoed by the wrapper.
+            assert!(
+                result.impl_output.contains(&format!("actual={expected}")),
+                "case {}: executed output {:?} does not report actual={expected}",
+                case.name,
+                result.impl_output
+            );
+            executed += 1;
+        }
+        assert!(
+            executed >= 24,
+            "only {executed} wave02 cases executed; the file shrank or cases were skipped"
+        );
     }
 
     #[test]

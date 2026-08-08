@@ -484,7 +484,7 @@
     {
       "symbol": "__isoc99_sscanf",
       "header": "<stdio.h>",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C99 sscanf alias",
       "module": "stdio_abi"
     },
@@ -505,7 +505,7 @@
     {
       "symbol": "__isoc99_vsscanf",
       "header": "<stdio.h>",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C99 vsscanf alias",
       "module": "stdio_abi"
     },

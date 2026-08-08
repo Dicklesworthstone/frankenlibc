@@ -393,6 +393,36 @@
       "expected_output": "symbol=fflush_unlocked;mode=hardened;expected=FFLUSH_UNLOCKED_RC_0;actual=FFLUSH_UNLOCKED_RC_0;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "vsscanf_controlled_int_strict",
+      "function": "vsscanf",
+      "spec_section": "POSIX vsscanf controlled integer parse",
+      "inputs": {
+        "symbol": "vsscanf",
+        "scenario": "controlled_string_va_list_integer_scan_without_payload_capture",
+        "expected": "VSSCANF_RC_1_VALUE_101",
+        "oracle_source": "FrankenLibC POSIX vsscanf va_list replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=vsscanf;mode=strict;expected=VSSCANF_RC_1_VALUE_101;actual=VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "vsscanf_controlled_int_hardened",
+      "function": "vsscanf",
+      "spec_section": "POSIX vsscanf controlled integer parse",
+      "inputs": {
+        "symbol": "vsscanf",
+        "scenario": "controlled_string_va_list_integer_scan_without_payload_capture",
+        "expected": "VSSCANF_RC_1_VALUE_101",
+        "oracle_source": "FrankenLibC POSIX vsscanf va_list replay",
+        "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
+      },
+      "expected_output": "symbol=vsscanf;mode=hardened;expected=VSSCANF_RC_1_VALUE_101;actual=VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }
