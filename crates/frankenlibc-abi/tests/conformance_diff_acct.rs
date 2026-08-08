@@ -22,33 +22,65 @@ fn errno_now() -> i32 {
     unsafe { *libc::__errno_location() }
 }
 
+/// True when this process actually lacks the privilege these tests assume.
+///
+/// The hardcoded "-1 + EPERM" expectations below are only correct for an
+/// unprivileged caller. The rch build fleet runs its workers as root, where
+/// acct(2) SUCCEEDS, so asserting failure unconditionally made this gate
+/// permanently red there while fl was behaving correctly. The fl-vs-host
+/// comparison is the part that holds either way, and it is never skipped.
+fn unprivileged() -> bool {
+    // Bound to a local first: an `unsafe { .. }` block at the start of a
+    // function body parses as a statement, so `unsafe { .. } != 0` is a syntax
+    // error here even though it is fine in `if` position.
+    let euid = unsafe { libc::geteuid() };
+    euid != 0
+}
+
+/// Turn process accounting back off. Enabling it is a real, persistent side
+/// effect on the machine — as root the calls below genuinely switch accounting
+/// on — so anything that may have succeeded is undone here.
+fn disable_accounting_if_privileged() {
+    if !unprivileged() {
+        unsafe { syscall(SYS_ACCT, 0 as c_long) };
+    }
+}
+
 #[test]
 fn diff_acct_unprivileged_returns_eperm() {
-    // Unprivileged caller: both impls return -1 with EPERM.
     let path = CString::new("/var/log/pacct").unwrap();
     let fl_v = unsafe { fl::acct(path.as_ptr()) };
     let fl_e = errno_now();
     let lc_v = unsafe { syscall(SYS_ACCT, path.as_ptr() as c_long) };
     let lc_e = errno_now();
+    disable_accounting_if_privileged();
+
+    // The real contract: fl does whatever the kernel did.
     assert_eq!(fl_v as c_long, lc_v, "acct ret: fl={fl_v} lc={lc_v}");
-    assert_eq!(fl_v, -1, "unprivileged caller should fail");
     assert_eq!(fl_e, lc_e, "acct errno: fl={fl_e} lc={lc_e}");
-    assert!(
-        matches!(fl_e, libc::EPERM | libc::ENOSYS),
-        "expected EPERM or ENOSYS, got {fl_e}"
-    );
+    if unprivileged() {
+        assert_eq!(fl_v, -1, "unprivileged caller should fail");
+        assert!(
+            matches!(fl_e, libc::EPERM | libc::ENOSYS),
+            "expected EPERM or ENOSYS, got {fl_e}"
+        );
+    }
 }
 
 #[test]
 fn diff_acct_null_filename_returns_eperm_for_unprivileged() {
-    // NULL means "disable accounting"; without privilege both fail.
+    // NULL means "disable accounting". Without privilege both fail; WITH
+    // privilege both succeed, and the call is idempotent, so no cleanup is
+    // needed here — disabling twice is harmless.
     let fl_v = unsafe { fl::acct(std::ptr::null()) };
     let fl_e = errno_now();
     let lc_v = unsafe { syscall(SYS_ACCT, 0 as c_long) };
     let lc_e = errno_now();
     assert_eq!(fl_v as c_long, lc_v);
-    assert_eq!(fl_v, -1);
     assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");
+    if unprivileged() {
+        assert_eq!(fl_v, -1);
+    }
 }
 
 #[test]
