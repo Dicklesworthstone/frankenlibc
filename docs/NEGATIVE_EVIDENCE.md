@@ -17859,6 +17859,53 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   shared atomic free-list/sidecar load on the depth-one hot cycle. This rejection is not a parity
   ceiling: it closes this composition, while leaving that different ownership primitive open.
 
+## 2026-08-08 (SandyCove) — CLAIM NOT REPRODUCED: bd-qds9jk's published 3.98-4.13x re-measures at 1.37x; measured 1.37x today, and the reason is that fl itself got ~2.7x slower (bd-5ibpa3)
+
+The 2026-07-10 bd-qds9jk row above went unreproducible on 2026-06-26, when e634aff2a deleted the two bench hooks its
+harness called; `benches/glibc_baseline_bench.rs` did not compile again until 1a3122722. Recorded
+here NEXT TO the original rather than replacing it, per bd-5ibpa3.
+
+- **RE-MEASURED, same invocation, live host arm.** `rch exec -- cargo bench --profile release
+  -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench -- getprotobyname_r_tcp
+  --noplot --sample-size 100 --measurement-time 5`, 115 samples/arm, remote rch worker. The host
+  arm is `dlmopen(LM_ID_NEWLM, "libc.so.6")`, so it cannot bind fl's `#[no_mangle]` symbols.
+
+  | arm | criterion median [lo, hi] | p50 ns/op |
+  |---|---|---|
+  | `frankenlibc_abi` | 3.0117 µs [2.9699, 3.0521] | 3050.616 |
+  | `frankenlibc_abi_aa_null` | 3.1813 µs [3.1370, 3.2297] | 3231.263 |
+  | `host_glibc` | 4.1356 µs [4.0811, 4.1915] | 4202.232 |
+
+  **vs glibc = 1.37x** against the fl arm (1.30x against the A/A arm). Published: 3.98-4.13x.
+
+- **A/A NULL = 1.056, AND IT IS NOT CLEAN — stated, not buried.** `frankenlibc_abi_aa_null` is a
+  byte-identical copy of the `frankenlibc_abi` closure added by this addendum's commit, so its
+  ratio measures the harness and the machine, not code. It came out **1.056**, and the two CIs do
+  **not** overlap ([2.9699, 3.0521] vs [3.1370, 3.2297]) — there is a real ~5.6% systematic
+  arm-position effect in this harness. That bounds the resolution of any ratio taken from it. It
+  does not rescue the published number: a 5.6% floor cannot explain 4.0x reported vs 1.37x
+  measured.
+
+- **RUN-TO-RUN SPREAD, ALSO STATED.** An earlier run of the same group on worker `hz2` (10-sample
+  criterion default, no A/A arm) gave fl p50 4813.640 ns and glibc p50 8279.051 ns = **1.72x**.
+  So today's two independent runs land at 1.37x and 1.72x. Both are far below 3.98-4.13x, and the
+  gap between them is why the 100-sample run with the null is the one quoted.
+
+- **THE RATIO DID NOT COLLAPSE BECAUSE GLIBC GOT FASTER — fl GOT SLOWER.** Original row:
+  fl 1125.06 / 1124.32 ns against host_glibc 4475.76 / 4646.10 ns. Today: fl **3050.6** ns against
+  host_glibc **4202.2** ns. glibc's absolute cost moved ~6% (4475 -> 4202), which is what you would
+  expect from a different-but-comparable machine; fl's moved **1125 -> 3050 ns, ~2.7x slower**, on
+  that same machine and in that same invocation. A machine difference cannot explain one arm moving
+  2.7x while the other holds within 6%. That points at a real regression in fl's
+  `getprotobyname_r` path since 2026-07-10, not at a measurement artifact, and it is filed as its
+  own bead rather than asserted here — this addendum reports what was measured.
+
+- **THE OTHER HALF OF THE PUBLISHED CLAIM, `3.00x vs ORIG`, IS UNSUBSTANTIATED AND STAYS THAT WAY.**
+  Its two anchors (`getprotobyname_r_cloning_for_bench`,
+  `getprotobyname_r_legacy_fs_per_call_for_bench`) were deleted by e634aff2a and were deliberately
+  not restored: both were fl-vs-fl, and a self-speedup is MAINTENANCE, not a campaign result.
+  Resurrecting dead implementations solely to benchmark them would manufacture arms.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): services family allocation-elision — 2.24x vs ORIG, 1.23-1.25x faster than host glibc (bd-xmng5n)
 
 - **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `ServiceEntry.*clon|lookup_service_entry|

@@ -1041,6 +1041,42 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
         // The sibling getservbyname_r/getservbyport_r groups keep their legacy
         // anchors because their hooks still exist; nothing here changes those.
 
+        // A/A NULL (bd-5ibpa3). Byte-identical to the `frankenlibc_abi` arm
+        // above — same call, same buffers' shape, same black_box discipline — and
+        // registered as its own arm between the two real ones. Its ratio against
+        // `frankenlibc_abi` is a measurement of the harness and the machine, not
+        // of any code difference, so it is the floor below which a vs-glibc ratio
+        // means nothing. Read it FIRST: if frankenlibc_abi/frankenlibc_abi_aa_null
+        // is not ~1.00, the run was too noisy to interpret and the vs-glibc number
+        // from that same run must not be published.
+        let mut aa_protoent: libc::protoent = unsafe { mem::zeroed() };
+        let mut aa_buf = [0i8; 1024];
+        let mut aa_result: *mut libc::protoent = std::ptr::null_mut();
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_r_tcp",
+                impl_label: "frankenlibc_abi_aa_null",
+                api_family: "resolver",
+                symbol: "getprotobyname_r",
+                workload: "reentrant lookup tcp into caller buffer",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let rc = unsafe {
+                    frankenlibc_abi::unistd_abi::getprotobyname_r(
+                        proto.as_ptr(),
+                        (&raw mut aa_protoent).cast::<c_void>(),
+                        aa_buf.as_mut_ptr(),
+                        aa_buf.len(),
+                        (&raw mut aa_result).cast::<*mut c_void>(),
+                    )
+                };
+                black_box(rc);
+                black_box(aa_result);
+            },
+        );
+
         bench_op(
             &mut group,
             BenchMeta {
