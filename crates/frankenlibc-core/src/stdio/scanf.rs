@@ -1112,6 +1112,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             // payload value itself is an impl detail we do not replicate.
             let budget = max_chars - chars_read; // chars allowed from `remaining`
             let mut j = 3usize;
+            let mut payload: u64 = 0;
             if remaining.len() > j && j < budget && remaining[j] == b'(' {
                 let mut k = j + 1;
                 while k < remaining.len()
@@ -1121,6 +1122,15 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     k += 1;
                 }
                 if k < remaining.len() && k < budget && remaining[k] == b')' {
+                    // glibc does not discard the sequence: __strtod_nan runs it
+                    // through strtoull with base 0 and, when the WHOLE sequence
+                    // parses to a nonzero value, ORs it into the mantissa. So
+                    // "nan(1)" is 0x7fc00001 as a float, not the default quiet
+                    // NaN. Base 0 means "0x1ff" is hex and a leading "0" is
+                    // octal; a sequence that is not a number at all ("abc") or
+                    // is empty leaves the default, and glibc still ACCEPTS the
+                    // token either way.
+                    payload = crate::stdlib::conversion::parse_nan_payload(&remaining[j + 1..k]);
                     j = k + 1; // consume through the ')'
                 } else {
                     // Malformed payload (no closing paren / cut off by width):
@@ -1128,7 +1138,12 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     return None;
                 }
             }
-            let val = f64::NAN.copysign(if negative { -1.0 } else { 1.0 });
+            // Reuse strtod's encoder rather than open-coding the bit layout:
+            // the payload lives in the LOW mantissa bits so that
+            // narrow_f64_to_f32 (which takes the low 23) lands a `%f` store on
+            // glibc's value with no second encoding step. Sharing it also keeps
+            // scanf and strtod from drifting apart on the same grammar.
+            let val = crate::stdlib::conversion::nan_f64(payload, negative);
             return Some((Some(ScanValue::Float(val)), i + j));
         }
     }
