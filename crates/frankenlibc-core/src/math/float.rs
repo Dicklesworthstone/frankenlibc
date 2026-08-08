@@ -127,6 +127,13 @@ pub(crate) fn round_to_i64_x86(r: f64) -> i64 {
     // 2^63 is exactly representable; values >= it (and < -2^63) overflow i64.
     const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
     if r.is_nan() || !(-TWO_POW_63..TWO_POW_63).contains(&r) {
+        // The hardware `cvt(t)sd2si` this mirrors does not merely RETURN the
+        // integer indefinite on this path — it also raises the invalid-operation
+        // exception (#IA), which glibc surfaces as FE_INVALID. C99 7.12.9.5 says
+        // the result is unspecified when the rounded value is not representable
+        // and that a domain error occurs. Emulating only the return value left
+        // the flag silently unraised for every non-finite / out-of-range input.
+        fe_invalid_f64();
         i64::MIN
     } else {
         r as i64
