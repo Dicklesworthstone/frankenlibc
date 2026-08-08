@@ -22,6 +22,24 @@ mod g {
 }
 use frankenlibc_abi::unistd_abi as fl;
 
+/// Serialises every test in this file.
+///
+/// utmpxname sets a process-global path inside BOTH impls, so two of these
+/// running concurrently each redirect the other. This lock used to live inside
+/// `assert_same_file`, which covered only the four tests that go through it —
+/// the two driven by `fl_run`/`glibc_run` took no lock at all and raced against
+/// them. That made pututxline_same_id_without_rewind_appends intermittently
+/// red: it failed in a nine-gate batch and passed when run with fewer.
+///
+/// Hoisted to module scope so both entry points share it. Poison-tolerant, and
+/// acquired EXACTLY once per test — std's Mutex is not reentrant, so a helper
+/// taking it again under a test that already holds it would deadlock.
+static UTMPX_PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn utmpx_guard() -> std::sync::MutexGuard<'static, ()> {
+    UTMPX_PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 static CNT: AtomicU64 = AtomicU64::new(0);
 fn tmp_path(tag: &str) -> (std::path::PathBuf, CString) {
     let n = CNT.fetch_add(1, Ordering::Relaxed);
@@ -56,6 +74,12 @@ const RS: u64 = std::mem::size_of::<libc::utmpx>() as u64;
 
 fn fl_run(seq: &[(&[u8], &[u8], c_int)]) -> u64 {
     let (path, c) = tmp_path("f");
+    // Close any file a PREVIOUS test in this process left open before renaming.
+    // utmpxname behaves differently depending on whether a database is
+    // currently open, so without this the read cursor these semantics depend on
+    // is inherited from whichever test ran before — which is what made
+    // pututxline_same_id_without_rewind_appends intermittently red.
+    unsafe { fl::endutxent() };
     unsafe { fl::utmpxname(c.as_ptr()) };
     unsafe { fl::setutxent() };
     for (id, line, pid) in seq {
@@ -71,6 +95,9 @@ fn fl_run(seq: &[(&[u8], &[u8], c_int)]) -> u64 {
 
 fn glibc_run(seq: &[(&[u8], &[u8], c_int)]) -> u64 {
     let (path, c) = tmp_path("g");
+    // See fl_run: drop any inherited open database before renaming, so the
+    // oracle starts from a known cursor rather than the previous test's.
+    unsafe { g::endutxent() };
     unsafe { g::utmpxname(c.as_ptr()) };
     unsafe { g::setutxent() };
     for (id, line, pid) in seq {
@@ -98,6 +125,7 @@ fn pututxline_same_id_without_rewind_appends() {
     // overwrite case is pututxline_overwrites_same_id_after_rewind below.
     // Corrected premise, not a relaxed one: this still pins fl to glibc, and
     // the arm now fails for an implementation that ignores the cursor.
+    let _guard = utmpx_guard();
     let seq: &[(&[u8], &[u8], c_int)] = &[(b"t1", b"pts/1", 100), (b"t1", b"pts/1", 200)];
     let f = fl_run(seq);
     let gg = glibc_run(seq);
@@ -114,6 +142,7 @@ fn pututxline_same_id_without_rewind_appends() {
 #[test]
 fn pututxline_appends_distinct_ids() {
     // Distinct ut_ids -> two records.
+    let _guard = utmpx_guard();
     let seq: &[(&[u8], &[u8], c_int)] = &[(b"t1", b"pts/1", 100), (b"t2", b"pts/2", 200)];
     let f = fl_run(seq);
     let gg = glibc_run(seq);
@@ -185,8 +214,7 @@ fn glibc_bytes(seq: &[libc::utmpx]) -> Vec<u8> {
 /// Serialised: utmpxname sets a process-global path inside each impl, so two of
 /// these running concurrently would each redirect the other.
 fn assert_same_file(tag: &str, seq: &[libc::utmpx], expected_records: usize) {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = utmpx_guard();
 
     let gg = glibc_bytes(seq);
     let f = fl_bytes(seq);
