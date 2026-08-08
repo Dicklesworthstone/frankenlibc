@@ -200,6 +200,13 @@ pub enum ScanDirective {
     Whitespace,
     /// A conversion specifier.
     Spec(Box<ScanSpec>),
+    /// A malformed directive: parsing stops here, performing no conversion.
+    ///
+    /// Currently only an unterminated scanset (`%[^]`). This is deliberately
+    /// NOT the same as ending the directive list: an empty list leaves
+    /// `input_failure` set and reports EOF, whereas glibc reports a MATCHING
+    /// failure (return 0) because the fault is in the format, not the input.
+    Malformed,
 }
 
 /// A parsed scanf conversion specifier.
@@ -467,9 +474,25 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                         i += 1;
                     }
                 }
-                if i < fmt.len() && fmt[i] == b']' {
-                    i += 1;
+                // The scanset MUST be closed. `%[^]` looks complete but is not:
+                // a `]` immediately after `[` or `[^` is a literal member (the
+                // branch above consumes it), so the set is still open and the
+                // format simply ends. fl used to build a valid negated set from
+                // it and match the entire input; glibc treats the directive as
+                // malformed, performs no conversion, and returns the number of
+                // assignments already made (0 for `sscanf("^abc", "%[^]")`).
+                //
+                // Breaking here — the same path a failed bind_route takes —
+                // drops the directive instead of running it, so nothing is
+                // written to the caller's buffer. That matters beyond the
+                // return value: fl previously stored "^abc" into a buffer the
+                // caller had every reason to believe was untouched.
+                let terminated = i < fmt.len() && fmt[i] == b']';
+                if !terminated {
+                    directives.push(ScanDirective::Malformed);
+                    break;
                 }
+                i += 1;
                 spec.conversion = b'[';
                 spec.scanset = Some(ScanSet { negated, chars });
             } else {
@@ -550,6 +573,23 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
 
     for dir in directives {
         match dir {
+            // Malformed format: stop with the assignments already made and
+            // report a MATCHING failure, not EOF. glibc returns 0 for
+            // sscanf("^abc", "%[^]") — input was available, the format was
+            // broken — so input_failure must be cleared here even though no
+            // conversion succeeded.
+            ScanDirective::Malformed => {
+                return ScanResult {
+                    values,
+                    count,
+                    // `pos`, not 0: whatever earlier directives legitimately
+                    // consumed still counts, so a trailing `%n` in a format
+                    // that also contains a malformed scanset reports the right
+                    // offset.
+                    consumed: pos,
+                    input_failure: false,
+                };
+            }
             ScanDirective::Whitespace => {
                 // Skip whitespace in input (Unicode-aware for a wide stream).
                 pos = skip_ws(input, pos, wide_input);
