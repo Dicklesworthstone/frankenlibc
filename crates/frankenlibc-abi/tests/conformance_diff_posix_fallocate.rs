@@ -21,7 +21,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use frankenlibc_abi::unistd_abi::internal_fallocate_emulate;
+use frankenlibc_abi::unistd_abi::{
+    internal_fallocate_emulate, posix_fallocate, posix_fallocate_dispatch,
+};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -338,4 +340,142 @@ fn semantic_contract_holds() {
     assert_eq!(read_all(&path).len(), 4000, "file must never shrink");
 
     let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// Fallback WIRING.
+//
+// The tests above prove the emulation body is correct; they say nothing about
+// whether `posix_fallocate` still calls it. That gap is not hypothetical: the
+// emulation and its `EOPNOTSUPP` match arm were both deleted by e634aff2a while
+// `posix_fallocate` itself survived, exported and passing symbol-presence
+// checks, for six weeks (bd-om1s58). ext4/tmpfs never return `EOPNOTSUPP`, so
+// the branch cannot be reached through the live syscall on this host;
+// `posix_fallocate_dispatch` takes the syscall result as an argument precisely
+// so the decision is observable here.
+// ---------------------------------------------------------------------------
+
+/// Build a 100-byte file and return (path, open handle).
+fn small_file(tag: &str) -> (std::path::PathBuf, std::fs::File) {
+    let path = temp_path(tag);
+    build_file(
+        &path,
+        &Shape {
+            segments: vec![(0, vec![0x42; 100])],
+            final_len: None,
+        },
+    );
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("open");
+    (path, f)
+}
+
+#[test]
+fn dispatch_on_eopnotsupp_runs_the_emulation() {
+    let (path, f) = small_file("dispatch-eopnotsupp");
+    // SAFETY: fd is valid and owned for the duration of the call.
+    let rc = unsafe { posix_fallocate_dispatch(f.as_raw_fd(), 0, 4000, Err(libc::EOPNOTSUPP)) };
+    assert_eq!(rc, 0, "EOPNOTSUPP must be emulated, not propagated");
+    f.sync_all().expect("sync");
+
+    let bytes = read_all(&path);
+    assert_eq!(
+        bytes.len(),
+        4000,
+        "emulation must have run and extended the file"
+    );
+    assert!(
+        bytes[..100].iter().all(|&b| b == 0x42),
+        "pre-existing data preserved"
+    );
+    assert!(
+        bytes[100..].iter().all(|&b| b == 0),
+        "allocated range zero-filled"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn dispatch_returns_other_errnos_unchanged() {
+    // glibc falls back ONLY on EOPNOTSUPP; every other error, ENOSYS included,
+    // is returned to the caller verbatim and the file is left untouched.
+    for errno in [libc::ENOSYS, libc::ENOSPC, libc::EFBIG, libc::EBADF] {
+        let (path, f) = small_file("dispatch-passthru");
+        // SAFETY: fd is valid and owned for the duration of the call.
+        let rc = unsafe { posix_fallocate_dispatch(f.as_raw_fd(), 0, 4000, Err(errno)) };
+        assert_eq!(rc, errno, "errno {errno} must be returned unchanged");
+        f.sync_all().expect("sync");
+        assert_eq!(
+            read_all(&path).len(),
+            100,
+            "errno {errno} must not trigger the emulation"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
+fn dispatch_on_success_is_zero_and_inert() {
+    let (path, f) = small_file("dispatch-ok");
+    // SAFETY: fd is valid and owned for the duration of the call.
+    let rc = unsafe { posix_fallocate_dispatch(f.as_raw_fd(), 0, 4000, Ok(())) };
+    assert_eq!(rc, 0);
+    f.sync_all().expect("sync");
+    assert_eq!(
+        read_all(&path).len(),
+        100,
+        "a successful syscall must not re-run the emulation"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// The remaining seam: the exported C entry point feeding the live syscall
+/// result into the dispatch. Diffed against glibc's real `posix_fallocate` on a
+/// byte-identical twin, so a regression in the entry point (wrong mode, dropped
+/// result, inverted error contract) is caught here.
+#[test]
+fn exported_entry_point_matches_glibc() {
+    let shape = || Shape {
+        segments: vec![(0, vec![0x5A; 1000])],
+        final_len: None,
+    };
+    let glibc_path = temp_path("entry-glibc");
+    let fl_path = temp_path("entry-fl");
+    build_file(&glibc_path, &shape());
+    build_file(&fl_path, &shape());
+
+    let glibc_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&glibc_path)
+        .expect("open glibc file");
+    // SAFETY: fd is valid and owned for the duration of the call.
+    let glibc_rc = unsafe { libc::posix_fallocate(glibc_file.as_raw_fd(), 0, 20_000) };
+    glibc_file.sync_all().expect("sync glibc");
+
+    let fl_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fl_path)
+        .expect("open fl file");
+    // SAFETY: fd is valid and owned for the duration of the call.
+    let fl_rc = unsafe { posix_fallocate(fl_file.as_raw_fd(), 0, 20_000) };
+    fl_file.sync_all().expect("sync fl");
+
+    assert_eq!(fl_rc, glibc_rc, "return contract (errno-direct) must match");
+    assert_eq!(fl_rc, 0, "native fallocate is supported on the test host");
+    assert_eq!(read_all(&fl_path), read_all(&glibc_path), "content mismatch");
+
+    // Negative arguments: both must report EINVAL without touching the file.
+    // SAFETY: fd is valid.
+    assert_eq!(unsafe { posix_fallocate(fl_file.as_raw_fd(), -1, 16) }, {
+        // SAFETY: fd is valid.
+        unsafe { libc::posix_fallocate(glibc_file.as_raw_fd(), -1, 16) }
+    });
+
+    let _ = std::fs::remove_file(&glibc_path);
+    let _ = std::fs::remove_file(&fl_path);
 }
