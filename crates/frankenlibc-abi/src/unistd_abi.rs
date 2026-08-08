@@ -26838,12 +26838,15 @@ pub unsafe extern "C" fn isnan(x: f64) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalb(x: f64, exp: f64) -> f64 {
-    x * (2.0f64).powf(exp)
+    // NOT `x * 2^exp`: SVID scalb makes a non-integral exponent a domain error,
+    // and the powf form additionally turned scalb(0, 1024) into 0 * inf = NaN
+    // with a spurious FE_INVALID. See math_abi::svid_scalb_f64 (bd-vi2w1m).
+    crate::math_abi::svid_scalb_f64(x, exp)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbf(x: f32, exp: f32) -> f32 {
-    x * (2.0f32).powf(exp)
+    crate::math_abi::svid_scalb_f32(x, exp)
 }
 
 // ===========================================================================

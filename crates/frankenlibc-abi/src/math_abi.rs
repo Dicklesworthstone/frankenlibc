@@ -6233,9 +6233,125 @@ pub unsafe extern "C" fn significandl(x: f64) -> f64 {
 pub unsafe extern "C" fn sincosl(x: f64, s: *mut f64, c: *mut f64) {
     unsafe { sincos(x, s, c) }
 }
+/// SVID `scalb(x, n)` — glibc's `__ieee754_scalb`.
+///
+/// This is NOT `x * 2^n`. The defining behaviour of the SVID function is that a
+/// NON-INTEGRAL exponent is a domain error: it returns NaN, raises FE_INVALID
+/// and sets EDOM. `scalb` is the obsolete System V spelling, but glibc still
+/// implements it, so it must be implemented here too rather than stubbed.
+///
+/// Evaluation order matters and follows glibc exactly:
+///   1. x NaN                -> x * n, so a NaN propagates without a domain error
+///   2. n == +inf (or NaN)   -> x * n, which makes scalb(0, +inf) an invalid NaN
+///   3. n == -inf            -> signed zero, but inf / inf is an invalid NaN
+///   4. n not integral       -> invalid NaN
+///   5. |n| beyond i32       -> clamp the exponent to +/-65000 before scalbn
+///   6. otherwise            -> scalbn(x, n as i32)
+///
+/// Pinned by conformance_diff_scalb (bd-vi2w1m).
+fn ieee754_scalb_f64(x: f64, n: f64) -> f64 {
+    if x.is_nan() {
+        return x * n;
+    }
+    if !n.is_finite() {
+        if n.is_nan() || n > 0.0 {
+            // 0 * inf is the invalid NaN glibc produces for scalb(0, +inf).
+            return x * n;
+        }
+        // n == -inf: x / +inf collapses to a correctly signed zero, and
+        // inf / inf is the invalid NaN glibc produces.
+        if x == 0.0 {
+            return x;
+        }
+        return x / -n;
+    }
+    if n != f64::from(n as i32) {
+        if n.trunc() != n {
+            // Domain error. 0.0/0.0 both produces the NaN and raises FE_INVALID
+            // in one operation; black_box keeps the compiler from folding it and
+            // discarding the exception.
+            return core::hint::black_box(
+                core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
+            );
+        }
+        // Integral but outside i32: glibc clamps rather than converting.
+        let clamped = if n > 0.0 { 65000 } else { -65000 };
+        return frankenlibc_core::math::scalbn(x, clamped);
+    }
+    frankenlibc_core::math::scalbn(x, n as i32)
+}
+
+/// f32 counterpart of [`ieee754_scalb_f64`], kept in f32 arithmetic throughout
+/// so the NaN payload and the overflow threshold match glibc's `scalbf`.
+fn ieee754_scalb_f32(x: f32, n: f32) -> f32 {
+    if x.is_nan() {
+        return x * n;
+    }
+    if !n.is_finite() {
+        if n.is_nan() || n > 0.0 {
+            return x * n;
+        }
+        if x == 0.0 {
+            return x;
+        }
+        return x / -n;
+    }
+    if n != (n as i32) as f32 {
+        if n.trunc() != n {
+            return core::hint::black_box(
+                core::hint::black_box(0.0_f32) / core::hint::black_box(0.0_f32),
+            );
+        }
+        let clamped = if n > 0.0 { 65000 } else { -65000 };
+        return frankenlibc_core::math::scalbnf(x, clamped);
+    }
+    frankenlibc_core::math::scalbnf(x, n as i32)
+}
+
+/// glibc's `w_scalb` errno wrapper. The exception flags come from the kernel
+/// above; only errno is decided here, and only for a non-finite or zero result.
+pub(crate) fn svid_scalb_f64(x: f64, n: f64) -> f64 {
+    let z = ieee754_scalb_f64(x, n);
+    if !z.is_finite() || z == 0.0 {
+        if z.is_nan() {
+            // A NaN that came from a NaN INPUT is not a domain error.
+            if !x.is_nan() && !n.is_nan() {
+                set_domain_errno();
+            }
+        } else if z.is_infinite() {
+            if !x.is_infinite() && !n.is_infinite() {
+                set_range_errno();
+            }
+        } else if x != 0.0 && !n.is_infinite() {
+            // Underflowed to zero from a nonzero x.
+            set_range_errno();
+        }
+    }
+    z
+}
+
+/// f32 counterpart of [`svid_scalb_f64`].
+pub(crate) fn svid_scalb_f32(x: f32, n: f32) -> f32 {
+    let z = ieee754_scalb_f32(x, n);
+    if !z.is_finite() || z == 0.0 {
+        if z.is_nan() {
+            if !x.is_nan() && !n.is_nan() {
+                set_domain_errno();
+            }
+        } else if z.is_infinite() {
+            if !x.is_infinite() && !n.is_infinite() {
+                set_range_errno();
+            }
+        } else if x != 0.0 && !n.is_infinite() {
+            set_range_errno();
+        }
+    }
+    z
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbl(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::scalbn(x, y as i32)
+    svid_scalb_f64(x, y)
 }
 
 // =========================================================================
@@ -13269,10 +13385,12 @@ finite_binary_f64!(__fmod_finite, frankenlibc_core::math::fmod);
 finite_binary_f64!(__hypot_finite, frankenlibc_core::math::hypot);
 finite_binary_f64!(__pow_finite, frankenlibc_core::math::pow);
 finite_binary_f64!(__remainder_finite, frankenlibc_core::math::remainder);
-// __scalb_finite: scalb(x, y) = x * 2^(int)y
+// glibc's `__scalb_finite` IS `__ieee754_scalb` — the same kernel the public
+// `scalb` wraps, minus the errno layer. It therefore owes the same non-integral
+// domain error, which `scalbn(x, y as i32)` silently skipped.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __scalb_finite(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::scalbn(x, y as i32)
+    ieee754_scalb_f64(x, y)
 }
 
 // Binary f32 _finite aliases
@@ -13283,7 +13401,7 @@ finite_binary_f32!(__powf_finite, frankenlibc_core::math::powf);
 finite_binary_f32!(__remainderf_finite, frankenlibc_core::math::remainderf);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __scalbf_finite(x: f32, y: f32) -> f32 {
-    frankenlibc_core::math::scalbnf(x, y as i32)
+    ieee754_scalb_f32(x, y)
 }
 
 // Binary long double _finite aliases
