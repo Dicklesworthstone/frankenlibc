@@ -5331,3 +5331,19 @@ fn public_gethostent_agrees_with_gethtent() {
         "fl's public gethostent and private _gethtent disagree about /etc/hosts"
     );
 }
+
+// ===========================================================================
+// bd-xh08pf — relocated from an inline `#[cfg(test)]` block in unistd_abi.rs.
+//
+// unistd_abi is declared `#[cfg(not(test))] pub mod unistd_abi;` in lib.rs, so
+// that block could never compile in either build and this assertion had never
+// executed. It only touches the public `res_init` entry point, so it moves here
+// unchanged and now actually runs.
+// ===========================================================================
+
+#[test]
+fn res_init_reports_success_bd_xh08pf() {
+    // SAFETY: res_init takes no arguments and only initialises resolver state.
+    let rc = unsafe { unistd_abi::res_init() };
+    assert_eq!(rc, 0, "res_init should report success");
+}

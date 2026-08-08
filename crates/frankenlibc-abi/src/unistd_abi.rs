@@ -14492,14 +14492,14 @@ pub unsafe extern "C" fn res_search(
     -1
 }
 
-#[cfg(test)]
-mod resolver_bootstrap_tests {
-    #[test]
-    fn res_init_reports_success() {
-        let rc = unsafe { super::res_init() };
-        assert_eq!(rc, 0);
-    }
-}
+// MOVED: `resolver_bootstrap_tests::res_init_reports_success` now lives in
+// tests/resolv_abi_test.rs as `res_init_reports_success_bd_xh08pf` (bd-xh08pf).
+//
+// It was inline `#[cfg(test)]` inside a module lib.rs declares
+// `#[cfg(not(test))]`, so it could never compile in either build and had never
+// run. It only touched the public `res_init` entry point, so it relocated
+// unchanged. tests/no_dead_inline_tests.rs enforces that no new block appears
+// here.
 
 // ---------------------------------------------------------------------------
 // fgetpwent / fgetgrent — Implemented (native line reading + parsing)

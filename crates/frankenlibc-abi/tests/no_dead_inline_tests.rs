@@ -38,9 +38,12 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("pthread_abi", 6),
     ("stdio_abi", 6),
     ("termios_abi", 6),
-    ("unistd_abi", 1),
     ("wchar_abi", 2),
 ];
+// BURNED DOWN (bd-xh08pf): unistd_abi (1) — its lone assertion only touched the
+// public `res_init`, so it relocated unchanged to
+// tests/resolv_abi_test.rs::res_init_reports_success_bd_xh08pf and now runs.
+// 54 -> 53 stranded tests, 11 -> 10 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
