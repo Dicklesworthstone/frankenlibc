@@ -146,6 +146,48 @@ fn c23_narrow_matches_glibc() {
         1.0 + (2f64.powi(-24)),
         -(2f64.powi(-60))
     );
+    // The three witnesses below replace INERT ones (bd-fws7ar). The originals —
+    // fmul(1+2^-24, 1+2^-24), fdiv(1, 3), fsqrt(2) — produce the same bits
+    // whether the implementation rounds once or twice, so they could not fail,
+    // and nine narrowing entry points sat as plain double-rounding casts for six
+    // weeks with this gate green.
+    //
+    // These are CONSTRUCTED, not sampled: double rounding only bites when the
+    // exact result lands in the ~2^-53-wide band strictly above an f32 midpoint
+    // m, so that rounding to f64 lands exactly ON m (an f32 tie, resolved to the
+    // even neighbour) while the exact value rounds the other way. That band is
+    // measure-zero under random probing — the bead records 400k samples finding
+    // nothing.
+    //
+    // Every pair was checked with exact rational arithmetic AND against live
+    // glibc. In all three, m = 1 + 2^-24 (the midpoint between 1.0 and
+    // 1+2^-23), glibc returns 0x3f800001, and naive double rounding returns
+    // 0x3f800000, so each one fails loudly if the op regresses to `(x OP y) as f32`.
+
+    // fmul: x*y = m + 2^-76 - 2^-104, just above m.
+    //   x = 0x3ff000000fffffff = 1 + 2^-24 - 2^-52
+    //   y = 0x3ff0000000000001 = 1 + 2^-52
+    chk2!(
+        "fmul",
+        fl::fmul,
+        g_fmul,
+        f64::from_bits(0x3ff000000fffffff),
+        f64::from_bits(0x3ff0000000000001)
+    );
+    // fdiv: x/y lands in the band. Found by requiring y*m to fall just BELOW an
+    // f64 grid point, so the next representable x is inside the band rather
+    // than a full ulp away — which is why simple divisors like 1/3 are inert.
+    chk2!(
+        "fdiv",
+        fl::fdiv,
+        g_fdiv,
+        f64::from_bits(0x3ff0000010800002),
+        f64::from_bits(0x3ff0000000800001)
+    );
+    // fsqrt: x chosen just above m^2, so sqrt(x) lands just above m.
+    chk1!("fsqrt", fl::fsqrt, g_fsqrt, f64::from_bits(0x3ff0000020000011));
+    // Keep the original inert inputs too: they are still valid parity cases,
+    // they just cannot detect double rounding on their own.
     chk2!(
         "fmul",
         fl::fmul,
