@@ -23,6 +23,207 @@ pub enum ExpandError {
     /// A `$VAR` reference resolved to no value, and the caller asked
     /// to treat that as an error (the POSIX `WRDE_UNDEF` flag).
     UndefinedVariable(String),
+    /// A `$((...))` arithmetic expansion was malformed. glibc reports this
+    /// as `WRDE_SYNTAX`. See [`eval_arith`] for exactly which inputs qualify.
+    ArithSyntax,
+}
+
+/// Evaluate the inside of a `$((...))` arithmetic expansion the way glibc's
+/// `wordexp` actually does — which is NOT full POSIX shell arithmetic.
+///
+/// Measured against live glibc (see `conformance_diff_wordexp_arith`), the
+/// implemented grammar is exactly:
+///
+/// ```text
+/// expr    := term  (('+' | '-') term)*
+/// term    := factor (('*' | '/') factor)*
+/// factor  := ('+' | '-')* primary
+/// primary := number | '(' expr ')'
+/// number  := 0x<hex> | 0<octal> | <decimal>
+/// ```
+///
+/// Two behaviours are surprising and both are glibc's, reproduced deliberately
+/// rather than "fixed":
+///
+/// 1. **Any operator outside that grammar silently ENDS the expression, and the
+///    value parsed so far is the result.** glibc does not error and does not
+///    evaluate the rest. Measured: `$((10%3))` -> `10`, `$((1<<4))` -> `1`,
+///    `$((6&3))` -> `6`, `$((1?42:7))` -> `1`, and — the case that pins the rule
+///    — `$((1+2*3<4))` -> `7`, i.e. `1+2*3` is evaluated and `<4` is dropped.
+///    So `%`, shifts, comparisons, bitwise, logical and ternary are all absent,
+///    not merely unimplemented-with-an-error.
+/// 2. **A missing or non-numeric operand IS an error** (`WRDE_SYNTAX`), as is
+///    division by zero and any identifier. Measured: `$((1+))`, `$(( ))`,
+///    `$((abc))`, `$((1/0))`, `$((~5))`, `$((!0))` all fail, and notably
+///    `$((FLVAR+1))` fails too — glibc's wordexp has no variables in arithmetic
+///    even when the variable is set and exported.
+///
+/// Arithmetic is `i64` and wrapping, so a pathological expression cannot panic.
+pub fn eval_arith(expr: &[u8]) -> Result<i64, ExpandError> {
+    let mut p = ArithParser { s: expr, i: 0 };
+    p.skip_ws();
+    let v = p.expr()?;
+    // Trailing junk is NOT an error: glibc stops at the first operator it does
+    // not implement and keeps what it has.
+    Ok(v)
+}
+
+struct ArithParser<'a> {
+    s: &'a [u8],
+    i: usize,
+}
+
+impl ArithParser<'_> {
+    fn skip_ws(&mut self) {
+        while self.i < self.s.len() && self.s[self.i].is_ascii_whitespace() {
+            self.i += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.s.get(self.i).copied()
+    }
+
+    fn expr(&mut self) -> Result<i64, ExpandError> {
+        let mut acc = self.term()?;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                // `+=`/`-=` etc. are not in the grammar; a following `=` means
+                // this is an operator glibc does not implement, so stop here.
+                Some(op @ (b'+' | b'-')) if self.s.get(self.i + 1) != Some(&b'=') => {
+                    self.i += 1;
+                    let rhs = self.term()?;
+                    acc = if op == b'+' {
+                        acc.wrapping_add(rhs)
+                    } else {
+                        acc.wrapping_sub(rhs)
+                    };
+                }
+                _ => return Ok(acc),
+            }
+        }
+    }
+
+    fn term(&mut self) -> Result<i64, ExpandError> {
+        let mut acc = self.factor()?;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some(op @ (b'*' | b'/')) if self.s.get(self.i + 1) != Some(&b'=') => {
+                    self.i += 1;
+                    let rhs = self.factor()?;
+                    if op == b'*' {
+                        acc = acc.wrapping_mul(rhs);
+                    } else {
+                        if rhs == 0 {
+                            return Err(ExpandError::ArithSyntax);
+                        }
+                        acc = acc.wrapping_div(rhs);
+                    }
+                }
+                _ => return Ok(acc),
+            }
+        }
+    }
+
+    fn factor(&mut self) -> Result<i64, ExpandError> {
+        self.skip_ws();
+        match self.peek() {
+            Some(b'+') => {
+                self.i += 1;
+                self.factor()
+            }
+            Some(b'-') => {
+                self.i += 1;
+                Ok(self.factor()?.wrapping_neg())
+            }
+            _ => self.primary(),
+        }
+    }
+
+    fn primary(&mut self) -> Result<i64, ExpandError> {
+        self.skip_ws();
+        match self.peek() {
+            Some(b'(') => {
+                self.i += 1;
+                let v = self.expr()?;
+                self.skip_ws();
+                if self.peek() != Some(b')') {
+                    return Err(ExpandError::ArithSyntax);
+                }
+                self.i += 1;
+                Ok(v)
+            }
+            Some(c) if c.is_ascii_digit() => Ok(self.number()),
+            // Identifiers, `~`, `!`, an empty expression and a trailing operator
+            // all land here and are syntax errors, matching glibc.
+            _ => Err(ExpandError::ArithSyntax),
+        }
+    }
+
+    /// `0x`/`0X` hex, leading `0` octal, otherwise decimal. Digits outside the
+    /// active base simply end the number (they become trailing junk, which the
+    /// caller drops).
+    fn number(&mut self) -> i64 {
+        let start = self.i;
+        let mut val: i64 = 0;
+        if self.s[self.i] == b'0' && matches!(self.s.get(self.i + 1), Some(b'x' | b'X')) {
+            self.i += 2;
+            while let Some(d) = self.peek().and_then(|c| (c as char).to_digit(16)) {
+                val = val.wrapping_mul(16).wrapping_add(d as i64);
+                self.i += 1;
+            }
+            // A bare `0x` with no digits is just the literal 0 followed by junk.
+            if self.i == start + 2 {
+                self.i = start + 1;
+                return 0;
+            }
+            return val;
+        }
+        if self.s[self.i] == b'0' {
+            self.i += 1;
+            while let Some(c) = self.peek() {
+                if !(b'0'..=b'7').contains(&c) {
+                    break;
+                }
+                val = val.wrapping_mul(8).wrapping_add((c - b'0') as i64);
+                self.i += 1;
+            }
+            return val;
+        }
+        while let Some(c) = self.peek() {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            val = val.wrapping_mul(10).wrapping_add((c - b'0') as i64);
+            self.i += 1;
+        }
+        val
+    }
+}
+
+/// Given `bytes` positioned just past the `$((` of an arithmetic expansion,
+/// return `(expression, index_after_closing_parens)`. Parenthesis depth starts
+/// at 2 for the two already-consumed `(`, so nested groups such as
+/// `$(((2+3)*4))` close correctly. Returns `None` if the `))` never arrives.
+pub fn scan_arith_end(bytes: &[u8], after_open: usize) -> Option<(&[u8], usize)> {
+    let mut depth = 2usize;
+    let mut j = after_open;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&bytes[after_open..j - 1], j + 1));
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
 }
 
 /// Expand a single shell-style word into a `String`.
@@ -71,6 +272,18 @@ fn expand_vars_dyn(
             if i < bytes.len() {
                 i += 1; // skip closing '
             }
+            continue;
+        }
+        // `$((expr))` arithmetic expansion. Checked BEFORE the generic `$`
+        // handling so it cannot be mistaken for `$(command)` — which is exactly
+        // the confusion bd-yb9f9r was about on the WRDE_NOCMD side.
+        if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'(') && bytes.get(i + 2) == Some(&b'(') {
+            let Some((expr, next)) = scan_arith_end(bytes, i + 3) else {
+                return Err(ExpandError::ArithSyntax);
+            };
+            let value = eval_arith(expr)?;
+            result.push_str(&value.to_string());
+            i = next;
             continue;
         }
         if bytes[i] == b'$' {

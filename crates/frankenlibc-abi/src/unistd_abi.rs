@@ -6763,6 +6763,23 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
             if byte == b'$' && i + 1 < s.len() {
                 match s[i + 1] {
                     b'(' => {
+                        // `$((` is ARITHMETIC, not command substitution. glibc
+                        // permits arithmetic under WRDE_NOCMD and rejects only
+                        // `$(cmd)` and backticks, so classifying `$((1+2))` as
+                        // command substitution made fl return WRDE_CMDSUB for a
+                        // word glibc expands to "3". bd-yb9f9r.
+                        if s.get(i + 2) == Some(&b'(') {
+                            match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
+                                Some((_, next)) => {
+                                    i = next;
+                                    continue;
+                                }
+                                None => {
+                                    scan.has_syntax_error = true;
+                                    return scan;
+                                }
+                            }
+                        }
                         scan.has_command_substitution = true;
                         return scan;
                     }
@@ -6794,6 +6811,20 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
         if byte == b'$' && i + 1 < s.len() {
             match s[i + 1] {
                 b'(' => {
+                    // Same arithmetic-vs-command-substitution split as the
+                    // double-quoted branch above (bd-yb9f9r).
+                    if s.get(i + 2) == Some(&b'(') {
+                        match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
+                            Some((_, next)) => {
+                                i = next;
+                                continue;
+                            }
+                            None => {
+                                scan.has_syntax_error = true;
+                                return scan;
+                            }
+                        }
+                    }
                     scan.has_command_substitution = true;
                     return scan;
                 }
@@ -6860,6 +6891,10 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
     })
     .map_err(|e| match e {
         frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => WRDE_BADVAL,
+        // glibc reports a malformed `$((...))` as WRDE_SYNTAX — measured for
+        // `$((1+))`, `$(( ))`, `$((abc))`, `$((1/0))`, `$((~5))`, `$((!0))`
+        // and `$((SETVAR+1))`. bd-yb9f9r.
+        frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax => WRDE_SYNTAX,
     })
 }
 
@@ -6898,6 +6933,31 @@ fn expand_vars_with_split_mask_dyn(
             if i < bytes.len() {
                 i += 1;
             }
+            continue;
+        }
+        // `$((expr))` arithmetic, checked before the generic `$` handling so it
+        // is never mistaken for `$(command)`. This expander is reached whenever
+        // the word contains an unquoted `$`, which includes every arithmetic
+        // word, so the core expander's copy of this rule is not enough on its
+        // own. bd-yb9f9r.
+        if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'(') && bytes.get(i + 2) == Some(&b'(') {
+            let Some((expr, next)) =
+                frankenlibc_core::stdlib::wordexp::scan_arith_end(bytes, i + 3)
+            else {
+                return Err(WRDE_SYNTAX);
+            };
+            let value = match frankenlibc_core::stdlib::wordexp::eval_arith(expr) {
+                Ok(v) => v,
+                Err(_) => return Err(WRDE_SYNTAX),
+            };
+            // POSIX groups arithmetic with parameter expansion for field
+            // splitting, so the digits are marked splittable; in practice a
+            // decimal integer contains no IFS character, so this is not
+            // observable against glibc either way.
+            for ch in value.to_string().chars() {
+                push_masked_char(&mut result, &mut split_mask, ch, split_unquoted_expansions);
+            }
+            i = next;
             continue;
         }
         if bytes[i] == b'$' {
@@ -7174,8 +7234,23 @@ pub unsafe extern "C" fn wordexp(
     let mut in_single_quote = false;
     let mut in_double_quote = false;
     let mut escaped = false;
+    // Parenthesis depth inside a `$((...))` arithmetic expansion. While this is
+    // non-zero the input is copied verbatim: no word splitting and no quote
+    // toggling, so `$(( 1 + 2 ))` survives tokenisation as ONE word. Without
+    // this the spaces split it into `$((`, `1`, `+`, `2`, `))` and the
+    // expression never reaches the evaluator. bd-yb9f9r.
+    let mut arith_depth = 0usize;
 
     for &b in input_bytes {
+        if arith_depth > 0 {
+            current_word.push(b as char);
+            match b {
+                b'(' => arith_depth += 1,
+                b')' => arith_depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
         if escaped {
             // Preserve the backslash through tokenisation: it is only consumed
             // here for word-splitting/quote decisions, but the expansion phase
@@ -7208,6 +7283,12 @@ pub unsafe extern "C" fn wordexp(
             continue;
         }
         current_word.push(b as char);
+        // Entering arithmetic. Detected on the trailing `$((` just pushed, since
+        // this loop has no lookahead. Single quotes make it literal; double
+        // quotes do not, so `"$((1+2))"` still expands.
+        if !in_single_quote && current_word.as_bytes().ends_with(b"$((") {
+            arith_depth = 2;
+        }
     }
     if !current_word.is_empty() {
         result_words.push(current_word);
@@ -7215,6 +7296,10 @@ pub unsafe extern "C" fn wordexp(
 
     // Unclosed quotes
     if in_single_quote || in_double_quote {
+        return WRDE_SYNTAX;
+    }
+    // An unterminated `$((` is a syntax error, as it is for an unclosed quote.
+    if arith_depth > 0 {
         return WRDE_SYNTAX;
     }
 
