@@ -16135,21 +16135,47 @@ fn with_cuserid_buf<R>(f: impl FnOnce(&mut [u8; CUSERID_BUFSIZE]) -> R) -> R {
     }
 }
 
+/// Resolve the current uid to a login name through the passwd backend.
+///
+/// The hardcoded "root"/"user" pair is only the FALLBACK for a uid with no
+/// passwd entry. Restored under bd-l1xxt3: e634aff2a deleted the lookup and
+/// left just this fallback inline in `cuserid`, so the function answered
+/// "root"/"user" for every uid and never consulted the database at all.
+fn cuserid_name_for_uid(uid: u32) -> Vec<u8> {
+    crate::pwd_abi::lookup_passwd_by_uid(uid)
+        .map(|entry| entry.pw_name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            if uid == 0 {
+                b"root".to_vec()
+            } else {
+                b"user".to_vec()
+            }
+        })
+}
+
+fn copy_cuserid_name(dst: &mut [u8; CUSERID_BUFSIZE], name: &[u8]) {
+    let len = name.len().min(dst.len() - 1);
+    dst[..len].copy_from_slice(&name[..len]);
+    dst[len] = 0;
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cuserid(s: *mut c_char) -> *mut c_char {
     let uid = syscall::sys_getuid();
-    let name = if uid == 0 { "root" } else { "user" };
+    let name = cuserid_name_for_uid(uid);
     if s.is_null() {
         return with_cuserid_buf(|buf| {
-            let len = name.len().min(buf.len() - 1);
-            buf[..len].copy_from_slice(&name.as_bytes()[..len]);
-            buf[len] = 0;
+            copy_cuserid_name(buf, &name);
             buf.as_mut_ptr() as *mut c_char
         });
     }
-    let len = name.len().min(8);
+    // CUSERID_BUFSIZE - 1, not a bare 8: the caller-supplied buffer is
+    // documented to be at least L_cuserid bytes, and the stub's `.min(8)` would
+    // have truncated any longer login name.
+    let len = name.len().min(CUSERID_BUFSIZE - 1);
     unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr() as *const c_char, s, len);
+        std::ptr::copy_nonoverlapping(name.as_ptr().cast::<c_char>(), s, len);
         *s.add(len) = 0;
     };
     s

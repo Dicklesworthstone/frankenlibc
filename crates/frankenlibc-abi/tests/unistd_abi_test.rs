@@ -2960,7 +2960,14 @@ fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
 
 #[test]
 fn abi_argp_parse_version_prints_configured_version_and_exits() {
-    let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
+    // Poison-tolerant, matching PASSWD_ENV_LOCK's handling elsewhere in this
+    // file: these tests mutate the same argp globals, so if one of them panics
+    // the others would otherwise die on a poisoned mutex and report a failure
+    // that has nothing to do with what they test. A cascading failure hides the
+    // real one.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let version = CString::new("argp-demo 1.2").unwrap();
     let _globals = ArgpVersionGlobalsGuard::set(version.as_ptr(), std::ptr::null_mut());
 
@@ -2990,12 +2997,30 @@ fn abi_argp_parse_version_prints_configured_version_and_exits() {
 
 #[test]
 fn abi_argp_parse_version_hook_overrides_version_string_without_exit_when_requested() {
-    let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
+    // Poison-tolerant, matching PASSWD_ENV_LOCK's handling elsewhere in this
+    // file: these tests mutate the same argp globals, so if one of them panics
+    // the others would otherwise die on a poisoned mutex and report a failure
+    // that has nothing to do with what they test. A cascading failure hides the
+    // real one.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let version = CString::new("ignored-version").unwrap();
     let _globals =
         ArgpVersionGlobalsGuard::set(version.as_ptr(), argp_test_version_hook as *mut c_void);
 
-    let output = capture_argp_stdout_child_status(0, 125, || unsafe {
+    // Status arguments were SWAPPED, which made this test unpassable rather
+    // than merely wrong. The helper is (expected_status, returned_status), where
+    // returned_status is what the child exits with once the closure RETURNS.
+    // Under ARGP_NO_EXIT argp_parse is supposed to return, so returning is the
+    // success path and 125 is the status a correct run produces — yet the test
+    // asserted the child exited 0. No behaviour of argp_parse could satisfy it:
+    // returning gave 125, and the closure's own failure branch also gave 125.
+    //
+    // Fixed by expecting 125 (correct completion) and moving the failure branch
+    // to a DISTINCT code, so a genuine argp_parse regression is now
+    // distinguishable from success instead of colliding with it.
+    let output = capture_argp_stdout_child_status(125, 125, || unsafe {
         let argp_struct = empty_argp_storage();
         let prog = CString::new("argp-demo").unwrap();
         let version_arg = CString::new("--version").unwrap();
@@ -3015,7 +3040,7 @@ fn abi_argp_parse_version_hook_overrides_version_string_without_exit_when_reques
             std::ptr::null_mut(),
         );
         if rc != 0 || index != 2 {
-            libc::_exit(125);
+            libc::_exit(124);
         }
     })
     .unwrap();
@@ -3081,7 +3106,14 @@ fn abi_argp_help_null_stream_preserves_fixture_noop_contract() {
 fn abi_argp_help_renders_configured_bug_address() {
     const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
 
-    let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
+    // Poison-tolerant, matching PASSWD_ENV_LOCK's handling elsewhere in this
+    // file: these tests mutate the same argp globals, so if one of them panics
+    // the others would otherwise die on a poisoned mutex and report a failure
+    // that has nothing to do with what they test. A cascading failure hides the
+    // real one.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let bug_address = CString::new("bugs@example.test").unwrap();
     let _bug_address_guard = ArgpBugAddressGuard::set(bug_address.as_ptr());
     let argp_struct = empty_argp_storage();
@@ -4112,7 +4144,6 @@ fn mount_setattr_empty_path_preserves_unprivileged_eperm_like_host() {
             attr_size,
         )
     };
-    assert_eq!(host_plain_rc, -1);
     let host_plain_errno = unsafe { *libc::__errno_location() };
 
     let mut abi_plain_attr = [0_u64; 4];
@@ -4126,11 +4157,27 @@ fn mount_setattr_empty_path_preserves_unprivileged_eperm_like_host() {
             attr_size,
         )
     };
-    assert_eq!(abi_plain_rc, -1);
     let abi_plain_errno = errno_value();
 
+    // fl must do whatever the HOST did — that is the actual contract, and it is
+    // checked on the return value as well as errno now, which the hardcoded
+    // `== -1` pair never really did.
+    assert_eq!(
+        i64::from(abi_plain_rc),
+        host_plain_rc,
+        "mount_setattr(plain) rc: fl={abi_plain_rc} host={host_plain_rc}"
+    );
     assert_eq!(abi_plain_errno, host_plain_errno);
-    assert_eq!(abi_plain_errno, libc::EPERM);
+    // EPERM is only the right answer when we are actually unprivileged. The
+    // rch workers run as root, where this syscall does NOT fail, so asserting
+    // it unconditionally made this test permanently red on the whole fleet.
+    if unsafe { libc::geteuid() } != 0 {
+        assert_eq!(
+            abi_plain_errno,
+            libc::EPERM,
+            "unprivileged mount_setattr(plain) must be EPERM"
+        );
+    }
 
     let mut host_empty_path_attr = [0_u64; 4];
     clear_errno();
@@ -4144,7 +4191,6 @@ fn mount_setattr_empty_path_preserves_unprivileged_eperm_like_host() {
             attr_size,
         )
     };
-    assert_eq!(host_empty_path_rc, -1);
     let host_empty_path_errno = unsafe { *libc::__errno_location() };
 
     let mut abi_empty_path_attr = [0_u64; 4];
@@ -4158,11 +4204,21 @@ fn mount_setattr_empty_path_preserves_unprivileged_eperm_like_host() {
             attr_size,
         )
     };
-    assert_eq!(abi_empty_path_rc, -1);
     let abi_empty_path_errno = errno_value();
 
+    assert_eq!(
+        i64::from(abi_empty_path_rc),
+        host_empty_path_rc,
+        "mount_setattr(AT_EMPTY_PATH) rc: fl={abi_empty_path_rc} host={host_empty_path_rc}"
+    );
     assert_eq!(abi_empty_path_errno, host_empty_path_errno);
-    assert_eq!(abi_empty_path_errno, libc::EPERM);
+    if unsafe { libc::geteuid() } != 0 {
+        assert_eq!(
+            abi_empty_path_errno,
+            libc::EPERM,
+            "unprivileged mount_setattr(AT_EMPTY_PATH) must be EPERM"
+        );
+    }
 }
 
 #[test]
@@ -10913,16 +10969,41 @@ fn kexec_load_with_null_segments_and_positive_count_returns_efault() {
 #[test]
 fn kexec_load_unprivileged_returns_known_errno() {
     use frankenlibc_abi::unistd_abi::kexec_load;
+
+    // nr_segments == 0 is the kexec UNLOAD operation, so this is not a
+    // guaranteed failure: as root it succeeds and returns 0. The test asserted
+    // -1 unconditionally, which made it permanently red on the rch fleet, whose
+    // workers run as root.
+    //
+    // Rather than merely relax the assertion, compare against the host syscall —
+    // this test had no oracle at all before, so it could only ever check fl
+    // against a hardcoded guess about the environment.
+    unsafe { *libc::__errno_location() = 0 };
+    let host_rc = unsafe { libc::syscall(libc::SYS_kexec_load, 0_i64, 0_i64, 0_i64, 0_i64) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
     let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
-    assert_eq!(rc, -1);
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
-    assert!(
-        errno == libc::EPERM
-            || errno == libc::ENOSYS
-            || errno == libc::EINVAL
-            || errno == libc::EBUSY,
-        "unexpected kexec_load errno: {errno}"
+
+    assert_eq!(
+        i64::from(rc),
+        host_rc,
+        "kexec_load rc: fl={rc} host={host_rc}"
     );
+    if host_rc == -1 {
+        assert_eq!(
+            errno, host_errno,
+            "kexec_load errno: fl={errno} host={host_errno}"
+        );
+        assert!(
+            errno == libc::EPERM
+                || errno == libc::ENOSYS
+                || errno == libc::EINVAL
+                || errno == libc::EBUSY,
+            "unexpected kexec_load errno: {errno}"
+        );
+    }
 }
 
 #[test]
