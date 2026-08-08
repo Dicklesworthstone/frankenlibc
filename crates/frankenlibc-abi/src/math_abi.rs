@@ -985,7 +985,18 @@ pub unsafe extern "C" fn gamma(x: f64) -> f64 {
 /// Extract significand scaled to [1, 2).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn significand(x: f64) -> f64 {
-    frankenlibc_core::math::significand(x)
+    // significand(0) has no normalized mantissa: glibc reports EDOM.
+    if x == 0.0 {
+        set_domain_errno();
+    }
+    let out = frankenlibc_core::math::significand(x);
+    // glibc significand(x) = scalbn(x, -ilogb(x)); ilogb(0/inf/NaN) raises
+    // FE_INVALID, which propagates. fl's core leaves the flag unset, so re-raise
+    // it on the cold path for the three special-input classes.
+    if x == 0.0 || !x.is_finite() {
+        pi_fn_raise_invalid_f64();
+    }
+    out
 }
 
 /// GNU `exp10()` — base-10 exponential.
@@ -1816,7 +1827,22 @@ pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn significandf(x: f32) -> f32 {
-    unary_entry_f32(x, 3, frankenlibc_core::math::significandf)
+    // significand(0) has no normalized mantissa: glibc reports EDOM.
+    if x == 0.0 {
+        set_domain_errno();
+    }
+    let out = unary_entry_f32(x, 3, frankenlibc_core::math::significandf);
+    // ilogbf(0/inf/NaN) raises FE_INVALID inside glibc's significandf; mirror it.
+    // glibc's f32 path additionally raises FE_INEXACT on ±inf (the scalbnf scale
+    // of an infinite operand), unlike the f64 significand path. That asymmetry
+    // is real and must be preserved in both directions.
+    if x == 0.0 || !x.is_finite() {
+        pi_fn_raise_invalid_f32();
+        if x.is_infinite() {
+            raise_inexact_f64();
+        }
+    }
+    out
 }
 
 /// `pow10f` is a GNU extension alias for `exp10f`.
