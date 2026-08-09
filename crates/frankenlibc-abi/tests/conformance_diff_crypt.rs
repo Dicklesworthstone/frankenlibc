@@ -25,13 +25,49 @@
 //! `fl_crypt_accepts_modern_method_salts` runs by default and only
 //! verifies fl returns non-null with the correct method-tag prefix.
 
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::sync::OnceLock;
 
 use frankenlibc_abi::unistd_abi as fl;
 
-#[link(name = "crypt")]
 unsafe extern "C" {
-    fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char;
+    fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+}
+
+type CryptFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
+
+/// Resolve host libxcrypt at RUNTIME instead of link time.
+///
+/// This file used `#[link(name = "crypt")]`, which needs the `libcrypt.so`
+/// DEVELOPMENT symlink. The rch worker images ship only the runtime
+/// `libcrypt.so.1`, so the whole target failed to LINK there:
+///   rust-lld: error: unable to find library -lcrypt
+/// An unlinkable target is silent, not green — this gate has been contributing
+/// nothing on the fleet while looking like just another passing name in a list.
+///
+/// conformance_diff_crypt_failure_token already hit this and solved it exactly
+/// this way; its comment even names the missing symlink. The workaround simply
+/// had not been carried across to this file.
+fn crypt_fn() -> CryptFn {
+    static F: OnceLock<usize> = OnceLock::new();
+    let addr = *F.get_or_init(|| {
+        const RTLD_NOW: c_int = 2;
+        // SAFETY: constant, NUL-terminated library and symbol names.
+        let h = unsafe { dlopen(c"libcrypt.so.1".as_ptr(), RTLD_NOW) };
+        assert!(!h.is_null(), "dlopen libcrypt.so.1 failed");
+        let p = unsafe { dlsym(h, c"crypt".as_ptr()) };
+        assert!(!p.is_null(), "dlsym crypt failed");
+        p as usize
+    });
+    // SAFETY: dlsym returned a non-null pointer to `crypt`, whose signature is
+    // fixed by POSIX.
+    unsafe { std::mem::transmute::<usize, CryptFn>(addr) }
+}
+
+/// Same call shape the linked `crypt` had, so call sites are unchanged.
+unsafe fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
+    unsafe { crypt_fn()(key, salt) }
 }
 
 #[derive(Debug)]
