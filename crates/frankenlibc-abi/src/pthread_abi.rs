@@ -152,6 +152,22 @@ const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
 const HOST_THREAD_HANDOFF_READY: i32 = 1;
 const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
 
+/// Yields the creating thread spends waiting for the child to publish its TID
+/// before it stops spinning and blocks on [`HOST_THREAD_REGISTRATION_EPOCH`].
+const HOST_THREAD_REGISTRATION_YIELD_SPINS: usize = 256;
+
+/// Upper bound on how long `pthread_create` waits for that publication. This
+/// is a safety net against a child that never runs, not the mechanism: the
+/// futex wake makes the common case return as soon as the child publishes.
+const HOST_THREAD_REGISTRATION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
+
+/// Bumped by every host-thread trampoline immediately after it publishes its
+/// kernel TID into [`HOST_THREAD_TID_REGISTRY`]. Global and `'static` so a
+/// creating thread can block on it without any lifetime relationship to the
+/// child's start context, which the child still owns while we wait.
+static HOST_THREAD_REGISTRATION_EPOCH: AtomicI32 = AtomicI32::new(0);
+
 static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ManagedThreadRecord>>> =
     LazyLock::new(|| Mutex::new(artifact_hash_map()));
 static MANAGED_THREAD_TOMBSTONES: LazyLock<Mutex<ArtifactHashSet<usize>>> =
@@ -980,6 +996,21 @@ fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(thread as usize, tid);
+    // Publish AFTER the insert is visible, then wake every creating thread
+    // waiting for any registration; each re-checks its own key. Without this
+    // the creator only ever polled, and gave up. bd-4atx9e.
+    HOST_THREAD_REGISTRATION_EPOCH.fetch_add(1, Ordering::Release);
+    #[cfg(target_os = "linux")]
+    {
+        let _ = futex_wake_private(&HOST_THREAD_REGISTRATION_EPOCH, i32::MAX);
+    }
+}
+
+fn host_thread_is_registered(thread_key: usize) -> bool {
+    HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(&thread_key)
 }
 
 fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
@@ -992,17 +1023,47 @@ fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
     // run immediately after pthread_create returns. Wait until the child
     // trampoline publishes its kernel TID into the registry so those entry
     // points see a coherent live-thread view.
-    for _ in 0..256 {
-        if HOST_THREAD_TID_REGISTRY
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&thread_key)
-        {
+    //
+    // Fast path: on an idle machine the child publishes within a few yields,
+    // so this costs no syscall beyond the yields it already did.
+    for _ in 0..HOST_THREAD_REGISTRATION_YIELD_SPINS {
+        if host_thread_is_registered(thread_key) {
             return true;
         }
         raw_syscall::sys_sched_yield();
     }
-    false
+
+    // Slow path. The yield spin above USED TO BE THE WHOLE FUNCTION, and
+    // returning false after it is a silent loss of the very invariant the
+    // comment promises: the caller proceeds with no registry entry, so the
+    // next resolve_thread_tid finds nothing and every tid-based entry point
+    // (pthread_getaffinity_np, pthread_getcpuclockid, pthread_sigqueue,
+    // pthread_gettid_np, pthread_cancel) answers ESRCH for a thread that is
+    // running. It reproduced as `left: 3, right: 0` in pthread_abi_test on a
+    // loaded 64-core host: 256 yields is a bet on scheduling latency, and a
+    // contended machine loses that bet. bd-4atx9e.
+    //
+    // Blocking on a futex instead of spinning matters for the same reason:
+    // burning the parent's slice competes with the child we are waiting for.
+    // The epoch is a 'static global precisely so that waiting on it needs no
+    // lifetime relationship with the child's start context, which the child
+    // still owns at this point.
+    let deadline = std::time::Instant::now() + HOST_THREAD_REGISTRATION_TIMEOUT;
+    loop {
+        // Snapshot BEFORE re-checking the registry: if the child publishes in
+        // the gap, the futex wait below returns EAGAIN immediately rather than
+        // sleeping through the wake.
+        let epoch = HOST_THREAD_REGISTRATION_EPOCH.load(Ordering::Acquire);
+        if host_thread_is_registered(thread_key) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            // Give up exactly as before: the caller keeps the start context
+            // alive rather than freeing a box the child may still read.
+            return false;
+        }
+        futex_wait_private_timeout(&HOST_THREAD_REGISTRATION_EPOCH, epoch, 1_000_000);
+    }
 }
 
 fn publish_host_thread_handoff(
@@ -1890,6 +1951,33 @@ fn futex_wait_private(word: &AtomicI32, expected: i32) -> c_int {
             unsafe { set_abi_errno(errno) };
             -1
         }
+    }
+}
+
+/// `futex_wait_private` with a RELATIVE timeout in nanoseconds.
+///
+/// Returns without distinguishing wake from timeout from `EAGAIN` — every
+/// caller re-checks the condition it actually cares about, so the wait is only
+/// ever a hint about when to look again.
+fn futex_wait_private_timeout(word: &AtomicI32, expected: i32, timeout_ns: i64) -> c_int {
+    let ts = libc::timespec {
+        tv_sec: timeout_ns / 1_000_000_000,
+        tv_nsec: timeout_ns % 1_000_000_000,
+    };
+    // SAFETY: Linux futex syscall with a valid userspace address and a valid
+    // relative timeout that outlives the call.
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected as u32,
+            &ts as *const libc::timespec as usize,
+            0,
+            0,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(_) => -1,
     }
 }
 

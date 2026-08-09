@@ -2122,6 +2122,60 @@ fn getaffinity_np() {
     }
 }
 
+/// Once `pthread_create` RETURNS, every tid-based entry point must be able to
+/// resolve the new thread. fl's `pthread_create` deliberately waits for the
+/// child to publish its kernel TID before returning, so this is its own stated
+/// contract, not an extra demand.
+///
+/// Deliberately takes NO readiness handshake: the point is that the caller
+/// should not need one. Before bd-4atx9e that wait was a 256-yield spin that
+/// silently gave up, so on a loaded machine `pthread_create` returned with no
+/// registry entry and these calls answered ESRCH for a running thread —
+/// `left: 3, right: 0`. The loop is what makes it a probe rather than a
+/// coincidence: a single creation almost always wins the race.
+#[test]
+fn created_thread_is_immediately_resolvable_by_tid_entry_points() {
+    for i in 0..64 {
+        unsafe {
+            let ready = AtomicI32::new(0);
+            let mut thr: libc::pthread_t = 0;
+            assert_eq!(
+                pthread_create(
+                    &mut thr,
+                    ptr::null(),
+                    Some(cancellable_thread),
+                    (&ready as *const AtomicI32).cast_mut().cast(),
+                ),
+                0
+            );
+
+            let tid = pthread_gettid_np(thr);
+            assert!(
+                tid > 0,
+                "iteration {i}: gettid_np returned {tid} for a thread pthread_create just \
+                 reported as created"
+            );
+
+            let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
+            assert_eq!(
+                pthread_getaffinity_np(thr, std::mem::size_of::<libc::cpu_set_t>(), &mut cpuset),
+                0,
+                "iteration {i}: getaffinity_np could not resolve a just-created thread"
+            );
+
+            let mut clock_id: libc::clockid_t = 0;
+            assert_eq!(
+                pthread_getcpuclockid(thr, &mut clock_id),
+                0,
+                "iteration {i}: getcpuclockid could not resolve a just-created thread"
+            );
+
+            assert_eq!(pthread_cancel(thr), 0);
+            assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
+        }
+    }
+}
+
 #[test]
 fn getaffinity_np_live_thread() {
     unsafe {
@@ -2158,8 +2212,24 @@ unsafe extern "C" fn prepare_fn() {}
 unsafe extern "C" fn parent_fn() {}
 unsafe extern "C" fn child_fn() {}
 
+/// Serialises the two arms that touch the process-global atfork registry.
+///
+/// `atfork_prepare_does_not_self_deadlock_on_reentrant_registration` clears
+/// that registry and asserts its exact length twice; `atfork_register_succeeds`
+/// appends to it. libtest runs them on different threads, so the counting arm
+/// intermittently saw 2 or 3 where it required 1 — a test-isolation defect, not
+/// an fl one. Same shape as the ut_id collision in conformance_diff_pututxline
+/// (bd-hdb4c3): exact assertions over process-global state need a lock, not
+/// luck. bd-d3tvn3.
+static ATFORK_REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn atfork_registry_guard() -> std::sync::MutexGuard<'static, ()> {
+    ATFORK_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn atfork_register_succeeds() {
+    let _guard = atfork_registry_guard();
     let rc = unsafe { pthread_atfork(Some(prepare_fn), Some(parent_fn), Some(child_fn)) };
     assert_eq!(rc, 0, "pthread_atfork should succeed");
 }
@@ -2183,6 +2253,7 @@ fn atfork_prepare_does_not_self_deadlock_on_reentrant_registration() {
         __test_atfork_handlers_clear, __test_atfork_handlers_len, __test_run_atfork_prepare,
     };
 
+    let _guard = atfork_registry_guard();
     __test_atfork_handlers_clear();
     let rc =
         unsafe { pthread_atfork(Some(atfork_reentrant_prepare_registers_another), None, None) };
