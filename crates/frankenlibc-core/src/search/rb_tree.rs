@@ -196,7 +196,26 @@ impl<K> RbTree<K> {
 
     /// Delete the key matching `needle`. Returns the removed key on
     /// success; returns `None` if the key was not present.
+    ///
+    /// The membership pre-check is REQUIRED, not an optimisation.
+    /// [`Self::delete_rec`] is Sedgewick's left-leaning red-black deletion,
+    /// whose stated precondition is that the key is present: the descent
+    /// applies `move_red_left`/`move_red_right` unconditionally to manufacture
+    /// a red node to delete, and its
+    /// `if needle == h.key && h.right.is_none() { return None }` step discards
+    /// the whole node. Those steps are only sound while the descent is
+    /// actually converging on an existing key. Run against an ABSENT key they
+    /// restructure a tree that had nothing to remove, and nodes are dropped —
+    /// `conformance_diff_tsearch` caught it as an in-order walk missing a
+    /// contiguous band of keys (87, 89, 103, 111, 123 in random trial 3) that
+    /// glibc's tdelete still had.
+    ///
+    /// `tdelete` on a missing key is an ordinary, documented no-op, so this
+    /// path is reached by any normal caller. bd-0v1jdb.
     pub fn delete<F: Fn(&K, &K) -> Ordering>(&mut self, needle: &K, cmp: &F) -> Option<K> {
+        if self.find(needle, cmp).is_none() {
+            return None;
+        }
         let prev_len = self.len;
         let (new_root, removed) = Self::delete_rec(self.root.take(), needle, cmp, &mut self.len);
         self.root = new_root;
@@ -635,6 +654,72 @@ mod tests {
         }
         assert!(t.is_empty());
         assert!(t.find(&0, &cmp_i32).is_none());
+    }
+
+    /// Deleting a key that is NOT present must be a total no-op — including on
+    /// a tree that has already had real deletions applied to it.
+    ///
+    /// `delete_rec` is Sedgewick's LLRB deletion, whose stated precondition is
+    /// that the key EXISTS: it manufactures a red node to remove on the way
+    /// down via `move_red_left`/`move_red_right`, and discards a whole node at
+    /// `needle == h.key && h.right.is_none()`. Driven at an absent key those
+    /// steps restructure a tree that had nothing to remove, and nodes are
+    /// dropped. `conformance_diff_tsearch` caught it as an in-order walk
+    /// missing the band 87, 89, 103, 111, 123 that glibc's tdelete still had.
+    ///
+    /// RELATIONSHIP TO `missing_deletes_preserve_set_and_llrb_invariants`: that
+    /// arm builds its tree with inserts only and was ALSO red at HEAD — the
+    /// mutation run that removed the guard again failed both. So core's own
+    /// unit tests had caught this and were simply not being run either; the abi
+    /// sweep that found `conformance_diff_tsearch` had not covered core. This
+    /// arm adds the post-deletion shape, which is what the tsearch corpus
+    /// actually exercises, so the two cover different tree states. bd-0v1jdb.
+    #[test]
+    fn delete_missing_key_is_a_no_op_after_prior_deletions() {
+        let snapshot = |t: &RbTree<i32>| {
+            let mut v = Vec::new();
+            t.walk(RbWalkOrder::InOrder, |k, _| v.push(*k));
+            v
+        };
+
+        // Interleave inserts and deletions of PRESENT keys first, so the tree
+        // reaches a post-deletion shape, then probe absent keys at every gap.
+        let mut t = RbTree::new();
+        for k in 0i32..64 {
+            t.insert(k * 2, &cmp_i32);
+        }
+        for k in [0i32, 2, 30, 62, 64, 66, 90, 120, 126, 14, 46, 78, 110] {
+            t.delete(&k, &cmp_i32);
+        }
+
+        let before = snapshot(&t);
+        let len_before = t.len();
+        assert_eq!(before.len(), len_before, "walk and len disagree up front");
+        assert!(len_before > 0, "tree must be non-empty for this to mean anything");
+
+        // Every odd value is absent by construction; so are the evens deleted
+        // above and values outside the range.
+        for missing in [-3i32, -1, 1, 15, 31, 47, 63, 79, 95, 111, 127, 129, 1000, 0, 30, 90] {
+            assert_eq!(
+                t.delete(&missing, &cmp_i32),
+                None,
+                "delete({missing}) of an absent key must report nothing removed"
+            );
+            assert_eq!(t.len(), len_before, "delete({missing}) changed len");
+            assert_eq!(
+                snapshot(&t),
+                before,
+                "delete({missing}) changed the tree contents"
+            );
+            // Structure too: a restructure that happened to keep every key
+            // would still be a bug worth catching.
+            assert_llrb_invariants(&t);
+        }
+
+        // And the tree is still fully functional afterwards.
+        for k in &before {
+            assert_eq!(t.find(k, &cmp_i32), Some(k));
+        }
     }
 
     #[test]
