@@ -9335,6 +9335,28 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
 /// Closes the existing stream and opens a new file with the given mode.
 /// If pathname is NULL, attempts to change the mode of the existing fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Write `n` in decimal into `buf`, returning the digit count. Used to build
+/// `/proc/self/fd/N` without allocating on a path that must not depend on the
+/// allocator being usable.
+fn fd_decimal_into(n: u32, buf: &mut [u8]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut digits = [0u8; 10];
+    let mut len = 0usize;
+    let mut v = n;
+    while v > 0 {
+        digits[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    for i in 0..len {
+        buf[i] = digits[len - 1 - i];
+    }
+    len
+}
+
 pub unsafe extern "C" fn freopen(
     pathname: *const c_char,
     mode: *const c_char,
@@ -9462,25 +9484,67 @@ pub unsafe extern "C" fn freopen(
         if id == STDIN_SENTINEL || id == STDOUT_SENTINEL || id == STDERR_SENTINEL {
             target_fd = old_fd;
         } else if old_fd >= 0 {
-            let _ = raw_syscall::sys_close(old_fd);
+            if pathname.is_null() {
+                // Keep it OPEN. With a NULL pathname the old descriptor is both
+                // the thing we reopen through (/proc/self/fd/N) and the number
+                // the result must keep, so closing it here would destroy the
+                // only handle on the file. bd-mpp7kt.
+                target_fd = old_fd;
+            } else {
+                let _ = raw_syscall::sys_close(old_fd);
+            }
         }
     }
 
-    if pathname.is_null() {
-        // NULL pathname: mode change only is not well-supported; return NULL.
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return std::ptr::null_mut();
-    }
+    // `freopen(NULL, mode, stream)` changes a stream's mode without naming the
+    // file. glibc implements it by reopening the descriptor's own
+    // /proc/self/fd/N link and dup2-ing the result back onto the original fd,
+    // so the caller keeps both its FILE* and its descriptor number. fl used to
+    // return NULL with EINVAL — after having already closed the descriptor
+    // above, so the stream was destroyed AND the call reported failure.
+    //
+    // Verified against live glibc 2.42:
+    //   f = fopen(p,"w"); fputs("line-one\n",f); fflush(f);
+    //   freopen(NULL,"r",f) -> same FILE*, same fd (3), fgets reads "line-one\n"
+    //   freopen(NULL,"r+") on an "r" handle succeeds and does NOT truncate
+    let mut proc_path = [0u8; 32];
+    let path_ptr: *const c_char = if pathname.is_null() {
+        if target_fd < 0 {
+            // No descriptor to reopen through (memory-backed stream, or one
+            // whose fd was already gone).
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return std::ptr::null_mut();
+        }
+        let prefix = b"/proc/self/fd/";
+        proc_path[..prefix.len()].copy_from_slice(prefix);
+        let digits = fd_decimal_into(target_fd as u32, &mut proc_path[prefix.len()..]);
+        proc_path[prefix.len() + digits] = 0;
+        proc_path.as_ptr().cast::<c_char>()
+    } else {
+        pathname
+    };
 
     // Open the new file.
     let oflags = flags_to_oflags(&open_flags);
     let create_mode: libc::mode_t = 0o666;
     let mut fd = match unsafe {
-        raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, oflags, create_mode)
+        raw_syscall::sys_openat(libc::AT_FDCWD, path_ptr as *const u8, oflags, create_mode)
     } {
         Ok(f) => f,
         Err(e) => {
+            // The NULL-pathname path deliberately kept the old descriptor open
+            // to reopen through it; if that reopen failed there is no stream
+            // left to own it, so close it here rather than leak. Standard
+            // streams keep their 0/1/2 descriptors either way.
+            if pathname.is_null()
+                && target_fd >= 0
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                let _ = raw_syscall::sys_close(target_fd);
+            }
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
             return std::ptr::null_mut();
