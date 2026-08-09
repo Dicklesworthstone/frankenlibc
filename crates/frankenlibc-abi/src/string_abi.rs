@@ -606,14 +606,38 @@ unsafe fn raw_avx_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
         // line when the destination END `dst+n` is unaligned — measured ~1.95x vs glibc at
         // n=4096 with `(dst+n)&31 != 0` (worse than the forward case; aligned-end is parity).
         // glibc aligns the dest tail. Copy the top head first so the main region ends on a
-        // 32 boundary, then run the descending loop with aligned `vmovdqa` stores. ALWAYS
-        // safe for backward overlap (dst > src): the top-head write lands at/above the main
-        // read region for any shift >= 0, so it never clobbers a source byte the main loop
-        // still needs, and the whole thing stays strictly descending (top → main → low tail).
+        // 32 boundary, then run the descending loop with aligned `vmovdqa` stores.
+        //
+        // The peel used to be `copy_unaligned_32(dst+n-32, src+n-32)` under a comment
+        // claiming it was "ALWAYS safe for backward overlap". It was not, in two
+        // independent ways, and conformance_diff_memmove was RED at HEAD because of them:
+        //
+        //  1. It writes a full 32 bytes at `[n-32, n)`, which reaches BELOW `dst+l` — and
+        //     the descending loop afterwards still has to READ `src[0, l)`. At len=200
+        //     disp=1 (top_head=9, l=191) the peel wrote base[233..265] and the loop then
+        //     re-read base[233..255] it had just clobbered.
+        //  2. `copy_unaligned_32` is an ASCENDING pair of 16-byte moves. In a BACKWARD
+        //     context with overlap distance < 16 its first store clobbers its own second
+        //     load: at len=200 disp=15 the low half stored base[247..263] and the high
+        //     half then loaded base[248..264].
+        //
+        // Both vanish if the peel copies EXACTLY the top `top_head` bytes `[l, n)` and does
+        // it descending. `copy_unaligned_16` is atomic (one u128 load, then the store), so
+        // it is safe at any overlap distance, and nothing is written below `dst+l` at all,
+        // which leaves the main loop's source untouched by construction. top_head < 32, so
+        // this is at most one 16-byte block plus a short byte tail — it runs once. bd-0lqilq.
         let top_head = (dst as usize + n) & 31;
         if top_head != 0 && top_head + 128 <= n {
             let l = n - top_head; // dst+l is 32-aligned
-            copy_unaligned_32(dst.add(n - 32), src.add(n - 32)); // covers [n-32, n) ⊇ [l, n)
+            let mut t = n;
+            while t - l >= 16 {
+                t -= 16;
+                copy_unaligned_16(dst.add(t), src.add(t));
+            }
+            while t > l {
+                t -= 1;
+                std::ptr::write_volatile(dst.add(t), std::ptr::read_volatile(src.add(t)));
+            }
             let mut d = dst.add(l);
             let mut s = src.add(l);
             let mut rem = l;
