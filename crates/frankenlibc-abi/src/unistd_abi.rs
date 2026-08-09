@@ -2606,6 +2606,58 @@ use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, ShortOutco
 /// the canonical POSIX state.
 static mut GETOPT_NEXTCHAR: Option<ArgRef> = None;
 
+/// Bounds of the run of operands skipped so far, glibc's `first_nonopt` /
+/// `last_nonopt`.
+///
+/// glibc does NOT permute argv as it goes. It scans in place, remembers the
+/// operand run in these two indices, lets `optind` run ahead over it, and
+/// rotates ONCE — `exchange()` — when it is about to return -1, at which point
+/// `optind` is set back to `first_nonopt` so the caller finds the operands.
+/// Traced on the host, `opts="abcd:"`, `argv=[prog,-c,-b,bar,-c]`:
+///
+/// ```text
+///   ret='c' optind=2   argv=[prog -c -b bar -c]   unchanged
+///   ret='b' optind=3   argv=[prog -c -b bar -c]   unchanged
+///   ret='c' optind=5   argv=[prog -c -b bar -c]   still unchanged, optind ran past
+///   ret=-1  optind=4   argv=[prog -c -b -c bar]   permuted once, optind=first_nonopt
+/// ```
+///
+/// fl used to rotate the next option in front of the operand run immediately,
+/// so its `optind` tracked a different array at every intermediate step and
+/// argv was already permuted mid-scan. 1709 of 8000 fuzz cases diverged.
+/// bd-sgr8xa.
+///
+/// No explicit reset is needed when a caller restarts with `optind = 1`: the
+/// clamp at the top of the scan block pulls both indices down to `optind`,
+/// which is exactly how glibc's own restart works.
+static mut GETOPT_FIRST_NONOPT: usize = 1;
+static mut GETOPT_LAST_NONOPT: usize = 1;
+
+/// glibc's `exchange()`: rotate `[bottom, top)` so the options in
+/// `[middle, top)` precede the operands in `[bottom, middle)`.
+///
+/// Mirrors the rotation onto the caller's real argv pointer array, so the
+/// permutation is observable exactly where glibc makes it observable.
+///
+/// SAFETY: `argv` has `argc` valid elements and `bottom <= middle <= top <= argc`.
+unsafe fn getopt_exchange(
+    argv_bytes: &mut [Vec<u8>],
+    argv: *const *mut c_char,
+    bottom: usize,
+    middle: usize,
+    top: usize,
+) {
+    if bottom >= middle || middle >= top {
+        return;
+    }
+    argv_bytes[bottom..top].rotate_left(middle - bottom);
+    let argv_mut = argv as *mut *mut c_char;
+    unsafe {
+        std::slice::from_raw_parts_mut(argv_mut.add(bottom), top - bottom)
+            .rotate_left(middle - bottom);
+    }
+}
+
 /// Reconstruct a C-style argv into owned byte vectors.
 ///
 /// Returns `None` for any null or tracked-unterminated entry within
@@ -2734,39 +2786,84 @@ unsafe fn parse_getopt_short(
         }
     }
 
-    // Argument permutation (glibc default mode): when the element at `optind`
-    // is an operand, rotate the next option element — together with its
-    // separate argument, if any — in front of the run of operands, so options
-    // are reported in order and operands accumulate at the tail of argv.
-    if !strict
-        && !return_in_order
-        && !mid_bundle
-        && optind >= 1
-        && optind < argc_us
-        && !getopt_is_option_like(&argv_bytes[optind])
-    {
-        let mut k = optind + 1;
-        while k < argc_us && !getopt_is_option_like(&argv_bytes[k]) {
-            k += 1;
+    // Argument permutation, glibc's PERMUTE model (see GETOPT_FIRST_NONOPT).
+    //
+    // Scan IN PLACE: skip over the operand run, remembering its bounds and
+    // letting `optind` run past it, and rotate exactly once — when the scan
+    // reaches the end and we are about to report -1. fl used to rotate the next
+    // option in front of the operands on every call, which produced the right
+    // final argv but the wrong `optind` at every intermediate step, and left
+    // argv permuted mid-scan where glibc leaves it untouched. bd-sgr8xa.
+    let mut optind = optind;
+    if !strict && !return_in_order && !mid_bundle && optind >= 1 {
+        // SAFETY: plain loads/stores of the scanner's own statics.
+        let (mut first_nonopt, mut last_nonopt) =
+            unsafe { (GETOPT_FIRST_NONOPT, GETOPT_LAST_NONOPT) };
+
+        // A caller that restarts by assigning `optind` pulls both bounds down
+        // with it; this is glibc's restart path, not a special case.
+        if last_nonopt > optind {
+            last_nonopt = optind;
         }
-        if k < argc_us {
-            let blk = if k + 1 < argc_us && getopt_block_takes_next_arg(&argv_bytes[k], effective) {
-                2
-            } else {
-                1
-            };
-            let end = k + blk;
-            argv_bytes[optind..end].rotate_right(blk);
-            // Mirror the rotation onto the caller's real argv pointer array
-            // so subsequent getopt() calls and the caller observe the
-            // permutation — exactly what glibc's getopt does.
-            let argv_mut = argv as *mut *mut c_char;
-            // SAFETY: argv has `argc` valid elements; `optind..end` is within
-            // `[0, argc)`, so the constructed slice stays in bounds.
-            unsafe {
-                std::slice::from_raw_parts_mut(argv_mut.add(optind), end - optind)
-                    .rotate_right(blk);
+        if first_nonopt > optind {
+            first_nonopt = optind;
+        }
+
+        // Options seen after a run of operands: move them in front of it.
+        if first_nonopt != last_nonopt && last_nonopt != optind {
+            unsafe { getopt_exchange(&mut argv_bytes, argv, first_nonopt, last_nonopt, optind) };
+            first_nonopt += optind - last_nonopt;
+            last_nonopt = optind;
+        } else if last_nonopt != optind {
+            first_nonopt = optind;
+        }
+
+        // Extend the operand run over anything non-option at `optind`.
+        while optind < argc_us && !getopt_is_option_like(&argv_bytes[optind]) {
+            optind += 1;
+        }
+        last_nonopt = optind;
+
+        // `--` ends option scanning. glibc rotates the operands seen so far in
+        // front of it, then jumps `optind` to the end so the -1 path below
+        // backs it up to the first operand. Without this block, argv came out
+        // unpermuted for inputs like ["prog", "-", "--", ...] where the only
+        // thing before `--` is an operand. bd-sgr8xa.
+        if optind != argc_us && argv_bytes[optind] == b"--" {
+            optind += 1;
+            if first_nonopt != last_nonopt && last_nonopt != argc_us {
+                unsafe {
+                    getopt_exchange(&mut argv_bytes, argv, first_nonopt, last_nonopt, optind)
+                };
+                first_nonopt += optind - last_nonopt;
+                last_nonopt = optind;
+            } else if first_nonopt == last_nonopt {
+                first_nonopt = optind;
             }
+            last_nonopt = argc_us;
+            optind = argc_us;
+        }
+
+        // End of scan: rotate once, then back `optind` over the operands so the
+        // caller finds them, and report -1.
+        if optind == argc_us {
+            if first_nonopt != last_nonopt {
+                optind = first_nonopt;
+            }
+            unsafe {
+                GETOPT_FIRST_NONOPT = first_nonopt;
+                GETOPT_LAST_NONOPT = last_nonopt;
+                libc_optind = optind as c_int;
+                libc_optopt = 0;
+                GETOPT_NEXTCHAR = None;
+            }
+            return -1;
+        }
+
+        unsafe {
+            GETOPT_FIRST_NONOPT = first_nonopt;
+            GETOPT_LAST_NONOPT = last_nonopt;
+            libc_optind = optind as c_int;
         }
     }
 
