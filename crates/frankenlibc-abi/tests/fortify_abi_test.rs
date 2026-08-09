@@ -43,6 +43,36 @@ fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
     );
 }
 
+/// Counterpart to [`assert_child_sigabrt`]: the child must run to COMPLETION
+/// rather than trip a fortify abort.
+///
+/// Fork-isolated for the same reason the abort arms are, but inverted: a guard
+/// that aborts when it should not would kill the whole test binary if the call
+/// were made in-process, which reads as a harness crash rather than a failed
+/// assertion. Here it is a plain failure naming the signal.
+fn assert_child_exits_normally(label: &str, child: impl FnOnce()) {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+
+    if pid == 0 {
+        child();
+        unsafe { libc::_exit(0) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    assert!(
+        !libc::WIFSIGNALED(status),
+        "{label} child died by signal {} — a fortify abort where none is due",
+        libc::WTERMSIG(status)
+    );
+    assert!(
+        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        "{label} child should exit 0, status={status}"
+    );
+}
+
 #[test]
 fn chk_fail_aborts_child_process() {
     assert_child_sigabrt("chk_fail", || unsafe { __chk_fail() });
@@ -2027,11 +2057,52 @@ fn ptsname_r_chk_short_real_buffer_aborts_child_process() {
     });
 }
 
+/// Boundary of the object-size guard: `buflen == nreal` fits EXACTLY and must
+/// be allowed through.
+///
+/// The existing abort arm uses buflen=256 against nreal=1, which is so far past
+/// the boundary that an off-by-one guard (`buflen >= nreal`) still satisfies it
+/// while rejecting every exactly-sized buffer — the single most common correct
+/// call. This arm is what discriminates the two.
+///
+/// Fork-isolated because a wrong guard aborts, and an abort in-process takes
+/// the whole binary down instead of failing one assertion.
+///
+/// An earlier draft here probed `nreal == usize::MAX` instead, on the theory
+/// that the `!= usize::MAX` clause needed covering. Mutation testing showed
+/// that arm was TAUTOLOGICAL: `buflen > usize::MAX` cannot hold for any buflen,
+/// so the clause is unreachable and deleting it changes nothing. Recorded so
+/// nobody re-adds that arm believing it covers something. bd-j87m1z.
+#[test]
+fn ptsname_r_chk_buflen_equal_to_real_buffer_does_not_abort() {
+    assert_child_exits_normally("ptsname_r_chk buflen == nreal", || {
+        let mut buf = [0u8; 256];
+        let n = buf.len();
+        // fd -1 keeps this free of any PTY dependency: the delegated call
+        // fails, which is fine — the arm is about NOT aborting.
+        unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), n, n) };
+    });
+}
+
+/// One byte past the object size must abort — the other side of the same
+/// boundary, so the pair pins `>` rather than `>=`.
+#[test]
+fn ptsname_r_chk_buflen_one_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ptsname_r_chk buflen == nreal + 1", || {
+        let mut buf = [0u8; 256];
+        let n = buf.len();
+        unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), n + 1, n) };
+    });
+}
+
 #[test]
 fn ptsname_r_chk_on_pty() {
     let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
     if master < 0 {
-        return; // PTY not available in this environment
+        // Say so out loud: a silent early return is indistinguishable from a
+        // passing assertion in the log.
+        eprintln!("SKIPPED ptsname_r_chk_on_pty: posix_openpt unavailable here");
+        return;
     }
     unsafe { libc::grantpt(master) };
     unsafe { libc::unlockpt(master) };
