@@ -21707,6 +21707,59 @@ pub(crate) unsafe fn pack_name_with_dnptrs(
 /// wire-format labels in `comp_dn[..length]`, optionally adding compression
 /// pointers using previously seen names in `dnptrs`.
 /// Returns the number of bytes written to `comp_dn`, or -1 on error.
+/// Compare the name stored in the message at `off` against `want` (a list of
+/// labels), case-insensitively, following compression pointers.
+///
+/// `base` is the message start (`dnptrs[0]`). The walk is bounded: an offset
+/// must be below the 14-bit pointer limit and each hop must move strictly
+/// backwards, so a malformed or hostile message cannot loop here.
+unsafe fn dn_name_at_offset_equals(base: *const u8, mut off: usize, want: &[&[u8]]) -> bool {
+    let mut wi = 0usize;
+    let mut hops = 0usize;
+    loop {
+        if off >= 0x4000 {
+            return false;
+        }
+        // SAFETY: `off` is bounded above and the caller guarantees the message
+        // holds every offset it recorded in `dnptrs`.
+        let len = unsafe { *base.add(off) };
+        if len & 0xC0 == 0xC0 {
+            let lo = unsafe { *base.add(off + 1) } as usize;
+            let next = (((len & 0x3F) as usize) << 8) | lo;
+            // Pointers must go strictly backwards; anything else is malformed.
+            if next >= off {
+                return false;
+            }
+            hops += 1;
+            if hops > 128 {
+                return false;
+            }
+            off = next;
+            continue;
+        }
+        if len == 0 {
+            // End of the stored name: equal iff we consumed all of `want`.
+            return wi == want.len();
+        }
+        if len > 63 || wi >= want.len() {
+            return false;
+        }
+        let label = want[wi];
+        if label.len() != len as usize {
+            return false;
+        }
+        for (k, &wb) in label.iter().enumerate() {
+            // SAFETY: bounded by `len`, which the message declares.
+            let mb = unsafe { *base.add(off + 1 + k) };
+            if mb.to_ascii_lowercase() != wb.to_ascii_lowercase() {
+                return false;
+            }
+        }
+        wi += 1;
+        off += 1 + len as usize;
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dn_comp(
     exp_dn: *const c_char,
@@ -21734,19 +21787,109 @@ pub unsafe extern "C" fn dn_comp(
         return 1;
     }
 
-    // Split into labels.
     let name_str = if name_bytes.last() == Some(&b'.') {
         &name_bytes[..name_bytes.len() - 1]
     } else {
         name_bytes
     };
 
-    let mut out_off = 0usize;
-    for label in name_str.split(|&b| b == b'.') {
+    let labels: Vec<&[u8]> = name_str.split(|&b| b == b'.').collect();
+    for label in &labels {
         if label.is_empty() || label.len() > 63 {
             return -1;
         }
-        // Need: 1 (length) + label.len() bytes + at least 1 more for root terminator.
+    }
+
+    // Message base for compression offsets. glibc's convention: dnptrs[0] is
+    // the start of the message being built, and the entries after it are names
+    // already written into it. With no dnptrs there is nothing to point at, so
+    // the name is emitted in full — which is what fl used to do unconditionally.
+    let base: *const u8 = if dnptrs.is_null() {
+        std::ptr::null()
+    } else {
+        unsafe { *dnptrs as *const u8 }
+    };
+    let have_dict = !base.is_null();
+
+    // Number of names already recorded when this call began. The suffix search
+    // below must consider ONLY these: glibc records each suffix of the name it
+    // is currently writing, but never points the name at itself. fl matched
+    // against the entries it had just added, so "mail.a.a" compressed its own
+    // second "a" against its first and came out as
+    //   04 6d 61 69 6c 01 61 c0 05   (9 bytes)
+    // where glibc writes the name in full (10 bytes) and only later names may
+    // point into it. bd-50his3.
+    let existing = if have_dict {
+        let mut n = 0usize;
+        // SAFETY: the array is NUL-terminated by contract, bounded by lastdnptr.
+        unsafe {
+            let mut slot = dnptrs;
+            while (lastdnptr.is_null() || slot < lastdnptr) && !(*slot).is_null() {
+                n += 1;
+                slot = slot.add(1);
+            }
+        }
+        n
+    } else {
+        0
+    };
+
+    let mut out_off = 0usize;
+    for s in 0..labels.len() {
+        // Longest-suffix match against every name already recorded.
+        if have_dict {
+            // SAFETY: bounded by `existing`, counted from the NUL-terminated
+            // array before any of this call's own offsets were appended.
+            unsafe {
+                // Slot 0 is the MESSAGE BASE, not a searchable name: glibc does
+                // `msg = *dnptrs++` and starts its scan after it. Including it
+                // let the first name in a message point at itself — "y.y" came
+                // out as `01 79 c0 00` where glibc writes it in full. bd-50his3.
+                for i in 1..existing {
+                    let slot = dnptrs.add(i);
+                    let cand = *slot as *const u8;
+                    let cand_off = cand.offset_from(base);
+                    if cand_off >= 0
+                        && (cand_off as usize) < 0x4000
+                        && dn_name_at_offset_equals(base, cand_off as usize, &labels[s..])
+                    {
+                        // Emit the 2-byte pointer. Needs room for both bytes.
+                        if out_off + 2 > out.len() {
+                            return -1;
+                        }
+                        let off = cand_off as usize;
+                        out[out_off] = 0xC0 | ((off >> 8) as u8);
+                        out[out_off + 1] = (off & 0xFF) as u8;
+                        return (out_off + 2) as c_int;
+                    }
+                }
+            }
+        }
+
+        // No match for this suffix: record where it starts, then write it.
+        if have_dict && !lastdnptr.is_null() {
+            // SAFETY: walk to the first free slot, staying below lastdnptr.
+            unsafe {
+                let mut slot = dnptrs;
+                while slot < lastdnptr && !(*slot).is_null() {
+                    slot = slot.add(1);
+                }
+                if slot < lastdnptr {
+                    let here = comp_dn.add(out_off);
+                    // Only record offsets a pointer can actually reach.
+                    if (here as *const u8).offset_from(base) < 0x4000 {
+                        *slot = here;
+                        let next = slot.add(1);
+                        if next < lastdnptr {
+                            *next = std::ptr::null_mut();
+                        }
+                    }
+                }
+            }
+        }
+
+        let label = labels[s];
+        // 1 length byte + the label + at least 1 more for the root terminator.
         if out_off + 1 + label.len() + 1 > out.len() {
             return -1;
         }
@@ -21756,32 +21899,12 @@ pub unsafe extern "C" fn dn_comp(
         out_off += label.len();
     }
 
-    // Root terminator.
+    // Root terminator (only reached when no suffix could be pointed at).
     if out_off >= out.len() {
         return -1;
     }
     out[out_off] = 0;
     out_off += 1;
-
-    // If dnptrs is provided and there's room, record this name for future compression.
-    // (Simple implementation: we don't do compression pointer matching, just record.)
-    if !dnptrs.is_null() && !lastdnptr.is_null() {
-        // Find first NULL slot in dnptrs array.
-        let mut slot = dnptrs;
-        unsafe {
-            while slot < lastdnptr && !(*slot).is_null() {
-                slot = slot.add(1);
-            }
-            if slot < lastdnptr {
-                *slot = comp_dn;
-                // NULL-terminate the array if there's room.
-                let next = slot.add(1);
-                if next < lastdnptr {
-                    *next = std::ptr::null_mut();
-                }
-            }
-        }
-    }
 
     out_off as c_int
 }
