@@ -4236,10 +4236,62 @@ pub unsafe extern "C" fn roundevenf128(x: f128) -> f128 {
 
 // --- nextdown / nextup ---
 
+/// A NaN operand to `nextup`/`nextdown` is returned QUIETED, and a SIGNALING
+/// NaN additionally raises FE_INVALID. Returns `None` when `x` is not a NaN.
+///
+/// Measured on the host, values and flags together:
+///
+/// ```text
+///   nextup  (sNaN 0x7ff4000000000000) -> 0x7ffc000000000000  flags 0x1 (FE_INVALID)
+///   nextdown(sNaN 0x7ff4000000000000) -> 0x7ffc000000000000  flags 0x1
+///   nextupf (sNaN 0x7fa00000)         -> 0x7fe00000          flags 0x1
+///   nextup  (qNaN 0x7ff8000000000000) -> unchanged           flags 0x0
+/// ```
+///
+/// fl returned every NaN unchanged and raised nothing, except `nextdown_impl`
+/// (f64) which quieted but still raised nothing — one of four paths half-right.
+/// The gate compares values only, so the missing flag was an unchecked
+/// divergence on top of the one it caught; the gate now asserts both.
+///
+/// FE_INVALID is raised arithmetically rather than through `fenv_abi`, which
+/// `lib.rs` gates `#[cfg(not(test))]` — the same idiom core uses for its own
+/// `fe_invalid_*` helpers. bd-4ojokx.
+#[inline]
+fn quiet_nan_operand_f64(x: f64) -> Option<f64> {
+    const EXP: u64 = 0x7ff0_0000_0000_0000;
+    const MANT: u64 = 0x000f_ffff_ffff_ffff;
+    const QUIET: u64 = 0x0008_0000_0000_0000;
+    let b = x.to_bits();
+    if (b & EXP) != EXP || (b & MANT) == 0 {
+        return None;
+    }
+    if b & QUIET == 0 {
+        let _ =
+            core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+    }
+    Some(f64::from_bits(b | QUIET))
+}
+
+/// f32 counterpart of [`quiet_nan_operand_f64`]. bd-4ojokx.
+#[inline]
+fn quiet_nan_operand_f32(x: f32) -> Option<f32> {
+    const EXP: u32 = 0x7f80_0000;
+    const MANT: u32 = 0x007f_ffff;
+    const QUIET: u32 = 0x0040_0000;
+    let b = x.to_bits();
+    if (b & EXP) != EXP || (b & MANT) == 0 {
+        return None;
+    }
+    if b & QUIET == 0 {
+        let _ =
+            core::hint::black_box(core::hint::black_box(0.0_f32) / core::hint::black_box(0.0_f32));
+    }
+    Some(f32::from_bits(b | QUIET))
+}
+
 fn nextdown_impl(x: f64) -> f64 {
-    let xb = x.to_bits();
-    if (xb & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000 && (xb & 0x000f_ffff_ffff_ffff) != 0 {
-        return f64::from_bits(xb | 0x0008_0000_0000_0000); // quiet a signaling NaN
+    if let Some(q) = quiet_nan_operand_f64(x) {
+        return q;
     }
     if x == f64::NEG_INFINITY {
         return f64::NEG_INFINITY;
@@ -4252,8 +4304,8 @@ fn nextdown_impl(x: f64) -> f64 {
     f64::from_bits(next)
 }
 fn nextdownf_impl(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
+    if let Some(q) = quiet_nan_operand_f32(x) {
+        return q;
     }
     if x == f32::NEG_INFINITY {
         return f32::NEG_INFINITY;
@@ -4266,8 +4318,8 @@ fn nextdownf_impl(x: f32) -> f32 {
     f32::from_bits(next)
 }
 fn nextup_impl(x: f64) -> f64 {
-    if x.is_nan() {
-        return x;
+    if let Some(q) = quiet_nan_operand_f64(x) {
+        return q;
     }
     if x == f64::INFINITY {
         return f64::INFINITY;
@@ -4280,8 +4332,8 @@ fn nextup_impl(x: f64) -> f64 {
     f64::from_bits(next)
 }
 fn nextupf_impl(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
+    if let Some(q) = quiet_nan_operand_f32(x) {
+        return q;
     }
     if x == f32::INFINITY {
         return f32::INFINITY;
