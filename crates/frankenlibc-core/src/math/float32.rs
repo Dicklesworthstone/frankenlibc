@@ -1711,13 +1711,53 @@ mod tests {
         (ab - bb).unsigned_abs() <= ulps
     }
 
+    /// Bit-exact reference for `log2f`.
+    ///
+    /// These arms used to compare against `libm::log2f`, and that oracle is
+    /// WRONG for this project: `libm` is 1 ULP off from both the host and the
+    /// correctly-rounded result at points fl gets right. Measured at
+    /// x = 0.59375 (the first grid point where they disagree):
+    ///
+    /// ```text
+    ///   fl                            bits = 3208677331
+    ///   host glibc log2f              bits = 3208677331
+    ///   log2l() in long double -> f32 bits = 3208677331   (correctly rounded)
+    ///   libm::log2f                   bits = 3208677330   <-- the outlier
+    /// ```
+    ///
+    /// So the gate was red while fl was RIGHT. `f32::log2` resolves to the
+    /// host's `log2f`, which is the parity contract this project actually
+    /// holds itself to, and is already the idiom used by
+    /// `log10f_dyadic_profile_grid_within_4_ulps` a few arms below.
+    ///
+    /// The divergence comes from `log2f_dyadic_profile_fast_path`: the fallback
+    /// in `log2f` IS `libm::log2f`, so only inputs the fast path claims can
+    /// differ from it. The fast path is the MORE accurate of the two here —
+    /// it agrees with the host and with the correctly-rounded value — so this
+    /// gate was punishing fl for being right.
+    ///
+    /// `x.log2()` is safe HERE even though `log2f`'s own body carries a comment
+    /// forbidding it: that hazard is self-interposition inside the shipped
+    /// `libc.so`, where the `log2f` symbol resolves back to fl. This is
+    /// frankenlibc-core's unit-test binary, which exports no libc symbols and
+    /// links the host's `log2f` — the same reason the `log10f` arm below can
+    /// call `x.log10()`.
+    ///
+    /// NOTE this is a bit-exact comparison against the host, so it will fail if
+    /// the host's libm changes its rounding — that is intended: this project
+    /// tracks glibc, and a divergence is exactly what should be reported.
+    /// bd-m63gy7.
+    fn host_log2f_reference(x: f32) -> f32 {
+        x.log2()
+    }
+
     #[test]
-    fn log2f_dyadic_profile_grid_matches_libm_bits() {
+    fn log2f_dyadic_profile_grid_matches_host_bits() {
         let mut s = 0x6c8e_9cf5_u32;
         for k in 0..=64 {
             let x = 0.5 + (k as f32) * 0.031_25;
             let got = log2f(x);
-            let want = libm::log2f(x);
+            let want = host_log2f_reference(x);
             assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
         }
 
@@ -1727,7 +1767,7 @@ mod tests {
             s ^= s << 5;
             let x = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
             let got = log2f(x);
-            let want = libm::log2f(x);
+            let want = host_log2f_reference(x);
             assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
         }
 
@@ -1740,12 +1780,27 @@ mod tests {
             2.500_000_2,
             f32::INFINITY,
         ] {
-            assert_eq!(log2f(x).to_bits(), libm::log2f(x).to_bits(), "log2f({x})");
+            assert_eq!(log2f(x).to_bits(), host_log2f_reference(x).to_bits(), "log2f({x})");
         }
         assert!(log2f(-1.0).is_nan());
         assert!(log2f(f32::NAN).is_nan());
     }
 
+    /// Golden corpus over the same 64-point dyadic grid.
+    ///
+    /// The recorded digest was UPDATED once, deliberately, and not to make a
+    /// red test pass. It had been captured while this corpus still encoded
+    /// `libm::log2f`'s values; 4 of the 64 grid points differ between libm and
+    /// the host, and on all 4 fl agrees with the host and with the
+    /// correctly-rounded (long-double) result — see `host_log2f_reference`.
+    ///
+    /// The evidence that licensed the update is the sibling arm
+    /// `log2f_dyadic_profile_grid_matches_host_bits`, which asserts bit
+    /// equality against the host over this same grid plus 1,000,000 random
+    /// points and the special values. Every value hashed below is therefore
+    /// independently proven correct pointwise before it is hashed — the digest
+    /// pins them, it does not define them. Split: 4 points changed, 60
+    /// unchanged, 0 regressions. bd-m63gy7.
     #[test]
     fn golden_log2f_dyadic_profile_corpus_sha256() {
         use sha2::{Digest, Sha256};
@@ -1754,7 +1809,7 @@ mod tests {
         for k in 0..64 {
             let x = 0.5 + (k as f32) * 0.031_25;
             let got = log2f(x);
-            let want = libm::log2f(x);
+            let want = host_log2f_reference(x);
             assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
             hasher.update(x.to_bits().to_le_bytes());
             hasher.update(got.to_bits().to_le_bytes());
@@ -1765,7 +1820,7 @@ mod tests {
             .map(|x| format!("{x:02x}"))
             .collect();
         assert_eq!(
-            digest, "248d682cbff82dc23dbcce6229ef91fe6c6acf2d7c60289e9080756ac411b5f1",
+            digest, "6ca9ff9314c15c49d761f9686434e351789ff0815c083abdbf45991cb2a6ba2f",
             "log2f dyadic profile corpus hash drifted: got {digest}"
         );
     }
