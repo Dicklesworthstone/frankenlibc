@@ -1,99 +1,131 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // live host-glibc cuserid oracle
 
-//! Differential coverage for deprecated `cuserid(3)`.
+//! Host-differential gate for `cuserid(3)` (bd-l1xxt3).
 //!
-//! FrankenLibC resolves the current uid through the passwd backend and supports
-//! both the static-buffer and caller-buffer forms. This gate compares both
-//! contracts against the live host glibc implementation for the same process.
+//! cuserid had buffer/passwd-backend coverage driven through fl's
+//! `FRANKENLIBC_PASSWD_PATH` override, but nothing that compared it against the
+//! host. That override is exactly what made the gap invisible: a test that
+//! points fl at a synthetic passwd file proves fl parses that file, not that fl
+//! agrees with glibc about the real one. This gate deliberately does NOT set the
+//! override, so both implementations resolve the same live /etc/passwd for the
+//! same uid.
+//!
+//! That distinction is not hypothetical here. cuserid was a hardcoded
+//! `if uid == 0 { "root" } else { "user" }` stub until daaed5036 restored the
+//! passwd lookup that e634aff2a had deleted, and the stub would have sailed
+//! through any override-driven test that happened to expect "user" — while
+//! failing this one for every non-root account.
+//!
+//! glibc's cuserid is reached through a plain `extern "C"`: fl's definitions
+//! carry `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so their
+//! no_mangle is off in a debug build and these symbols resolve to the host.
+//!
+//! KNOWN WEAKNESS ON A ROOT HOST — measured, not theorised. The old stub
+//! answered `uid == 0 ? "root" : "user"`, and for uid 0 that is ALSO the correct
+//! passwd answer. So on the rch fleet, whose workers run as root, this gate
+//! cannot distinguish the stub from a working lookup: re-introducing the stub
+//! as a mutation leaves all three tests green. It discriminates properly for any
+//! non-root uid (the stub would say "user" where the host says e.g. "ubuntu"),
+//! which is the common case on a developer machine and in CI running unprivileged.
+//!
+//! Strengthening it for a root host means forking a child, setuid-ing to a
+//! non-root account, and comparing there — deliberately NOT done here, because
+//! forking inside this suite has its own hazards and the arm would exist only to
+//! serve one environment. Tracked on bd-l1xxt3 instead of being left implicit.
 
-use frankenlibc_abi::unistd_abi as fl;
-use std::ffi::{CStr, c_char, c_int, c_void};
-
-type CuseridFn = unsafe extern "C" fn(*mut c_char) -> *mut c_char;
-
-const RTLD_NOW: c_int = 2;
+use std::ffi::{CStr, c_char};
 
 unsafe extern "C" {
-    fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    fn cuserid(s: *mut c_char) -> *mut c_char;
 }
 
-fn host_cuserid() -> CuseridFn {
-    unsafe {
-        let lib = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
-        assert!(!lib.is_null(), "dlopen(libc.so.6) failed");
-        let symbol = dlsym(lib, c"cuserid".as_ptr());
-        assert!(!symbol.is_null(), "dlsym(cuserid) failed");
-        std::mem::transmute(symbol)
+/// L_cuserid is 9 on glibc, but fl's internal buffer is 32 and the caller-buffer
+/// form is documented against L_cuserid. Give both engines the same generous
+/// buffer so a difference in RESULT is never confused with a difference in the
+/// space they were handed.
+const BUF: usize = 64;
+
+fn caller_buffer(engine: u8) -> Option<Vec<u8>> {
+    let mut buf = [0 as c_char; BUF];
+    let p = if engine == 0 {
+        unsafe { frankenlibc_abi::unistd_abi::cuserid(buf.as_mut_ptr()) }
+    } else {
+        unsafe { cuserid(buf.as_mut_ptr()) }
+    };
+    if p.is_null() {
+        return None;
     }
+    // Both must hand back the caller's own pointer, not internal storage.
+    assert_eq!(
+        p,
+        buf.as_mut_ptr(),
+        "cuserid(buf) must return the caller's buffer"
+    );
+    Some(unsafe { CStr::from_ptr(p) }.to_bytes().to_vec())
 }
 
-fn bytes(ptr: *const c_char) -> Vec<u8> {
-    assert!(!ptr.is_null(), "cuserid returned NULL");
-    unsafe { CStr::from_ptr(ptr).to_bytes().to_vec() }
-}
-
-struct EnvGuard {
-    key: &'static str,
-    old: Option<String>,
-}
-
-impl EnvGuard {
-    fn unset(key: &'static str) -> Self {
-        let old = std::env::var(key).ok();
-        unsafe { std::env::remove_var(key) };
-        Self { key, old }
+fn static_storage(engine: u8) -> Option<Vec<u8>> {
+    let p = if engine == 0 {
+        unsafe { frankenlibc_abi::unistd_abi::cuserid(std::ptr::null_mut()) }
+    } else {
+        unsafe { cuserid(std::ptr::null_mut()) }
+    };
+    if p.is_null() {
+        return None;
     }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.old {
-            Some(value) => unsafe { std::env::set_var(self.key, value) },
-            None => unsafe { std::env::remove_var(self.key) },
-        }
-    }
+    Some(unsafe { CStr::from_ptr(p) }.to_bytes().to_vec())
 }
 
 #[test]
-fn cuserid_static_and_caller_buffer_match_host() {
-    let _env = EnvGuard::unset("FRANKENLIBC_PASSWD_PATH");
-    let host = host_cuserid();
-
-    let host_static = unsafe { host(std::ptr::null_mut()) };
-    let fl_static = unsafe { fl::cuserid(std::ptr::null_mut()) };
-    assert_eq!(bytes(fl_static), bytes(host_static), "cuserid(NULL)");
-
-    let second_fl_static = unsafe { fl::cuserid(std::ptr::null_mut()) };
+fn cuserid_caller_buffer_matches_glibc() {
+    let fl = caller_buffer(0);
+    let host = caller_buffer(1);
     assert_eq!(
-        second_fl_static, fl_static,
-        "FrankenLibC should reuse per-thread cuserid static storage"
+        fl.as_deref().map(String::from_utf8_lossy),
+        host.as_deref().map(String::from_utf8_lossy),
+        "cuserid(buf): fl={:?} glibc={:?}",
+        fl.as_deref().map(String::from_utf8_lossy),
+        host.as_deref().map(String::from_utf8_lossy)
     );
 
-    let mut host_buf = [0 as c_char; 64];
-    let mut fl_buf = [0 as c_char; 64];
-    let host_out = unsafe { host(host_buf.as_mut_ptr()) };
-    let fl_out = unsafe { fl::cuserid(fl_buf.as_mut_ptr()) };
+    // Guard against BOTH sides being trivially empty, which would make the
+    // comparison above vacuous. The process always runs as some real uid, so a
+    // non-empty login name is the expected outcome on any sane host.
+    let name = host.expect("host cuserid returned NULL");
+    assert!(
+        !name.is_empty(),
+        "host cuserid produced an empty name; the comparison would prove nothing"
+    );
+}
 
+#[test]
+fn cuserid_static_storage_matches_glibc() {
+    let fl = static_storage(0);
+    let host = static_storage(1);
     assert_eq!(
-        host_out,
-        host_buf.as_mut_ptr(),
-        "host cuserid should return caller buffer"
+        fl.as_deref().map(String::from_utf8_lossy),
+        host.as_deref().map(String::from_utf8_lossy),
+        "cuserid(NULL): fl={:?} glibc={:?}",
+        fl.as_deref().map(String::from_utf8_lossy),
+        host.as_deref().map(String::from_utf8_lossy)
     );
-    assert_eq!(
-        fl_out,
-        fl_buf.as_mut_ptr(),
-        "FrankenLibC cuserid should return caller buffer"
-    );
-    assert_eq!(
-        bytes(fl_buf.as_ptr()),
-        bytes(host_buf.as_ptr()),
-        "cuserid(caller buffer)"
-    );
-    assert_eq!(
-        bytes(fl_buf.as_ptr()),
-        bytes(fl_static),
-        "caller-buffer and static-buffer values should agree"
-    );
+}
+
+#[test]
+fn cuserid_both_forms_agree_within_each_impl() {
+    // The NULL form and the caller-buffer form must produce the same name in a
+    // single implementation. This is what would catch the restored code
+    // truncating one path and not the other — the stub capped the caller buffer
+    // at 8 bytes while the static path used the full width, so the two forms
+    // could disagree for a login name longer than 8 characters.
+    for (engine, label) in [(0u8, "frankenlibc"), (1u8, "glibc")] {
+        let via_buf = caller_buffer(engine);
+        let via_static = static_storage(engine);
+        assert_eq!(
+            via_buf.as_deref().map(String::from_utf8_lossy),
+            via_static.as_deref().map(String::from_utf8_lossy),
+            "{label}: cuserid(buf) and cuserid(NULL) disagree"
+        );
+    }
 }
