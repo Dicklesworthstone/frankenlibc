@@ -15,8 +15,9 @@ use crate::crypt::salt::parse_crypt_salt;
 /// Hash `key` against the `$5$[rounds=NNNN$]salt$...` formatted
 /// `salt_bytes`, returning the full crypt-format result string.
 pub fn sha256_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
-    let (rounds, salt) = parse_crypt_salt(salt_bytes, 3);
-    let rounds = rounds as usize;
+    let setting = parse_crypt_salt(salt_bytes, 3)?;
+    let salt = setting.salt;
+    let rounds = setting.rounds as usize;
 
     let mut digest_b = Sha256::new();
     digest_b.update(key);
@@ -119,10 +120,13 @@ pub fn sha256_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     encoded.push_str(&base64::encode(&last, 3));
 
     let salt_str = core::str::from_utf8(salt).unwrap_or("");
-    Some(if rounds == 5000 {
-        format!("$5${salt_str}${encoded}")
-    } else {
+    // The prefix is echoed when the INPUT carried one, not when the count
+    // differs from the default — `$5$rounds=5000$s$` keeps its prefix on the
+    // host. bd-fegsgf.
+    Some(if setting.rounds_custom {
         format!("$5$rounds={rounds}${salt_str}${encoded}")
+    } else {
+        format!("$5${salt_str}${encoded}")
     })
 }
 

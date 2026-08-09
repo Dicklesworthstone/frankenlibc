@@ -7,6 +7,40 @@
 //! the rounds + salt portion from a complete hash buffer.
 //!
 //! Used by `crypt_sha256` / `crypt_sha512` in the abi layer.
+//!
+//! ## `rounds=` is REJECTED, never clamped (bd-fegsgf)
+//!
+//! This parser used to clamp an out-of-range `rounds=` into
+//! `[1000, 999999999]` and to fall back to 5000 for anything it could not
+//! parse, so a malformed setting still produced a hash. The host
+//! (libxcrypt `libcrypt.so.1`) does the opposite: it validates the field and
+//! returns the `*0` failure token with `EINVAL` for every deviation. Probed
+//! live on this host with `key="password"`:
+//!
+//! ```text
+//!   $5$rounds=1000$x$                    -> $5$rounds=1000$x$qJLv4pv...   errno=0
+//!   $5$rounds=1001$x$ / =4999$x$         -> accepted                       errno=0
+//!   $5$rounds=999$x$                     -> *0  errno=22   (below minimum)
+//!   $5$rounds=1000000000$x$              -> *0  errno=22   (above maximum)
+//!   $5$rounds=0500$x$                    -> *0  errno=22   (leading zero)
+//!   $5$rounds=+5000$x$ / = 5000$x$       -> *0  errno=22   (sign / space)
+//!   $5$rounds=-1$x$ / =abc$x$ / =$slt$   -> *0  errno=22   (no leading 1-9)
+//!   $5$rounds=99999999999999999999999$x$ -> *0  errno=22   (overflow)
+//!   $5$rounds=5000x$slt$ / =12345 / =5000-> *0  errno=22   (no closing `$`)
+//! ```
+//!
+//! Because the whole point of a `$` setting is that it can be re-derived from
+//! a stored hash, silently substituting a different round count is worse than
+//! failing: it mints a hash the host will never reproduce.
+//!
+//! ## `rounds_custom`, not `rounds != 5000`
+//!
+//! The callers used to re-emit the `rounds=` prefix whenever the count
+//! differed from the 5000 default. The host instead echoes the prefix
+//! whenever the *input setting carried one*, so an explicit
+//! `$5$rounds=5000$saltsaltsalt$` round-trips with its prefix intact. That
+//! single mismatch was the only remaining `$5$`/`$6$` divergence — the
+//! digests themselves were already byte-identical.
 
 /// Default SHA-crypt round count when no `rounds=` parameter is present.
 pub const DEFAULT_SHA_ROUNDS: u32 = 5000;
@@ -20,43 +54,67 @@ pub const MAX_SHA_ROUNDS: u32 = 999_999_999;
 /// Maximum salt length per the SHA-crypt specification.
 pub const MAX_SALT_LEN: usize = 16;
 
+/// A parsed SHA-crypt setting: the round count, whether the input spelled it
+/// out, and the salt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShaCryptSetting<'a> {
+    /// Round count to run the key-stretching loop for.
+    pub rounds: u32,
+    /// True when the input setting carried an explicit `rounds=NNNN$` field.
+    /// Drives whether the output re-emits that field — independently of
+    /// whether `rounds` happens to equal [`DEFAULT_SHA_ROUNDS`].
+    pub rounds_custom: bool,
+    /// Salt bytes, borrowed from the input, at most [`MAX_SALT_LEN`] long.
+    pub salt: &'a [u8],
+}
+
 /// Extract the rounds + salt portion from a SHA-crypt hash buffer.
 ///
 /// `salt_bytes` is the full hash buffer (including the leading `$N$`
 /// prefix); `prefix_len` is the byte length of that prefix (3 for
 /// `$5$` / `$6$`).
 ///
-/// Returns `(rounds, salt_slice)` where `salt_slice` borrows from
-/// `salt_bytes` and is at most [`MAX_SALT_LEN`] bytes long. The
-/// rounds value is clamped into `[MIN_SHA_ROUNDS, MAX_SHA_ROUNDS]`;
-/// missing / non-numeric / out-of-range round counts decay to
-/// [`DEFAULT_SHA_ROUNDS`].
-pub fn parse_crypt_salt(salt_bytes: &[u8], prefix_len: usize) -> (u32, &[u8]) {
+/// Returns `None` when the setting is malformed, which the caller reports as
+/// the `*0` failure token with `EINVAL` — see the module docs for the live
+/// host probe that fixes each rule. A setting with no `rounds=` field is
+/// always well-formed: the salt is simply everything up to the next `$`,
+/// capped at [`MAX_SALT_LEN`].
+pub fn parse_crypt_salt(salt_bytes: &[u8], prefix_len: usize) -> Option<ShaCryptSetting<'_>> {
     if prefix_len > salt_bytes.len() {
-        return (DEFAULT_SHA_ROUNDS, &[]);
+        return None;
     }
     let rest = &salt_bytes[prefix_len..];
 
-    let (rounds, salt_start) = if let Some(after_eq) = rest.strip_prefix(b"rounds=") {
-        let num_end = after_eq
-            .iter()
-            .position(|&b| b == b'$')
-            .unwrap_or(after_eq.len());
-        let rounds_str = core::str::from_utf8(&after_eq[..num_end]).unwrap_or("");
-        let r = rounds_str
-            .parse::<u32>()
-            .unwrap_or(DEFAULT_SHA_ROUNDS)
-            .clamp(MIN_SHA_ROUNDS, MAX_SHA_ROUNDS);
-        // Skip past the rounds field and the trailing '$' (if present).
-        let after_eq_consumed = num_end + b"rounds=".len();
-        let salt_start = if num_end < after_eq.len() {
-            after_eq_consumed + 1
-        } else {
-            after_eq_consumed
-        };
-        (r, salt_start)
-    } else {
-        (DEFAULT_SHA_ROUNDS, 0)
+    let (rounds, rounds_custom, salt_start) = match rest.strip_prefix(b"rounds=") {
+        Some(num) => {
+            // libxcrypt requires a leading 1-9: that single rule rejects the
+            // empty field, a sign, leading whitespace, a leading zero and any
+            // non-numeric text, all of which strtoul would otherwise accept or
+            // silently read as zero.
+            if !matches!(num.first(), Some(b'1'..=b'9')) {
+                return None;
+            }
+            let digits = num.iter().take_while(|b| b.is_ascii_digit()).count();
+            // The digit run must be terminated by the field separator; a
+            // trailing `x`, or running off the end of the string, is a reject.
+            if num.get(digits) != Some(&b'$') {
+                return None;
+            }
+            // Saturating accumulation: an overflowing run cannot land back
+            // inside the accepted range, so saturation and C's ERANGE reject
+            // the same inputs.
+            let mut value: u64 = 0;
+            for &d in &num[..digits] {
+                value = value
+                    .saturating_mul(10)
+                    .saturating_add(u64::from(d - b'0'));
+            }
+            if !(u64::from(MIN_SHA_ROUNDS)..=u64::from(MAX_SHA_ROUNDS)).contains(&value) {
+                return None;
+            }
+            (value as u32, true, b"rounds=".len() + digits + 1)
+        }
+        None => (DEFAULT_SHA_ROUNDS, false, 0),
     };
 
     let salt_rest = &rest[salt_start..];
@@ -65,138 +123,172 @@ pub fn parse_crypt_salt(salt_bytes: &[u8], prefix_len: usize) -> (u32, &[u8]) {
         .position(|&b| b == b'$')
         .unwrap_or(salt_rest.len())
         .min(MAX_SALT_LEN);
-    (rounds, &salt_rest[..salt_end])
+    Some(ShaCryptSetting {
+        rounds,
+        rounds_custom,
+        salt: &salt_rest[..salt_end],
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn ok(input: &[u8]) -> ShaCryptSetting<'_> {
+        parse_crypt_salt(input, 3).expect("setting should parse")
+    }
+
     #[test]
     fn parse_simple_no_rounds() {
         // $6$abcdef$rest...
-        let (rounds, salt) = parse_crypt_salt(b"$6$abcdef$rest", 3);
-        assert_eq!(rounds, DEFAULT_SHA_ROUNDS);
-        assert_eq!(salt, b"abcdef");
+        let s = ok(b"$6$abcdef$rest");
+        assert_eq!(s.rounds, DEFAULT_SHA_ROUNDS);
+        assert!(!s.rounds_custom);
+        assert_eq!(s.salt, b"abcdef");
     }
 
     #[test]
     fn parse_explicit_rounds() {
-        let (rounds, salt) = parse_crypt_salt(b"$6$rounds=10000$saltvalue$body", 3);
-        assert_eq!(rounds, 10000);
-        assert_eq!(salt, b"saltvalue");
+        let s = ok(b"$6$rounds=10000$saltvalue$body");
+        assert_eq!(s.rounds, 10000);
+        assert!(s.rounds_custom);
+        assert_eq!(s.salt, b"saltvalue");
+    }
+
+    /// An explicit `rounds=5000` is NOT the same setting as no `rounds=` field:
+    /// the count matches the default but the output must still carry the
+    /// prefix. This is the divergence bd-fegsgf was actually about.
+    #[test]
+    fn explicit_default_rounds_is_still_custom() {
+        let s = ok(b"$5$rounds=5000$saltsaltsalt$");
+        assert_eq!(s.rounds, DEFAULT_SHA_ROUNDS);
+        assert!(s.rounds_custom);
+        assert_eq!(s.salt, b"saltsaltsalt");
+    }
+
+    /// These four used to assert clamping (`rounds=10` -> 1000, `rounds=10^9`
+    /// -> 999999999) and default-substitution (`rounds=abc`/`rounds=` -> 5000).
+    /// The host rejects every one of them outright, so the old assertions were
+    /// faithful descriptions of the bug and are replaced, not adjusted.
+    /// bd-fegsgf.
+    #[test]
+    fn parse_rounds_below_minimum_is_rejected() {
+        assert_eq!(parse_crypt_salt(b"$6$rounds=10$x$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds=999$x$", 3), None);
     }
 
     #[test]
-    fn parse_rounds_clamps_low() {
-        // 10 rounds → clamped up to MIN_SHA_ROUNDS (1000).
-        let (rounds, _) = parse_crypt_salt(b"$6$rounds=10$x$", 3);
-        assert_eq!(rounds, MIN_SHA_ROUNDS);
+    fn parse_rounds_above_maximum_is_rejected() {
+        assert_eq!(parse_crypt_salt(b"$6$rounds=1000000000$x$", 3), None);
+        // Overflows u64 during accumulation; saturation must not wrap it back
+        // into range.
+        assert_eq!(
+            parse_crypt_salt(b"$6$rounds=99999999999999999999999$x$", 3),
+            None
+        );
     }
 
     #[test]
-    fn parse_rounds_clamps_high() {
-        // 10^10 → clamped down to MAX_SHA_ROUNDS (999_999_999).
-        let (rounds, _) = parse_crypt_salt(b"$6$rounds=1000000000$x$", 3);
-        assert_eq!(rounds, MAX_SHA_ROUNDS);
+    fn parse_garbage_rounds_is_rejected() {
+        assert_eq!(parse_crypt_salt(b"$6$rounds=abc$slt$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds=$slt$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds=-1$x$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds=+5000$x$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds= 5000$x$", 3), None);
+    }
+
+    #[test]
+    fn parse_rounds_leading_zero_is_rejected() {
+        assert_eq!(parse_crypt_salt(b"$6$rounds=0500$x$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds=00$x$", 3), None);
+    }
+
+    #[test]
+    fn parse_rounds_unterminated_field_is_rejected() {
+        // A digit run that is not closed by `$` — whether by a stray character
+        // or by the end of the string — is not a rounds field.
+        assert_eq!(parse_crypt_salt(b"$6$rounds=5000x$slt$", 3), None);
+        assert_eq!(parse_crypt_salt(b"$6$rounds=12345", 3), None);
     }
 
     #[test]
     fn parse_rounds_at_min_boundary() {
-        let (rounds, _) = parse_crypt_salt(b"$6$rounds=1000$x$", 3);
-        assert_eq!(rounds, 1000);
+        let s = ok(b"$6$rounds=1000$x$");
+        assert_eq!(s.rounds, MIN_SHA_ROUNDS);
+        assert!(s.rounds_custom);
     }
 
     #[test]
     fn parse_rounds_at_max_boundary() {
-        let (rounds, _) = parse_crypt_salt(b"$6$rounds=999999999$x$", 3);
-        assert_eq!(rounds, MAX_SHA_ROUNDS);
+        let s = ok(b"$6$rounds=999999999$x$");
+        assert_eq!(s.rounds, MAX_SHA_ROUNDS);
+        assert!(s.rounds_custom);
     }
 
     #[test]
-    fn parse_garbage_rounds_falls_back_to_default() {
-        let (rounds, salt) = parse_crypt_salt(b"$6$rounds=abc$slt$", 3);
-        assert_eq!(rounds, DEFAULT_SHA_ROUNDS);
-        assert_eq!(salt, b"slt");
-    }
-
-    #[test]
-    fn parse_empty_rounds_value_falls_back_to_default() {
-        let (rounds, salt) = parse_crypt_salt(b"$6$rounds=$slt$", 3);
-        assert_eq!(rounds, DEFAULT_SHA_ROUNDS);
-        assert_eq!(salt, b"slt");
+    fn parse_rounds_just_inside_boundaries() {
+        assert_eq!(ok(b"$6$rounds=1001$x$").rounds, 1001);
+        assert_eq!(ok(b"$6$rounds=999999998$x$").rounds, 999_999_998);
     }
 
     #[test]
     fn parse_salt_truncated_to_max_len() {
         // 20-byte salt should clip to 16.
-        let input = b"$6$0123456789ABCDEFXYZ$body";
-        let (_rounds, salt) = parse_crypt_salt(input, 3);
-        assert_eq!(salt.len(), MAX_SALT_LEN);
-        assert_eq!(salt, b"0123456789ABCDEF");
+        let s = ok(b"$6$0123456789ABCDEFXYZ$body");
+        assert_eq!(s.salt.len(), MAX_SALT_LEN);
+        assert_eq!(s.salt, b"0123456789ABCDEF");
     }
 
     #[test]
     fn parse_salt_no_trailing_dollar_consumes_to_end() {
         // No closing $ → salt is everything up to the cap.
-        let (_rounds, salt) = parse_crypt_salt(b"$6$abc", 3);
-        assert_eq!(salt, b"abc");
+        assert_eq!(ok(b"$6$abc").salt, b"abc");
     }
 
     #[test]
     fn parse_empty_salt() {
-        let (rounds, salt) = parse_crypt_salt(b"$6$$body", 3);
-        assert_eq!(rounds, DEFAULT_SHA_ROUNDS);
-        assert_eq!(salt, b"");
+        let s = ok(b"$6$$body");
+        assert_eq!(s.rounds, DEFAULT_SHA_ROUNDS);
+        assert!(!s.rounds_custom);
+        assert_eq!(s.salt, b"");
     }
 
     #[test]
     fn parse_explicit_rounds_then_empty_salt() {
-        let (rounds, salt) = parse_crypt_salt(b"$6$rounds=7777$$body", 3);
-        assert_eq!(rounds, 7777);
-        assert_eq!(salt, b"");
-    }
-
-    #[test]
-    fn parse_explicit_rounds_no_trailing_dollar() {
-        // "rounds=NNNN" with no trailing '$' — the parser treats the
-        // entire tail as the rounds value, leaving zero salt bytes.
-        let (rounds, salt) = parse_crypt_salt(b"$6$rounds=12345", 3);
-        assert_eq!(rounds, 12345);
-        assert_eq!(salt, b"");
+        let s = ok(b"$6$rounds=7777$$body");
+        assert_eq!(s.rounds, 7777);
+        assert!(s.rounds_custom);
+        assert_eq!(s.salt, b"");
     }
 
     #[test]
     fn parse_prefix_len_zero_no_consumption() {
         // No $N$ prefix → start at offset 0.
-        let (rounds, salt) = parse_crypt_salt(b"abc$body", 0);
-        assert_eq!(rounds, DEFAULT_SHA_ROUNDS);
-        assert_eq!(salt, b"abc");
+        let s = parse_crypt_salt(b"abc$body", 0).unwrap();
+        assert_eq!(s.rounds, DEFAULT_SHA_ROUNDS);
+        assert_eq!(s.salt, b"abc");
     }
 
     #[test]
-    fn parse_prefix_len_past_end_returns_defaults() {
+    fn parse_prefix_len_past_end_is_rejected() {
         // Defensive: prefix_len > buffer.
-        let (rounds, salt) = parse_crypt_salt(b"$6", 99);
-        assert_eq!(rounds, DEFAULT_SHA_ROUNDS);
-        assert!(salt.is_empty());
+        assert_eq!(parse_crypt_salt(b"$6", 99), None);
     }
 
     #[test]
     fn parse_explicit_rounds_with_max_salt() {
-        let input = b"$6$rounds=20000$0123456789ABCDEF$body";
-        let (rounds, salt) = parse_crypt_salt(input, 3);
-        assert_eq!(rounds, 20000);
-        assert_eq!(salt, b"0123456789ABCDEF");
-        assert_eq!(salt.len(), MAX_SALT_LEN);
+        let s = ok(b"$6$rounds=20000$0123456789ABCDEF$body");
+        assert_eq!(s.rounds, 20000);
+        assert_eq!(s.salt, b"0123456789ABCDEF");
+        assert_eq!(s.salt.len(), MAX_SALT_LEN);
     }
 
     #[test]
     fn parse_real_world_sha512_hash() {
         // Typical /etc/shadow SHA-512 entry shape.
-        let input = b"$6$rounds=5000$abcdefghijklmnop$bodybodybodybody...";
-        let (rounds, salt) = parse_crypt_salt(input, 3);
-        assert_eq!(rounds, 5000);
-        assert_eq!(salt, b"abcdefghijklmnop");
+        let s = ok(b"$6$rounds=5000$abcdefghijklmnop$bodybodybodybody...");
+        assert_eq!(s.rounds, 5000);
+        assert!(s.rounds_custom);
+        assert_eq!(s.salt, b"abcdefghijklmnop");
     }
 }

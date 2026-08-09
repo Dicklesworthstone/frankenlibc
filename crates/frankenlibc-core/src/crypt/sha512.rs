@@ -31,13 +31,13 @@ use crate::crypt::salt::parse_crypt_salt;
 /// Hash `key` against the `$6$[rounds=NNNN$]salt$...` formatted
 /// `salt_bytes`, returning the full crypt-format result string.
 ///
-/// Returns `None` only on malformed input that the parser can't
-/// recover from (currently never `None` since parse_crypt_salt is
-/// total — kept as `Option` for API symmetry with future error
-/// modes).
+/// Returns `None` when the setting is malformed — in practice a bad
+/// `rounds=` field, which the host rejects rather than clamps. The caller
+/// turns that into libxcrypt's `*0` failure token with `EINVAL`.
 pub fn sha512_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
-    let (rounds, salt) = parse_crypt_salt(salt_bytes, 3);
-    let rounds = rounds as usize;
+    let setting = parse_crypt_salt(salt_bytes, 3)?;
+    let salt = setting.salt;
+    let rounds = setting.rounds as usize;
 
     // Step 1: Digest B = SHA512(key + salt + key)
     let mut digest_b = Sha512::new();
@@ -163,10 +163,13 @@ pub fn sha512_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     encoded.push_str(&base64::encode(&last, 2));
 
     let salt_str = core::str::from_utf8(salt).unwrap_or("");
-    Some(if rounds == 5000 {
-        format!("$6${salt_str}${encoded}")
-    } else {
+    // The prefix is echoed when the INPUT carried one, not when the count
+    // differs from the default — `$6$rounds=5000$s$` keeps its prefix on the
+    // host. bd-fegsgf.
+    Some(if setting.rounds_custom {
         format!("$6$rounds={rounds}${salt_str}${encoded}")
+    } else {
+        format!("$6${salt_str}${encoded}")
     })
 }
 
