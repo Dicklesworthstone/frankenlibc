@@ -8231,10 +8231,35 @@ pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
     let Some(bytes) = (unsafe { read_c_string_bytes(setting) }) else {
         return 1;
     };
-    if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
-        0
+    // libxcrypt's crypt_checksalt has FIVE outcomes, not two:
+    //   0 CRYPT_SALT_OK        1 CRYPT_SALT_INVALID     2 CRYPT_SALT_METHOD_DISABLED
+    //   3 CRYPT_SALT_METHOD_LEGACY                      4 CRYPT_SALT_TOO_CHEAP
+    // fl collapsed them to OK/INVALID and reported OK for every method it
+    // recognised, so $1$ and $5$ came back 0 where the host says 3.
+    //
+    // Measured against the live library rather than inferred from the method
+    // name — the split is not "MD5 is old, SHA is new":
+    //   $1$ (MD5)     -> 3 LEGACY        $6$ (SHA-512)  -> 0 OK
+    //   $5$ (SHA-256) -> 3 LEGACY        $y$ /$2b$/$7$  -> 0 OK
+    //   $$, $z$bad, *0, *1               -> 1 INVALID
+    // SHA-256 landing in LEGACY alongside MD5 is the part that has to be read
+    // off the library; bd-iu39zz originally recorded only $1$ for that reason.
+    const CRYPT_SALT_OK: c_int = 0;
+    const CRYPT_SALT_INVALID: c_int = 1;
+    const CRYPT_SALT_METHOD_LEGACY: c_int = 3;
+    if bytes.starts_with(b"$6$") {
+        CRYPT_SALT_OK
+    } else if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") {
+        CRYPT_SALT_METHOD_LEGACY
     } else {
-        1
+        // Everything else is INVALID here, which for the methods fl does not
+        // implement ($y$ yescrypt, $2b$ bcrypt, $7$ scrypt — bd-c6ykz1) is a
+        // DELIBERATE divergence from the host, which calls them OK. Reporting
+        // OK for a setting fl's own crypt() cannot then compute would make the
+        // two entry points contradict each other; the honest answer is to keep
+        // saying INVALID until those methods exist. Revisit together with
+        // bd-c6ykz1.
+        CRYPT_SALT_INVALID
     }
 }
 
