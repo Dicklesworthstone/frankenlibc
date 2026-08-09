@@ -20861,10 +20861,15 @@ pub unsafe extern "C" fn fmtmsg(
             return -1;
         }
     };
-    if !frankenlibc_core::fmtmsg::valid_severity(severity)
-        || label_bytes
-            .as_deref()
-            .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
+    // A severity above the XSI range is valid only once `addseverity` has
+    // registered it. core's `valid_severity` knows only 0..=4 and cannot see
+    // the registry, which is why the check lives here. bd-8rt3wc.
+    let Ok(sev_name) = fmtmsg_severity_name(severity) else {
+        return -1;
+    };
+    if label_bytes
+        .as_deref()
+        .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
     {
         return -1;
     }
@@ -20890,9 +20895,9 @@ pub unsafe extern "C" fn fmtmsg(
                 return -1;
             }
         };
-        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message(
+        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message_named(
             label_bytes.as_deref(),
-            severity,
+            sev_name.as_deref(),
             text_bytes.as_deref(),
             action_bytes.as_deref(),
             tag_bytes.as_deref(),
@@ -21547,11 +21552,74 @@ pub unsafe extern "C" fn bsd_signal(sig: c_int, handler: libc::sighandler_t) -> 
     unsafe { crate::signal_abi::signal(sig, handler) }
 }
 
-/// XSI `addseverity` — add/modify message severity level.
+/// Custom severities registered through [`addseverity`], consulted by
+/// [`fmtmsg`].
+///
+/// Lives here rather than in core because it is process-global mutable state;
+/// core's `format_fmtmsg_message_named` already exists to take the resolved
+/// name from this side.
+static FMTMSG_SEVERITIES: std::sync::LazyLock<
+    std::sync::Mutex<crate::util::ArtifactHashMap<c_int, Vec<u8>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(crate::util::artifact_hash_map()));
+
+/// XSI `addseverity` — register, replace or remove a custom message severity.
+///
+/// This was a stub returning MM_OK unconditionally, commented "No-op is safe".
+/// It is not: the return value is the caller's only signal, and `fmtmsg` could
+/// never print a custom severity because nothing recorded one. Measured on the
+/// host:
+///
+/// ```text
+///   addseverity(6, NULL)      -> -1   remove one that was never added
+///   addseverity(6, "CUSTOM")  ->  0
+///   addseverity(6, NULL)      ->  0   remove the one just added
+///   addseverity(6, NULL)      -> -1   already gone
+///   addseverity(0|1|4, ...)   -> -1   0..=4 reserved: cannot add OR remove
+///   addseverity(-1, "X")      -> -1
+///   addseverity(5, "FIVE")    ->  0
+/// ```
+///
+/// So `<= 4` is reserved outright — the five XSI codes cannot be redefined or
+/// removed — and removal succeeds only when the severity is currently
+/// registered. bd-8rt3wc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn addseverity(_severity: c_int, _string: *const c_char) -> c_int {
-    // Stub: severity management for fmtmsg. No-op is safe.
+pub unsafe extern "C" fn addseverity(severity: c_int, string: *const c_char) -> c_int {
+    // Covers the negative codes too, which the host also rejects.
+    if severity <= 4 {
+        return -1;
+    }
+    let mut reg = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
+    if string.is_null() {
+        return if reg.remove(&severity).is_some() { 0 } else { -1 };
+    }
+    let Some(bytes) = (unsafe { read_c_string_bytes(string) }) else {
+        return -1;
+    };
+    reg.insert(severity, bytes);
     0
+}
+
+/// Name to print for `severity`, or `None` when it has none (MM_NOSEV).
+///
+/// `Err(())` means the code is not printable at all: above the XSI range with
+/// no `addseverity` registration, or negative.
+fn fmtmsg_severity_name(severity: c_int) -> Result<Option<Vec<u8>>, ()> {
+    if severity < 0 {
+        return Err(());
+    }
+    if severity == 0 {
+        return Ok(None); // MM_NOSEV: no severity component is emitted
+    }
+    if severity <= 4 {
+        return Ok(frankenlibc_core::fmtmsg::severity_name(severity).map(|s| s.as_bytes().to_vec()));
+    }
+    FMTMSG_SEVERITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&severity)
+        .cloned()
+        .map(Some)
+        .ok_or(())
 }
 
 // ===========================================================================
