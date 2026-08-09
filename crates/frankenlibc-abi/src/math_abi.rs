@@ -5455,45 +5455,109 @@ fn getpayloadf_impl(x: *const f32) -> f32 {
     let bits = val.to_bits();
     (bits & 0x003F_FFFF) as f32
 }
-fn setpayload_impl(res: *mut f64, payload: f64) -> c_int {
+/// C23 payload validity for `setpayload`/`setpayloadsig` (+f32).
+///
+/// `pl` is a valid payload iff it is a NON-NEGATIVE INTEGER strictly below
+/// 2^51 (2^22 for f32) — and `-0.0` is REJECTED even though it compares equal
+/// to zero. Ground truth from the host:
+///
+/// ```text
+///   setpayload(0.0)      ret 0  res 0x7ff8000000000000
+///   setpayload(1.0)      ret 0  res 0x7ff8000000000001
+///   setpayload(42.0)     ret 0  res 0x7ff800000000002a
+///   setpayload(2^51-1)   ret 0  res 0x7fffffffffffffff
+///   setpayload(1.5)      ret 1  res 0x0000000000000000
+///   setpayload(42.7)     ret 1  res 0x0000000000000000
+///   setpayload(-1.0)     ret 1  res 0x0000000000000000
+///   setpayload(-0.0)     ret 1  res 0x0000000000000000
+///   setpayload(2^51)     ret 1  res 0x0000000000000000
+///   setpayload(inf)      ret 1  res 0x0000000000000000
+///   setpayload(nan)      ret 1  res 0x0000000000000000
+/// ```
+///
+/// Two things fl got wrong, both from writing `payload as u64` and testing the
+/// result: the cast TRUNCATES a non-integer (1.5 and 42.7 became payloads 1 and
+/// 42 and returned success) and SATURATES a NaN to 0 (so a NaN payload was
+/// accepted outright). And on failure fl returned without touching `*res`,
+/// where every failing row above leaves +0.0. bd-fguecq.
+///
+/// Integrality is checked through core's `trunc`, not `f64::trunc`: the latter
+/// lowers to the `trunc` symbol, which in the shipped `libc.so` is fl's own.
+#[inline]
+fn payload_value_f64(payload: f64) -> Option<u64> {
+    if payload.to_bits() >> 63 != 0 || !payload.is_finite() {
+        return None;
+    }
+    if frankenlibc_core::math::trunc(payload) != payload {
+        return None;
+    }
     let p = payload as u64;
-    if payload < 0.0 || p >= (1u64 << 51) {
-        return 1;
+    (p < (1u64 << 51)).then_some(p)
+}
+
+/// f32 counterpart of [`payload_value_f64`]; the payload field is 22 bits.
+/// bd-fguecq.
+#[inline]
+fn payload_value_f32(payload: f32) -> Option<u32> {
+    if payload.to_bits() >> 31 != 0 || !payload.is_finite() {
+        return None;
     }
-    unsafe {
-        *res = f64::from_bits(0x7FF8_0000_0000_0000 | p);
+    if frankenlibc_core::math::truncf(payload) != payload {
+        return None;
     }
-    0
+    let p = payload as u32;
+    (p < (1u32 << 22)).then_some(p)
+}
+
+fn setpayload_impl(res: *mut f64, payload: f64) -> c_int {
+    match payload_value_f64(payload) {
+        Some(p) => {
+            unsafe { *res = f64::from_bits(0x7FF8_0000_0000_0000 | p) };
+            0
+        }
+        None => {
+            unsafe { *res = 0.0 };
+            1
+        }
+    }
 }
 fn setpayloadf_impl(res: *mut f32, payload: f32) -> c_int {
-    let p = payload as u32;
-    if payload < 0.0f32 || p >= (1u32 << 22) {
-        return 1;
+    match payload_value_f32(payload) {
+        Some(p) => {
+            unsafe { *res = f32::from_bits(0x7FC0_0000 | p) };
+            0
+        }
+        None => {
+            unsafe { *res = 0.0 };
+            1
+        }
     }
-    unsafe {
-        *res = f32::from_bits(0x7FC0_0000 | p);
-    }
-    0
 }
 fn setpayloadsig_impl(res: *mut f64, payload: f64) -> c_int {
-    let p = payload as u64;
-    if payload < 0.0 || p == 0 || p >= (1u64 << 51) {
-        return 1;
+    // A signaling NaN needs a NON-ZERO payload: with the quiet bit clear a zero
+    // mantissa is an infinity, not a NaN.
+    match payload_value_f64(payload).filter(|p| *p != 0) {
+        Some(p) => {
+            unsafe { *res = f64::from_bits(0x7FF0_0000_0000_0000 | p) };
+            0
+        }
+        None => {
+            unsafe { *res = 0.0 };
+            1
+        }
     }
-    unsafe {
-        *res = f64::from_bits(0x7FF0_0000_0000_0000 | p);
-    }
-    0
 }
 fn setpayloadsigf_impl(res: *mut f32, payload: f32) -> c_int {
-    let p = payload as u32;
-    if payload < 0.0f32 || p == 0 || p >= (1u32 << 22) {
-        return 1;
+    match payload_value_f32(payload).filter(|p| *p != 0) {
+        Some(p) => {
+            unsafe { *res = f32::from_bits(0x7F80_0000 | p) };
+            0
+        }
+        None => {
+            unsafe { *res = 0.0 };
+            1
+        }
     }
-    unsafe {
-        *res = f32::from_bits(0x7F80_0000 | p);
-    }
-    0
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpayload(x: *const f64) -> f64 {
