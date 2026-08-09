@@ -5396,11 +5396,11 @@ pub unsafe extern "C" fn bdflush(func: c_int, data: c_long) -> c_int {
 // cfget/cfset speed: native implementation via termios_abi
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetibaud(termios_p: *const c_void) -> c_uint {
-    unsafe { crate::termios_abi::cfgetispeed(termios_p.cast()) }
+    unsafe { crate::termios_abi::cfgetibaud(termios_p.cast()) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetobaud(termios_p: *const c_void) -> c_uint {
-    unsafe { crate::termios_abi::cfgetospeed(termios_p.cast()) }
+    unsafe { crate::termios_abi::cfgetobaud(termios_p.cast()) }
 }
 // cfsetbaud: set BOTH input and output baud to the same value. glibc's prototype
 // is `int cfsetbaud(struct termios *, baud_t baud)` — a SINGLE baud argument
@@ -5409,19 +5409,17 @@ pub unsafe extern "C" fn cfgetobaud(termios_p: *const c_void) -> c_uint {
 // reading a garbage register for the phantom `obaud`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetbaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
-    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios_p.cast(), baud) };
-    if r1 != 0 {
-        return r1;
-    }
-    unsafe { crate::termios_abi::cfsetospeed(termios_p.cast(), baud) }
+    // Delegates to the *baud* implementation, NOT cfset*speed: the speed family
+    // takes a Bxxx code and rejects a raw baud number with EINVAL. bd-lmhxt4.
+    unsafe { crate::termios_abi::cfsetbaud(termios_p.cast(), baud) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cfsetibaud(termios_p: *mut c_void, speed: c_uint) -> c_int {
-    unsafe { crate::termios_abi::cfsetispeed(termios_p.cast(), speed) }
+pub unsafe extern "C" fn cfsetibaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
+    unsafe { crate::termios_abi::cfsetibaud(termios_p.cast(), baud) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cfsetobaud(termios_p: *mut c_void, speed: c_uint) -> c_int {
-    unsafe { crate::termios_abi::cfsetospeed(termios_p.cast(), speed) }
+pub unsafe extern "C" fn cfsetobaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
+    unsafe { crate::termios_abi::cfsetobaud(termios_p.cast(), baud) }
 }
 // chflags: BSD — not supported on Linux, return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

@@ -464,6 +464,89 @@ fn input_speed_bits(speed: libc::speed_t) -> libc::tcflag_t {
     ((speed as libc::tcflag_t) << 16) & libc::CIBAUD as libc::tcflag_t
 }
 
+/// Shared body of `cfsetibaud`/`cfsetobaud`/`cfsetbaud` (glibc 2.42).
+///
+/// The `*baud` family takes an ACTUAL BAUD NUMBER (50, 9600, 115200), unlike the
+/// `*speed` family which takes a `Bxxx` CODE. fl's `cf*baud` used to delegate
+/// straight to `cfset*speed`, which correctly rejects raw numbers with EINVAL
+/// (bd-wc9fye) — so `cfsetibaud(t, 50)` stored nothing and `cfgetibaud`
+/// answered 0 where the host answers 50.
+///
+/// Host behaviour, measured on glibc 2.42 (c_cflag shown for the input field,
+/// which lives in the CIBAUD bits at << 16):
+///
+/// ```text
+///   cfsetibaud(50)      c_cflag=0x00010000 c_ispeed=50       getibaud=50
+///   cfsetibaud(9600)    c_cflag=0x000d0000 c_ispeed=9600     getibaud=9600
+///   cfsetibaud(115200)  c_cflag=0x10020000 c_ispeed=115200   getibaud=115200
+///   cfsetibaud(4000000) c_cflag=0x100f0000 c_ispeed=4000000  getibaud=4000000
+///   cfsetbaud(9600)     c_cflag=0x000d000d  BOTH fields, ispeed=ospeed=9600
+/// ```
+///
+/// So a standard rate is encoded as its `Bxxx` code in the cflag AND stored as
+/// the plain number in `c_ispeed`/`c_ospeed`, which is what the `cfget*baud`
+/// accessors return. bd-lmhxt4.
+fn set_baud_fields(termios_p: *mut libc::termios, baud: u32, input: bool, output: bool) -> c_int {
+    if termios_p.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if !tracked_object_fits(termios_p.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let code = baud_rate_to_constant(baud as libc::speed_t);
+    unsafe {
+        if input {
+            (*termios_p).c_cflag = ((*termios_p).c_cflag & !(libc::CIBAUD as libc::tcflag_t))
+                | input_speed_bits(code);
+            (*termios_p).c_ispeed = baud as libc::speed_t;
+        }
+        if output {
+            (*termios_p).c_cflag =
+                ((*termios_p).c_cflag & !(libc::CBAUD as libc::tcflag_t)) | code as libc::tcflag_t;
+            (*termios_p).c_ospeed = baud as libc::speed_t;
+        }
+    }
+    0
+}
+
+/// `cfsetibaud` — set the input baud rate from an actual baud number.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfsetibaud(termios_p: *mut libc::termios, baud: u32) -> c_int {
+    set_baud_fields(termios_p, baud, true, false)
+}
+
+/// `cfsetobaud` — set the output baud rate from an actual baud number.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfsetobaud(termios_p: *mut libc::termios, baud: u32) -> c_int {
+    set_baud_fields(termios_p, baud, false, true)
+}
+
+/// `cfsetbaud` — set BOTH input and output baud from one actual baud number.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfsetbaud(termios_p: *mut libc::termios, baud: u32) -> c_int {
+    set_baud_fields(termios_p, baud, true, true)
+}
+
+/// `cfgetibaud` — the actual input baud number, as stored by `cfsetibaud`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfgetibaud(termios_p: *const libc::termios) -> u32 {
+    if termios_p.is_null() || !tracked_object_fits(termios_p) {
+        return 0;
+    }
+    unsafe { (*termios_p).c_ispeed }
+}
+
+/// `cfgetobaud` — the actual output baud number, as stored by `cfsetobaud`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfgetobaud(termios_p: *const libc::termios) -> u32 {
+    if termios_p.is_null() || !tracked_object_fits(termios_p) {
+        return 0;
+    }
+    unsafe { (*termios_p).c_ospeed }
+}
+
 fn zeroed_termios() -> libc::termios {
     let termios = std::mem::MaybeUninit::<libc::termios>::zeroed();
     // SAFETY: termios is a plain C ABI record; all-zero initialization is
