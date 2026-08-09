@@ -909,6 +909,10 @@ struct SharedCondState {
 struct TimedMutexCtx {
     mutex: *mut libc::pthread_mutex_t,
     ready: AtomicI32,
+    /// Set to 1 only AFTER the holder releases the mutex. Lets the waiter
+    /// assert it timed out *before* the unlock as a causal fact rather than a
+    /// wall-clock guess. bd-d3tvn3.
+    unlocked: AtomicI32,
 }
 
 unsafe extern "C" fn condvar_waiter(arg: *mut c_void) -> *mut c_void {
@@ -964,10 +968,14 @@ unsafe extern "C" fn hold_mutex_briefly(arg: *mut c_void) -> *mut c_void {
         pthread_mutex_lock(ctx.mutex);
     }
     ctx.ready.store(1, Ordering::Release);
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Held far longer than the waiter's 50ms deadline so the "timed out before
+    // the unlock" window is wide even on a badly loaded machine. It was 200ms,
+    // which left the waiter only 150ms of slack — the source of the flake.
+    std::thread::sleep(std::time::Duration::from_millis(2_000));
     unsafe {
         pthread_mutex_unlock(ctx.mutex);
     }
+    ctx.unlocked.store(1, Ordering::Release);
     ptr::null_mut()
 }
 
@@ -1863,17 +1871,18 @@ fn setname_getname_np() {
 #[test]
 fn setname_getname_np_live_thread() {
     unsafe {
+        let ready = AtomicI32::new(0);
         let mut thr: libc::pthread_t = 0;
         assert_eq!(
             pthread_create(
                 &mut thr,
                 ptr::null(),
                 Some(cancellable_thread),
-                ptr::null_mut()
+                (&ready as *const AtomicI32).cast_mut().cast(),
             ),
             0
         );
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        wait_until_running(&ready);
 
         let name = CString::new("peer").unwrap();
         assert_eq!(
@@ -1949,17 +1958,18 @@ fn kill_sig_zero_to_self() {
 #[test]
 fn kill_sig_zero_to_live_thread() {
     unsafe {
+        let ready = AtomicI32::new(0);
         let mut thr: libc::pthread_t = 0;
         assert_eq!(
             pthread_create(
                 &mut thr,
                 ptr::null(),
                 Some(cancellable_thread),
-                ptr::null_mut()
+                (&ready as *const AtomicI32).cast_mut().cast(),
             ),
             0
         );
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        wait_until_running(&ready);
 
         assert_eq!(
             pthread_kill(thr, 0),
@@ -2055,10 +2065,12 @@ fn sigqueue_live_thread_preserves_queued_value() {
             0
         );
 
-        for _ in 0..100 {
-            if ctx.ready.load(Ordering::Acquire) == 1 {
-                break;
-            }
+        // 100ms of 1ms polls was not enough on a loaded box; the budget only
+        // bounds runtime, the assertion below is unchanged. bd-d3tvn3.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while ctx.ready.load(Ordering::Acquire) != 1
+            && std::time::Instant::now() < deadline
+        {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert_eq!(
@@ -2113,17 +2125,18 @@ fn getaffinity_np() {
 #[test]
 fn getaffinity_np_live_thread() {
     unsafe {
+        let ready = AtomicI32::new(0);
         let mut thr: libc::pthread_t = 0;
         assert_eq!(
             pthread_create(
                 &mut thr,
                 ptr::null(),
                 Some(cancellable_thread),
-                ptr::null_mut()
+                (&ready as *const AtomicI32).cast_mut().cast(),
             ),
             0
         );
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        wait_until_running(&ready);
 
         let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
         assert_eq!(
@@ -3192,6 +3205,7 @@ fn mutex_timedlock_future_deadline_times_out_before_unlock() {
         let mut ctx = TimedMutexCtx {
             mutex: &mut mutex,
             ready: AtomicI32::new(0),
+            unlocked: AtomicI32::new(0),
         };
         let mut thr: libc::pthread_t = 0;
         assert_eq!(
@@ -3218,9 +3232,23 @@ fn mutex_timedlock_future_deadline_times_out_before_unlock() {
         }
 
         assert_eq!(pthread_mutex_timedlock(&mut mutex, &ts), libc::ETIMEDOUT);
+        // The contract is CAUSAL, not chronometric: the call must give up
+        // while the mutex is still held. Asserting `elapsed < 150ms` instead
+        // made a loaded scheduler look like a libc defect — it was the single
+        // wall-clock upper bound left in this file. bd-d3tvn3.
+        assert_eq!(
+            ctx.unlocked.load(Ordering::Acquire),
+            0,
+            "timedlock returned ETIMEDOUT only after the holder released; it waited for the \
+             unlock instead of the deadline"
+        );
+        // Lower bound stays exact and is load-safe (contention can only make
+        // this longer): it must actually have waited for the deadline rather
+        // than failing straight away.
         assert!(
-            start.elapsed() < std::time::Duration::from_millis(150),
-            "timedlock should time out near the requested deadline, not wait for unlock"
+            start.elapsed() >= std::time::Duration::from_millis(45),
+            "timedlock returned after {:?}, before its own 50ms deadline",
+            start.elapsed()
         );
 
         assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
@@ -3668,17 +3696,18 @@ fn gettid_np_returns_tid() {
 #[test]
 fn gettid_np_returns_tid_for_live_thread() {
     unsafe {
+        let ready = AtomicI32::new(0);
         let mut thr: libc::pthread_t = 0;
         assert_eq!(
             pthread_create(
                 &mut thr,
                 ptr::null(),
                 Some(cancellable_thread),
-                ptr::null_mut()
+                (&ready as *const AtomicI32).cast_mut().cast(),
             ),
             0
         );
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        wait_until_running(&ready);
 
         let tid = pthread_gettid_np(thr);
         assert!(
@@ -4176,17 +4205,18 @@ fn getcpuclockid_matches_kernel_formula_for_self() {
 #[test]
 fn getcpuclockid_returns_valid_clock_for_live_thread() {
     unsafe {
+        let ready = AtomicI32::new(0);
         let mut thr: libc::pthread_t = 0;
         assert_eq!(
             pthread_create(
                 &mut thr,
                 ptr::null(),
                 Some(cancellable_thread),
-                ptr::null_mut()
+                (&ready as *const AtomicI32).cast_mut().cast(),
             ),
             0
         );
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        wait_until_running(&ready);
         let mut clock_id: libc::clockid_t = 0;
         assert_eq!(
             pthread_getcpuclockid(thr, &mut clock_id),
@@ -4241,17 +4271,54 @@ fn getcpuclockid_joined_thread_returns_esrch() {
 // pthread_cancel (cancel a thread that's blocked)
 // ===========================================================================
 
-unsafe extern "C" fn cancellable_thread(_arg: *mut c_void) -> *mut c_void {
+/// When `arg` is non-null it points at an `AtomicI32` this thread sets to 1
+/// once it is actually RUNNING with cancellation configured. Pair it with
+/// [`wait_until_running`] on the creating side.
+///
+/// Every "…_live_thread" arm below used to stand in for this with a fixed
+/// `sleep(20ms)` after `pthread_create`. That is not a handshake, it is a
+/// guess about scheduling latency. On a loaded machine the child had not been
+/// scheduled yet, so it had not registered itself, and the call under test
+/// returned ESRCH: the failures read `left: 3, right: 0`. Measured on a
+/// 64-core worker with five concurrent test binaries, 3 of 8 runs of this
+/// binary failed that way, naming a varying subset of the arms — which is why
+/// the bead recorded a different set each time it was observed. bd-d3tvn3.
+unsafe extern "C" fn cancellable_thread(arg: *mut c_void) -> *mut c_void {
     unsafe {
         // Enable cancellation
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, ptr::null_mut());
         pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, ptr::null_mut());
+        // Signal readiness only AFTER cancellation is configured, so an arm
+        // that cancels immediately cannot race the setup above.
+        if !arg.is_null() {
+            (*arg.cast::<AtomicI32>()).store(1, Ordering::Release);
+        }
         // Sleep loop with cancellation points
         for _ in 0..100 {
             pthread_testcancel();
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         ptr::null_mut()
+    }
+}
+
+/// Block until a [`cancellable_thread`] reports it is running.
+///
+/// The 30-second budget bounds the test's RUNTIME; it is not the contract.
+/// The assertion is unchanged — the thread must come up — so a genuinely dead
+/// thread still fails the arm, just later. Only give-up bounds are generous
+/// here; the behavioural assertions stay exact.
+fn wait_until_running(ready: &AtomicI32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while ready.load(Ordering::Acquire) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "created thread never reported running within 30s"
+        );
+        // Sleep rather than yield: this binary runs ~200 tests in parallel, and
+        // a busy-spin here would add exactly the CPU pressure that makes the
+        // other timing-sensitive arms flaky.
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 
@@ -4310,16 +4377,17 @@ fn cancel_running_thread() {
         let _guard = ThreadingForceNativeGuard {
             previous: pthread_threading_swap_force_native_for_tests(),
         };
+        let ready = AtomicI32::new(0);
         let mut thr: libc::pthread_t = 0;
         let rc = pthread_create(
             &mut thr,
             ptr::null(),
             Some(cancellable_thread),
-            ptr::null_mut(),
+            (&ready as *const AtomicI32).cast_mut().cast(),
         );
         assert_eq!(rc, 0);
 
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        wait_until_running(&ready);
 
         let rc = pthread_cancel(thr);
         assert_eq!(rc, 0, "pthread_cancel should succeed for a live thread");
