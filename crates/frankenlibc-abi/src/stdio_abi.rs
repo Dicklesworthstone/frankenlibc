@@ -10336,7 +10336,14 @@ pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -
             drop(guard);
             return unsafe { read_fn(cookie, buf as *mut c_char, count) };
         }
-        unsafe { set_abi_errno(errno::EBADF) };
+        // A NULL read hook is a legal fopencookie configuration, not a bad
+        // descriptor: glibc's _IO_cookie_read returns -1 and leaves errno
+        // ALONE, so the caller sees ferror set with errno untouched. fl set
+        // EBADF here, which a caller doing `if (ferror(f)) perror(...)` would
+        // report as "Bad file descriptor" on a stream that was opened exactly
+        // as documented. Measured against live glibc 2.42:
+        //   read=NULL: fread(...,10) -> 0, errno unchanged, ferror=1, feof=0
+        // bd-zpmf99.
         return -1;
     }
     unsafe { set_abi_errno(errno::EBADF) };
@@ -10354,8 +10361,16 @@ pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize
             drop(guard);
             return unsafe { write_fn(cookie, buf as *const c_char, count) };
         }
-        unsafe { set_abi_errno(errno::EBADF) };
-        return -1;
+        // A NULL write hook returns 0, not -1, and leaves errno alone —
+        // glibc's _IO_cookie_write sets the stream's error flag and reports a
+        // zero-length write. Returning 0 here reaches the same state through
+        // fl's own machinery: the caller treats it as a short write and calls
+        // set_error(). Measured against live glibc 2.42:
+        //   write=NULL: fwrite(...,5) -> 5 (buffered), ferror=0
+        //               then fflush   -> -1, errno unchanged, ferror=1
+        // The failure deliberately surfaces at the flush, not at the fwrite.
+        // bd-zpmf99.
+        return 0;
     }
     unsafe { set_abi_errno(errno::EBADF) };
     -1
