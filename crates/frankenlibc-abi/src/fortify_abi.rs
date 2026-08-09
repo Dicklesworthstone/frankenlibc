@@ -15,7 +15,11 @@ type WcharT = c_int; // wchar_t is int32 on Linux/x86_64
 type NfdsT = u64; // nfds_t on x86_64
 const WCHAR_SIZE: usize = core::mem::size_of::<WcharT>();
 const FORTIFY_PATH_MAX: usize = 4096;
-const FORTIFY_MB_LEN_MAX: usize = 16;
+// MB_LEN_MAX (16) intentionally has no constant here. It is what the FORTIFY
+// header macro compares the object size against when deciding whether to route
+// a call to __wctomb_chk at all; the runtime check inside that function uses
+// MB_CUR_MAX instead. Having both spelled out invited exactly the confusion
+// that made __wctomb_chk reject buffers glibc accepts. bd-ddr8kv.
 
 #[inline]
 fn wide_units_from_bytes(bytes: usize) -> usize {
@@ -1116,9 +1120,32 @@ pub unsafe extern "C" fn __wcsnrtombs_chk(
     unsafe { wcsnrtombs(dest, src, nwc, n, ps) }
 }
 
+/// glibc compares `buflen` against **MB_CUR_MAX**, not MB_LEN_MAX.
+///
+/// The two are easy to confuse because the FORTIFY header macro decides whether
+/// to route the call here at all by comparing the object size against
+/// MB_LEN_MAX (16). The RUNTIME check inside `__wctomb_chk` is the other
+/// constant — the locale's current maximum — and using 16 there rejects buffers
+/// glibc accepts. Probed against the live host, calling its `__wctomb_chk`
+/// directly:
+///
+/// ```text
+///   C locale       (MB_CUR_MAX=1): buflen 1, 5, 6, 15, 16 -> all return, none abort
+///   C.UTF-8        (MB_CUR_MAX=6): buflen 1, 5 abort; 6, 15, 16 return
+///   en_US.UTF-8    (MB_CUR_MAX=6): same as C.UTF-8
+/// ```
+///
+/// fl used `buflen < 16` and so aborted for every buflen in 1..=15 regardless
+/// of locale — killing correct programs, which is the damaging direction for a
+/// fortify check. bd-ddr8kv.
+///
+/// NOTE: fl's `__ctype_get_mb_cur_max` is currently hardcoded to 6 rather than
+/// tracking the locale, so the C-locale row above still diverges. That is a
+/// separate defect in the locale plumbing, not in this guard — see bd-w7nxne.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int {
-    if !s.is_null() && buflen != usize::MAX && buflen < FORTIFY_MB_LEN_MAX {
+    let mb_cur_max = unsafe { crate::glibc_internal_abi::__ctype_get_mb_cur_max() } as usize;
+    if !s.is_null() && buflen != usize::MAX && buflen < mb_cur_max {
         unsafe { __chk_fail() }
     }
     unsafe { wctomb(s, wchar) }

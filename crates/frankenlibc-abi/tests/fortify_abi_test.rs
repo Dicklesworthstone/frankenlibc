@@ -1517,6 +1517,99 @@ fn wctomb_chk_short_buffer_aborts_child_process() {
     });
 }
 
+/// Did the child die by SIGABRT? Reports rather than asserts, so a differential
+/// can compare fl's answer against the host's for the same input.
+fn child_aborted(label: &str, child: impl FnOnce()) -> bool {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+    if pid == 0 {
+        child();
+        unsafe { libc::_exit(0) };
+    }
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGABRT
+}
+
+unsafe extern "C" {
+    /// The HOST's fortify wrapper, a public glibc symbol since 2.4. Compared
+    /// against fl's below.
+    #[link_name = "__wctomb_chk"]
+    fn host_wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int;
+    fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
+}
+
+/// `__wctomb_chk` must abort exactly when glibc does — which is
+/// `buflen < MB_CUR_MAX`, NOT `buflen < MB_LEN_MAX`.
+///
+/// The two constants are easy to confuse: the FORTIFY header macro uses
+/// MB_LEN_MAX (16) to decide whether to route the call here at all, while the
+/// runtime check inside uses the locale's current maximum. fl compared against
+/// 16, so it aborted for every buflen in 1..=15 — rejecting buffers glibc
+/// accepts, i.e. killing correct programs, which is the damaging direction for
+/// a fortify check. Probed on the live host, one process per row:
+///
+/// ```text
+///   C locale     MB_CUR_MAX=1  buflen 1, 5, 6, 15, 16 -> none abort
+///   C.UTF-8      MB_CUR_MAX=6  buflen 1, 5 abort; 6, 15, 16 return
+/// ```
+///
+/// This arm runs under a UTF-8 locale because that is where fl and the host
+/// currently agree. The C-locale row does NOT yet match: fl's
+/// `__ctype_get_mb_cur_max` is hardcoded to 6 instead of tracking the locale,
+/// which is bd-w7nxne. Asserting it here would fail for that reason rather
+/// than this one. bd-ddr8kv.
+#[test]
+fn wctomb_chk_abort_boundary_matches_host_in_utf8_locale() {
+    let loc = CString::new("C.UTF-8").unwrap();
+    if unsafe { setlocale(libc::LC_ALL, loc.as_ptr()) }.is_null() {
+        eprintln!("SKIPPED wctomb_chk_abort_boundary: C.UTF-8 unavailable here");
+        return;
+    }
+
+    let mut compared = 0usize;
+    for &n in &[1usize, 5, 6, 7, 15, 16] {
+        let host = child_aborted(&format!("host wctomb_chk buflen={n}"), || {
+            let mut buf = [0u8; 32];
+            unsafe { host_wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
+        });
+        let fl = child_aborted(&format!("fl wctomb_chk buflen={n}"), || {
+            let mut buf = [0u8; 32];
+            unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
+        });
+        assert_eq!(
+            fl, host,
+            "buflen={n}: fl aborted={fl}, host aborted={host} (MB_CUR_MAX is 6 here)"
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 6, "buflen table drifted");
+}
+
+/// Reference half: the host's own boundary, so the differential above cannot
+/// pass by fl and glibc agreeing on the wrong answer.
+#[test]
+fn host_wctomb_chk_boundary_is_mb_cur_max_not_mb_len_max() {
+    let loc = CString::new("C.UTF-8").unwrap();
+    if unsafe { setlocale(libc::LC_ALL, loc.as_ptr()) }.is_null() {
+        eprintln!("SKIPPED host_wctomb_chk_boundary: C.UTF-8 unavailable here");
+        return;
+    }
+    let probe = |n: usize| {
+        child_aborted(&format!("host boundary buflen={n}"), || {
+            let mut buf = [0u8; 32];
+            unsafe { host_wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
+        })
+    };
+    assert!(probe(5), "host should abort below MB_CUR_MAX (6)");
+    assert!(!probe(6), "host should accept buflen == MB_CUR_MAX (6)");
+    assert!(
+        !probe(15),
+        "host should accept buflen 15 — proof the bound is MB_CUR_MAX, not MB_LEN_MAX (16)"
+    );
+}
+
 #[test]
 fn mbsrtowcs_chk_safe() {
     let src_str = CString::new("hi").unwrap();
