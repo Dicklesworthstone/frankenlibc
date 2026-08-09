@@ -10133,12 +10133,43 @@ pub static sys_signame: SysSigList = SysSigList([
     SIG_NAME_RT.as_ptr() as *const c_char, // 64
 ]);
 
+/// Description used by `psignal`, which is deliberately NOT
+/// [`signal_description_into`].
+///
+/// glibc's `psignal` and `strsignal` disagree on real-time signals, and the
+/// difference is observable. `strsignal` has a dedicated RT branch; `psignal`
+/// only consults the classic `sys_siglist` table, whose RT slots are NULL, so
+/// it falls through to "Unknown signal N". Measured on the host, one process,
+/// both calls per row:
+///
+/// ```text
+///   sig 31  psignal="Bad system call"     strsignal="Bad system call"
+///   sig 32  psignal="Unknown signal 32"   strsignal="Unknown signal 32"
+///   sig 34  psignal="Unknown signal 34"   strsignal="Real-time signal 0"
+///   sig 40  psignal="Unknown signal 40"   strsignal="Real-time signal 6"
+///   sig 64  psignal="Unknown signal 64"   strsignal="Real-time signal 30"
+///   sig 65  psignal="Unknown signal 65"   strsignal="Unknown signal 65"
+/// ```
+///
+/// fl routed `psignal` through `strsignal`'s description under a comment
+/// claiming "glibc backs both off a single description table". It does not,
+/// and conformance_diff_psignal was red on exactly that: fl printed
+/// "myprog: Real-time signal 0" where glibc prints "myprog: Unknown signal 34".
+/// bd-3k2orn.
+fn psignal_description_into(sig: c_int, dst: &mut Vec<u8>) {
+    if (1..=31).contains(&sig) {
+        dst.extend_from_slice(signal_name(sig));
+        return;
+    }
+    let mut formatted = String::new();
+    let _ = write!(&mut formatted, "Unknown signal {sig}");
+    dst.extend_from_slice(formatted.as_bytes());
+}
+
 /// POSIX `psignal` — print a signal description to stderr.
 ///
-/// Goes through `signal_description_into` for the same labeling as
-/// `strsignal` — glibc backs both off a single description table, so a
-/// user comparing `strsignal(34)` to a captured `psignal(34, ...)` line
-/// sees consistent text on real-time and unknown signals.
+/// Uses [`psignal_description_into`], NOT `strsignal`'s: see the note there
+/// for the measured divergence on real-time signals.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
     // Build message: "s: signal_name\n" or "signal_name\n"
@@ -10152,7 +10183,7 @@ pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
         msg.extend_from_slice(&prefix);
         msg.extend_from_slice(b": ");
     }
-    signal_description_into(sig, &mut msg);
+    psignal_description_into(sig, &mut msg);
     msg.push(b'\n');
 
     // Write to stderr via native raw syscall (bd-h5x)
