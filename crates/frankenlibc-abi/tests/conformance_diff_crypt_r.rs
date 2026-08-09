@@ -13,8 +13,50 @@
 use std::ffi::{CStr, CString, c_char};
 
 unsafe extern "C" {
-    fn crypt_r(key: *const c_char, salt: *const c_char, data: *mut std::ffi::c_void)
-    -> *mut c_char;
+    fn dlopen(filename: *const c_char, flag: std::ffi::c_int) -> *mut std::ffi::c_void;
+    fn dlsym(handle: *mut std::ffi::c_void, symbol: *const c_char) -> *mut std::ffi::c_void;
+}
+
+type CryptRFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *mut std::ffi::c_void) -> *mut c_char;
+
+/// Resolve host libxcrypt's `crypt_r` at RUNTIME.
+///
+/// This target used a bare `extern "C" { fn crypt_r(..) }` and did not link:
+///   rust-lld: error: undefined symbol: crypt_r
+/// Nothing pulled in libcrypt, so the whole gate was DARK on the fleet — silent,
+/// not green.
+///
+/// Linking `-lcrypt` would not have been the right fix either. fl exports its
+/// own `crypt_r` under `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`,
+/// so in a RELEASE build a bare extern resolves to FL'S OWN SYMBOL and the
+/// "host" arm would silently compare fl against itself — a gate that can only
+/// pass. dlopen/dlsym against libcrypt.so.1 is the only way to get a real
+/// oracle, and it also sidesteps the missing libcrypt.so dev symlink on the
+/// workers. Same approach as conformance_diff_crypt_failure_token.
+fn host_crypt_r() -> CryptRFn {
+    static F: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let addr = *F.get_or_init(|| {
+        const RTLD_NOW: std::ffi::c_int = 2;
+        // SAFETY: constant, NUL-terminated library and symbol names.
+        let h = unsafe { dlopen(c"libcrypt.so.1".as_ptr(), RTLD_NOW) };
+        assert!(!h.is_null(), "dlopen libcrypt.so.1 failed");
+        let p = unsafe { dlsym(h, c"crypt_r".as_ptr()) };
+        assert!(!p.is_null(), "dlsym crypt_r failed");
+        p as usize
+    });
+    // SAFETY: dlsym returned a non-null pointer to crypt_r, whose signature is
+    // fixed by the libxcrypt ABI.
+    unsafe { std::mem::transmute::<usize, CryptRFn>(addr) }
+}
+
+/// Same call shape as the old extern, so call sites are unchanged.
+unsafe fn crypt_r(
+    key: *const c_char,
+    salt: *const c_char,
+    data: *mut std::ffi::c_void,
+) -> *mut c_char {
+    unsafe { host_crypt_r()(key, salt, data) }
 }
 
 // Generous buffer: glibc's struct crypt_data is ~128 KiB; libxcrypt's is small.
