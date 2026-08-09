@@ -177,6 +177,65 @@ pub fn sha512_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Known-answer vectors captured from the live host libxcrypt
+    /// (`libcrypt.so.1`) while closing bd-fegsgf. These pin the byte-for-byte
+    /// output without needing the host at test time, so a regression in the
+    /// digest, the transposition table or the base-64 encoder fails here and
+    /// not only in the abi differential gate.
+    #[test]
+    fn known_answers_match_host_libxcrypt() {
+        for (key, salt, expect) in [
+            (
+                &b"Hello world!"[..],
+                &b"$6$saltstring"[..],
+                "$6$saltstring$svn8UoSVapNtMuq1ukKS4tPQd8iKwSMHWjl/O817G3uBnIFNjnQJuesI68u4OTLiBFdcbYEdFCoEOfaS35inz1",
+            ),
+            (
+                b"password",
+                b"$6$saltsaltsalt$",
+                "$6$saltsaltsalt$hu2MB85GKhCdSuPyy/Ac2I1avaZTRAa9f2YbpKlogMwpK13RIetDflQrNI0bK/af8sX3q7/Mi4VFc44T.vgRQ/",
+            ),
+            (
+                b"",
+                b"$6$emptysalt$",
+                "$6$emptysalt$TrI.h19YNad.S.Xw2WEgON9ojBrkXYcCfZrEcOEa9k/Bp5Sw4dxhsyY0KdBJ5Vt2UbEFOMolXqrfnZHc1QRM..",
+            ),
+            (
+                b"password",
+                b"$6$rounds=1000$x$",
+                "$6$rounds=1000$x$TKaqGzt3RTU4bSAFQYQ3JUR9Tvv.BekzA3kIht0iuXDSsTtKIvDqfJ.1gMXRQPlY4LbOZbk1LCuB/Ty6C494c1",
+            ),
+        ] {
+            assert_eq!(sha512_crypt(key, salt).as_deref(), Some(expect));
+        }
+    }
+
+    /// An explicit `rounds=5000` must be echoed even though it equals the
+    /// default — the only surviving `$6$` divergence before bd-fegsgf.
+    #[test]
+    fn explicit_default_rounds_keeps_prefix() {
+        let h = sha512_crypt(b"password", b"$6$rounds=5000$saltsaltsalt$").unwrap();
+        assert_eq!(
+            h,
+            "$6$rounds=5000$saltsaltsalt$hu2MB85GKhCdSuPyy/Ac2I1avaZTRAa9f2YbpKlogMwpK13RIetDflQrNI0bK/af8sX3q7/Mi4VFc44T.vgRQ/"
+        );
+    }
+
+    /// A malformed `rounds=` is a rejected setting, not a request for the
+    /// nearest legal count; the abi layer renders `None` as libxcrypt's `*0`.
+    #[test]
+    fn malformed_rounds_is_rejected() {
+        for salt in [
+            &b"$6$rounds=999$x$"[..],
+            b"$6$rounds=1000000000$x$",
+            b"$6$rounds=0500$x$",
+            b"$6$rounds=abc$x$",
+            b"$6$rounds=5000x$x$",
+        ] {
+            assert_eq!(sha512_crypt(b"password", salt), None, "salt={salt:?}");
+        }
+    }
+
     /// Characterization test: pin the current output for a known input
     /// to detect any future drift. The expected string captures the
     /// existing abi behavior (which preserves the historical byte-

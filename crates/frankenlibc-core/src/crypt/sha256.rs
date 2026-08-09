@@ -134,6 +134,65 @@ pub fn sha256_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Known-answer vectors captured from the live host libxcrypt
+    /// (`libcrypt.so.1`) while closing bd-fegsgf. These pin the byte-for-byte
+    /// output without needing the host at test time, so a regression in the
+    /// digest, the transposition table or the base-64 encoder fails here and
+    /// not only in the abi differential gate.
+    #[test]
+    fn known_answers_match_host_libxcrypt() {
+        for (key, salt, expect) in [
+            (
+                &b"Hello world!"[..],
+                &b"$5$saltstring"[..],
+                "$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5",
+            ),
+            (
+                b"password",
+                b"$5$saltsaltsalt$",
+                "$5$saltsaltsalt$/N7c7rmQoc7bVRcUisZxkSYJRyapzgVkea220umjO3C",
+            ),
+            (
+                b"",
+                b"$5$emptysalt$",
+                "$5$emptysalt$7Ggii2OZa/7DQx2XFDomXtHl2Ea.SGT2XvtgDslxc.8",
+            ),
+            (
+                b"password",
+                b"$5$rounds=1000$x$",
+                "$5$rounds=1000$x$qJLv4pvDPeZRN4swJyhU3ZR3jSNhO4Xoyru4iIVxwM8",
+            ),
+        ] {
+            assert_eq!(sha256_crypt(key, salt).as_deref(), Some(expect));
+        }
+    }
+
+    /// An explicit `rounds=5000` must be echoed even though it equals the
+    /// default — the only surviving `$5$` divergence before bd-fegsgf.
+    #[test]
+    fn explicit_default_rounds_keeps_prefix() {
+        let h = sha256_crypt(b"password", b"$5$rounds=5000$saltsaltsalt$").unwrap();
+        assert_eq!(
+            h,
+            "$5$rounds=5000$saltsaltsalt$/N7c7rmQoc7bVRcUisZxkSYJRyapzgVkea220umjO3C"
+        );
+    }
+
+    /// A malformed `rounds=` is a rejected setting, not a request for the
+    /// nearest legal count; the abi layer renders `None` as libxcrypt's `*0`.
+    #[test]
+    fn malformed_rounds_is_rejected() {
+        for salt in [
+            &b"$5$rounds=999$x$"[..],
+            b"$5$rounds=1000000000$x$",
+            b"$5$rounds=0500$x$",
+            b"$5$rounds=abc$x$",
+            b"$5$rounds=5000x$x$",
+        ] {
+            assert_eq!(sha256_crypt(b"password", salt), None, "salt={salt:?}");
+        }
+    }
+
     #[test]
     fn characterization_simple_key_default_rounds() {
         let h = sha256_crypt(b"Hello world!", b"$5$saltstring").unwrap();

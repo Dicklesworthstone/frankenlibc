@@ -105,6 +105,33 @@ pub fn md5_crypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Known-answer vectors captured from the live host libxcrypt
+    /// (`libcrypt.so.1`) while closing bd-fegsgf. `$1$` has no `rounds=`
+    /// field, so the last case doubles as proof that `rounds=5000` is taken as
+    /// ordinary salt text and truncated to 8 bytes, exactly as the host does.
+    #[test]
+    fn known_answers_match_host_libxcrypt() {
+        for (key, salt, expect) in [
+            (
+                &b"Hello world!"[..],
+                &b"$1$saltstri"[..],
+                "$1$saltstri$YMyguxXMBpd2TEZ.vS/3q1",
+            ),
+            (
+                b"password",
+                b"$1$abcdefgh$",
+                "$1$abcdefgh$G//4keteveJp0qb8z2DxG/",
+            ),
+            (
+                b"password",
+                b"$1$rounds=5000$x$",
+                "$1$rounds=5$KuZXAQB00y0CyFLBxazyO0",
+            ),
+        ] {
+            assert_eq!(md5_crypt(key, salt).as_deref(), Some(expect));
+        }
+    }
+
     #[test]
     fn salt_is_truncated_to_8_chars() {
         // 12-char salt should match the same key against the 8-char prefix.
