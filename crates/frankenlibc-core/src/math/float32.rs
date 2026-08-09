@@ -2110,10 +2110,29 @@ mod tests {
             let grid = powf_profile_exp_1_337_grid(base).expect("dyadic profile-grid value");
             let poly = powf_profile_exp_1_337_poly(base);
             assert_eq!(grid.to_bits(), poly.to_bits(), "grid k={k} base={base}");
+            // The PUBLIC powf is checked against the host, NOT against the
+            // profile polynomial.
+            //
+            // This arm used to assert `powf(base, exp) == poly(base)`, and that
+            // became false by design: `powf` now routes normal bases through
+            // the fused ARM/glibc `__ieee754_powf` kernel, which its own comment
+            // records as superseding "the exponent-1.337 grid below (same
+            // domain, but bit-exact to glibc and faster)". The profile path only
+            // runs for the residual subnormal-base / overflow cases the fused
+            // guard rejects.
+            //
+            // So the polynomial is the WORSE reference, and the old assertion
+            // was failing fl for being right. Measured at base=0.5 against the
+            // host:
+            //   glibc powf                 bits = 1053469677
+            //   powl() long double -> f32  bits = 1053469677  (correctly rounded)
+            //   fl public powf             bits = 1053469677
+            //   profile polynomial         bits = 1053469675  <-- 2 ULP out
+            // bd-rlsudz.
             assert_eq!(
                 powf(base, exp).to_bits(),
-                poly.to_bits(),
-                "public powf grid k={k} base={base}"
+                base.powf(exp).to_bits(),
+                "public powf vs host, grid k={k} base={base}"
             );
             hasher.update(base.to_bits().to_le_bytes());
             hasher.update(grid.to_bits().to_le_bytes());
