@@ -107,9 +107,22 @@ pub fn hypot(x: f64, y: f64) -> f64 {
     libm::hypot(x, y)
 }
 
-/// Round to nearest integer without raising inexact exception.
+/// Round to nearest integer honouring the CURRENT rounding mode.
 ///
-/// Uses banker's rounding (round to even on ties), matching rint semantics.
+/// Value semantics are `rint`'s; the difference is that `nearbyint` must not
+/// raise FE_INEXACT. That suppression is done at the ABI boundary
+/// (`math_abi::nearbyint`), which saves and restores the flag around this call
+/// — the same thing glibc's hardware `roundsd` does with its
+/// suppress-precision-exception bit.
+///
+/// It deliberately is NOT done by bit-manipulation rounding here, the way the
+/// `round` family does it (bd-i5cj3w): `round` has a fixed tie rule, but
+/// `nearbyint` must follow whichever of the four rounding modes is active, and
+/// a hand-rolled ties-to-even returns the wrong VALUE under FE_DOWNWARD /
+/// FE_UPWARD / FE_TOWARDZERO. Measured while getting this wrong once: under
+/// FE_DOWNWARD (0x400) the host gives nearbyint(1.5) = 1.0 and
+/// nearbyint(-0.5) = -1.0, where a ties-to-even form gives 2.0 and -0.0.
+/// bd-epponw.
 #[inline]
 pub fn nearbyint(x: f64) -> f64 {
     libm::rint(x)

@@ -653,9 +653,52 @@ pub unsafe extern "C" fn erfc(x: f64) -> f64 {
 // Rounding / conversion
 // ---------------------------------------------------------------------------
 
+/// Run `f` and restore FE_INEXACT to whatever it was beforehand.
+///
+/// `nearbyint`/`nearbyintf` are defined as `rint` WITHOUT the inexact
+/// exception (IEEE 754 roundToIntegralExact vs …Nearest). The underlying
+/// rounding must still honour the current rounding mode, so it cannot be
+/// replaced by a fixed-tie bit-manipulation form the way `round` is
+/// (bd-i5cj3w) — under FE_DOWNWARD the host gives nearbyint(1.5) = 1.0, which
+/// a ties-to-even form gets wrong. Instead do what glibc's hardware `roundsd`
+/// does with its suppress-precision-exception bit: round normally, then put
+/// the flag back.
+///
+/// Only the inexact bit is restored; any other exception the call legitimately
+/// raises is left alone.
+///
+/// Gated `#[cfg(not(test))]` because `lib.rs` gates `fenv_abi` the same way, so
+/// the module does not exist during `cargo test --lib`. The `#[cfg(test)]`
+/// twin below is a pass-through: the flag behaviour cannot be observed there
+/// anyway (no fenv module to read), and it IS observed by the integration gate
+/// `conformance_diff_nearbyint_flags`, which links the real library. The
+/// suppression is not optional in the shipped artifact. bd-epponw.
+#[cfg(not(test))]
+#[inline]
+fn suppress_inexact<T>(f: impl FnOnce() -> T) -> T {
+    const FE_INEXACT: u32 = 0x20;
+    // SAFETY: plain reads/writes of this thread's MXCSR.
+    let before = unsafe { crate::fenv_abi::read_mxcsr() };
+    let out = f();
+    let after = unsafe { crate::fenv_abi::read_mxcsr() };
+    let restored = (after & !FE_INEXACT) | (before & FE_INEXACT);
+    if restored != after {
+        unsafe { crate::fenv_abi::write_mxcsr(restored) };
+    }
+    out
+}
+
+/// See the `cfg(not(test))` twin: `fenv_abi` is absent during `cargo test
+/// --lib`, so there is no MXCSR to save or restore here.
+#[cfg(test)]
+#[inline]
+fn suppress_inexact<T>(f: impl FnOnce() -> T) -> T {
+    f()
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nearbyint(x: f64) -> f64 {
-    unary_entry(x, 3, frankenlibc_core::math::nearbyint)
+    suppress_inexact(|| unary_entry(x, 3, frankenlibc_core::math::nearbyint))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1515,7 +1558,7 @@ pub unsafe extern "C" fn rintf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nearbyintf(x: f32) -> f32 {
-    unary_entry_f32(x, 3, frankenlibc_core::math::nearbyintf)
+    suppress_inexact(|| unary_entry_f32(x, 3, frankenlibc_core::math::nearbyintf))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

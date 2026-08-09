@@ -1010,6 +1010,8 @@ pub fn rintf(x: f32) -> f32 {
     libm::rintf(x)
 }
 
+/// f32 counterpart of [`crate::math::nearbyint`]: honours the current rounding
+/// mode; the FE_INEXACT suppression happens at the ABI boundary. bd-epponw.
 #[inline]
 pub fn nearbyintf(x: f32) -> f32 {
     libm::rintf(x)

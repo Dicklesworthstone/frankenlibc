@@ -138,7 +138,7 @@ unsafe fn read_x87_sw() -> u16 {
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn read_mxcsr() -> u32 {
+pub(crate) unsafe fn read_mxcsr() -> u32 {
     let mut mxcsr: u32 = 0;
     unsafe {
         core::arch::asm!(
@@ -152,13 +152,13 @@ unsafe fn read_mxcsr() -> u32 {
 
 #[inline(always)]
 #[cfg(not(target_arch = "x86_64"))]
-unsafe fn read_mxcsr() -> u32 {
+pub(crate) unsafe fn read_mxcsr() -> u32 {
     MXCSR_DEFAULT
 }
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn write_mxcsr(mxcsr: u32) {
+pub(crate) unsafe fn write_mxcsr(mxcsr: u32) {
     unsafe {
         core::arch::asm!(
             "ldmxcsr [{}]",
@@ -170,7 +170,7 @@ unsafe fn write_mxcsr(mxcsr: u32) {
 
 #[inline(always)]
 #[cfg(not(target_arch = "x86_64"))]
-unsafe fn write_mxcsr(_mxcsr: u32) {}
+pub(crate) unsafe fn write_mxcsr(_mxcsr: u32) {}
 
 /// `fnstenv` stores the full x87 environment (28 bytes) and masks all exceptions.
 #[inline(always)]
