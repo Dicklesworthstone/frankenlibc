@@ -89,6 +89,107 @@ macro_rules! round_trip {
     }};
 }
 
+/// Flag words fed to `posix_spawnattr_setflags`: every individually valid bit,
+/// their union, then words carrying a bit outside the set.
+///
+/// glibc's accepted set is `ALL_FLAGS = 0x1FF` — RESETIDS|SETPGROUP|SETSIGDEF|
+/// SETSIGMASK|SETSCHEDPARAM|SETSCHEDULER|USEVFORK|SETSID|SETCGROUP. Probed
+/// against the live host (glibc 2.42) before being asserted here: 0x000..0x1FF
+/// all return 0, and 0x200 / 0x400 / 0x1000 / 0x4000 / 0xFFFF / 0x8000 / 0x2FF
+/// all return EINVAL(22) — including 0x2FF, which is a VALID word with one
+/// extra bit, so the rule is `flags & !ALL_FLAGS`, not a range check.
+const FLAG_WORDS: &[c_short] = &[
+    0, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x100, 0x1FF, // accepted
+    0x200, 0x400, 0x1000, 0x4000, -1, -32768, 0x2FF, // rejected
+];
+
+/// Sentinel pre-loaded into the attr before each probe, so a rejected call is
+/// distinguishable from one that stored the bad value.
+const SENTINEL: c_short = 0x1FF;
+
+/// `(setflags rc, flags read back afterwards)` for one candidate word.
+fn setflags_probe(
+    init: unsafe extern "C" fn(*mut c_void) -> c_int,
+    destroy: unsafe extern "C" fn(*mut c_void) -> c_int,
+    set: unsafe extern "C" fn(*mut c_void, c_short) -> c_int,
+    get: unsafe extern "C" fn(*const c_void, *mut c_short) -> c_int,
+    word: c_short,
+) -> (c_int, c_short) {
+    unsafe {
+        let mut attr = MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
+        let a = attr.as_mut_ptr() as *mut c_void;
+        let ac = attr.as_ptr() as *const c_void;
+        assert_eq!(init(a), 0, "posix_spawnattr_init should succeed");
+        assert_eq!(set(a, SENTINEL), 0, "sentinel is a valid flag word");
+        let rc = set(a, word);
+        let mut after: c_short = 0;
+        get(ac, &mut after);
+        destroy(a);
+        (rc, after)
+    }
+}
+
+/// bd-lkvixl: `posix_spawnattr_setflags` must reject any bit outside
+/// `ALL_FLAGS` with EINVAL, and must leave the attribute UNCHANGED when it
+/// does. fl used to store whatever it was given.
+///
+/// The "unchanged" half matters as much as the errno: a caller that ignores
+/// the return value would otherwise carry a bogus flag word into
+/// `posix_spawn`, which is exactly where an unknown bit does damage. Asserting
+/// only the errno would let an implementation return EINVAL *after* writing.
+#[test]
+fn posix_spawnattr_setflags_rejects_unknown_bits_like_glibc() {
+    let mut checked_accept = 0usize;
+    let mut checked_reject = 0usize;
+    for &word in FLAG_WORDS {
+        let g = setflags_probe(
+            g::posix_spawnattr_init,
+            g::posix_spawnattr_destroy,
+            g::posix_spawnattr_setflags,
+            g::posix_spawnattr_getflags,
+            word,
+        );
+        let f = setflags_probe(
+            fl::posix_spawnattr_init,
+            fl::posix_spawnattr_destroy,
+            fl::posix_spawnattr_setflags,
+            fl::posix_spawnattr_getflags,
+            word,
+        );
+        assert_eq!(
+            f, g,
+            "setflags(0x{:04X}): fl returned {f:?}, glibc {g:?} (rc, flags-after)",
+            word as u16
+        );
+
+        // Independent reference check, so the arm cannot pass by fl and glibc
+        // regressing together.
+        const ALL_FLAGS: c_short = 0x1FF;
+        if word & !ALL_FLAGS == 0 {
+            assert_eq!(
+                g,
+                (0, word),
+                "glibc should accept 0x{:04X} and store it",
+                word as u16
+            );
+            checked_accept += 1;
+        } else {
+            assert_eq!(
+                g,
+                (libc::EINVAL, SENTINEL),
+                "glibc should reject 0x{:04X} with EINVAL and leave the attr alone",
+                word as u16
+            );
+            checked_reject += 1;
+        }
+    }
+    assert_eq!(
+        (checked_accept, checked_reject),
+        (11, 7),
+        "flag-word table drifted; both halves must stay covered"
+    );
+}
+
 #[test]
 fn posix_spawnattr_round_trips_match_glibc() {
     let g: R = round_trip!(g);
