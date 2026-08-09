@@ -7,6 +7,49 @@
 //! two records. fl must match host glibc on the resulting file size. fl and
 //! glibc keep independent utmp state (separate utmpxname paths), so the two are
 //! driven on separate temp files. No mocks.
+//!
+//! ## Every arm owns a private ut_id / ut_line namespace — do not reuse (bd-hdb4c3)
+//!
+//! glibc caches the LAST RECORD it wrote in process-global state, and that
+//! cache survives `endutxent()`, `utmpxname()` and `setutxent()`. The next
+//! `pututxline` consults it through the same matching rule the on-disk search
+//! uses, so a record written by an EARLIER TEST can decide whether a later
+//! test's first write appends or replaces. Nothing in the file API resets it.
+//!
+//! That made `pututxline_same_id_without_rewind_appends` intermittently red:
+//! its glibc arm returned 1 record instead of 2, i.e. the ORACLE's own premise
+//! assertion failed and fl was never reached. Measured directly against live
+//! glibc 2.42 by replaying "predecessor, then the arm" in one process — only
+//! the two predecessors that also used `ut_id = "t1"` broke it:
+//!
+//! ```text
+//!   cold (no predecessor)            -> 2   the documented behaviour
+//!   after matches_on_id_over_line    -> 1   ut_id t1  <-- breaks
+//!   after overwrites_same_id_after_rewind -> 1   ut_id t1  <-- breaks
+//!   after dead_over_user (t2) / boot_type_only (bt,ZZ) /
+//!         boot_then_runlvl (rl) / empty_id ("") / distinct_ids (t1 then t2)
+//!                                    -> 2   no matching id, unaffected
+//! ```
+//!
+//! Note distinct_ids WRITES t1 first and still does not break the arm: what
+//! survives is the LAST record written, which for that arm is t2. Only a
+//! predecessor whose final record matches decides the next arm's first write.
+//!
+//! It looked load-dependent only because libtest's thread scheduling decides
+//! which arm runs first: alone it always passed, under `--test-threads=1`
+//! (fixed alphabetical order, so both t1 arms run first) it always FAILED, and
+//! with sibling binaries competing for CPU it failed intermittently. The
+//! UTMPX_PATH_LOCK below is still required — it serialises the process-global
+//! *path* — but serialising does not clear the record cache, which is why
+//! hoisting that lock did not fix this.
+//!
+//! The fix is that each arm now uses ids and lines no other arm can match
+//! (`a*` distinct, `b*` id-over-line, `c*` dead-over-user, `d*` boot, `e*`
+//! empty-id, `f*` rewound, `g*` no-rewind), so no ordering can prime the cache
+//! into a match. Verified against live glibc: every predecessor still produces
+//! its own expected record count, and the no-rewind arm still yields 2 after
+//! each one individually and after all of them in sequence. If you add an arm,
+//! give it a fresh letter — reusing an id reintroduces this exactly.
 
 use std::ffi::{CString, c_char, c_int};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -125,8 +168,12 @@ fn pututxline_same_id_without_rewind_appends() {
     // overwrite case is pututxline_overwrites_same_id_after_rewind below.
     // Corrected premise, not a relaxed one: this still pins fl to glibc, and
     // the arm now fails for an implementation that ignores the cursor.
+    //
+    // The `g*` namespace is load-bearing — see the module docs. With `t1` here
+    // this arm inherited glibc's record cache from whichever t1 arm libtest
+    // happened to schedule first and asserted 1 == 2 (bd-hdb4c3).
     let _guard = utmpx_guard();
-    let seq: &[(&[u8], &[u8], c_int)] = &[(b"t1", b"pts/1", 100), (b"t1", b"pts/1", 200)];
+    let seq: &[(&[u8], &[u8], c_int)] = &[(b"g1", b"gt/1", 100), (b"g1", b"gt/1", 200)];
     let f = fl_run(seq);
     let gg = glibc_run(seq);
     assert_eq!(gg, 2 * RS, "glibc: same-id without a rewind appends");
@@ -141,9 +188,9 @@ fn pututxline_same_id_without_rewind_appends() {
 
 #[test]
 fn pututxline_appends_distinct_ids() {
-    // Distinct ut_ids -> two records.
+    // Distinct ut_ids -> two records. Private `a*` namespace (module docs).
     let _guard = utmpx_guard();
-    let seq: &[(&[u8], &[u8], c_int)] = &[(b"t1", b"pts/1", 100), (b"t2", b"pts/2", 200)];
+    let seq: &[(&[u8], &[u8], c_int)] = &[(b"a1", b"at/1", 100), (b"a2", b"at/2", 200)];
     let f = fl_run(seq);
     let gg = glibc_run(seq);
     assert_eq!(gg, 2 * RS, "glibc: distinct ids -> 2 records");
@@ -244,8 +291,8 @@ fn pututxline_matches_on_id_over_line() {
     assert_same_file(
         "id_beats_line",
         &[
-            typed_rec(libc::USER_PROCESS, b"t1", b"tty1", b"alice"),
-            typed_rec(libc::USER_PROCESS, b"t1", b"ttyX", b"dave"),
+            typed_rec(libc::USER_PROCESS, b"b1", b"bt/1", b"alice"),
+            typed_rec(libc::USER_PROCESS, b"b1", b"bt/X", b"dave"),
         ],
         1,
     );
@@ -258,8 +305,8 @@ fn pututxline_dead_process_overwrites_the_user_process() {
     assert_same_file(
         "dead_over_user",
         &[
-            typed_rec(libc::USER_PROCESS, b"t2", b"tty2", b"carol"),
-            typed_rec(libc::DEAD_PROCESS, b"t2", b"tty2", b""),
+            typed_rec(libc::USER_PROCESS, b"c1", b"ct/1", b"carol"),
+            typed_rec(libc::DEAD_PROCESS, b"c1", b"ct/1", b""),
         ],
         1,
     );
@@ -272,8 +319,8 @@ fn pututxline_boot_time_matches_on_type_alone() {
     assert_same_file(
         "boot_type_only",
         &[
-            typed_rec(libc::BOOT_TIME, b"bt", b"~", b"reboot"),
-            typed_rec(libc::BOOT_TIME, b"ZZ", b"~~", b"reboot2"),
+            typed_rec(libc::BOOT_TIME, b"d1", b"dt/1", b"reboot"),
+            typed_rec(libc::BOOT_TIME, b"d2", b"dt/2", b"reboot2"),
         ],
         1,
     );
@@ -282,8 +329,8 @@ fn pututxline_boot_time_matches_on_type_alone() {
     assert_same_file(
         "boot_then_runlvl",
         &[
-            typed_rec(libc::BOOT_TIME, b"bt", b"~", b"reboot"),
-            typed_rec(libc::RUN_LVL, b"rl", b"~", b"runlevel"),
+            typed_rec(libc::BOOT_TIME, b"d1", b"dt/1", b"reboot"),
+            typed_rec(libc::RUN_LVL, b"d3", b"dt/3", b"runlevel"),
         ],
         2,
     );
@@ -294,8 +341,8 @@ fn pututxline_falls_back_to_line_when_id_is_empty() {
     assert_same_file(
         "empty_id",
         &[
-            typed_rec(libc::USER_PROCESS, b"", b"tty9", b"eve"),
-            typed_rec(libc::USER_PROCESS, b"", b"tty9", b"frank"),
+            typed_rec(libc::USER_PROCESS, b"", b"et/9", b"eve"),
+            typed_rec(libc::USER_PROCESS, b"", b"et/9", b"frank"),
         ],
         1,
     );
@@ -311,8 +358,8 @@ fn pututxline_overwrites_same_id_after_rewind() {
     assert_same_file(
         "same_id_rewound",
         &[
-            typed_rec(libc::USER_PROCESS, b"t1", b"pts/1", b"alice"),
-            typed_rec(libc::USER_PROCESS, b"t1", b"pts/1", b"bob"),
+            typed_rec(libc::USER_PROCESS, b"f1", b"ft/1", b"alice"),
+            typed_rec(libc::USER_PROCESS, b"f1", b"ft/1", b"bob"),
         ],
         1,
     );
