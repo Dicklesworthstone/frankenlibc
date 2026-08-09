@@ -1597,6 +1597,34 @@ pub unsafe extern "C" fn posix_spawnp(
 
 /// POSIX `posix_spawn_file_actions_addclose` — add a close action.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// glibc's file-descriptor validity test for the file-action adders.
+///
+/// Every adder that takes an fd opens with, in effect,
+/// `if (fd < 0 || fd >= __sysconf (_SC_OPEN_MAX)) return EBADF;`. Both halves
+/// matter and fl only had the first: measured against live glibc 2.42 on a host
+/// whose `_SC_OPEN_MAX` is 1048576,
+///
+/// ```text
+///   addclose(-1)        -> EBADF      addclose(1000000)   -> 0
+///   addclose(1048575)   -> 0          addclose(1048576)   -> EBADF
+///   addclose(INT_MAX)   -> EBADF
+/// ```
+///
+/// so the bound is the RLIMIT, not `INT_MAX` and not a constant — which is why
+/// the gate derives its probe values from `sysconf` at runtime instead of
+/// hardcoding one. `addfchdir_np` is the deliberate exception: glibc does not
+/// validate there at all (see its own comment). bd-r1cvsg.
+fn spawn_valid_fd(fd: c_int) -> bool {
+    if fd < 0 {
+        return false;
+    }
+    // SAFETY: sysconf takes an int and has no pointer arguments.
+    let open_max = unsafe { crate::unistd_abi::sysconf(libc::_SC_OPEN_MAX) };
+    // A negative sysconf means "no determinate limit"; glibc's comparison then
+    // cannot reject, so neither do we.
+    open_max < 0 || (fd as i64) < open_max as i64
+}
+
 pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
     file_actions: *mut c_void,
     fd: c_int,
@@ -1604,9 +1632,7 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
     if file_actions.is_null() {
         return libc::EINVAL;
     }
-    // glibc's file-action adders reject a negative fd with EBADF (not EINVAL).
-    // bd-r1cvsg.
-    if fd < 0 {
+    if !spawn_valid_fd(fd) {
         return libc::EBADF;
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
@@ -1626,8 +1652,8 @@ pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
     if file_actions.is_null() {
         return libc::EINVAL;
     }
-    if oldfd < 0 || newfd < 0 {
-        return libc::EBADF; // glibc: __spawn_valid_fd -> EBADF. bd-r1cvsg.
+    if !spawn_valid_fd(oldfd) || !spawn_valid_fd(newfd) {
+        return libc::EBADF; // glibc: fd < 0 || fd >= _SC_OPEN_MAX. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1648,8 +1674,8 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
     if file_actions.is_null() || path.is_null() {
         return libc::EINVAL;
     }
-    if fd < 0 {
-        return libc::EBADF; // glibc: invalid fd -> EBADF. bd-r1cvsg.
+    if !spawn_valid_fd(fd) {
+        return libc::EBADF; // glibc: fd < 0 || fd >= _SC_OPEN_MAX. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1714,11 +1740,12 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addfchdir_np(
     if file_actions.is_null() {
         return libc::EINVAL;
     }
-    // glibc's file-action adders reject a negative fd with EBADF (not EINVAL).
-    // bd-r1cvsg.
-    if fd < 0 {
-        return libc::EBADF;
-    }
+    // NO fd validation here, deliberately. Unlike every other adder, glibc's
+    // addfchdir_np never calls the validity test, so it accepts -1, INT_MIN and
+    // INT_MAX alike and returns 0; a bad fd surfaces at spawn time instead. fl
+    // used to reject fd < 0 with EBADF here, which the bd-r1cvsg fix introduced
+    // by applying the rule uniformly. Measured against live glibc 2.42:
+    //   addfchdir_np(-1) -> 0   addfchdir_np(INT_MIN) -> 0   addfchdir_np(INT_MAX) -> 0
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
     };
@@ -1733,8 +1760,8 @@ pub unsafe fn posix_spawn_file_actions_addclosefrom_np_impl(
     if file_actions.is_null() {
         return libc::EINVAL;
     }
-    if from < 0 {
-        return libc::EBADF; // glibc addclosefrom_np: from < 0 -> EBADF. bd-r1cvsg.
+    if !spawn_valid_fd(from) {
+        return libc::EBADF; // glibc addclosefrom_np: same validity test. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1750,10 +1777,8 @@ pub unsafe fn posix_spawn_file_actions_addtcsetpgrp_np_impl(
     if file_actions.is_null() {
         return libc::EINVAL;
     }
-    // glibc's file-action adders reject a negative fd with EBADF (not EINVAL).
-    // bd-r1cvsg.
-    if fd < 0 {
-        return libc::EBADF;
+    if !spawn_valid_fd(fd) {
+        return libc::EBADF; // glibc: fd < 0 || fd >= _SC_OPEN_MAX. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
