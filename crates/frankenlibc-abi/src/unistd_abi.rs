@@ -4834,6 +4834,38 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
 
+/// The waiter-registration counter, in the sem_t word after the value.
+///
+/// Restored under bd-2g7oyh: 70973cf47 added this so sem_post can skip the
+/// FUTEX_WAKE syscall when nobody is blocked, and e634aff2a deleted the whole
+/// mechanism. Without it every sem_post issues a syscall even uncontended, and
+/// conformance_diff_semaphore's wake test has no registration to observe.
+unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
+    // SAFETY: callers provide a valid, suitably aligned Linux sem_t, which is
+    // at least 32 bytes. Offset four is therefore an aligned AtomicU32 slot.
+    unsafe {
+        &*((sem as *const u8).add(std::mem::size_of::<i32>())
+            as *const std::sync::atomic::AtomicU32)
+    }
+}
+
+/// RAII registration: decrements on every exit path, including the error
+/// returns out of the sleeping loop, so a failed sem_wait cannot leak a
+/// phantom waiter and pin sem_post to the syscall path forever.
+struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
+
+impl Drop for SemWaiterRegistration {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
+    let waiters = unsafe { sem_waiters_as_atomic(sem) };
+    waiters.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    SemWaiterRegistration(waiters)
+}
+
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     match unsafe {
         syscall::sys_futex(
@@ -5110,6 +5142,10 @@ pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_ui
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
+    // Zero the waiter counter too: a sem_t is often re-initialised over reused
+    // storage, and a stale nonzero count would keep sem_post on the syscall
+    // path for the life of the new semaphore.
+    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
     atom.store(value as i32, std::sync::atomic::Ordering::Release);
     0
 }
@@ -5121,7 +5157,9 @@ pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    // No resources to reclaim for futex-based semaphores.
+    // No resources to reclaim for futex-based semaphores, but clear the waiter
+    // counter so reused storage starts clean.
+    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
     0
 }
 
@@ -5133,15 +5171,22 @@ pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
-    let old = atom.fetch_add(1, std::sync::atomic::Ordering::Release);
+    // SeqCst, not Release: it must be ordered against the waiter load below and
+    // against the registering thread's SeqCst recheck in sem_wait. A Release
+    // increment paired with that load permits the store-buffering execution
+    // where neither side sees the other, i.e. a lost wake.
+    let old = atom.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if old < 0 || old == i32::MAX {
         // Overflow protection
         atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     }
-    // Wake one waiter
-    sem_futex_wake(sem, 1);
+    // Only syscall when somebody is actually blocked. Uncontended posts are the
+    // common case and were paying a FUTEX_WAKE each.
+    if unsafe { sem_waiters_as_atomic(sem) }.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+        sem_futex_wake(sem, 1);
+    }
     0
 }
 
@@ -5153,8 +5198,35 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
+    // Uncontended fast path: never registers, so an immediately-available
+    // token costs no extra atomics.
     loop {
         let val = atom.load(std::sync::atomic::Ordering::Acquire);
+        if val > 0
+            && atom
+                .compare_exchange_weak(
+                    val,
+                    val - 1,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            return 0;
+        }
+        if val <= 0 {
+            break;
+        }
+    }
+
+    // Register BEFORE rechecking the value. With the matching SeqCst value
+    // increment and waiter load in sem_post, either the poster observes this
+    // registration and wakes us, or this thread observes the posted token and
+    // never sleeps. That ordering is what rules out the lost-wake
+    // store-buffering execution; registering after the recheck would reopen it.
+    let _registration = unsafe { sem_register_waiter(sem) };
+    loop {
+        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
         if val > 0
             && atom
                 .compare_exchange_weak(
