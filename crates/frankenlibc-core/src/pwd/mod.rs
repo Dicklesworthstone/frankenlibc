@@ -152,15 +152,24 @@ pub fn format_passwd_line(fields: PasswdLineFields<'_>, out: &mut Vec<u8>) {
     out.extend_from_slice(fields.passwd);
     out.push(b':');
     // glibc putpwent special-cases NIS-style entries (name begins with '+' or
-    // '-'): the uid and gid fields are written EMPTY when their value is 0
-    // (e.g. "+user:x::::::"), so a parsed NIS line round-trips unchanged. For
-    // ordinary entries both numbers are always written. bd-nuuk1l.
+    // '-'): the uid and gid fields are written EMPTY **ALWAYS**, whatever the
+    // stored values are — glibc's NIS branch is a single
+    // `fprintf(f, "%s:%s:::%s:%s:%s\n", ...)` with no number in it at all.
+    //
+    // This used to read `if !(nis && uid == 0)`, i.e. empty only when the value
+    // happened to be 0. Measured against the live host, which drops the numbers
+    // regardless:
+    //   name=+user uid=0 gid=0 -> "+user:x:::::"
+    //   name=+user uid=5 gid=0 -> "+user:x:::::"
+    //   name=+user uid=5 gid=7 -> "+user:x:::g:d:s"
+    //   name=root  uid=0 gid=0 -> "root:x:0:0:root:/root:/bin/sh"  (ordinary: kept)
+    // The old form emitted "+user:x:5::::" for the second row. bd-nuuk1l.
     let nis = matches!(fields.name.first(), Some(b'+') | Some(b'-'));
-    if !(nis && fields.uid == 0) {
+    if !nis {
         write_u32_decimal(out, fields.uid);
     }
     out.push(b':');
-    if !(nis && fields.gid == 0) {
+    if !nis {
         write_u32_decimal(out, fields.gid);
     }
     out.push(b':');

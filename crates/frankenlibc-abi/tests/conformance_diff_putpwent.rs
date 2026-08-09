@@ -4,10 +4,22 @@
 //! Differential gate for putpwent/putgrent line formatting (bd-1d6wij), pinning
 //! the NIS +/- fixes (bd-nuuk1l, bd-0vv4zb). For an ordinary entry the line is
 //! "name:passwd:uid:gid:gecos:dir:shell"; for a NIS-style entry whose name
-//! begins with '+'/'-', glibc leaves the uid/gid (resp. gid) field EMPTY when
-//! its value is 0. fl's output must match host glibc byte-for-byte. Uses real
-//! FILE* streams (fl writes via fl's stdio, glibc via glibc's) and compares the
-//! resulting files. No mocks.
+//! begins with '+'/'-', glibc leaves the uid/gid (resp. gid) field EMPTY
+//! **ALWAYS**, whatever the stored value is. fl's output must match host glibc
+//! byte-for-byte. Uses real FILE* streams (fl writes via fl's stdio, glibc via
+//! glibc's) and compares the resulting files. No mocks.
+//!
+//! This header used to say "EMPTY when its value is 0", and so did both
+//! implementations. The `+keep` rows below were already in the table and were
+//! already RED at HEAD — the gate had caught it and nobody had read the result:
+//!
+//! ```text
+//!   putpwent(+keep) fl="+keep:x:7::::"  glibc="+keep:x:::::"
+//!   putgrent(+keep) fl="+keep:x:9:"     glibc="+keep:x::"
+//! ```
+//!
+//! glibc's NIS branch is a single fprintf with no number in it at all, so a
+//! non-zero uid/gid on a NIS entry is dropped exactly like a zero one.
 
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -77,11 +89,14 @@ fn g_write_gr(gr: &libc::group) -> Vec<u8> {
 #[test]
 fn putpwent_matches_glibc() {
     let cases: &[(&str, u32, u32)] = &[
-        ("user", 1000, 1000), // ordinary
+        ("user", 1000, 1000), // ordinary: both numbers written
+        ("root", 0, 0),       // ordinary with 0s: still written, not elided
         ("+", 0, 0),          // NIS: uid+gid empty
         ("+nis", 0, 0),       // NIS: uid+gid empty
         ("-blocked", 0, 0),   // NIS minus
-        ("+keep", 7, 0),      // NIS: uid kept, gid empty
+        ("+keep", 7, 0),      // NIS: uid DROPPED despite being non-zero
+        ("+both", 5, 7),      // NIS: both dropped despite both non-zero
+        ("-both", 5, 7),      // NIS minus, same
     ];
     for &(name, uid, gid) in cases {
         let nm = CString::new(name).unwrap();
@@ -111,10 +126,12 @@ fn putpwent_matches_glibc() {
 fn putgrent_matches_glibc() {
     let cases: &[(&str, u32)] = &[
         ("staff", 50), // ordinary
+        ("root", 0),   // ordinary with 0: still written, not elided
         ("+", 0),      // NIS: gid empty
         ("+nis", 0),   // NIS: gid empty
         ("-blk", 0),   // NIS minus
-        ("+keep", 9),  // NIS: gid kept
+        ("+keep", 9),  // NIS: gid DROPPED despite being non-zero
+        ("-keep", 9),  // NIS minus, same
     ];
     for &(name, gid) in cases {
         let nm = CString::new(name).unwrap();

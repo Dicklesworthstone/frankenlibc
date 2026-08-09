@@ -148,12 +148,18 @@ pub fn format_group_line(
     out.extend_from_slice(passwd);
     out.push(b':');
     // glibc putgrent special-cases NIS-style entries (name begins with '+' or
-    // '-'): the gid field is written EMPTY when its value is 0, so a parsed NIS
-    // group line round-trips unchanged. Mirrors the source-confirmed putpwent
-    // behaviour (bd-nuuk1l); ordinary entries always write the number.
-    // bd-0vv4zb.
+    // '-'): the gid field is written EMPTY **ALWAYS**, whatever the stored
+    // value is. Mirrors putpwent (bd-nuuk1l); ordinary entries always write the
+    // number, and the member list is written either way.
+    //
+    // This used to read `if !(nis && gid == 0)`. Measured against the live host:
+    //   name=+grp  gid=0 members=[]            -> "+grp:x::"
+    //   name=+grp  gid=9 members=[]            -> "+grp:x::"
+    //   name=-grp  gid=0 members=[alice,bob]   -> "-grp:x::alice,bob"
+    //   name=staff gid=50 members=[alice,bob]  -> "staff:x:50:alice,bob"  (ordinary)
+    // The old form emitted "+grp:x:9:" for the second row. bd-0vv4zb.
     let nis = matches!(name.first(), Some(b'+') | Some(b'-'));
-    if !(nis && gid == 0) {
+    if !nis {
         write_u32_decimal(out, gid);
     }
     out.push(b':');
