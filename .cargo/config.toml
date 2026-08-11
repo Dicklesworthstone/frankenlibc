@@ -1,2 +1,2 @@
 [build]
-rustflags = ["-Ctarget-feature=+avx2,+fma"]
+rustflags = ["-Z", "threads=4", "-Ctarget-feature=+avx2,+fma"]
