@@ -26999,3 +26999,76 @@ the next agent should not re-run it.
 ## 2026-08-14 (FrostyCastle) — MEASURED LOSS, campaign, high-load paired rerun
 
 `ELF_SHA256=9f48f9c2489104b87b75f2601aef1514da345218063629b32990cc02edf37c44`; live same-invocation A/A medians/CIs were 1.0186 [0.9745,1.0987], 0.9774 [0.8413,1.0542], 0.9202 [0.8621,1.0234], and 0.9992 [0.9651,1.0984], while paired fl/glibc medians were 15.9653 [12.3913,19.0510], 11.2940 [9.7967,13.5798], 12.0483 [10.8859,15.1929], and 17.1863 [11.8016,22.6599] at 16/64/256/1024 B (all `FL_SLOWER`, n=61, percentile bootstrap 20,000, seed `0x202608140001`); provenance: `vmi1152480`, 10 observed threads, AVX2+SSE4.2, loadavg `46.79 45.10 47.95`. This is a loss with valid directional nulls but not a standing-row magnitude comparison because the host was saturated.
+
+## 2026-08-14 (YellowPlateau) — BALANCED-SQUARE PORT + a correction that matters more: the malloc/free ratio is HOST-DEPENDENT (6.0-6.5x on hz2 vs 10.0-11.2x on vmi1149989)
+
+- **RESULT CLASS:** `result_class=campaign`, LOSS. Third run today, first using the balanced-square
+  design ported from `franken_networkx/scripts/balanced_square_ab.py` (72761094c).
+- **ELF SHA-256 (self-reported in-process):**
+  `e2c6a19ba676650859fc9c7f5753107db1a34fc9c1ae62351cec8a7eb43417c2`
+- **RUN_PROVENANCE:** `host=hetzner2 observed_threads=16 governor=unavailable (container)
+  isa=avx512f+avx2+sse4.2 loadavg=3.36 3.07 3.30`, worker `hz2`. Contrast the two earlier runs
+  today: `host=vmi1149989 observed_threads=10 isa=avx2+sse4.2 loadavg=24.31`.
+
+| sz (B) | square ratio | square 95% CI | null_fl | null_glibc | verdict |
+|---|---|---|---|---|---|
+| 16 | **6.4354** | [6.1823, 6.5792] | 0.9986 | 1.0005 | ADMISSIBLE FL_SLOWER |
+| 64 | **6.1790** | [6.0209, 6.4264] | 0.9997 | 0.9998 | ADMISSIBLE FL_SLOWER |
+| 256 | **6.1072** | [5.4398, 6.4302] | 1.0009 | 0.9995 | ADMISSIBLE FL_SLOWER |
+| 1024 | **6.2456** | [5.5327, 6.4496] | 1.0012 | 0.9991 | ADMISSIBLE FL_SLOWER |
+
+- **THE HEADLINE FINDING — "10.010x" IS NOT A PROPERTY OF THE CODE ALONE.** Same commit, same
+  probe, same day, two workers:
+
+  | | fl ns/op | glibc ns/op | ratio |
+  |---|---|---|---|
+  | hz2 (16T, avx512f, loadavg 3.4) | **33.2–37.4** | **5.4–6.1** | **6.0–6.5x** |
+  | vmi1149989 (10T, avx2, loadavg 24.3) | 46.2–52.1 | 4.37–5.03 | 10.0–11.2x |
+
+  Both halves move and they move in OPPOSITE directions: fl is ~31% faster on hz2 while glibc is
+  ~19% SLOWER there. The ratio is therefore host-sensitive by a factor of ~1.7, and quoting a single
+  number for it is a category error. **bd-dcrhgl's success criterion ("8.05x -> ~5x") is
+  unfalsifiable as written**, because ~6.2x is already achieved on hz2 today with no lever at all,
+  while ~10x persists on vmi1149989. Any allocator lever must name its host and re-measure the
+  baseline on that same host in the same session.
+- **THIS ALSO SHARPENS THE LOAD-SENSITIVITY CLAIM I MADE AND THEN WEAKENED TODAY.** First run
+  (noisy) suggested fl degrades harder than glibc; second run (same worker, tighter) made me
+  withdraw it to "only when alternation fails to absorb the noise". This third run supports the
+  original direction on clean evidence: moving to the quiet, wider-ISA host bought fl 31% and cost
+  glibc 19%. fl's allocator is the load- and platform-sensitive arm. That is consistent with
+  bd-dcrhgl's decomposition (shared fallback table + reentry guard) versus glibc's thread-local
+  tcache.
+- **PORT VALIDATION — the square and the design it replaces agree, and the square's null is ~5x
+  tighter.** Both were run in the same invocation:
+
+  | sz | square | paired | square nulls | paired null (CI) |
+  |---|---|---|---|---|
+  | 16 | 6.4354 | 6.2191 | 0.9986 / 1.0005 | 1.0078 [0.9952, 1.0440] |
+  | 64 | 6.1790 | 6.1454 | 0.9997 / 0.9998 | 0.9952 [0.9881, 1.0063] |
+  | 256 | 6.1072 | 6.1865 | 1.0009 / 0.9995 | 1.0026 [0.9934, 1.0077] |
+  | 1024 | 6.2456 | **5.4180** | 1.0012 / 0.9991 | 1.0009 [0.9958, 1.0081] |
+
+  Every square null lands within 0.0014 of 1.0; the paired nulls run to 1.0440 at the top of their
+  CI. The sz=1024 disagreement is the instructive one: paired's glibc arm read 6.12 ns there against
+  5.41–5.49 at every other size, i.e. one arm caught a slow patch and deflated the ratio, while the
+  square — sampling each arm at four symmetric slot positions per round — did not. That is precisely
+  the failure mode the balanced square exists to prevent, caught on its first run here.
+- **WHAT WAS PORTED**, from `franken_networkx/scripts/balanced_square_ab.py` (72761094c), not
+  hand-rolled: the `ABBAABBA` within-round square; the contemporaneous per-arm A/A null (each arm's
+  first-half slots over its second-half slots, so contention is caught per row after the fact rather
+  than excluded up front by an unsatisfiable quiescence gate); `NULL_BOUND = ±0.02` with an explicit
+  `NULL-FAILED` verdict; and their `--expect-elf` guard as `EXPECT_ELF_SHA`.
+  **Note for other repos: frankenlibc never had the host-wide quiescence precondition that
+  root-caused this for franken_networkx.** `malloc_st_probe` has no such gate and produced rows on a
+  loadavg-24 host earlier today. The port was worth doing anyway for the three reasons above; the
+  blocker here was rch admission, which is a different problem.
+- **FIDELITY DEVIATION, disclosed:** their `statistics.median` of a 2-element half returns the mean;
+  this port's `pctl` helper returns the upper of the two. Applied identically to numerator and
+  denominator, so directionally unbiased, but noisier than their statistic. Given the observed nulls
+  (within 0.0014 of 1.0) it is not currently material; fix it before it ever is.
+- **STILL NOT CLAIMED:** `FREE_NULL fl/glibc` has now read 1.033, 0.938 and 0.877 across three runs.
+  It is an unpaired point estimate with no A/A control and it straddles 1.0. Route it through the
+  square before anyone claims a `free(NULL)` win.
+- **CONCRETE RETRY PREDICATE.** Re-measure the allocator baseline on hz2 AND on a vmi-class worker
+  in the same session before and after any lever, and report both. A lever validated only on hz2
+  cannot be credited with closing a gap that is 1.7x larger on vmi-class hardware, and vice versa.
