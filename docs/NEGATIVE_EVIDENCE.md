@@ -24,6 +24,26 @@ records `legacy_incumbent=host-glibc`, `incumbent_provenance=dlmopen-lmid-newlm`
 uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
 `incumbent_bootstrap_median_ci`, and `null_bootstrap_median_ci`.
 
+## 2026-08-14 (Codex) — REJECTED: `strcasestr` is measurably slower than in-process glibc (`bd-1gm7mw`)
+
+- **MACHINE-READABLE SAME-INVOCATION EVIDENCE:** `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=1.4742`; `incumbent_bootstrap_median_ci=[1.4195,1.5577]`;
+  `null_bootstrap_median_ci=[0.8951,1.2626]` (the envelope over both FL/FL and glibc/glibc
+  square controls); `bench_elf_sha256=fcc0e8c91ac95ea89d882404911705b204929447613a6d32b363e57b8c0440c4`.
+  Same-invocation A/A null control median **1.0217x**, bootstrap median 95% CI
+  **[0.9565, 1.1698]** for the found-case FL/FL square.
+
+- `string_inprocess_survey_bench` ran an ABBA/BAAB balanced square pinned to CPU 0, with
+  FrankenLibC core and the real in-process glibc `strcasestr` called in every round. The executing
+  probe self-reported ELF SHA-256 `fcc0e8c91ac95ea89d882404911705b204929447613a6d32b363e57b8c0440c4`.
+  Across 61 rounds × 20,000 calls, FL/glibc was **1.4742x** (95% bootstrap CI
+  `[1.4195, 1.5577]`) for the found needle and **0.8434x** (`[0.7816, 0.8801]`) for absent-60.
+  Contemporaneous A/A nulls were FL **1.0217** (`[0.9565, 1.1698]`) / **0.9816**
+  (`[0.9136, 1.0564]`) and glibc **1.0401** (`[0.8951, 1.2626]`) / **1.0227**
+  (`[0.9581, 1.1459]`) respectively. The found-case loss blocks a promotion; the probe is
+  retained to judge the next one-lever fix.
+
 ## 2026-07-16 (cod / codex-root) — REJECTED: fused BSD IPv4 component scan regressed `inet_addr` (`bd-us7dho`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`

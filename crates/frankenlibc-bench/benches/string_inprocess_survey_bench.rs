@@ -10,10 +10,13 @@
 //! Run: `cargo bench -p frankenlibc-bench --bench string_inprocess_survey_bench`
 
 use std::ffi::{c_char, c_int, c_void};
+use std::fmt::Write as _;
 use std::hint::black_box;
+use std::time::Instant;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_core::string::str as core_str;
+use sha2::{Digest, Sha256};
 
 unsafe extern "C" {
     fn strspn(s: *const c_char, accept: *const c_char) -> usize;
@@ -58,7 +61,242 @@ unsafe extern "C" {
     fn strchrnul(s: *const c_char, c: c_int) -> *const c_char;
 }
 
+/// The only publishable path for the strcasestr rows. Criterion samples each
+/// function in a separate time interval, which cannot distinguish a real
+/// implementation difference from a moving host baseline. This probe instead
+/// places both implementations in every round, with a contemporaneous A/A
+/// null derived from each arm's symmetric square positions.
+const STRCASESTR_SQUARE: [u8; 8] = *b"ABBAABBA";
+const STRCASESTR_ROUNDS: usize = 61;
+const STRCASESTR_ITERS: usize = 20_000;
+const STRCASESTR_BOOTSTRAP_RESAMPLES: usize = 4_000;
+const STRCASESTR_BOOTSTRAP_SEED: u64 = 0x5c_a5_e5_71_2026_0814;
+
+#[derive(Debug)]
+struct StrcasestrSquare {
+    ratio: f64,
+    ratio_ci95: (f64, f64),
+    null_fl: f64,
+    null_fl_ci95: (f64, f64),
+    null_glibc: f64,
+    null_glibc_ci95: (f64, f64),
+    checksum: u64,
+}
+
+#[inline]
+fn strcasestr_median(samples: &[f64]) -> f64 {
+    assert!(!samples.is_empty());
+    let mut ordered = samples.to_vec();
+    ordered.sort_by(|left, right| left.total_cmp(right));
+    ordered[ordered.len() / 2]
+}
+
+struct StrcasestrRng(u64);
+
+impl StrcasestrRng {
+    #[inline]
+    fn next_index(&mut self, upper: usize) -> usize {
+        let mut value = self.0;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.0 = value;
+        (value.wrapping_mul(0x2545_f491_4f6c_dd1d) % upper as u64) as usize
+    }
+}
+
+fn strcasestr_bootstrap_ci95(ratios: &[f64]) -> (f64, f64) {
+    assert!(!ratios.is_empty());
+    let mut rng = StrcasestrRng(STRCASESTR_BOOTSTRAP_SEED);
+    let mut resampled = Vec::with_capacity(STRCASESTR_BOOTSTRAP_RESAMPLES);
+    let mut draw = vec![0.0; ratios.len()];
+    for _ in 0..STRCASESTR_BOOTSTRAP_RESAMPLES {
+        for value in &mut draw {
+            *value = ratios[rng.next_index(ratios.len())];
+        }
+        resampled.push(strcasestr_median(&draw));
+    }
+    resampled.sort_by(|left, right| left.total_cmp(right));
+    let lower = ((resampled.len() - 1) as f64 * 0.025).round() as usize;
+    let upper = ((resampled.len() - 1) as f64 * 0.975).round() as usize;
+    (resampled[lower], resampled[upper])
+}
+
+fn strcasestr_timed_batch<F>(operation: &mut F) -> (f64, u64)
+where
+    F: FnMut() -> u64,
+{
+    let start = Instant::now();
+    let mut checksum = 0u64;
+    for _ in 0..STRCASESTR_ITERS {
+        checksum ^= black_box(operation());
+    }
+    let elapsed_ns = start.elapsed().as_secs_f64() * 1_000_000_000.0;
+    (elapsed_ns / STRCASESTR_ITERS as f64, checksum)
+}
+
+fn strcasestr_balanced_square<F, G>(mut fl: F, mut glibc: G) -> StrcasestrSquare
+where
+    F: FnMut() -> u64,
+    G: FnMut() -> u64,
+{
+    let mut ratios = Vec::with_capacity(STRCASESTR_ROUNDS);
+    let mut fl_nulls = Vec::with_capacity(STRCASESTR_ROUNDS);
+    let mut glibc_nulls = Vec::with_capacity(STRCASESTR_ROUNDS);
+    let mut checksum = 0u64;
+
+    for _ in 0..STRCASESTR_ROUNDS {
+        let mut fl_slots = Vec::with_capacity(4);
+        let mut glibc_slots = Vec::with_capacity(4);
+        for arm in STRCASESTR_SQUARE {
+            let (ns_per_call, arm_checksum) = if arm == b'A' {
+                strcasestr_timed_batch(&mut fl)
+            } else {
+                strcasestr_timed_batch(&mut glibc)
+            };
+            checksum ^= arm_checksum;
+            if arm == b'A' {
+                fl_slots.push(ns_per_call);
+            } else {
+                glibc_slots.push(ns_per_call);
+            }
+        }
+
+        ratios.push(strcasestr_median(&fl_slots) / strcasestr_median(&glibc_slots));
+        fl_nulls.push(strcasestr_median(&fl_slots[..2]) / strcasestr_median(&fl_slots[2..]));
+        glibc_nulls
+            .push(strcasestr_median(&glibc_slots[..2]) / strcasestr_median(&glibc_slots[2..]));
+    }
+
+    StrcasestrSquare {
+        ratio: strcasestr_median(&ratios),
+        ratio_ci95: strcasestr_bootstrap_ci95(&ratios),
+        null_fl: strcasestr_median(&fl_nulls),
+        null_fl_ci95: strcasestr_bootstrap_ci95(&fl_nulls),
+        null_glibc: strcasestr_median(&glibc_nulls),
+        null_glibc_ci95: strcasestr_bootstrap_ci95(&glibc_nulls),
+        checksum,
+    }
+}
+
+/// Pin only when explicitly requested. A run without a caller-selected CPU is
+/// rejected rather than accidentally publishing another noisy shared-worker row.
+fn pin_strcasestr_probe_cpu() -> usize {
+    let cpu = std::env::var("FRANKENLIBC_STRCASESTR_CPU")
+        .expect("set FRANKENLIBC_STRCASESTR_CPU to a quiet CPU before measuring strcasestr")
+        .parse::<usize>()
+        .expect("FRANKENLIBC_STRCASESTR_CPU must be an unsigned CPU number");
+    assert!(
+        cpu < libc::CPU_SETSIZE as usize,
+        "requested CPU is out of range"
+    );
+
+    // SAFETY: a zeroed `cpu_set_t` is the documented empty affinity set that
+    // `CPU_ZERO` initializes before `CPU_SET` adds the validated CPU number.
+    let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+    unsafe {
+        // SAFETY: `set` is a valid writable `cpu_set_t` and `cpu` is in range.
+        libc::CPU_ZERO(&mut set);
+        libc::CPU_SET(cpu, &mut set);
+    }
+    let rc = unsafe {
+        // SAFETY: `set` is a fully initialized affinity set; pid 0 addresses
+        // this probe process and the supplied size matches its concrete type.
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &raw const set)
+    };
+    assert_eq!(
+        rc,
+        0,
+        "could not pin strcasestr probe to CPU {cpu}: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: `sched_getcpu` has no pointer arguments and only reads kernel state.
+    let observed = unsafe { libc::sched_getcpu() };
+    assert_eq!(
+        observed, cpu as i32,
+        "strcasestr probe escaped its requested CPU"
+    );
+    cpu
+}
+
+fn self_reported_elf_sha256() -> String {
+    let executable = std::env::current_exe().expect("strcasestr probe executable path");
+    let bytes = std::fs::read(&executable).expect("strcasestr probe executable bytes");
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
+fn print_strcasestr_square(label: &str, result: &StrcasestrSquare) {
+    println!(
+        "STRCASESTR_SQUARE case={label} cpu={} rounds={} iters={} seed={:#x} \\
+         fl_over_glibc={:.4} ci95=[{:.4},{:.4}] null_fl={:.4} null_fl_ci95=[{:.4},{:.4}] \\
+         null_glibc={:.4} null_glibc_ci95=[{:.4},{:.4}] checksum={:#x}",
+        unsafe { libc::sched_getcpu() },
+        STRCASESTR_ROUNDS,
+        STRCASESTR_ITERS,
+        STRCASESTR_BOOTSTRAP_SEED,
+        result.ratio,
+        result.ratio_ci95.0,
+        result.ratio_ci95.1,
+        result.null_fl,
+        result.null_fl_ci95.0,
+        result.null_fl_ci95.1,
+        result.null_glibc,
+        result.null_glibc_ci95.0,
+        result.null_glibc_ci95.1,
+        result.checksum,
+    );
+}
+
+fn run_strcasestr_interleaved_probe() {
+    let pinned_cpu = pin_strcasestr_probe_cpu();
+    let elf_sha256 = self_reported_elf_sha256();
+    println!("STRCASESTR_PROBE_PINNED cpu={pinned_cpu} elf_sha256={elf_sha256}");
+
+    let hay = c"the quick brown fox jumps over the lazy dog and then some more text needle_here";
+    let needle = c"NEEDLE_HERE";
+    let found = strcasestr_balanced_square(
+        || {
+            core_str::strcasestr(black_box(hay.to_bytes()), black_box(needle.to_bytes())).is_some()
+                as u64
+        },
+        || unsafe {
+            (!strcasestr(black_box(hay.as_ptr()), black_box(needle.as_ptr())).is_null()) as u64
+        },
+    );
+    print_strcasestr_square("found", &found);
+
+    let hay_absent = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let needle_absent = c"zoo";
+    let absent = strcasestr_balanced_square(
+        || {
+            core_str::strcasestr(
+                black_box(hay_absent.to_bytes()),
+                black_box(needle_absent.to_bytes()),
+            )
+            .is_some() as u64
+        },
+        || unsafe {
+            (!strcasestr(
+                black_box(hay_absent.as_ptr()),
+                black_box(needle_absent.as_ptr()),
+            )
+            .is_null()) as u64
+        },
+    );
+    print_strcasestr_square("absent60", &absent);
+}
+
 fn bench(c: &mut Criterion) {
+    if std::env::var_os("FRANKENLIBC_STRCASESTR_INTERLEAVED_PROBE").is_some() {
+        run_strcasestr_interleaved_probe();
+        return;
+    }
+
     // ---- strspn (bitmap) ---- match IN-CHUNK at index 15 (exercises the SIMD
     // mask trailing_zeros position, not just the scalar remainder tail).
     let span = c"aaaaaaaaaaaaaaaXaaaaaaaaaaaaaaaaaaaa"; // 15 accept then 'X' (non-accept)
