@@ -14,6 +14,7 @@ use std::ptr;
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max;
 use frankenlibc_abi::locale_abi::{
     bindtextdomain, catclose, catgets, catopen, dgettext, duplocale, freelocale, gettext,
     locale_reset_catalog_state_for_tests, locale_reset_gettext_state_for_tests, localeconv,
@@ -128,6 +129,17 @@ fn setlocale_set_posix_locale() {
     assert!(!result.is_null());
     let name = unsafe { CStr::from_ptr(result) };
     assert_eq!(name.to_bytes(), b"C");
+}
+
+#[test]
+fn ctype_mb_cur_max_matches_supported_c_and_posix_locales() {
+    let c_name = CString::new("C").unwrap();
+    assert!(!unsafe { setlocale(libc::LC_ALL, c_name.as_ptr()) }.is_null());
+    assert_eq!(unsafe { __ctype_get_mb_cur_max() }, 1);
+
+    let posix_name = CString::new("POSIX").unwrap();
+    assert!(!unsafe { setlocale(libc::LC_ALL, posix_name.as_ptr()) }.is_null());
+    assert_eq!(unsafe { __ctype_get_mb_cur_max() }, 1);
 }
 
 #[test]
