@@ -2,8 +2,8 @@
   "version": "v1",
   "family": "stdio/libio",
   "captured_at": "2026-05-13T08:45:00Z",
-  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-02 C99 scanf alias, C99 va_list scanf alias, wide-scanf alias, stream state, fdopen, fcloseall, and unlocked status/flush symbols. Outputs classify controlled string/tmpfile scanf, empty-stdin EOF, empty wide-format, EOF clear/status, flush, and stream creation classes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stdin payloads, thread ids, timestamps, or host FILE internals.",
-  "spec_reference": "ISO C99 scanf alias and va_list forwarding semantics for __isoc99_sscanf/__isoc99_vfscanf/__isoc99_vscanf/__isoc99_vsscanf/__isoc99_wscanf plus POSIX/GNU stdio state, fdopen, fcloseall, and unlocked clearerr/feof/ferror/fflush semantics",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-stdio-libio wave-02 C99 scanf alias, C99/POSIX va_list scanf alias, wide-scanf alias, stream state, fdopen, fcloseall, and unlocked status/flush symbols. Outputs classify controlled string/tmpfile scanf, empty-stdin EOF, empty wide-format, EOF clear/status, flush, and stream creation classes without recording stream addresses, file descriptors, filesystem paths, stdout bytes, stdin payloads, thread ids, timestamps, or host FILE internals.",
+  "spec_reference": "ISO C99 scanf alias and va_list forwarding semantics for __isoc99_sscanf/__isoc99_vfscanf/__isoc99_vscanf/__isoc99_vsscanf/__isoc99_wscanf plus POSIX vsscanf va_list forwarding and GNU/POSIX stdio state, fdopen, fcloseall, and unlocked clearerr/feof/ferror/fflush semantics",
   "campaign": {
     "bead": "bd-kgy3r.4",
     "campaign_id": "fcq-stdio-libio",
@@ -16,6 +16,7 @@
       "__isoc99_vscanf",
       "__isoc99_vsscanf",
       "__isoc99_wscanf",
+      "vsscanf",
       "clearerr",
       "clearerr_unlocked",
       "fcloseall",

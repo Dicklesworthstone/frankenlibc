@@ -13,6 +13,7 @@ const FIRST_WAVE_SYMBOLS: &[&str] = &[
     "__isoc99_vscanf",
     "__isoc99_vsscanf",
     "__isoc99_wscanf",
+    "vsscanf",
     "clearerr",
     "clearerr_unlocked",
     "fcloseall",
@@ -325,6 +326,9 @@ fn stdio_libio_wave02_spec_reference_names_required_surfaces() -> Result<(), Str
             && fixture.spec_reference.contains("__isoc99_sscanf")
             && fixture.spec_reference.contains("__isoc99_vfscanf")
             && fixture.spec_reference.contains("__isoc99_wscanf")
+            && fixture
+                .spec_reference
+                .contains("POSIX vsscanf va_list forwarding")
             && fixture.spec_reference.contains("clearerr")
             && fixture.spec_reference.contains("fdopen")
             && fixture.spec_reference.contains("unlocked"),
