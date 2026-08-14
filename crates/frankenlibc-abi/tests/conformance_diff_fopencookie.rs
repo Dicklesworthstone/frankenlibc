@@ -62,6 +62,7 @@ mod g {
         pub fn fread(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fflush(f: *mut c_void) -> c_int;
+        pub fn setvbuf(f: *mut c_void, buf: *mut c_char, mode: c_int, size: usize) -> c_int;
         pub fn fclose(f: *mut c_void) -> c_int;
         pub fn ferror(f: *mut c_void) -> c_int;
         pub fn feof(f: *mut c_void) -> c_int;
@@ -122,7 +123,13 @@ macro_rules! null_hook_write {
 }
 
 fn g_open(mode: &[u8]) -> *mut c_void {
-    unsafe { g::fopencookie(std::ptr::null_mut(), mode.as_ptr().cast(), CookieIoFuncs::all_null()) }
+    unsafe {
+        g::fopencookie(
+            std::ptr::null_mut(),
+            mode.as_ptr().cast(),
+            CookieIoFuncs::all_null(),
+        )
+    }
 }
 
 fn fl_open(mode: &[u8]) -> *mut c_void {
@@ -133,6 +140,117 @@ fn fl_open(mode: &[u8]) -> *mut c_void {
             mode.as_ptr().cast(),
             (&funcs as *const CookieIoFuncs).cast(),
         )
+    }
+}
+
+#[derive(Debug, Default)]
+struct WriteHookState {
+    calls: usize,
+    bytes: usize,
+}
+
+unsafe extern "C" fn recording_write(
+    cookie: *mut c_void,
+    _buf: *const c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: each helper below passes a live `WriteHookState` as the cookie and
+    // does not close the stream until after all callback observations complete.
+    let state = unsafe { &mut *cookie.cast::<WriteHookState>() };
+    state.calls += 1;
+    state.bytes += count;
+    count as isize
+}
+
+fn recording_funcs() -> CookieIoFuncs {
+    CookieIoFuncs {
+        read: std::ptr::null_mut(),
+        write: recording_write as *const () as *mut c_void,
+        seek: std::ptr::null_mut(),
+        close: std::ptr::null_mut(),
+    }
+}
+
+/// `(fwrite result, callback calls/bytes after fwrite, fflush result,
+/// callback calls/bytes after fflush, ferror after fflush)`.
+type BufferedWriteObs = (usize, usize, usize, c_int, usize, usize, c_int);
+
+fn g_recording_write(mode: c_int) -> BufferedWriteObs {
+    let mut state = WriteHookState::default();
+    let stream = unsafe {
+        g::fopencookie(
+            (&mut state as *mut WriteHookState).cast(),
+            c"w".as_ptr(),
+            recording_funcs(),
+        )
+    };
+    assert!(!stream.is_null());
+    assert_eq!(
+        unsafe { g::setvbuf(stream, std::ptr::null_mut(), mode, 64) },
+        0
+    );
+    let wrote = unsafe { g::fwrite(b"hello".as_ptr().cast(), 1, 5, stream) };
+    let after_write = (state.calls, state.bytes);
+    let flushed = unsafe { g::fflush(stream) };
+    let after_flush = (state.calls, state.bytes);
+    let error = unsafe { g::ferror(stream) };
+    assert_eq!(unsafe { g::fclose(stream) }, 0);
+    (
+        wrote,
+        after_write.0,
+        after_write.1,
+        flushed,
+        after_flush.0,
+        after_flush.1,
+        error,
+    )
+}
+
+fn fl_recording_write(mode: c_int) -> BufferedWriteObs {
+    let mut state = WriteHookState::default();
+    let funcs = recording_funcs();
+    let stream = unsafe {
+        fl::fopencookie(
+            (&mut state as *mut WriteHookState).cast(),
+            c"w".as_ptr(),
+            (&funcs as *const CookieIoFuncs).cast(),
+        )
+    };
+    assert!(!stream.is_null());
+    assert_eq!(
+        unsafe { fl::setvbuf(stream, std::ptr::null_mut(), mode, 64) },
+        0
+    );
+    let wrote = unsafe { fl::fwrite(b"hello".as_ptr().cast(), 1, 5, stream) };
+    let after_write = (state.calls, state.bytes);
+    let flushed = unsafe { fl::fflush(stream) };
+    let after_flush = (state.calls, state.bytes);
+    let error = unsafe { fl::ferror(stream) };
+    assert_eq!(unsafe { fl::fclose(stream) }, 0);
+    (
+        wrote,
+        after_write.0,
+        after_write.1,
+        flushed,
+        after_flush.0,
+        after_flush.1,
+        error,
+    )
+}
+
+#[test]
+fn nonnull_write_hook_buffering_matches_glibc() {
+    for (mode, expected) in [
+        (0, (5, 0, 0, 0, 1, 5, 0)), // _IOFBF: callback waits for fflush.
+        (2, (5, 1, 5, 0, 1, 5, 0)), // _IONBF: callback runs during fwrite.
+    ] {
+        let gg = g_recording_write(mode);
+        let ff = fl_recording_write(mode);
+        assert_eq!(gg, expected, "glibc oracle drifted for setvbuf mode {mode}");
+        assert_eq!(
+            ff, gg,
+            "cookie write buffering mismatch for setvbuf mode {mode}"
+        );
     }
 }
 
@@ -178,7 +296,13 @@ fn null_read_hook_matches_glibc() {
 #[test]
 fn null_write_hook_matches_glibc() {
     let gg = null_hook_write!(g_open(b"w\0"), g::fwrite, g::fflush, g::ferror, g::fclose);
-    let ff = null_hook_write!(fl_open(b"w\0"), fl::fwrite, fl::fflush, fl::ferror, fl::fclose);
+    let ff = null_hook_write!(
+        fl_open(b"w\0"),
+        fl::fwrite,
+        fl::fflush,
+        fl::ferror,
+        fl::fclose
+    );
 
     // errno is untouched by every step, on both sides.
     assert_eq!(
@@ -212,7 +336,17 @@ fn null_hooks_never_set_ebadf() {
     assert_ne!(r.1, libc::EBADF, "fl set EBADF on a NULL read hook");
     assert_eq!(r.1, SENTINEL_ERRNO, "fl must leave errno untouched");
 
-    let w = null_hook_write!(fl_open(b"w\0"), fl::fwrite, fl::fflush, fl::ferror, fl::fclose);
+    let w = null_hook_write!(
+        fl_open(b"w\0"),
+        fl::fwrite,
+        fl::fflush,
+        fl::ferror,
+        fl::fclose
+    );
     assert_ne!(w.0.1, libc::EBADF, "fl set EBADF on a NULL write hook");
-    assert_ne!(w.1.1, libc::EBADF, "fl set EBADF flushing a NULL write hook");
+    assert_ne!(
+        w.1.1,
+        libc::EBADF,
+        "fl set EBADF flushing a NULL write hook"
+    );
 }

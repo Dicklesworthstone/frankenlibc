@@ -1957,46 +1957,11 @@ unsafe fn write_bytes_without_runtime_policy(
         if !stream_exists(id) {
             return 0;
         }
-
-        let mut written_total = 0usize;
-        while written_total < bytes.len() {
-            let rc = unsafe {
-                cookie_stream_write(
-                    id,
-                    bytes[written_total..].as_ptr(),
-                    bytes.len().saturating_sub(written_total),
-                )
-            };
-            let errno_val = if rc < 0 {
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            } else {
-                0
-            };
-            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
-                StreamPolicyAction::Retry => continue,
-                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
-                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
-            }
-            if rc <= 0 {
-                break;
-            }
-            let advanced = (rc as usize).min(bytes.len() - written_total);
-            if advanced == 0 {
-                break;
-            }
-            written_total += advanced;
-        }
-
-        if let Some(cell) = stream_cell(id) {
-            let mut stream_obj_guard = cell.lock();
-            let stream_obj = &mut *stream_obj_guard;
-            let delta = written_total.min(i64::MAX as usize) as i64;
-            stream_obj.set_offset(stream_obj.offset().saturating_add(delta));
-            if written_total < bytes.len() {
-                stream_obj.set_error();
-            }
-        }
-        return written_total;
+        let Some(cell) = stream_cell(id) else {
+            return 0;
+        };
+        let mut stream_obj = cell.lock();
+        return unsafe { cookie_buffer_write(id, &mut stream_obj, bytes) };
     }
 
     // RESOLVED (bd-h0n1mf, was PERF bd-hqo6b6): the write path now resolves the per-stream
@@ -2560,10 +2525,13 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
 
-    // Cookie-backed streams close via callback and cookie-registry teardown.
+    // Cookie-backed streams flush their ordinary stdio buffer before invoking
+    // the close callback.  `fclose` still performs the close on a flush error,
+    // but reports that error to the caller as glibc does.
     if is_cookie_stream(id) {
+        let flushed = unsafe { flush_cookie_stream(id, s) };
         let rc = unsafe { cookie_stream_close(id) };
-        return if rc == 0 { 0 } else { libc::EOF };
+        return if flushed && rc == 0 { 0 } else { libc::EOF };
     }
 
     // Memory-backed streams: sync data, then clean up.
@@ -2755,7 +2723,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
             let mut s_guard = cell.lock();
             let s = &mut *s_guard;
             let ok = if is_cookie_stream(id) {
-                true
+                unsafe { flush_cookie_stream(id, s) }
             } else if s.is_mem_backed() {
                 let _ = sync_fast_fixed_mem_read_to_stream(id, s);
                 unsafe {
@@ -2778,7 +2746,13 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 
     let id = canonical_stream_id(stream);
     if is_cookie_stream(id) {
-        let adverse = !stream_exists(id);
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
+            return libc::EOF;
+        };
+        let mut s = cell.lock();
+        let flushed = unsafe { flush_cookie_stream(id, &mut s) };
+        let adverse = !flushed;
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
         return if adverse { libc::EOF } else { 0 };
     }
@@ -3014,19 +2988,16 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         }
-        let rc = unsafe { cookie_stream_write(id, [byte].as_ptr(), 1) };
         let Some(cell) = stream_cell(id) else {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         };
         let mut s_guard = cell.lock();
         let s = &mut *s_guard;
-        if rc > 0 {
-            s.set_offset(s.offset().saturating_add(1));
+        if unsafe { cookie_buffer_write(id, s, &[byte]) } == 1 {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
             return c;
         }
-        s.set_error();
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     }
@@ -3588,36 +3559,12 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return libc::EOF;
         }
-
-        let mut written = 0usize;
-        while written < bytes.len() {
-            let rc = unsafe {
-                cookie_stream_write(
-                    id,
-                    bytes[written..].as_ptr(),
-                    bytes.len().saturating_sub(written),
-                )
-            };
-            if rc <= 0 {
-                break;
-            }
-            let advanced = (rc as usize).min(bytes.len() - written);
-            if advanced == 0 {
-                break;
-            }
-            written += advanced;
-        }
-
-        let adverse = written < bytes.len();
-        if let Some(cell) = stream_cell(id) {
-            let mut stream_obj_guard = cell.lock();
-            let stream_obj = &mut *stream_obj_guard;
-            let delta = written.min(i64::MAX as usize) as i64;
-            stream_obj.set_offset(stream_obj.offset().saturating_add(delta));
-            if adverse {
-                stream_obj.set_error();
-            }
-        }
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return libc::EOF;
+        };
+        let mut stream_obj = cell.lock();
+        let adverse = unsafe { cookie_buffer_write(id, &mut stream_obj, bytes) } < bytes.len();
 
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -3968,46 +3915,13 @@ pub unsafe extern "C" fn fwrite(
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return 0;
         }
-
-        let mut written_total = 0usize;
-        while written_total < total {
-            let rc = unsafe {
-                cookie_stream_write(
-                    id,
-                    src[written_total..].as_ptr(),
-                    total.saturating_sub(written_total),
-                )
-            };
-            let errno_val = if rc < 0 {
-                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-            } else {
-                0
-            };
-            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
-                StreamPolicyAction::Retry => continue,
-                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
-                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
-            }
-            if rc <= 0 {
-                break;
-            }
-            let advanced = (rc as usize).min(total - written_total);
-            if advanced == 0 {
-                break;
-            }
-            written_total += advanced;
-        }
-
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return 0;
+        };
+        let mut s = cell.lock();
+        let written_total = unsafe { cookie_buffer_write(id, &mut s, src) };
         let adverse = written_total < total;
-        if let Some(cell) = stream_cell(id) {
-            let mut s_guard = cell.lock();
-            let s = &mut *s_guard;
-            let delta = written_total.min(i64::MAX as usize) as i64;
-            s.set_offset(s.offset().saturating_add(delta));
-            if adverse {
-                s.set_error();
-            }
-        }
         let complete_items = written_total.checked_div(size).unwrap_or(0);
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -10440,6 +10354,91 @@ pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize
     -1
 }
 
+/// Deliver one contiguous byte span to a cookie write callback, retrying only
+/// the callback results which the shared stream policy classifies as retryable.
+unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
+    let mut written = 0usize;
+    while written < bytes.len() {
+        let rc =
+            unsafe { cookie_stream_write(id, bytes[written..].as_ptr(), bytes.len() - written) };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
+            StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+        }
+        if rc <= 0 {
+            break;
+        }
+        written += (rc as usize).min(bytes.len() - written);
+    }
+    written
+}
+
+/// Buffer a cookie write using the same `StdioStream` policy as fd streams.
+///
+/// Cookie streams have no kernel fd, so only the eventual sink differs: full
+/// and line-buffered writes accumulate in `StdioStream`, while an unbuffered
+/// write reaches the callback immediately.  The logical offset advances when
+/// the caller's bytes are accepted into that buffer, matching stdio's visible
+/// write progress rather than callback timing.
+unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8]) -> usize {
+    let Some(result) = stream.buffer_write(bytes) else {
+        return 0;
+    };
+    let flush_needed = result.flush_needed;
+    let flushed_from_buffer = result.flushed_from_buffer;
+    let flush_data = result.flush_data.into_owned();
+
+    if !flush_needed {
+        stream.set_offset(
+            stream
+                .offset()
+                .saturating_add(bytes.len().min(i64::MAX as usize) as i64),
+        );
+        return bytes.len();
+    }
+
+    let flushed = unsafe { cookie_write_all(id, &flush_data) };
+    if flushed == flush_data.len() {
+        stream.mark_flushed();
+        stream.set_offset(
+            stream
+                .offset()
+                .saturating_add(bytes.len().min(i64::MAX as usize) as i64),
+        );
+        return bytes.len();
+    }
+
+    stream.set_error();
+    let current = flushed.saturating_sub(flushed_from_buffer).min(bytes.len());
+    stream.set_offset(
+        stream
+            .offset()
+            .saturating_add(current.min(i64::MAX as usize) as i64),
+    );
+    current
+}
+
+/// Flush pending cookie output through its callback.
+unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
+    let pending = stream.pending_flush().to_vec();
+    if pending.is_empty() {
+        return true;
+    }
+    if unsafe { cookie_write_all(id, &pending) } == pending.len() {
+        stream.mark_flushed();
+        true
+    } else {
+        stream.set_error();
+        false
+    }
+}
+
 /// Seek a cookie-backed stream.
 pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_int) -> c_int {
     let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -10981,9 +10980,10 @@ pub unsafe extern "C" fn fopencookie(
     // SAFETY: caller guarantees funcs points to a valid cookie_io_functions_t.
     let io_funcs = unsafe { *(funcs as *const CookieIoFuncs) };
 
-    // Create a memory-backed stream as the underlying container.
-    // Cookie streams use an empty dynamic buffer; actual I/O goes through callbacks.
-    let stream = StdioStream::new_mem_dynamic_with_flags(open_flags);
+    // Cookie streams have no kernel fd, but they still use the ordinary stdio
+    // write buffer.  This makes the default `_IOFBF` behavior observable before
+    // the callback is invoked, exactly as it is for glibc cookie streams.
+    let stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
     let id = alloc_stream_id();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());

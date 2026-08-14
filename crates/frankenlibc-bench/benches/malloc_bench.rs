@@ -970,12 +970,30 @@ fn segment_production_artifact_dir() -> PathBuf {
 
 #[cfg(feature = "abi-bench")]
 struct SegmentProductionProfile {
+    available: bool,
+    status: String,
     allocator_self_pct: f64,
     allocator_malloc_self_pct: f64,
     allocator_free_self_pct: f64,
     allocator_frames: Vec<String>,
     perf_bytes: u64,
     report_bytes: u64,
+}
+
+#[cfg(feature = "abi-bench")]
+impl SegmentProductionProfile {
+    fn unavailable(status: impl Into<String>) -> Self {
+        Self {
+            available: false,
+            status: status.into(),
+            allocator_self_pct: 0.0,
+            allocator_malloc_self_pct: 0.0,
+            allocator_free_self_pct: 0.0,
+            allocator_frames: Vec::new(),
+            perf_bytes: 0,
+            report_bytes: 0,
+        }
+    }
 }
 
 #[cfg(feature = "abi-bench")]
@@ -1012,10 +1030,11 @@ fn profile_segment_production_candidate(
         .spawn()
         .expect("spawn remote perf record for segment production candidate");
     thread::sleep(Duration::from_millis(250));
-    assert!(
-        perf.try_wait().expect("poll remote perf record").is_none(),
-        "perf record exited before the production candidate workload"
-    );
+    if let Some(status) = perf.try_wait().expect("poll remote perf record") {
+        let status = format!("perf_record_exited_before_workload status={status}");
+        println!("MALLOC_SEGMENT_PRODUCTION_PROFILE_UNAVAILABLE {status}");
+        return SegmentProductionProfile::unavailable(status);
+    }
 
     let profile_start = Instant::now();
     let mut checksum = 0usize;
@@ -1131,6 +1150,8 @@ fn profile_segment_production_candidate(
         "MALLOC_SEGMENT_PRODUCTION_ALLOCATOR_SELF_TIME total_self_pct={allocator_self_pct:.2} malloc_self_pct={allocator_malloc_self_pct:.2} free_self_pct={allocator_free_self_pct:.2} frames={allocator_frames:?} perf_bytes={perf_bytes} report_bytes={report_bytes}"
     );
     SegmentProductionProfile {
+        available: true,
+        status: "available".to_owned(),
         allocator_self_pct,
         allocator_malloc_self_pct,
         allocator_free_self_pct,
@@ -2077,6 +2098,8 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
                 "  \"decision_gate_scope\": \"candidate/orig ratio median below 1.0 and more than 2x the A/A null median-CI half-width from 1.0; every CV is descriptive only\",\n",
                 "  \"all_size_median_ci_gate_pass\": {all_size_median_ci_gate_pass},\n",
                 "  \"all_size_candidate_beats_orig\": {all_size_candidate_beats_orig},\n",
+                "  \"production_profile_available\": {production_profile_available},\n",
+                "  \"production_profile_status\": {production_profile_status:?},\n",
                 "  \"production_allocator_self_pct\": {production_allocator_self_pct:.6},\n",
                 "  \"production_malloc_self_pct\": {production_malloc_self_pct:.6},\n",
                 "  \"production_free_self_pct\": {production_free_self_pct:.6},\n",
@@ -2098,6 +2121,8 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
             permutation_cycles = PERMUTATION_CYCLES_PER_SAMPLE,
             all_size_median_ci_gate_pass = all_size_median_ci_gate_pass,
             all_size_candidate_beats_orig = all_size_candidate_beats_orig,
+            production_profile_available = profile.available,
+            production_profile_status = &profile.status,
             production_allocator_self_pct = profile.allocator_self_pct,
             production_malloc_self_pct = profile.allocator_malloc_self_pct,
             production_free_self_pct = profile.allocator_free_self_pct,
