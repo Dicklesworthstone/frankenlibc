@@ -26890,3 +26890,60 @@ the next agent should not re-run it.
 - **CONTRAST (kept).** The gate-driven form of the same triage — red gate → read the function at
   HEAD → confirm with a live host oracle — produced 11 real restorations the same day (8993be4eb),
   every one red-to-green. The gate is what makes it evidence rather than a text coincidence.
+
+## 2026-08-14 (YellowPlateau) — MEASURED LOSS, campaign: deployed fl `malloc`+`free` is 10.57x–16.17x SLOWER than live host glibc (paired median, same invocation)
+
+- **RESULT CLASS:** `result_class=campaign`. Incumbent is host glibc, loaded live in the SAME
+  process via `dlmopen(LM_ID_NEWLM, "libc.so.6")` and called through `dlsym`'d function pointers, so
+  both arms execute inside one invocation. This is a LOSS row, recorded as such.
+- **ELF SHA-256 (self-reported from inside the running process, harness contract part 1):**
+  `9759277a0cca907be5661c458f21d42c91eca29348adf28894390bef834cc6b8`
+- **HARNESS / PROVENANCE.** `crates/frankenlibc-bench/examples/malloc_st_probe.rs`, run as
+  `cargo run --release --example malloc_st_probe -p frankenlibc-bench --features abi-bench` through
+  `RCH_REQUIRE_REMOTE=1 rch exec`. Worker `vmi1149989` (root@212.90.121.76), selected with
+  **"0 slots remaining after reservation"** — i.e. the worker was saturated when the run started.
+  Repo HEAD `14e9a1f2b`; `crates/frankenlibc-abi/src/malloc_abi.rs` last changed `8878330ca`
+  (2026-08-03), so the measured allocator is unambiguous. Statistic is the MEDIAN of per-round
+  ratios with the arms interleaved inside every round and arm order alternated per round; n=61
+  rounds x 100,000 malloc/free pairs per arm per round. Bootstrap = percentile, 20,000 resamples,
+  deterministic seed `0x202608140001`.
+
+| sz (B) | A/A null median | null 95% CI | fl/glibc paired median | paired 95% CI | verdict |
+|---|---|---|---|---|---|
+| 16 | 1.1423 | [0.9883, 1.5774] | **11.9413** | [11.1079, 12.7411] | FL_SLOWER |
+| 64 | 0.9728 | [0.8433, 1.1097] | **10.5666** | [9.9632, 14.8908] | FL_SLOWER |
+| 256 | 0.9292 | [0.7767, 1.0376] | **12.5788** | [11.6355, 15.5297] | FL_SLOWER |
+| 1024 | 0.9950 | [0.7612, 1.1333] | **16.1721** | [13.0446, 21.1440] | FL_SLOWER |
+
+- **WHY IT IS DECIDABLE DESPITE A LOOSE NULL.** Every null CI contains 1.0, and the widest null
+  half-width is ~0.29 (sz=16). The effect is 9.6–15.2 ratio units above unity, i.e. 30x–100x the
+  twice-null-half-width bar. Direction and order of magnitude are therefore decided. **Precision is
+  not**: see the next point before quoting any single number.
+- **HONEST LIMITS — do not quote this against the 10.010x standing row as a regression.** The
+  2026-07-25 row (10.010x paired median; per size 9.986/9.981/10.107/9.990) was taken on a quiet
+  host. This run's absolute fl times are inflated ~1.5–1.9x against that baseline (fl arm 44.1–76.0
+  ns/op here vs ~40 ns there) while the **glibc arm barely moved** (3.97–5.32 ns/op here vs ~4.6 ns
+  there). The gap between the two framings inside this very invocation is itself the warning:
+  unpaired `MALLOC_FREE sz=16` reports fl=71.18 ns while the paired fl arm at the same size reports
+  44.13 ns. So the ratio inflation is host contention, not an allocator regression. sz=16
+  additionally has a null median 14% off unity and should not be quoted alone at all.
+- **THE ASYMMETRY IS THE NEW FINDING, and it is actionable.** Under identical contention glibc's arm
+  stayed inside a 3.97–5.32 ns band (±15%) while fl's arm swung 44.1–76.0 ns (±42%). fl's allocator
+  is markedly more sensitive to a loaded host than glibc's. That is consistent with the bd-dcrhgl
+  decomposition — a fallback hash table and a reentry guard are shared mutable state, and shared
+  mutable state is exactly what degrades under a noisy neighbour, whereas glibc's tcache path is
+  thread-local. It suggests the deployed gap on a *busy* machine is worse than the quiet-host 10x
+  headline, which is the number a real workload would actually see.
+- **NOT A WIN, RECORDED FOR COMPLETENESS.** `FREE_NULL fl=2.55 glibc=2.46 fl/glibc=1.033` — the
+  shipped `free(NULL)` fast path holds at near parity. `FREE_NULL_AB new/old=0.039` is a
+  **self-speedup, i.e. MAINTENANCE, not a win**, and is repeated here only because the probe prints
+  it.
+- **HARNESS GAP THIS RUN EXPOSED (fix before the next row).** The probe self-reports its ELF hash
+  but NOT the observed thread count, CPU governor, or runtime ISA, all of which the campaign's
+  provenance rule requires. Those three fields are missing from this row and were not fabricated.
+- **CONCRETE RETRY PREDICATE.** Re-run on a worker whose A/A null bootstrap median CI fits within
+  ±0.05 of 1.0 at every size — not merely contains 1.0 — before comparing the magnitude to 10.010x.
+  Do not decide anything from `cv` (117–154% here, and meaningless at this dispersion). If the
+  quiet-host re-run reproduces ~10x, the standing number stands and this row is a contention
+  artifact on magnitude only; if it reproduces >12x, the allocator has regressed since 2026-07-25
+  and that is a separate bead.
