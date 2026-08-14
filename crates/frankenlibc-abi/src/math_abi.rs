@@ -763,6 +763,17 @@ pub unsafe extern "C" fn fmin(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
+    // glibc's fmax lowers to the hardware MAXSD instruction, which on a signed-
+    // zero tie (both operands ±0) returns the SECOND operand. libm's fmax
+    // returns the first, so fmax(-0,+0) gave -0 where glibc gives +0. Mirror
+    // the MAXSD tie-break. Measured live on this host:
+    //   fmax(-0,+0) -> 0x0000000000000000, fmax(+0,-0) -> 0x8000000000000000.
+    // (fmin needs no such branch: libm::fmin already returns the second.)
+    // Shipped as f8ee68c6e, silently deleted by 517d0a233, restored (bd-aykfv1).
+    // Pinned by conformance_diff_exact_unary_flags.
+    if x == 0.0 && y == 0.0 {
+        return y;
+    }
     frankenlibc_core::math::fmax(x, y)
 }
 
@@ -1021,9 +1032,20 @@ pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
     out
 }
 
-/// BSD `gamma()` — alias for `lgamma()`.
+/// BSD `gamma()` — alias for `lgamma()`. Like `lgamma`, it sets the global
+/// `signgam` to the sign of Γ(x); leaving signgam stale breaks the classic
+/// `r = gamma(x); if (signgam < 0) r = -r;` recovery pattern.
+///
+/// Shipped as bfe2405f6, silently deleted by 517d0a233 (the −6914-line
+/// 2026-06-26 commit), restored here; conformance_diff_gamma_signgam is the
+/// gate that stayed red for the whole interval (bd-aykfv1).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gamma(x: f64) -> f64 {
+    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
+    unsafe {
+        signgam = sign;
+        __signgam = sign;
+    }
     let out = unary_entry(x, 10, frankenlibc_core::math::gamma);
     if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
         set_range_errno();
@@ -1485,6 +1507,11 @@ pub unsafe extern "C" fn fdimf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxf(x: f32, y: f32) -> f32 {
+    // glibc fmaxf lowers to MAXSS: a signed-zero tie returns the SECOND operand
+    // (see fmax). libm's fmaxf returns the first.
+    if x == 0.0 && y == 0.0 {
+        return y;
+    }
     binary_entry_f32(x, y, 2, frankenlibc_core::math::fmaxf)
 }
 
@@ -1865,6 +1892,13 @@ pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
+    // BSD gammaf aliases lgammaf: set the global signgam to sign of Γ(x).
+    // Same delete/restore history as `gamma` above (bd-aykfv1).
+    let (_, sign) = frankenlibc_core::math::lgammaf_r(x);
+    unsafe {
+        signgam = sign;
+        __signgam = sign;
+    }
     let out = unary_entry_f32(x, 8, frankenlibc_core::math::gammaf);
     // lgamma poles at non-positive integers
     if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {

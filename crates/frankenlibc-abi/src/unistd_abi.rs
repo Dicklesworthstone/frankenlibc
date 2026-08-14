@@ -3795,14 +3795,16 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
     }
 
     let mut pty_num: c_int = 0;
-    // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
+    // SAFETY: ioctl writes PTY slave index into `pty_num` on success. glibc maps
+    // the non-pty-master EINVAL to ENOTTY (so ptsname on a slave fails ENOTTY).
     unsafe {
         syscall::sys_ioctl(
             fd,
             libc::TIOCGPTN as usize,
             &mut pty_num as *mut c_int as usize,
         )
-    }?;
+    }
+    .map_err(|e| if e == errno::EINVAL { errno::ENOTTY } else { e })?;
 
     let path = format!("/dev/pts/{pty_num}");
     let c_path = CString::new(path).map_err(|_| errno::EINVAL)?;
@@ -4050,7 +4052,15 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
 
     let target = current.saturating_add(inc).clamp(-20, 19);
     if let Err(e) = syscall::sys_setpriority(libc::PRIO_PROCESS as c_int, 0, target) {
-        unsafe { set_abi_errno(e) };
+        // POSIX nice() reports a permission failure as EPERM, but the kernel's
+        // setpriority returns EACCES when an unprivileged process tries to lower
+        // its nice value. glibc remaps EACCES -> EPERM here; mirror that.
+        // Measured live as uid 1000: glibc nice(-1) -> -1, errno=1 (EPERM).
+        //
+        // Shipped as ab7ff020b, silently deleted by e634aff2a (2026-06-26),
+        // restored here; conformance_diff_nice_eperm was red on this (bd-aykfv1).
+        let mapped = if e == libc::EACCES { libc::EPERM } else { e };
+        unsafe { set_abi_errno(mapped) };
         return -1;
     }
 
@@ -4600,7 +4610,22 @@ pub unsafe extern "C" fn sched_getaffinity(
     mask: *mut c_void,
 ) -> c_int {
     match unsafe { syscall::sys_sched_getaffinity(pid, cpusetsize, mask as *mut u8) } {
-        Ok(_) => 0,
+        Ok(written) => {
+            // The kernel only writes `written` bytes; glibc zero-fills the rest
+            // of the caller's mask so high CPUs read as clear (CPU_ISSET == 0),
+            // rather than leaving stale buffer contents.
+            //
+            // Shipped as ac740bd7b, silently deleted by e634aff2a (2026-06-26),
+            // restored here; conformance_diff_sched_affinity_zerofill was red on
+            // exactly this (bd-aykfv1).
+            let written = written.max(0) as usize;
+            if !mask.is_null() && written < cpusetsize {
+                unsafe {
+                    std::ptr::write_bytes((mask as *mut u8).add(written), 0, cpusetsize - written)
+                };
+            }
+            0
+        }
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -12306,6 +12331,18 @@ pub unsafe extern "C" fn posix_fallocate(
 /// `posix_madvise` — POSIX advisory information on memory usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int {
+    // Linux's MADV_DONTNEED is DESTRUCTIVE (it zero-fills private anonymous pages
+    // on the next access), but POSIX_MADV_DONTNEED is merely advisory. glibc
+    // therefore IGNORES POSIX_MADV_DONTNEED entirely — returning 0 without any
+    // syscall (even for an invalid address) — rather than destroy the caller's
+    // data. (POSIX_MADV_DONTNEED == MADV_DONTNEED == 4 on Linux, so a passthrough
+    // would silently zero memory.)
+    //
+    // Shipped as 01a003f20, silently deleted by e634aff2a (2026-06-26), restored
+    // here; conformance_diff_posix_madvise was red on exactly this (bd-aykfv1).
+    if advice == libc::POSIX_MADV_DONTNEED {
+        return 0;
+    }
     let (_, decision) = runtime_policy::decide(
         ApiFamily::IoFd,
         addr as usize,
@@ -14825,11 +14862,20 @@ pub unsafe extern "C" fn getgrouplist(
     }
 
     unsafe { *ngroups = result.len() as c_int };
+    // glibc copies MIN(found, *ngroups) group IDs into the caller's buffer
+    // unconditionally — including when it overflows and returns -1 — so a
+    // caller that inspects the partial result (or the common "fill what fits"
+    // pattern) sees the same prefix glibc would write. Leaving the buffer
+    // untouched on overflow is the divergence.
+    //
+    // Shipped as b851e0bda, silently deleted by e634aff2a (2026-06-26), restored
+    // here; conformance_diff_getgrouplist_overflow was red on this (bd-aykfv1).
+    let to_write = result.len().min(max_groups);
+    for (i, &gid) in result.iter().take(to_write).enumerate() {
+        unsafe { *groups.add(i) = gid };
+    }
     if result.len() > max_groups {
         return -1;
-    }
-    for (i, &gid) in result.iter().enumerate() {
-        unsafe { *groups.add(i) = gid };
     }
     result.len() as c_int
 }
@@ -16257,42 +16303,42 @@ pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
 // ---------------------------------------------------------------------------
 
 /// GNU `getpt` — open a pseudoterminal master.
+///
+/// glibc defines this as exactly `posix_openpt(O_RDWR)` — `/dev/ptmx` opened with
+/// O_RDWR and NOTHING else. The O_NOCTTY|O_CLOEXEC additions diverge observably:
+/// glibc's getpt fd has FD_CLOEXEC clear, so it survives exec(). Measured live on
+/// this host: glibc getpt() -> fd 3, fcntl(fd, F_GETFD) & FD_CLOEXEC == 0,
+/// F_GETFL == 0o100002 (O_RDWR|O_LARGEFILE).
+///
+/// Shipped as 8c2658f6d, silently deleted by e634aff2a (2026-06-26), restored
+/// here; conformance_diff_getpt was red on this (bd-aykfv1).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpt() -> c_int {
-    static PTMX: &[u8] = b"/dev/ptmx\0";
-    match unsafe {
-        syscall::sys_openat(
-            libc::AT_FDCWD,
-            PTMX.as_ptr(),
-            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
-            0,
-        )
-    } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { posix_openpt(libc::O_RDWR) }
 }
 
 /// POSIX `ptsname_r` — get slave PTY name (reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
-    let effective_buflen = tracked_output_capacity(buf, buflen);
-    if buf.is_null() || buflen == 0 {
+    if buf.is_null() {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
     }
-    if effective_buflen == 0 {
-        unsafe { set_abi_errno(libc::ERANGE) };
-        return libc::ERANGE;
-    }
+    // glibc does the TIOCGPTN ioctl BEFORE checking buflen — so a non-master fd
+    // yields ENOTTY (it maps the ioctl's EINVAL to ENOTTY), and buflen==0 on a
+    // valid master yields ERANGE (from the length check), not EINVAL. Measured
+    // live on this host: ptsname_r(master, 0) -> 34 ERANGE,
+    // ptsname_r(non-master, 64) -> 25 ENOTTY.
+    //
+    // Shipped as 9dc0343e8, silently deleted by e634aff2a (2026-06-26), restored
+    // here; conformance_diff_ptsname was red on this (bd-aykfv1).
+    let effective_buflen = tracked_output_capacity(buf, buflen);
     let mut pty_num: c_uint = 0;
     const TIOCGPTN: usize = 0x80045430;
     if let Err(e) =
         unsafe { syscall::sys_ioctl(fd, TIOCGPTN, &mut pty_num as *mut c_uint as usize) }
     {
+        let e = if e == libc::EINVAL { libc::ENOTTY } else { e };
         unsafe { set_abi_errno(e) };
         return e;
     }
@@ -16620,11 +16666,41 @@ pub unsafe extern "C" fn ptrace(
     addr: *mut c_void,
     data: *mut c_void,
 ) -> c_long {
-    match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
-        Ok(v) => v as c_long,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
+    // glibc bridges the PEEK requests (PEEKTEXT=1/PEEKDATA=2/PEEKUSER=3): the
+    // kernel writes the peeked word through the `data` pointer and returns 0, but
+    // the C API expects the word as the RETURN value. So glibc redirects `data`
+    // to a local, returns that word, and clears errno (the word may legitimately
+    // be -1). Without this, ptrace(PTRACE_PEEKDATA, .., NULL) faults / returns 0.
+    //
+    // Shipped as 9c7d75949, silently deleted by e634aff2a (2026-06-26), restored
+    // here; conformance_diff_ptrace_peek was red on this (bd-aykfv1).
+    let is_peek = (1..=3).contains(&request);
+    if is_peek {
+        let mut word: c_long = 0;
+        match unsafe {
+            syscall::sys_ptrace(
+                request,
+                pid,
+                addr as usize,
+                &mut word as *mut c_long as usize,
+            )
+        } {
+            Ok(_) => {
+                unsafe { set_abi_errno(0) };
+                word
+            }
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        }
+    } else {
+        match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
+            Ok(v) => v as c_long,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
         }
     }
 }
@@ -21506,13 +21582,14 @@ pub unsafe extern "C" fn clock_getcpuclockid(
     if clock_id.is_null() {
         return libc::EINVAL;
     }
-    // If pid is 0, use CLOCK_PROCESS_CPUTIME_ID directly.
-    if pid == 0 {
-        unsafe { *clock_id = libc::CLOCK_PROCESS_CPUTIME_ID };
-        return 0;
-    }
-    // Kernel CPUCLOCK formula: clock_id = ~pid << 3 | CPUCLOCK_SCHED (=2)
-    // This encodes the PID into the clock ID for process-specific CPU time.
+    // Kernel CPUCLOCK formula: clock_id = ~pid << 3 | CPUCLOCK_SCHED (=2),
+    // encoding the PID into the clock ID. glibc applies this for EVERY pid,
+    // INCLUDING 0 (the calling process) — it does NOT substitute
+    // CLOCK_PROCESS_CPUTIME_ID. Measured live on this host:
+    //   glibc clock_getcpuclockid(0) -> rc=0, clock_id=0xfffffffa (-6), not 2.
+    //
+    // Shipped as 89f149103, silently deleted by e634aff2a (2026-06-26), restored
+    // here; conformance_diff_clock_getcpuclockid was red on this (bd-aykfv1).
     let cid: libc::clockid_t = (!pid as libc::clockid_t) << 3 | 2;
     // Validate the clock exists by calling clock_getres.
     let mut ts = libc::timespec {
@@ -25839,9 +25916,8 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
     let Some(input_bytes) = (unsafe { read_c_string_bytes(string) }) else {
         return 8;
     };
-    if input_bytes.is_empty() {
-        return 8;
-    }
+    // An empty (but non-NULL) input matches no template — glibc reports 7
+    // ("no matching line"), not 8 ("invalid spec"); let it fall through.
     let mut input = Vec::with_capacity(input_bytes.len() + 1);
     input.extend_from_slice(&input_bytes);
     input.push(0);
@@ -25882,7 +25958,9 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         Err(_) => return 5, // read error
     };
 
-    // Try each line as a strptime template
+    // Try each line as a strptime template. glibc seeds the broken-down time
+    // with sentinels so it can tell which fields the template actually set,
+    // then fills the rest from the current local time (getdate_apply_defaults).
     for line in content.split(|&b| b == b'\n') {
         // Skip empty lines
         if line.is_empty() || line.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
@@ -25898,8 +25976,8 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         template.extend_from_slice(&line[..end]);
         template.push(0);
 
-        // Initialize result to a clean state
-        unsafe { std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>()) };
+        // Sentinel-init so unset fields are detectable after strptime.
+        unsafe { getdate_sentinel_init(result) };
 
         let remainder = unsafe {
             crate::time_abi::strptime(
@@ -25915,12 +25993,190 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
                 let offset = rest_addr - input_base;
                 let rest = &input[offset..input_bytes.len()];
                 if rest.iter().all(|&b| b == b' ' || b == b'\t') {
-                    return 0; // success
+                    // Matched. Fill unspecified fields from the current local
+                    // time per POSIX/glibc rules; returns 8 on an impossible
+                    // calendar date (e.g. February 30).
+                    let wday_in_template = getdate_template_has_weekday(&template);
+                    return unsafe { getdate_apply_defaults(result, wday_in_template) };
                 }
             }
         }
     }
     7 // no matching template
+}
+
+/// glibc-style sentinel pattern for `getdate`/`getdate_r`: every field that a
+/// `strptime` template might fill is set to an out-of-range marker so the
+/// default-fill pass can tell "set by the template" from "left untouched".
+///
+/// Shipped as e5ffb3532 + 636c72c28, silently deleted by e634aff2a (2026-06-26),
+/// restored here; conformance_diff_getdate was red on this (bd-3kslha).
+unsafe fn getdate_sentinel_init(result: *mut libc::tm) {
+    unsafe {
+        std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>());
+        (*result).tm_sec = -1;
+        (*result).tm_min = -1;
+        (*result).tm_hour = -1;
+        (*result).tm_mday = 0; // valid mday is 1..=31
+        (*result).tm_mon = -1;
+        (*result).tm_year = i32::MIN;
+        (*result).tm_wday = -1;
+        (*result).tm_yday = -1;
+        (*result).tm_isdst = -1;
+    }
+}
+
+/// Days in `month` (0..=11) of calendar `year` (full year, e.g. 2024).
+fn getdate_days_in_month(month: i32, year: i32) -> i32 {
+    const DAYS: [i32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if month == 1 {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        if leap { 29 } else { 28 }
+    } else if (0..=11).contains(&month) {
+        DAYS[month as usize]
+    } else {
+        31
+    }
+}
+
+/// Returns true if a getdate DATEMSK template contains a weekday directive
+/// (%a/%A/%w/%u, with optional E/O modifier). getdate can no longer rely on a
+/// surviving tm_wday sentinel to detect "a weekday was specified", because
+/// strptime now (correctly, like glibc) recomputes tm_wday whenever a
+/// year/month/day field is parsed — which would otherwise make a year-only
+/// input like "2024" look like a weekday spec and reset the year to "now".
+fn getdate_template_has_weekday(template: &[u8]) -> bool {
+    let mut i = 0;
+    while i < template.len() {
+        if template[i] == b'%' {
+            let mut j = i + 1;
+            if j < template.len() && matches!(template[j], b'E' | b'O') {
+                j += 1;
+            }
+            match template.get(j) {
+                Some(b'a') | Some(b'A') | Some(b'w') | Some(b'u') => return true,
+                _ => {}
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+/// Fill the fields a matched template left unset from the current local time,
+/// mirroring glibc `getdate`. Returns 0 on success or 8 for an impossible date.
+///
+/// Rules (validated against live glibc):
+///   * time: if no h/m/s field was given, default to the current h/m/s; if any
+///     was given, unspecified lower fields default to 0 ("10:30" -> sec 0).
+///   * year: defaults to the current year (no month/day rollover — "January 05"
+///     stays in the current year even though it is past).
+///   * weekday-only: the next occurrence of that weekday (today if it matches).
+///   * time-only (nothing about the date): today, advanced to tomorrow if the
+///     given HOUR has already passed today.
+///   * an explicit but impossible calendar date (February 30) -> 8.
+///
+/// Note: `tm_isdst` and any DST-driven adjustment come from glibc's *local*
+/// mktime; frankenlibc's mktime is UTC-only (documented TZ scope), so this
+/// matches glibc exactly under TZ=UTC. See bd-2g7oyh.288.
+unsafe fn getdate_apply_defaults(result: *mut libc::tm, weekday_in_template: bool) -> c_int {
+    // Current local time.
+    let now_secs = unsafe { crate::time_abi::time(std::ptr::null_mut()) };
+    let mut now: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { crate::time_abi::localtime_r(&now_secs, &mut now) };
+
+    let (p_sec, p_min, p_hour, p_mday, p_mon, p_year, p_wday) = unsafe {
+        (
+            (*result).tm_sec,
+            (*result).tm_min,
+            (*result).tm_hour,
+            (*result).tm_mday,
+            (*result).tm_mon,
+            (*result).tm_year,
+            (*result).tm_wday,
+        )
+    };
+    let sec_set = p_sec != -1;
+    let min_set = p_min != -1;
+    let hour_set = p_hour != -1;
+    let mday_set = p_mday != 0;
+    let mon_set = p_mon != -1;
+    let year_set = p_year != i32::MIN;
+    // A weekday counts as "specified" only when the template actually contained a
+    // weekday directive — NOT merely because strptime recomputed tm_wday from the
+    // parsed date (see getdate_template_has_weekday).
+    let _ = p_wday;
+    let wday_set = weekday_in_template;
+
+    // Time fields.
+    let any_time = sec_set || min_set || hour_set;
+    let (hour, min, sec) = if any_time {
+        (
+            if hour_set { p_hour } else { 0 },
+            if min_set { p_min } else { 0 },
+            if sec_set { p_sec } else { 0 },
+        )
+    } else {
+        (now.tm_hour, now.tm_min, now.tm_sec)
+    };
+
+    // Date fields.
+    let date_given = mon_set || mday_set;
+    let mut year = if year_set { p_year } else { now.tm_year };
+    let mut mon = if mon_set { p_mon } else { now.tm_mon };
+    let mut mday = if mday_set { p_mday } else { now.tm_mday };
+
+    // Validate an explicitly given calendar date before any normalization
+    // (glibc reports error 8 for February 30 et al., rather than rolling over).
+    if mday_set {
+        if !(0..=11).contains(&mon) {
+            return 8;
+        }
+        let dim = getdate_days_in_month(mon, year.saturating_add(1900));
+        if p_mday < 1 || p_mday > dim {
+            return 8;
+        }
+    }
+
+    if wday_set && !date_given {
+        // Weekday-only: next occurrence (today if today's weekday matches).
+        year = now.tm_year;
+        mon = now.tm_mon;
+        let delta = (((p_wday - now.tm_wday) % 7) + 7) % 7;
+        mday = now.tm_mday + delta;
+    } else if !date_given {
+        // Nothing explicit about the date (time-only, or year-only): start
+        // from today's month/day.
+        mon = now.tm_mon;
+        mday = now.tm_mday;
+    }
+
+    unsafe {
+        (*result).tm_sec = sec;
+        (*result).tm_min = min;
+        (*result).tm_hour = hour;
+        (*result).tm_mday = mday;
+        (*result).tm_mon = mon;
+        (*result).tm_year = year;
+        (*result).tm_isdst = -1;
+        (*result).tm_wday = 0;
+        (*result).tm_yday = 0;
+
+        // Time-only with the *hour* already past today -> roll to tomorrow.
+        // glibc (time/getdate.c) advances the day iff the parsed hour is strictly
+        // before the current hour (`tp->tm_hour - tm.tm_hour < 0`); it compares at
+        // hour granularity only, NOT the full (hour,min,sec) tuple, and gates on a
+        // set hour with no month/mday/weekday given.
+        if !date_given && !wday_set && hour_set && hour < now.tm_hour {
+            (*result).tm_mday += 1;
+        }
+
+        // Normalize: recompute tm_wday/tm_yday and carry any day/month overflow.
+        crate::time_abi::mktime(result);
+    }
+    0
 }
 
 /// `getdate` — convert a date string to struct tm using DATEMSK templates.
