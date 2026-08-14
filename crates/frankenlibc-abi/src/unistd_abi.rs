@@ -2551,8 +2551,17 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_RE_DUP_MAX => 32767,
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
-        libc::_SC_THREAD_SAFE_FUNCTIONS => 1,
-        libc::_SC_THREADS => 1,
+        // _SC_THREADS and _SC_THREAD_SAFE_FUNCTIONS report the supported
+        // _POSIX_THREADS / _POSIX_THREAD_SAFE_FUNCTIONS *version* (200809L), not
+        // a boolean. Measured live on this host: glibc sysconf(67) and
+        // sysconf(68) both return 200809.
+        //
+        // _SC_THREADS was fixed by b5ae82d1a and silently deleted by e634aff2a
+        // (2026-06-26); restored here (bd-d3cav6). _SC_THREAD_SAFE_FUNCTIONS is
+        // the same defect, which that fix missed and no gate covered — the gate
+        // list gains it here.
+        libc::_SC_THREAD_SAFE_FUNCTIONS => 200809,
+        libc::_SC_THREADS => 200809,
         libc::_SC_THREAD_KEYS_MAX => 1024,
         libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
@@ -2572,6 +2581,54 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_PRIORITY_SCHEDULING => 1,
         libc::_SC_FSYNC => 1,
         libc::_SC_ASYNCHRONOUS_IO => 1,
+        // POSIX feature flags and utility limits glibc reports as definite
+        // constants; without these they fall through to the EINVAL default
+        // (returning -1 as if the key were unknown), so a caller writing
+        // `n = sysconf(_SC_ATEXIT_MAX); if (n > 0)` takes the wrong branch.
+        //
+        // Shipped as b5ae82d1a, silently deleted by e634aff2a (2026-06-26),
+        // restored here; conformance_diff_sysconf, _sysconf_raw and
+        // _sysconf_values were all red on this one deletion (bd-d3cav6).
+        // Every value below re-confirmed against live glibc on this host.
+        libc::_SC_JOB_CONTROL => 1,
+        libc::_SC_SAVED_IDS => 1,
+        libc::_SC_BC_BASE_MAX => 99,
+        libc::_SC_BC_DIM_MAX => 2048,
+        libc::_SC_BC_SCALE_MAX => 99,
+        libc::_SC_BC_STRING_MAX => 1000,
+        libc::_SC_COLL_WEIGHTS_MAX => 255,
+        libc::_SC_EXPR_NEST_MAX => 32,
+        libc::_SC_2_C_BIND => 200809,
+        libc::_SC_2_C_DEV => 200809,
+        libc::_SC_2_LOCALEDEF => 200809,
+        libc::_SC_2_SW_DEV => 200809,
+        // Realtime / message-queue / AIO limits (glibc's fixed Linux values).
+        libc::_SC_ATEXIT_MAX => libc::c_int::MAX as libc::c_long,
+        libc::_SC_SEM_VALUE_MAX => libc::c_int::MAX as libc::c_long,
+        libc::_SC_DELAYTIMER_MAX => libc::c_int::MAX as libc::c_long,
+        libc::_SC_MQ_PRIO_MAX => 32768,
+        libc::_SC_RTSIG_MAX => 32,
+        libc::_SC_AIO_PRIO_DELTA_MAX => 20,
+        libc::_SC_SIGQUEUE_MAX => {
+            // glibc reports the RLIMIT_SIGPENDING soft limit (the max number of
+            // queued realtime signals) — 883225 on this host, i.e. a per-machine
+            // value, not a constant. Read it the same way _SC_OPEN_MAX reads
+            // RLIMIT_NOFILE; fall back to the _POSIX_SIGQUEUE_MAX minimum (32).
+            let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+            match unsafe {
+                syscall::sys_getrlimit(libc::RLIMIT_SIGPENDING as i32, rlim.as_mut_ptr() as *mut u8)
+            } {
+                Ok(()) => {
+                    let rlim = unsafe { rlim.assume_init() };
+                    if rlim.rlim_cur == libc::RLIM_INFINITY {
+                        -1
+                    } else {
+                        rlim.rlim_cur as libc::c_long
+                    }
+                }
+                Err(_) => 32,
+            }
+        }
         _ => {
             unsafe { set_abi_errno(errno::EINVAL) };
             -1
@@ -3861,6 +3918,57 @@ unsafe fn pc_link_max_for_fd(fd: c_int) -> libc::c_long {
     }
 }
 
+#[inline]
+/// Per-filesystem _PC_FILESIZEBITS, mirroring glibc's __statfs_filesize_max
+/// (sysdeps/unix/sysv/linux/pathconf.c). f_type magic from <linux/magic.h>.
+///
+/// Shipped as 4713e10f2, silently deleted by e634aff2a (2026-06-26), restored
+/// here; conformance_diff_pathconf was red on this (bd-d3cav6).
+fn fs_filesizebits_for_type(f_type: i64) -> libc::c_long {
+    const EXT2_SUPER_MAGIC: i64 = 0xEF53; // ext2/3/4
+    const XFS_SUPER_MAGIC: i64 = 0x58465342;
+    const REISERFS_SUPER_MAGIC: i64 = 0x52654973;
+    const NTFS_SB_MAGIC: i64 = 0x5346544E;
+    const UDF_SUPER_MAGIC: i64 = 0x15013346;
+    const JFS_SUPER_MAGIC: i64 = 0x3153464A;
+    const CGROUP_SUPER_MAGIC: i64 = 0x27e0eb;
+    const SMB_SUPER_MAGIC: i64 = 0x517B;
+    const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
+    const F2FS_SUPER_MAGIC: i64 = 0xF2F52010;
+    const MSDOS_SUPER_MAGIC: i64 = 0x4d44;
+    const JFFS2_SUPER_MAGIC: i64 = 0x72b6;
+    const ROMFS_MAGIC: i64 = 0x7275;
+    match f_type {
+        F2FS_SUPER_MAGIC => 256,
+        BTRFS_SUPER_MAGIC => 255,
+        EXT2_SUPER_MAGIC | XFS_SUPER_MAGIC | REISERFS_SUPER_MAGIC | NTFS_SB_MAGIC
+        | UDF_SUPER_MAGIC | JFS_SUPER_MAGIC | CGROUP_SUPER_MAGIC | SMB_SUPER_MAGIC => 64,
+        MSDOS_SUPER_MAGIC | JFFS2_SUPER_MAGIC | ROMFS_MAGIC => 32,
+        _ => 32, // glibc's default
+    }
+}
+
+/// Resolve _PC_FILESIZEBITS via statfs; glibc returns 32 if statfs is
+/// unsupported (ENOSYS) and -1 on any other error.
+unsafe fn pc_filesizebits_for_path(path: *const c_char) -> libc::c_long {
+    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_statfs(path as *const u8, sf.as_mut_ptr()) } {
+        Ok(()) => fs_filesizebits_for_type(unsafe { sf.assume_init() }.f_type),
+        Err(e) if e == libc::ENOSYS => 32,
+        Err(_) => -1,
+    }
+}
+
+/// Resolve _PC_FILESIZEBITS for an fd via fstatfs.
+unsafe fn pc_filesizebits_for_fd(fd: c_int) -> libc::c_long {
+    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_fstatfs(fd, sf.as_mut_ptr()) } {
+        Ok(()) => fs_filesizebits_for_type(unsafe { sf.assume_init() }.f_type),
+        Err(e) if e == libc::ENOSYS => 32,
+        Err(_) => -1,
+    }
+}
+
 fn pathconf_value(name: c_int) -> Option<libc::c_long> {
     match name {
         // _PC_LINK_MAX is resolved via per-path/per-fd statfs in the
@@ -3875,6 +3983,13 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         libc::_PC_CHOWN_RESTRICTED => Some(1),
         libc::_PC_NO_TRUNC => Some(1),
         libc::_PC_VDISABLE => Some(0),
+        // POSIX requires the FS to support symlinks ("/" -> ".." etc.); glibc
+        // returns 1 on Linux (measured live: pathconf(".", 20) -> 1). Without
+        // this arm it falls through to the EINVAL default.
+        //
+        // Shipped as e2a577d08, silently deleted by e634aff2a (2026-06-26),
+        // restored here (bd-d3cav6).
+        libc::_PC_2_SYMLINKS => Some(1),
         _ => None,
     }
 }
@@ -3981,6 +4096,35 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
         return v;
     }
+
+    // _PC_FILESIZEBITS is filesystem-dependent (glibc __statfs_filesize_max);
+    // without this it falls through to the EINVAL default (-1). bd-eqcn80,
+    // shipped 4713e10f2, deleted by e634aff2a, restored (bd-d3cav6).
+    if name == libc::_PC_FILESIZEBITS {
+        let v = unsafe { pc_filesizebits_for_path(path) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
+    // glibc reports these record/allocation limits as the filesystem block size
+    // (statvfs f_bsize) rather than -1/EINVAL. Measured live on this host:
+    // pathconf(".", _PC_REC_MIN_XFER_SIZE / _PC_REC_XFER_ALIGN /
+    // _PC_ALLOC_SIZE_MIN) all return 4096, which is statvfs(".").f_bsize.
+    //
+    // Shipped as e2a577d08, silently deleted by e634aff2a (2026-06-26), restored
+    // here (bd-d3cav6).
+    if matches!(
+        name,
+        libc::_PC_REC_MIN_XFER_SIZE | libc::_PC_REC_XFER_ALIGN | libc::_PC_ALLOC_SIZE_MIN
+    ) {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_statfs(path as *const u8, fs.as_mut_ptr()) } {
+            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
+            Err(_) => -1,
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
     let out = match pathconf_value(name) {
         Some(v) => v,
         None => {
@@ -4021,6 +4165,33 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
     if name == libc::_PC_LINK_MAX {
         let v = unsafe { pc_link_max_for_fd(fd) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
+
+    // _PC_FILESIZEBITS is filesystem-dependent; mirror the per-path branch in
+    // pathconf via fstatfs. bd-eqcn80, shipped 4713e10f2, deleted by e634aff2a.
+    if name == libc::_PC_FILESIZEBITS {
+        let v = unsafe { pc_filesizebits_for_fd(fd) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
+    // Record/allocation limits = filesystem block size (statvfs f_bsize), via the
+    // fd's fstatfs — mirrors the per-path statfs branch in pathconf.
+    //
+    // Shipped as d2a979696, silently deleted by e634aff2a (2026-06-26), restored
+    // here; confirmed missing by READING this function at HEAD, not by the
+    // line-probe heuristic (bd-d3cav6).
+    if matches!(
+        name,
+        libc::_PC_REC_MIN_XFER_SIZE | libc::_PC_REC_XFER_ALIGN | libc::_PC_ALLOC_SIZE_MIN
+    ) {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
+            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
+            Err(_) => -1,
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
         return v;
     }
     let out = match pathconf_value(name) {
@@ -8219,6 +8390,9 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         // Cannot inspect the setting, so the plain token applies. (libxcrypt
         // dereferences these and would crash; returning the token keeps the
         // never-NULL invariant callers depend on without inventing a hash.)
+        // libxcrypt pairs that failure token with EINVAL; callers must not
+        // mistake a malformed credential request for a valid hash result.
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return crypt_failure_token(b"");
     }
 

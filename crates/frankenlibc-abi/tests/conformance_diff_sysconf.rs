@@ -48,6 +48,10 @@ fn sysconf_matches_glibc() {
         _SC_2_SW_DEV,
         _SC_IOV_MAX,
         _SC_THREADS,
+        // _SC_THREAD_SAFE_FUNCTIONS was NOT in this list, and fl answered a
+        // boolean 1 where glibc answers 200809 — the same defect as _SC_THREADS,
+        // uncaught because nothing compared it. Added (bd-d3cav6).
+        _SC_THREAD_SAFE_FUNCTIONS,
         _SC_THREAD_KEYS_MAX,
         _SC_ATEXIT_MAX,
         _SC_LOGIN_NAME_MAX,

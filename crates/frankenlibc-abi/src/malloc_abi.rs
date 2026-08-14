@@ -3265,10 +3265,14 @@ struct AllocatorReentryGuard {
 
 impl Drop for AllocatorReentryGuard {
     fn drop(&mut self) {
-        let current = self.slot.allocator_depth.load(Ordering::Acquire);
+        // This guard is constructed only by the successful 0 -> 1 CAS in
+        // `enter_allocator_reentry_guard`. Reentrant callers can observe the
+        // occupied slot, but their failed CAS never mutates the depth, so the
+        // owner always releases exactly depth 1. Avoid a second atomic load on
+        // every malloc/free exit in the hot path.
         self.slot
             .allocator_depth
-            .store(current.saturating_sub(1), Ordering::Release);
+            .store(0, Ordering::Release);
     }
 }
 

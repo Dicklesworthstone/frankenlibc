@@ -11432,6 +11432,19 @@ fn fcrypt_alias_matches_crypt_for_sha512() {
 }
 
 #[test]
+fn fcrypt_null_inputs_return_failure_token_and_einval() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::fcrypt;
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = fcrypt(std::ptr::null(), std::ptr::null());
+        assert!(!result.is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+    }
+}
+
+#[test]
 fn xcrypt_alias_matches_crypt_for_md5() {
     use frankenlibc_abi::unistd_abi::{crypt, xcrypt};
     let key = CString::new("password").unwrap();

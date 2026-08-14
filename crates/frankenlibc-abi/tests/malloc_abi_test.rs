@@ -304,6 +304,22 @@ fn test_segment_free_rejects_header_and_class_slack_without_retiring_slot() {
 }
 
 #[test]
+fn test_free_releases_allocator_reentry_depth() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+
+    let ptr = unsafe { malloc(17) };
+    assert!(!ptr.is_null());
+    unsafe { free(ptr) };
+
+    // A completed free must release the outer allocator guard.  Holding depth
+    // here would force the next allocation down the reentrant fallback path.
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    assert_eq!(previous_depth, 0, "free must leave no allocator reentry depth");
+}
+
+#[test]
 fn test_segment_realloc_matrix_preserves_exact_bounds() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     signal_runtime_ready_for_tests();

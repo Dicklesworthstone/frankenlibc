@@ -18,6 +18,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
+#[cfg(feature = "abi-bench")]
+use frankenlibc_bench::HostWideBenchmarkGuard;
 use frankenlibc_core::malloc::size_class::{SizeClassIndex, small_bin_index};
 use sha2::{Digest, Sha256};
 
@@ -1243,6 +1245,20 @@ fn pin_segment_production_scoring_thread() -> usize {
 }
 
 #[cfg(feature = "abi-bench")]
+fn require_segment_production_quiet(guard: &HostWideBenchmarkGuard, phase: &str) {
+    match guard.check_quiet() {
+        Ok(evidence) => println!(
+            "MALLOC_SEGMENT_PRODUCTION_{}",
+            evidence.contract_line(phase)
+        ),
+        Err(error) => {
+            eprintln!("MALLOC_SEGMENT_PRODUCTION_BLOCKED phase={phase} error={error}");
+            std::process::exit(2);
+        }
+    }
+}
+
+#[cfg(feature = "abi-bench")]
 fn segment_production_executable_provenance(output_dir: &Path) -> (String, u64, u64) {
     let identity = bench_executable_identity();
     let sha_path = output_dir.join("executable.sha256");
@@ -1917,6 +1933,11 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
     );
     segment_production_preflight("glibc", glibc_malloc, glibc_free, &SIZES, false, false);
 
+    let scoring_cpu = pin_segment_production_scoring_thread();
+    let quiet_guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("MALLOC_SEGMENT_PRODUCTION_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
     let profile = profile_segment_production_candidate(
         &output_dir,
         candidate_malloc,
@@ -1924,7 +1945,7 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
         &SIZES,
         PROFILE_OPERATIONS,
     );
-    let scoring_cpu = pin_segment_production_scoring_thread();
+    require_segment_production_quiet(&quiet_guard, "pre_measurement");
     let worker = fs::read_to_string("/proc/sys/kernel/hostname")
         .expect("read remote worker hostname")
         .trim()
@@ -1980,6 +2001,7 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
         );
         size_results.push(result);
     }
+    require_segment_production_quiet(&quiet_guard, "post_measurement");
     let all_size_median_ci_gate_pass = size_results
         .iter()
         .all(SegmentProductionSizeResult::median_ci_gate_pass);
