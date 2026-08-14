@@ -6233,10 +6233,37 @@ pub unsafe extern "C" fn lgammaf64_r(x: f64, signgamp: *mut c_int) -> f64 {
 pub unsafe extern "C" fn lgammaf64x_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
+
+/// Positive binary128 values above the finite f64 range must not be narrowed
+/// through the double implementation.  In this range the Stirling remainder
+/// is far below one binary128 ulp, so the first two Bernoulli corrections keep
+/// the result finite while the full ldbl-128 kernel remains tracked separately.
+#[inline]
+fn lgammaf128_large_positive(x: f128) -> f128 {
+    const HALF_LOG_TWO_PI: f128 = 0.9189385332046727417803297364056176398614f128;
+    let reciprocal = 1.0f128 / x;
+    let reciprocal_squared = reciprocal * reciprocal;
+    let correction = reciprocal
+        * ((1.0f128 / 12.0)
+            + reciprocal_squared * ((-1.0f128 / 360.0) + reciprocal_squared / 1260.0));
+    (x - 0.5) * logl_f128(x) - x + HALF_LOG_TWO_PI + correction
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
-    // ABI-correct binary128 surface; the Bessel/gamma quad kernels are still a
-    // tracked parity gap, so preserve the existing f64 implementation quality.
+    if x.is_finite() && x > f64::MAX as f128 {
+        if !signgamp.is_null() {
+            // Gamma is positive for every positive argument.
+            unsafe { *signgamp = 1 };
+        }
+        let result = lgammaf128_large_positive(x);
+        if result.is_infinite() {
+            set_range_errno();
+        }
+        return result;
+    }
+    // ABI-correct binary128 surface; the full ldbl-128 kernel is still a
+    // tracked parity gap, but the finite range above f64 must remain finite.
     unsafe { lgamma_r(x as f64, signgamp) as f128 }
 }
 
@@ -7696,7 +7723,13 @@ pub unsafe extern "C" fn lgammaf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf128(x: f128) -> f128 {
-    unsafe { lgamma(x as f64) as f128 }
+    let mut sign = 1;
+    let result = unsafe { lgammaf128_r(x, &mut sign) };
+    unsafe {
+        signgam = sign;
+        __signgam = sign;
+    }
+    result
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logf32(x: f32) -> f32 {
