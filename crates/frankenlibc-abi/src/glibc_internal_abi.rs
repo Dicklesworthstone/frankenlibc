@@ -566,14 +566,12 @@ pub unsafe extern "C" fn __ctype_toupper() -> *const c_int {
 }
 
 /// `__ctype_get_mb_cur_max` — return maximum bytes per multibyte character.
-///
-/// FrankenLibC currently supports only the C/POSIX locale.  That locale has
-/// a single-byte multibyte encoding, so `MB_CUR_MAX` must be one.  Returning
-/// UTF-8's six-byte maximum here makes locale-sensitive fortify checks reject
-/// valid one-byte C-locale buffers.
+/// FrankenLibC's multibyte codec is UTF-8, whose maximum is six bytes.
+/// This must remain at least the codec's maximum output width so fortify
+/// wrappers do not accept undersized destination buffers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ctype_get_mb_cur_max() -> SizeT {
-    1
+    6
 }
 
 // __ctype32_* (3 symbols) — native, forward to ctype_abi tables

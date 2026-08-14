@@ -20,6 +20,7 @@ use frankenlibc_abi::locale_abi::{
     locale_reset_catalog_state_for_tests, locale_reset_gettext_state_for_tests, localeconv,
     newlocale, ngettext, nl_langinfo, nl_langinfo_l, setlocale, textdomain, uselocale,
 };
+use frankenlibc_abi::wchar_abi::wctomb;
 
 static GETTEXT_STATE_GUARD: Mutex<()> = Mutex::new(());
 static CATALOG_STATE_GUARD: Mutex<()> = Mutex::new(());
@@ -132,14 +133,12 @@ fn setlocale_set_posix_locale() {
 }
 
 #[test]
-fn ctype_mb_cur_max_matches_supported_c_and_posix_locales() {
-    let c_name = CString::new("C").unwrap();
-    assert!(!unsafe { setlocale(libc::LC_ALL, c_name.as_ptr()) }.is_null());
-    assert_eq!(unsafe { __ctype_get_mb_cur_max() }, 1);
+fn ctype_mb_cur_max_covers_utf8_codec_output() {
+    let mut bytes = [0_u8; 6];
+    let encoded = unsafe { wctomb(bytes.as_mut_ptr(), '🦀' as u32) };
 
-    let posix_name = CString::new("POSIX").unwrap();
-    assert!(!unsafe { setlocale(libc::LC_ALL, posix_name.as_ptr()) }.is_null());
-    assert_eq!(unsafe { __ctype_get_mb_cur_max() }, 1);
+    assert_eq!(encoded, 4);
+    assert!((encoded as usize) <= unsafe { __ctype_get_mb_cur_max() });
 }
 
 #[test]
