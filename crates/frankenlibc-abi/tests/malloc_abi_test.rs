@@ -1008,6 +1008,32 @@ fn test_fallback_retired_key_is_not_live_and_reactivates_with_new_size() {
     assert_eq!(fallback_remove_sized_for_bench(key), Some(192));
 }
 
+#[test]
+fn test_fallback_reuses_retired_collision_slots_before_probe_limit() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    // The table size is 2^18 and the hash multiplier is odd, so adding 2^18
+    // produces the same starting probe index. More than 1,024 distinct keys
+    // exercise the full collision budget. Each retired key must become
+    // reusable; otherwise this sequence fills the probe chain and tracking
+    // silently stops for the final allocation.
+    const COLLISION_STRIDE: usize = 1 << 18;
+    const PROBE_LIMIT: usize = 1024;
+    let base = 0x6b00_0000usize;
+
+    for sequence in 0..=PROBE_LIMIT {
+        let key =
+            base.checked_add(sequence * COLLISION_STRIDE)
+                .expect("synthetic fallback key remains representable") as *mut c_void;
+        fallback_insert_sized_for_bench(key, 64);
+        assert_eq!(
+            fallback_size_for_bench(key),
+            Some(64),
+            "retired collision slot {sequence} must remain reusable"
+        );
+        assert_eq!(fallback_remove_sized_for_bench(key), Some(64));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // malloc — alloc/free cycling
 // ---------------------------------------------------------------------------

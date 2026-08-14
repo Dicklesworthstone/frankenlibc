@@ -2748,7 +2748,11 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
     };
     let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(key);
-    let mut first_tombstone: Option<usize> = None;
+    // A retired key preserves the probe chain just like a traditional
+    // tombstone, but does not describe a live allocation. Reusing the first
+    // such slot bounds occupancy under workloads whose host allocator returns
+    // many distinct addresses instead of immediately recycling a tcache key.
+    let mut first_reusable: Option<usize> = None;
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
@@ -2762,18 +2766,21 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
             }
             return Some(idx);
         }
-        if slot == FALLBACK_SLOT_TOMBSTONE {
-            if first_tombstone.is_none() {
-                first_tombstone = Some(idx);
+        if slot == FALLBACK_SLOT_TOMBSTONE
+            || (slot != FALLBACK_SLOT_EMPTY
+                && FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) == 0)
+        {
+            if first_reusable.is_none() {
+                first_reusable = Some(idx);
             }
             continue;
         }
         if slot == FALLBACK_SLOT_EMPTY {
-            if let Some(tomb_idx) = first_tombstone {
+            if let Some(reusable_idx) = first_reusable {
                 publish_fallback_range(key, size);
-                FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
-                FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
-                return Some(tomb_idx);
+                FALLBACK_ALLOC_SIZES[reusable_idx].store(size, Ordering::Relaxed);
+                FALLBACK_ALLOC_PTRS[reusable_idx].store(key, Ordering::Release);
+                return Some(reusable_idx);
             }
             publish_fallback_range(key, size);
             FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
@@ -2782,11 +2789,11 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
         }
     }
 
-    if let Some(tomb_idx) = first_tombstone {
+    if let Some(reusable_idx) = first_reusable {
         publish_fallback_range(key, size);
-        FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
-        FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
-        return Some(tomb_idx);
+        FALLBACK_ALLOC_SIZES[reusable_idx].store(size, Ordering::Relaxed);
+        FALLBACK_ALLOC_PTRS[reusable_idx].store(key, Ordering::Release);
+        return Some(reusable_idx);
     }
     None
 }
