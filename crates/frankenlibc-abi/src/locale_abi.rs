@@ -1,11 +1,12 @@
 //! ABI layer for `<locale.h>` functions.
 //!
-//! Bootstrap provides the POSIX "C"/"POSIX" locale only. `setlocale` accepts
-//! these names and rejects all others. `localeconv` returns C-locale defaults.
+//! Bootstrap provides a UTF-8 C locale. `setlocale` accepts the conventional
+//! C aliases and canonicalizes them to `C.UTF-8`; `localeconv` retains the
+//! C-locale numeric defaults.
 
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::locale as locale_core;
@@ -46,21 +47,13 @@ unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
     Some(bytes.to_vec())
 }
 
-/// Static C-locale name string.
-static C_LOCALE_NAME: &[u8] = b"C\0";
-/// Locale name used by glibc for its UTF-8 C locale.
-static C_UTF8_LOCALE_NAME: &[u8] = b"C.UTF-8\0";
-/// Whether the active LC_CTYPE encoding is the supported UTF-8 C locale.
+/// Canonical name for the bootstrap UTF-8 C locale.
+static C_LOCALE_NAME: &[u8] = b"C.UTF-8\0";
+/// Character encoding string for the bootstrap locale.
 ///
-/// The remaining locale categories retain their C-locale behaviour; this
-/// state exists specifically for multibyte conversion and FORTIFY's
-/// MB_CUR_MAX contract.
-static CTYPE_IS_UTF8: AtomicBool = AtomicBool::new(false);
-/// Character encoding string for the POSIX C locale.
-///
-/// glibc reports `ANSI_X3.4-1968` for the `C`/`POSIX` locale, and this crate
-/// only implements that locale family here.
-static C_LOCALE_CODESET: &[u8] = b"ANSI_X3.4-1968\0";
+/// The conversion ABI is UTF-8 throughout, so every public locale report must
+/// expose the same encoding as `MB_CUR_MAX` and the multibyte codec.
+static C_LOCALE_CODESET: &[u8] = b"UTF-8\0";
 /// POSIX C-locale radix character.
 static C_LOCALE_RADIX: &[u8] = b".\0";
 /// POSIX C-locale thousands separator (empty string).
@@ -137,10 +130,9 @@ unsafe impl Sync for LConv {}
 
 /// POSIX `setlocale`.
 ///
-/// Bootstrap supports the "C"/"POSIX" locale and the UTF-8 C locale for
-/// LC_CTYPE. Querying (null `locale` pointer) returns the active locale name
-/// for LC_CTYPE/LC_ALL. Setting to "C", "POSIX", or "" selects C; setting
-/// LC_CTYPE/LC_ALL to "C.UTF-8" selects the UTF-8 multibyte codec.
+/// Bootstrap supports one UTF-8 C locale. Querying (null `locale` pointer)
+/// returns its canonical `C.UTF-8` name. The conventional "C"/"POSIX" names
+/// are accepted as aliases; other names fail with `ENOENT` in strict mode.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *const c_char {
     let (mode, decision) =
@@ -160,11 +152,6 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     // Query mode: locale is NULL.
     if locale.is_null() {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, false);
-        if matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL)
-            && CTYPE_IS_UTF8.load(Ordering::Acquire)
-        {
-            return C_UTF8_LOCALE_NAME.as_ptr() as *const c_char;
-        }
         return C_LOCALE_NAME.as_ptr() as *const c_char;
     }
 
@@ -175,23 +162,11 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return std::ptr::null();
     };
 
-    if locale_core::is_c_locale(&name) {
-        if matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL) {
-            CTYPE_IS_UTF8.store(false, Ordering::Release);
-        }
+    if locale_core::is_c_locale(&name) || matches!(name.as_slice(), b"C.UTF-8" | b"C.utf8") {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
         C_LOCALE_NAME.as_ptr() as *const c_char
-    } else if matches!(name.as_slice(), b"C.UTF-8" | b"C.utf8")
-        && matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL)
-    {
-        CTYPE_IS_UTF8.store(true, Ordering::Release);
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
-        C_UTF8_LOCALE_NAME.as_ptr() as *const c_char
     } else if mode.heals_enabled() {
-        // Hardened: fall back to C locale instead of failing.
-        if matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL) {
-            CTYPE_IS_UTF8.store(false, Ordering::Release);
-        }
+        // Hardened: fall back to the bootstrap UTF-8 locale instead of failing.
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         C_LOCALE_NAME.as_ptr() as *const c_char
     } else {
@@ -201,14 +176,13 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     }
 }
 
-/// glibc's runtime `MB_CUR_MAX` value for the active LC_CTYPE locale.
+/// The maximum multibyte width accepted by the shipped UTF-8 conversion codec.
+///
+/// The bootstrap locale uses the codec throughout, so the public locale value
+/// and every conversion entrypoint share this six-byte maximum.
 #[inline]
 pub(crate) fn mb_cur_max() -> libc::size_t {
-    if CTYPE_IS_UTF8.load(Ordering::Acquire) {
-        6
-    } else {
-        1
-    }
+    6
 }
 
 // ---------------------------------------------------------------------------
@@ -334,8 +308,8 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
 
 /// POSIX `nl_langinfo`.
 ///
-/// Bootstrap supports a minimal C-locale subset:
-/// - `CODESET` -> `"ANSI_X3.4-1968"`
+/// Bootstrap supports a minimal UTF-8 C-locale subset:
+/// - `CODESET` -> `"UTF-8"`
 /// - `RADIXCHAR` -> `"."`
 /// - `THOUSEP` -> `""`
 ///   Unsupported items return `""`.
@@ -794,12 +768,12 @@ mod tests {
     use std::ffi::CStr;
 
     #[test]
-    fn setlocale_query_returns_c() {
+    fn setlocale_query_returns_utf8_c_locale() {
         // SAFETY: Null locale means query mode.
         let result = unsafe { setlocale(locale_core::LC_ALL, std::ptr::null()) };
         assert!(!result.is_null());
         let name = unsafe { CStr::from_ptr(result) }.to_bytes();
-        assert_eq!(name, b"C");
+        assert_eq!(name, b"C.UTF-8");
     }
 
     #[test]
@@ -838,12 +812,12 @@ mod tests {
     }
 
     #[test]
-    fn nl_langinfo_codeset_returns_c_locale_ascii() {
+    fn nl_langinfo_codeset_returns_utf8() {
         // SAFETY: CODESET is a valid item.
         let result = unsafe { nl_langinfo(libc::CODESET) };
         assert!(!result.is_null());
         let val = unsafe { CStr::from_ptr(result) };
-        assert_eq!(val.to_bytes(), b"ANSI_X3.4-1968");
+        assert_eq!(val.to_bytes(), b"UTF-8");
     }
 
     #[test]

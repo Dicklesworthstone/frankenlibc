@@ -6,7 +6,7 @@
 //! Tests cover safe pass-through paths where buffer sizes are sufficient and
 //! fork-isolated failure paths where checked wrappers abort the child process.
 
-use std::ffi::{CString, c_char, c_int, c_long, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
 
 // Re-export fortified functions from the ABI crate.
 use frankenlibc_abi::errno_abi::__errno_location;
@@ -1510,10 +1510,8 @@ fn wctomb_chk_safe() {
 }
 
 #[test]
-fn wctomb_chk_short_buffer_aborts_child_process_in_utf8_locale() {
-    assert_child_sigabrt("wctomb_chk short UTF-8 buffer", || {
-        let _ =
-            unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+fn wctomb_chk_short_buffer_aborts_child_process() {
+    assert_child_sigabrt("wctomb_chk short buffer", || {
         let mut buf = [0u8; 1];
         unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
     });
@@ -1539,34 +1537,29 @@ unsafe extern "C" {
     /// against fl's below.
     #[link_name = "__wctomb_chk"]
     fn host_wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int;
-    #[link_name = "__ctype_get_mb_cur_max"]
-    fn host_ctype_get_mb_cur_max() -> usize;
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
 }
 
 #[test]
-fn ctype_mb_cur_max_tracks_c_and_utf8_locales_vs_glibc() {
-    let pid = unsafe { libc::fork() };
-    assert!(pid >= 0, "fork failed for locale differential");
-    if pid == 0 {
-        let mut matches_host = true;
-        for locale in [c"C", c"C.UTF-8"] {
-            let host_locale = unsafe { setlocale(libc::LC_ALL, locale.as_ptr()) };
-            let fl_locale =
-                unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, locale.as_ptr()) };
-            matches_host &= !host_locale.is_null()
-                && !fl_locale.is_null()
-                && unsafe { host_ctype_get_mb_cur_max() }
-                    == unsafe { frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max() };
-        }
-        unsafe { libc::_exit(if matches_host { 0 } else { 1 }) };
-    }
+fn locale_mb_cur_max_and_wctomb_share_the_utf8_contract() {
+    let selected = unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    assert!(!selected.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(selected) }.to_bytes(), b"C.UTF-8");
 
-    let mut status: c_int = 0;
-    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
-    assert!(
-        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
-        "C and C.UTF-8 MB_CUR_MAX must match host glibc, status={status}"
+    let queried = unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, std::ptr::null()) };
+    assert_eq!(unsafe { CStr::from_ptr(queried) }.to_bytes(), b"C.UTF-8");
+
+    let codeset = unsafe { frankenlibc_abi::locale_abi::nl_langinfo(libc::CODESET) };
+    assert_eq!(unsafe { CStr::from_ptr(codeset) }.to_bytes(), b"UTF-8");
+    assert_eq!(
+        unsafe { frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max() },
+        6
+    );
+
+    let mut buffer = [0u8; 6];
+    assert_eq!(
+        unsafe { frankenlibc_abi::wchar_abi::wctomb(buffer.as_mut_ptr(), 0x20AC) },
+        3
     );
 }
 
@@ -1585,10 +1578,11 @@ fn ctype_mb_cur_max_tracks_c_and_utf8_locales_vs_glibc() {
 ///   C.UTF-8      MB_CUR_MAX=6  buflen 1, 5 abort; 6, 15, 16 return
 /// ```
 ///
-/// This arm explicitly selects UTF-8 for both implementations. The separate
-/// two-locale differential above covers the C-locale one-byte boundary.
+/// FrankenLibC's bootstrap locale and conversion family are UTF-8, so this arm
+/// selects the matching UTF-8 locale for the host and exercises the same
+/// codec-wide guard in both implementations.
 #[test]
-fn wctomb_chk_abort_boundary_matches_host_in_utf8_locale() {
+fn wctomb_chk_abort_boundary_matches_host() {
     let loc = CString::new("C.UTF-8").unwrap();
     if unsafe { setlocale(libc::LC_ALL, loc.as_ptr()) }.is_null() {
         eprintln!("SKIPPED wctomb_chk_abort_boundary: C.UTF-8 unavailable here");
@@ -1602,9 +1596,6 @@ fn wctomb_chk_abort_boundary_matches_host_in_utf8_locale() {
             unsafe { host_wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
         });
         let fl = child_aborted(&format!("fl wctomb_chk buflen={n}"), || {
-            let _ = unsafe {
-                frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr())
-            };
             let mut buf = [0u8; 32];
             unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
         });

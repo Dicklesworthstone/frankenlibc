@@ -565,12 +565,10 @@ pub unsafe extern "C" fn __ctype_toupper() -> *const c_int {
     unsafe { crate::ctype_abi::toupper_table_ptr() }
 }
 
-/// `__ctype_get_mb_cur_max` — return LC_CTYPE's maximum multibyte width.
+/// `__ctype_get_mb_cur_max` — maximum width of the active UTF-8 codec.
 ///
-/// The default C/POSIX locale has a one-byte character encoding; the supported
-/// C.UTF-8 locale uses glibc's historical six-byte maximum. FORTIFY checks
-/// consume this runtime value, so it must track `setlocale` rather than the
-/// codec's widest possible output.
+/// The bootstrap locale and conversion family are UTF-8, so FORTIFY consumers
+/// require the codec's six-byte maximum.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ctype_get_mb_cur_max() -> SizeT {
     crate::locale_abi::mb_cur_max()
