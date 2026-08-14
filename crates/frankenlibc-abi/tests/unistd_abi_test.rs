@@ -11528,8 +11528,11 @@ fn crypt_checksalt_classifies_known_prefixes() {
     let bogus = CString::new("$plain$saltsalt$").unwrap();
     let des2 = CString::new("ab").unwrap();
 
-    assert_eq!(unsafe { crypt_checksalt(md5.as_ptr()) }, 0);
-    assert_eq!(unsafe { crypt_checksalt(sha256.as_ptr()) }, 0);
+    // libxcrypt classifies MD5 and SHA-256 as METHOD_LEGACY rather
+    // than OK. Keep this ABI test aligned with the live-host
+    // differential gate rather than collapsing the five-way contract.
+    assert_eq!(unsafe { crypt_checksalt(md5.as_ptr()) }, 3);
+    assert_eq!(unsafe { crypt_checksalt(sha256.as_ptr()) }, 3);
     assert_eq!(unsafe { crypt_checksalt(sha512.as_ptr()) }, 0);
     assert_eq!(unsafe { crypt_checksalt(bogus.as_ptr()) }, 1);
     assert_eq!(unsafe { crypt_checksalt(des2.as_ptr()) }, 1);

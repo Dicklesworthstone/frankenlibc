@@ -8550,12 +8550,12 @@ pub unsafe extern "C" fn crypt_preferred_method() -> *const c_char {
 
 /// libcrypt `crypt_checksalt(setting) -> int` — validate that
 /// `setting` begins with a recognized crypt prefix. Returns
-/// `CRYPT_SALT_OK = 0` for `$1$` (MD5), `$5$` (SHA-256), and `$6$`
-/// (SHA-512); returns `CRYPT_SALT_INVALID = 1` for any other
-/// prefix or NULL input. (libxcrypt also defines
-/// `CRYPT_SALT_METHOD_LEGACY = 2` and `CRYPT_SALT_METHOD_DISABLED
-/// = 3` for older / disabled algorithms; we don't classify those
-/// separately.)
+/// `CRYPT_SALT_OK = 0` for `$6$` (SHA-512),
+/// `CRYPT_SALT_METHOD_LEGACY = 3` for `$1$` (MD5) and `$5$`
+/// (SHA-256), and `CRYPT_SALT_INVALID = 1` for unsupported prefixes
+/// or NULL input. libxcrypt also defines
+/// `CRYPT_SALT_METHOD_DISABLED = 2` and `CRYPT_SALT_TOO_CHEAP = 4`;
+/// FrankenLibC does not implement a method that maps to either outcome.
 ///
 /// # Safety
 ///
