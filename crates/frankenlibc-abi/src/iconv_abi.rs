@@ -52,6 +52,27 @@ fn iconv_error_return() -> usize {
     ICONV_ERROR_VALUE
 }
 
+/// Returns whether hardened mode must reject an iconv encoding pair before
+/// descriptor creation.
+///
+/// ISO-2022-JP and UTF-7 are implemented for strict compatibility, but the
+/// hardened phase-1 contract deliberately keeps their stateful decoder paths
+/// out of the trusted conversion surface. Normalize exactly as core iconv does
+/// so punctuation and case variants cannot bypass the policy.
+#[must_use]
+pub fn hardened_iconv_open_denied(tocode: &[u8], fromcode: &[u8]) -> bool {
+    fn normalized_is_deferred(raw: &[u8]) -> bool {
+        let normalized: Vec<u8> = raw
+            .iter()
+            .filter(|&&byte| !matches!(byte, b'-' | b'_' | b' ' | b'\t'))
+            .map(|byte| byte.to_ascii_uppercase())
+            .collect();
+        matches!(normalized.as_slice(), b"ISO2022JP" | b"UTF7")
+    }
+
+    normalized_is_deferred(tocode) || normalized_is_deferred(fromcode)
+}
+
 type IconvHandle = Arc<Mutex<IconvDescriptor>>;
 
 static ICONV_HANDLES: OnceLock<Mutex<ArtifactHashMap<usize, IconvHandle>>> = OnceLock::new();
@@ -159,6 +180,16 @@ pub unsafe extern "C" fn iconv_open(tocode: *const c_char, fromcode: *const c_ch
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         return iconv_error_handle();
     };
+
+    if frankenlibc_membrane::config::safety_level().heals_enabled()
+        && hardened_iconv_open_denied(&to, &from)
+    {
+        // Hardened mode excludes these stateful decoder paths by contract.
+        // SAFETY: sets thread-local errno.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 12, true);
+        return iconv_error_handle();
+    }
 
     match iconv::iconv_open_detailed(&to, &from) {
         Ok((desc, _dispatch)) => {
@@ -464,6 +495,21 @@ mod tests {
             assert_ne!(cd, iconv_error_handle());
             assert_eq!(iconv_close(cd), 0);
         }
+    }
+
+    #[test]
+    fn hardened_iconv_policy_rejects_deferred_codec_aliases_only() {
+        for encoding in [
+            b"ISO-2022-JP".as_slice(),
+            b"iso_2022_jp".as_slice(),
+            b"UTF-7".as_slice(),
+            b"utf 7".as_slice(),
+        ] {
+            assert!(hardened_iconv_open_denied(b"UTF-8", encoding));
+            assert!(hardened_iconv_open_denied(encoding, b"UTF-8"));
+        }
+        assert!(!hardened_iconv_open_denied(b"UTF-8", b"UTF-16LE"));
+        assert!(!hardened_iconv_open_denied(b"ISO-2022-JP-2", b"UTF-8"));
     }
 
     #[test]

@@ -13601,7 +13601,19 @@ fn execute_iconv_case(
     let input = parse_u8_vec_any(inputs, &["input", "inbuf", "src"])?;
     let out_len = parse_usize_any(inputs, &["out_len", "dst_len", "outbytesleft"])?;
 
-    let impl_output = run_impl_iconv_case(&tocode, &fromcode, &input, out_len);
+    // Fixture execution uses core iconv directly, so mirror the ABI's
+    // hardened-only admission rule here instead of letting this conformance
+    // path accidentally exercise a decoder the deployed ABI refuses.
+    let impl_output = if hardened
+        && frankenlibc_abi::iconv_abi::hardened_iconv_open_denied(
+            tocode.as_bytes(),
+            fromcode.as_bytes(),
+        )
+    {
+        format_iconv_open_error(frankenlibc_core::iconv::ICONV_EINVAL)
+    } else {
+        run_impl_iconv_case(&tocode, &fromcode, &input, out_len)
+    };
 
     if strict {
         let host_output = run_host_iconv_case(&tocode, &fromcode, &input, out_len)?;
