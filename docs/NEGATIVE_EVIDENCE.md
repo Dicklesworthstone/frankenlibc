@@ -26947,3 +26947,51 @@ the next agent should not re-run it.
   quiet-host re-run reproduces ~10x, the standing number stands and this row is a contention
   artifact on magnitude only; if it reproduces >12x, the allocator has regressed since 2026-07-25
   and that is a separate bead.
+
+## 2026-08-14 (YellowPlateau) — MEASURED LOSS, campaign, CLEAN-NULL RERUN: fl `malloc`+`free` reproduces ~10x vs live host glibc; supersedes the magnitude of the row above
+
+- **RESULT CLASS:** `result_class=campaign`, LOSS. Same harness, same worker, same day as the row
+  above; the difference is that **this run's A/A nulls hold**, so this is the row to quote and the
+  previous one is direction-only.
+- **ELF SHA-256 (self-reported in-process):**
+  `96e6bd82881362664e8144a2b4870784ab528f59f143d3866125594c30d3368c`
+  (differs from the prior run because the probe gained the RUN_PROVENANCE line — that is the point
+  of hashing the ELF from inside it.)
+- **RUN_PROVENANCE, read on the executing machine:** `host=vmi1149989 observed_threads=10
+  governor=unavailable (no cpufreq sysfs — common in a container) isa=avx2+sse4.2
+  loadavg=24.31 35.30 32.63`. n=61 rounds x 100,000 pairs/arm/round, interleaved with per-round arm
+  alternation; bootstrap percentile, 20,000 resamples, seed `0x202608140001`. HEAD `dc4b18f9c`;
+  `malloc_abi.rs` unchanged since `8878330ca`.
+
+| sz (B) | A/A null median | null 95% CI | fl/glibc paired median | paired 95% CI | verdict |
+|---|---|---|---|---|---|
+| 16 | 0.9834 | [0.9589, 1.0042] | **9.9852** | [9.7776, 10.3864] | FL_SLOWER |
+| 64 | 0.9985 | [0.9856, 1.0107] | **10.5027** | [10.1996, 11.1031] | FL_SLOWER |
+| 256 | 1.0066 | [0.9878, 1.0289] | **11.2226** | [10.5401, 12.5516] | FL_SLOWER |
+| 1024 | 0.9922 | [0.9478, 1.0256] | **10.0121** | [9.7615, 10.4502] | FL_SLOWER |
+
+- **THE RETRY PREDICATE FROM THE ROW ABOVE IS MET (3.5 of 4).** It demanded every per-size null
+  bootstrap CI fit within ±0.05 of 1.0, not merely contain 1.0. sz=16, 64 and 256 satisfy it
+  outright. sz=1024's lower bound is 0.9478, i.e. **0.0022 outside** the bar — recorded as the near
+  miss it is rather than rounded into compliance. Null half-widths collapsed from ~0.29/0.13/0.13/0.19
+  to ~0.023/0.013/0.021/0.039.
+- **IT REPRODUCES THE 2026-07-25 STANDING ROW.** That row: 10.010x, per size 9.986 / 9.981 / 10.107
+  / 9.990. This row: **9.9852 / 10.5027 / 11.2226 / 10.0121**. sz=16 and sz=1024 land within 0.03 of
+  the standing values. So the allocator has **not** regressed since 2026-07-25, and the standing
+  10.010x survives independent re-measurement three weeks later on different hardware.
+- **IT ALSO SETTLES THE PRIOR ROW.** The 11.94/10.57/12.58/16.17 an hour earlier was a contention
+  artifact on magnitude, exactly as that row's HONEST LIMITS predicted — same worker, same code,
+  loose nulls. fl absolute times fell from 44.1–76.0 to 46.2–52.1 ns/op while glibc's stayed at
+  4.37–5.03. **Do not cite the earlier row's magnitude for anything.** Its direction, and its
+  observation about fl's load sensitivity, stand.
+- **NOT CLAIMED, though it looks like a win:** `FREE_NULL fl=2.01 glibc=2.14 fl/glibc=0.938`. fl is
+  ~6% faster than glibc on `free(NULL)` here — but `FREE_NULL` is an **unpaired point estimate with
+  no A/A control of its own** in this probe, and the prior run put it at 1.033 in the other
+  direction. Two unpaired estimates straddling 1.0 is not a win; it is an ungated number. Anyone who
+  wants that win must put `free(NULL)` through `paired()` first. `FREE_NULL_AB new/old=0.100` is a
+  **self-speedup = MAINTENANCE**, and its `old` arm moved 64.64 -> 20.12 ns between runs, which is
+  itself a reason not to trust unpaired arms on this fleet.
+- **DISPOSITION.** The 10x loss is real, reproducible, and now has complete provenance. The lever
+  that addresses it is bd-dcrhgl SUB-STEP A (inline size header, owned by cod_fl); nothing in this
+  row changes its design, but the load-sensitivity asymmetry noted in the row above is a second,
+  independent argument for it that a quiet-host microbench cannot see.
