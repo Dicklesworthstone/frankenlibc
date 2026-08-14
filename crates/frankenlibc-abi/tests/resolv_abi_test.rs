@@ -4866,9 +4866,11 @@ fn nss_files_gethostbyname_uses_hosts_backend() {
         assert_eq!(status, 1);
         assert_eq!(err, 0);
         assert_eq!(h_err, 0);
+        // A hosts-file lookup may be initiated through an alias, but h_name
+        // remains the line's first (canonical) name.
         assert_eq!(
             unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
-            b"nss-alias"
+            b"nss-name"
         );
         assert_eq!(hostent.h_addrtype, libc::AF_INET);
         assert_eq!(hostent.h_length, 4);
@@ -4972,7 +4974,7 @@ fn nss_files_gethostbyname4_uses_gaih_addrtuple_backend() {
             assert_eq!(tuple.scopeid, 0);
             assert_eq!(
                 unsafe { CStr::from_ptr(tuple.name) }.to_bytes(),
-                b"nss-name4-alias"
+                b"nss-name4"
             );
             assert_eq!(tuple.addr[0].to_ne_bytes(), [203, 0, 113, 55]);
             assert_eq!(tuple.addr[1], 0);
