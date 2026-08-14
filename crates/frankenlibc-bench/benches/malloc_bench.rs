@@ -990,7 +990,20 @@ fn profile_segment_production_candidate(
     let report_path = output_dir.join("perf-report.txt");
     let pid = std::process::id().to_string();
     let mut perf = Command::new("perf")
-        .args(["record", "-F", "4999", "--call-graph", "fp", "-p"])
+        // `cycles` may be exposed as a precise-only event but yield no samples on
+        // otherwise admissible remote workers. This profile is attribution-only;
+        // use the portable software clock so the deployed-frame oracle remains
+        // observable before the separately timed paired measurement.
+        .args([
+            "record",
+            "-e",
+            "cpu-clock",
+            "-F",
+            "999",
+            "--call-graph",
+            "fp",
+            "-p",
+        ])
         .arg(&pid)
         .arg("-o")
         .arg(&perf_path)
