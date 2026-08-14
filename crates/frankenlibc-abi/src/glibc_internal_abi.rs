@@ -5393,12 +5393,11 @@ pub unsafe extern "C" fn bdflush(func: c_int, data: c_long) -> c_int {
     }
     -1
 }
-// cfget/cfset speed: native implementation via termios_abi
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+// Rust-visible forwarding helpers for callers that use this module directly.
+// The public C symbols are exported once by termios_abi.
 pub unsafe extern "C" fn cfgetibaud(termios_p: *const c_void) -> c_uint {
     unsafe { crate::termios_abi::cfgetibaud(termios_p.cast()) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetobaud(termios_p: *const c_void) -> c_uint {
     unsafe { crate::termios_abi::cfgetobaud(termios_p.cast()) }
 }
@@ -5407,17 +5406,14 @@ pub unsafe extern "C" fn cfgetobaud(termios_p: *const c_void) -> c_uint {
 // (<termios.h>:82), NOT a separate (ibaud, obaud) pair. The old 3-argument form
 // was an ABI mismatch: a C caller passing the documented 2 arguments left fl
 // reading a garbage register for the phantom `obaud`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetbaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
     // Delegates to the *baud* implementation, NOT cfset*speed: the speed family
     // takes a Bxxx code and rejects a raw baud number with EINVAL. bd-lmhxt4.
     unsafe { crate::termios_abi::cfsetbaud(termios_p.cast(), baud) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetibaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
     unsafe { crate::termios_abi::cfsetibaud(termios_p.cast(), baud) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetobaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
     unsafe { crate::termios_abi::cfsetobaud(termios_p.cast(), baud) }
 }
