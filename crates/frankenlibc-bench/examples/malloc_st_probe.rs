@@ -9,12 +9,10 @@
 //!      itself. A hash computed by a shell step next to the run proves nothing
 //!      about which ELF actually executed — rch builds into an opaque per-worker
 //!      pool target dir, and agents edit crates mid-benchmark in this fleet.
-//!   2. `paired()` interleaves both arms inside one round and alternates which
-//!      arm goes first every round; the statistic is the MEDIAN of per-round
-//!      ratios, not a ratio of medians.
-//!   3. every decision ratio is printed next to an A/A null control measured in
-//!      the SAME invocation (`paired(fl, fl)`). Gate on the median against that
-//!      null, never on `cv` — `cv < 5%` is unreachable on this hardware.
+//!   2. each decision uses the `ABBAABBA` balanced square inside one round; the
+//!      statistic is the MEDIAN of per-round ratios, not a ratio of medians.
+//!   3. each arm's first two square slots over its final two slots is an A/A
+//!      null from the SAME invocation. Both must be within +/-2% of 1.0.
 use std::time::Instant;
 
 type MallocFn = unsafe extern "C" fn(usize) -> *mut libc::c_void;
@@ -202,7 +200,107 @@ impl Paired {
     }
 }
 
-/// Time two arms interleaved inside every round, alternating arm order per round.
+// ---------------------------------------------------------------------------
+// Balanced-square A/B — ported from franken_networkx
+// `scripts/balanced_square_ab.py` (72761094c), which root-caused the fleet's
+// measurement bottleneck and published this design.
+//
+// WHAT IT CHANGES HERE, and why it is worth porting even though this probe
+// already interleaves. The former two-slot design alternated arm ORDER ACROSS
+// rounds (AB, BA, AB, …), which balances only between adjacent rounds. The
+// square runs `ABBAABBA` INSIDE one round, so each arm occupies a
+// symmetric set of slot positions and any within-round drift lands on both arms
+// equally rather than on whichever arm happens to go second.
+//
+// The bigger change is the null. The former design took its A/A null from a
+// SEPARATE paired(fl, fl) invocation — a different stretch of wall-clock, so
+// the null could be measured on a quiet moment while decision rounds were
+// contended. The square derives each arm's null CONTEMPORANEOUSLY, from that
+// same arm's own first-half slots over its second-half slots inside the same
+// round. Contention is then caught per-row after the fact instead of being
+// excluded up front, which is exactly what makes a busy host usable.
+//
+// NULL_BOUND is theirs (±0.02) and is far stricter than this probe's previous
+// "null CI merely contains 1.0" test. That matters concretely: the sz=16 row in
+// my first run today had a null median of 1.1423 whose CI grazed 1.0, so it
+// PASSED the old test and would FAIL this one. Refusing is the point.
+//
+// Ratio convention is kept as this repo's: fl / glibc, so >1 means fl SLOWER.
+// (franken_networkx uses incumbent/ours, i.e. >1 means theirs faster. Do not
+// copy their orientation here — the standing 10.010x row is in fl/glibc.)
+// ---------------------------------------------------------------------------
+const SQUARE: [u8; 8] = *b"ABBAABBA";
+const NULL_BOUND: f64 = 0.02;
+
+struct Square {
+    ratio_p50: f64,
+    ci_lo: f64,
+    ci_hi: f64,
+    /// Each arm's own first-half / second-half ratio; both must land at 1.0.
+    null_fl: f64,
+    null_glibc: f64,
+    rounds: usize,
+    checksum: u64,
+}
+
+impl Square {
+    fn verdict(&self) -> &'static str {
+        if (self.null_fl - 1.0).abs() > NULL_BOUND || (self.null_glibc - 1.0).abs() > NULL_BOUND {
+            "NULL-FAILED"
+        } else if self.ci_lo <= 1.0 && 1.0 <= self.ci_hi {
+            "STRADDLES-1"
+        } else if self.ratio_p50 > 1.0 {
+            "ADMISSIBLE FL_SLOWER"
+        } else {
+            "ADMISSIBLE FL_FASTER"
+        }
+    }
+}
+
+/// One balanced-square row. `arm_fl` and `arm_glibc` each run `iters` operations
+/// per slot and return a checksum so neither can be optimised away.
+fn balanced_square<A, B>(mut arm_fl: A, mut arm_glibc: B, rounds: usize, iters: u64) -> Square
+where
+    A: FnMut(u64) -> u64,
+    B: FnMut(u64) -> u64,
+{
+    let mut checksum = arm_fl(iters.min(2000)) ^ arm_glibc(iters.min(2000));
+
+    let (mut ratios, mut nulls_fl, mut nulls_glibc) = (Vec::new(), Vec::new(), Vec::new());
+    for _ in 0..rounds {
+        let (mut fl_slots, mut glibc_slots) = (Vec::new(), Vec::new());
+        for &slot in SQUARE.iter() {
+            // 'A' is the incumbent slot position in the source design; here the
+            // square is over (fl, glibc) with fl taking the 'A' positions.
+            let t = Instant::now();
+            if slot == b'A' {
+                checksum ^= arm_fl(iters);
+                fl_slots.push(t.elapsed().as_nanos() as f64 / iters as f64);
+            } else {
+                checksum ^= arm_glibc(iters);
+                glibc_slots.push(t.elapsed().as_nanos() as f64 / iters as f64);
+            }
+        }
+        ratios.push(pctl(&fl_slots, 0.5) / pctl(&glibc_slots, 0.5));
+        // The square places each arm's halves symmetrically, so a half-split
+        // ratio away from 1.0 is drift or contention, not slot position.
+        nulls_fl.push(pctl(&fl_slots[..2], 0.5) / pctl(&fl_slots[2..], 0.5));
+        nulls_glibc.push(pctl(&glibc_slots[..2], 0.5) / pctl(&glibc_slots[2..], 0.5));
+    }
+
+    let (ci_lo, ci_hi) = bootstrap_median_ci(&ratios, BOOTSTRAP_SEED);
+    Square {
+        ratio_p50: pctl(&ratios, 0.5),
+        ci_lo,
+        ci_hi,
+        null_fl: pctl(&nulls_fl, 0.5),
+        null_glibc: pctl(&nulls_glibc, 0.5),
+        rounds: ratios.len(),
+        checksum,
+    }
+}
+
+/// Legacy two-slot interleave, retained only to expose non-decision telemetry.
 ///
 /// Both arms run `iters` operations per round and return a checksum that is folded
 /// into the result, so neither can be optimised away. Order alternation is what
@@ -263,8 +361,28 @@ where
 }
 
 fn main() {
-    println!("ELF_SHA256 {}", self_elf_sha256());
+    let elf_sha = self_elf_sha256();
+    println!("ELF_SHA256 {elf_sha}");
     print_run_provenance();
+
+    // Ported from franken_networkx balanced_square_ab.py's --expect-elf guard.
+    // Their note: "a bare `python3` silently loads the site-packages build,
+    // which is a DIFFERENT binary — this guard exists because that trap cost a
+    // full session's numbers once." The equivalent trap here is rch's opaque
+    // per-worker pool target dir plus agents editing crates mid-benchmark, which
+    // is precisely the hazard the in-process hash was introduced for. Set
+    // EXPECT_ELF_SHA to the prefix you INTEND to measure and the run refuses
+    // rather than silently measuring something else.
+    if let Ok(expect) = std::env::var("EXPECT_ELF_SHA") {
+        let expect = expect.trim();
+        if !expect.is_empty() && !elf_sha.starts_with(expect) {
+            eprintln!(
+                "ELF MISMATCH: running {}, expected prefix {expect} — refusing to measure",
+                &elf_sha[..elf_sha.len().min(16)]
+            );
+            std::process::exit(2);
+        }
+    }
 
     let h = unsafe {
         libc::dlmopen(
@@ -314,15 +432,12 @@ fn main() {
         }
         let (fp, gp) = (pctl(&fs, 0.5), pctl(&gs, 0.5));
         println!(
-            "MALLOC_FREE sz={sz} fl={fp:.2} glibc={gp:.2} fl/glibc={:.3}",
+            "MALLOC_FREE_SERIAL_TELEMETRY_ONLY sz={sz} fl={fp:.2} glibc={gp:.2} fl/glibc={:.3}",
             fp / gp
         );
     }
 
-    // Contract-compliant section: interleaved, order-alternating, A/A-controlled.
-    // The A/A arm is fl-vs-fl (identical code, both arms), so it measures exactly
-    // the floor this harness can resolve for the fl arm on this host. Any
-    // MALLOC_FREE_PAIRED ratio must beat that floor with margin to be a claim.
+    // Decision section: a balanced square with contemporaneous per-arm nulls.
     for &sz in &[16usize, 64, 256, 1024] {
         let fl_arm = |n: u64| -> u64 {
             let mut ck = 0u64;
@@ -346,28 +461,31 @@ fn main() {
             }
             ck
         };
-        let null = paired(fl_arm, fl_arm, 61, 100_000);
-        println!("{}", null.line(&format!("MALLOC_FREE_NULL sz={sz}")));
-        let dec = paired(fl_arm, glibc_arm, 61, 100_000);
-        println!("{}", dec.line(&format!("MALLOC_FREE_PAIRED sz={sz}")));
-
-        // Self-classify the row so it cannot be quoted without its null. A null
-        // whose bootstrap CI excludes 1.0 means this invocation could not resolve
-        // the comparison at all (a noisy neighbour on a shared worker is the usual
-        // cause), and the paired ratio beside it is NOT a usable number.
-        let verdict = if null.excludes_unity() {
-            "NULL_VIOLATED (row unusable: A/A CI excludes 1.0)"
-        } else if !dec.excludes_unity() {
-            "INDECISIVE (paired CI spans 1.0)"
-        } else if dec.ratio_p50 > 1.0 {
-            "FL_SLOWER"
-        } else {
-            "FL_FASTER"
-        };
+        // This is the only decision row. It keeps glibc live in the same process,
+        // reports both A/A nulls, and refuses a row whose nulls are outside the
+        // imported +/-2% bound.
+        let sq = balanced_square(fl_arm, glibc_arm, 41, 25_000);
         println!(
-            "MALLOC_FREE_VERDICT sz={sz} {verdict} paired={:.4} null={:.4} null_ci=[{:.4},{:.4}] \
-             bootstrap=percentile/{BOOTSTRAP_RESAMPLES}/seed={BOOTSTRAP_SEED:#x}",
-            dec.ratio_p50, null.ratio_p50, null.ci_lo, null.ci_hi
+            "MALLOC_FREE_SQUARE sz={sz} ratio_p50={:.4} ci95=[{:.4},{:.4}] n={} \
+             null_fl={:.4} null_glibc={:.4} bound=+/-{NULL_BOUND} square={} ck={:#x} :: {}",
+            sq.ratio_p50,
+            sq.ci_lo,
+            sq.ci_hi,
+            sq.rounds,
+            sq.null_fl,
+            sq.null_glibc,
+            std::str::from_utf8(&SQUARE).unwrap_or("?"),
+            sq.checksum,
+            sq.verdict()
+        );
+
+        // Preserve a smaller old-style sample as diagnostic telemetry only. It
+        // has no contemporaneous per-arm null and must never be used as a ratio
+        // row or a verdict.
+        let telemetry = paired(fl_arm, glibc_arm, 9, 25_000);
+        println!(
+            "{}",
+            telemetry.line(&format!("MALLOC_FREE_ABBA_TELEMETRY_ONLY sz={sz}"))
         );
     }
 
@@ -407,10 +525,41 @@ fn main() {
     }
     let old_fp = pctl(&old_fs, 0.5);
     let (fp, gp) = (pctl(&fs, 0.5), pctl(&gs, 0.5));
-    println!("FREE_NULL fl={fp:.2} glibc={gp:.2} fl/glibc={:.3}", fp / gp);
+    println!(
+        "FREE_NULL_SERIAL_TELEMETRY_ONLY fl={fp:.2} glibc={gp:.2} fl/glibc={:.3}",
+        fp / gp
+    );
     println!(
         "FREE_NULL_AB old={old_fp:.2} new={fp:.2} new/old={:.3} saves={:.2}ns/call",
         fp / old_fp,
         old_fp - fp
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SQUARE, Square};
+
+    #[test]
+    fn balanced_square_gives_each_arm_four_symmetric_slots() {
+        assert_eq!(SQUARE, *b"ABBAABBA");
+        assert_eq!(SQUARE.iter().filter(|&&slot| slot == b'A').count(), 4);
+        assert_eq!(SQUARE.iter().filter(|&&slot| slot == b'B').count(), 4);
+        assert_eq!(&SQUARE[..4], b"ABBA");
+        assert_eq!(&SQUARE[4..], b"ABBA");
+    }
+
+    #[test]
+    fn square_verdict_refuses_an_out_of_bound_contemporaneous_null() {
+        let row = Square {
+            ratio_p50: 10.0,
+            ci_lo: 9.5,
+            ci_hi: 10.5,
+            null_fl: 1.0,
+            null_glibc: 1.021,
+            rounds: 1,
+            checksum: 0,
+        };
+        assert_eq!(row.verdict(), "NULL-FAILED");
+    }
 }
