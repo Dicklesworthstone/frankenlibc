@@ -26862,3 +26862,31 @@ profile, not a guess". Decomposing them found the gap was not `%s` at all.
   `+`-signed input. Core `stdio::scanf` 72/72.
 - **REMAINING GAP.** `%s` itself: `two_strings` 1.328x, `string_token` 1.171x.
   Not allocation — there is none left on that path.
+
+## 2026-08-14 (YellowPlateau) — CORRECTNESS-TRIAGE NOTE (no timing): gateless "hunk sweep" refuted
+
+Not a performance row: nothing here was timed, no source was edited, and no A/A null applies. It is
+recorded in this ledger because it is a *triage method* that produced a false defect inventory, and
+the next agent should not re-run it.
+
+- **METHOD TRIED.** Extend the red-gate deletion-triage to losses with *no* surviving gate: sweep a
+  deleting commit hunk by hunk and flag any hunk none of whose distinctive deleted lines (>28 chars,
+  non-comment, non-punctuation) appears anywhere in `frankenlibc-abi/src` or `frankenlibc-core/src`
+  at HEAD.
+- **HYPOTHESIS.** e634aff2a cut 2742 lines from `unistd_abi.rs`; the ones with no gate pointing at
+  them are invisible, so text-absence should surface them.
+- **COUNTED MECHANISM (the evidence that it does no work).** Hunks examined 129 → flagged against
+  `unistd_abi.rs` alone 41 → flagged against both crates' full `src/` 11 → hand-verified real losses
+  **0**, false positives **11**, i.e. precision 0/11. Filed and closed as bd-oyq9xb. Each flagged
+  item was *reimplemented under different identifiers*, so the behaviour is intact while not one
+  deleted line survives textually: `pututxline`'s overwrite rule as
+  `utmpx_slot_offset`/`utmpx_supersedes` (and it has a live gate, `conformance_diff_pututxline`),
+  wordexp arithmetic as `core::stdlib::wordexp::eval_arith`, argp version/exit as `ARGP_NO_EXIT` +
+  `argp_program_version_hook`, crypt `$5$`/`$6$` at `unistd_abi.rs:8406`, the scalb family in
+  `math_abi.rs`.
+- **WHY REJECTED.** The false-positive rate of a text-absence sweep is the refactor rate; it asks
+  about text where the question is about behaviour. Lead generator only — and any lead whose symbol
+  already has a green gate in `tests/` is dead on arrival, which is the cheap filter I skipped.
+- **CONTRAST (kept).** The gate-driven form of the same triage — red gate → read the function at
+  HEAD → confirm with a live host oracle — produced 11 real restorations the same day (8993be4eb),
+  every one red-to-green. The gate is what makes it evidence rather than a text coincidence.
