@@ -708,6 +708,20 @@ fn segment_slot_meta(
 #[inline]
 fn segment_slot_view(addr: usize) -> Option<SegmentSlotView> {
     let segment_index = segment_owned_index(addr)?;
+    segment_slot_view_in_owned_segment(addr, segment_index)
+}
+
+/// Builds a slot view after the caller has acquired a published ownership bit.
+///
+/// `segment_owned_index` is deliberately kept at public lookup boundaries. The
+/// strict free path has already performed that acquire before it reaches this
+/// helper, so repeating the arena-base and bitmap loads would add work without
+/// strengthening the ownership proof.
+#[inline]
+fn segment_slot_view_in_owned_segment(
+    addr: usize,
+    segment_index: usize,
+) -> Option<SegmentSlotView> {
     let header = segment_header(segment_index)?;
     let base = segment_base(segment_index)?;
     let relative = addr.wrapping_sub(base);
@@ -1099,10 +1113,10 @@ fn segment_free(
     ptr: *mut c_void,
 ) -> SegmentFreeResult {
     let addr = ptr as usize;
-    if segment_owned_index(addr).is_none() {
+    let Some(segment_index) = segment_owned_index(addr) else {
         return SegmentFreeResult::NotOwned;
-    }
-    let Some(view) = segment_slot_view(addr) else {
+    };
+    let Some(view) = segment_slot_view_in_owned_segment(addr, segment_index) else {
         return SegmentFreeResult::OwnedInvalid;
     };
     if addr != view.user_base {

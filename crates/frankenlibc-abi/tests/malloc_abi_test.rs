@@ -279,6 +279,31 @@ fn test_segment_free_reuse_and_calloc_lifecycle() {
 }
 
 #[test]
+fn test_segment_free_rejects_header_and_class_slack_without_retiring_slot() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+
+    let ptr = unsafe { malloc(17) };
+    assert!(!ptr.is_null());
+    assert!(malloc_segment_owned_for_tests(ptr.cast_const()));
+
+    let header_address = unsafe { ptr.cast::<u8>().sub(16).cast::<c_void>() };
+    let class_slack = unsafe { ptr.cast::<u8>().add(17).cast::<c_void>() };
+    unsafe {
+        free(header_address);
+        free(class_slack);
+    }
+    assert_eq!(
+        malloc_known_remaining_for_tests(ptr.cast_const()),
+        Some(17),
+        "invalid addresses inside an owned segment must not retire its live slot"
+    );
+
+    unsafe { free(ptr) };
+    assert_eq!(malloc_known_remaining_for_tests(ptr.cast_const()), None);
+}
+
+#[test]
 fn test_segment_realloc_matrix_preserves_exact_bounds() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     signal_runtime_ready_for_tests();
