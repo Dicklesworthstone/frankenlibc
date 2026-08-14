@@ -1013,6 +1013,15 @@ fn host_thread_is_registered(thread_key: usize) -> bool {
         .contains_key(&thread_key)
 }
 
+fn prune_registered_host_thread_tid_if_matches(thread_key: usize, stale_tid: i32) {
+    let mut registry = HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if registry.get(&thread_key).copied() == Some(stale_tid) {
+        registry.remove(&thread_key);
+    }
+}
+
 fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
     if thread == 0 {
         return false;
@@ -1169,10 +1178,11 @@ fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     if thread_tid_appears_alive(tid) {
         return Some(tid);
     }
-    HOST_THREAD_TID_REGISTRY
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&thread_key);
+    // A host `pthread_t` is a reusable value.  A creator can publish a new
+    // TID for this key after the lookup above but before this stale-prune lock
+    // is acquired.  Removing unconditionally would erase that live
+    // registration and make the next tid-based call report ESRCH.
+    prune_registered_host_thread_tid_if_matches(thread_key, tid);
     None
 }
 
@@ -7037,4 +7047,36 @@ pub fn __test_atfork_handlers_clear() {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clear();
+}
+
+/// Replay the host-thread-handle reuse interleaving for the integration gate.
+///
+/// The resolver has already observed `stale_tid` when a replacement thread
+/// publishes `replacement_tid` under the same handle; pruning the stale
+/// observation must preserve the replacement.
+#[doc(hidden)]
+pub fn __test_host_thread_registry_replacement_survives_stale_prune(
+    thread: libc::pthread_t,
+    stale_tid: i32,
+    replacement_tid: i32,
+) -> Option<i32> {
+    let thread_key = thread as usize;
+    {
+        let mut registry = HOST_THREAD_TID_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.insert(thread_key, stale_tid);
+        registry.insert(thread_key, replacement_tid);
+    }
+    prune_registered_host_thread_tid_if_matches(thread_key, stale_tid);
+    let result = HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&thread_key)
+        .copied();
+    HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&thread_key);
+    result
 }

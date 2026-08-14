@@ -2177,6 +2177,15 @@ fn created_thread_is_immediately_resolvable_by_tid_entry_points() {
 }
 
 #[test]
+fn host_thread_registry_stale_prune_preserves_reused_handle_registration() {
+    let reused_handle = usize::MAX as libc::pthread_t;
+    assert_eq!(
+        __test_host_thread_registry_replacement_survives_stale_prune(reused_handle, 101, 202,),
+        Some(202)
+    );
+}
+
+#[test]
 fn getaffinity_np_live_thread() {
     unsafe {
         let ready = AtomicI32::new(0);
