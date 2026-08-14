@@ -191,13 +191,6 @@ impl Paired {
             self.checksum
         )
     }
-
-    /// Does this comparison's CI exclude 1.0? For the A/A null the answer must be
-    /// NO (a null whose CI excludes 1.0 invalidates every row in the invocation);
-    /// for a decision row it is what makes the ratio a claim rather than a number.
-    fn excludes_unity(&self) -> bool {
-        self.ci_lo > 1.0 || self.ci_hi < 1.0
-    }
 }
 
 // ---------------------------------------------------------------------------
