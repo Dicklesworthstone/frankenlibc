@@ -34,7 +34,7 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
+//!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
@@ -63,6 +63,7 @@ const GETRANDOM_REPS: usize = 50_000;
 const GETAUXVAL_REPS: usize = 2_000_000;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
+const MALLOC_FREE_REPS: usize = 100_000;
 const MTX_TRYLOCK_REPS: usize = 1_000_000;
 const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 // Raised from 200_000 on 2026-07-31: at 200k the A/A null half-width was 7.7%,
@@ -94,6 +95,8 @@ type SemDestroyFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemPostFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type ThrdCurrentFn = unsafe extern "C" fn() -> libc::pthread_t;
+type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
+type FreeFn = unsafe extern "C" fn(*mut c_void);
 type MtxInitFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t, c_int) -> c_int;
 type MtxTrylockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
 type MtxUnlockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
@@ -149,6 +152,10 @@ unsafe extern "C" {
     fn linked_host_sem_trywait(sem: *mut libc::sem_t) -> c_int;
     #[link_name = "thrd_current"]
     fn linked_host_thrd_current() -> libc::pthread_t;
+    #[link_name = "malloc"]
+    fn linked_host_malloc(size: usize) -> *mut c_void;
+    #[link_name = "free"]
+    fn linked_host_free(ptr: *mut c_void);
     #[link_name = "mtx_init"]
     fn linked_host_mtx_init(mtx: *mut libc::pthread_mutex_t, typ: c_int) -> c_int;
     #[link_name = "mtx_trylock"]
@@ -346,6 +353,7 @@ enum Family {
     Getauxval,
     SemPost,
     ThrdCurrent,
+    MallocFree,
     MtxTrylock,
     GetaddrinfoHosts,
     SinhfCoshf,
@@ -628,6 +636,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
+                Some(value) if value == OsStr::new("malloc_free") => Family::MallocFree,
                 Some(value) if value == OsStr::new("mtx_trylock") => Family::MtxTrylock,
                 Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
@@ -640,7 +649,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
-                     sem_post, thrd_current, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
+                     sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
             };
@@ -650,7 +659,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|mtx_trylock|\
+                  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
@@ -1531,6 +1540,100 @@ fn measure_thrd_current_case(host: ThrdCurrentFn, fl: ThrdCurrentFn) -> CaseResu
         "current_identity",
         "historical current-thread identity-cache lookup",
         THRD_CURRENT_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+#[inline(never)]
+fn run_malloc_free_batch(malloc: MallocFn, free: FreeFn, size: usize, reps: usize) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..reps {
+        let ptr = unsafe { malloc(black_box(size)) };
+        assert!(!ptr.is_null(), "malloc({size}) returned NULL during timing");
+        accumulator ^= black_box(ptr as usize);
+        unsafe { free(black_box(ptr)) };
+    }
+    black_box(accumulator)
+}
+
+fn time_malloc_free_batch(malloc: MallocFn, free: FreeFn, size: usize) -> f64 {
+    let started = Instant::now();
+    black_box(run_malloc_free_batch(malloc, free, size, MALLOC_FREE_REPS));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / MALLOC_FREE_REPS as f64
+}
+
+fn measure_malloc_free_case(
+    host_malloc: MallocFn,
+    host_free: FreeFn,
+    fl_malloc: MallocFn,
+    fl_free: FreeFn,
+    size: usize,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_malloc_free_batch(fl_malloc, fl_free, size);
+                    fb = time_malloc_free_batch(fl_malloc, fl_free, size);
+                }
+                0 => {
+                    fb = time_malloc_free_batch(fl_malloc, fl_free, size);
+                    fa = time_malloc_free_batch(fl_malloc, fl_free, size);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_malloc_free_batch(host_malloc, host_free, size);
+                    gb = time_malloc_free_batch(host_malloc, host_free, size);
+                }
+                1 => {
+                    gb = time_malloc_free_batch(host_malloc, host_free, size);
+                    ga = time_malloc_free_batch(host_malloc, host_free, size);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_malloc_free_batch(fl_malloc, fl_free, size);
+                    effect_glibc = time_malloc_free_batch(host_malloc, host_free, size);
+                }
+                2 => {
+                    effect_glibc = time_malloc_free_batch(host_malloc, host_free, size);
+                    effect_fl = time_malloc_free_batch(fl_malloc, fl_free, size);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        "small_64",
+        "64-byte strict malloc/free churn with both provider A/A controls",
+        MALLOC_FREE_REPS,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -3550,6 +3653,151 @@ fn run_thrd_current(config: &Config) {
 
     // The loaded libc replacement owns process-global and TLS state. Keep it
     // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
+fn run_malloc_free(config: &Config) {
+    assert!(
+        config.fl_deepbind,
+        "malloc_free requires --fl-deepbind so FrankenLibC's internal allocation path models LD_PRELOAD deployment"
+    );
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe {
+        libc::dlopen(
+            fl_path.as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
+        )
+    };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_malloc_symbol = unsafe { libc::dlsym(handle, c"malloc".as_ptr()) };
+    let fl_free_symbol = unsafe { libc::dlsym(handle, c"free".as_ptr()) };
+    assert!(
+        !fl_malloc_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC malloc")
+    );
+    assert!(
+        !fl_free_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC free")
+    );
+
+    let host_malloc: MallocFn = linked_host_malloc;
+    let host_free: FreeFn = linked_host_free;
+    let fl_malloc: MallocFn = unsafe { std::mem::transmute(fl_malloc_symbol) };
+    let fl_free: FreeFn = unsafe { std::mem::transmute(fl_free_symbol) };
+    let incumbent_identity = symbol_object(host_malloc as *const () as *const c_void)
+        .expect("identify host malloc object");
+    let fl_identity =
+        symbol_object(fl_malloc_symbol.cast_const()).expect("identify FrankenLibC malloc object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=malloc_free");
+    println!("FL_LINKAGE explicit_dlopen_local_deepbind symbol=malloc_free");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_malloc as usize, fl_malloc as usize,
+        "both malloc arms resolve to the same function address"
+    );
+    assert_ne!(
+        host_free as usize, fl_free as usize,
+        "both free arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=malloc_free incumbent_malloc_address={:#x} \
+         fl_malloc_address={:#x} incumbent_free_address={:#x} fl_free_address={:#x}",
+        host_malloc as usize, fl_malloc as usize, host_free as usize, fl_free as usize,
+    );
+
+    for (provider, malloc, free) in [
+        ("host", host_malloc, host_free),
+        ("frankenlibc", fl_malloc, fl_free),
+    ] {
+        let ptr = unsafe { malloc(64) };
+        assert!(!ptr.is_null(), "{provider} malloc(64) returned NULL");
+        unsafe { free(ptr) };
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=malloc_free comparisons=2 \
+         contract=non_null_64_byte_round_trip verdict=pass"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=malloc_free phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=malloc_free verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "malloc_free observed thread count changed between conformance and measurement"
+    );
+
+    let result = measure_malloc_free_case(host_malloc, host_free, fl_malloc, fl_free, 64);
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "malloc_free observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "malloc_free",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=malloc_free verdict={verdict} \
+         cases=1 wins={} losses={} undecidable={} headline_case=small_64 \
+         headline_ratio_median={:.6} headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        usize::from(result.comparison == "FL_FASTER"),
+        usize::from(result.comparison == "FL_SLOWER"),
+        usize::from(!result.decidable()),
+        result.effect_median,
+        result.comparison,
+    );
+
     if verdict == "INCOMPLETE" {
         std::process::exit(2);
     }
@@ -6498,6 +6746,7 @@ fn main() {
         Family::Getauxval => run_getauxval(&config),
         Family::SemPost => run_sem_post(&config),
         Family::ThrdCurrent => run_thrd_current(&config),
+        Family::MallocFree => run_malloc_free(&config),
         Family::MtxTrylock => run_mtx_trylock(&config),
         Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
         Family::SinhfCoshf => run_sinhf_coshf(&config),
@@ -6517,5 +6766,36 @@ fn main() {
             );
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    static TEST_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    static TEST_FREES: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn counted_malloc(size: usize) -> *mut c_void {
+        TEST_ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        unsafe { libc::malloc(size) }
+    }
+
+    unsafe extern "C" fn counted_free(ptr: *mut c_void) {
+        TEST_FREES.fetch_add(1, Ordering::Relaxed);
+        unsafe { libc::free(ptr) };
+    }
+
+    #[test]
+    fn malloc_free_batch_pairs_each_allocation_with_a_free() {
+        TEST_ALLOCATIONS.store(0, Ordering::Relaxed);
+        TEST_FREES.store(0, Ordering::Relaxed);
+
+        let _ = run_malloc_free_batch(counted_malloc, counted_free, 64, 17);
+
+        assert_eq!(TEST_ALLOCATIONS.load(Ordering::Relaxed), 17);
+        assert_eq!(TEST_FREES.load(Ordering::Relaxed), 17);
     }
 }
