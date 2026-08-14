@@ -19,8 +19,15 @@ unsafe extern "C" {
 
 // Codes whose value legitimately fluctuates between two back-to-back reads, so
 // only availability (not the exact value) is compared:
-//   _SC_AVPHYS_PAGES = 75, _SC_NPROCESSORS_ONLN = 84.
-const DYNAMIC: &[c_int] = &[75, 84];
+//   _SC_AVPHYS_PAGES = 86, _SC_NPROCESSORS_ONLN = 84.
+const DYNAMIC: &[c_int] = &[84, 86];
+
+// glibc selectors intentionally represented as raw numbers in the ABI match:
+// the Rust libc crate does not publish this complete set on every target.
+const RESTORED_GLIBC_CODES: &[c_int] = &[
+    13, 20, 45, 77, 78, 79, 80, 81, 82, 88, 89, 90, 91, 93, 94, 95, 96, 98, 99, 100, 101, 102, 104,
+    106, 107, 108, 109, 110, 111, 113, 115, 116, 118, 119, 120, 121, 122, 123, 124, 127, 129, 130,
+];
 
 #[test]
 fn sysconf_raw_codes_match_glibc() {
@@ -50,4 +57,17 @@ fn sysconf_raw_codes_match_glibc() {
         value_mismatches.len(),
         value_mismatches.join("\n")
     );
+}
+
+#[test]
+fn restored_raw_glibc_codes_match_host() {
+    for &code in RESTORED_GLIBC_CODES {
+        let host = unsafe { sysconf(code) };
+        let implementation = unsafe { frankenlibc_abi::unistd_abi::sysconf(code) };
+        assert!(
+            host >= 0,
+            "host glibc unexpectedly rejects raw sysconf code {code}"
+        );
+        assert_eq!(implementation, host, "raw sysconf code {code}");
+    }
 }

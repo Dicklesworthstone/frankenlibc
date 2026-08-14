@@ -2543,8 +2543,8 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_NGROUPS_MAX => {
             runtime_procfs_long("/proc/sys/kernel/ngroups_max").unwrap_or(65536)
         }
-        libc::_SC_GETPW_R_SIZE_MAX => 4096,
-        libc::_SC_GETGR_R_SIZE_MAX => 4096,
+        libc::_SC_GETPW_R_SIZE_MAX => 1024,
+        libc::_SC_GETGR_R_SIZE_MAX => 1024,
         libc::_SC_LOGIN_NAME_MAX => 256,
         libc::_SC_TTY_NAME_MAX => 32,
         // Linux does not define a runtime symbolic-link traversal limit.
@@ -2573,18 +2573,20 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_MONOTONIC_CLOCK => 1,
         libc::_SC_CPUTIME => 1,
         libc::_SC_THREAD_CPUTIME => 1,
-        libc::_SC_MAPPED_FILES => 1,
-        libc::_SC_MEMLOCK => 1,
-        libc::_SC_MEMLOCK_RANGE => 1,
-        libc::_SC_MEMORY_PROTECTION => 1,
-        libc::_SC_SEMAPHORES => 1,
-        libc::_SC_SHARED_MEMORY_OBJECTS => 1,
-        libc::_SC_SYNCHRONIZED_IO => 1,
-        libc::_SC_TIMERS => 1,
-        libc::_SC_REALTIME_SIGNALS => 1,
-        libc::_SC_PRIORITY_SCHEDULING => 1,
-        libc::_SC_FSYNC => 1,
-        libc::_SC_ASYNCHRONOUS_IO => 1,
+        // POSIX option selectors expose their supported revision, not a
+        // boolean. Linux glibc advertises POSIX.1-2008 for this family.
+        libc::_SC_MAPPED_FILES => 200809,
+        libc::_SC_MEMLOCK => 200809,
+        libc::_SC_MEMLOCK_RANGE => 200809,
+        libc::_SC_MEMORY_PROTECTION => 200809,
+        libc::_SC_SEMAPHORES => 200809,
+        libc::_SC_SHARED_MEMORY_OBJECTS => 200809,
+        libc::_SC_SYNCHRONIZED_IO => 200809,
+        libc::_SC_TIMERS => 200809,
+        libc::_SC_REALTIME_SIGNALS => 200809,
+        libc::_SC_PRIORITY_SCHEDULING => 200809,
+        libc::_SC_FSYNC => 200809,
+        libc::_SC_ASYNCHRONOUS_IO => 200809,
         // POSIX feature flags and utility limits glibc reports as definite
         // constants; without these they fall through to the EINVAL default
         // (returning -1 as if the key were unknown), so a caller writing
@@ -2613,6 +2615,41 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_MQ_PRIO_MAX => 32768,
         libc::_SC_RTSIG_MAX => 32,
         libc::_SC_AIO_PRIO_DELTA_MAX => 20,
+        // `libc` does not expose every Linux/glibc _SC selector on every
+        // supported Rust target. Keep the selector numbers here rather than
+        // silently treating these documented glibc facilities as unknown.
+        // The raw-code differential gate owns the ABI contract for this set.
+        //
+        // POSIX option/version selectors.
+        13 | 20 => 200809, // _SC_PRIORITIZED_IO, _SC_MESSAGE_PASSING
+        45 => 2048,        // _SC_CHARCLASS_NAME_MAX
+        77..=82 => 200809, // _SC_THREAD_{ATTR_*,PRIORITY_*,PRIO_*,PROCESS_SHARED}
+        88 => 8192,        // _SC_PASS_MAX
+        89 => 700,         // _SC_XOPEN_VERSION
+        90 => 4,           // _SC_XOPEN_XCU_VERSION
+        91 | 93 | 94 => 1, // _SC_XOPEN_{UNIX,ENH_I18N,SHM}
+        95 | 96 => 200809, // _SC_2_{CHAR_TERM,C_VERSION}
+        98..=100 => 1,     // _SC_XOPEN_XPG{2,3,4}
+        // C implementation limits reported by glibc's sysconf(3).
+        101 => 8,                        // _SC_CHAR_BIT
+        102 => i8::MAX as libc::c_long,  // _SC_CHAR_MAX
+        104 => i32::MAX as libc::c_long, // _SC_INT_MAX
+        106 => (std::mem::size_of::<libc::c_long>() * 8) as libc::c_long,
+        107 => 32,                       // _SC_WORD_BIT
+        108 => 16,                       // _SC_MB_LEN_MAX
+        109 => 20,                       // _SC_NZERO
+        110 => i16::MAX as libc::c_long, // _SC_SSIZE_MAX
+        111 => i8::MAX as libc::c_long,  // _SC_SCHAR_MAX
+        113 => i16::MAX as libc::c_long, // _SC_SHRT_MAX
+        115 => u8::MAX as libc::c_long,  // _SC_UCHAR_MAX
+        116 => u32::MAX as libc::c_long, // _SC_UINT_MAX
+        118 => u16::MAX as libc::c_long, // _SC_USHRT_MAX
+        // POSIX message-catalog limits.
+        119 => 4096, // _SC_NL_ARGMAX
+        120 => 2048, // _SC_NL_LANGMAX
+        121..=124 => i32::MAX as libc::c_long,
+        // _SC_NL_{MSGMAX,NMAX,SETMAX,TEXTMAX}
+        127 | 129 | 130 => 1, // _SC_XBS5_LP64_OFF64, _SC_XOPEN_{LEGACY,REALTIME}
         libc::_SC_SIGQUEUE_MAX => {
             // glibc reports the RLIMIT_SIGPENDING soft limit (the max number of
             // queued realtime signals) — 883225 on this host, i.e. a per-machine
