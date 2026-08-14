@@ -1510,8 +1510,10 @@ fn wctomb_chk_safe() {
 }
 
 #[test]
-fn wctomb_chk_short_buffer_aborts_child_process() {
-    assert_child_sigabrt("wctomb_chk short buffer", || {
+fn wctomb_chk_short_buffer_aborts_child_process_in_utf8_locale() {
+    assert_child_sigabrt("wctomb_chk short UTF-8 buffer", || {
+        let _ =
+            unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
         let mut buf = [0u8; 1];
         unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
     });
@@ -1537,7 +1539,35 @@ unsafe extern "C" {
     /// against fl's below.
     #[link_name = "__wctomb_chk"]
     fn host_wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int;
+    #[link_name = "__ctype_get_mb_cur_max"]
+    fn host_ctype_get_mb_cur_max() -> usize;
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
+}
+
+#[test]
+fn ctype_mb_cur_max_tracks_c_and_utf8_locales_vs_glibc() {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed for locale differential");
+    if pid == 0 {
+        let mut matches_host = true;
+        for locale in [c"C", c"C.UTF-8"] {
+            let host_locale = unsafe { setlocale(libc::LC_ALL, locale.as_ptr()) };
+            let fl_locale =
+                unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, locale.as_ptr()) };
+            matches_host &= !host_locale.is_null()
+                && !fl_locale.is_null()
+                && unsafe { host_ctype_get_mb_cur_max() }
+                    == unsafe { frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max() };
+        }
+        unsafe { libc::_exit(if matches_host { 0 } else { 1 }) };
+    }
+
+    let mut status: c_int = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert!(
+        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        "C and C.UTF-8 MB_CUR_MAX must match host glibc, status={status}"
+    );
 }
 
 /// `__wctomb_chk` must abort exactly when glibc does — which is
@@ -1555,11 +1585,8 @@ unsafe extern "C" {
 ///   C.UTF-8      MB_CUR_MAX=6  buflen 1, 5 abort; 6, 15, 16 return
 /// ```
 ///
-/// This arm runs under a UTF-8 locale because that is where fl and the host
-/// currently agree. The C-locale row does NOT yet match: fl's
-/// `__ctype_get_mb_cur_max` is hardcoded to 6 instead of tracking the locale,
-/// which is bd-w7nxne. Asserting it here would fail for that reason rather
-/// than this one. bd-ddr8kv.
+/// This arm explicitly selects UTF-8 for both implementations. The separate
+/// two-locale differential above covers the C-locale one-byte boundary.
 #[test]
 fn wctomb_chk_abort_boundary_matches_host_in_utf8_locale() {
     let loc = CString::new("C.UTF-8").unwrap();
@@ -1575,6 +1602,9 @@ fn wctomb_chk_abort_boundary_matches_host_in_utf8_locale() {
             unsafe { host_wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
         });
         let fl = child_aborted(&format!("fl wctomb_chk buflen={n}"), || {
+            let _ = unsafe {
+                frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr())
+            };
             let mut buf = [0u8; 32];
             unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
         });

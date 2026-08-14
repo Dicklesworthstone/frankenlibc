@@ -565,13 +565,15 @@ pub unsafe extern "C" fn __ctype_toupper() -> *const c_int {
     unsafe { crate::ctype_abi::toupper_table_ptr() }
 }
 
-/// `__ctype_get_mb_cur_max` — return maximum bytes per multibyte character.
-/// FrankenLibC's multibyte codec is UTF-8, whose maximum is six bytes.
-/// This must remain at least the codec's maximum output width so fortify
-/// wrappers do not accept undersized destination buffers.
+/// `__ctype_get_mb_cur_max` — return LC_CTYPE's maximum multibyte width.
+///
+/// The default C/POSIX locale has a one-byte character encoding; the supported
+/// C.UTF-8 locale uses glibc's historical six-byte maximum. FORTIFY checks
+/// consume this runtime value, so it must track `setlocale` rather than the
+/// codec's widest possible output.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ctype_get_mb_cur_max() -> SizeT {
-    6
+    crate::locale_abi::mb_cur_max()
 }
 
 // __ctype32_* (3 symbols) — native, forward to ctype_abi tables

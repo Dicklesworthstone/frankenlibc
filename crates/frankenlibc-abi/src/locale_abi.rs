@@ -5,7 +5,7 @@
 
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::locale as locale_core;
@@ -48,6 +48,14 @@ unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
 
 /// Static C-locale name string.
 static C_LOCALE_NAME: &[u8] = b"C\0";
+/// Locale name used by glibc for its UTF-8 C locale.
+static C_UTF8_LOCALE_NAME: &[u8] = b"C.UTF-8\0";
+/// Whether the active LC_CTYPE encoding is the supported UTF-8 C locale.
+///
+/// The remaining locale categories retain their C-locale behaviour; this
+/// state exists specifically for multibyte conversion and FORTIFY's
+/// MB_CUR_MAX contract.
+static CTYPE_IS_UTF8: AtomicBool = AtomicBool::new(false);
 /// Character encoding string for the POSIX C locale.
 ///
 /// glibc reports `ANSI_X3.4-1968` for the `C`/`POSIX` locale, and this crate
@@ -129,9 +137,10 @@ unsafe impl Sync for LConv {}
 
 /// POSIX `setlocale`.
 ///
-/// Bootstrap: only the "C" and "POSIX" locales are supported. Querying
-/// (null `locale` pointer) returns `"C"`. Setting to "C", "POSIX", or ""
-/// succeeds. All other locale names fail and return null.
+/// Bootstrap supports the "C"/"POSIX" locale and the UTF-8 C locale for
+/// LC_CTYPE. Querying (null `locale` pointer) returns the active locale name
+/// for LC_CTYPE/LC_ALL. Setting to "C", "POSIX", or "" selects C; setting
+/// LC_CTYPE/LC_ALL to "C.UTF-8" selects the UTF-8 multibyte codec.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *const c_char {
     let (mode, decision) =
@@ -151,6 +160,11 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     // Query mode: locale is NULL.
     if locale.is_null() {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, false);
+        if matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL)
+            && CTYPE_IS_UTF8.load(Ordering::Acquire)
+        {
+            return C_UTF8_LOCALE_NAME.as_ptr() as *const c_char;
+        }
         return C_LOCALE_NAME.as_ptr() as *const c_char;
     }
 
@@ -162,16 +176,38 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     };
 
     if locale_core::is_c_locale(&name) {
+        if matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL) {
+            CTYPE_IS_UTF8.store(false, Ordering::Release);
+        }
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
         C_LOCALE_NAME.as_ptr() as *const c_char
+    } else if matches!(name.as_slice(), b"C.UTF-8" | b"C.utf8")
+        && matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL)
+    {
+        CTYPE_IS_UTF8.store(true, Ordering::Release);
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
+        C_UTF8_LOCALE_NAME.as_ptr() as *const c_char
     } else if mode.heals_enabled() {
         // Hardened: fall back to C locale instead of failing.
+        if matches!(category, locale_core::LC_CTYPE | locale_core::LC_ALL) {
+            CTYPE_IS_UTF8.store(false, Ordering::Release);
+        }
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         C_LOCALE_NAME.as_ptr() as *const c_char
     } else {
         unsafe { set_abi_errno(libc::ENOENT) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         std::ptr::null()
+    }
+}
+
+/// glibc's runtime `MB_CUR_MAX` value for the active LC_CTYPE locale.
+#[inline]
+pub(crate) fn mb_cur_max() -> libc::size_t {
+    if CTYPE_IS_UTF8.load(Ordering::Acquire) {
+        6
+    } else {
+        1
     }
 }
 

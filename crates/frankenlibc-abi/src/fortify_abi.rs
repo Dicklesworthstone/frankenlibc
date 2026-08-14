@@ -1139,9 +1139,8 @@ pub unsafe extern "C" fn __wcsnrtombs_chk(
 /// of locale — killing correct programs, which is the damaging direction for a
 /// fortify check. bd-ddr8kv.
 ///
-/// NOTE: fl's `__ctype_get_mb_cur_max` is currently hardcoded to 6 rather than
-/// tracking the locale, so the C-locale row above still diverges. That is a
-/// separate defect in the locale plumbing, not in this guard — see bd-w7nxne.
+/// `__ctype_get_mb_cur_max` tracks the active LC_CTYPE locale, so this guard
+/// accepts the C-locale one-byte boundary and the C.UTF-8 six-byte boundary.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int {
     let mb_cur_max = unsafe { crate::glibc_internal_abi::__ctype_get_mb_cur_max() } as usize;
