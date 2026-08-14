@@ -7,8 +7,9 @@ use frankenlibc_abi::htm_fast_path::{
     htm_swap_test_mode_for_tests,
 };
 use frankenlibc_abi::malloc_abi::{
-    __libc_freeres, aligned_alloc, calloc, cfree, export_alloc_stats_snapshot_jsonl, free,
-    mallinfo, mallinfo2, malloc, malloc_bump_allocation_size_for_tests,
+    __libc_freeres, aligned_alloc, calloc, cfree, export_alloc_stats_snapshot_jsonl,
+    fallback_insert_sized_for_bench, fallback_remove_sized_for_bench, fallback_size_for_bench,
+    free, mallinfo, mallinfo2, malloc, malloc_bump_allocation_size_for_tests,
     malloc_bump_overflow_alloc_for_tests, malloc_bump_overflow_header_valid_for_tests,
     malloc_bump_overflow_stats, malloc_current_reentry_slot_index_for_tests,
     malloc_fallback_range_for_tests, malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests,
@@ -975,6 +976,36 @@ fn test_fallback_range_filter_preserves_tracked_bounds_and_skips_out_of_range() 
         None,
         "free must still remove the tracked allocation even though the range is monotone"
     );
+}
+
+#[test]
+fn test_fallback_retired_key_is_not_live_and_reactivates_with_new_size() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    // The tracking table does not dereference keys. This stable synthetic key
+    // isolates the metadata contract from host allocator address reuse.
+    let key = 0x6a10_0000usize as *mut c_void;
+
+    fallback_insert_sized_for_bench(key, 64);
+    assert_eq!(fallback_size_for_bench(key), Some(64));
+    assert_eq!(fallback_remove_sized_for_bench(key), Some(64));
+    assert_eq!(
+        fallback_size_for_bench(key),
+        None,
+        "a retired key must not remain observable as a live allocation"
+    );
+    assert_eq!(
+        unsafe { malloc_usable_size(key) },
+        0,
+        "public size discovery must not treat a retired key as owned"
+    );
+
+    fallback_insert_sized_for_bench(key, 192);
+    assert_eq!(
+        fallback_size_for_bench(key),
+        Some(192),
+        "the same host address must reactivate with its new allocation size"
+    );
+    assert_eq!(fallback_remove_sized_for_bench(key), Some(192));
 }
 
 // ---------------------------------------------------------------------------

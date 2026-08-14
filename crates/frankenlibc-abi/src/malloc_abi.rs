@@ -2661,7 +2661,10 @@ pub fn export_alloc_stats_snapshot_jsonl(bead_id: &str, run_id: &str, mode: &str
 //
 // Some bootstrap/reentrant paths intentionally allocate via native libc
 // instead of the membrane arena. These pointers must later use native
-// realloc/free semantics to preserve C behavior.
+// realloc/free semantics to preserve C behavior. A freed entry retains its
+// exact key with a zero size: glibc's tcache normally returns that same key on
+// the next allocation, so reinsertion can reactivate it at the matching probe
+// instead of walking a tombstone chain under the table lock.
 const FALLBACK_ALLOC_TABLE_SLOTS: usize = 262144;
 const FALLBACK_SLOT_EMPTY: usize = 0;
 const FALLBACK_SLOT_TOMBSTONE: usize = 1;
@@ -2727,7 +2730,7 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
-            return true;
+            return FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) != 0;
         }
         if slot == FALLBACK_SLOT_EMPTY {
             return false;
@@ -2750,6 +2753,9 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
+            // A zero-sized entry is a retired key, not a live allocation.
+            // Reactivating the exact key preserves the table's uniqueness
+            // invariant while avoiding a tombstone-chain scan on tcache reuse.
             if size != 0 {
                 publish_fallback_range(key, size);
                 FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
@@ -2830,10 +2836,14 @@ fn fallback_remove_sized_for_slot(
             let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
             if slot_key == key {
                 let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
-                FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Relaxed);
-                FALLBACK_ALLOC_PTRS[cached_idx].store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
                 clear_fallback_cache(slot);
-                return Some(size);
+                if size != 0 {
+                    // Keep the key as an inactive marker. The next host tcache
+                    // reuse can reactivate it without probing past a tombstone.
+                    FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
+                    return Some(size);
+                }
+                return None;
             }
             clear_fallback_cache(slot);
         }
@@ -2850,8 +2860,14 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
             let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
-            FALLBACK_ALLOC_SIZES[idx].store(0, Ordering::Relaxed);
-            FALLBACK_ALLOC_PTRS[idx].store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
+            if size == 0 {
+                return None;
+            }
+            // Retired keys are non-owning: all public lookup paths require a
+            // non-zero size before treating the entry as live. Keeping the key
+            // turns the common same-address host tcache reuse into a first-probe
+            // reactivation rather than accumulating another tombstone.
+            FALLBACK_ALLOC_SIZES[idx].store(0, Ordering::Release);
             return Some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
@@ -2876,6 +2892,9 @@ fn fallback_update_size(ptr: *mut c_void, new_size: usize) -> bool {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
+            if FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed) == 0 {
+                return false;
+            }
             if new_size != 0 {
                 publish_fallback_range(key, new_size);
                 FALLBACK_ALLOC_SIZES[idx].store(new_size, Ordering::Relaxed);
@@ -2911,7 +2930,8 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
-            return Some(FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed));
+            let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+            return (size != 0).then_some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
             return None;
