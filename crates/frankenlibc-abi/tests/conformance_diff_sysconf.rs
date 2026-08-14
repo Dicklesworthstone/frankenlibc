@@ -7,8 +7,7 @@
 //! to fall through to the EINVAL default (returning -1 as if unknown); _SC_THREADS
 //! returned a boolean 1 instead of the _POSIX_THREADS version. Now fixed.
 //!
-//! THREE keys are intentionally NOT matched (fl reports a more informative value):
-//!   _SC_SYMLOOP_MAX        fl=40 (Linux MAXSYMLINKS) vs glibc -1 (indeterminate)
+//! TWO keys are intentionally NOT matched (fl reports a more informative value):
 //!   _SC_GETGR_R_SIZE_MAX   fl=4096 (larger safe getgr*_r buffer hint) vs glibc 1024
 //!   _SC_GETPW_R_SIZE_MAX   fl=4096 vs glibc 1024
 //! and inherently-dynamic free-memory keys race between the two calls.
@@ -82,7 +81,32 @@ fn sysconf_matches_glibc() {
         div.join("\n  ")
     );
 
-    // Pin the three intentional divergences so a regression on them is noticed.
+    // Pin the two intentional divergences so a regression on them is noticed.
     assert_eq!(unsafe { fu::sysconf(libc::_SC_GETPW_R_SIZE_MAX) }, 4096);
-    assert_eq!(unsafe { fu::sysconf(libc::_SC_SYMLOOP_MAX) }, 40);
+}
+
+#[test]
+fn sysconf_symloop_max_matches_indeterminate_glibc_contract() {
+    const SENTINEL_ERRNO: libc::c_int = 12_345;
+
+    // `-1` alone is ambiguous: an unknown key also returns -1, but sets
+    // EINVAL.  `_SC_SYMLOOP_MAX` is a supported indeterminate value, so both
+    // implementations must preserve a pre-existing errno.
+    unsafe {
+        *libc::__errno_location() = SENTINEL_ERRNO;
+        let glibc_value = sysconf(libc::_SC_SYMLOOP_MAX);
+        let glibc_errno = *libc::__errno_location();
+
+        *libc::__errno_location() = SENTINEL_ERRNO;
+        let fl_value = fu::sysconf(libc::_SC_SYMLOOP_MAX);
+        let fl_errno = *libc::__errno_location();
+
+        assert_eq!(
+            glibc_value, -1,
+            "glibc reports SYMLOOP_MAX as indeterminate"
+        );
+        assert_eq!(glibc_errno, SENTINEL_ERRNO, "glibc must preserve errno");
+        assert_eq!(fl_value, glibc_value, "fl SYMLOOP_MAX must match glibc");
+        assert_eq!(fl_errno, glibc_errno, "fl SYMLOOP_MAX must preserve errno");
+    }
 }

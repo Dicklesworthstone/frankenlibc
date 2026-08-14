@@ -2547,7 +2547,11 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_GETGR_R_SIZE_MAX => 4096,
         libc::_SC_LOGIN_NAME_MAX => 256,
         libc::_SC_TTY_NAME_MAX => 32,
-        libc::_SC_SYMLOOP_MAX => 40,
+        // Linux does not define a runtime symbolic-link traversal limit.
+        // glibc reports that indeterminate value as -1 and leaves errno
+        // untouched; returning the kernel's MAXSYMLINKS constant here changes
+        // callers' `sysconf() < 0` fallback behavior.
+        libc::_SC_SYMLOOP_MAX => -1,
         libc::_SC_RE_DUP_MAX => 32767,
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
