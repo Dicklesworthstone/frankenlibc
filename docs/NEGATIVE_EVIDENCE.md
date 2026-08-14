@@ -26995,3 +26995,7 @@ the next agent should not re-run it.
   that addresses it is bd-dcrhgl SUB-STEP A (inline size header, owned by cod_fl); nothing in this
   row changes its design, but the load-sensitivity asymmetry noted in the row above is a second,
   independent argument for it that a quiet-host microbench cannot see.
+
+## 2026-08-14 (FrostyCastle) — MEASURED LOSS, campaign, high-load paired rerun
+
+`ELF_SHA256=9f48f9c2489104b87b75f2601aef1514da345218063629b32990cc02edf37c44`; live same-invocation A/A medians/CIs were 1.0186 [0.9745,1.0987], 0.9774 [0.8413,1.0542], 0.9202 [0.8621,1.0234], and 0.9992 [0.9651,1.0984], while paired fl/glibc medians were 15.9653 [12.3913,19.0510], 11.2940 [9.7967,13.5798], 12.0483 [10.8859,15.1929], and 17.1863 [11.8016,22.6599] at 16/64/256/1024 B (all `FL_SLOWER`, n=61, percentile bootstrap 20,000, seed `0x202608140001`); provenance: `vmi1152480`, 10 observed threads, AVX2+SSE4.2, loadavg `46.79 45.10 47.95`. This is a loss with valid directional nulls but not a standing-row magnitude comparison because the host was saturated.

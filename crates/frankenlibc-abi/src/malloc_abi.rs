@@ -3270,9 +3270,7 @@ impl Drop for AllocatorReentryGuard {
         // occupied slot, but their failed CAS never mutates the depth, so the
         // owner always releases exactly depth 1. Avoid a second atomic load on
         // every malloc/free exit in the hot path.
-        self.slot
-            .allocator_depth
-            .store(0, Ordering::Release);
+        self.slot.allocator_depth.store(0, Ordering::Release);
     }
 }
 

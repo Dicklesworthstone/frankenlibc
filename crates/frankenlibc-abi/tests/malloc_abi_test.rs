@@ -316,7 +316,10 @@ fn test_free_releases_allocator_reentry_depth() {
     // here would force the next allocation down the reentrant fallback path.
     let previous_depth = malloc_swap_reentry_depth_for_tests(1);
     malloc_restore_reentry_depth_for_tests(previous_depth);
-    assert_eq!(previous_depth, 0, "free must leave no allocator reentry depth");
+    assert_eq!(
+        previous_depth, 0,
+        "free must leave no allocator reentry depth"
+    );
 }
 
 #[test]
