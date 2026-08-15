@@ -10,10 +10,12 @@ use frankenlibc_abi::pthread_abi::{
     pthread_threading_restore_for_tests, pthread_threading_swap_force_native_for_tests,
 };
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 fn lock_only() -> std::sync::MutexGuard<'static, ()> {
-    TEST_GUARD.lock().unwrap()
+    TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 struct NativeThreadingTestGuard {
@@ -28,7 +30,7 @@ impl Drop for NativeThreadingTestGuard {
 }
 
 fn lock_and_force_native() -> NativeThreadingTestGuard {
-    let guard = TEST_GUARD.lock().unwrap();
+    let guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let previous = pthread_threading_swap_force_native_for_tests();
     NativeThreadingTestGuard {
         _guard: guard,

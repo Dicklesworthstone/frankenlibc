@@ -12,7 +12,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Serialize tests that touch the global efun cell — installing
-/// a callback in one test must not leak into another.
+/// a callback in one test must not leak into another. Acquire it poison-tolerantly, so a
+/// failing assertion reports as one failure instead of poisoning this guard and taking
+/// every later test with it (bd-9ri7g1).
 static EFUN_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Counter incremented by the test callback so we can assert the
@@ -52,7 +54,7 @@ fn restore_callback(prev: Option<EFunc>) {
 
 #[test]
 fn esetfunc_returns_previous_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     // Installing test_callback again should return Some(test_callback).
     let prev = unsafe { esetfunc(Some(test_callback())) };
@@ -65,7 +67,7 @@ fn esetfunc_returns_previous_callback() {
 
 #[test]
 fn esetfunc_can_install_and_clear() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let prev = unsafe { esetfunc(None) };
     assert!(prev.is_some());
@@ -77,7 +79,7 @@ fn esetfunc_can_install_and_clear() {
 
 #[test]
 fn estrdup_success_passthrough() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"hello, efun!";
     let p = unsafe { estrdup(s.as_ptr()) };
@@ -90,7 +92,7 @@ fn estrdup_success_passthrough() {
 
 #[test]
 fn estrdup_null_invokes_callback_and_returns_null() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { estrdup(std::ptr::null()) };
     assert!(p.is_null());
@@ -104,7 +106,7 @@ fn estrdup_null_invokes_callback_and_returns_null() {
 
 #[test]
 fn estrndup_success_passthrough() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"banana";
     let p = unsafe { estrndup(s.as_ptr(), 3) };
@@ -117,7 +119,7 @@ fn estrndup_success_passthrough() {
 
 #[test]
 fn emalloc_success_passthrough() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { emalloc(64) };
     assert!(!p.is_null());
@@ -130,7 +132,7 @@ fn emalloc_success_passthrough() {
 fn emalloc_zero_size_does_not_invoke_callback() {
     // malloc(0) may legally return NULL or a unique pointer.
     // Either way the wrapper must not treat that as an error.
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { emalloc(0) };
     if !p.is_null() {
@@ -142,7 +144,7 @@ fn emalloc_zero_size_does_not_invoke_callback() {
 
 #[test]
 fn ecalloc_success_passthrough_and_zero_initialized() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { ecalloc(8, 4) };
     assert!(!p.is_null());
@@ -155,7 +157,7 @@ fn ecalloc_success_passthrough_and_zero_initialized() {
 
 #[test]
 fn ecalloc_zero_count_does_not_invoke_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { ecalloc(0, 16) };
     if !p.is_null() {
@@ -167,7 +169,7 @@ fn ecalloc_zero_count_does_not_invoke_callback() {
 
 #[test]
 fn erealloc_success_extends_and_preserves() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { emalloc(8) };
     assert!(!p.is_null());
@@ -185,7 +187,7 @@ fn erealloc_success_extends_and_preserves() {
 
 #[test]
 fn erealloc_to_zero_size_does_not_invoke_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let p = unsafe { emalloc(16) };
     assert!(!p.is_null());
@@ -199,7 +201,7 @@ fn erealloc_to_zero_size_does_not_invoke_callback() {
 
 #[test]
 fn estrlcpy_success_returns_source_length() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let mut buf = [0u8 as c_char; 16];
     let src = c"hello";
@@ -212,7 +214,7 @@ fn estrlcpy_success_returns_source_length() {
 
 #[test]
 fn estrlcpy_overflow_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let mut buf = [0u8 as c_char; 4];
     let src = c"hello, world!";
@@ -223,7 +225,7 @@ fn estrlcpy_overflow_invokes_callback() {
 
 #[test]
 fn estrlcpy_null_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let n = unsafe { estrlcpy(std::ptr::null_mut(), c"x".as_ptr(), 8) };
     assert_eq!(n, 0);
@@ -233,7 +235,7 @@ fn estrlcpy_null_invokes_callback() {
 
 #[test]
 fn estrlcat_success_returns_combined_length() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let mut buf = [0u8 as c_char; 16];
     unsafe {
@@ -252,7 +254,7 @@ fn estrlcat_success_returns_combined_length() {
 
 #[test]
 fn estrlcat_overflow_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let mut buf = [0u8 as c_char; 8];
     unsafe {
@@ -270,7 +272,7 @@ fn estrlcat_overflow_invokes_callback() {
 
 #[test]
 fn efopen_success_passthrough() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let path = c"/etc/hostname";
     let mode = c"r";
@@ -285,7 +287,7 @@ fn efopen_success_passthrough() {
 
 #[test]
 fn efopen_nonexistent_path_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let path = c"/nonexistent/path/that/should/not/exist/efun-test-xyz";
     let mode = c"r";
@@ -297,7 +299,7 @@ fn efopen_nonexistent_path_invokes_callback() {
 
 #[test]
 fn efopen_null_args_invoke_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let f = unsafe { efopen(std::ptr::null(), c"r".as_ptr()) };
     assert!(f.is_null());
@@ -311,7 +313,7 @@ fn efopen_null_args_invoke_callback() {
 
 #[test]
 fn estrtoi_in_range_returns_value_silently() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"42";
     let v = unsafe { estrtoi(s.as_ptr(), 10, 0, 100) };
@@ -322,7 +324,7 @@ fn estrtoi_in_range_returns_value_silently() {
 
 #[test]
 fn estrtoi_no_digits_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"   xyz";
     let _ = unsafe { estrtoi(s.as_ptr(), 10, 0, 100) };
@@ -332,7 +334,7 @@ fn estrtoi_no_digits_invokes_callback() {
 
 #[test]
 fn estrtoi_invalid_base_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"42";
     let _ = unsafe { estrtoi(s.as_ptr(), 1, 0, 100) };
@@ -342,7 +344,7 @@ fn estrtoi_invalid_base_invokes_callback() {
 
 #[test]
 fn estrtoi_out_of_range_invokes_callback_and_returns_clamped() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"500";
     let v = unsafe { estrtoi(s.as_ptr(), 10, 0, 100) };
@@ -353,7 +355,7 @@ fn estrtoi_out_of_range_invokes_callback_and_returns_clamped() {
 
 #[test]
 fn estrtoi_null_nptr_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let v = unsafe { estrtoi(std::ptr::null(), 10, 0, 100) };
     assert_eq!(v, 0 as libc::intmax_t);
@@ -363,7 +365,7 @@ fn estrtoi_null_nptr_invokes_callback() {
 
 #[test]
 fn estrtoi_negative_in_negative_range_silent() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"-12";
     let v = unsafe { estrtoi(s.as_ptr(), 10, -100, 100) };
@@ -374,7 +376,7 @@ fn estrtoi_negative_in_negative_range_silent() {
 
 #[test]
 fn estrtou_in_range_returns_value_silently() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"42";
     let v = unsafe { estrtou(s.as_ptr(), 10, 0, 100) };
@@ -385,7 +387,7 @@ fn estrtou_in_range_returns_value_silently() {
 
 #[test]
 fn estrtou_above_hi_invokes_callback_and_returns_clamped() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"1000";
     let v = unsafe { estrtou(s.as_ptr(), 10, 0, 100) };
@@ -396,7 +398,7 @@ fn estrtou_above_hi_invokes_callback_and_returns_clamped() {
 
 #[test]
 fn estrtou_no_digits_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"abc";
     let _ = unsafe { estrtou(s.as_ptr(), 10, 0, 100) };
@@ -406,7 +408,7 @@ fn estrtou_no_digits_invokes_callback() {
 
 #[test]
 fn estrtou_invalid_base_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"42";
     let _ = unsafe { estrtou(s.as_ptr(), 99, 0, 100) };
@@ -416,7 +418,7 @@ fn estrtou_invalid_base_invokes_callback() {
 
 #[test]
 fn estrtou_null_nptr_invokes_callback() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let v = unsafe { estrtou(std::ptr::null(), 10, 0, 100) };
     assert_eq!(v, 0 as libc::uintmax_t);
@@ -426,7 +428,7 @@ fn estrtou_null_nptr_invokes_callback() {
 
 #[test]
 fn estrtou_hex_prefix_works() {
-    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let _guard = EFUN_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = install_test_callback();
     let s = c"0xff";
     let v = unsafe { estrtou(s.as_ptr(), 16, 0, 0xffff) };

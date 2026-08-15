@@ -29,6 +29,8 @@ unsafe extern "C" {
 const GLOB_TILDE: c_int = 0x1000;
 const GLOB_TILDE_CHECK: c_int = 0x4000;
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct HomeVarGuard(Option<std::ffi::OsString>);
@@ -139,7 +141,7 @@ fn glob_tilde_matches_glibc() {
 
 #[test]
 fn glob_tilde_home_matches_glibc() {
-    let _home_lock = HOME_ENV_LOCK.lock().unwrap();
+    let _home_lock = HOME_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Drive `~`/`~/...` against a controlled $HOME so both engines resolve the
     // same directory (both read the process `HOME`).
     let dir = std::env::temp_dir().join(format!("fl_glob_tilde_{}", std::process::id()));
@@ -161,7 +163,7 @@ fn glob_tilde_home_matches_glibc() {
 
 #[test]
 fn glob_tilde_without_home_falls_back_to_passwd_entry() {
-    let _home_lock = HOME_ENV_LOCK.lock().unwrap();
+    let _home_lock = HOME_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore_home = HomeVarGuard::unset();
 
     let host = run_host("~", GLOB_TILDE_CHECK);

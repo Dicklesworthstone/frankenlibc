@@ -5626,7 +5626,9 @@ fn strnvis_netbsd_overflow_returns_minus_one() {
 // ---------------------------------------------------------------------------
 
 /// Serialize tests that touch the VIS_OPTIONS env var so they can't
-/// race against each other.
+/// race against each other. Acquire it poison-tolerantly, so a failing assertion reports as
+/// one failure instead of poisoning this guard and taking every later test with it
+/// (bd-9ri7g1).
 static VIS_OPTIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct VisOptionsGuard {
@@ -5674,7 +5676,7 @@ impl Drop for VisOptionsGuard {
 
 #[test]
 fn strenvisx_without_env_matches_strvisx() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let payload: &[u8] = b"hello\nworld";
     let mut a = [0 as c_char; 64];
@@ -5706,7 +5708,7 @@ fn strenvisx_without_env_matches_strvisx() {
 
 #[test]
 fn strenvisx_honors_vis_octal_from_env() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
     // Encode a non-whitespace control byte with no flags from the
     // caller; env should force octal representation.
@@ -5731,7 +5733,7 @@ fn strenvisx_honors_vis_octal_from_env() {
 
 #[test]
 fn strenvisx_honors_cstyle_and_newline_from_env() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_CSTYLE,VIS_NL"));
     let payload: &[u8] = b"\n";
     let mut buf = [0 as c_char; 16];
@@ -5753,7 +5755,7 @@ fn strenvisx_honors_cstyle_and_newline_from_env() {
 
 #[test]
 fn strenvisx_honors_meta_from_env() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_META"));
     let payload: &[u8] = b" \t\n*?[`";
     let mut buf = [0 as c_char; 64];
@@ -5775,7 +5777,7 @@ fn strenvisx_honors_meta_from_env() {
 
 #[test]
 fn strenvisx_honors_noslash_from_env() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_NOSLASH"));
     let payload: &[u8] = b"\x01";
     let mut buf = [0 as c_char; 16];
@@ -5796,7 +5798,7 @@ fn strenvisx_honors_noslash_from_env() {
 
 #[test]
 fn strenvisx_honors_httpstyle_from_env() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_HTTPSTYLE"));
     let payload: &[u8] = b" /";
     let mut buf = [0 as c_char; 16];
@@ -5817,7 +5819,7 @@ fn strenvisx_honors_httpstyle_from_env() {
 
 #[test]
 fn strenvisx_honors_mimestyle_from_env() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_MIMESTYLE"));
     let payload: &[u8] = b"=\x7f";
     let mut buf = [0 as c_char; 16];
@@ -5838,7 +5840,7 @@ fn strenvisx_honors_mimestyle_from_env() {
 
 #[test]
 fn strenvisx_unknown_env_tokens_are_ignored() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_FOO,VIS_BAR,VIS_OCTAL"));
     let payload: &[u8] = b"\x01";
     let mut buf = [0 as c_char; 16];
@@ -5860,7 +5862,7 @@ fn strenvisx_unknown_env_tokens_are_ignored() {
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strenvisx_ignores_tracked_unterminated_vis_options() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let assignment = b"VIS_OPTIONS=VIS_OCTAL\0";
 
@@ -5906,7 +5908,7 @@ fn strenvisx_ignores_tracked_unterminated_vis_options() {
 
 #[test]
 fn strenvisx_null_cerr_does_not_crash() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let payload: &[u8] = b"x";
     let mut buf = [0 as c_char; 8];
@@ -5924,7 +5926,7 @@ fn strenvisx_null_cerr_does_not_crash() {
 
 #[test]
 fn strenvisx_zero_srclen_allows_null_src() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let mut buf = [0xeeu8 as c_char; 8];
     let mut cerr: c_int = 99;
@@ -5936,7 +5938,7 @@ fn strenvisx_zero_srclen_allows_null_src() {
 
 #[test]
 fn strenvisx_null_args_return_minus_one() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let mut buf = [0 as c_char; 8];
     let mut cerr: c_int = 0;
@@ -5952,7 +5954,7 @@ fn strenvisx_null_args_return_minus_one() {
 
 #[test]
 fn strsenvisx_combines_env_flags_with_extras() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
     let payload: &[u8] = b"a#b";
     let extra = c"#";
@@ -5978,7 +5980,7 @@ fn strsenvisx_combines_env_flags_with_extras() {
 
 #[test]
 fn strsenvisx_overflow_returns_minus_one() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let payload: &[u8] = b"###";
     let extra = c"#";
@@ -6000,7 +6002,7 @@ fn strsenvisx_overflow_returns_minus_one() {
 
 #[test]
 fn strsenvisx_zero_srclen_allows_null_src() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let mut buf = [0xeeu8 as c_char; 8];
     let mut cerr: c_int = 99;
@@ -6022,7 +6024,7 @@ fn strsenvisx_zero_srclen_allows_null_src() {
 
 #[test]
 fn strsenvisx_null_args_return_minus_one() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let mut buf = [0 as c_char; 8];
     let mut cerr: c_int = 0;
@@ -6059,7 +6061,7 @@ fn strsenvisx_null_args_return_minus_one() {
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn strsenvisx_rejects_tracked_unterminated_extra() {
-    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _restore = VisOptionsGuard::set(None);
     let payload: &[u8] = b"a#";
     let extra = unsafe { tracked_bytes_without_nul(b"#") };

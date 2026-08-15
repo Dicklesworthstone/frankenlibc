@@ -649,11 +649,13 @@ fn vtable_flush_rejects_tracked_short_pending_buffer() {
 // NativeStreamRegistry tests
 // ===========================================================================
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn registry_pre_registers_stdio() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let reg = native_stream_registry();
 
     let stdin = reg.get(0).expect("stdin should be pre-registered");
@@ -671,7 +673,7 @@ fn registry_pre_registers_stdio() {
 
 #[test]
 fn registry_register_and_get() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
 
     let f = NativeFile::new(42, file_flags::READ, NativeFileBufMode::Full);
@@ -687,7 +689,7 @@ fn registry_register_and_get() {
 
 #[test]
 fn registry_unregister() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
 
     let f = NativeFile::new(99, file_flags::WRITE, NativeFileBufMode::None);
@@ -701,7 +703,7 @@ fn registry_unregister() {
 
 #[test]
 fn registry_register_multiple_and_count() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
     let initial_count = reg.open_count();
 
@@ -733,7 +735,7 @@ fn registry_register_multiple_and_count() {
 
 #[test]
 fn registry_get_mut_modifies_stream() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
 
     let f = NativeFile::new(50, file_flags::READ, NativeFileBufMode::Full);
@@ -754,7 +756,7 @@ fn registry_get_mut_modifies_stream() {
 
 #[test]
 fn registry_slot_reuse_after_unregister() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
 
     let f1 = NativeFile::new(70, file_flags::READ, NativeFileBufMode::None);
@@ -773,7 +775,7 @@ fn registry_slot_reuse_after_unregister() {
 
 #[test]
 fn registry_get_out_of_bounds_returns_none() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let reg = native_stream_registry();
 
     assert!(reg.get(999).is_none());
@@ -782,7 +784,7 @@ fn registry_get_out_of_bounds_returns_none() {
 
 #[test]
 fn registry_flush_all_flushes_writable_streams() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
 
     let fd = temp_memfd();
@@ -827,7 +829,7 @@ fn registry_flush_all_flushes_writable_streams() {
 
 #[test]
 fn iter_begin_returns_first_stream() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let begin = unsafe { _IO_iter_begin() };
     let end = unsafe { _IO_iter_end() };
     assert_ne!(
@@ -850,7 +852,7 @@ fn iter_end_is_constant_sentinel() {
 
 #[test]
 fn iter_file_returns_valid_native_file() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let begin = unsafe { _IO_iter_begin() };
     let file_ptr = unsafe { _IO_iter_file(begin) };
     assert!(
@@ -877,7 +879,7 @@ fn iter_file_on_null_returns_null() {
 
 #[test]
 fn iter_next_advances_past_end() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let end = unsafe { _IO_iter_end() };
     let next = unsafe { _IO_iter_next(end) };
     assert_eq!(next, end, "next on end should return end");
@@ -885,7 +887,7 @@ fn iter_next_advances_past_end() {
 
 #[test]
 fn iter_full_traversal_visits_all_streams() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
     let initial_count = reg.open_count();
 
@@ -927,7 +929,7 @@ fn iter_full_traversal_visits_all_streams() {
 
 #[test]
 fn iter_traversal_after_unregister() {
-    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut reg = native_stream_registry();
 
     let f1 = NativeFile::new(200, file_flags::READ, NativeFileBufMode::Full);

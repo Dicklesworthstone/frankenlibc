@@ -24,7 +24,10 @@ use frankenlibc_abi::unistd_abi::{
 };
 
 /// Serializes tests that fork+wait with pid=-1 (wait, wait3) to prevent
-/// them from reaping children belonging to other concurrent tests.
+/// them from reaping children belonging to other concurrent tests. Acquire it
+/// poison-tolerantly: one failing assertion panics while holding the guard, and a
+/// poison-intolerant acquire would turn that single failure into a phantom failure in
+/// every test that runs afterwards (bd-9ri7g1).
 static FORK_WAIT_ANY_LOCK: Mutex<()> = Mutex::new(());
 
 // ===========================================================================
@@ -92,7 +95,7 @@ fn wait_for_pidfd_child(pidfd: c_int) {
 
 #[test]
 fn spawnattr_init_destroy() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     let rc = unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
     assert_eq!(rc, 0, "init should succeed");
@@ -103,21 +106,21 @@ fn spawnattr_init_destroy() {
 
 #[test]
 fn spawnattr_init_null_returns_einval() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { posix_spawnattr_init(std::ptr::null_mut()) };
     assert_eq!(rc, libc::EINVAL);
 }
 
 #[test]
 fn spawnattr_destroy_null_returns_einval() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { posix_spawnattr_destroy(std::ptr::null_mut()) };
     assert_eq!(rc, libc::EINVAL);
 }
 
 #[test]
 fn spawnattr_destroy_uninitialized_returns_einval() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     let rc = unsafe { posix_spawnattr_destroy(attr.as_mut_ptr().cast()) };
     assert_eq!(
@@ -133,7 +136,7 @@ fn spawnattr_destroy_uninitialized_returns_einval() {
 
 #[test]
 fn spawnattr_flags_default_zero() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -147,7 +150,7 @@ fn spawnattr_flags_default_zero() {
 
 #[test]
 fn spawnattr_flags_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -168,7 +171,7 @@ fn spawnattr_flags_roundtrip() {
 
 #[test]
 fn spawnattr_pgroup_default_zero() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -182,7 +185,7 @@ fn spawnattr_pgroup_default_zero() {
 
 #[test]
 fn spawnattr_pgroup_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -203,7 +206,7 @@ fn spawnattr_pgroup_roundtrip() {
 
 #[test]
 fn spawnattr_schedpolicy_default_zero() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -217,7 +220,7 @@ fn spawnattr_schedpolicy_default_zero() {
 
 #[test]
 fn spawnattr_schedpolicy_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -238,7 +241,7 @@ fn spawnattr_schedpolicy_roundtrip() {
 
 #[test]
 fn spawnattr_schedparam_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -260,7 +263,7 @@ fn spawnattr_schedparam_roundtrip() {
 
 #[test]
 fn spawnattr_sigdefault_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -293,7 +296,7 @@ fn spawnattr_sigdefault_roundtrip() {
 
 #[test]
 fn spawnattr_sigmask_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -322,7 +325,7 @@ fn spawnattr_sigmask_roundtrip() {
 
 #[test]
 fn file_actions_init_destroy() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     let rc = unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
     assert_eq!(rc, 0);
@@ -333,7 +336,7 @@ fn file_actions_init_destroy() {
 
 #[test]
 fn file_actions_init_null_returns_einval() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { posix_spawn_file_actions_init(std::ptr::null_mut()) };
     assert_eq!(rc, libc::EINVAL);
 }
@@ -344,7 +347,7 @@ fn file_actions_init_null_returns_einval() {
 
 #[test]
 fn file_actions_addclose() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -356,7 +359,7 @@ fn file_actions_addclose() {
 
 #[test]
 fn file_actions_adddup2() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -368,7 +371,7 @@ fn file_actions_adddup2() {
 
 #[test]
 fn file_actions_addopen() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -389,7 +392,7 @@ fn file_actions_addopen() {
 
 #[test]
 fn file_actions_addchdir_np() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -402,7 +405,7 @@ fn file_actions_addchdir_np() {
 
 #[test]
 fn file_actions_addfchdir_np() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -414,7 +417,7 @@ fn file_actions_addfchdir_np() {
 
 #[test]
 fn file_actions_addclosefrom_np() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -426,7 +429,7 @@ fn file_actions_addclosefrom_np() {
 
 #[test]
 fn file_actions_addtcsetpgrp_np() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -438,7 +441,7 @@ fn file_actions_addtcsetpgrp_np() {
 
 #[test]
 fn file_actions_multiple() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -474,7 +477,7 @@ fn file_actions_multiple() {
 
 #[test]
 fn spawnattr_getflags_null_attr() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut flags: libc::c_short = 0;
     let rc = unsafe { posix_spawnattr_getflags(std::ptr::null(), &mut flags) };
     assert_eq!(rc, libc::EINVAL);
@@ -482,7 +485,7 @@ fn spawnattr_getflags_null_attr() {
 
 #[test]
 fn spawnattr_getpgroup_null_out() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -494,7 +497,7 @@ fn spawnattr_getpgroup_null_out() {
 
 #[test]
 fn spawnattr_cgroup_default_and_roundtrip() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -522,7 +525,7 @@ fn spawnattr_cgroup_default_and_roundtrip() {
 
 #[test]
 fn posix_spawnp_true() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cmd = CString::new("/bin/true").unwrap();
     let argv: [*const std::ffi::c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
     let mut pid: libc::pid_t = 0;
@@ -551,7 +554,7 @@ fn posix_spawnp_true() {
 
 #[test]
 fn posix_spawnp_missing_binary_returns_enoent() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let missing =
         CString::new("frankenlibc_nonexistent_spawn_binary_9f1e62f4b2c1478ab5f92cf0").unwrap();
     let argv: [*const c_char; 2] = [missing.as_ptr(), std::ptr::null()];
@@ -578,7 +581,7 @@ fn posix_spawnp_missing_binary_returns_enoent() {
 
 #[test]
 fn posix_spawnp_skips_tracked_unterminated_path_env() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let missing =
         CString::new("frankenlibc_nonexistent_spawn_binary_526e67273888434d98d12286").unwrap();
     let argv: [*const c_char; 2] = [missing.as_ptr(), std::ptr::null()];
@@ -605,7 +608,7 @@ fn posix_spawnp_skips_tracked_unterminated_path_env() {
 
 #[test]
 fn posix_spawn_closefrom_np_closes_high_fd_in_child() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let file = std::fs::File::open("/dev/null").unwrap();
     let high_fd: c_int = 200;
     let dup_rc = unsafe { libc::dup2(file.as_raw_fd(), high_fd) };
@@ -658,7 +661,7 @@ fn posix_spawn_closefrom_np_closes_high_fd_in_child() {
 
 #[test]
 fn execvp_continues_path_search_after_eacces() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let uniq = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -723,7 +726,7 @@ fn execvp_continues_path_search_after_eacces() {
 
 #[test]
 fn fork_and_waitpid_child_exits_zero() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0, "fork should succeed");
 
@@ -742,7 +745,7 @@ fn fork_and_waitpid_child_exits_zero() {
 
 #[test]
 fn fork_and_waitpid_child_exits_nonzero() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0, "fork should succeed");
 
@@ -759,7 +762,7 @@ fn fork_and_waitpid_child_exits_nonzero() {
 
 #[test]
 fn fork_child_gets_zero_pid() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0, "fork should succeed");
 
@@ -781,7 +784,7 @@ fn fork_child_gets_zero_pid() {
 
 #[test]
 fn wait_returns_child_status() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -802,7 +805,7 @@ fn wait_returns_child_status() {
 
 #[test]
 fn wait4_captures_rusage() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -827,7 +830,7 @@ fn wait4_captures_rusage() {
 
 #[test]
 fn wait3_captures_rusage() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -849,7 +852,7 @@ fn wait3_captures_rusage() {
 
 #[test]
 fn waitid_with_p_pid() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -875,7 +878,7 @@ fn waitid_with_p_pid() {
 
 #[test]
 fn waitpid_wnohang_no_child_ready() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -903,7 +906,7 @@ fn waitpid_wnohang_no_child_ready() {
 
 #[test]
 fn execve_runs_true() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -924,7 +927,7 @@ fn execve_runs_true() {
 
 #[test]
 fn execve_null_pathname_returns_efault() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { execve(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
     assert_eq!(rc, -1);
     let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
@@ -933,7 +936,7 @@ fn execve_null_pathname_returns_efault() {
 
 #[test]
 fn execve_nonexistent_returns_enoent() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -959,7 +962,7 @@ fn execve_nonexistent_returns_enoent() {
 
 #[test]
 fn execvp_direct_path_preserves_errno_on_failure() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = CString::new("/nonexistent_frankenlibc_execvp_errno_probe").unwrap();
     let argv: [*const c_char; 2] = [path.as_ptr(), std::ptr::null()];
 
@@ -975,7 +978,7 @@ fn execvp_direct_path_preserves_errno_on_failure() {
 
 #[test]
 fn execvpe_finds_true_on_path() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0);
 
@@ -996,7 +999,7 @@ fn execvpe_finds_true_on_path() {
 
 #[test]
 fn execvpe_direct_path_preserves_errno_on_failure() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = CString::new("/nonexistent_frankenlibc_execvpe_errno_probe").unwrap();
     let argv: [*const c_char; 2] = [path.as_ptr(), std::ptr::null()];
     let envp: [*const c_char; 1] = [std::ptr::null()];
@@ -1013,7 +1016,7 @@ fn execvpe_direct_path_preserves_errno_on_failure() {
 
 #[test]
 fn posix_spawn_runs_true() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cmd = CString::new("/bin/true").unwrap();
     let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
     let mut pid: libc::pid_t = 0;
@@ -1039,7 +1042,7 @@ fn posix_spawn_runs_true() {
 
 #[test]
 fn pidfd_spawn_runs_true_with_atomic_pidfd() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cmd = CString::new("/bin/true").unwrap();
     let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
     let mut pidfd: c_int = -1;
@@ -1067,7 +1070,7 @@ fn pidfd_spawn_runs_true_with_atomic_pidfd() {
 
 #[test]
 fn pidfd_spawnp_searches_path_with_atomic_pidfd() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cmd = CString::new("true").unwrap();
     let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
     let mut pidfd: c_int = -1;
@@ -1095,7 +1098,7 @@ fn pidfd_spawnp_searches_path_with_atomic_pidfd() {
 
 #[test]
 fn posix_spawn_null_path_returns_einval() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut pid: libc::pid_t = -1;
     let rc = unsafe {
         posix_spawn(
@@ -1117,7 +1120,7 @@ fn posix_spawn_null_path_returns_einval() {
 
 #[test]
 fn posix_spawn_with_file_actions() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -1167,7 +1170,7 @@ fn posix_spawn_with_file_actions() {
 
 #[test]
 fn posix_spawn_with_attr() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
@@ -1204,7 +1207,7 @@ fn posix_spawn_with_attr() {
 
 #[test]
 fn posix_spawnp_with_echo() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cmd = CString::new("/bin/echo").unwrap();
     let arg1 = CString::new("hello").unwrap();
     let argv: [*const c_char; 3] = [cmd.as_ptr(), arg1.as_ptr(), std::ptr::null()];
@@ -1231,7 +1234,7 @@ fn posix_spawnp_with_echo() {
 
 #[test]
 fn posix_spawnp_searches_path_from_envp() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let uniq = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -1282,7 +1285,7 @@ fn posix_spawnp_searches_path_from_envp() {
 
 #[test]
 fn file_actions_addclose_negative_fd() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -1297,7 +1300,7 @@ fn file_actions_addclose_negative_fd() {
 
 #[test]
 fn file_actions_adddup2_negative_fd() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -1318,7 +1321,7 @@ fn file_actions_adddup2_negative_fd() {
 
 #[test]
 fn file_actions_addopen_null_path() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -1338,7 +1341,7 @@ fn file_actions_addopen_null_path() {
 
 #[test]
 fn file_actions_addchdir_np_null_path() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
 
@@ -1355,7 +1358,7 @@ fn file_actions_addchdir_np_null_path() {
 
 #[test]
 fn spawnattr_double_destroy() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
     let rc1 = unsafe { posix_spawnattr_destroy(attr.as_mut_ptr().cast()) };
@@ -1368,7 +1371,7 @@ fn spawnattr_double_destroy() {
 
 #[test]
 fn file_actions_double_destroy() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fa = AlignedBuf::new();
     unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
     let rc1 = unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
@@ -1384,7 +1387,7 @@ fn file_actions_double_destroy() {
 
 #[test]
 fn under_wait4_collects_child() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0);
     if pid == 0 {
@@ -1399,7 +1402,7 @@ fn under_wait4_collects_child() {
 
 #[test]
 fn under_wait3_collects_any_child() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0);
     if pid == 0 {
@@ -1414,7 +1417,7 @@ fn under_wait3_collects_any_child() {
 
 #[test]
 fn under_waitid_observes_child_termination() {
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0);
     if pid == 0 {
@@ -1441,7 +1444,7 @@ fn under_waitid_observes_child_termination() {
 #[test]
 fn capital_exit_terminates_child_with_status_in_fork() {
     use frankenlibc_abi::process_abi::_Exit;
-    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let pid = unsafe { fork() };
     assert!(pid >= 0, "fork should succeed");
 

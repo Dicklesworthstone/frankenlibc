@@ -74,6 +74,8 @@ mod x86_64_tests {
         sin_zero: [u8; 8],
     }
 
+    /// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+    /// poisoning this guard and taking every later test with it (bd-9ri7g1).
     static WAITID_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // -----------------------------------------------------------------
@@ -1479,7 +1481,7 @@ mod x86_64_tests {
 
     #[test]
     fn waitid_typed_helper_reports_stops_and_exits() {
-        let _lock = WAITID_LOCK.lock().expect("waitid lock");
+        let _lock = WAITID_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let pid = match sys_clone_fork(SIGCHLD) {
             Ok(0) => {
@@ -1517,7 +1519,7 @@ mod x86_64_tests {
 
     #[test]
     fn clone3_clone_pidfd_reports_child_fd_or_expected_fallback() {
-        let _lock = WAITID_LOCK.lock().expect("waitid lock");
+        let _lock = WAITID_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut pidfd = -1_i32;
         let args = CloneArgs {
@@ -1555,7 +1557,7 @@ mod x86_64_tests {
 
     #[test]
     fn waitid_pidfd_selector_reports_clone3_child_or_expected_fallback() {
-        let _lock = WAITID_LOCK.lock().expect("waitid lock");
+        let _lock = WAITID_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut pidfd = -1_i32;
         let args = CloneArgs {

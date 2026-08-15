@@ -11,6 +11,8 @@ use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
 use frankenlibc_abi::wchar_abi::*;
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static STDIO_GLOBAL_STREAM_LOCK: Mutex<()> = Mutex::new(());
 
 struct StdioGlobalStreamGuard {
@@ -21,7 +23,7 @@ struct StdioGlobalStreamGuard {
 
 impl StdioGlobalStreamGuard {
     unsafe fn install(new_stdin: *mut c_void, new_stdout: *mut c_void) -> Self {
-        let guard = STDIO_GLOBAL_STREAM_LOCK.lock().unwrap();
+        let guard = STDIO_GLOBAL_STREAM_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old_stdin = unsafe { frankenlibc_abi::stdio_abi::stdin };
         let old_stdout = unsafe { frankenlibc_abi::stdio_abi::stdout };
         unsafe {

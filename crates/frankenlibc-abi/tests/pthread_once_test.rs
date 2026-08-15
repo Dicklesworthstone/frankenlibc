@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use frankenlibc_abi::pthread_abi::{pthread_create, pthread_join, pthread_once};
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 static INIT_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -18,7 +20,7 @@ unsafe extern "C" fn increment_counter() {
 
 #[test]
 fn once_runs_exactly_once() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     INIT_COUNTER.store(0, Ordering::Relaxed);
 
     let mut once: libc::pthread_once_t = 0;
@@ -38,7 +40,7 @@ fn once_runs_exactly_once() {
 
 #[test]
 fn once_null_control_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     assert_eq!(
         unsafe { pthread_once(std::ptr::null_mut(), Some(increment_counter)) },
         libc::EINVAL
@@ -47,7 +49,7 @@ fn once_null_control_is_einval() {
 
 #[test]
 fn once_null_routine_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut once: libc::pthread_once_t = 0;
     assert_eq!(unsafe { pthread_once(&mut once, None) }, libc::EINVAL);
 }
@@ -69,7 +71,7 @@ unsafe extern "C" fn thread_call_once(_arg: *mut c_void) -> *mut c_void {
 
 #[test]
 fn once_concurrent_threads_run_exactly_once() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     MT_INIT_COUNTER.store(0, Ordering::Relaxed);
     unsafe { SHARED_ONCE = 0 };
 
@@ -113,7 +115,7 @@ unsafe extern "C" fn inc_b() {
 
 #[test]
 fn independent_once_controls_run_independently() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     COUNTER_A.store(0, Ordering::Relaxed);
     COUNTER_B.store(0, Ordering::Relaxed);
 
@@ -136,7 +138,7 @@ fn independent_once_controls_run_independently() {
 
 #[test]
 fn once_triple_call_idempotent() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     INIT_COUNTER.store(0, Ordering::Relaxed);
 
     let mut once: libc::pthread_once_t = 0;
@@ -161,7 +163,7 @@ unsafe extern "C" fn set_side_effect() {
 
 #[test]
 fn once_routine_side_effect_visible_after_return() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     SIDE_EFFECT.store(0, Ordering::Relaxed);
 
     let mut once: libc::pthread_once_t = 0;
@@ -188,7 +190,7 @@ unsafe extern "C" fn heavy_thread_fn(_arg: *mut c_void) -> *mut c_void {
 
 #[test]
 fn once_high_thread_count_still_runs_once() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     HEAVY_COUNTER.store(0, Ordering::Relaxed);
     unsafe { HEAVY_ONCE = 0 };
 
@@ -222,7 +224,7 @@ fn once_high_thread_count_still_runs_once() {
 
 #[test]
 fn once_both_null_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     assert_eq!(
         unsafe { pthread_once(std::ptr::null_mut(), None) },
         libc::EINVAL
@@ -237,7 +239,7 @@ unsafe extern "C" fn late_increment() {
 
 #[test]
 fn once_completed_with_different_routine_is_noop() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     INIT_COUNTER.store(0, Ordering::Relaxed);
     LATE_COUNTER.store(0, Ordering::Relaxed);
 

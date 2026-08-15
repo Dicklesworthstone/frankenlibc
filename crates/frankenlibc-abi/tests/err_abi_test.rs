@@ -420,7 +420,9 @@ fn test_warnc_concurrent() {
 // ---------------------------------------------------------------------------
 
 /// Serialize tests that touch the global err-exit hook so they
-/// can't observe each other's mutations.
+/// can't observe each other's mutations. Acquire it poison-tolerantly, so a failing assertion
+/// reports as one failure instead of poisoning this guard and taking every later test with it
+/// (bd-9ri7g1).
 static ERR_SET_EXIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 unsafe extern "C" fn dummy_hook_a(_eval: c_int) {}
@@ -428,7 +430,7 @@ unsafe extern "C" fn dummy_hook_b(_eval: c_int) {}
 
 #[test]
 fn err_set_exit_returns_previous_hook() {
-    let _guard = ERR_SET_EXIT_LOCK.lock().unwrap();
+    let _guard = ERR_SET_EXIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Start from a known clean state.
     let saved = unsafe { err_set_exit(None) };
 
@@ -466,7 +468,7 @@ fn err_set_exit_hook_runs_before_errx_in_child() {
     // Run a fresh test-binary child instead of forking from this
     // multi-threaded harness. Calling mutex-backed Rust code after
     // fork can deadlock if another test thread owned runtime state.
-    let _guard = ERR_SET_EXIT_LOCK.lock().unwrap();
+    let _guard = ERR_SET_EXIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--ignored")

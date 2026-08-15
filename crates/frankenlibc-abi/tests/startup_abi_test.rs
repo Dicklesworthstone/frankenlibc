@@ -7,6 +7,8 @@
 
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::Mutex;
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static STARTUP_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 use std::ptr;
@@ -80,7 +82,7 @@ unsafe extern "C" fn test_main(
 
 #[test]
 fn phase0_succeeds_with_valid_fixture() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"/usr/bin/test");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -98,7 +100,7 @@ fn phase0_succeeds_with_valid_fixture() {
 
 #[test]
 fn phase0_snapshot_records_allow_decision() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"myapp");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -123,7 +125,7 @@ fn phase0_snapshot_records_allow_decision() {
 
 #[test]
 fn phase0_null_main_returns_negative() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -143,7 +145,7 @@ fn phase0_null_main_returns_negative() {
 
 #[test]
 fn phase0_null_argv_returns_negative() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -167,7 +169,7 @@ fn phase0_null_argv_returns_negative() {
 
 #[test]
 fn startup_snapshot_returns_invariants() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"/bin/hello");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -198,7 +200,7 @@ fn startup_snapshot_returns_invariants() {
 
 #[test]
 fn startup_snapshot_null_returns_negative() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { __frankenlibc_startup_snapshot(ptr::null_mut()) };
     assert_eq!(rc, -1);
 }
@@ -215,7 +217,7 @@ unsafe extern "C" fn test_dtor(_obj: *mut c_void) {
 
 #[test]
 fn cxa_thread_atexit_impl_returns_zero() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut obj = 0u64;
     let rc = unsafe {
         __cxa_thread_atexit_impl(
@@ -233,7 +235,7 @@ fn cxa_thread_atexit_impl_returns_zero() {
 
 #[test]
 fn phase0_sets_program_name_globals() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"/usr/local/bin/myapp");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -368,7 +370,7 @@ unsafe extern "C" fn cxa_atexit_record_arg(arg: *mut c_void) {
 
 #[test]
 fn phase0_calls_init_and_fini_hooks() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         INIT_CALLED = false;
         FINI_CALLED = false;
@@ -393,7 +395,7 @@ fn phase0_calls_init_and_fini_hooks() {
 
 #[test]
 fn phase0_runs_preinit_and_init_constructors_before_main() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     CONSTRUCTOR_ORDER.lock().unwrap().clear();
 
     let mut fix = StartupFixture::new(b"constructors");
@@ -423,7 +425,7 @@ fn phase0_runs_preinit_and_init_constructors_before_main() {
 
 #[test]
 fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     DESTRUCTOR_ORDER.lock().unwrap().clear();
 
     let mut fix = StartupFixture::new(b"destructors");
@@ -453,7 +455,7 @@ fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
 
 #[test]
 fn phase0_runs_preinit_init_main_and_fini_arrays_in_order() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     INIT_FINI_ARRAY_ORDER.lock().unwrap().clear();
 
     let mut fix = StartupFixture::new(b"init-fini-arrays");
@@ -483,7 +485,7 @@ fn phase0_runs_preinit_init_main_and_fini_arrays_in_order() {
 
 #[test]
 fn phase0_exit_callbacks_run_lifo_and_propagate_status() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fds = [0i32; 2];
     let pipe_rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
     assert_eq!(pipe_rc, 0, "pipe() should succeed");
@@ -534,7 +536,7 @@ fn phase0_exit_callbacks_run_lifo_and_propagate_status() {
 
 #[test]
 fn phase0_exit_registration_rejects_missing_callbacks() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     assert_eq!(unsafe { atexit(None) }, -1);
     assert_eq!(unsafe { on_exit(None, ptr::null_mut()) }, -1);
@@ -542,7 +544,7 @@ fn phase0_exit_registration_rejects_missing_callbacks() {
 
 #[test]
 fn cxa_atexit_finalize_filters_dso_and_runs_lifo_once() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { __cxa_finalize(ptr::null_mut()) };
     CXA_ATEXIT_ORDER.lock().unwrap().clear();
 
@@ -613,7 +615,7 @@ fn cxa_atexit_finalize_filters_dso_and_runs_lifo_once() {
 
 #[test]
 fn phase0_zero_argc_succeeds() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // argc=0 is technically valid (no program name)
     let mut argv = vec![ptr::null_mut::<c_char>()]; // just null terminator
     let mut auxv = vec![AT_NULL, 0usize];
@@ -633,7 +635,7 @@ fn phase0_zero_argc_succeeds() {
 
 #[test]
 fn phase0_negative_argc_still_runs() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Implementation treats argc as a hint; negative argc doesn't prevent execution
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
@@ -684,7 +686,7 @@ unsafe extern "C" fn main_returns_negative(
 
 #[test]
 fn phase0_propagates_zero_return() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -702,7 +704,7 @@ fn phase0_propagates_zero_return() {
 
 #[test]
 fn phase0_propagates_one_return() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -720,7 +722,7 @@ fn phase0_propagates_one_return() {
 
 #[test]
 fn phase0_propagates_negative_return() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -742,7 +744,7 @@ fn phase0_propagates_negative_return() {
 
 #[test]
 fn phase0_bare_name_sets_matching_short_name() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"simple");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -770,7 +772,7 @@ fn phase0_bare_name_sets_matching_short_name() {
 
 #[test]
 fn phase0_deep_path_extracts_basename() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"/a/b/c/d/e/prog");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -793,7 +795,7 @@ fn phase0_deep_path_extracts_basename() {
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn phase0_skips_unterminated_program_name_globals() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     program_invocation_name.store(ptr::null_mut(), Ordering::Release);
     program_invocation_short_name.store(ptr::null_mut(), Ordering::Release);
     __progname.store(ptr::null_mut(), Ordering::Release);
@@ -839,7 +841,7 @@ fn phase0_skips_unterminated_program_name_globals() {
 
 #[test]
 fn cxa_thread_atexit_impl_null_obj_returns_zero() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { __cxa_thread_atexit_impl(test_dtor, ptr::null_mut(), ptr::null_mut()) };
     assert_eq!(rc, 0, "null obj should still register successfully");
 }
@@ -850,7 +852,7 @@ fn cxa_thread_atexit_impl_null_obj_returns_zero() {
 
 #[test]
 fn startup_snapshot_argc_matches_fixture() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"/bin/test");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -883,7 +885,7 @@ fn startup_snapshot_argc_matches_fixture() {
 
 #[test]
 fn phase0_only_init_hook_no_fini() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"initonly");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -901,7 +903,7 @@ fn phase0_only_init_hook_no_fini() {
 
 #[test]
 fn phase0_only_fini_hook_no_init() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = StartupFixture::new(b"finionly");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -944,7 +946,7 @@ fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
 
 #[test]
 fn getprogname_returns_nonnull_even_when_unset() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Force the slot to NULL so we exercise the empty-fallback branch.
     program_invocation_short_name.store(ptr::null_mut(), Ordering::Release);
     __progname.store(ptr::null_mut(), Ordering::Release);
@@ -957,7 +959,7 @@ fn getprogname_returns_nonnull_even_when_unset() {
 
 #[test]
 fn setprogname_stores_basename() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let buf: &'static [u8] = b"/usr/local/bin/myprog\0";
     unsafe { setprogname(cstr_lifetime(buf)) };
 
@@ -978,7 +980,7 @@ fn setprogname_stores_basename() {
 
 #[test]
 fn setprogname_no_slash_uses_input_directly() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let buf: &'static [u8] = b"barename\0";
     unsafe { setprogname(cstr_lifetime(buf)) };
     let p = unsafe { getprogname() };
@@ -990,7 +992,7 @@ fn setprogname_no_slash_uses_input_directly() {
 fn setprogname_trailing_slash_yields_empty() {
     // Pathological case: "/foo/" — the basename is "" (everything after
     // the trailing slash). Matches NetBSD behavior.
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let buf: &'static [u8] = b"/foo/\0";
     unsafe { setprogname(cstr_lifetime(buf)) };
     let p = unsafe { getprogname() };
@@ -1000,7 +1002,7 @@ fn setprogname_trailing_slash_yields_empty() {
 
 #[test]
 fn setprogname_null_is_no_op() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let buf: &'static [u8] = b"sentinel\0";
     unsafe { setprogname(cstr_lifetime(buf)) };
     let before = program_invocation_short_name.load(Ordering::Acquire);
@@ -1021,7 +1023,7 @@ fn setprogname_null_is_no_op() {
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn setprogname_ignores_tracked_unterminated_name() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let buf: &'static [u8] = b"sentinel\0";
     unsafe { setprogname(cstr_lifetime(buf)) };
     let before = program_invocation_short_name.load(Ordering::Acquire);
@@ -1043,7 +1045,7 @@ fn setprogname_ignores_tracked_unterminated_name() {
 
 #[test]
 fn setprogname_overrides_previous_value() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let first: &'static [u8] = b"/first/path/aaa\0";
     let second: &'static [u8] = b"/second/path/bbb\0";
 
@@ -1060,7 +1062,7 @@ fn setprogname_overrides_previous_value() {
 
 #[test]
 fn getprogname_pointer_aliases_short_name_when_set() {
-    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let _g = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let buf: &'static [u8] = b"/path/aliascheck\0";
     unsafe { setprogname(cstr_lifetime(buf)) };
     let p = unsafe { getprogname() };
@@ -1127,7 +1129,7 @@ impl TruncatedAuxvFixture {
 
 #[test]
 fn phase0_handles_truncated_auxv_vector() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = TruncatedAuxvFixture::new_truncated(b"/usr/bin/truncated-auxv");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -1148,7 +1150,7 @@ fn phase0_handles_truncated_auxv_vector() {
 
 #[test]
 fn phase0_classifies_secure_mode_from_auxv() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = TruncatedAuxvFixture::new_with_secure_mode(b"/usr/bin/secure-test", true);
     let _ = unsafe {
         __frankenlibc_startup_phase0(
@@ -1171,7 +1173,7 @@ fn phase0_classifies_secure_mode_from_auxv() {
 
 #[test]
 fn phase0_classifies_nonsecure_mode_from_auxv() {
-    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fix = TruncatedAuxvFixture::new_with_secure_mode(b"/usr/bin/nonsecure-test", false);
     let _ = unsafe {
         __frankenlibc_startup_phase0(

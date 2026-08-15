@@ -9,6 +9,8 @@ use frankenlibc_abi::pthread_abi::{
     pthread_rwlock_wrlock,
 };
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 fn alloc_rwlock_ptr() -> *mut libc::pthread_rwlock_t {
@@ -23,7 +25,7 @@ unsafe fn free_rwlock_ptr(ptr: *mut libc::pthread_rwlock_t) {
 
 #[test]
 fn rwlock_roundtrip_read_and_write() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
 
     // SAFETY: pointer identity is stable for test lifetime.
@@ -40,7 +42,7 @@ fn rwlock_roundtrip_read_and_write() {
 
 #[test]
 fn rwlock_destroy_busy_and_validation_contract() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
 
     // SAFETY: pointer identity is stable for test lifetime.
@@ -74,7 +76,7 @@ fn rwlock_destroy_busy_and_validation_contract() {
 
 #[test]
 fn rwlock_writer_blocks_reader_until_unlock() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
 
     // SAFETY: pointer identity is stable for test lifetime.
@@ -128,7 +130,7 @@ fn rwlock_writer_blocks_reader_until_unlock() {
 
 #[test]
 fn rwlock_multiple_concurrent_readers() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
@@ -175,7 +177,7 @@ fn rwlock_multiple_concurrent_readers() {
 
 #[test]
 fn rwlock_init_null_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         assert_eq!(
             pthread_rwlock_init(std::ptr::null_mut(), std::ptr::null()),
@@ -186,7 +188,7 @@ fn rwlock_init_null_is_einval() {
 
 #[test]
 fn rwlock_rdlock_then_rdlock_same_thread() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
@@ -202,7 +204,7 @@ fn rwlock_rdlock_then_rdlock_same_thread() {
 
 #[test]
 fn rwlock_destroy_null_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         assert_eq!(pthread_rwlock_destroy(std::ptr::null_mut()), libc::EINVAL);
     }
@@ -210,7 +212,7 @@ fn rwlock_destroy_null_is_einval() {
 
 #[test]
 fn rwlock_init_destroy_reinit() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
@@ -226,7 +228,7 @@ fn rwlock_init_destroy_reinit() {
 
 #[test]
 fn rwlock_write_then_write_different_thread_blocks() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
@@ -267,7 +269,7 @@ fn rwlock_write_then_write_different_thread_blocks() {
 
 #[test]
 fn rwlock_read_lock_unlock_repeated_cycle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
@@ -282,7 +284,7 @@ fn rwlock_read_lock_unlock_repeated_cycle() {
 
 #[test]
 fn rwlock_write_lock_unlock_repeated_cycle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
@@ -297,7 +299,7 @@ fn rwlock_write_lock_unlock_repeated_cycle() {
 
 #[test]
 fn rwlock_read_then_write_interleaved_cycle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwlock = alloc_rwlock_ptr();
     unsafe {
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);

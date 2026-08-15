@@ -9,6 +9,8 @@ use frankenlibc_abi::pthread_abi::{
     pthread_rwlock_trywrlock, pthread_rwlock_unlock, pthread_rwlock_wrlock,
 };
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 fn alloc_rwlock() -> *mut libc::pthread_rwlock_t {
@@ -22,7 +24,7 @@ unsafe fn free_rwlock(ptr: *mut libc::pthread_rwlock_t) {
 
 #[test]
 fn tryrdlock_succeeds_when_unlocked() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -35,7 +37,7 @@ fn tryrdlock_succeeds_when_unlocked() {
 
 #[test]
 fn tryrdlock_succeeds_when_read_locked() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -53,7 +55,7 @@ fn tryrdlock_succeeds_when_read_locked() {
 
 #[test]
 fn tryrdlock_fails_when_write_locked() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -67,7 +69,7 @@ fn tryrdlock_fails_when_write_locked() {
 
 #[test]
 fn trywrlock_succeeds_when_unlocked() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -80,7 +82,7 @@ fn trywrlock_succeeds_when_unlocked() {
 
 #[test]
 fn trywrlock_fails_when_read_locked() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -94,7 +96,7 @@ fn trywrlock_fails_when_read_locked() {
 
 #[test]
 fn trywrlock_fails_when_write_locked() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -108,7 +110,7 @@ fn trywrlock_fails_when_write_locked() {
 
 #[test]
 fn tryrdlock_null_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     assert_eq!(
         unsafe { pthread_rwlock_tryrdlock(std::ptr::null_mut()) },
         libc::EINVAL
@@ -117,7 +119,7 @@ fn tryrdlock_null_is_einval() {
 
 #[test]
 fn trywrlock_null_is_einval() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     assert_eq!(
         unsafe { pthread_rwlock_trywrlock(std::ptr::null_mut()) },
         libc::EINVAL
@@ -126,7 +128,7 @@ fn trywrlock_null_is_einval() {
 
 #[test]
 fn tryrdlock_multiple_concurrent_reads_succeed() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -145,7 +147,7 @@ fn tryrdlock_multiple_concurrent_reads_succeed() {
 
 #[test]
 fn trywrlock_after_read_unlock_succeeds() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -164,7 +166,7 @@ fn trywrlock_after_read_unlock_succeeds() {
 
 #[test]
 fn tryrdlock_after_write_unlock_succeeds() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 
@@ -183,7 +185,7 @@ fn tryrdlock_after_write_unlock_succeeds() {
 
 #[test]
 fn tryrdlock_trywrlock_interleaved_cycle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rwl = alloc_rwlock();
     assert_eq!(unsafe { pthread_rwlock_init(rwl, std::ptr::null()) }, 0);
 

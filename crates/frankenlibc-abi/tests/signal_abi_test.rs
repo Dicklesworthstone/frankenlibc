@@ -26,6 +26,8 @@ use frankenlibc_abi::signal_abi::{
 };
 use frankenlibc_core::errno;
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 static DEFERRED_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LIVE_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -355,7 +357,7 @@ fn sigrtmin_less_than_sigrtmax() {
 
 #[test]
 fn sigaction_query_sigpipe_succeeds() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut old = unsafe { std::mem::zeroed::<libc::sigaction>() };
 
     let rc = unsafe {
@@ -370,7 +372,7 @@ fn sigaction_query_sigpipe_succeeds() {
 
 #[test]
 fn sigaction_install_and_restore() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
     // Save the original handler
     let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -397,7 +399,7 @@ fn sigaction_pending_signal_invokes_newly_installed_handler() {
     // dispatched against a stale handler (or dropped entirely if the
     // slot was zero). After the fix, the slot is written first, so any
     // signal delivered through the trampoline observes the new handler.
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
     static FIRST_HITS: AtomicI32 = AtomicI32::new(0);
     static SECOND_HITS: AtomicI32 = AtomicI32::new(0);
@@ -480,7 +482,7 @@ fn sigaction_pending_signal_invokes_newly_installed_handler() {
 
 #[test]
 fn signal_sigpipe_install_and_restore_succeeds() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sig_err = libc::SIG_ERR;
 
     let previous = unsafe {
@@ -503,7 +505,7 @@ fn signal_sigpipe_install_and_restore_succeeds() {
 
 #[test]
 fn signal_sigpipe_ign_roundtrip_succeeds() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
     let previous = unsafe { signal(libc::SIGPIPE, libc::SIG_IGN) };
     assert_ne!(
@@ -538,7 +540,7 @@ fn signal_safety_map_covers_allocator_and_membrane_ranges() {
 
 #[test]
 fn signal_delivery_is_deferred_inside_critical_section() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
 
     let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -577,7 +579,7 @@ fn signal_delivery_is_deferred_inside_critical_section() {
 
 #[test]
 fn signal_delivery_remains_immediate_for_safe_classification() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
 
     let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -1064,7 +1066,7 @@ fn kill_nonexistent_pid_fails() {
 
 #[test]
 fn sigprocmask_query_current_mask() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut oldset: libc::sigset_t = unsafe { std::mem::zeroed() };
     let rc = unsafe { sigprocmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) };
     assert_eq!(rc, 0, "sigprocmask query should succeed");
@@ -1072,7 +1074,7 @@ fn sigprocmask_query_current_mask() {
 
 #[test]
 fn sigprocmask_block_and_unblock_sigusr1() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
     // Save current mask
     let mut oldmask: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -1109,7 +1111,7 @@ fn sigpending_returns_set() {
 
 #[test]
 fn sighold_and_sigrelse_sigusr1() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { sighold(libc::SIGUSR1) };
     assert_eq!(rc, 0, "sighold(SIGUSR1) should succeed");
     let rc = unsafe { sigrelse(libc::SIGUSR1) };
@@ -1118,7 +1120,7 @@ fn sighold_and_sigrelse_sigusr1() {
 
 #[test]
 fn sigignore_sigusr1() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     // Save current disposition
     let prev = unsafe { signal(libc::SIGUSR1, libc::SIG_DFL) };
 
@@ -1131,7 +1133,7 @@ fn sigignore_sigusr1() {
 
 #[test]
 fn obsolete_signal_wrappers_reject_invalid_signal_with_errno() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let cases: &[(&str, unsafe extern "C" fn(c_int) -> c_int)] = &[
         ("sighold", sighold),
         ("sigrelse", sigrelse),
@@ -1154,7 +1156,7 @@ fn obsolete_signal_wrappers_reject_invalid_signal_with_errno() {
 
 #[test]
 fn siginterrupt_sigusr1() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     // siginterrupt modifies SA_RESTART flag; just verify it doesn't fail
     let rc = unsafe { siginterrupt(libc::SIGUSR1, 1) };
     assert_eq!(rc, 0, "siginterrupt(SIGUSR1, 1) should succeed");
@@ -1164,7 +1166,7 @@ fn siginterrupt_sigusr1() {
 
 #[test]
 fn siginterrupt_invalid_signal_sets_errno() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
 
     let rc = unsafe { siginterrupt(0, 1) };
@@ -1185,7 +1187,7 @@ fn siginterrupt_invalid_signal_sets_errno() {
 fn raise_null_signal_succeeds() {
     // POSIX: raise(0) must not send a signal; it performs only the permission
     // and thread-existence checks (tgkill with sig=0). Host glibc returns 0.
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
     let rc = unsafe { frankenlibc_abi::signal_abi::raise(0) };
     let err = unsafe { *__errno_location() };
@@ -1195,7 +1197,7 @@ fn raise_null_signal_succeeds() {
 
 #[test]
 fn raise_negative_signal_rejected() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
     let rc = unsafe { frankenlibc_abi::signal_abi::raise(-1) };
     let err = unsafe { *__errno_location() };
@@ -1205,7 +1207,7 @@ fn raise_negative_signal_rejected() {
 
 #[test]
 fn raise_above_max_signal_rejected() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
     let rc = unsafe { frankenlibc_abi::signal_abi::raise(65) };
     let err = unsafe { *__errno_location() };
@@ -1228,7 +1230,7 @@ fn raise_default_signal_with_ignore_default_returns_zero_and_restores_handler() 
     // SIGURG and SIGCHLD have SIG_DFL == "ignore" — perfect for
     // testing that raise_default_signal returns control after the
     // queued signal is delivered under the default action.
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     RDS_HANDLER_INVOCATIONS.store(0, Ordering::SeqCst);
 
     // Install our counting handler so we can verify it's restored
@@ -1272,7 +1274,7 @@ fn raise_default_signal_with_ignore_default_returns_zero_and_restores_handler() 
 
 #[test]
 fn raise_default_signal_invalid_signum_returns_minus_one_einval() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
     let rc = unsafe { raise_default_signal(99999) };
     assert_eq!(rc, -1, "out-of-range signal must fail");
@@ -1288,7 +1290,7 @@ fn raise_default_signal_zero_signal_is_invalid() {
     // POSIX raise(0) is the null signal (only permission/existence
     // check); raise_default_signal has no meaningful "default
     // action" for the null signal, so it must reject it.
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
     let rc = unsafe { raise_default_signal(0) };
     assert_eq!(rc, -1);
@@ -1307,7 +1309,7 @@ use frankenlibc_abi::signal_abi::{
 
 #[test]
 fn under_sigprocmask_swap_round_trip() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut empty: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe { sigemptyset(&mut empty) };
     let mut blocked: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -1325,7 +1327,7 @@ fn under_sigprocmask_swap_round_trip() {
 
 #[test]
 fn under_kill_with_signal_zero_returns_zero_for_self() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let me = unsafe { libc::getpid() };
     let rc = unsafe { __kill(me, 0) };
     assert_eq!(rc, 0);
@@ -1333,7 +1335,7 @@ fn under_kill_with_signal_zero_returns_zero_for_self() {
 
 #[test]
 fn under_killpg_signal_zero_returns_zero_for_self() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let pgrp = unsafe { libc::getpgrp() };
     let rc = unsafe { __killpg(pgrp, 0) };
     assert_eq!(rc, 0);
@@ -1341,7 +1343,7 @@ fn under_killpg_signal_zero_returns_zero_for_self() {
 
 #[test]
 fn under_raise_invalid_signal_returns_minus_one() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { *__errno_location() = 0 };
     let rc = unsafe { __raise(99999) };
     assert_eq!(rc, -1);
@@ -1349,7 +1351,7 @@ fn under_raise_invalid_signal_returns_minus_one() {
 
 #[test]
 fn under_sigignore_sighold_sigrelse_round_trip() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     // SIGUSR2 is a safe signal to ignore briefly. Save the current
     // disposition first (via a temporary sigaction read), then
     // exercise __sigignore/__sighold/__sigrelse and restore.
@@ -1372,7 +1374,7 @@ fn under_sigignore_sighold_sigrelse_round_trip() {
 
 #[test]
 fn under_sigaltstack_query_only_succeeds() {
-    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     use frankenlibc_abi::signal_abi::__sigaltstack;
     // Query-only call (NULL ss) — must succeed without disturbing
     // any installed altstack.

@@ -13,6 +13,8 @@ use frankenlibc_abi::dlfcn_abi::{
 };
 use frankenlibc_abi::malloc_abi::{free, malloc};
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 fn compile_self_contained_test_dso() -> PathBuf {
@@ -77,7 +79,7 @@ unsafe extern "C" fn record_first_phdr(
 
 #[test]
 fn dl_iterate_phdr_native_fallback_returns_zero_without_callback() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
     // SAFETY: no callback is provided and no pointers are dereferenced.
     let rc = unsafe { dl_iterate_phdr(None, std::ptr::null_mut()) };
@@ -86,7 +88,7 @@ fn dl_iterate_phdr_native_fallback_returns_zero_without_callback() {
 
 #[test]
 fn dl_iterate_phdr_invokes_callback_with_host_phdr_data() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut probe = DlIterateProbe::default();
 
     let rc = unsafe {
@@ -113,7 +115,7 @@ fn dl_iterate_phdr_invokes_callback_with_host_phdr_data() {
 
 #[test]
 fn dladdr_null_inputs_return_zero_and_publish_invalid_handle_error() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
     // SAFETY: reading/clearing thread-local dlerror state is valid.
     unsafe {
@@ -132,7 +134,7 @@ fn dladdr_null_inputs_return_zero_and_publish_invalid_handle_error() {
 
 #[test]
 fn dladdr_non_null_inputs_return_zero_and_publish_unavailable_error() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let mut out_slot: usize = 0;
     let addr = (&out_slot as *const usize).cast::<c_void>();
     let info = (&mut out_slot as *mut usize).cast::<c_void>();
@@ -158,7 +160,7 @@ fn dladdr_non_null_inputs_return_zero_and_publish_unavailable_error() {
 
 #[test]
 fn dlopen_null_returns_main_handle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(
         !handle.is_null(),
@@ -169,7 +171,7 @@ fn dlopen_null_returns_main_handle() {
 
 #[test]
 fn dlopen_nonexistent_library_returns_null() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let name = CString::new("libnonexistent_zzz_12345.so").unwrap();
     let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) };
     assert!(
@@ -186,7 +188,7 @@ fn dlopen_nonexistent_library_returns_null() {
 
 #[test]
 fn dlsym_finds_known_symbol() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
 
@@ -202,7 +204,7 @@ fn dlsym_finds_known_symbol() {
 
 #[test]
 fn dlsym_rtld_default_finds_known_symbol() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sym_name = CString::new("printf").unwrap();
     let sym = unsafe { dlsym(libc::RTLD_DEFAULT, sym_name.as_ptr()) };
     assert!(
@@ -213,7 +215,7 @@ fn dlsym_rtld_default_finds_known_symbol() {
 
 #[test]
 fn dlsym_rtld_next_finds_known_symbol() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sym_name = CString::new("malloc").unwrap();
     let sym = unsafe { dlsym(libc::RTLD_NEXT, sym_name.as_ptr()) };
     assert!(
@@ -224,7 +226,7 @@ fn dlsym_rtld_next_finds_known_symbol() {
 
 #[test]
 fn dlsym_unknown_symbol_returns_null() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
 
@@ -237,14 +239,14 @@ fn dlsym_unknown_symbol_returns_null() {
 
 #[test]
 fn dlclose_null_returns_error() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let rc = unsafe { dlclose(std::ptr::null_mut()) };
     assert_ne!(rc, 0, "dlclose(NULL) should return error");
 }
 
 #[test]
 fn dlerror_returns_null_when_no_error() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     // Clear any pending error
     unsafe { dlerror() };
     // A successful dlopen should clear the error
@@ -261,7 +263,7 @@ fn dlerror_returns_null_when_no_error() {
 
 #[test]
 fn dlerror_consumed_after_read() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     // Force an error
     let name = CString::new("libnonexistent_zzz.so").unwrap();
     let _ = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) };
@@ -274,7 +276,7 @@ fn dlerror_consumed_after_read() {
 
 #[test]
 fn dlopen_libc_succeeds() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let name = CString::new("libc.so.6").unwrap();
     let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
     assert!(
@@ -286,7 +288,7 @@ fn dlopen_libc_succeeds() {
 
 #[test]
 fn dlopen_pathname_self_contained_shared_object_uses_native_loader() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let so_path = compile_self_contained_test_dso();
     let name = CString::new(so_path.as_os_str().as_bytes()).unwrap();
 
@@ -325,7 +327,7 @@ fn dlopen_pathname_self_contained_shared_object_uses_native_loader() {
 
 #[test]
 fn dlsym_null_name_returns_null() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
     let sym = unsafe { dlsym(handle, std::ptr::null()) };
@@ -339,7 +341,7 @@ fn dlsym_null_name_returns_null() {
 
 #[test]
 fn dlopen_same_handle_twice_returns_same_handle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let h1 = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     let h2 = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!h1.is_null());
@@ -353,7 +355,7 @@ fn dlopen_same_handle_twice_returns_same_handle() {
 
 #[test]
 fn dlopen_rtld_lazy_succeeds() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_LAZY) };
     assert!(
         !handle.is_null(),
@@ -364,7 +366,7 @@ fn dlopen_rtld_lazy_succeeds() {
 
 #[test]
 fn dlsym_finds_malloc() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
 
@@ -377,7 +379,7 @@ fn dlsym_finds_malloc() {
 
 #[test]
 fn dlsym_main_handle_finds_memcpy() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
 
@@ -390,7 +392,7 @@ fn dlsym_main_handle_finds_memcpy() {
 
 #[test]
 fn dlclose_idempotent_for_main_handle() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
     // First close should succeed
@@ -400,7 +402,7 @@ fn dlclose_idempotent_for_main_handle() {
 
 #[test]
 fn dlclose_repeated_main_handle_close_is_noop() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!handle.is_null());
 
@@ -412,7 +414,7 @@ fn dlclose_repeated_main_handle_close_is_noop() {
 
 #[test]
 fn dlvsym_supported_version_resolves_native_symbol() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sym_name = CString::new("malloc").unwrap();
     let version = CString::new("GLIBC_2.2.5").unwrap();
     let sym = unsafe { dlvsym(libc::RTLD_DEFAULT, sym_name.as_ptr(), version.as_ptr()) };
@@ -424,7 +426,7 @@ fn dlvsym_supported_version_resolves_native_symbol() {
 
 #[test]
 fn dlvsym_rtld_next_resolves_symbol() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sym_name = CString::new("malloc").unwrap();
     let version = CString::new("GLIBC_2.2.5").unwrap();
     let sym = unsafe { dlvsym(libc::RTLD_NEXT, sym_name.as_ptr(), version.as_ptr()) };
@@ -436,7 +438,7 @@ fn dlvsym_rtld_next_resolves_symbol() {
 
 #[test]
 fn dlvsym_host_handle_resolves_symbol() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let lib_name = CString::new("libc.so.6").unwrap();
     let handle = unsafe { dlopen(lib_name.as_ptr(), libc::RTLD_NOW) };
     assert!(!handle.is_null(), "dlopen libc should succeed");
@@ -452,7 +454,7 @@ fn dlvsym_host_handle_resolves_symbol() {
 
 #[test]
 fn dlvsym_unsupported_version_returns_null() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sym_name = CString::new("malloc").unwrap();
     let version = CString::new("GLIBC_9.9").unwrap();
     let sym = unsafe { dlvsym(libc::RTLD_DEFAULT, sym_name.as_ptr(), version.as_ptr()) };
@@ -464,7 +466,7 @@ fn dlvsym_unsupported_version_returns_null() {
 
 #[test]
 fn dlsym_and_dlvsym_reject_unterminated_names_in_bootstrap_passthrough() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         let unterminated_symbol = malloc(6).cast::<u8>();
         assert!(!unterminated_symbol.is_null());
@@ -514,7 +516,7 @@ fn dlsym_and_dlvsym_reject_unterminated_names_in_bootstrap_passthrough() {
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn dlopen_rejects_unterminated_name_in_bootstrap_passthrough() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         let unterminated_name = malloc(7).cast::<u8>();
         assert!(!unterminated_name.is_null());
@@ -537,7 +539,7 @@ fn dlopen_rejects_unterminated_name_in_bootstrap_passthrough() {
 
 #[test]
 fn dlopen_empty_string_returns_null_or_main() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let name = CString::new("").unwrap();
     let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) };
     // Empty string may return main handle or NULL depending on implementation
@@ -548,7 +550,7 @@ fn dlopen_empty_string_returns_null_or_main() {
 
 #[test]
 fn main_program_handle_sees_rtld_global_symbols() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let main_handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
     assert!(!main_handle.is_null(), "dlopen(NULL) should succeed");
 
@@ -617,7 +619,7 @@ fn main_program_handle_sees_rtld_global_symbols() {
 
 #[test]
 fn libc_dlopen_mode_matches_dlopen_for_libc() {
-    let _g = TEST_GUARD.lock().unwrap();
+    let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let path = c"libc.so.6";
     let h_pub = unsafe { dlopen(path.as_ptr(), libc::RTLD_NOW) };
     let h_int = unsafe { __libc_dlopen_mode(path.as_ptr(), libc::RTLD_NOW) };
@@ -646,7 +648,7 @@ fn libc_dlopen_mode_matches_dlopen_for_libc() {
 
 #[test]
 fn libc_dlsym_with_rtld_default_resolves_known_symbol() {
-    let _g = TEST_GUARD.lock().unwrap();
+    let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let sym = c"abort";
     let p = unsafe { __libc_dlsym(libc::RTLD_DEFAULT, sym.as_ptr()) };
     // RTLD_DEFAULT lookup may fail in static-link builds; if so,
@@ -661,7 +663,7 @@ fn libc_dlsym_with_rtld_default_resolves_known_symbol() {
 
 #[test]
 fn libc_dlclose_returns_zero_on_valid_handle() {
-    let _g = TEST_GUARD.lock().unwrap();
+    let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let path = c"libc.so.6";
     let h = unsafe { __libc_dlopen_mode(path.as_ptr(), libc::RTLD_NOW) };
     if h.is_null() {

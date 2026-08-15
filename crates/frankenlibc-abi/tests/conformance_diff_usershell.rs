@@ -15,6 +15,8 @@ use std::sync::Mutex;
 
 use frankenlibc_abi::stdlib_abi as fl;
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static USERSHELL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 unsafe extern "C" {
@@ -55,7 +57,7 @@ fn drain_lc() -> BTreeSet<String> {
 
 #[test]
 fn diff_usershell_full_iteration_yields_same_set() {
-    let _guard = USERSHELL_TEST_LOCK.lock().unwrap();
+    let _guard = USERSHELL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fl_set = drain_fl();
     let lc_set = drain_lc();
     // Both impls might fall back to a built-in list if /etc/shells
@@ -77,7 +79,7 @@ fn diff_usershell_full_iteration_yields_same_set() {
 
 #[test]
 fn diff_usershell_setusershell_rewinds() {
-    let _guard = USERSHELL_TEST_LOCK.lock().unwrap();
+    let _guard = USERSHELL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // First pass.
     let s1 = drain_fl();
     let s2 = drain_fl();
@@ -90,7 +92,7 @@ fn diff_usershell_setusershell_rewinds() {
 
 #[test]
 fn diff_usershell_endusershell_resets_iterator() {
-    let _guard = USERSHELL_TEST_LOCK.lock().unwrap();
+    let _guard = USERSHELL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     fl::setusershell();
     let _ = fl::getusershell(); // consume one
     fl::endusershell();
@@ -107,7 +109,7 @@ fn diff_usershell_endusershell_resets_iterator() {
 
 #[test]
 fn diff_usershell_first_shell_is_consistent() {
-    let _guard = USERSHELL_TEST_LOCK.lock().unwrap();
+    let _guard = USERSHELL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     fl::setusershell();
     let fl_first_p = fl::getusershell();
     let fl_first = if fl_first_p.is_null() {

@@ -43,6 +43,8 @@ const GLOB_NOSORT: c_int = 1 << 5;
 const GLOB_ERR: c_int = 1;
 const GLOB_ABORTED: c_int = 2;
 
+/// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
+/// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static GLOB_ERRFUNC_LOCK: Mutex<()> = Mutex::new(());
 static GLOB_ERRFUNC_CALLS: AtomicUsize = AtomicUsize::new(0);
 static GLOB_ERRFUNC_ERRNO: AtomicI32 = AtomicI32::new(0);
@@ -409,7 +411,7 @@ fn glob_errfunc_unprivileged() -> bool {
 fn diff_glob_errfunc_directory_error_paths() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _guard = GLOB_ERRFUNC_LOCK.lock().unwrap();
+    let _guard = GLOB_ERRFUNC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut divs = Vec::new();
     let dir = build_test_tree();
     let blocked = dir.path.join("blocked");
