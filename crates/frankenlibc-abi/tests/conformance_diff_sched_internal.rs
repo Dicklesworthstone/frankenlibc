@@ -59,19 +59,34 @@ fn internal_sched_priority_bounds_match_host_policies() {
         libc::SCHED_IDLE,
         SCHED_DEADLINE,
     ] {
+        // Successful scheduler-priority queries do not set errno. Seed each
+        // implementation's independent slot so a wrapper that spuriously
+        // writes errno cannot pass on return values alone.
+        unsafe { *libc::__errno_location() = libc::EAGAIN };
         let host_min = unsafe { host_sched_get_priority_min(policy) };
+        let host_min_err = host_errno();
+        unsafe { *fl_errno_location() = libc::EAGAIN };
         let fl_min = unsafe { fl_sched_get_priority_min(policy) };
+        let fl_min_err = fl_errno();
         assert_eq!(
-            fl_min, host_min,
-            "__sched_get_priority_min({policy}) return mismatch"
+            (fl_min, fl_min_err),
+            (host_min, host_min_err),
+            "__sched_get_priority_min({policy}) result mismatch"
         );
+        assert_eq!(host_min_err, libc::EAGAIN);
 
+        unsafe { *libc::__errno_location() = libc::EAGAIN };
         let host_max = unsafe { host_sched_get_priority_max(policy) };
+        let host_max_err = host_errno();
+        unsafe { *fl_errno_location() = libc::EAGAIN };
         let fl_max = unsafe { fl_sched_get_priority_max(policy) };
+        let fl_max_err = fl_errno();
         assert_eq!(
-            fl_max, host_max,
-            "__sched_get_priority_max({policy}) return mismatch"
+            (fl_max, fl_max_err),
+            (host_max, host_max_err),
+            "__sched_get_priority_max({policy}) result mismatch"
         );
+        assert_eq!(host_max_err, libc::EAGAIN);
     }
 }
 
