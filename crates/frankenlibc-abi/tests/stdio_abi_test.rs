@@ -6437,3 +6437,44 @@ fn fcloseall_keeps_the_standard_streams_registered() {
     let rc = unsafe { frankenlibc_abi::stdio_abi::fflush(std::ptr::null_mut()) };
     assert_eq!(rc, 0, "fflush(NULL) after fcloseall should succeed");
 }
+
+/// bd-xmlbtg: a SENTINEL id must never leave fl as a `FILE *`.
+///
+/// `stdin`/`stdout`/`stderr` canonicalise to `0x1000_0001..=0x1000_0003`, and
+/// every host-delegating stdio entry point used to gate purely on registry
+/// membership. Any internal caller that rebuilt a pointer as `id as *mut c_void`
+/// — the shape `fcloseall` used before bd-0ftdgt — therefore produced a `stream`
+/// that WAS the sentinel value, and handing that to glibc aborts the process
+/// with "Fatal error: glibc detected an invalid stdio handle".
+///
+/// Asserted through the delegation predicate rather than by making the call,
+/// because the failure mode is an abort: it would kill the test binary instead
+/// of failing this test, and an aborted binary reports nothing at all.
+///
+/// Both directions matter. Refusing the sentinel is the fix; still delegating a
+/// genuine foreign stream is what proves the fix did not simply block the host
+/// path outright.
+#[test]
+fn host_delegation_refuses_a_synthesized_sentinel_but_allows_a_foreign_stream() {
+    let sentinel = frankenlibc_abi::stdio_abi::stdio_stdout_sentinel_ptr_for_tests();
+    assert!(
+        !frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(sentinel),
+        "a synthesized standard-stream sentinel must never be delegated to host stdio; \
+         glibc would dereference {sentinel:?} as a FILE pointer"
+    );
+
+    // A real host FILE * that fl does not own must still delegate, otherwise the
+    // guard has broken foreign-stream support instead of fixing the sentinel.
+    let path = temp_path("xmlbtg_foreign");
+    fs::write(&path, b"foreign").expect("seed foreign stream file");
+    let c_path = CString::new(path.as_os_str().as_bytes()).expect("path has no NUL");
+    let mode = CString::new("r").expect("mode has no NUL");
+    let foreign = unsafe { libc::fopen(c_path.as_ptr(), mode.as_ptr()) };
+    assert!(!foreign.is_null(), "host fopen should succeed");
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(foreign.cast::<c_void>()),
+        "a genuine host FILE * that fl does not own must still be delegated"
+    );
+    unsafe { libc::fclose(foreign) };
+    let _ = fs::remove_file(&path);
+}

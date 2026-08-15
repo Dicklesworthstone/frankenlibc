@@ -1365,6 +1365,49 @@ fn registry_contains_stream(id: usize) -> bool {
     reg.streams.contains_key(&id)
 }
 
+/// Whether a call carrying `stream` (the caller's pointer) and `id` (its
+/// canonical stream id) may be delegated to HOST stdio.
+///
+/// Registry membership alone is NOT a sufficient test, which is what bd-xmlbtg
+/// is about. `stdin`/`stdout`/`stderr` canonicalise to the SENTINEL ids
+/// `0x1000_0001..=0x1000_0003`, and those are fl's own handles, not addresses.
+/// An internal caller that reconstructs a pointer as `id as *mut c_void` — the
+/// shape `fcloseall` used — therefore produces a `stream` that IS the sentinel
+/// value. Handing that to the host makes glibc dereference `0x1000_0002` and
+/// abort the process with "Fatal error: glibc detected an invalid stdio handle"
+/// (bd-0ftdgt), or segfault, depending on timing.
+///
+/// The distinction that keeps the legitimate path working: when a caller passes
+/// a REAL host `FILE *` that happens to map to a standard fd,
+/// `native_stdio_fd_for_ptr` still canonicalises it to a sentinel id, but the
+/// pointer is a genuine address, so `stream as usize != id` and delegation
+/// proceeds exactly as before. Only a synthesized sentinel pointer is refused.
+/// Test hook (bd-xmlbtg): the host-delegation decision for `stream`.
+///
+/// Exposed because the only way to observe the bug behaviourally is to let a
+/// sentinel reach glibc, which aborts the process instead of failing a test.
+#[doc(hidden)]
+#[must_use]
+pub fn stdio_may_delegate_to_host_for_tests(stream: *mut c_void) -> bool {
+    may_delegate_to_host(stream, canonical_stream_id(stream))
+}
+
+/// Test hook (bd-xmlbtg): fl's `stdout` sentinel AS A POINTER — i.e. exactly
+/// the synthesized handle an internal `id as *mut c_void` produces.
+#[doc(hidden)]
+#[must_use]
+pub fn stdio_stdout_sentinel_ptr_for_tests() -> *mut c_void {
+    STDOUT_SENTINEL as *mut c_void
+}
+
+#[inline]
+fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
+    if is_standard_sentinel_id(id) && stream as usize == id {
+        return false;
+    }
+    !registry_contains_stream(id)
+}
+
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
 struct HostStreamState {
@@ -2500,7 +2543,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
     }
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_fclose) = unsafe { host_fclose_fn() }
     {
         let rc = unsafe { host_fclose(stream) };
@@ -2669,7 +2712,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
         let _id = canonical_stream_id(stream);
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if !registry_contains_stream(_id)
+        if may_delegate_to_host(stream, _id)
             && let Some(host_fflush) = unsafe { host_fflush_fn() }
         {
             let rc = unsafe { host_fflush(stream) };
@@ -3326,7 +3369,7 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_fgets) = unsafe { host_fgets_fn() }
     {
         let rc = unsafe { host_fgets(buf, size, stream) };
@@ -3733,7 +3776,7 @@ pub unsafe extern "C" fn fread(
 
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_fread) = unsafe { host_fread_fn() }
     {
         let rc = unsafe { host_fread(ptr, size, nmemb, stream) };
@@ -4143,7 +4186,7 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_fseek) = unsafe { host_fseek_fn() }
     {
         let rc = unsafe { host_fseek(stream, offset, whence) };
@@ -4271,7 +4314,7 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_ftell) = unsafe { host_ftell_fn() }
     {
         let rc = unsafe { host_ftell(stream) };
@@ -4358,7 +4401,7 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
     }
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_feof) = unsafe { host_feof_fn() }
     {
         return unsafe { host_feof(stream) };
@@ -4391,7 +4434,7 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
     }
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_ferror) = unsafe { host_ferror_fn() }
     {
         return unsafe { host_ferror(stream) };
@@ -4428,7 +4471,7 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
     }
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id) {
+    if may_delegate_to_host(stream, id) {
         if let Some(host_clearerr) = unsafe { host_clearerr_fn() } {
             unsafe { host_clearerr(stream) };
         }
@@ -4473,7 +4516,7 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_ungetc) = unsafe { host_ungetc_fn() }
     {
         let rc = unsafe { host_ungetc(c, stream) };
@@ -4517,7 +4560,7 @@ pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
     }
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_fileno) = unsafe { host_fileno_fn() }
     {
         let rc = unsafe { host_fileno(stream) };
@@ -8879,7 +8922,7 @@ pub unsafe extern "C" fn vfscanf(
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_vfscanf) = unsafe { host_vfscanf_fn() }
     {
         let rc = unsafe { host_vfscanf(stream, format, ap) };
@@ -9105,7 +9148,7 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
 
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_fgetpos) = unsafe { host_fgetpos_fn() }
     {
         let rc = unsafe { host_fgetpos(stream, pos) };
@@ -9152,7 +9195,7 @@ pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) 
     let _id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(_id)
+    if may_delegate_to_host(stream, _id)
         && let Some(host_fsetpos) = unsafe { host_fsetpos_fn() }
     {
         let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, _id, 0, false, false, 0);
@@ -9355,7 +9398,7 @@ pub unsafe extern "C" fn freopen(
 
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_freopen) = unsafe { host_freopen_fn() }
     {
         unregister_host_stream(stream);
@@ -9695,7 +9738,7 @@ pub unsafe extern "C" fn getdelim(
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
+    if may_delegate_to_host(stream, id)
         && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
     {
         let Some(prepared) =
@@ -9769,7 +9812,7 @@ pub unsafe extern "C" fn getline(
     let _id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(_id)
+    if may_delegate_to_host(stream, _id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
         let Some(prepared) =
