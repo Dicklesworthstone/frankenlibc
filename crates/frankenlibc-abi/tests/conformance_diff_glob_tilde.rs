@@ -9,7 +9,10 @@
 //!
 //! `~` / `~/...` (the $HOME case) was already handled and is re-pinned here.
 
-use std::ffi::{CString, c_char, c_int};
+use std::{
+    ffi::{CString, c_char, c_int},
+    sync::Mutex,
+};
 
 use frankenlibc_abi::string_abi as fl;
 
@@ -25,6 +28,30 @@ unsafe extern "C" {
 
 const GLOB_TILDE: c_int = 0x1000;
 const GLOB_TILDE_CHECK: c_int = 0x4000;
+
+static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct HomeVarGuard(Option<std::ffi::OsString>);
+
+impl HomeVarGuard {
+    fn unset() -> Self {
+        let previous = std::env::var_os("HOME");
+        // SAFETY: HOME_ENV_LOCK serializes this test's process-global mutation.
+        unsafe { std::env::remove_var("HOME") };
+        Self(previous)
+    }
+}
+
+impl Drop for HomeVarGuard {
+    fn drop(&mut self) {
+        match self.0.take() {
+            // SAFETY: HOME_ENV_LOCK remains held for the guard's lifetime.
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            // SAFETY: HOME_ENV_LOCK remains held for the guard's lifetime.
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+}
 
 fn collect(g: &libc::glob_t, ret: c_int) -> Vec<String> {
     if ret != 0 || g.gl_pathv.is_null() {
@@ -112,13 +139,14 @@ fn glob_tilde_matches_glibc() {
 
 #[test]
 fn glob_tilde_home_matches_glibc() {
+    let _home_lock = HOME_ENV_LOCK.lock().unwrap();
     // Drive `~`/`~/...` against a controlled $HOME so both engines resolve the
     // same directory (both read the process `HOME`).
     let dir = std::env::temp_dir().join(format!("fl_glob_tilde_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     std::fs::write(dir.join("marker_zq7x"), b"x").unwrap();
-    let prev = std::env::var_os("HOME");
-    // SAFETY: single-threaded test; restored below.
+    let restore_home = HomeVarGuard(std::env::var_os("HOME"));
+    // SAFETY: HOME_ENV_LOCK serializes this process-global mutation.
     unsafe { std::env::set_var("HOME", &dir) };
 
     check("~/marker_zq7x", GLOB_TILDE);
@@ -127,9 +155,29 @@ fn glob_tilde_home_matches_glibc() {
     check("~", GLOB_TILDE);
     check("~/", GLOB_TILDE);
 
-    match prev {
-        Some(v) => unsafe { std::env::set_var("HOME", v) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
+    drop(restore_home);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn glob_tilde_without_home_falls_back_to_passwd_entry() {
+    let _home_lock = HOME_ENV_LOCK.lock().unwrap();
+    let _restore_home = HomeVarGuard::unset();
+
+    let host = run_host("~", GLOB_TILDE_CHECK);
+    assert_eq!(
+        host.0, 0,
+        "host glob must resolve bare tilde via passwd: {host:?}"
+    );
+    assert_eq!(
+        host.1.len(),
+        1,
+        "host glob must return one passwd home: {host:?}"
+    );
+
+    let ours = run_fl("~", GLOB_TILDE_CHECK);
+    assert_eq!(
+        ours, host,
+        "glob bare tilde with HOME unset diverged: fl={ours:?} glibc={host:?}"
+    );
 }

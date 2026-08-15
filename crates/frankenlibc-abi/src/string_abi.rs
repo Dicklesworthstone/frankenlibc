@@ -9606,6 +9606,40 @@ struct AltDirGlobFs {
     stat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
 }
 
+/// Supply the passwd database home directory for bare-tilde expansion when the
+/// process has no usable `HOME`.  The core glob engine deliberately has no
+/// process-identity dependency, but glibc's public `glob` contract falls back
+/// to `getpwuid(getuid())->pw_dir` for `~` and `~/...`.
+fn glob_home_fallback_pattern(pattern: &[u8], flags: c_int) -> Option<Vec<u8>> {
+    use frankenlibc_core::string::glob::{GLOB_TILDE, GLOB_TILDE_CHECK};
+
+    if flags & (GLOB_TILDE | GLOB_TILDE_CHECK) == 0
+        || pattern.first() != Some(&b'~')
+        || !matches!(pattern.get(1), Some(b'/') | Some(0))
+        || matches!(std::env::var("HOME"), Ok(home) if !home.is_empty())
+    {
+        return None;
+    }
+
+    let uid = frankenlibc_core::syscall::sys_getuid() as libc::uid_t;
+    // SAFETY: getpwuid returns either null or a valid libc::passwd pointer
+    // whose fields remain valid until the next passwd lookup in this thread.
+    let passwd = unsafe { crate::pwd_abi::getpwuid(uid) };
+    if passwd.is_null() {
+        return None;
+    }
+    // SAFETY: `passwd` was checked above and `pw_dir` is a NUL-terminated
+    // pathname owned by the passwd entry. Copy it before another lookup.
+    let home = unsafe { read_c_string_bytes((*passwd).pw_dir) }?;
+    if home.is_empty() {
+        return None;
+    }
+
+    let mut expanded = home;
+    expanded.extend_from_slice(&pattern[1..]);
+    Some(expanded)
+}
+
 impl frankenlibc_core::string::glob::GlobFs for AltDirGlobFs {
     fn read_dir(&self, dir_path: &[u8]) -> Result<Vec<Vec<u8>>, c_int> {
         let bytes = if dir_path.is_empty() {
@@ -9700,6 +9734,8 @@ pub unsafe extern "C" fn glob(
     let Some(pat_bytes) = (unsafe { read_c_string_bytes_with_nul(pattern) }) else {
         return glob_core::GLOB_NOMATCH;
     };
+    let home_fallback_pattern = glob_home_fallback_pattern(&pat_bytes, flags);
+    let effective_pattern = home_fallback_pattern.as_deref().unwrap_or(&pat_bytes);
 
     let append = flags & glob_core::GLOB_APPEND != 0;
 
@@ -9745,9 +9781,9 @@ pub unsafe extern "C" fn glob(
             closedir: unsafe { (*gt).gl_closedir },
             stat: unsafe { (*gt).gl_stat },
         };
-        glob_core::glob_expand_with_fs(&pat_bytes, flags, &mut errfn, &alt)
+        glob_core::glob_expand_with_fs(effective_pattern, flags, &mut errfn, &alt)
     } else {
-        glob_core::glob_expand_with_fs(&pat_bytes, flags, &mut errfn, &glob_core::StdGlobFs)
+        glob_core::glob_expand_with_fs(effective_pattern, flags, &mut errfn, &glob_core::StdGlobFs)
     };
 
     match result {
