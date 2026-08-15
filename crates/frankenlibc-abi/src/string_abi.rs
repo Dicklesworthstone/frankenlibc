@@ -2230,6 +2230,16 @@ unsafe fn scan_c_string_for_byte(
             (limit, false, true)
         }
         None => {
+            #[cfg(target_arch = "x86_64")]
+            if active_string_simd_feature_mask() & SIMD_FEATURE_AVX2 != 0
+                && std::is_x86_feature_detected!("avx2")
+            {
+                // SAFETY: runtime AVX2 detection above satisfies the kernel's ISA
+                // precondition; it retains the same aligned/page-contained loads as
+                // the portable path below.
+                let (index, found_target) = unsafe { scan_c_string_for_byte_avx2(ptr, target) };
+                return (index, found_target, false);
+            }
             use core::simd::Simd;
             use core::simd::cmp::SimdPartialEq;
             // glibc-style aligned-load-with-head-mask for the FIRST vector: align
@@ -2307,6 +2317,77 @@ unsafe fn scan_c_string_for_byte(
                 }
                 i += 32;
             }
+        }
+    }
+}
+
+/// AVX2 target-or-NUL scanner for unbounded C strings.
+///
+/// The portable-SIMD fallback emits a 32-byte operation but does not guarantee
+/// AVX2 code generation.  This kernel gives the deployed ABI path the same
+/// `vpcmpeqb`/`vpmovmskb` primitive glibc uses, while preserving the page proof:
+/// the first load is aligned down within `ptr`'s mapped page and every later
+/// 32-byte load begins on a 32-byte boundary.  The 128-byte folded skip is only
+/// used when all four reads remain in that same page.
+///
+/// # Safety
+///
+/// `ptr` must point to a readable NUL-terminated C string and the caller must
+/// have established AVX2 availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_c_string_for_byte_avx2(ptr: *const c_char, target: u8) -> (usize, bool) {
+    use std::arch::x86_64::*;
+
+    // SAFETY: AVX2 is enabled for this function. Every load is either the
+    // aligned-down first window in ptr's mapped page or a later page-contained
+    // 32-byte window; see the function-level safety contract.
+    unsafe {
+        #[inline(always)]
+        unsafe fn target_or_nul_bits(p: *const u8, target: __m256i, zero: __m256i) -> u32 {
+            // SAFETY: caller proves [p, p + 32) is readable.
+            let lanes = unsafe { _mm256_loadu_si256(p.cast()) };
+            let target_bits = _mm256_cmpeq_epi8(lanes, target);
+            let nul_bits = _mm256_cmpeq_epi8(lanes, zero);
+            _mm256_movemask_epi8(_mm256_or_si256(target_bits, nul_bits)) as u32
+        }
+
+        let p = ptr.cast::<u8>();
+        let target_v = _mm256_set1_epi8(target as i8);
+        let zero = _mm256_setzero_si256();
+        let align = (p as usize) & 31;
+        // SAFETY: rounding down by at most 31 bytes stays inside p's mapped page.
+        let base = unsafe { p.sub(align) };
+        let head_clear = !((1u32 << align) - 1);
+        let first = unsafe { target_or_nul_bits(base, target_v, zero) } & head_clear;
+        if first != 0 {
+            let offset = first.trailing_zeros() as usize;
+            let found_target = (unsafe { *base.add(offset) }) == target;
+            return (offset - align, found_target);
+        }
+
+        let mut i = 32 - align;
+        loop {
+            if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+                // SAFETY: the page guard proves all four 32-byte windows are readable.
+                let folded = unsafe { target_or_nul_bits(p.add(i), target_v, zero) }
+                    | unsafe { target_or_nul_bits(p.add(i + 32), target_v, zero) }
+                    | unsafe { target_or_nul_bits(p.add(i + 64), target_v, zero) }
+                    | unsafe { target_or_nul_bits(p.add(i + 96), target_v, zero) };
+                if folded == 0 {
+                    i += 128;
+                    continue;
+                }
+            }
+
+            // SAFETY: p+i is 32-byte aligned, so the load remains in its page.
+            let bits = unsafe { target_or_nul_bits(p.add(i), target_v, zero) };
+            if bits != 0 {
+                let offset = bits.trailing_zeros() as usize;
+                let found_target = (unsafe { *p.add(i + offset) }) == target;
+                return (i + offset, found_target);
+            }
+            i += 32;
         }
     }
 }

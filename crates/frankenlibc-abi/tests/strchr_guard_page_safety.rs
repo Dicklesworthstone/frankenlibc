@@ -65,6 +65,13 @@ fn strchr_never_reads_into_guard_page() {
                     "strchrnul(absent) start={start} nul={nul_off} wrong NUL position"
                 );
 
+                let reject = c"z";
+                assert_eq!(
+                    fl::strcspn(s, reject.as_ptr()),
+                    nul_off - start,
+                    "strcspn('z') start={start} nul={nul_off} wrong NUL position"
+                );
+
                 // strchr for the present 'a' must find the first one at `start`
                 // (every byte before NUL is 'a'), unless start == nul_off (empty).
                 if start < nul_off {
@@ -73,6 +80,26 @@ fn strchr_never_reads_into_guard_page() {
                         ra, s as *mut c_char,
                         "strchr('a') start={start} should be first byte"
                     );
+                }
+
+                // A target near the final 128-byte bulk window must be found
+                // before the NUL without looking into the protected page. This
+                // drives the AVX2 target-or-NUL scanner past its folded skip.
+                if nul_off >= start + 129 {
+                    let target_off = nul_off - 129;
+                    *bytes.add(target_off) = b'z';
+                    let rz = fl::strchr(s, b'z' as i32);
+                    assert_eq!(
+                        rz,
+                        bytes.add(target_off).cast::<c_char>(),
+                        "strchr('z') start={start} nul={nul_off} wrong target"
+                    );
+                    assert_eq!(
+                        fl::strcspn(s, reject.as_ptr()),
+                        target_off - start,
+                        "strcspn('z') start={start} nul={nul_off} wrong target"
+                    );
+                    *bytes.add(target_off) = b'a';
                 }
 
                 // strlen shares the folded-128 NUL scan: exact length, no over-read.
