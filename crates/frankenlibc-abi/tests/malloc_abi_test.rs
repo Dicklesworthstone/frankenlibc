@@ -1289,17 +1289,31 @@ fn reentry_slot_index_is_stable_for_a_live_thread() {
 #[test]
 fn reentry_slots_stay_single_owner_under_thread_churn() {
     const WAVE: usize = 8;
-    const WAVES: usize = 64;
+    // 20 independent runs retain the required repetition while keeping the
+    // process-lifetime thread churn below the fixed reentry-slot bank's tested
+    // 64-wave capacity (20 * 3 = 60 waves).
+    const WAVES_PER_RUN: usize = 3;
+    const SEGMENT_CYCLES_PER_WORKER: usize = 64;
+    const RUNS: usize = 20;
 
-    for _wave in 0..WAVES {
-        let barrier = Arc::new(Barrier::new(WAVE));
-        let owners: Arc<Mutex<Vec<(usize, usize)>>> = Arc::new(Mutex::new(Vec::new()));
-        let mut handles = Vec::with_capacity(WAVE);
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+    // Publish the size-class segment before releasing the first worker wave:
+    // concurrent first-use intentionally fails open to the host allocator.
+    let warm = unsafe { malloc(64) };
+    assert!(malloc_segment_owned_for_tests(warm.cast_const()));
+    unsafe { free(warm) };
 
-        for worker in 0..WAVE {
-            let barrier = Arc::clone(&barrier);
-            let owners = Arc::clone(&owners);
-            handles.push(std::thread::spawn(move || {
+    for run in 0..RUNS {
+        for _wave in 0..WAVES_PER_RUN {
+            let barrier = Arc::new(Barrier::new(WAVE));
+            let owners: Arc<Mutex<Vec<(usize, usize)>>> = Arc::new(Mutex::new(Vec::new()));
+            let mut handles = Vec::with_capacity(WAVE);
+
+            for worker in 0..WAVE {
+                let barrier = Arc::clone(&barrier);
+                let owners = Arc::clone(&owners);
+                handles.push(std::thread::spawn(move || {
                 // Rendezvous so every worker in this wave is concurrently live
                 // while it resolves and re-resolves its reentry slot.
                 barrier.wait();
@@ -1311,27 +1325,52 @@ fn reentry_slots_stay_single_owner_under_thread_churn() {
                     idx, idx_again,
                     "reentry slot must stay stable within one live worker thread"
                 );
-                owners.lock().expect("owners lock").push((idx, worker));
-            }));
-        }
-        for handle in handles {
-            handle.join().expect("worker thread joined");
-        }
-
-        // All WAVE workers were concurrently live between the barrier and the
-        // join, so each must own a distinct reentry slot.
-        let owners = owners.lock().expect("owners lock");
-        let mut seen: HashMap<usize, usize> = HashMap::new();
-        for &(idx, worker) in owners.iter() {
-            if let Some(&other) = seen.get(&idx) {
-                panic!(
-                    "reentry slot {idx} shared by concurrently-live workers \
-                     {other} and {worker} (bd-35hjg.3.1)"
-                );
+                for cycle in 0..SEGMENT_CYCLES_PER_WORKER {
+                    let ptr = unsafe { malloc(64) };
+                    assert!(
+                        !ptr.is_null(),
+                        "worker {worker} cycle {cycle}: segment allocation must succeed"
+                    );
+                    assert!(
+                        malloc_segment_owned_for_tests(ptr.cast_const()),
+                        "worker {worker} cycle {cycle}: fixed-path churn must reach segment allocator"
+                    );
+                    unsafe {
+                        ptr.cast::<u8>().write(worker as u8);
+                        free(ptr);
+                    }
+                    assert_eq!(
+                        malloc_known_remaining_for_tests(ptr.cast_const()),
+                        None,
+                        "worker {worker} cycle {cycle}: segment_free must retire the slot"
+                    );
+                }
+                    owners.lock().expect("owners lock").push((idx, worker));
+                }));
             }
-            seen.insert(idx, worker);
+            for handle in handles {
+                handle.join().expect("worker thread joined");
+            }
+
+            // All WAVE workers were concurrently live between the barrier and the
+            // join, so each must own a distinct reentry slot.
+            let owners = owners.lock().expect("owners lock");
+            let mut seen: HashMap<usize, usize> = HashMap::new();
+            for &(idx, worker) in owners.iter() {
+                if let Some(&other) = seen.get(&idx) {
+                    panic!(
+                        "reentry slot {idx} shared by concurrently-live workers \
+                         {other} and {worker} (bd-35hjg.3.1)"
+                    );
+                }
+                seen.insert(idx, worker);
+            }
+            assert_eq!(
+                owners.len(),
+                WAVE,
+                "run {run}: every worker must report a slot"
+            );
         }
-        assert_eq!(owners.len(), WAVE, "every worker must report a slot");
     }
 
     // Spawning worker threads must have latched the process into multi-threaded
