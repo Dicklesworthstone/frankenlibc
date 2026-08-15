@@ -432,21 +432,54 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
     );
 }
 
+/// `atanhf` for tiny |x|, where the f64-log path once drifted 251 ULP.
+///
+/// Pins the FE_INEXACT contract alongside the bits: glibc raises it for every nonzero
+/// input in this band even though it returns x unchanged (the true atanh(x) is not
+/// representable), and raises nothing for ±0.0. Returning x is an exact operation and
+/// raises nothing on its own, so a bits-only assertion — which is all this test used to
+/// make — passes an implementation that silently drops the flag.
 #[test]
-#[allow(unsafe_code)] // host-glibc oracle (-lm linked by std)
-fn atanhf_tiny_inputs_match_glibc_bits() {
+#[allow(unsafe_code)] // host-glibc oracle (-lm linked by std) + fenv
+fn atanhf_tiny_inputs_match_glibc_bits_and_inexact_flag() {
+    use core::ffi::c_int;
+    use core::hint::black_box;
     use frankenlibc_core::math as m;
     unsafe extern "C" {
         fn atanhf(x: f32) -> f32;
+        fn feclearexcept(excepts: c_int) -> c_int;
+        fn fetestexcept(excepts: c_int) -> c_int;
     }
+    const FE_INEXACT: c_int = 0x20;
+    const FE_ALL_EXCEPT: c_int = 0x3d;
 
-    for x in [-1.911_694_1e-12_f32, -1.0 / 8192.0, 0.0, 1.0 / 8192.0] {
+    for x in [
+        -1.911_694_1e-12_f32,
+        1.911_694_1e-12,
+        -1.0 / 8192.0,
+        1.0 / 8192.0,
+        0.0,
+        -0.0,
+        1e-30,
+    ] {
+        let x = black_box(x);
+
+        unsafe { feclearexcept(FE_ALL_EXCEPT) };
         let got = m::atanhf(x);
+        let got_inexact = unsafe { fetestexcept(FE_INEXACT) } != 0;
+
+        unsafe { feclearexcept(FE_ALL_EXCEPT) };
         let want = unsafe { atanhf(x) };
+        let want_inexact = unsafe { fetestexcept(FE_INEXACT) } != 0;
+
         assert_eq!(
             got.to_bits(),
             want.to_bits(),
             "atanhf tiny-input drift at x={x:e}: got={got:e}, glibc={want:e}"
+        );
+        assert_eq!(
+            got_inexact, want_inexact,
+            "atanhf FE_INEXACT divergence at x={x:e}: fl={got_inexact}, glibc={want_inexact}"
         );
     }
 }
