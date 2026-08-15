@@ -961,12 +961,34 @@ pub fn expm1f(x: f32) -> f32 {
 #[inline]
 pub fn log1pf(x: f32) -> f32 {
     if x == 0.0 {
-        return x; // preserve the sign of zero (log1p(-0) = -0)
+        return x; // preserve the sign of zero (log1p(-0) = -0), and raise nothing
     }
-    // log1p(x) = log(1+x). Compute 1+x in f64 — EXACT for an f32 x (no catastrophic
-    // small-x cancellation) — then take the dedicated bit-exact f64 `log` kernel and
-    // round once. Accurate across the whole domain and ~glibc speed (the f64 log is
-    // the ARM __log port), replacing the generic libm::log1pf. The f64 log raises
+    // Tiny |x|: log1p(x) = x - x²/2 + …, and the first omitted term is below half an
+    // f32 ULP once |x| < 2^-24, so x IS the correctly rounded result. Proof: for
+    // |x| ∈ [2^e, 2^(e+1)), ulp(x) = 2^(e-23), and x²/2 < 2^(2e+1) ≤ 2^(e-24) =
+    // ½ulp(x) exactly when e ≤ -25, i.e. |x| < 2^-24. Confirmed against glibc 2.42:
+    // log1pf(±2^-24) returns x bit-for-bit, log1pf(±2^-23) does not.
+    //
+    // This branch is REQUIRED, not just a shortcut: the f64 route below is wrong here.
+    // `1.0 + f64::from(x)` is exact only while x's lowest significand bit stays inside
+    // f64's 53-bit window, i.e. |x| ≥ 2^-29; below that the sum rounds and the error
+    // swamps the tiny result. At x = -8.282635e-14 (≈2^-43) that showed up as a
+    // 548-ULP drift against glibc.
+    //
+    // glibc raises FE_INEXACT for every nonzero input here even though it returns x
+    // unchanged (the true log1p(x) is not representable), so force one inexact
+    // operation: returning x is exact and would otherwise silently drop the flag the
+    // f64 `log` used to raise.
+    const TINY: f32 = 1.0 / 16_777_216.0; // 2^-24
+    if x.abs() < TINY {
+        let _ =
+            core::hint::black_box(core::hint::black_box(1.0_f64) / core::hint::black_box(3.0_f64));
+        return x;
+    }
+    // log1p(x) = log(1+x). Compute 1+x in f64 — exact for |x| ≥ 2^-29, which the guard
+    // above now guarantees — then take the dedicated bit-exact f64 `log` kernel and
+    // round once. Accurate across the rest of the domain and ~glibc speed (the f64 log
+    // is the ARM __log port), replacing the generic libm::log1pf. The f64 log raises
     // FE_DIVBYZERO for 1+x == 0 (x == -1, pole) and FE_INVALID for 1+x < 0 (x < -1,
     // domain), exactly matching glibc's log1pf.
     (crate::math::log(1.0 + f64::from(x))) as f32

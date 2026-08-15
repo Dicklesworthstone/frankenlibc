@@ -451,6 +451,75 @@ fn atanhf_tiny_inputs_match_glibc_bits() {
     }
 }
 
+/// `log1pf` for tiny |x|, where the old f64 route drifted 548 ULP vs glibc at
+/// x = -8.282635e-14: `1.0 + f64::from(x)` is exact only for |x| >= 2^-29, and below
+/// that the rounding of the sum swamps the tiny result.
+///
+/// Pins three things at once, because the value alone does not characterise the
+/// contract (measured against glibc 2.42):
+///   - bit parity, including BOTH sides of the 2^-24 threshold. log1pf(2^-23) does
+///     NOT return x, so widening the shortcut by one exponent fails this test.
+///   - FE_INEXACT parity: glibc raises it for every nonzero input even when it
+///     returns x unchanged, and raises nothing for +-0.0. A shortcut that just
+///     returns x drops that flag silently.
+#[test]
+#[allow(unsafe_code)] // host-glibc oracle (-lm linked by std) + fenv
+fn log1pf_tiny_inputs_match_glibc_bits_and_inexact_flag() {
+    use core::ffi::c_int;
+    use core::hint::black_box;
+    use frankenlibc_core::math as m;
+    unsafe extern "C" {
+        fn log1pf(x: f32) -> f32;
+        fn feclearexcept(excepts: c_int) -> c_int;
+        fn fetestexcept(excepts: c_int) -> c_int;
+    }
+    const FE_INEXACT: c_int = 0x20;
+    const FE_ALL_EXCEPT: c_int = 0x3d;
+
+    const TINY: f32 = 1.0 / 16_777_216.0; // 2^-24, last magnitude that returns x
+    const OVER: f32 = 1.0 / 8_388_608.0; // 2^-23, first magnitude that does not
+
+    for x in [
+        -8.282_635e-14_f32,
+        8.282_635e-14,
+        0.0,
+        -0.0,
+        1.0 / 1_073_741_824.0, // 2^-30, inside the region where 1+x is inexact in f64
+        -1.0 / 1_073_741_824.0,
+        TINY,
+        -TINY,
+        OVER,
+        -OVER,
+        1e-6,
+        -1e-6,
+    ] {
+        let x = black_box(x);
+
+        unsafe { feclearexcept(FE_ALL_EXCEPT) };
+        let got = m::log1pf(x);
+        let got_inexact = unsafe { fetestexcept(FE_INEXACT) } != 0;
+
+        unsafe { feclearexcept(FE_ALL_EXCEPT) };
+        let want = unsafe { log1pf(x) };
+        let want_inexact = unsafe { fetestexcept(FE_INEXACT) } != 0;
+
+        assert_eq!(
+            got.to_bits(),
+            want.to_bits(),
+            "log1pf value drift at x={x:e}: got={got:e}, glibc={want:e}"
+        );
+        assert_eq!(
+            got_inexact, want_inexact,
+            "log1pf FE_INEXACT divergence at x={x:e}: fl={got_inexact}, glibc={want_inexact}"
+        );
+    }
+
+    // The threshold is where it is because of what glibc does on either side of it:
+    // returning x past 2^-24 would be a wrong VALUE, not merely a slower path.
+    assert_eq!(m::log1pf(black_box(TINY)).to_bits(), TINY.to_bits());
+    assert_ne!(m::log1pf(black_box(OVER)).to_bits(), OVER.to_bits());
+}
+
 /// Regression guard for the f32 libm-passthrough trig / inverse-trig /
 /// inverse-hyperbolic / cbrt / logf family: each stays within 4 ULP of the host
 /// glibc across its range (incl. moderate large-arg range reduction for sinf).
