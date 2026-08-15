@@ -1,6 +1,9 @@
 //! Characterize fl strchr vs glibc strchr (dlmopen) across sizes, target ABSENT (full
 //! scan to NUL = throughput). The probe showed n=256 at ~2.9x; this maps the curve so a
-//! scanner change can be validated for no-regression at every size.
+//! scanner change can be validated for no-regression at every size. Timed rows
+//! use the campaign's balanced `ABBAABBA` square: both arms have equal early,
+//! late, and total exposure, while each arm's contemporaneous early/late A/A
+//! null makes a busy worker observable rather than a reason to wait forever.
 //!
 //! Run: cargo run --release --example strchr_largen_ab --features abi-bench
 
@@ -21,7 +24,89 @@ fn pctl(s: &[f64], q: f64) -> f64 {
     v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
 }
 
+const SQUARE: [u8; 8] = *b"ABBAABBA";
+const NULL_BOUND: f64 = 0.02;
+
+/// Hash the executable from inside the process that is timing the row. Remote
+/// builds use worker-local target directories, so a shell-side hash would not
+/// establish which ELF actually executed.
+fn self_elf_sha256() -> String {
+    use sha2::{Digest, Sha256};
+
+    let path = std::env::current_exe().expect("resolve running benchmark ELF");
+    let bytes = std::fs::read(path).expect("read running benchmark ELF");
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+struct SquareRow {
+    fl: f64,
+    glibc: f64,
+    ratio: f64,
+    null_fl: f64,
+    null_glibc: f64,
+    checksum: usize,
+}
+
+impl SquareRow {
+    fn verdict(&self) -> &'static str {
+        if (self.null_fl - 1.0).abs() > NULL_BOUND || (self.null_glibc - 1.0).abs() > NULL_BOUND {
+            "NULL-FAILED"
+        } else if self.ratio > 1.0 {
+            "ADMISSIBLE FL_SLOWER"
+        } else {
+            "ADMISSIBLE FL_FASTER"
+        }
+    }
+}
+
+/// Compare the two live implementations in four interleaved slots each. The
+/// decision value is the median of per-round FL/glibc ratios, never a ratio of
+/// independently sampled medians. Each arm's first two slots divided by its
+/// final two slots is an A/A null from the same invocation.
+fn balanced_square<F, G>(mut fl_arm: F, mut glibc_arm: G, rounds: usize, iters: u64) -> SquareRow
+where
+    F: FnMut(u64) -> usize,
+    G: FnMut(u64) -> usize,
+{
+    let mut checksum = fl_arm(iters.min(2_000)) ^ glibc_arm(iters.min(2_000));
+    let (mut ratios, mut fl_samples, mut glibc_samples) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut nulls_fl, mut nulls_glibc) = (Vec::new(), Vec::new());
+
+    for _ in 0..rounds {
+        let (mut fl_slots, mut glibc_slots) = (Vec::new(), Vec::new());
+        for slot in SQUARE {
+            let start = Instant::now();
+            let elapsed = if slot == b'A' {
+                checksum ^= fl_arm(iters);
+                &mut fl_slots
+            } else {
+                checksum ^= glibc_arm(iters);
+                &mut glibc_slots
+            };
+            elapsed.push(start.elapsed().as_nanos() as f64 / iters as f64);
+        }
+
+        ratios.push(pctl(&fl_slots, 0.5) / pctl(&glibc_slots, 0.5));
+        fl_samples.extend(fl_slots.iter().copied());
+        glibc_samples.extend(glibc_slots.iter().copied());
+        nulls_fl.push(pctl(&fl_slots[..2], 0.5) / pctl(&fl_slots[2..], 0.5));
+        nulls_glibc.push(pctl(&glibc_slots[..2], 0.5) / pctl(&glibc_slots[2..], 0.5));
+    }
+
+    SquareRow {
+        fl: pctl(&fl_samples, 0.5),
+        glibc: pctl(&glibc_samples, 0.5),
+        ratio: pctl(&ratios, 0.5),
+        null_fl: pctl(&nulls_fl, 0.5),
+        null_glibc: pctl(&nulls_glibc, 0.5),
+        checksum,
+    }
+}
+
 fn main() {
+    println!("ELF_SHA256={}", self_elf_sha256());
     let h = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -65,38 +150,36 @@ fn main() {
         let mut buf = vec![b'x'; n + 16];
         buf[n] = 0;
         let scp = unsafe { buf.as_ptr().add(0) as *const i8 };
-        let lit = 20_000u64;
-        let (mut fl, mut gl) = (Vec::new(), Vec::new());
-        for r in 0..100 {
-            if r % 2 == 0 {
-                let t = Instant::now();
-                for _ in 0..lit {
-                    black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) });
+        let row = balanced_square(
+            |iters| {
+                let mut checksum = 0usize;
+                for _ in 0..iters {
+                    checksum ^=
+                        black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) })
+                            as usize;
                 }
-                fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
-                let t = Instant::now();
-                for _ in 0..lit {
-                    black_box(unsafe { g_strchr(scp, b'Z' as i32) });
+                checksum
+            },
+            |iters| {
+                let mut checksum = 0usize;
+                for _ in 0..iters {
+                    checksum ^= black_box(unsafe { g_strchr(scp, b'Z' as i32) }) as usize;
                 }
-                gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
-            } else {
-                let t = Instant::now();
-                for _ in 0..lit {
-                    black_box(unsafe { g_strchr(scp, b'Z' as i32) });
-                }
-                gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
-                let t = Instant::now();
-                for _ in 0..lit {
-                    black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) });
-                }
-                fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
-            }
-        }
-        let (f10, g10) = (pctl(&fl, 0.1), pctl(&gl, 0.1));
+                checksum
+            },
+            41,
+            20_000,
+        );
         println!(
-            "STRCHR n={n:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
-            f10 / g10,
-            if f10 <= g10 * 1.1 { "ok" } else { "LOSS" }
+            "STRCHR n={n:<6} median: fl={:.2} glibc={:.2} fl/glibc={:.4} \\
+             null_fl={:.4} null_glibc={:.4} bound=+/-{NULL_BOUND:.2} ck={:#x} :: {}",
+            row.fl,
+            row.glibc,
+            row.ratio,
+            row.null_fl,
+            row.null_glibc,
+            row.checksum,
+            row.verdict(),
         );
     }
 }
