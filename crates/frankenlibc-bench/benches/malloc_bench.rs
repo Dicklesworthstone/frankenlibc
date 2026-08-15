@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
 #[cfg(feature = "abi-bench")]
-use frankenlibc_bench::HostWideBenchmarkGuard;
+use frankenlibc_bench::{HostWideBenchmarkGuard, balanced_square_reverse_at};
 use frankenlibc_core::malloc::size_class::{SizeClassIndex, small_bin_index};
 use sha2::{Digest, Sha256};
 
@@ -237,6 +237,43 @@ fn paired_cv_pct(samples: &[f64]) -> f64 {
 #[cfg(feature = "abi-bench")]
 fn malloc_bench_cli_requests(needle: &str) -> bool {
     std::env::args_os().any(|arg| arg.to_string_lossy().contains(needle))
+}
+
+/// Select the timing-admission contract before the benchmark touches an arm.
+///
+/// The traditional target remains fail-closed on host-wide quiescence. The
+/// explicit busy-host target uses the balanced-square order below instead: it
+/// keeps the incumbent and A/A control in the same process, while ensuring
+/// foreign load is distributed over both timing arms.
+#[cfg(feature = "abi-bench")]
+#[derive(Clone, Copy)]
+enum SegmentProductionAdmission {
+    HostWideQuiet,
+    BusyHostBalancedSquare,
+}
+
+#[cfg(feature = "abi-bench")]
+impl SegmentProductionAdmission {
+    fn from_cli() -> Option<Self> {
+        if malloc_bench_cli_requests("segment_allocator_3way_busy_host") {
+            Some(Self::BusyHostBalancedSquare)
+        } else if malloc_bench_cli_requests("segment_allocator_3way") {
+            Some(Self::HostWideQuiet)
+        } else {
+            None
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::HostWideQuiet => "host_wide_quiet",
+            Self::BusyHostBalancedSquare => "busy_host_balanced_square",
+        }
+    }
+
+    const fn requires_host_wide_quiet(self) -> bool {
+        matches!(self, Self::HostWideQuiet)
+    }
 }
 
 #[cfg(feature = "abi-bench")]
@@ -785,7 +822,12 @@ fn score_segment_production_size(
     let mut scoring_checksum = 0usize;
 
     for sample_index in 0..raw_samples {
-        let reverse = sample_index.is_multiple_of(2);
+        // ABBAABBA is a balanced square: the real and A/A blocks each own two
+        // early and two late positions in every eight-sample square. This is
+        // what admits the explicit busy-host mode without treating a noisy
+        // host as quiet; the per-arm all-permutation schedule below remains
+        // unchanged.
+        let reverse = balanced_square_reverse_at(sample_index);
         let run_null = || {
             segment_production_null_sample(
                 black_box(orig_malloc),
@@ -1899,9 +1941,9 @@ fn bench_segment_bitmap_paired(_c: &mut Criterion) {}
 
 #[cfg(feature = "abi-bench")]
 fn bench_segment_production_paired(_c: &mut Criterion) {
-    if !malloc_bench_cli_requests("segment_allocator_3way") {
+    let Some(admission) = SegmentProductionAdmission::from_cli() else {
         return;
-    }
+    };
 
     const SIZES: [usize; 4] = [16, 64, 256, 1_024];
     const PROFILE_OPERATIONS: u64 = 4_096;
@@ -1934,10 +1976,17 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
     segment_production_preflight("glibc", glibc_malloc, glibc_free, &SIZES, false, false);
 
     let scoring_cpu = pin_segment_production_scoring_thread();
-    let quiet_guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
-        eprintln!("MALLOC_SEGMENT_PRODUCTION_BLOCKED phase=guard_init error={error}");
-        std::process::exit(2);
+    let quiet_guard = admission.requires_host_wide_quiet().then(|| {
+        HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+            eprintln!("MALLOC_SEGMENT_PRODUCTION_BLOCKED phase=guard_init error={error}");
+            std::process::exit(2);
+        })
     });
+    println!(
+        "MALLOC_SEGMENT_PRODUCTION_ADMISSION mode={} host_wide_quiescence_required={} order_schedule=ABBAABBA incumbent=live_dlmopen aa_control=same_process",
+        admission.label(),
+        admission.requires_host_wide_quiet(),
+    );
     let profile = profile_segment_production_candidate(
         &output_dir,
         candidate_malloc,
@@ -1945,7 +1994,9 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
         &SIZES,
         PROFILE_OPERATIONS,
     );
-    require_segment_production_quiet(&quiet_guard, "pre_measurement");
+    if let Some(quiet_guard) = quiet_guard.as_ref() {
+        require_segment_production_quiet(quiet_guard, "pre_measurement");
+    }
     let worker = fs::read_to_string("/proc/sys/kernel/hostname")
         .expect("read remote worker hostname")
         .trim()
@@ -2001,7 +2052,9 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
         );
         size_results.push(result);
     }
-    require_segment_production_quiet(&quiet_guard, "post_measurement");
+    if let Some(quiet_guard) = quiet_guard.as_ref() {
+        require_segment_production_quiet(quiet_guard, "post_measurement");
+    }
     let all_size_median_ci_gate_pass = size_results
         .iter()
         .all(SegmentProductionSizeResult::median_ci_gate_pass);
@@ -2115,7 +2168,9 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
                 "  \"sizes\": {sizes:?},\n",
                 "  \"operations_per_microblock\": {operations_per_microblock},\n",
                 "  \"permutation_cycles_per_sample\": {permutation_cycles},\n",
-                "  \"order_scheme\": \"exact ORIG/ORIG A/A pairs interleaved within every raw sample; all six O-C-G permutations; inner and outer block order reversed every other sample\",\n",
+                "  \"measurement_admission\": {measurement_admission:?},\n",
+                "  \"host_wide_quiescence_required\": {host_wide_quiescence_required},\n",
+                "  \"order_scheme\": \"exact ORIG/ORIG A/A pairs interleaved within every raw sample; all six O-C-G permutations; inner and outer A/A-versus-real block order follow the ABBAABBA balanced square\",\n",
                 "  \"null_unit_of_analysis\": \"one A/A ratio per raw sample, with the same operations per null arm as each O-C-G arm\",\n",
                 "  \"decision_gate_scope\": \"candidate/orig ratio median below 1.0 and more than 2x the A/A null median-CI half-width from 1.0; every CV is descriptive only\",\n",
                 "  \"all_size_median_ci_gate_pass\": {all_size_median_ci_gate_pass},\n",
@@ -2141,6 +2196,8 @@ fn bench_segment_production_paired(_c: &mut Criterion) {
             sizes = SIZES,
             operations_per_microblock = OPERATIONS_PER_MICROBLOCK,
             permutation_cycles = PERMUTATION_CYCLES_PER_SAMPLE,
+            measurement_admission = admission.label(),
+            host_wide_quiescence_required = admission.requires_host_wide_quiet(),
             all_size_median_ci_gate_pass = all_size_median_ci_gate_pass,
             all_size_candidate_beats_orig = all_size_candidate_beats_orig,
             production_profile_available = profile.available,

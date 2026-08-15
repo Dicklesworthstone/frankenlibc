@@ -20,6 +20,22 @@ pub const HOST_WIDE_CPU_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 pub const HOST_WIDE_MAX_BUSY_FRACTION: f64 = 0.20;
 pub const HOST_WIDE_REQUIRED_CLEAR_SAMPLES: usize = 5;
 pub const HOST_WIDE_QUIET_TIMEOUT: Duration = Duration::from_secs(300);
+/// Eight-round order that balances two arms across a drifting shared host.
+///
+/// `false` denotes arm A first and `true` denotes arm B first. Each arm owns
+/// four positions overall and two positions in each half of the square, so a
+/// monotonic load change is applied equally to both arms rather than being
+/// confounded with a fixed run order.
+pub const BALANCED_SQUARE_ABBA: [bool; 8] = [false, true, true, false, false, true, true, false];
+
+/// Return the first-arm reversal for a balanced-square round.
+///
+/// The sequence repeats deliberately: a measurement may contain more than
+/// eight raw samples, but every complete square retains equal arm exposure.
+#[must_use]
+pub const fn balanced_square_reverse_at(round: usize) -> bool {
+    BALANCED_SQUARE_ABBA[round % BALANCED_SQUARE_ABBA.len()]
+}
 /// Loader flags that make a locally opened FrankenLibC artifact bind its own
 /// exported symbols, matching the relevant `LD_PRELOAD` interposition order.
 pub const DEPLOYED_PRELOAD_DLOPEN_FLAGS: libc::c_int =
@@ -1524,6 +1540,30 @@ fn json_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn balanced_square_gives_each_arm_equal_early_late_and_total_exposure() {
+        assert_eq!(
+            BALANCED_SQUARE_ABBA,
+            [false, true, true, false, false, true, true, false]
+        );
+        for half in BALANCED_SQUARE_ABBA.chunks_exact(4) {
+            assert_eq!(half.iter().filter(|&&reverse| reverse).count(), 2);
+            assert_eq!(half.iter().filter(|&&reverse| !reverse).count(), 2);
+        }
+        assert_eq!(
+            (0..BALANCED_SQUARE_ABBA.len())
+                .filter(|&round| balanced_square_reverse_at(round))
+                .count(),
+            4
+        );
+        assert_eq!(
+            (0..BALANCED_SQUARE_ABBA.len())
+                .map(|round| balanced_square_reverse_at(round))
+                .collect::<Vec<_>>(),
+            BALANCED_SQUARE_ABBA
+        );
+    }
 
     #[test]
     fn deployed_preload_loader_flags_keep_frankenlibc_symbols_self_bound() {
