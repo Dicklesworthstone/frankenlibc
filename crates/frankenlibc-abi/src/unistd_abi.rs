@@ -6508,10 +6508,6 @@ pub unsafe extern "C" fn map_shadow_stack(addr: c_ulong, size: c_ulong, flags: c
 /// `union bpf_attr` for the requested `cmd`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bpf(cmd: c_int, attr: *mut c_void, size: c_uint) -> c_int {
-    if size > 0 && attr.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
     match unsafe { syscall::sys_bpf(cmd, attr as *mut u8, size) } {
         Ok(n) => n,
         Err(e) => {
@@ -6536,10 +6532,6 @@ pub unsafe extern "C" fn kexec_load(
     segments: *const c_void,
     flags: c_ulong,
 ) -> c_long {
-    if nr_segments > 0 && segments.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
     match unsafe {
         syscall::sys_kexec_load(
             entry as usize,
@@ -6573,10 +6565,6 @@ pub unsafe extern "C" fn kexec_file_load(
     cmdline: *const c_char,
     flags: c_ulong,
 ) -> c_long {
-    if cmdline_len > 0 && cmdline.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
     match unsafe {
         syscall::sys_kexec_file_load(
             kernel_fd,

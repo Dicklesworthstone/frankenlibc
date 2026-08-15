@@ -164,6 +164,16 @@ fn privileged_control_invalid_failures_match_host_syscall() {
     );
     assert_eq!(fl.0, -1);
 
+    // The kernel, not the ABI boundary, decides whether an invalid command-line
+    // pointer or the invalid descriptor/privilege check wins for this syscall.
+    let host = host_kexec_file_load(-1, -1, 1, ptr::null(), 0);
+    let fl = fl_kexec_file_load(-1, -1, 1, ptr::null(), 0);
+    assert_eq!(
+        fl, host,
+        "kexec_file_load(null cmdline positive length): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(fl.0, -1);
+
     let host = host_kexec_file_load(-1, -1, 0, ptr::null(), 0);
     let fl = fl_kexec_file_load(-1, -1, 0, ptr::null(), 0);
     assert_eq!(
