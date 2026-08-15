@@ -20,6 +20,10 @@ pub const HOST_WIDE_CPU_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 pub const HOST_WIDE_MAX_BUSY_FRACTION: f64 = 0.20;
 pub const HOST_WIDE_REQUIRED_CLEAR_SAMPLES: usize = 5;
 pub const HOST_WIDE_QUIET_TIMEOUT: Duration = Duration::from_secs(300);
+/// Loader flags that make a locally opened FrankenLibC artifact bind its own
+/// exported symbols, matching the relevant `LD_PRELOAD` interposition order.
+pub const DEPLOYED_PRELOAD_DLOPEN_FLAGS: libc::c_int =
+    libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND;
 
 #[derive(Clone, Copy, Debug)]
 struct HostCpuTicks {
@@ -1520,6 +1524,14 @@ fn json_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deployed_preload_loader_flags_keep_frankenlibc_symbols_self_bound() {
+        assert_eq!(
+            DEPLOYED_PRELOAD_DLOPEN_FLAGS,
+            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
+        );
+    }
 
     #[test]
     fn host_wide_cpu_list_parser_accepts_ranges_and_singletons() {

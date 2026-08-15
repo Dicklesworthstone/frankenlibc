@@ -53,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use frankenlibc_bench::HostWideBenchmarkGuard;
+use frankenlibc_bench::{DEPLOYED_PRELOAD_DLOPEN_FLAGS, HostWideBenchmarkGuard};
 use sha2::{Digest, Sha256};
 
 const SAMPLES: usize = 40;
@@ -4076,10 +4076,14 @@ fn call_getaddrinfo_once(
 }
 
 fn run_getaddrinfo_hosts(config: &Config) {
+    assert!(
+        config.fl_deepbind,
+        "getaddrinfo requires --fl-deepbind so FrankenLibC's internal resolver and allocator calls model LD_PRELOAD deployment"
+    );
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), DEPLOYED_PRELOAD_DLOPEN_FLAGS) };
     assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
     let fl_getaddrinfo_symbol = unsafe { libc::dlsym(handle, c"getaddrinfo".as_ptr()) };
     assert!(
@@ -4105,7 +4109,8 @@ fn run_getaddrinfo_hosts(config: &Config) {
     print_identity("INCUMBENT", &incumbent_identity);
     print_identity("FL", &fl_identity);
     println!("INCUMBENT_LINKAGE direct_process_link symbol=getaddrinfo");
-    println!("FL_LINKAGE explicit_dlopen_local symbol=getaddrinfo");
+    println!("FL_LINKAGE explicit_dlopen_deepbind symbol=getaddrinfo");
+    println!("FL_LOAD_MODE symbol=getaddrinfo deepbind=true models=ld_preload_deployment");
     assert!(
         incumbent_identity
             .path
