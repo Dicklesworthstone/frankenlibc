@@ -63,7 +63,9 @@ const FTW_PHYS: c_int = 1; // don't follow symlinks
 const FTW_DEPTH: c_int = 8; // post-order (was 4 — pre-bd-ftw-4 bug, FTW_CHDIR=4)
 
 // Tests share a global collection vector since the C callback can't
-// capture closures.
+// capture closures. Acquire it poison-tolerantly: every test clears it before
+// use, so a failure in one test must not panic the next one on the poison
+// (bd-9ri7g1).
 static COLLECTOR: Mutex<Vec<(String, c_int)>> = Mutex::new(Vec::new());
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -75,9 +77,12 @@ unsafe extern "C" fn collect_ftw(
     let p = unsafe { CStr::from_ptr(path) }
         .to_string_lossy()
         .into_owned();
-    if let Ok(mut v) = COLLECTOR.lock() {
-        v.push((p, typeflag));
-    }
+    // Never `if let Ok(..)` here: on a poisoned lock that silently records nothing, and the
+    // next test then asserts against an empty vector instead of its own behavior.
+    COLLECTOR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((p, typeflag));
     COUNT.fetch_add(1, Ordering::Relaxed);
     0
 }
@@ -91,9 +96,12 @@ unsafe extern "C" fn collect_nftw(
     let p = unsafe { CStr::from_ptr(path) }
         .to_string_lossy()
         .into_owned();
-    if let Ok(mut v) = COLLECTOR.lock() {
-        v.push((p, typeflag));
-    }
+    // Never `if let Ok(..)` here: on a poisoned lock that silently records nothing, and the
+    // next test then asserts against an empty vector instead of its own behavior.
+    COLLECTOR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((p, typeflag));
     COUNT.fetch_add(1, Ordering::Relaxed);
     0
 }
@@ -132,7 +140,7 @@ fn build_symlink_tree() -> std::path::PathBuf {
 /// (path-suffix-after-base, typeflag) collection.
 fn run_ftw(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
     {
-        COLLECTOR.lock().unwrap().clear();
+        COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
     COUNT.store(0, Ordering::Relaxed);
     let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
@@ -142,7 +150,7 @@ fn run_ftw(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
         unsafe { ftw(cbase.as_ptr(), Some(collect_ftw), 16) }
     };
     assert_eq!(r, 0, "ftw return: use_fl={use_fl}");
-    let mut v = COLLECTOR.lock().unwrap().clone();
+    let mut v = COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let base_str = base.to_string_lossy().into_owned();
     for entry in v.iter_mut() {
         if let Some(rest) = entry.0.strip_prefix(&base_str) {
@@ -155,7 +163,7 @@ fn run_ftw(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
 
 fn run_ftw64(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
     {
-        COLLECTOR.lock().unwrap().clear();
+        COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
     COUNT.store(0, Ordering::Relaxed);
     let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
@@ -165,7 +173,7 @@ fn run_ftw64(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
         unsafe { ftw64(cbase.as_ptr(), Some(collect_ftw), 16) }
     };
     assert_eq!(r, 0, "ftw64 return: use_fl={use_fl}");
-    let mut v = COLLECTOR.lock().unwrap().clone();
+    let mut v = COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let base_str = base.to_string_lossy().into_owned();
     for entry in v.iter_mut() {
         if let Some(rest) = entry.0.strip_prefix(&base_str) {
@@ -178,7 +186,7 @@ fn run_ftw64(use_fl: bool, base: &std::path::Path) -> Vec<(String, c_int)> {
 
 fn run_nftw(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, c_int)> {
     {
-        COLLECTOR.lock().unwrap().clear();
+        COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
     COUNT.store(0, Ordering::Relaxed);
     let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
@@ -188,7 +196,7 @@ fn run_nftw(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, 
         unsafe { nftw(cbase.as_ptr(), Some(collect_nftw), 16, flags) }
     };
     assert_eq!(r, 0, "nftw return: use_fl={use_fl}");
-    let mut v = COLLECTOR.lock().unwrap().clone();
+    let mut v = COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let base_str = base.to_string_lossy().into_owned();
     for entry in v.iter_mut() {
         if let Some(rest) = entry.0.strip_prefix(&base_str) {
@@ -201,7 +209,7 @@ fn run_nftw(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, 
 
 fn run_nftw64(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String, c_int)> {
     {
-        COLLECTOR.lock().unwrap().clear();
+        COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
     COUNT.store(0, Ordering::Relaxed);
     let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
@@ -217,7 +225,7 @@ fn run_nftw64(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String
         unsafe { nftw64(cbase.as_ptr(), Some(collect_nftw), 16, flags) }
     };
     assert_eq!(r, 0, "nftw64 return: use_fl={use_fl}");
-    let mut v = COLLECTOR.lock().unwrap().clone();
+    let mut v = COLLECTOR.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let base_str = base.to_string_lossy().into_owned();
     for entry in v.iter_mut() {
         if let Some(rest) = entry.0.strip_prefix(&base_str) {

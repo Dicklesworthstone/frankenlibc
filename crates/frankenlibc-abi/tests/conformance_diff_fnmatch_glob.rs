@@ -275,7 +275,7 @@ unsafe extern "C" fn recording_glob_errfunc(path: *const c_char, errno: c_int) -
             .to_string_lossy()
             .into_owned()
     };
-    *GLOB_ERRFUNC_PATH.lock().unwrap() = Some(rendered);
+    *GLOB_ERRFUNC_PATH.lock().unwrap_or_else(|e| e.into_inner()) = Some(rendered);
     GLOB_ERRFUNC_RETURN.load(Ordering::SeqCst)
 }
 
@@ -283,14 +283,14 @@ fn reset_glob_errfunc(return_value: c_int) {
     GLOB_ERRFUNC_CALLS.store(0, Ordering::SeqCst);
     GLOB_ERRFUNC_ERRNO.store(0, Ordering::SeqCst);
     GLOB_ERRFUNC_RETURN.store(return_value, Ordering::SeqCst);
-    *GLOB_ERRFUNC_PATH.lock().unwrap() = None;
+    *GLOB_ERRFUNC_PATH.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn glob_errfunc_snapshot() -> (usize, c_int, Option<String>) {
     (
         GLOB_ERRFUNC_CALLS.load(Ordering::SeqCst),
         GLOB_ERRFUNC_ERRNO.load(Ordering::SeqCst),
-        GLOB_ERRFUNC_PATH.lock().unwrap().clone(),
+        GLOB_ERRFUNC_PATH.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     )
 }
 
