@@ -27133,3 +27133,99 @@ the next agent should not re-run it.
   file's own pre-commit lint refused it as a reject row, correctly. Recorded here as an open
   question. To bank it, re-run with an A/A null and bootstrap CI, or count the work directly
   (instructions/cycles) to show the guarded path does not reduce it.
+
+## 2026-08-15 (BlackThrush) — REJECTED LEVER: dropping the lock-prefixed CAS from the allocator reentry guard buys ~0.8% (bd-7wubke)
+
+- **LEVER.** `enter_allocator_reentry_guard()` claims the per-thread slot with
+  `compare_exchange(0,1,AcqRel,Acquire)` on every `malloc` and every `free` (16 call sites, so the
+  whole allocator family). `allocator_depth` is thread-private — `allocator_reentry_slot_for_tid`
+  binds a slot to exactly one live kernel tid — so the RMW never arbitrates between threads; its
+  only racer is an async signal handler on the same thread. Candidate: while `MULTI_THREADED` is
+  unlatched, replace the RMW with a relaxed load plus a release store, keeping the CAS once the
+  process goes multi-threaded (a recycled tid/TCB can alias slots, bd-35hjg.3.1).
+- **EQUIVALENCE ARGUMENT (holds; it is the payoff that failed, not the proof).** A handler landing
+  before the load sees 0, enters, restores 0, and we enter behind it; a handler landing after the
+  store sees 1 and takes the bootstrap passthrough; a handler landing inside the load/store window —
+  the one window the CAS does not have — sees 0 and enters, but the store strictly precedes every
+  `segment_local` access, so the handler's access nests inside our pre-access window and the two
+  never overlap; a handler that never returns pins the thread to the bootstrap path identically
+  under both. Gate written and observed passing before the measurement: `malloc_abi_test`
+  `allocator_depth_claim_refuses_nested_entry_on_both_branches` +
+  `allocator_guard_releases_depth_after_every_malloc_and_free`, `2 passed; 0 failed` on RCH worker
+  `vmi1264463`, plus the full `malloc_abi_test` at `74 passed; 0 failed; 1 ignored` on `vmi1153651`.
+- **MEASURED, and it does not pay.** Four arms, ABBA (base, cand, cand, base), host `hz1`
+  (`hostname=frankenlibc-test`, 8 logical CPUs, `--pin-quietest 4`,
+  `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`, governor unavailable), harness
+  `incumbent_coverage_ab --family malloc_free --fl-deepbind`, `samples=36 reps_per_arm=100000`,
+  `threads_observed=1` pre and post on every arm, host-wide exclusivity `verdict=clear` pre and post
+  on every arm. Every arm ran the SAME bench ELF `sha256=cfd1fff2aabd0941…`; only the dlopened fl
+  object differed (`fl_base.so sha256=36190076622737f8…`, `fl_cand.so sha256=3d1cb0e76ff2765d…`);
+  incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6 sha256=a3947513a02831ec…`.
+
+  | order | arm | fl ns/pair | glibc ns/pair | ratio_median | ratio_ci95 | null_fl_fl | null_glibc_glibc |
+  |---|---|---|---|---|---|---|---|
+  | 1 | base | 84.925 | 6.270 | 13.526508 | [13.481309,13.614332] | 1.000043 | 1.004413 |
+  | 2 | cand | 84.138 | 6.021 | 13.913485 | [13.530666,14.046947] | 0.999353 | 1.001872 |
+  | 3 | cand | 84.037 | 6.250 | 13.440313 | [13.426475,13.638570] | 0.998521 | 0.999657 |
+  | 4 | base | 84.613 | 5.960 | 14.204718 | [14.059043,14.250760] | 1.000676 | 0.998191 |
+
+- **THE EIGHT NULL CONTROLS, in pipe-free form.** Each arm carries its own same-invocation A/A
+  controls, each a bootstrap median with a bootstrap median CI, tolerance 0.020, no CI straddle.
+  Arm 1 base: A/A null FL/FL median 1.000043, bootstrap median CI [0.996640,1.003402]; A/A null
+  glibc/glibc median 1.004413, bootstrap median CI [0.994024,1.006853].
+  Arm 2 cand: A/A null FL/FL median 0.999353, bootstrap median CI [0.998641,1.002437]; A/A null
+  glibc/glibc median 1.001872, bootstrap median CI [0.996981,1.009495].
+  Arm 3 cand: A/A null FL/FL median 0.998521, bootstrap median CI [0.997754,1.001165]; A/A null
+  glibc/glibc median 0.999657, bootstrap median CI [0.994426,1.002338].
+  Arm 4 base: A/A null FL/FL median 1.000676, bootstrap median CI [0.999187,1.003513]; A/A null
+  glibc/glibc median 0.998191, bootstrap median CI [0.995930,1.003741].
+  The FL/glibc effect medians with their bootstrap median CIs are 13.526508 [13.481309,13.614332],
+  13.913485 [13.530666,14.046947], 13.440313 [13.426475,13.638570] and 14.204718
+  [14.059043,14.250760]. SCOPE, stated exactly: the A/A nulls are same-invocation, and the
+  candidate/base A/B is necessarily cross-invocation because the two arms are two different fl
+  objects, which is why it was run ABBA with the null controls and the live incumbent arm repeated
+  inside every invocation.
+- **THE EFFECT, in pipe-free form.** Candidate/base on the fl arm is 0.9907 by position 1-vs-2 and
+  0.9932 by position 4-vs-3, and the FL/glibc effect medians interleave (base 13.526508 and
+  14.204718 against candidate 13.913485 and 13.440313), so the effect is not separated from the
+  between-arm spread.
+
+  All eight A/A nulls sit inside the 0.020 tolerance with no CI straddle. Paired by position the fl
+  arm moves `84.925 -> 84.138` and `84.613 -> 84.037`, i.e. `cand/base = 0.9907` and `0.9932`:
+  **~0.7 ns per malloc/free pair, ~0.35 ns per guarded call.** The vs-incumbent ratio does NOT
+  separate — base spans `13.527`/`14.205` and candidate spans `13.913`/`13.440`, fully interleaved,
+  because the glibc arm alone moves `5.960`-`6.270` ns between arms. REJECTED: a ~0.8% fl-side
+  change is a self-speedup below the between-arm spread, not a win, and it is not worth altering a
+  safety-critical claim on the allocator's exclusion invariant. Source reverted; only this row and
+  the bead survive.
+- **THE REAL FINDING — the guard microbench over-attributes by ~16x.** `SIZETRACK_GUARDED_HEADER_AB`
+  / `GUARD_AB` reads `5.63`-`7.45 ns/call` for guard enter+exit, and bd-dcrhgl's decomposition bills
+  `~8 ns/pair` to the reentry guard, with the matched no-call-graph profile on bd-65p87u putting
+  `95.18%` of the `enter_allocator_reentry_guard` frame on the locked CAS. Deleting that CAS
+  outright recovers `~0.35 ns/call`. The lock prefix is not free, but the deployed path has enough
+  independent work to hide almost all of it, which an isolated enter/exit loop cannot. This extends
+  the 2026-08-15 "component subtraction over-attributes by ~50%" note: for a single atomic inside a
+  long dependent path the over-attribution is more than an order of magnitude. It also matches the
+  2026-07-04 malloc double-slot-resolve LOSS, whose stated residual ("the guards' real cost is the
+  atomic RMWs") is exactly what this row now refutes.
+- **PRIOR ROWS THIS ONE ANSWERS.** `check_perf_ledger_integrity.py preflight` blocked this surface on
+  two rows; neither covers this lever, and both are addressed rather than bypassed.
+  L16944 `[VOID-NONULL]` is the double-slot-resolve elision — a plumbing change that explicitly did
+  NOT remove the RMW, and it records no retry predicate; this row supplies the missing measurement of
+  the residual it named. L17098's retry condition is "do not retry existing-table guarded headers",
+  which is sub-step A and untouched here.
+- **CONCRETE RETRY PREDICATE.** Do not re-run any variant that only changes the *cost* of the guard
+  claim (non-atomic ST claim, split load/store, cheaper ordering, hoisting the duplicate
+  `is_runtime_ready()` loads). The deployed budget for the entire claim is now bounded at
+  `~0.35 ns/call` against an `84 ns` pair, so no such variant can move the ratio. Retry only a lever
+  that removes the guard ENTRY ITSELF from the hot path (a proof that the family needs no per-call
+  exclusion, which also requires the signal-reentrancy contract to be re-established some other way),
+  and only against a same-session base/candidate pair with both A/A nulls.
+- **WORKER/HARNESS PROVENANCE (this ledger's malloc rows must name both).** `hz1` reads
+  `13.44`-`14.20x` with `fl ~84 ns/pair` on `incumbent_coverage_ab --fl-deepbind`; the 2026-08-15
+  baseline row reads `12.385414x` with `fl 68.386 ns` on `hz2` with the same harness and the same
+  incumbent object `a3947513a02831ec…`; `malloc_st_probe` reads `5.9459x` on `hz2`. Three numbers,
+  one primitive. Both fl objects here were built on RCH worker `vmi1264463` from `--base HEAD
+  --clean-overlay` (candidate overlaying only `crates/frankenlibc-abi/src/malloc_abi.rs`, base
+  rebuilt in the same target pool from `HEAD`) and then measured on `hz1`; the workspace pins
+  `-Ctarget-feature=+avx2,+fma` with no `target-cpu=native`, so the objects are not host-specialised.
