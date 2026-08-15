@@ -6386,3 +6386,54 @@ fn funopen_round_trips_write_seek_read() {
     assert!(s.closed);
     assert_eq!(s.data, payload);
 }
+
+// ---------------------------------------------------------------------------
+// fcloseall must not unregister the standard streams (bd-0ftdgt)
+// ---------------------------------------------------------------------------
+
+/// `fcloseall` used to remove `stdin`/`stdout`/`stderr` from the stream
+/// registry. Every stdio entry point maps those three to a SENTINEL id
+/// (`0x1000_0001..=0x1000_0003`) and falls back to HOST stdio for any id the
+/// registry does not contain — passing the sentinel through as if it were a
+/// `FILE *`. So after `fcloseall`, the next standard-stream call handed glibc
+/// the address `0x1000_0002`, and glibc killed the process with
+/// "Fatal error: glibc detected an invalid stdio handle".
+///
+/// That is why this asserts the REGISTRY INVARIANT rather than demonstrating it
+/// by writing to `stdout`: a regression aborts the process, and an aborted test
+/// binary reports nothing — which is exactly how this stayed invisible while it
+/// took 44 of 173 conformance tests down mid-run.
+///
+/// Calling it twice matters: the second call is the one that used to find the
+/// sentinels already missing.
+#[test]
+fn fcloseall_keeps_the_standard_streams_registered() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
+        "precondition: the standard streams should be registered before fcloseall"
+    );
+
+    let first = frankenlibc_abi::stdio_abi::fcloseall();
+    assert_eq!(first, 0, "fcloseall should report success");
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
+        "fcloseall unregistered a standard stream; its sentinel id would now be \
+         passed to host stdio as a FILE pointer"
+    );
+
+    let second = frankenlibc_abi::stdio_abi::fcloseall();
+    assert_eq!(second, 0, "a second fcloseall should still report success");
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
+        "a second fcloseall unregistered a standard stream"
+    );
+
+    // And the process is still able to flush every stream, which is the call
+    // the conformance suite made next when it died.
+    let rc = unsafe { frankenlibc_abi::stdio_abi::fflush(std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "fflush(NULL) after fcloseall should succeed");
+}

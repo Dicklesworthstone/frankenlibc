@@ -11244,9 +11244,55 @@ pub unsafe extern "C" fn fflush_unlocked(stream: *mut c_void) -> c_int {
     unsafe { fflush(stream) }
 }
 
-/// GNU `fcloseall` — close all open streams.
+/// Test hook (bd-0ftdgt): reports whether the three standard streams are still
+/// resolvable in the registry.
+///
+/// This is the invariant `fcloseall` used to break. It is exposed as a plain
+/// boolean because the alternative — proving it by USING `stdout` afterwards —
+/// aborts the whole process when it regresses instead of failing one test, and
+/// an aborted test binary reports nothing at all.
+#[doc(hidden)]
+#[must_use]
+pub fn stdio_standard_streams_registered_for_tests() -> bool {
+    registry_contains_stream(STDIN_SENTINEL)
+        && registry_contains_stream(STDOUT_SENTINEL)
+        && registry_contains_stream(STDERR_SENTINEL)
+}
+
+/// True for the three ids that stand in for `stdin`/`stdout`/`stderr`.
+///
+/// These ids are SENTINEL ADDRESSES (`0x1000_0001..=0x1000_0003`), not real
+/// `FILE *` values, so they must never be handed to the host allocator or to
+/// host stdio — see [`fcloseall`].
+#[inline]
+fn is_standard_sentinel_id(id: usize) -> bool {
+    matches!(id, STDIN_SENTINEL | STDOUT_SENTINEL | STDERR_SENTINEL)
+}
+
+/// GNU `fcloseall` — flush every stream and close the non-standard ones.
 ///
 /// Returns 0 on success. This is a GNU extension.
+///
+/// The three standard streams are flushed but NOT unregistered (bd-0ftdgt).
+/// Removing them used to corrupt the process, because every stdio entry point
+/// maps `stdin`/`stdout`/`stderr` to a sentinel id and falls back to HOST stdio
+/// for any id the registry does not contain — passing that sentinel through as
+/// if it were a `FILE *`. Once `fcloseall` had unregistered them, the next
+/// standard-stream call reached glibc with the address `0x1000_0002`, which
+/// glibc dereferenced and rejected:
+///
+/// ```text
+/// Fatal error: glibc detected an invalid stdio handle
+/// ```
+///
+/// killing the process. That was reproducible as `stdio_libio_wave02` followed
+/// by `stdio_libio_wave06` in one process (SIGABRT single-threaded, SIGSEGV
+/// multi-threaded), and it took the whole conformance suite down mid-run, so 44
+/// of 173 tests never reported at all.
+///
+/// Keeping the standard cells alive also matches the host: measured on live
+/// glibc 2.42, `fcloseall()` returns 0 and a subsequent `fflush(NULL)` is still
+/// safe, i.e. glibc does not leave a dangling standard handle behind either.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn fcloseall() -> c_int {
     // Flush all open streams by passing NULL to fflush (POSIX semantics).
@@ -11259,9 +11305,14 @@ pub extern "C" fn fcloseall() -> c_int {
 
     let mut overall_rc = 0;
     for id in ids {
-        // `id as *mut c_void` resolves back to the same `id` inside `fclose`
-        // because `standard_stream_id` returns `None` for integer values like 1, 2, 3,
-        // and `canonical_stream_id` falls back to the integer value.
+        // Already flushed above, and unregistering one would turn its sentinel
+        // into a fake `FILE *` for every later standard-stream call.
+        if is_standard_sentinel_id(id) {
+            continue;
+        }
+        // `id as *mut c_void` resolves back to the same `id` inside `fclose`:
+        // a non-standard stream's id IS its `FILE *`, and the sentinels that do
+        // not round-trip are skipped above.
         let rc = unsafe { fclose(id as *mut c_void) };
         if rc != 0 {
             overall_rc = libc::EOF;
