@@ -7390,7 +7390,21 @@ fn expand_vars_with_split_mask_dyn(
             else {
                 return Err(WRDE_SYNTAX);
             };
-            let value = match frankenlibc_core::stdlib::wordexp::eval_arith(expr) {
+            // The BODY is expanded before it is parsed as arithmetic. glibc's
+            // arithmetic engine itself has no variables at all — `$((FLARITH+1))`
+            // is WRDE_SYNTAX even with FLARITH exported — but `$(($FLARITH+1))`
+            // is 42, because the expansion layer substitutes the parameter and
+            // the parser only ever sees digits. Measured against live glibc 2.42
+            // (bd-6a9tuc): `$(($UNSET+1))` -> "1" and `$(($UNSET))` -> "0" (the
+            // empty body is zero, unlike `$(( ))` which is a syntax error),
+            // `$((${#FLARITH}))` -> "2", `$((${UNSET:-7}+1))` -> "8",
+            // `$((0x$FLARITH))` -> "65" (textual splice, then parse), and
+            // `$(($FLARITH$FLARITH))` -> "4141". Recursing through this same
+            // expander is also what keeps `\$FLARITH` and `'$FLARITH'` syntax
+            // errors: neither reaches the parser as a number.
+            let expr_text = core::str::from_utf8(expr).map_err(|_| WRDE_SYNTAX)?;
+            let (expanded, _) = expand_vars_with_split_mask_dyn(expr_text, undef_is_error, false)?;
+            let value = match frankenlibc_core::stdlib::wordexp::eval_arith(expanded.as_bytes()) {
                 Ok(v) => v,
                 Err(_) => return Err(WRDE_SYNTAX),
             };

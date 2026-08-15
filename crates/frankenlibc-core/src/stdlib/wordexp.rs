@@ -67,9 +67,27 @@ pub enum ExpandError {
 ///    `$((abc))`, `$((1/0))`, `$((~5))`, `$((!0))` all fail, and notably
 ///    `$((FLVAR+1))` fails too — glibc's wordexp has no variables in arithmetic
 ///    even when the variable is set and exported.
+/// 3. **The caller expands the body first, and that is the only way a value gets
+///    in.** `$(($FLVAR+1))` is `42` while `$((FLVAR+1))` is an error, because
+///    the expansion layer substitutes `$FLVAR` before this parser runs. An
+///    unset name leaves nothing behind, so `$(($UNSET+1))` is `1` and a
+///    zero-length body is `0` — but a blank one is still an error.
 ///
 /// Arithmetic is `i64` and wrapping, so a pathological expression cannot panic.
 pub fn eval_arith(expr: &[u8]) -> Result<i64, ExpandError> {
+    // `expr` arrives ALREADY EXPANDED — the caller substitutes parameters first,
+    // which is the only way a variable's value ever reaches this parser (see the
+    // callers). Note the grammar above still has no identifiers: `$((VAR+1))` is
+    // an error even when `VAR` is exported, while `$(($VAR+1))` works.
+    //
+    // An EMPTY expression is zero; a BLANK one is a syntax error. The rule is
+    // length, not content, so it is checked before any whitespace is skipped.
+    // Measured on live glibc 2.42 (bd-6a9tuc): `$(())` -> "0" and
+    // `$(($UNSET))` -> "0", against `$(( ))` -> WRDE_SYNTAX and
+    // `$(( $UNSET ))` -> WRDE_SYNTAX.
+    if expr.is_empty() {
+        return Ok(0);
+    }
     let mut p = ArithParser { s: expr, i: 0 };
     p.skip_ws();
     let v = p.expr()?;
@@ -291,7 +309,13 @@ fn expand_vars_dyn(
             let Some((expr, next)) = scan_arith_end(bytes, i + 3) else {
                 return Err(ExpandError::ArithSyntax);
             };
-            let value = eval_arith(expr)?;
+            // The body is expanded BEFORE it is parsed as arithmetic — see the
+            // matching note in the abi expander. `eval_arith` has no variables;
+            // `$(($VAR+1))` works only because the parameter is substituted
+            // here first, leaving digits for the parser. bd-6a9tuc.
+            let expr_text = core::str::from_utf8(expr).map_err(|_| ExpandError::ArithSyntax)?;
+            let expanded = expand_vars_dyn(expr_text, undef_is_error, lookup_env)?;
+            let value = eval_arith(expanded.as_bytes())?;
             result.push_str(&value.to_string());
             i = next;
             continue;
@@ -419,7 +443,8 @@ pub fn expand_braced_param(
     undef_is_error: bool,
     lookup_env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, ExpandError> {
-    let is_name = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    let is_name =
+        |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
 
     // `${#NAME}` — string length.
     if let Some(name) = content.strip_prefix('#')

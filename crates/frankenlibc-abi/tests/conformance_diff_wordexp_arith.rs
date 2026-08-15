@@ -41,6 +41,17 @@ mod g {
 /// (return code, expanded words) from an implementation.
 type Outcome = (c_int, Vec<String>);
 
+/// Every test in this file runs under one lock. `wordexp` reads `environ`, and
+/// one of the tests has to SET a variable to prove the no-variables rule with a
+/// value actually present; letting that overlap a sibling's `wordexp` call is
+/// the classic way to fabricate a divergence out of libtest parallelism.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn read_words(we: &WordExpT) -> Vec<String> {
     let mut v = Vec::new();
     for i in 0..we.we_wordc {
@@ -84,11 +95,7 @@ fn fl(word: &str, flags: c_int) -> Outcome {
     };
     // SAFETY: as above, against fl's implementation.
     let rc = unsafe {
-        frankenlibc_abi::unistd_abi::wordexp(
-            w.as_ptr(),
-            (&raw mut we).cast::<c_void>(),
-            flags,
-        )
+        frankenlibc_abi::unistd_abi::wordexp(w.as_ptr(), (&raw mut we).cast::<c_void>(), flags)
     };
     if rc != 0 {
         return (rc, Vec::new());
@@ -145,10 +152,93 @@ const WORDS: &[&str] = &[
     "$((1+))",
     "$(( ))",
     "$((abc))",
+    // bd-6a9tuc asked for assignment / increment / comma to be IMPLEMENTED on
+    // the premise that glibc supports them. Measured against live glibc 2.42,
+    // it does not: every assignment and increment form below is WRDE_SYNTAX,
+    // and `,` is just another unimplemented operator that ends the expression
+    // (so `$((1,2))` is "1", not "2"). These arms exist so that implementing
+    // the bead would fail the gate instead of silently diverging.
+    "$((x=5))",
+    "$(( x = 5 ))",
+    "$((x=5, x*2))",
+    "$((x=3, ++x))",
+    "$((x=3, x++))",
+    "$((1,2))",
+    "$((1, 2))",
+    "$((++x))",
+    "$((x++))",
+    "$((--x))",
+    "$((x--))",
+    "$((x+=2))",
+    "$((x-=2))",
+    "$((x*=2))",
+    "$((x/=2))",
+    "$((x%=2))",
+    "$((x<<=1))",
+    "$((x&=1))",
+    "$((x^=1))",
+    "$((x|=1))",
+    "$((5=3))",
+    "$((1+2,3+4))",
+];
+
+/// Words whose behaviour depends on an environment variable actually being set.
+/// Two rules are pinned here, and they pull in opposite directions, which is why
+/// both halves are needed (bd-6a9tuc):
+///
+///  - the arithmetic PARSER has no variables at all: `$((FLARITH+1))` is
+///    WRDE_SYNTAX even with `FLARITH` exported;
+///  - the arithmetic BODY is parameter-expanded before it is parsed, so
+///    `$(($FLARITH+1))` is "42".
+///
+/// Every expectation below was measured against live glibc 2.42, including the
+/// unobvious ones: an unset name expands to nothing, so `$(($UNSET+1))` is "1"
+/// (unary plus) and `$(($UNSET))` is "0", while `$(( $UNSET ))` is a syntax
+/// error — the empty body is zero only when it is exactly zero-length.
+const ENV_WORDS: &[&str] = &[
+    // the parser has no identifiers
+    "$((FLARITH))",
+    "$((FLARITH+1))",
+    "$((FLARITH=7))",
+    "$((FLARITH++))",
+    // the body is expanded first
+    "$(($FLARITH+1))",
+    "$((${FLARITH}+1))",
+    "$(( $FLARITH ))",
+    "$(($FLARITH))",
+    "$(($FLARITH))x",
+    "$((1+$FLARITH*2))",
+    "$(($FLARITH$FLARITH))",
+    "$((${FLARITH}${FLARITH}))",
+    "$((0x$FLARITH))",
+    "$(($FLNEG+1))",
+    "$(($FLSP+1))",
+    "$((${#FLARITH}))",
+    "$((${FLARITH:-9}))",
+    // unset / empty bodies
+    "$(())",
+    "$(($NOPEVAR))",
+    "$((${NOPEVAR}))",
+    "$(($NOPEVAR+1))",
+    "$(( $NOPEVAR ))",
+    "$(($NOPEVAR $NOPEVAR))",
+    "$((1+$NOPEVAR))",
+    "$((${NOPEVAR:-7}+1))",
+    // expansion happens, but quoting and escaping still keep the name away from
+    // the parser, so these stay syntax errors
+    "$((\\$FLARITH+1))",
+    "$(('$FLARITH'+1))",
+    // non-numeric and divide-by-zero survive the substitution
+    "$(($FLTXT+1))",
+    "$((1/$FLZERO))",
+    "$(($FLARITH+))",
+    // nested arithmetic
+    "$(($((1+2))+1))",
 ];
 
 #[test]
 fn wordexp_arithmetic_matches_glibc() {
+    let _serial = serial();
     for &w in WORDS {
         let h = host(w, 0);
         let f = fl(w, 0);
@@ -160,11 +250,153 @@ fn wordexp_arithmetic_matches_glibc() {
     }
 }
 
+/// bd-6a9tuc refutation gate. The bead specified `$((x=5))` -> "5",
+/// `$((x=5, x*2))` -> "10" and `$((x=3, ++x))` -> "4" "like glibc". Live glibc
+/// 2.42 returns `WRDE_SYNTAX` for all three, and treats `,` the way it treats
+/// every other unimplemented operator: it stops there and keeps what it parsed,
+/// so `$((1,2))` expands to "1".
+///
+/// This test asserts those as POSITIVE FACTS about the oracle first, so it
+/// cannot pass by both sides being broken the same way, and it is what fails if
+/// anyone implements the bead as written.
+#[test]
+fn wordexp_arithmetic_has_no_assignment_increment_or_comma_operator() {
+    let _serial = serial();
+    const REJECTED: &[&str] = &[
+        "$((x=5))",
+        "$(( x = 5 ))",
+        "$((x=5, x*2))",
+        "$((x=3, ++x))",
+        "$((x=3, x++))",
+        "$((++x))",
+        "$((x++))",
+        "$((--x))",
+        "$((x--))",
+        "$((x+=2))",
+        "$((x*=2))",
+        "$((x<<=1))",
+    ];
+    for &w in REJECTED {
+        let h = host(w, 0);
+        assert_ne!(
+            h.0, 0,
+            "oracle changed: glibc now ACCEPTS {w:?} -> {:?}. glibc's wordexp arithmetic has \
+             gained assignment/increment; re-measure before touching fl.",
+            h.1
+        );
+        let f = fl(w, 0);
+        assert_eq!(
+            f, h,
+            "fl implements an arithmetic operator glibc's wordexp does not: {w:?} \
+             fl=(rc={}, {:?}) glibc=(rc={}, {:?})",
+            f.0, f.1, h.0, h.1
+        );
+    }
+
+    // `,` is a stop, not an operator: the LEFT value survives, the right is
+    // dropped. An implementation of the comma operator would answer "2"/"7".
+    for (w, expected) in [("$((1,2))", "1"), ("$((1+2,3+4))", "3")] {
+        let h = host(w, 0);
+        assert_eq!(
+            (h.0, h.1.as_slice()),
+            (0, [expected.to_owned()].as_slice()),
+            "oracle changed: glibc {w:?} is no longer {expected:?}"
+        );
+        let f = fl(w, 0);
+        assert_eq!(f, h, "fl diverges on the comma stop for {w:?}");
+    }
+}
+
+/// The arithmetic PARSER has no variables at all — a bare name is a syntax
+/// error even when the variable is set and exported — but the arithmetic BODY is
+/// parameter-expanded before the parser sees it, so `$(($VAR+1))` does work.
+/// Both halves are pinned with the variables actually set, because an unset name
+/// proves much less. This is the test that caught fl returning WRDE_SYNTAX for
+/// `$(($FLARITH+1))` where glibc answers "42" (bd-6a9tuc).
+///
+/// Every word is compared against the live oracle, and the mismatches are
+/// collected rather than asserted one at a time: a divergence here is usually a
+/// whole class, and stopping at the first one hides its shape.
+#[test]
+fn wordexp_arithmetic_expands_its_body_but_has_no_parser_variables() {
+    let _serial = serial();
+    // SAFETY: every test in this file holds `serial()`, so no sibling is calling
+    // `wordexp` (which reads `environ`) while these are being set.
+    unsafe {
+        std::env::set_var("FLARITH", "41");
+        std::env::set_var("FLNEG", "-3");
+        std::env::set_var("FLSP", " 7 ");
+        std::env::set_var("FLTXT", "abc");
+        std::env::set_var("FLZERO", "0");
+        std::env::remove_var("NOPEVAR");
+    }
+
+    let mut mismatches = Vec::new();
+    for &w in ENV_WORDS {
+        let h = host(w, 0);
+        let f = fl(w, 0);
+        if f != h {
+            mismatches.push(format!(
+                "  {w:?}: fl=(rc={}, {:?}) glibc=(rc={}, {:?})",
+                f.0, f.1, h.0, h.1
+            ));
+        }
+    }
+
+    // Positive facts about the ORACLE, so the loop above cannot pass by both
+    // sides being wrong in the same direction.
+    let checks: &[(&str, c_int, &[&str])] = &[
+        // the body IS expanded
+        ("$(($FLARITH+1))", 0, &["42"]),
+        ("$((${#FLARITH}))", 0, &["2"]),
+        ("$((0x$FLARITH))", 0, &["65"]),
+        // an unset name expands to nothing: unary plus, and zero-length is 0
+        ("$(($NOPEVAR+1))", 0, &["1"]),
+        ("$(($NOPEVAR))", 0, &["0"]),
+        ("$(())", 0, &["0"]),
+        // ...but a BLANK body is still a syntax error, so the rule is length
+        ("$(( $NOPEVAR ))", 5, &[]),
+        // the parser itself still has no identifiers
+        ("$((FLARITH+1))", 5, &[]),
+    ];
+    for &(w, rc, words) in checks {
+        let h = host(w, 0);
+        let expected: Vec<String> = words.iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(
+            (h.0, h.1.clone()),
+            (rc, expected.clone()),
+            "oracle changed for {w:?}; re-measure glibc before touching fl"
+        );
+        let f = fl(w, 0);
+        if f != h {
+            mismatches.push(format!(
+                "  {w:?}: fl=(rc={}, {:?}) glibc=(rc={}, {:?})",
+                f.0, f.1, h.0, h.1
+            ));
+        }
+    }
+
+    // SAFETY: as above.
+    unsafe {
+        for name in ["FLARITH", "FLNEG", "FLSP", "FLTXT", "FLZERO"] {
+            std::env::remove_var(name);
+        }
+    }
+
+    assert!(
+        mismatches.is_empty(),
+        "wordexp arithmetic diverges from live glibc on {} word(s):\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+}
+
 /// The security half: WRDE_NOCMD must reject command substitution and must NOT
 /// reject arithmetic. Asserted in both directions against the oracle, so
 /// neither "allow everything" nor "reject everything" passes.
 #[test]
 fn wordexp_nocmd_allows_arithmetic_and_rejects_command_substitution() {
+    let _serial = serial();
     for &w in WORDS {
         let h = host(w, WRDE_NOCMD);
         let f = fl(w, WRDE_NOCMD);
