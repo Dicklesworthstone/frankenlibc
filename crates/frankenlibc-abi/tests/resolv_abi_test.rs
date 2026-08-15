@@ -455,6 +455,174 @@ fn gethostbyname_r_hosts_result_preserves_aliases_and_duplicate_addresses() {
     );
 }
 
+/// Read a `hostent`'s alias table, which is terminated by a NULL pointer.
+///
+/// # Safety
+/// `hostent` must point at a populated `libc::hostent` whose `h_aliases` table is
+/// NULL-terminated.
+unsafe fn hostent_alias_bytes(hostent: &libc::hostent) -> Vec<Vec<u8>> {
+    let mut aliases = Vec::new();
+    // SAFETY: the aliases table is NULL-terminated per the hostent ABI contract.
+    unsafe {
+        let mut alias_ptr = hostent.h_aliases;
+        while !(*alias_ptr).is_null() {
+            aliases.push(CStr::from_ptr(*alias_ptr).to_bytes().to_vec());
+            alias_ptr = alias_ptr.add(1);
+        }
+    }
+    aliases
+}
+
+/// Read a `hostent`'s IPv4 address table, which is terminated by a NULL pointer.
+///
+/// # Safety
+/// `hostent` must point at a populated `libc::hostent` with `h_length == 4` and a
+/// NULL-terminated `h_addr_list`.
+unsafe fn hostent_addr_octets(hostent: &libc::hostent) -> Vec<[u8; 4]> {
+    let mut addresses = Vec::new();
+    // SAFETY: the address table is NULL-terminated and each entry holds `h_length` bytes,
+    // which the caller has established is 4.
+    unsafe {
+        let mut address_ptr = hostent.h_addr_list;
+        while !(*address_ptr).is_null() {
+            let octets = std::slice::from_raw_parts((*address_ptr).cast::<u8>(), 4);
+            addresses.push([octets[0], octets[1], octets[2], octets[3]]);
+            address_ptr = address_ptr.add(1);
+        }
+    }
+    addresses
+}
+
+/// The discriminating rules of glibc's `multi on` files-backend merge, each a case a
+/// plausible-but-wrong implementation gets wrong.
+///
+/// Every expectation is what live glibc 2.42 produced for that exact hosts content,
+/// captured by bind-mounting it over `/etc/hosts` and calling the host's own resolver:
+///
+/// ```text
+/// bwrap --dev-bind / / --bind ./fake_hosts /etc/hosts python3 ghbn_oracle.py <query>
+/// ```
+///
+/// This is the regression gate for bd-6rrgjs, where the hosts path dropped aliases and
+/// collapsed duplicate addresses. The pre-existing
+/// `gethostbyname_hosts_result_preserves_aliases_and_duplicate_addresses` vector cannot
+/// catch any of these: it merges two rows that share a canonical name, so it exercises
+/// neither the append order, nor the case-sensitive canonical test, nor address parsing.
+#[test]
+fn gethostbyname_hosts_merge_matches_glibc_discriminating_vectors() {
+    // (hosts content, query, expected h_name, expected aliases, expected addresses)
+    let vectors: &[(&[u8], &str, &[u8], &[&[u8]], &[[u8; 4]])] = &[
+        // A later row's canonical name is appended AFTER that row's own aliases, and only
+        // when it differs from h_name BYTE-for-byte. Case-insensitive comparison here would
+        // drop the trailing "localhost".
+        (
+            b"127.0.0.1 LOCALHOST Alias1\n127.0.0.2 localhost ALIAS1\n",
+            "LoCaLhOsT",
+            b"LOCALHOST",
+            &[b"Alias1", b"ALIAS1", b"localhost"],
+            &[[127, 0, 0, 1], [127, 0, 0, 2]],
+        ),
+        // No de-duplication anywhere: "dup" survives twice, and row 2 contributes its alias
+        // before its canonical name. Appending canonical-then-aliases yields [dup,dup,host].
+        (
+            b"10.0.0.1 host dup\n10.0.0.2 dup host\n",
+            "host",
+            b"host",
+            &[b"dup", b"host", b"dup"],
+            &[[10, 0, 0, 1], [10, 0, 0, 2]],
+        ),
+        // A row whose address is neither IPv4, v4-mapped, nor loopback is skipped entirely,
+        // so the NEXT matching row seeds h_name and the alias list.
+        (
+            b"2001:db8::1 v6only\n127.0.0.5 v6only tail\n",
+            "v6only",
+            b"v6only",
+            &[b"tail"],
+            &[[127, 0, 0, 5]],
+        ),
+        // An IPv6 loopback row is usable for an AF_INET query and contributes 127.0.0.1.
+        (
+            b"::1 localhost ip6-localhost ip6-loopback\n127.0.0.1 localhost\n",
+            "localhost",
+            b"localhost",
+            &[b"ip6-localhost", b"ip6-loopback"],
+            &[[127, 0, 0, 1], [127, 0, 0, 1]],
+        ),
+        // v4-mapped addresses contribute their low four bytes.
+        (
+            b"::ffff:10.1.2.3 mapped\n",
+            "mapped",
+            b"mapped",
+            &[],
+            &[[10, 1, 2, 3]],
+        ),
+        // Addresses parse under inet_pton, which rejects leading-zero octets: row 1 is
+        // dropped rather than read as 10.0.0.1 or as octal 8.0.0.1.
+        (
+            b"010.0.0.1 host a1\n10.0.0.2 host a2\n",
+            "host",
+            b"host",
+            &[b"a2"],
+            &[[10, 0, 0, 2]],
+        ),
+        // A numeric dotted-quad query short-circuits BEFORE the file is read, so the
+        // matching row's aliases are not attached.
+        (
+            b"127.0.0.1 canon myalias\n",
+            "127.0.0.1",
+            b"127.0.0.1",
+            &[],
+            &[[127, 0, 0, 1]],
+        ),
+    ];
+
+    for (hosts, query, expected_name, expected_aliases, expected_addresses) in vectors {
+        with_resolver_backends(Some(hosts), None, |_| {
+            let query_c = CString::new(*query).expect("query should be valid C string");
+            let ptr = unsafe { resolv_abi::gethostbyname(query_c.as_ptr()) };
+            assert!(!ptr.is_null(), "query {query} should resolve");
+
+            // SAFETY: gethostbyname returned a non-null pointer to its TLS-backed hostent.
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET, "query {query}");
+            assert_eq!(hostent.h_length, 4, "query {query}");
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                *expected_name,
+                "canonical name for query {query}"
+            );
+            let expected_aliases: Vec<Vec<u8>> =
+                expected_aliases.iter().map(|a| a.to_vec()).collect();
+            assert_eq!(
+                unsafe { hostent_alias_bytes(hostent) },
+                expected_aliases,
+                "alias merge for query {query}"
+            );
+            assert_eq!(
+                unsafe { hostent_addr_octets(hostent) },
+                *expected_addresses,
+                "address merge for query {query}"
+            );
+        });
+    }
+}
+
+/// A hosts row whose only address is IPv6 but neither v4-mapped nor loopback leaves an
+/// AF_INET query with nothing to return. Measured against live glibc 2.42:
+/// `gethostbyname("host")` returns NULL for `::ffff:0:10.9.8.7 host a1`.
+#[test]
+fn gethostbyname_hosts_row_with_unusable_ipv6_address_returns_null() {
+    with_resolver_backends(Some(b"::ffff:0:10.9.8.7 host a1\n"), None, |_| {
+        let query = CString::new("host").expect("query should be valid C string");
+        let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+        assert!(
+            ptr.is_null(),
+            "a row carrying only a non-mapped, non-loopback IPv6 address must not answer \
+             an AF_INET query"
+        );
+    });
+}
+
 #[test]
 fn gethostbyname_unknown_host_returns_null() {
     with_resolver_lock(|| {
