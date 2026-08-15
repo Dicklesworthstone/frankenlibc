@@ -64,6 +64,11 @@ fn strchr_never_reads_into_guard_page() {
                     rn, expect,
                     "strchrnul(absent) start={start} nul={nul_off} wrong NUL position"
                 );
+                assert_eq!(
+                    fl::strchr(s, 0),
+                    expect,
+                    "strchr(NUL) start={start} nul={nul_off} wrong NUL position"
+                );
 
                 let reject = c"z";
                 assert_eq!(
