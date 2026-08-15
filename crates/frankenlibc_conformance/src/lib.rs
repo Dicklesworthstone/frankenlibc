@@ -17473,6 +17473,7 @@ fn pthread_sync_wave05_actual(function: &str) -> Result<String, String> {
 }
 
 fn classify_pthread_unwind_next_abort() -> Result<String, String> {
+    let _children = child_process_lock();
     let pid = unsafe { libc::fork() };
     if pid < 0 {
         return Ok(String::from("UNWIND_NEXT_FORK_FAILED"));
@@ -19754,6 +19755,10 @@ fn execute_waitpid_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
+    // Held across BOTH branches: the WNOHANG branch reports `ECHILD` for
+    // "this process has no children", which a sibling arm's live child
+    // silently turns into `0`, and the branch below forks (bd-ry1dg5).
+    let _children = child_process_lock();
     let requested_pid = parse_i32(inputs, "pid").unwrap_or(-1) as libc::pid_t;
     let options = parse_i32(inputs, "options").unwrap_or(0);
     let mut status = 0;
@@ -20358,6 +20363,7 @@ fn completed_aiocb(return_value: isize) -> FixtureAiocb {
 }
 
 fn capital_exit_fixture_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let _children = child_process_lock();
     let status = parse_i32(inputs, "status").unwrap_or(42);
     let child = unsafe { libc::fork() };
     if child == 0 {
@@ -20650,6 +20656,7 @@ fn sched_setparam_fixture_actual(inputs: &serde_json::Value) -> Result<String, S
 }
 
 fn stack_chk_fail_fixture_actual() -> Result<String, String> {
+    let _children = child_process_lock();
     let child = unsafe { libc::fork() };
     if child == 0 {
         unsafe { frankenlibc_abi::fortify_abi::__stack_chk_fail() };
@@ -21368,6 +21375,7 @@ fn cuserid_fixture_actual() -> Result<String, String> {
 }
 
 fn daemon_fixture_actual() -> Result<String, String> {
+    let _children = child_process_lock();
     let child = unsafe { libc::fork() };
     if child == 0 {
         let rc = unsafe { frankenlibc_abi::unistd_abi::daemon(1, 1) };
@@ -25190,6 +25198,7 @@ fn signal_async_killpg_actual() -> String {
 }
 
 fn signal_async_pause_actual() -> Result<String, String> {
+    let _children = child_process_lock();
     let mut pipe_fds = [0; 2];
     // SAFETY: pipe_fds points at two valid file-descriptor slots.
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
@@ -25506,6 +25515,7 @@ fn signal_async_sigorset_actual() -> String {
 }
 
 fn signal_async_sigpending_actual() -> String {
+    let _children = child_process_lock();
     // SAFETY: fork isolates pending signal state from the harness process.
     let pid = unsafe { libc::fork() };
     if pid < 0 {
@@ -25628,6 +25638,7 @@ fn signal_async_sigrelse_actual() -> String {
 }
 
 fn signal_async_sigsuspend_actual() -> String {
+    let _children = child_process_lock();
     let mut pipe_fds = [0; 2];
     // SAFETY: pipe_fds points at two valid file-descriptor slots.
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
@@ -25702,6 +25713,7 @@ fn signal_async_sigsuspend_actual() -> String {
 }
 
 fn signal_async_sigwait_actual() -> String {
+    let _children = child_process_lock();
     // SAFETY: fork isolates pending signal state from the harness process.
     let pid = unsafe { libc::fork() };
     if pid < 0 {
@@ -27306,6 +27318,7 @@ fn fortify_classify_abort_signal<F>(action: F) -> String
 where
     F: FnOnce(),
 {
+    let _children = child_process_lock();
     let child = unsafe { libc::fork() };
     if child == 0 {
         action();
@@ -27336,6 +27349,7 @@ fn fortify_classify_child_signal<F>(action: F) -> String
 where
     F: FnOnce(),
 {
+    let _children = child_process_lock();
     let child = unsafe { libc::fork() };
     if child == 0 {
         action();
@@ -28888,6 +28902,7 @@ fn process_spawn_errno_result(prefix: &str, rc: c_int) -> String {
 }
 
 fn process_spawn_exit_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let _children = child_process_lock();
     let status = parse_i32(inputs, "status").unwrap_or(42);
     let child = unsafe { libc::fork() };
     if child == 0 {
@@ -29246,6 +29261,7 @@ fn process_spawn_vfork_actual(inputs: &serde_json::Value) -> Result<String, Stri
 }
 
 fn process_spawn_wait_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let _children = child_process_lock();
     let status = parse_i32(inputs, "status").unwrap_or(23);
     let child = unsafe { libc::fork() };
     if child == 0 {
@@ -29265,6 +29281,7 @@ fn process_spawn_wait_actual(inputs: &serde_json::Value) -> Result<String, Strin
 }
 
 fn process_spawn_wait3_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let _children = child_process_lock();
     let status = parse_i32(inputs, "status").unwrap_or(24);
     let child = unsafe { libc::fork() };
     if child == 0 {
@@ -29331,7 +29348,70 @@ fn execute_process_spawn_wait_tail_case(
     )))
 }
 
+/// Serialises every fixture arm that creates a child process against every arm
+/// that asserts "this process has no children" (bd-ry1dg5).
+///
+/// libtest runs fixture cases on parallel threads inside ONE process, and
+/// "no children" is a property of the PROCESS, not of a case. A sibling arm's
+/// live child therefore makes `wait4(-1, ..., WNOHANG)` return 0 instead of
+/// failing with `ECHILD`, which is how `wait4_no_child_echild_hardened` came
+/// out red in a whole-suite run and green when run alone.
+///
+/// Draining zombies is NOT a fix: `RC_0` under `WNOHANG` means a child exists
+/// and has not changed state — it is ALIVE — and `waitpid(WNOHANG)` cannot
+/// remove a live child. The only thing that makes the precondition true is
+/// holding this lock from before the `fork` until after the reap, and holding
+/// the same lock across the measured no-child call.
+///
+/// It is REENTRANT because the natural shape here is an arm that takes the lock
+/// and then calls a forking helper which takes it too; with a plain `Mutex`
+/// that self-deadlocks, and pushing the lock down into the helper alone would
+/// release it before the arm reaps, which is exactly the race being closed.
+/// Reentrancy is a per-thread depth counter rather than `std::sync::ReentrantLock`
+/// because that type is still feature-gated on this toolchain.
+///
+/// A forked child inherits the locked state and never unlocks it. That is fine:
+/// every child below either `_exit`s or aborts, and none of them takes this
+/// lock.
+struct ChildProcessGuard {
+    /// `Some` only for the OUTERMOST acquisition on this thread; a nested one
+    /// carries `None` and leaves the mutex held by the guard that took it.
+    _outer: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+impl Drop for ChildProcessGuard {
+    fn drop(&mut self) {
+        // `_outer` drops after this body, so the depth is back to zero before
+        // the mutex is released and no other thread can acquire it while this
+        // thread still counts itself inside.
+        CHILD_PROCESS_LOCK_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+thread_local! {
+    static CHILD_PROCESS_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn child_process_lock() -> ChildProcessGuard {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let previous_depth = CHILD_PROCESS_LOCK_DEPTH.with(|depth| {
+        let previous = depth.get();
+        depth.set(previous + 1);
+        previous
+    });
+    let outer = if previous_depth == 0 {
+        // A panicking arm must not wedge every later fixture case behind a
+        // poisoned lock, and the guarded state is `()`, so there is nothing a
+        // panic could have corrupted.
+        Some(LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+    } else {
+        None
+    };
+    ChildProcessGuard { _outer: outer }
+}
+
 fn process_spawn_fork_exit_child(status: c_int) -> Result<libc::pid_t, String> {
+    let _children = child_process_lock();
     let child = unsafe { libc::fork() };
     if child == 0 {
         unsafe { libc::_exit(status) };
@@ -29344,6 +29424,7 @@ fn process_spawn_fork_exit_child(status: c_int) -> Result<libc::pid_t, String> {
 }
 
 fn process_spawn_fork_paused_child() -> Result<libc::pid_t, String> {
+    let _children = child_process_lock();
     let child = unsafe { libc::fork() };
     if child == 0 {
         unsafe {
@@ -29368,6 +29449,10 @@ fn process_spawn_kill_and_reap(child: libc::pid_t) {
 
 fn process_spawn_wait4_child_status_actual(inputs: &serde_json::Value) -> Result<String, String> {
     let status = parse_i32(inputs, "status").unwrap_or(31);
+    // Taken by the ARM, not just by the forking helper: the helper's guard would
+    // drop before the reap below and leave the child visible to a sibling's
+    // no-child assertion (bd-ry1dg5).
+    let _children = child_process_lock();
     let child = process_spawn_fork_exit_child(status)?;
     let mut wait_status = 0;
     let mut rusage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
@@ -29386,6 +29471,8 @@ fn process_spawn_wait4_child_status_actual(inputs: &serde_json::Value) -> Result
 }
 
 fn process_spawn_wait4_wnohang_actual() -> Result<String, String> {
+    // Held by the arm through `process_spawn_kill_and_reap` below (bd-ry1dg5).
+    let _children = child_process_lock();
     let child = process_spawn_fork_paused_child()?;
     let mut wait_status = 0;
     process_spawn_reset_errno();
@@ -29409,6 +29496,9 @@ fn process_spawn_wait4_wnohang_actual() -> Result<String, String> {
 }
 
 fn process_spawn_wait4_no_child_actual() -> Result<String, String> {
+    // The measured call asserts a property of the whole PROCESS, so it must not
+    // overlap a sibling arm's live child (bd-ry1dg5).
+    let _children = child_process_lock();
     let mut wait_status = 0;
     process_spawn_reset_errno();
     let waited = unsafe {
@@ -29423,6 +29513,8 @@ fn process_spawn_wait4_no_child_actual() -> Result<String, String> {
 }
 
 fn process_spawn_waitid_child_status_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    // Held by the arm through the reap, as above (bd-ry1dg5).
+    let _children = child_process_lock();
     let status = parse_i32(inputs, "status").unwrap_or(33);
     let child = process_spawn_fork_exit_child(status)?;
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -29452,6 +29544,8 @@ fn process_spawn_waitid_child_status_actual(inputs: &serde_json::Value) -> Resul
 }
 
 fn process_spawn_waitid_wnohang_actual() -> Result<String, String> {
+    // Held by the arm through `process_spawn_kill_and_reap` below (bd-ry1dg5).
+    let _children = child_process_lock();
     let child = process_spawn_fork_paused_child()?;
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     process_spawn_reset_errno();
@@ -29475,6 +29569,8 @@ fn process_spawn_waitid_wnohang_actual() -> Result<String, String> {
 }
 
 fn process_spawn_waitid_no_child_actual() -> Result<String, String> {
+    // Same process-wide precondition as the wait4 arm above (bd-ry1dg5).
+    let _children = child_process_lock();
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     process_spawn_reset_errno();
     let rc = unsafe {
