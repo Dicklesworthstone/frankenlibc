@@ -110,6 +110,18 @@ static FORCE_NATIVE_MUTEX: std::sync::atomic::AtomicBool =
 /// to the native lifecycle path outside standalone mode.
 static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Shared state for the scoped native-threading test override. Integration
+/// tests run in parallel, while the override must be process-wide so children
+/// inherit it. A depth count keeps one test from restoring host delegation
+/// while another still exercises the managed lifecycle.
+struct ThreadingTestOverrideState {
+    baseline: bool,
+    depth: usize,
+}
+
+static THREADING_TEST_OVERRIDE: LazyLock<Mutex<Option<ThreadingTestOverrideState>>> =
+    LazyLock::new(|| Mutex::new(None));
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 
 // ---------------------------------------------------------------------------
@@ -2398,7 +2410,19 @@ pub fn pthread_threading_force_native_for_tests() {
 /// can restore it afterwards.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
-    let previous = FORCE_NATIVE_THREADING.swap(true, Ordering::AcqRel);
+    let mut override_state = THREADING_TEST_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let previous = FORCE_NATIVE_THREADING.load(Ordering::Acquire);
+    if let Some(state) = override_state.as_mut() {
+        state.depth += 1;
+    } else {
+        *override_state = Some(ThreadingTestOverrideState {
+            baseline: previous,
+            depth: 1,
+        });
+    }
+    FORCE_NATIVE_THREADING.store(true, Ordering::Release);
     with_pthread_tls(|tls| {
         tls.force_native_threading_override = Some(true);
     });
@@ -2409,7 +2433,20 @@ pub fn pthread_threading_swap_force_native_for_tests() -> bool {
 /// forcing native behavior in a test.
 #[doc(hidden)]
 pub fn pthread_threading_restore_for_tests(previous: bool) {
-    FORCE_NATIVE_THREADING.store(previous, Ordering::Release);
+    let mut override_state = THREADING_TEST_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(state) = override_state.as_mut() {
+        state.depth -= 1;
+        if state.depth == 0 {
+            FORCE_NATIVE_THREADING.store(state.baseline, Ordering::Release);
+            *override_state = None;
+        }
+    } else {
+        // Preserve the pre-lease behavior for callers that still pair a
+        // direct one-off override with this compatibility restoration hook.
+        FORCE_NATIVE_THREADING.store(previous, Ordering::Release);
+    }
     with_pthread_tls(|tls| tls.force_native_threading_override = Some(previous));
 }
 
@@ -7079,4 +7116,15 @@ pub fn __test_host_thread_registry_replacement_survives_stale_prune(
         .unwrap_or_else(|e| e.into_inner())
         .remove(&thread_key);
     result
+}
+
+/// Exposes the process-wide test override state to integration tests.
+#[doc(hidden)]
+pub fn __test_threading_force_native_override_state() -> (bool, usize) {
+    let depth = THREADING_TEST_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map_or(0, |state| state.depth);
+    (FORCE_NATIVE_THREADING.load(Ordering::Acquire), depth)
 }

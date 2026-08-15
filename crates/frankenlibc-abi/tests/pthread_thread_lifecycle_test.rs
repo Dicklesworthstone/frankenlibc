@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use frankenlibc_abi::pthread_abi::{
-    pthread_create, pthread_detach, pthread_equal, pthread_getname_np, pthread_join, pthread_self,
-    pthread_setname_np, pthread_threading_restore_for_tests,
-    pthread_threading_swap_force_native_for_tests,
+    __test_threading_force_native_override_state, pthread_create, pthread_detach, pthread_equal,
+    pthread_getname_np, pthread_join, pthread_self, pthread_setname_np,
+    pthread_threading_restore_for_tests, pthread_threading_swap_force_native_for_tests,
 };
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
@@ -34,6 +34,44 @@ fn lock_and_force_native() -> NativeThreadingTestGuard {
         _guard: guard,
         previous,
     }
+}
+
+#[test]
+fn nested_threading_force_native_overrides_restore_only_after_the_last_lease() {
+    let _guard = lock_only();
+    assert_eq!(
+        __test_threading_force_native_override_state().1,
+        0,
+        "the lifecycle test lock must start with no native-threading lease"
+    );
+
+    let first_previous = pthread_threading_swap_force_native_for_tests();
+    assert_eq!(
+        __test_threading_force_native_override_state(),
+        (true, 1),
+        "first lease must enable native threading"
+    );
+
+    let second_previous = pthread_threading_swap_force_native_for_tests();
+    assert_eq!(
+        __test_threading_force_native_override_state(),
+        (true, 2),
+        "nested lease must retain native threading"
+    );
+
+    pthread_threading_restore_for_tests(first_previous);
+    assert_eq!(
+        __test_threading_force_native_override_state(),
+        (true, 1),
+        "releasing one lease must not restore host delegation early"
+    );
+
+    pthread_threading_restore_for_tests(second_previous);
+    assert_eq!(
+        __test_threading_force_native_override_state(),
+        (first_previous, 0),
+        "the final lease must restore the original global mode"
+    );
 }
 
 unsafe extern "C" fn start_return_arg(arg: *mut c_void) -> *mut c_void {
