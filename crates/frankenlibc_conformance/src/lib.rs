@@ -22073,13 +22073,19 @@ fn fcntl64_fixture_actual() -> Result<String, String> {
 fn fcrypt_fixture_actual() -> Result<String, String> {
     poll_event_loop_reset_errno();
     let ptr = unsafe { frankenlibc_abi::unistd_abi::fcrypt(std::ptr::null(), std::ptr::null()) };
+    let errno_class = poll_event_loop_errno_class(poll_event_loop_errno());
+    // The failure TOKEN and the errno are both part of the contract. Recording only
+    // null-ness would accept a non-NULL return that forgot to set errno, or one that
+    // returned a plausible-looking hash instead of the "*0" failure token -- either of
+    // which lets a caller mistake a malformed credential request for a valid hash.
     if ptr.is_null() {
-        Ok(format!(
-            "FCRYPT_NULL_PTR_{}",
-            poll_event_loop_errno_class(poll_event_loop_errno())
-        ))
+        Ok(format!("FCRYPT_NULL_PTR_NULL_{errno_class}"))
     } else {
-        Ok(String::from("FCRYPT_NULL_PTR_UNEXPECTED_NONNULL"))
+        // SAFETY: crypt-family returns either NULL or a NUL-terminated static token.
+        let token = unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned();
+        Ok(format!("FCRYPT_NULL_PTR_TOKEN_{token}_{errno_class}"))
     }
 }
 
@@ -23065,11 +23071,20 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let reopened = unsafe {
                 frankenlibc_abi::stdio_abi::freopen(std::ptr::null(), mode.as_ptr(), stream)
             };
+            // POSIX's null-path form is a MODE CHANGE on an existing stream, so the
+            // identity of the returned stream is the contract, not merely its
+            // non-nullness: glibc reopens through /proc/self/fd and hands back the SAME
+            // FILE*. Reporting only "non-null" would accept an implementation that
+            // silently swapped in a fresh stream and stranded the caller's original.
             if reopened.is_null() {
                 Ok(String::from("FREOPEN_NULL_PATH_STREAM_NULL"))
-            } else {
+            } else if reopened == stream {
                 let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(reopened) };
                 Ok(String::from("FREOPEN_STREAM_REOPENED"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(reopened) };
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+                Ok(String::from("FREOPEN_STREAM_REPLACED"))
             }
         }
         "freopen64" => {
@@ -23081,11 +23096,16 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let reopened = unsafe {
                 frankenlibc_abi::stdio_abi::freopen64(std::ptr::null(), mode.as_ptr(), stream)
             };
+            // Same stream-identity contract as `freopen` above.
             if reopened.is_null() {
                 Ok(String::from("FREOPEN64_NULL_PATH_STREAM_NULL"))
-            } else {
+            } else if reopened == stream {
                 let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(reopened) };
                 Ok(String::from("FREOPEN64_STREAM_REOPENED"))
+            } else {
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(reopened) };
+                let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+                Ok(String::from("FREOPEN64_STREAM_REPLACED"))
             }
         }
         "fscanf" => stdio_libio_tmpfile(|stream| {

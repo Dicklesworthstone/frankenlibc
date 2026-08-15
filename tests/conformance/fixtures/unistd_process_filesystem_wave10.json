@@ -251,11 +251,11 @@
       "inputs": {
         "symbol": "fcrypt",
         "scenario": "null_key_and_salt_without_hash_capture",
-        "expected": "FCRYPT_NULL_PTR_EINVAL",
-        "oracle_source": "FrankenLibC fcrypt null input errno class",
+        "expected": "FCRYPT_NULL_PTR_TOKEN_*0_EINVAL",
+        "oracle_source": "live libxcrypt on glibc 2.42: fcrypt is not exported by libcrypt.so.1 or libc.so.6, and its documented alias crypt(NULL,NULL) returns the non-NULL failure token \"*0\" with errno=EINVAL. A NULL return is pre-libxcrypt behaviour that no crypt on this host still has.",
         "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
       },
-      "expected_output": "symbol=fcrypt;mode=strict;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
+      "expected_output": "symbol=fcrypt;mode=strict;expected=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;actual=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;failure_signature=none",
       "expected_errno": 22,
       "mode": "strict"
     },
@@ -266,11 +266,11 @@
       "inputs": {
         "symbol": "fcrypt",
         "scenario": "null_key_and_salt_without_hash_capture",
-        "expected": "FCRYPT_NULL_PTR_EINVAL",
-        "oracle_source": "FrankenLibC fcrypt null input errno class",
+        "expected": "FCRYPT_NULL_PTR_TOKEN_*0_EINVAL",
+        "oracle_source": "live libxcrypt on glibc 2.42: fcrypt is not exported by libcrypt.so.1 or libc.so.6, and its documented alias crypt(NULL,NULL) returns the non-NULL failure token \"*0\" with errno=EINVAL. A NULL return is pre-libxcrypt behaviour that no crypt on this host still has.",
         "ambient_state_policy": "forbid_fd_path_pid_env_user_program_output_descriptor_counter_or_file_state_capture"
       },
-      "expected_output": "symbol=fcrypt;mode=hardened;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
+      "expected_output": "symbol=fcrypt;mode=hardened;expected=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;actual=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;failure_signature=none",
       "expected_errno": 22,
       "mode": "hardened"
     },

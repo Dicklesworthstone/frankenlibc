@@ -161,11 +161,11 @@
       "inputs": {
         "symbol": "freopen",
         "scenario": "controlled_tmpfile_null_path_reopen_class_without_path_capture",
-        "expected": "FREOPEN_NULL_PATH_STREAM_NULL",
-        "oracle_source": "FrankenLibC freopen null-path class replay",
+        "expected": "FREOPEN_STREAM_REOPENED",
+        "oracle_source": "live glibc 2.42: fopen(path,\"r\") then freopen(NULL,\"r\"|\"w\"|\"r+\",stream) returns the SAME FILE* with errno untouched (POSIX null-path mode change, implemented through /proc/self/fd)",
         "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
       },
-      "expected_output": "symbol=freopen;mode=strict;expected=FREOPEN_NULL_PATH_STREAM_NULL;actual=FREOPEN_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen;mode=strict;expected=FREOPEN_STREAM_REOPENED;actual=FREOPEN_STREAM_REOPENED;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -176,11 +176,11 @@
       "inputs": {
         "symbol": "freopen",
         "scenario": "controlled_tmpfile_null_path_reopen_class_without_path_capture",
-        "expected": "FREOPEN_NULL_PATH_STREAM_NULL",
-        "oracle_source": "FrankenLibC freopen null-path class replay",
+        "expected": "FREOPEN_STREAM_REOPENED",
+        "oracle_source": "live glibc 2.42: fopen(path,\"r\") then freopen(NULL,\"r\"|\"w\"|\"r+\",stream) returns the SAME FILE* with errno untouched (POSIX null-path mode change, implemented through /proc/self/fd)",
         "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
       },
-      "expected_output": "symbol=freopen;mode=hardened;expected=FREOPEN_NULL_PATH_STREAM_NULL;actual=FREOPEN_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen;mode=hardened;expected=FREOPEN_STREAM_REOPENED;actual=FREOPEN_STREAM_REOPENED;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -191,11 +191,11 @@
       "inputs": {
         "symbol": "freopen64",
         "scenario": "controlled_tmpfile_null_path_reopen64_class_without_path_capture",
-        "expected": "FREOPEN64_NULL_PATH_STREAM_NULL",
-        "oracle_source": "FrankenLibC freopen64 null-path class replay",
+        "expected": "FREOPEN64_STREAM_REOPENED",
+        "oracle_source": "live glibc 2.42: same null-path mode-change contract as freopen -- the SAME FILE* comes back, errno untouched",
         "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
       },
-      "expected_output": "symbol=freopen64;mode=strict;expected=FREOPEN64_NULL_PATH_STREAM_NULL;actual=FREOPEN64_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen64;mode=strict;expected=FREOPEN64_STREAM_REOPENED;actual=FREOPEN64_STREAM_REOPENED;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -206,11 +206,11 @@
       "inputs": {
         "symbol": "freopen64",
         "scenario": "controlled_tmpfile_null_path_reopen64_class_without_path_capture",
-        "expected": "FREOPEN64_NULL_PATH_STREAM_NULL",
-        "oracle_source": "FrankenLibC freopen64 null-path class replay",
+        "expected": "FREOPEN64_STREAM_REOPENED",
+        "oracle_source": "live glibc 2.42: same null-path mode-change contract as freopen -- the SAME FILE* comes back, errno untouched",
         "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
       },
-      "expected_output": "symbol=freopen64;mode=hardened;expected=FREOPEN64_NULL_PATH_STREAM_NULL;actual=FREOPEN64_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen64;mode=hardened;expected=FREOPEN64_STREAM_REOPENED;actual=FREOPEN64_STREAM_REOPENED;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
