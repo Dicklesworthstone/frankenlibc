@@ -149,18 +149,55 @@ fn spawnattr_flags_default_zero() {
 }
 
 #[test]
+/// Expectations are what live glibc 2.42 produced, via python3 ctypes against libc.so.6 with
+/// explicit argtypes (`ldd (Ubuntu GLIBC 2.42-0ubuntu3.1) 2.42`):
+///
+/// ```text
+/// setflags(0x1234) rc=22(EINVAL)  getflags -> 0x0000 (unchanged)
+/// setflags(0x01ff) rc=0           getflags -> 0x01ff
+/// setflags(0x0200) rc=22(EINVAL)  getflags -> 0x01ff (prior value intact)
+/// setflags(0x0100) rc=0           getflags -> 0x0100
+/// ```
+///
+/// Until bd-lkvixl fl stored any value, and this arm asserted that permissive behavior; it went
+/// red when the fix landed rather than proving it. bd-o7fqu2.
 fn spawnattr_flags_roundtrip() {
     let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut attr = AlignedBuf::new();
     unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
 
-    let rc = unsafe { posix_spawnattr_setflags(attr.as_mut_ptr().cast(), 0x1234) };
-    assert_eq!(rc, 0);
+    let read_flags = |attr: &AlignedBuf| {
+        let mut flags: libc::c_short = -1;
+        let rc = unsafe { posix_spawnattr_getflags(attr.as_ptr().cast(), &mut flags) };
+        assert_eq!(rc, 0, "getflags on an initialized attr always succeeds");
+        flags
+    };
 
-    let mut flags: libc::c_short = 0;
-    let rc = unsafe { posix_spawnattr_getflags(attr.as_ptr().cast(), &mut flags) };
+    // Accepted values roundtrip. 0x1FF is the full mask; 0x80 is SETSID and
+    // 0x100 is SETCGROUP, the two highest bits, which a narrower mask would drop.
+    for accepted in [0x0000, 0x007f, 0x0080, 0x0100, 0x01ff] {
+        let rc = unsafe { posix_spawnattr_setflags(attr.as_mut_ptr().cast(), accepted) };
+        assert_eq!(rc, 0, "setflags(0x{accepted:04x}) is inside ALL_FLAGS");
+        assert_eq!(read_flags(&attr), accepted);
+    }
+
+    // Anything outside ALL_FLAGS is EINVAL, and — the part the old permissive
+    // arm could not see — a rejected call must leave the stored value alone.
+    let rc = unsafe { posix_spawnattr_setflags(attr.as_mut_ptr().cast(), 0x01ff) };
     assert_eq!(rc, 0);
-    assert_eq!(flags, 0x1234);
+    for rejected in [0x0200, 0x1234, 0x7fff] {
+        let rc = unsafe { posix_spawnattr_setflags(attr.as_mut_ptr().cast(), rejected) };
+        assert_eq!(
+            rc,
+            libc::EINVAL,
+            "setflags(0x{rejected:04x}) has bits outside ALL_FLAGS (0x1FF)"
+        );
+        assert_eq!(
+            read_flags(&attr),
+            0x01ff,
+            "a rejected setflags(0x{rejected:04x}) must not mutate the stored flags"
+        );
+    }
 
     unsafe { posix_spawnattr_destroy(attr.as_mut_ptr().cast()) };
 }
