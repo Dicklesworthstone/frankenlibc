@@ -41,27 +41,25 @@ fn host_ioprio_set(which: c_int, who: c_int, ioprio: c_int) -> (c_int, c_int) {
 
 #[test]
 fn ioprio_invalid_which_matches_host_syscall() {
-    let (host_get_rc, host_get_err) = host_ioprio_get(-1, 0);
-    set_fl_errno(0);
-    let fl_get_rc = unsafe { fl::ioprio_get(-1, 0) };
-    let fl_get_err = fl_errno();
-    assert_eq!(
-        (fl_get_rc, fl_get_err),
-        (host_get_rc, host_get_err),
-        "ioprio_get(invalid which): fl=({fl_get_rc}, {fl_get_err}) \
-         host=({host_get_rc}, {host_get_err})"
-    );
-    assert_eq!((fl_get_rc, fl_get_err), (-1, libc::EINVAL));
+    // Cover both signed boundary directions. A wrapper that only special-cases
+    // negative selectors must not accept an arbitrary large positive one.
+    for which in [-1, c_int::MAX] {
+        let host_get = host_ioprio_get(which, 0);
+        set_fl_errno(0);
+        let fl_get = (unsafe { fl::ioprio_get(which, 0) }, fl_errno());
+        assert_eq!(
+            fl_get, host_get,
+            "ioprio_get({which}): fl={fl_get:?} host={host_get:?}"
+        );
+        assert_eq!(host_get, (-1, libc::EINVAL));
 
-    let (host_set_rc, host_set_err) = host_ioprio_set(-1, 0, 0);
-    set_fl_errno(0);
-    let fl_set_rc = unsafe { fl::ioprio_set(-1, 0, 0) };
-    let fl_set_err = fl_errno();
-    assert_eq!(
-        (fl_set_rc, fl_set_err),
-        (host_set_rc, host_set_err),
-        "ioprio_set(invalid which): fl=({fl_set_rc}, {fl_set_err}) \
-         host=({host_set_rc}, {host_set_err})"
-    );
-    assert_eq!((fl_set_rc, fl_set_err), (-1, libc::EINVAL));
+        let host_set = host_ioprio_set(which, 0, 0);
+        set_fl_errno(0);
+        let fl_set = (unsafe { fl::ioprio_set(which, 0, 0) }, fl_errno());
+        assert_eq!(
+            fl_set, host_set,
+            "ioprio_set({which}): fl={fl_set:?} host={host_set:?}"
+        );
+        assert_eq!(host_set, (-1, libc::EINVAL));
+    }
 }
