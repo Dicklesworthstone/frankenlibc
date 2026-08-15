@@ -2418,7 +2418,6 @@ pub fn pthread_threading_swap_force_native_for_tests() -> bool {
         tls.force_native_threading_override = Some(true);
         previous
     })
-    .unwrap_or_else(global_force_native_threading_enabled)
 }
 
 /// Test hook: restore the thread lifecycle delegation mode after temporarily
