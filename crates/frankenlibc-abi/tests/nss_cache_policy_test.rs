@@ -5,6 +5,10 @@ use std::ptr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Serializes the env-var mutation every test in this file performs. Acquire it poison-tolerantly
+/// (`unwrap_or_else(|e| e.into_inner())`): a failing assertion panics while holding the guard, and
+/// a poison-intolerant acquire turns that single failure into a phantom failure in every test that
+/// runs afterwards. One real divergence on 2026-08-15 reported as 8 (bd-o0jhfu).
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -98,7 +102,7 @@ unsafe fn hostent_ipv4_addresses(ptr: *mut c_void) -> Vec<[u8; 4]> {
 
 #[test]
 fn passwd_cache_invalidation_resets_iteration_on_file_change() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-cache-policy");
 
     write_file(
@@ -141,7 +145,7 @@ fn passwd_cache_invalidation_resets_iteration_on_file_change() {
 
 #[test]
 fn group_cache_refreshes_lookup_after_file_change() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("group-cache-policy");
 
     write_file(&path, b"root:x:0:\ndev:x:100:alice\n");
@@ -174,7 +178,7 @@ fn group_cache_refreshes_lookup_after_file_change() {
 
 #[test]
 fn passwd_reentrant_uses_configured_source_and_erange_contract() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-reentrant");
 
     write_file(
@@ -276,7 +280,7 @@ fn passwd_reentrant_uses_configured_source_and_erange_contract() {
 
 #[test]
 fn group_reentrant_uses_configured_source_members_and_erange_contract() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("group-reentrant");
 
     write_file(&path, b"root:x:0:\ndev:x:250:alice,bob\n");
@@ -371,7 +375,7 @@ fn group_reentrant_uses_configured_source_members_and_erange_contract() {
 
 #[test]
 fn passwd_concurrent_lookup_coherence_under_file_churn() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-concurrency");
     let variant_a: &[u8] =
         b"root:x:0:0:root:/root:/bin/sh\nalice:x:1001:1001::/home/alice:/bin/sh\n";
@@ -430,7 +434,7 @@ fn passwd_concurrent_lookup_coherence_under_file_churn() {
 
 #[test]
 fn group_concurrent_lookup_coherence_under_file_churn() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("group-concurrency");
     let variant_a: &[u8] = b"root:x:0:\ndev:x:250:alice,bob\n";
     let variant_b: &[u8] = b"root:x:0:\ndev:x:450:alice,bob\n";
@@ -515,6 +519,17 @@ fn hosts_cache_refreshes_forward_lookup_after_file_change() {
     let _ = fs::remove_file(&path);
 }
 
+/// Expectations are what live glibc 2.42 produced for this exact hosts file, captured by
+/// bind-mounting it over `/etc/hosts` and calling the host's own resolver:
+///
+/// ```text
+/// bwrap --dev-bind / / --bind ./fake_hosts /etc/hosts python3 ghbn_oracle.py duplicate
+///   -> h_name=canon aliases=[query-alias, duplicate, duplicate, other]
+///      addrs=[127.0.0.1, 127.0.0.1]
+/// ```
+///
+/// The host's `/etc/host.conf` carries Debian's default `multi on`, which is what makes glibc
+/// merge every matching row instead of returning only the first.
 #[test]
 fn hosts_forward_lookup_matches_glibc_multi_row_alias_contract() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -526,7 +541,10 @@ fn hosts_forward_lookup_matches_glibc_multi_row_alias_contract() {
     // SAFETY: integration tests serialize env mutation via TEST_LOCK.
     unsafe { std::env::set_var(HOSTS_ENV, &path) };
 
-    let name = CString::new("query-alias").expect("literal has no interior NUL");
+    // Query "duplicate", which is the only name in this file carried by more than one row
+    // (rows 1 and 2). Rows are selected by the QUERIED name alone: row 3 shares row 1's
+    // canonical name but not the query, so it does not join the merge.
+    let name = CString::new("duplicate").expect("literal has no interior NUL");
     let result = unsafe { frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()) };
     assert!(!result.is_null(), "hosts lookup should succeed");
     let hostent = unsafe { &*(result as *const libc::hostent) };
@@ -540,12 +558,11 @@ fn hosts_forward_lookup_matches_glibc_multi_row_alias_contract() {
             b"duplicate".to_vec(),
             b"duplicate".to_vec(),
             b"other".to_vec(),
-            b"tail".to_vec(),
         ]
     );
     assert_eq!(
         unsafe { hostent_ipv4_addresses(result) },
-        vec![[127, 0, 0, 1], [127, 0, 0, 1], [127, 0, 0, 1]],
+        vec![[127, 0, 0, 1], [127, 0, 0, 1]],
         "matching hosts lines must preserve duplicate IPv4 addresses"
     );
 
@@ -564,6 +581,9 @@ fn hosts_forward_lookup_matches_glibc_multi_row_alias_contract() {
         )
     };
     assert_eq!(rc, 0);
+    // h_errno is fl's own success contract, not part of the alias contract asserted here:
+    // live glibc leaves h_errno at HOST_NOT_FOUND(1) on a successful files-backed merge,
+    // because it keeps walking the nsswitch service list after `files` has answered.
     assert_eq!(h_errno, 0);
     assert_eq!(hostent.h_addrtype, libc::AF_INET);
     assert_eq!(hostent.h_length, 4);
@@ -575,12 +595,11 @@ fn hosts_forward_lookup_matches_glibc_multi_row_alias_contract() {
             b"duplicate".to_vec(),
             b"duplicate".to_vec(),
             b"other".to_vec(),
-            b"tail".to_vec(),
         ]
     );
     assert_eq!(
         unsafe { hostent_ipv4_addresses(reentrant_result) },
-        vec![[127, 0, 0, 1], [127, 0, 0, 1], [127, 0, 0, 1]]
+        vec![[127, 0, 0, 1], [127, 0, 0, 1]]
     );
 
     // SAFETY: integration tests serialize env mutation via TEST_LOCK.
@@ -640,7 +659,7 @@ fn hosts_cache_refreshes_reverse_lookup_after_file_change() {
 
 #[test]
 fn passwd_empty_file_returns_null_on_getpwent() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-empty");
 
     write_file(&path, b"");
@@ -662,7 +681,7 @@ fn passwd_empty_file_returns_null_on_getpwent() {
 
 #[test]
 fn group_empty_file_returns_null_on_getgrnam() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("group-empty");
 
     write_file(&path, b"");
@@ -684,7 +703,7 @@ fn group_empty_file_returns_null_on_getgrnam() {
 
 #[test]
 fn passwd_iteration_exhausts_then_returns_null() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-exhaust");
 
     write_file(
@@ -722,7 +741,7 @@ fn passwd_iteration_exhausts_then_returns_null() {
 
 #[test]
 fn passwd_getpwuid_finds_correct_user() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-uid-lookup");
 
     write_file(
@@ -753,7 +772,7 @@ fn passwd_getpwuid_finds_correct_user() {
 
 #[test]
 fn group_getgrgid_finds_correct_group() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("group-gid-lookup");
 
     write_file(
@@ -788,7 +807,7 @@ fn group_getgrgid_finds_correct_group() {
 
 #[test]
 fn passwd_setpwent_rewinds_iteration() {
-    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = temp_path("passwd-rewind");
 
     write_file(
