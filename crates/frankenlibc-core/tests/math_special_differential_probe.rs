@@ -294,6 +294,8 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
             (a.to_bits() as i64 - b.to_bits() as i64).abs()
         }
     }
+    // Accumulate rather than assert at the first drift; see the f32 sibling for why.
+    let drifts = core::cell::RefCell::new(Vec::<String>::new());
     let scan = |name: &str,
                 fl: &dyn Fn(f64) -> f64,
                 gl: &dyn Fn(f64) -> f64,
@@ -311,10 +313,11 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
             }
             x += step;
         }
-        assert!(
-            worst <= 4,
-            "{name} drifted {worst} ULP vs glibc at x={wx:e}"
-        );
+        if worst > 4 {
+            drifts
+                .borrow_mut()
+                .push(format!("{name} drifted {worst} ULP vs glibc at x={wx:e}"));
+        }
     };
 
     scan(
@@ -429,6 +432,14 @@ fn trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
         -100.0,
         100.0,
         1e-3,
+    );
+
+    let drifts = drifts.into_inner();
+    assert!(
+        drifts.is_empty(),
+        "{} f64 passthrough symbol(s) drift >4 ULP vs glibc:\n{}",
+        drifts.len(),
+        drifts.join("\n")
     );
 }
 
@@ -588,6 +599,12 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
     }
     // Iterate the loop variable in f64 (cast to f32 per call) so a small step
     // near a large x can never stall on f32 rounding granularity.
+    // Collect every drifting symbol instead of asserting at the first one. Asserting
+    // inside the loop meant this gate could only ever name ONE symbol per run and did
+    // not even execute the scans after it: on 2026-08-15 atanhf's 251-ULP drift hid
+    // log1pf's 548-ULP drift entirely, and the second only surfaced after the first was
+    // fixed and pushed.
+    let drifts = core::cell::RefCell::new(Vec::<String>::new());
     let scan = |name: &str,
                 fl: &dyn Fn(f32) -> f32,
                 gl: &dyn Fn(f32) -> f32,
@@ -606,10 +623,11 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
             }
             xd += step;
         }
-        assert!(
-            worst <= 4,
-            "{name} drifted {worst} ULP vs glibc at x={wx:e}"
-        );
+        if worst > 4 {
+            drifts
+                .borrow_mut()
+                .push(format!("{name} drifted {worst} ULP vs glibc at x={wx:e}"));
+        }
     };
 
     scan(
@@ -783,5 +801,13 @@ fn f32_trig_inverse_cbrt_passthroughs_within_4_ulp_of_glibc() {
         1e-30,
         1e-3,
         3e-7,
+    );
+
+    let drifts = drifts.into_inner();
+    assert!(
+        drifts.is_empty(),
+        "{} f32 passthrough symbol(s) drift >4 ULP vs glibc:\n{}",
+        drifts.len(),
+        drifts.join("\n")
     );
 }
