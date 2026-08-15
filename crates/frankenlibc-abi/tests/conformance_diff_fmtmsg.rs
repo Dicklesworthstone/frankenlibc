@@ -418,7 +418,10 @@ fn diff_fmtmsg_loads_sev_level_like_glibc() {
             .arg("--exact")
             .arg("diff_fmtmsg_loads_sev_level_like_glibc")
             .env(SEV_LEVEL_CHILD, "1")
-            .env("SEV_LEVEL", "custom,0x5,CRITICAL")
+            .env(
+                "SEV_LEVEL",
+                "custom,0x5,CRITICAL:urgent,06,URGENT:malformed:ignored,wat,BAD",
+            )
             .env("MSGVERB", "label:severity:text:action:tag")
             .status()
             .expect("spawn isolated SEV_LEVEL differential child");
@@ -440,5 +443,14 @@ fn diff_fmtmsg_loads_sev_level_like_glibc() {
         text: Some("configured"),
         action: Some("inspect"),
         tag: Some("util:018"),
+    });
+    assert_matches_glibc(FmtmsgCase {
+        name: "SEV_LEVEL second custom severity",
+        classification: MM_PRINT,
+        label: Some("UX:app"),
+        severity: 6,
+        text: Some("configured"),
+        action: Some("inspect"),
+        tag: Some("util:019"),
     });
 }

@@ -21974,12 +21974,15 @@ fn fmtmsg_severity_environment() -> crate::util::ArtifactHashMap<c_int, Vec<u8>>
     };
 
     for entry in sev_level.as_encoded_bytes().split(|byte| *byte == b':') {
-        let Some((_keyword, rest)) = entry.split_once(|byte| *byte == b',') else {
+        let Some(first_comma) = entry.iter().position(|byte| *byte == b',') else {
             continue;
         };
-        let Some((level, printstring)) = rest.split_once(|byte| *byte == b',') else {
+        let rest = &entry[first_comma + 1..];
+        let Some(second_comma) = rest.iter().position(|byte| *byte == b',') else {
             continue;
         };
+        let level = &rest[..second_comma];
+        let printstring = &rest[second_comma + 1..];
         let Some(level) = parse_fmtmsg_severity_level(level) else {
             continue;
         };
