@@ -16,10 +16,13 @@ abi-bench = ["dep:frankenlibc-abi"]
 frankenlibc-membrane = { workspace = true }
 frankenlibc-core = { workspace = true }
 frankenlibc-abi = { workspace = true, optional = true }
+# NOT a dev-dependency: src/lib.rs itself uses libc::c_int and the RTLD_* flags for
+# DEPLOYED_PRELOAD_DLOPEN_FLAGS. Dev-dependencies are invisible to the lib target, so
+# keeping libc there broke every example in this crate -- see bd-84z81u.
+libc = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-libc = { workspace = true }
 libm = "0.2.16"
 sha2 = { workspace = true }
 
