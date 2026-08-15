@@ -1172,6 +1172,17 @@ pub fn malloc_segment_owned_for_tests(ptr: *const c_void) -> bool {
     segment_owned_index(ptr as usize).is_some()
 }
 
+/// Retire one exact segment slot without a thread-local magazine.
+///
+/// This test-only observation point makes the slot-state linearization
+/// directly observable: concurrent callers may collectively retire a live
+/// slot exactly once.  The normal `free` entrypoint supplies its reentry slot
+/// and therefore retains the allocation in that thread's local magazine.
+#[doc(hidden)]
+pub fn malloc_segment_retire_for_tests(ptr: *mut c_void) -> bool {
+    matches!(segment_free(None, ptr), SegmentFreeResult::Freed(_))
+}
+
 /// Raw allocator for internal ABI use.
 ///
 /// Uses the native host-resolution path with the same bump fallback and

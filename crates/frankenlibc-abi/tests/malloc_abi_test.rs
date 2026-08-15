@@ -15,12 +15,12 @@ use frankenlibc_abi::malloc_abi::{
     malloc_fallback_range_for_tests, malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests,
     malloc_info, malloc_is_bump_ptr_for_tests, malloc_known_remaining_for_tests,
     malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
-    malloc_segment_owned_for_tests, malloc_stats, malloc_stats_init_for_tests,
-    malloc_stats_record_alloc_for_harness, malloc_stats_record_free_for_harness,
-    malloc_stats_reset_for_harness, malloc_stats_snapshot_jsonl_for_tests,
-    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
-    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
-    take_last_decision_gate_for_tests, valloc,
+    malloc_segment_owned_for_tests, malloc_segment_retire_for_tests, malloc_stats,
+    malloc_stats_init_for_tests, malloc_stats_record_alloc_for_harness,
+    malloc_stats_record_free_for_harness, malloc_stats_reset_for_harness,
+    malloc_stats_snapshot_jsonl_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
+    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
+    signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
 use std::collections::HashMap;
@@ -276,6 +276,57 @@ fn test_segment_free_reuse_and_calloc_lifecycle() {
     unsafe {
         free(a);
         free(b);
+    }
+}
+
+#[test]
+fn segment_slot_retirement_linearizes_concurrent_double_free() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+    const WORKERS: usize = 8;
+    const ROUNDS: usize = 32;
+
+    for round in 0..ROUNDS {
+        let ptr = unsafe { malloc(17) };
+        assert!(!ptr.is_null(), "round {round}: allocation must succeed");
+        assert!(
+            malloc_segment_owned_for_tests(ptr.cast_const()),
+            "round {round}: small allocation must use the segment heap"
+        );
+
+        let start = Arc::new(Barrier::new(WORKERS + 1));
+        let retirements = Arc::new(Mutex::new(Vec::with_capacity(WORKERS)));
+        let address = ptr as usize;
+        let mut joins = Vec::with_capacity(WORKERS);
+        for _ in 0..WORKERS {
+            let start = Arc::clone(&start);
+            let retirements = Arc::clone(&retirements);
+            joins.push(std::thread::spawn(move || {
+                start.wait();
+                let retired = malloc_segment_retire_for_tests(address as *mut c_void);
+                retirements
+                    .lock()
+                    .expect("retirement results poisoned")
+                    .push(retired);
+            }));
+        }
+
+        start.wait();
+        for join in joins {
+            join.join().expect("concurrent retire worker panicked");
+        }
+
+        let retirements = retirements.lock().expect("retirement results poisoned");
+        assert_eq!(
+            retirements.iter().filter(|retired| **retired).count(),
+            1,
+            "round {round}: exactly one concurrent retirement may claim a live slot"
+        );
+        assert_eq!(
+            malloc_known_remaining_for_tests(ptr.cast_const()),
+            None,
+            "round {round}: the single successful retirement must leave the slot dead"
+        );
     }
 }
 
