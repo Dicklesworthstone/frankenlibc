@@ -11511,12 +11511,20 @@ fn encrypt_setkey_des_stubs_are_noops() {
 }
 
 #[test]
-fn crypt_preferred_method_returns_sha512_prefix() {
-    use frankenlibc_abi::unistd_abi::crypt_preferred_method;
+fn crypt_preferred_method_is_supported_by_crypt_checksalt() {
+    use frankenlibc_abi::unistd_abi::{crypt_checksalt, crypt_preferred_method};
     let p = unsafe { crypt_preferred_method() };
     assert!(!p.is_null());
     let s = unsafe { CStr::from_ptr(p) };
-    assert_eq!(s.to_bytes(), b"$6$");
+    assert!(
+        !s.to_bytes().is_empty(),
+        "the preferred crypt method must be a non-empty prefix"
+    );
+    assert_eq!(
+        unsafe { crypt_checksalt(p) },
+        0,
+        "the advertised preferred method must be accepted by crypt_checksalt"
+    );
 }
 
 #[test]

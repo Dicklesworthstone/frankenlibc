@@ -8418,42 +8418,64 @@ fn with_crypt_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
     }
 }
 
-/// Resolve libxcrypt's `crypt` implementation without ever resolving our own
-/// interposed export. Modern distributions ship yescrypt/bcrypt/scrypt in
-/// libcrypt rather than libc, while the native implementation below owns the
-/// historical SHA-based methods.
+/// Resolve a libxcrypt symbol without ever resolving our own interposed export.
+/// The handle intentionally remains open for the process lifetime: every
+/// function pointer retrieved from it must stay valid after this helper returns.
+fn host_libcrypt_symbol(symbol: *const c_char) -> Option<*mut c_void> {
+    type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+
+    static HOST_LIBCRYPT_HANDLE: std::sync::LazyLock<Option<usize>> =
+        std::sync::LazyLock::new(|| {
+            let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
+            // SAFETY: the resolver reads the loaded host libc ELF table and
+            // `dlopen` has this POSIX ABI.
+            let host_dlopen: DlopenFn = unsafe { core::mem::transmute(dlopen_addr) }; // ubs:ignore — resolved host dlopen ABI
+            let handle = unsafe {
+                host_dlopen(
+                    c"libcrypt.so.1".as_ptr(),
+                    libc::RTLD_LAZY | libc::RTLD_LOCAL,
+                )
+            };
+            (!handle.is_null()).then_some(handle as usize)
+        });
+
+    let handle = (*HOST_LIBCRYPT_HANDLE)? as *mut c_void;
+    let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
+    // SAFETY: the resolver reads the loaded host libc ELF table and `dlsym`
+    // has this POSIX ABI. `handle` was returned by that host's `dlopen`.
+    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(dlsym_addr) }; // ubs:ignore — resolved host dlsym ABI
+    let resolved = unsafe { host_dlsym(handle, symbol) };
+    (!resolved.is_null()).then_some(resolved)
+}
+
+/// Resolve libxcrypt's `crypt` implementation. Modern distributions ship
+/// yescrypt/bcrypt/scrypt in libcrypt rather than libc, while the native
+/// implementation below owns the historical SHA-based methods.
 fn host_extended_crypt() -> Option<unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char>
 {
     type CryptFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
     static HOST_CRYPT: std::sync::LazyLock<Option<CryptFn>> = std::sync::LazyLock::new(|| {
-        // Keep the handle open for the process lifetime: the cached function
-        // pointer is only valid while libcrypt remains loaded.
-        type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-        type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
-        let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
-        let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
-        // SAFETY: the resolver reads the loaded host libc's ELF symbol table;
-        // these two POSIX loader symbols have the declared ABIs.
-        let host_dlopen: DlopenFn = unsafe { core::mem::transmute(dlopen_addr) }; // ubs:ignore — resolved host dlopen ABI
-        let host_dlsym: DlsymFn = unsafe { core::mem::transmute(dlsym_addr) }; // ubs:ignore — resolved host dlsym ABI
-        let handle = unsafe {
-            host_dlopen(
-                c"libcrypt.so.1".as_ptr(),
-                libc::RTLD_LAZY | libc::RTLD_LOCAL,
-            )
-        };
-        if handle.is_null() {
-            return None;
-        }
-        let symbol = unsafe { host_dlsym(handle, c"crypt".as_ptr()) };
-        if symbol.is_null() {
-            return None;
-        }
-        // SAFETY: `dlsym` returned libxcrypt's `crypt` symbol from the
-        // libcrypt handle above, whose ABI is exactly `CryptFn`.
+        let symbol = host_libcrypt_symbol(c"crypt".as_ptr())?;
+        // SAFETY: dlsym returned libxcrypt's `crypt` symbol, whose ABI is
+        // exactly `CryptFn`.
         Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt ABI
     });
     *HOST_CRYPT
+}
+
+fn host_crypt_preferred_method() -> Option<*const c_char> {
+    type PreferredMethodFn = unsafe extern "C" fn() -> *const c_char;
+    static HOST_PREFERRED_METHOD: std::sync::LazyLock<Option<PreferredMethodFn>> =
+        std::sync::LazyLock::new(|| {
+            let symbol = host_libcrypt_symbol(c"crypt_preferred_method".as_ptr())?;
+            // SAFETY: dlsym returned libxcrypt's `crypt_preferred_method`
+            // symbol, whose ABI is exactly `PreferredMethodFn`.
+            Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt_preferred_method ABI
+        });
+    let preferred_method = (*HOST_PREFERRED_METHOD)?;
+    let method = unsafe { preferred_method() };
+    (!method.is_null()).then_some(method)
 }
 
 fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<Vec<u8>> {
@@ -8589,18 +8611,18 @@ pub unsafe extern "C" fn setkey(_key: *const c_char) {}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setkey_r(_key: *const c_char, _data: *mut c_void) {}
 
-// libxcrypt's preferred-method static string. Lives in BSS as a
-// NUL-terminated byte array so we can hand out a stable `*const
-// c_char` for as long as the process is running.
+// Fallback for hosts without libxcrypt's preferred-method entry point. Lives
+// in BSS so the pointer remains valid for the process lifetime.
 static CRYPT_PREFERRED_METHOD_STATIC: [u8; 4] = *b"$6$\0";
 
 /// libcrypt `crypt_preferred_method() -> *const c_char` — return
 /// the static prefix string of the preferred crypto method
-/// supported on this system. We return `"$6$"` (SHA-512), which is
-/// the strongest method our `crypt()` honors.
+/// supported on this system. When libxcrypt is available this returns its
+/// actual current default (normally yescrypt), matching the delegated modern
+/// `crypt` methods. Hosts without libxcrypt retain the native SHA-512 fallback.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crypt_preferred_method() -> *const c_char {
-    CRYPT_PREFERRED_METHOD_STATIC.as_ptr() as *const c_char
+    host_crypt_preferred_method().unwrap_or(CRYPT_PREFERRED_METHOD_STATIC.as_ptr() as *const c_char)
 }
 
 /// libcrypt `crypt_checksalt(setting) -> int` — validate that
