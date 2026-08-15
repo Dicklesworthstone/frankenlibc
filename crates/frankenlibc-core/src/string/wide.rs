@@ -339,6 +339,49 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
     const BLOCK: usize = PANEL * 4; // 256
     let limit = maxlen.min(s.len());
     let scan = &s[..limit];
+
+    // Short bounded strings never reach the folded 256-wide steady state.
+    // Probe their two ends with overlapping panels instead: the first panel
+    // retains left-to-right precedence, while the tail panel covers the whole
+    // range without a scalar prologue. This is the common ABI `wcsnlen` shape
+    // for fixed-size wide buffers.
+    if (16..32).contains(&limit) {
+        let first = Simd::<u32, 16>::from_slice(&scan[..16]);
+        if first.simd_eq(Simd::splat(0)).any() {
+            return scan[..16].iter().position(|&ch| ch == 0).unwrap();
+        }
+        let tail_start = limit - 16;
+        let tail = Simd::<u32, 16>::from_slice(&scan[tail_start..]);
+        if tail.simd_eq(Simd::splat(0)).any() {
+            return tail_start + scan[tail_start..].iter().position(|&ch| ch == 0).unwrap();
+        }
+        return limit;
+    }
+    if (8..16).contains(&limit) {
+        let first = Simd::<u32, 8>::from_slice(&scan[..8]);
+        if first.simd_eq(Simd::splat(0)).any() {
+            return scan[..8].iter().position(|&ch| ch == 0).unwrap();
+        }
+        let tail_start = limit - 8;
+        let tail = Simd::<u32, 8>::from_slice(&scan[tail_start..]);
+        if tail.simd_eq(Simd::splat(0)).any() {
+            return tail_start + scan[tail_start..].iter().position(|&ch| ch == 0).unwrap();
+        }
+        return limit;
+    }
+    if (4..8).contains(&limit) {
+        let first = Simd::<u32, 4>::from_slice(&scan[..4]);
+        if first.simd_eq(Simd::splat(0)).any() {
+            return scan[..4].iter().position(|&ch| ch == 0).unwrap();
+        }
+        let tail_start = limit - 4;
+        let tail = Simd::<u32, 4>::from_slice(&scan[tail_start..]);
+        if tail.simd_eq(Simd::splat(0)).any() {
+            return tail_start + scan[tail_start..].iter().position(|&ch| ch == 0).unwrap();
+        }
+        return limit;
+    }
+
     let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
@@ -1597,6 +1640,25 @@ mod tests {
         assert_eq!(wcsnlen(&value, 8), 2);
         assert_eq!(wcsnlen(&value, 1), 1);
         assert_eq!(wcsnlen(&[b'a' as u32, b'b' as u32], 8), 2);
+    }
+
+    #[test]
+    fn test_wcsnlen_small_simd_ranges_preserve_first_nul() {
+        for len in [4usize, 5, 7, 8, 9, 15, 16, 17, 31] {
+            let mut no_nul = vec![b'x' as u32; len];
+            assert_eq!(wcsnlen(&no_nul, len), len, "len={len}");
+
+            for nul_at in [0, len / 2, len - 1] {
+                no_nul.fill(b'x' as u32);
+                no_nul[nul_at] = 0;
+                assert_eq!(wcsnlen(&no_nul, len), nul_at, "len={len}, nul_at={nul_at}");
+            }
+
+            no_nul.fill(b'x' as u32);
+            no_nul[len / 2] = 0;
+            no_nul[len - 1] = 0;
+            assert_eq!(wcsnlen(&no_nul, len), len / 2, "len={len}");
+        }
     }
 
     #[test]
