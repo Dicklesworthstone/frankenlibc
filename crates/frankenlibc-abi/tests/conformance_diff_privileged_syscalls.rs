@@ -131,6 +131,7 @@ fn fl_kexec_file_load(
 #[test]
 fn privileged_control_invalid_failures_match_host_syscall() {
     let host = host_finit_module(-1, ptr::null(), 0);
+    assert_eq!(host.0, -1, "host finit_module must reject an invalid fd");
     let fl = fl_finit_module(-1, ptr::null(), 0);
     assert_eq!(
         fl, host,
@@ -139,16 +140,25 @@ fn privileged_control_invalid_failures_match_host_syscall() {
     assert_eq!(fl.0, -1);
 
     let host = host_quotactl_fd(c_uint::MAX, 0, 0, ptr::null_mut());
+    assert_eq!(host.0, -1, "host quotactl_fd must reject an invalid fd");
     let fl = fl_quotactl_fd(c_uint::MAX, 0, 0, ptr::null_mut());
     assert_eq!(fl, host, "quotactl_fd(invalid fd): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
 
     let host = host_bpf(1, ptr::null_mut(), 0);
+    assert_eq!(
+        host.0, -1,
+        "host bpf must reject a null zero-length attribute"
+    );
     let fl = fl_bpf(1, ptr::null_mut(), 0);
     assert_eq!(fl, host, "bpf(size 0 null attr): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
 
     let host = host_bpf(0, ptr::null_mut(), 16);
+    assert_eq!(
+        host.0, -1,
+        "host bpf must reject a null positive-length attribute"
+    );
     let fl = fl_bpf(0, ptr::null_mut(), 16);
     assert_eq!(
         fl, host,
@@ -157,6 +167,7 @@ fn privileged_control_invalid_failures_match_host_syscall() {
     assert_eq!(fl.0, -1);
 
     let host = host_kexec_load(0, 1, ptr::null(), 0);
+    assert_eq!(host.0, -1, "host kexec_load must reject null segments");
     let fl = fl_kexec_load(0, 1, ptr::null(), 0);
     assert_eq!(
         fl, host,
@@ -167,6 +178,7 @@ fn privileged_control_invalid_failures_match_host_syscall() {
     // The kernel, not the ABI boundary, decides whether an invalid command-line
     // pointer or the invalid descriptor/privilege check wins for this syscall.
     let host = host_kexec_file_load(-1, -1, 1, ptr::null(), 0);
+    assert_eq!(host.0, -1, "host kexec_file_load must reject null cmdline");
     let fl = fl_kexec_file_load(-1, -1, 1, ptr::null(), 0);
     assert_eq!(
         fl, host,
@@ -175,6 +187,7 @@ fn privileged_control_invalid_failures_match_host_syscall() {
     assert_eq!(fl.0, -1);
 
     let host = host_kexec_file_load(-1, -1, 0, ptr::null(), 0);
+    assert_eq!(host.0, -1, "host kexec_file_load must reject invalid fds");
     let fl = fl_kexec_file_load(-1, -1, 0, ptr::null(), 0);
     assert_eq!(
         fl, host,
