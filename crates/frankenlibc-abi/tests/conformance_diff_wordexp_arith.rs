@@ -215,6 +215,19 @@ const ENV_WORDS: &[&str] = &[
     "$(($FLSP+1))",
     "$((${#FLARITH}))",
     "$((${FLARITH:-9}))",
+    // bd-4f7oo7's literal cases: a ${param OP word} form inside arithmetic runs
+    // the parameter expansion first, so the operator's RESULT is what gets
+    // parsed. Measured: "6", "6", "10", "3".
+    "$(( ${x:-5} + 1 ))",
+    "$((${x:-5}+1))",
+    "$(( ${x-5} + 1 ))",
+    "$(( ${FLARITH:+9} + 1 ))",
+    "$(( ${#FLARITH} + 1 ))",
+    // affix removal inside arithmetic: ${FLARITH%1} on "41" is "4", so this is
+    // "5" — a different expansion code path (remove_affix) reached through the
+    // same recursion.
+    "$(( ${FLARITH%1} + 1 ))",
+    "$(( ${FLARITH#4} + 1 ))",
     // unset / empty bodies
     "$(())",
     "$(($NOPEVAR))",
