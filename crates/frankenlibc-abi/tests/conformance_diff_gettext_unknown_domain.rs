@@ -1,16 +1,17 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // live host-glibc gettext oracle
 
-//! Differential coverage for gettext passthrough on unknown domains.
+//! Differential coverage for domain-specific gettext passthrough on unknown domains.
 //!
 //! With no catalog for the domain, glibc returns the original msgid/msgid_plural
 //! pointers. FrankenLibC intentionally implements the same untranslated
 //! fallback for these ABI exports.
 
-use frankenlibc_abi::unistd_abi as fl;
+use frankenlibc_abi::{locale_abi as fl_locale, unistd_abi as fl};
 use std::ffi::{CStr, c_char, c_int, c_ulong};
 
 unsafe extern "C" {
+    fn dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char;
     fn dcgettext(domainname: *const c_char, msgid: *const c_char, category: c_int) -> *mut c_char;
     fn dcngettext(
         domainname: *const c_char,
@@ -37,6 +38,11 @@ fn gettext_unknown_domain_matches_host_passthrough() {
     let domain = c"frankenlibc-missing-domain-for-diff";
     let singular = c"frankenlibc singular sentinel";
     let plural = c"frankenlibc plural sentinel";
+
+    let host_d = unsafe { dgettext(domain.as_ptr(), singular.as_ptr()) };
+    let fl_d = unsafe { fl_locale::dgettext(domain.as_ptr(), singular.as_ptr()) };
+    assert_eq!(text(fl_d), text(host_d), "dgettext unknown domain");
+    assert_eq!(text(fl_d), singular.to_bytes());
 
     let host_dc = unsafe { dcgettext(domain.as_ptr(), singular.as_ptr(), libc::LC_MESSAGES) };
     let fl_dc = unsafe { fl::dcgettext(domain.as_ptr(), singular.as_ptr(), libc::LC_MESSAGES) };
