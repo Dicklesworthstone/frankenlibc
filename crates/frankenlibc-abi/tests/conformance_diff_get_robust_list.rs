@@ -87,3 +87,22 @@ fn get_robust_list_each_null_output_matches_host_syscall() {
     );
     assert_eq!(host, (-1, libc::EFAULT));
 }
+
+#[test]
+fn get_robust_list_invalid_pid_matches_host_without_writing_outputs() {
+    let sentinel_head = 1usize as *mut c_void;
+    let sentinel_len = usize::MAX;
+
+    let mut host_head = sentinel_head;
+    let mut host_len = sentinel_len;
+    let host = host_get_robust_list(-1, &mut host_head, &mut host_len);
+
+    let mut fl_head = sentinel_head;
+    let mut fl_len = sentinel_len;
+    let fl = fl_get_robust_list(-1, &mut fl_head, &mut fl_len);
+
+    assert_eq!(fl, host, "get_robust_list(-1): fl={fl:?} host={host:?}");
+    assert_eq!(host, (-1, libc::ESRCH));
+    assert_eq!((host_head, host_len), (sentinel_head, sentinel_len));
+    assert_eq!((fl_head, fl_len), (host_head, host_len));
+}
