@@ -13,6 +13,10 @@ use frankenlibc_abi::glibc_internal_abi::{
 };
 use std::ffi::{c_int, c_void};
 
+// Linux's policy 6 is intentionally not exported by `libc` on every target.
+// Its priority range is nevertheless part of the kernel scheduler ABI.
+const SCHED_DEADLINE: c_int = 6;
+
 unsafe extern "C" {
     #[link_name = "__sched_get_priority_max"]
     fn host_sched_get_priority_max(policy: c_int) -> c_int;
@@ -53,6 +57,7 @@ fn internal_sched_priority_bounds_match_host_policies() {
         libc::SCHED_RR,
         libc::SCHED_BATCH,
         libc::SCHED_IDLE,
+        SCHED_DEADLINE,
     ] {
         let host_min = unsafe { host_sched_get_priority_min(policy) };
         let fl_min = unsafe { fl_sched_get_priority_min(policy) };
