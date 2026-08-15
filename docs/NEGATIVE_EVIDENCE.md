@@ -27096,3 +27096,40 @@ the next agent should not re-run it.
 ## 2026-08-14 (Codex) — MEASURED LOSS, live same-invocation malloc/free baseline
 
 `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release -j1 -p frankenlibc-bench --example malloc_st_probe --features abi-bench` on `hz2` produced in-process `ELF_SHA256=e3357747e7eaefbd739dec0f20aaba9a2791f74998d28e35cd98eca094c01bdb`; `host=hetzner2 observed_threads=16 isa=avx512f+avx2+sse4.2 loadavg=4.49 4.81 5.51`; the ABBAABBA same-process live-glibc rows were `16B 5.4301x [5.2160,5.4495] null_fl=0.9996 null_glibc=1.0009`, `64B 5.9459x [5.4529,6.3355] 1.0024/1.0003`, `256B 6.2208x [6.0288,6.4341] 0.9996/1.0005`, and `1024B 5.4187x [5.4003,5.4306] 0.9997/1.0001` (all `ADMISSIBLE FL_SLOWER`, n=41): a valid loss/baseline, not a lever win.
+
+## 2026-08-15 (AmberQuarry) — MEASURED BASELINE and harness-scoped spread on malloc/free (no lever claimed)
+
+- **BASELINE, admissible.** `incumbent_coverage_ab --family malloc_free --fl-deepbind
+  --pin-quietest 4` on `hz2`/`hetzner2`: `fl_median_ns=68.386`, `glibc_median_ns=5.507`,
+  `ratio_median=12.385414`, `ci95=[12.249693,12.423311]`, `null_fl_fl=0.999944`,
+  `null_glibc_glibc=0.996376` (tolerance 0.020, both within), `null_half_width=0.010849`,
+  `clears_2x_null=true`, `verdict=DECIDABLE FL_SLOWER`, `samples=36`, `reps_per_arm=100000`,
+  `threads_observed=1` pre and post, `allowed_cpus=0:1:2:3`, `affinity_mask=000f`,
+  `isa=x86_64+sse4.2+avx+avx2+avx512f+fma+bmi1+bmi2`, quiet gate clear pre (0.129) and post
+  (0.020). In-process SHA-256: bench `13251ec388ebd1eb…`, fl `f5087fda650bfb61…`, incumbent
+  `/usr/lib/x86_64-linux-gnu/libc.so.6` `a3947513a02831ec…`. A loss/baseline, not a lever.
+- **HARNESS-SCOPED SPREAD, disclosed.** The same primitive (malloc/free, 64B) reads `5.9459x`
+  (`malloc_st_probe`, hz2, 2026-08-14, admissible, nulls 1.0024/1.0003), `9.3008x`
+  (`malloc_st_probe`, `vmi1149989`, today, **NULL-FAILED** 1.0198/1.0226, therefore inadmissible
+  and quoted only to locate the hardware term), and the `12.385414x` row above. The vmi-vs-hz2
+  part corroborates this ledger's existing 1.7x hardware predicate at 1.56x. The hz2-vs-hz2 part
+  does not: two sanctioned harnesses differ ~2x on the same worker and primitive with both nulls
+  passing, because they model different deployments — `incumbent_coverage_ab` dlopens fl
+  `RTLD_DEEPBIND` (LD_PRELOAD model, and it *asserts* that flag for `malloc_free`), while
+  `malloc_st_probe` uses `dlmopen` for the glibc arm. **Neither number is wrong; a bare "deployed
+  malloc is Nx" is.** Malloc rows must name their harness as well as their worker; bd-dcrhgl's
+  headline 8.05x names neither.
+- **NOT CLAIMED — component subtraction.** On `vmi1149989` the parts exceed the whole: table 17.99
+  + reentry guard ~11.4 (5.69/call across malloc and free) + stats 15.51 + native floor ~3.3 ≈
+  48ns/pair, against a measured deployed `fl=32.55ns` (`glibc=3.34`, sz=64, `malloc_st_probe`, same
+  worker). Isolated components over-attribute by ~50%, so "remove the table, save 17.25ns" is not a
+  supported inference in either direction. Size bd-dcrhgl sub-step A by its own shadow-run against a
+  DEPLOYED ratio, never by microbench subtraction.
+- **OPEN QUESTION, deliberately NOT banked as a rejection.** `SIZETRACK_GUARDED_HEADER_AB` read
+  `guarded_header=18.14` vs `table=17.99` ns/op, i.e. a 1.008 wall ratio suggesting the
+  "prove membership via the table, then read the header" intermediate saves nothing because it
+  retains the table lookup. That is structurally plausible but **it is a near-1.0 wall ratio with
+  no same-invocation A/A null and no counted mechanism, which is below this ledger's bar** — this
+  file's own pre-commit lint refused it as a reject row, correctly. Recorded here as an open
+  question. To bank it, re-run with an A/A null and bootstrap CI, or count the work directly
+  (instructions/cycles) to show the guarded path does not reduce it.
