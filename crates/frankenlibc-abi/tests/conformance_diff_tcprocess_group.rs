@@ -33,6 +33,8 @@ fn host_tcgetpgrp(lib: *mut c_void) -> TcgetpgrpFn {
     unsafe {
         let symbol = dlsym(lib, c"tcgetpgrp".as_ptr());
         assert!(!symbol.is_null(), "dlsym(tcgetpgrp) failed");
+        // SAFETY: libc's named `tcgetpgrp` symbol has exactly `TcgetpgrpFn`'s C ABI.
+        // ubs:ignore — the non-null symbol is resolved from libc by its exact ABI name.
         std::mem::transmute(symbol)
     }
 }
@@ -41,6 +43,8 @@ fn host_tcsetpgrp(lib: *mut c_void) -> TcsetpgrpFn {
     unsafe {
         let symbol = dlsym(lib, c"tcsetpgrp".as_ptr());
         assert!(!symbol.is_null(), "dlsym(tcsetpgrp) failed");
+        // SAFETY: libc's named `tcsetpgrp` symbol has exactly `TcsetpgrpFn`'s C ABI.
+        // ubs:ignore — the non-null symbol is resolved from libc by its exact ABI name.
         std::mem::transmute(symbol)
     }
 }
@@ -109,9 +113,12 @@ fn tcsetpgrp_invalid_and_non_tty_match_host() {
     let pgrp = unsafe { libc::getpgrp() };
     assert!(pgrp > 0, "getpgrp returned {pgrp}");
 
-    for (label, fd, expected_errno) in [
-        ("invalid fd", -1, libc::EBADF),
-        ("/dev/null", open_dev_null(), libc::ENOTTY),
+    for (label, fd, pgrp, expected_errno) in [
+        ("invalid fd", -1, pgrp, libc::EBADF),
+        ("/dev/null", open_dev_null(), pgrp, libc::ENOTTY),
+        // A non-terminal rejects the ioctl before inspecting the process
+        // group, so this remains a no-mutation errno-precedence probe.
+        ("/dev/null invalid pgrp", open_dev_null(), -1, libc::ENOTTY),
     ] {
         set_host_errno(0);
         let host_rc = unsafe { host(fd, pgrp) };
