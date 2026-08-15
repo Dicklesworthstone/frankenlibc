@@ -7,10 +7,8 @@
 //! to fall through to the EINVAL default (returning -1 as if unknown); _SC_THREADS
 //! returned a boolean 1 instead of the _POSIX_THREADS version. Now fixed.
 //!
-//! TWO keys are intentionally NOT matched (fl reports a more informative value):
-//!   _SC_GETGR_R_SIZE_MAX   fl=4096 (larger safe getgr*_r buffer hint) vs glibc 1024
-//!   _SC_GETPW_R_SIZE_MAX   fl=4096 vs glibc 1024
-//! and inherently-dynamic free-memory keys race between the two calls.
+//! Inherently-dynamic free-memory keys are intentionally omitted because they
+//! can race between the host and FrankenLibC calls.
 
 use frankenlibc_abi::unistd_abi as fu;
 unsafe extern "C" {
@@ -46,6 +44,8 @@ fn sysconf_matches_glibc() {
         _SC_2_LOCALEDEF,
         _SC_2_SW_DEV,
         _SC_IOV_MAX,
+        _SC_GETPW_R_SIZE_MAX,
+        _SC_GETGR_R_SIZE_MAX,
         _SC_THREADS,
         // _SC_THREAD_SAFE_FUNCTIONS was NOT in this list, and fl answered a
         // boolean 1 where glibc answers 200809 — the same defect as _SC_THREADS,
@@ -80,9 +80,6 @@ fn sysconf_matches_glibc() {
         div.len(),
         div.join("\n  ")
     );
-
-    // Pin the two intentional divergences so a regression on them is noticed.
-    assert_eq!(unsafe { fu::sysconf(libc::_SC_GETPW_R_SIZE_MAX) }, 4096);
 }
 
 #[test]

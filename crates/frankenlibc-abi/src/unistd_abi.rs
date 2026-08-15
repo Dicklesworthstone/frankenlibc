@@ -2555,6 +2555,19 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_RE_DUP_MAX => 32767,
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
+        // X/Open feature flags are supported on Linux/glibc.  Returning -1
+        // here is not an indeterminate result: it is the unknown-selector
+        // fallback and sets EINVAL.  These arms were deleted with the larger
+        // sysconf table in e634aff2a.
+        libc::_SC_XOPEN_UNIX => 1,
+        libc::_SC_XOPEN_ENH_I18N => 1,
+        libc::_SC_XOPEN_SHM => 1,
+        libc::_SC_XOPEN_LEGACY => 1,
+        libc::_SC_XOPEN_REALTIME => 1,
+        libc::_SC_XOPEN_REALTIME_THREADS => 1,
+        libc::_SC_XOPEN_XCU_VERSION => 4,
+        libc::_SC_REGEXP => 1,
+        libc::_SC_SHELL => 1,
         // _SC_THREADS and _SC_THREAD_SAFE_FUNCTIONS report the supported
         // _POSIX_THREADS / _POSIX_THREAD_SAFE_FUNCTIONS *version* (200809L), not
         // a boolean. Measured live on this host: glibc sysconf(67) and
@@ -2570,9 +2583,24 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
         libc::_SC_THREAD_DESTRUCTOR_ITERATIONS => 4,
-        libc::_SC_MONOTONIC_CLOCK => 1,
-        libc::_SC_CPUTIME => 1,
-        libc::_SC_THREAD_CPUTIME => 1,
+        libc::_SC_MONOTONIC_CLOCK => 200809,
+        libc::_SC_CPUTIME => 200809,
+        libc::_SC_THREAD_CPUTIME => 200809,
+        // POSIX thread/realtime options advertise the supported revision.
+        // The whole group was deleted by e634aff2a and otherwise falls through
+        // to the EINVAL default despite glibc reporting POSIX.1-2008 support.
+        libc::_SC_THREAD_ATTR_STACKADDR => 200809,
+        libc::_SC_THREAD_ATTR_STACKSIZE => 200809,
+        libc::_SC_THREAD_PRIORITY_SCHEDULING => 200809,
+        libc::_SC_THREAD_PRIO_INHERIT => 200809,
+        libc::_SC_THREAD_PRIO_PROTECT => 200809,
+        libc::_SC_THREAD_PROCESS_SHARED => 200809,
+        libc::_SC_BARRIERS => 200809,
+        libc::_SC_CLOCK_SELECTION => 200809,
+        libc::_SC_READER_WRITER_LOCKS => 200809,
+        libc::_SC_SPIN_LOCKS => 200809,
+        libc::_SC_SPAWN => 200809,
+        libc::_SC_TIMEOUTS => 200809,
         // POSIX option selectors expose their supported revision, not a
         // boolean. Linux glibc advertises POSIX.1-2008 for this family.
         libc::_SC_MAPPED_FILES => 200809,

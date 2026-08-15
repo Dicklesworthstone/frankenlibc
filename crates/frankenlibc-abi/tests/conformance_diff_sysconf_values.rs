@@ -93,6 +93,11 @@ fn stable_keys() -> Vec<(c_int, &'static str)> {
             libc::_SC_THREAD_DESTRUCTOR_ITERATIONS,
             "_SC_THREAD_DESTRUCTOR_ITERATIONS",
         ),
+        // These are POSIX option-version values, not boolean capability flags.
+        // Keep the sibling of _SC_THREADS in this independently-maintained
+        // stable-values gate: a return of `1` is a real regression even though
+        // it is non-negative.
+        (libc::_SC_THREAD_SAFE_FUNCTIONS, "_SC_THREAD_SAFE_FUNCTIONS"),
         (libc::_SC_THREADS, "_SC_THREADS"),
         (libc::_SC_VERSION, "_SC_VERSION"),
         (libc::_SC_2_VERSION, "_SC_2_VERSION"),
