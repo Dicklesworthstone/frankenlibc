@@ -72,37 +72,42 @@ fn internal_sched_priority_bounds_match_host_policies() {
 
 #[test]
 fn internal_sched_priority_invalid_policy_matches_host_errno() {
-    clear_host_errno();
-    let host_min = unsafe { host_sched_get_priority_min(-1) };
-    let host_min_err = host_errno();
+    // Exercise both signed boundary directions. A wrapper that only rejects a
+    // negative policy would otherwise pass the historical `-1` probe while
+    // still forwarding an arbitrary large positive value incorrectly.
+    for policy in [-1, c_int::MAX] {
+        clear_host_errno();
+        let host_min = unsafe { host_sched_get_priority_min(policy) };
+        let host_min_err = host_errno();
 
-    clear_fl_errno();
-    let fl_min = unsafe { fl_sched_get_priority_min(-1) };
-    let fl_min_err = fl_errno();
+        clear_fl_errno();
+        let fl_min = unsafe { fl_sched_get_priority_min(policy) };
+        let fl_min_err = fl_errno();
 
-    assert_eq!(
-        (fl_min, fl_min_err),
-        (host_min, host_min_err),
-        "__sched_get_priority_min(-1): fl=({fl_min}, {fl_min_err}) \
-         glibc=({host_min}, {host_min_err})"
-    );
-    assert_eq!((fl_min, fl_min_err), (-1, libc::EINVAL));
+        assert_eq!(
+            (fl_min, fl_min_err),
+            (host_min, host_min_err),
+            "__sched_get_priority_min({policy}): fl=({fl_min}, {fl_min_err}) \
+             glibc=({host_min}, {host_min_err})"
+        );
+        assert_eq!((host_min, host_min_err), (-1, libc::EINVAL));
 
-    clear_host_errno();
-    let host_max = unsafe { host_sched_get_priority_max(-1) };
-    let host_max_err = host_errno();
+        clear_host_errno();
+        let host_max = unsafe { host_sched_get_priority_max(policy) };
+        let host_max_err = host_errno();
 
-    clear_fl_errno();
-    let fl_max = unsafe { fl_sched_get_priority_max(-1) };
-    let fl_max_err = fl_errno();
+        clear_fl_errno();
+        let fl_max = unsafe { fl_sched_get_priority_max(policy) };
+        let fl_max_err = fl_errno();
 
-    assert_eq!(
-        (fl_max, fl_max_err),
-        (host_max, host_max_err),
-        "__sched_get_priority_max(-1): fl=({fl_max}, {fl_max_err}) \
-         glibc=({host_max}, {host_max_err})"
-    );
-    assert_eq!((fl_max, fl_max_err), (-1, libc::EINVAL));
+        assert_eq!(
+            (fl_max, fl_max_err),
+            (host_max, host_max_err),
+            "__sched_get_priority_max({policy}): fl=({fl_max}, {fl_max_err}) \
+             glibc=({host_max}, {host_max_err})"
+        );
+        assert_eq!((host_max, host_max_err), (-1, libc::EINVAL));
+    }
 }
 
 #[test]
