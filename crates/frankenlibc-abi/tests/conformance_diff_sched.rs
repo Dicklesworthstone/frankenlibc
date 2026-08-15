@@ -36,6 +36,9 @@ const SCHED_FIFO: c_int = 1;
 const SCHED_RR: c_int = 2;
 const SCHED_BATCH: c_int = 3;
 const SCHED_IDLE: c_int = 5;
+// Linux's policy 6 is not exported by `libc` on every supported target, but
+// its scheduler priority range is still a stable kernel ABI contract.
+const SCHED_DEADLINE: c_int = 6;
 
 #[derive(Debug)]
 struct Divergence {
@@ -74,6 +77,7 @@ fn diff_sched_get_priority_bounds_per_policy() {
         ("SCHED_RR", SCHED_RR),
         ("SCHED_BATCH", SCHED_BATCH),
         ("SCHED_IDLE", SCHED_IDLE),
+        ("SCHED_DEADLINE", SCHED_DEADLINE),
     ];
     for (name, policy) in policies {
         let min_fl = unsafe { fl_uni::sched_get_priority_min(*policy) };
