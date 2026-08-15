@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 use std::ffi::{CStr, CString, c_void};
-use std::sync::Mutex;
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
 use frankenlibc_abi::pthread_abi::{
@@ -70,8 +70,39 @@ fn nested_threading_force_native_overrides_restore_only_after_the_last_lease() {
     assert_eq!(
         __test_threading_force_native_override_state(),
         (first_previous, 0),
-        "the final lease must restore the original global mode"
+        "the final lease must restore the original worker mode"
     );
+}
+
+#[test]
+fn scoped_native_override_does_not_change_another_test_worker() {
+    let entered_native_scope = Arc::new(Barrier::new(2));
+    let release_native_scope = Arc::new(Barrier::new(2));
+    let entered_native_scope_for_worker = Arc::clone(&entered_native_scope);
+    let release_native_scope_for_worker = Arc::clone(&release_native_scope);
+
+    let worker = std::thread::spawn(move || {
+        let previous = pthread_threading_swap_force_native_for_tests();
+        assert_eq!(
+            __test_threading_force_native_override_state(),
+            (true, 1),
+            "the scoped override must be visible to its owning worker"
+        );
+        entered_native_scope_for_worker.wait();
+        release_native_scope_for_worker.wait();
+        pthread_threading_restore_for_tests(previous);
+    });
+
+    entered_native_scope.wait();
+    assert_eq!(
+        __test_threading_force_native_override_state(),
+        (false, 0),
+        "a native override on another test worker must not alter host dispatch here"
+    );
+    release_native_scope.wait();
+    worker
+        .join()
+        .expect("native override worker must not panic");
 }
 
 unsafe extern "C" fn start_return_arg(arg: *mut c_void) -> *mut c_void {

@@ -11535,7 +11535,9 @@ fn crypt_checksalt_classifies_known_prefixes() {
     let sha512 = CString::new("$6$saltsalt$").unwrap();
     let yescrypt = CString::new("$y$j9T$usesomesalt$").unwrap();
     let bcrypt = CString::new("$2b$05$abcdefghijklmnopqrstuu").unwrap();
+    let bcrypt_x = CString::new("$2x$05$abcdefghijklmnopqrstuu").unwrap();
     let scrypt = CString::new("$7$C6..../....SodiumChloride$").unwrap();
+    let alternate_md5 = CString::new("$md5$saltsalt$").unwrap();
     let bogus = CString::new("$plain$saltsalt$").unwrap();
     let des2 = CString::new("ab").unwrap();
 
@@ -11547,7 +11549,9 @@ fn crypt_checksalt_classifies_known_prefixes() {
     assert_eq!(unsafe { crypt_checksalt(sha512.as_ptr()) }, 0);
     assert_eq!(unsafe { crypt_checksalt(yescrypt.as_ptr()) }, 0);
     assert_eq!(unsafe { crypt_checksalt(bcrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(bcrypt_x.as_ptr()) }, 3);
     assert_eq!(unsafe { crypt_checksalt(scrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(alternate_md5.as_ptr()) }, 3);
     assert_eq!(unsafe { crypt_checksalt(bogus.as_ptr()) }, 1);
     assert_eq!(unsafe { crypt_checksalt(des2.as_ptr()) }, 1);
     // NULL input must not crash; returns CRYPT_SALT_INVALID.

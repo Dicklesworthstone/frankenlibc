@@ -111,17 +111,6 @@ static FORCE_NATIVE_MUTEX: std::sync::atomic::AtomicBool =
 static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Shared state for the scoped native-threading test override. Integration
-/// tests run in parallel, while the override must be process-wide so children
-/// inherit it. A depth count keeps one test from restoring host delegation
-/// while another still exercises the managed lifecycle.
-struct ThreadingTestOverrideState {
-    baseline: bool,
-    depth: usize,
-}
-
-static THREADING_TEST_OVERRIDE: LazyLock<Mutex<Option<ThreadingTestOverrideState>>> =
-    LazyLock::new(|| Mutex::new(None));
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 
 // ---------------------------------------------------------------------------
@@ -214,6 +203,8 @@ const THREAD_BACKEND_HOST: u8 = 2;
 
 struct PthreadTlsState {
     force_native_threading_override: Option<bool>,
+    threading_test_override_baseline: bool,
+    threading_test_override_depth: usize,
     threading_policy_depth: u32,
     thread_cancel_state: c_int,
     thread_cancel_type: c_int,
@@ -225,6 +216,8 @@ impl PthreadTlsState {
     fn new() -> Self {
         Self {
             force_native_threading_override: None,
+            threading_test_override_baseline: false,
+            threading_test_override_depth: 0,
             threading_policy_depth: 0,
             thread_cancel_state: PTHREAD_CANCEL_ENABLE_STATE,
             thread_cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
@@ -2406,48 +2399,49 @@ pub fn pthread_threading_force_native_for_tests() {
     with_pthread_tls(|tls| tls.force_native_threading_override = Some(true));
 }
 
-/// Test hook: force native threading and return the previous mode so callers
-/// can restore it afterwards.
+/// Test hook: force native threading on the calling test worker and return
+/// its previous mode so callers can restore it afterwards.
+///
+/// The test runner executes functions in parallel. Keeping this override in
+/// pthread TLS prevents one native-lifecycle test from changing the dispatch
+/// policy observed by an unrelated host-lifecycle test.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
-    let mut override_state = THREADING_TEST_OVERRIDE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let previous = FORCE_NATIVE_THREADING.load(Ordering::Acquire);
-    if let Some(state) = override_state.as_mut() {
-        state.depth += 1;
-    } else {
-        *override_state = Some(ThreadingTestOverrideState {
-            baseline: previous,
-            depth: 1,
-        });
-    }
-    FORCE_NATIVE_THREADING.store(true, Ordering::Release);
     with_pthread_tls(|tls| {
+        let previous = tls
+            .force_native_threading_override
+            .unwrap_or_else(global_force_native_threading_enabled);
+        if tls.threading_test_override_depth == 0 {
+            tls.threading_test_override_baseline = previous;
+        }
+        tls.threading_test_override_depth += 1;
         tls.force_native_threading_override = Some(true);
-    });
-    previous
+        previous
+    })
+    .unwrap_or_else(global_force_native_threading_enabled)
 }
 
 /// Test hook: restore the thread lifecycle delegation mode after temporarily
 /// forcing native behavior in a test.
 #[doc(hidden)]
 pub fn pthread_threading_restore_for_tests(previous: bool) {
-    let mut override_state = THREADING_TEST_OVERRIDE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(state) = override_state.as_mut() {
-        state.depth -= 1;
-        if state.depth == 0 {
-            FORCE_NATIVE_THREADING.store(state.baseline, Ordering::Release);
-            *override_state = None;
+    let restored = try_with_pthread_tls(|tls| {
+        if tls.threading_test_override_depth > 0 {
+            tls.threading_test_override_depth -= 1;
+            if tls.threading_test_override_depth == 0 {
+                tls.force_native_threading_override = Some(tls.threading_test_override_baseline);
+            } else {
+                tls.force_native_threading_override = Some(true);
+            }
+        } else {
+            tls.force_native_threading_override = Some(previous);
         }
-    } else {
-        // Preserve the pre-lease behavior for callers that still pair a
-        // direct one-off override with this compatibility restoration hook.
+    });
+    if restored.is_none() {
+        // Preserve the pre-lease behavior for callers whose TLS is already
+        // tearing down while a direct one-off override is being restored.
         FORCE_NATIVE_THREADING.store(previous, Ordering::Release);
     }
-    with_pthread_tls(|tls| tls.force_native_threading_override = Some(previous));
 }
 
 #[inline]
@@ -7118,13 +7112,15 @@ pub fn __test_host_thread_registry_replacement_survives_stale_prune(
     result
 }
 
-/// Exposes the process-wide test override state to integration tests.
+/// Exposes the calling worker's scoped test override state to integration tests.
 #[doc(hidden)]
 pub fn __test_threading_force_native_override_state() -> (bool, usize) {
-    let depth = THREADING_TEST_OVERRIDE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .map_or(0, |state| state.depth);
-    (FORCE_NATIVE_THREADING.load(Ordering::Acquire), depth)
+    try_with_pthread_tls(|tls| {
+        (
+            tls.force_native_threading_override
+                .unwrap_or_else(global_force_native_threading_enabled),
+            tls.threading_test_override_depth,
+        )
+    })
+    .unwrap_or_else(|| (global_force_native_threading_enabled(), 0))
 }
