@@ -9216,6 +9216,15 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         return std::ptr::null_mut();
     };
 
+    // A positive descriptor can still be closed.  Validate it before creating
+    // a registry-owned stream so fdopen() preserves glibc's EBADF contract for
+    // invalid descriptors regardless of whether the mode requests CLOEXEC.
+    if let Err(e) = unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFL, 0) } {
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
     if open_flags.cloexec {
         let existing = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
             Ok(flags) => flags,

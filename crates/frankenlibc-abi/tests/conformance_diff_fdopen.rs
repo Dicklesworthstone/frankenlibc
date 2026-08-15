@@ -107,3 +107,27 @@ fn fdopen_bad_mode_matches_glibc() {
         "fdopen(O_WRONLY fd, \"r\") acceptance: fl={fr:?} glibc={gr:?}"
     );
 }
+
+#[test]
+fn fdopen_closed_positive_fd_matches_glibc_ebadf() {
+    // A large positive value is outside the process descriptor table. This
+    // avoids a close/reuse race with parallel tests while exercising the path
+    // that used to create a registry stream for any fd >= 0.
+    const CLOSED_FD: c_int = 1_000_000_000;
+
+    unsafe { *libc::__errno_location() = 0 };
+    let glibc_stream = unsafe { g::fdopen(CLOSED_FD, c"r".as_ptr()) };
+    let glibc = (glibc_stream.is_null(), unsafe { *libc::__errno_location() });
+
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let fl_stream = unsafe { fl::fdopen(CLOSED_FD, c"r".as_ptr()) };
+    let frankenlibc = (fl_stream.is_null(), unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location()
+    });
+
+    assert_eq!(
+        frankenlibc, glibc,
+        "fdopen(closed positive fd): fl={frankenlibc:?} glibc={glibc:?}"
+    );
+    assert_eq!(glibc, (true, libc::EBADF), "glibc reference");
+}
