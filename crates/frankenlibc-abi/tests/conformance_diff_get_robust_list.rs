@@ -66,3 +66,24 @@ fn get_robust_list_null_outputs_match_host_syscall() {
     );
     assert_eq!(fl, (-1, libc::EFAULT));
 }
+
+#[test]
+fn get_robust_list_each_null_output_matches_host_syscall() {
+    let mut len = 0usize;
+    let host = host_get_robust_list(0, ptr::null_mut(), &mut len);
+    let fl = fl_get_robust_list(0, ptr::null_mut(), &mut len);
+    assert_eq!(
+        fl, host,
+        "get_robust_list(0,null,&mut len): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(host, (-1, libc::EFAULT));
+
+    let mut head = ptr::null_mut();
+    let host = host_get_robust_list(0, &mut head, ptr::null_mut());
+    let fl = fl_get_robust_list(0, &mut head, ptr::null_mut());
+    assert_eq!(
+        fl, host,
+        "get_robust_list(0,&mut head,null): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(host, (-1, libc::EFAULT));
+}
