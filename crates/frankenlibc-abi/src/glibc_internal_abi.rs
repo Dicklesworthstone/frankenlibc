@@ -5214,7 +5214,17 @@ pub unsafe extern "C" fn moncontrol(mode: c_int) {
 pub unsafe extern "C" fn monstartup(lowpc: c_ulong, highpc: c_ulong) {
     let _ = (lowpc, highpc);
 }
-// profil: native syscall
+type HostProfilFn = unsafe extern "C" fn(*mut c_void, SizeT, SizeT, c_uint) -> c_int;
+
+#[inline]
+unsafe fn host_profil_fn() -> Option<HostProfilFn> {
+    let addr = crate::host_resolve::resolve_host_symbol_raw("profil")?;
+    // SAFETY: the raw ELF resolver returns the host libc's `profil` symbol,
+    // whose ABI is exactly `HostProfilFn` on the supported Linux targets.
+    Some(unsafe { core::mem::transmute(addr) })
+}
+
+// profil: host sampling engine
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn profil(
     buf: *mut c_void,
@@ -5222,8 +5232,15 @@ pub unsafe extern "C" fn profil(
     offset: SizeT,
     scale: c_uint,
 ) -> c_int {
-    let _ = (buf, bufsiz, offset, scale);
-    0 // success no-op
+    let Some(host_profil) = (unsafe { host_profil_fn() }) else {
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return -1;
+    };
+    let result = unsafe { host_profil(buf, bufsiz, offset, scale) };
+    if result != 0 {
+        unsafe { set_abi_errno(crate::host_resolve::host_errno(libc::EINVAL)) };
+    }
+    result
 }
 /// `sprofil` — multi-region PC-sample profiling.
 ///

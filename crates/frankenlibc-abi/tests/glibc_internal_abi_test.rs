@@ -6130,6 +6130,61 @@ fn profiling_frequency_and_profil_safe_defaults_are_stable() {
     }
 }
 
+#[inline(never)]
+fn burn_profile_cpu() {
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+    let mut spin = 0u64;
+    loop {
+        for _ in 0..200_000 {
+            spin = std::hint::black_box(spin.wrapping_mul(6364136223846793005).wrapping_add(1));
+        }
+        assert_eq!(
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &raw mut usage) },
+            0
+        );
+        if usage.ru_utime.tv_sec > 0 || usage.ru_utime.tv_usec >= 250_000 {
+            break;
+        }
+    }
+    std::hint::black_box(spin);
+}
+
+#[test]
+fn profil_records_pc_samples() {
+    // `profil` owns the process's SIGPROF disposition while it is active.  A
+    // fork keeps that global state out of the parallel libtest parent and also
+    // proves the observable contract: burning CPU changes a caller buffer.
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        let mut samples = [0u16; 32_768];
+        let result = unsafe {
+            profil(
+                samples.as_mut_ptr().cast(),
+                std::mem::size_of_val(&samples),
+                burn_profile_cpu as usize,
+                u16::MAX as libc::c_uint,
+            )
+        };
+        if result != 0 {
+            unsafe { libc::_exit(1) };
+        }
+        burn_profile_cpu();
+        if unsafe { profil(ptr::null_mut(), 0, 0, 0) } != 0 {
+            unsafe { libc::_exit(2) };
+        }
+        let sampled = samples.iter().any(|&sample| sample != 0);
+        unsafe { libc::_exit(if sampled { 0 } else { 3 }) };
+    }
+
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert!(
+        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        "profil child failed with status {status:#x}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // __nss_lookup_function / __nss_hosts_lookup2 / __nss_next2
 // ---------------------------------------------------------------------------

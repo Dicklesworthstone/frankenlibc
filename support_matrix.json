@@ -20572,7 +20572,7 @@
     },
     {
       "symbol": "profil",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
