@@ -6,12 +6,14 @@
 //! formatting, and rejection of malformed labels/severities.
 
 use std::ffi::{c_char, c_int};
+use std::process::Command;
 use std::sync::Mutex;
 
 use frankenlibc_abi::unistd_abi as fl;
 
 const MM_PRINT: i64 = 0x100;
 const MM_CONSOLE: i64 = 0x200;
+const SEV_LEVEL_CHILD: &str = "FLC_FMTMSG_SEV_LEVEL_CHILD";
 
 unsafe extern "C" {
     fn fmtmsg(
@@ -407,4 +409,36 @@ fn diff_fmtmsg_rejects_invalid_label_and_severity() {
     ] {
         assert_matches_glibc(case);
     }
+}
+
+#[test]
+fn diff_fmtmsg_loads_sev_level_like_glibc() {
+    if std::env::var_os(SEV_LEVEL_CHILD).is_none() {
+        let status = Command::new(std::env::current_exe().expect("current test binary path"))
+            .arg("--exact")
+            .arg("diff_fmtmsg_loads_sev_level_like_glibc")
+            .env(SEV_LEVEL_CHILD, "1")
+            .env("SEV_LEVEL", "custom,0x5,CRITICAL")
+            .env("MSGVERB", "label:severity:text:action:tag")
+            .status()
+            .expect("spawn isolated SEV_LEVEL differential child");
+        assert!(
+            status.success(),
+            "isolated SEV_LEVEL child failed: {status}"
+        );
+        return;
+    }
+
+    // glibc snapshots SEV_LEVEL on its first fmtmsg call, so this must run in
+    // a fresh process.  The hex level also exercises its strtol(base=0) parser.
+    let _lock = FMTMSG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    assert_matches_glibc(FmtmsgCase {
+        name: "SEV_LEVEL custom severity",
+        classification: MM_PRINT,
+        label: Some("UX:app"),
+        severity: 5,
+        text: Some("configured"),
+        action: Some("inspect"),
+        tag: Some("util:018"),
+    });
 }

@@ -21233,6 +21233,7 @@ pub unsafe extern "C" fn fmtmsg(
     action: *const c_char,
     tag: *const c_char,
 ) -> c_int {
+    initialize_fmtmsg_severities();
     let label_bytes = match unsafe { read_optional_c_string_bytes(label) } {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -21942,6 +21943,93 @@ static FMTMSG_SEVERITIES: std::sync::LazyLock<
     std::sync::Mutex<crate::util::ArtifactHashMap<c_int, Vec<u8>>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(crate::util::artifact_hash_map()));
 
+static FMTMSG_SEV_LEVEL_INITIALIZED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Load `SEV_LEVEL` exactly once, immediately before the first `fmtmsg`.
+///
+/// glibc does not load this environment variable for `addseverity` alone;
+/// loading it here preserves both that ordering and its once-per-process
+/// snapshot semantics.
+fn initialize_fmtmsg_severities() {
+    FMTMSG_SEV_LEVEL_INITIALIZED.get_or_init(|| {
+        let environment = fmtmsg_severity_environment();
+        let mut severities = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
+        for (level, printstring) in environment {
+            // Environment entries are loaded after any earlier addseverity
+            // calls, matching glibc's internal_addseverity update order.
+            severities.insert(level, printstring);
+        }
+    });
+}
+
+/// Parse the `SEV_LEVEL` entries glibc loads before the first `fmtmsg` call.
+///
+/// Each colon-separated entry has the form `keyword,level,printstring`.  The
+/// keyword is descriptive only; a malformed entry is ignored, just as glibc
+/// ignores it while scanning the environment.
+fn fmtmsg_severity_environment() -> crate::util::ArtifactHashMap<c_int, Vec<u8>> {
+    let mut severities = crate::util::artifact_hash_map();
+    let Some(sev_level) = std::env::var_os("SEV_LEVEL") else {
+        return severities;
+    };
+
+    for entry in sev_level.as_encoded_bytes().split(|byte| *byte == b':') {
+        let Some((_keyword, rest)) = entry.split_once(|byte| *byte == b',') else {
+            continue;
+        };
+        let Some((level, printstring)) = rest.split_once(|byte| *byte == b',') else {
+            continue;
+        };
+        let Some(level) = parse_fmtmsg_severity_level(level) else {
+            continue;
+        };
+        if level > 4 {
+            severities.insert(level, printstring.to_vec());
+        }
+    }
+
+    severities
+}
+
+/// Parse the `strtol(..., 0)`-style severity number accepted by glibc's
+/// `SEV_LEVEL` parser.  The field must be consumed completely because the
+/// comma delimiter is already split out by the caller.
+fn parse_fmtmsg_severity_level(field: &[u8]) -> Option<c_int> {
+    let field = field.trim_ascii_start();
+    let (negative, digits) = match field {
+        [b'+', rest @ ..] => (false, rest),
+        [b'-', rest @ ..] => (true, rest),
+        _ => (false, field),
+    };
+    let (radix, digits) = match digits {
+        [b'0', b'x' | b'X', rest @ ..] => (16, rest),
+        [b'0', rest @ ..] if !rest.is_empty() => (8, rest),
+        _ => (10, digits),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+
+    let value = digits.iter().try_fold(0_i64, |value, byte| {
+        let digit = match byte {
+            b'0'..=b'9' => i64::from(byte - b'0'),
+            b'a'..=b'f' => i64::from(byte - b'a' + 10),
+            b'A'..=b'F' => i64::from(byte - b'A' + 10),
+            _ => return None,
+        };
+        if digit >= i64::from(radix) {
+            return None;
+        }
+        value.checked_mul(i64::from(radix))?.checked_add(digit)
+    })?;
+    let value = if negative {
+        value.checked_neg()?
+    } else {
+        value
+    };
+    c_int::try_from(value).ok()
+}
+
 /// XSI `addseverity` — register, replace or remove a custom message severity.
 ///
 /// This was a stub returning MM_OK unconditionally, commented "No-op is safe".
@@ -21970,7 +22058,11 @@ pub unsafe extern "C" fn addseverity(severity: c_int, string: *const c_char) -> 
     }
     let mut reg = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
     if string.is_null() {
-        return if reg.remove(&severity).is_some() { 0 } else { -1 };
+        return if reg.remove(&severity).is_some() {
+            0
+        } else {
+            -1
+        };
     }
     let Some(bytes) = (unsafe { read_c_string_bytes(string) }) else {
         return -1;
