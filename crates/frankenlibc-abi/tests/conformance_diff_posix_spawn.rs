@@ -244,31 +244,30 @@ fn diff_posix_spawnp_path_lookup() {
 
 #[test]
 fn diff_file_actions_init_destroy_round_trip() {
-    let mut fa = vec![0u8; FA_BYTES];
-    let r_init_fl = unsafe { fl::posix_spawn_file_actions_init(fa.as_mut_ptr() as *mut c_void) };
-    let r_destroy_fl =
-        unsafe { fl::posix_spawn_file_actions_destroy(fa.as_mut_ptr() as *mut c_void) };
+    let mut fa = FileActionsBuf([0u8; FA_BYTES]);
+    let r_init_fl = unsafe { fl::posix_spawn_file_actions_init(fa.0.as_mut_ptr().cast()) };
+    let r_destroy_fl = unsafe { fl::posix_spawn_file_actions_destroy(fa.0.as_mut_ptr().cast()) };
     assert_eq!(r_init_fl, 0, "fl init");
     assert_eq!(r_destroy_fl, 0, "fl destroy");
 
-    let mut fa = vec![0u8; FA_BYTES];
-    let r_init_lc = unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr() as *mut c_void) };
-    let r_destroy_lc = unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr() as *mut c_void) };
+    let mut fa = FileActionsBuf([0u8; FA_BYTES]);
+    let r_init_lc = unsafe { posix_spawn_file_actions_init(fa.0.as_mut_ptr().cast()) };
+    let r_destroy_lc = unsafe { posix_spawn_file_actions_destroy(fa.0.as_mut_ptr().cast()) };
     assert_eq!(r_init_lc, 0, "lc init");
     assert_eq!(r_destroy_lc, 0, "lc destroy");
 }
 
 #[test]
 fn diff_attr_init_destroy_round_trip() {
-    let mut a = vec![0u8; ATTR_BYTES];
-    let r_init_fl = unsafe { fl::posix_spawnattr_init(a.as_mut_ptr() as *mut c_void) };
-    let r_destroy_fl = unsafe { fl::posix_spawnattr_destroy(a.as_mut_ptr() as *mut c_void) };
+    let mut a = AttrBuf([0u8; ATTR_BYTES]);
+    let r_init_fl = unsafe { fl::posix_spawnattr_init(a.0.as_mut_ptr().cast()) };
+    let r_destroy_fl = unsafe { fl::posix_spawnattr_destroy(a.0.as_mut_ptr().cast()) };
     assert_eq!(r_init_fl, 0, "fl init");
     assert_eq!(r_destroy_fl, 0, "fl destroy");
 
-    let mut a = vec![0u8; ATTR_BYTES];
-    let r_init_lc = unsafe { posix_spawnattr_init(a.as_mut_ptr() as *mut c_void) };
-    let r_destroy_lc = unsafe { posix_spawnattr_destroy(a.as_mut_ptr() as *mut c_void) };
+    let mut a = AttrBuf([0u8; ATTR_BYTES]);
+    let r_init_lc = unsafe { posix_spawnattr_init(a.0.as_mut_ptr().cast()) };
+    let r_destroy_lc = unsafe { posix_spawnattr_destroy(a.0.as_mut_ptr().cast()) };
     assert_eq!(r_init_lc, 0, "lc init");
     assert_eq!(r_destroy_lc, 0, "lc destroy");
 }
@@ -289,21 +288,21 @@ fn diff_spawnattr_setflags_validates_flags() {
         0x1FF | 0x200, // valid bits + one invalid -> EINVAL
     ];
     for &flags in cases {
-        let mut a_fl = vec![0u8; ATTR_BYTES];
-        let mut a_g = vec![0u8; ATTR_BYTES];
+        let mut a_fl = AttrBuf([0u8; ATTR_BYTES]);
+        let mut a_g = AttrBuf([0u8; ATTR_BYTES]);
         assert_eq!(
-            unsafe { fl::posix_spawnattr_init(a_fl.as_mut_ptr() as *mut c_void) },
+            unsafe { fl::posix_spawnattr_init(a_fl.0.as_mut_ptr().cast()) },
             0
         );
         assert_eq!(
-            unsafe { posix_spawnattr_init(a_g.as_mut_ptr() as *mut c_void) },
+            unsafe { posix_spawnattr_init(a_g.0.as_mut_ptr().cast()) },
             0
         );
-        let r_fl = unsafe { fl::posix_spawnattr_setflags(a_fl.as_mut_ptr() as *mut c_void, flags) };
-        let r_g = unsafe { posix_spawnattr_setflags(a_g.as_mut_ptr() as *mut c_void, flags) };
+        let r_fl = unsafe { fl::posix_spawnattr_setflags(a_fl.0.as_mut_ptr().cast(), flags) };
+        let r_g = unsafe { posix_spawnattr_setflags(a_g.0.as_mut_ptr().cast(), flags) };
         assert_eq!(r_fl, r_g, "setflags(0x{flags:x}): fl={r_fl} glibc={r_g}");
-        unsafe { fl::posix_spawnattr_destroy(a_fl.as_mut_ptr() as *mut c_void) };
-        unsafe { posix_spawnattr_destroy(a_g.as_mut_ptr() as *mut c_void) };
+        unsafe { fl::posix_spawnattr_destroy(a_fl.0.as_mut_ptr().cast()) };
+        unsafe { posix_spawnattr_destroy(a_g.0.as_mut_ptr().cast()) };
     }
 }
 
@@ -312,30 +311,27 @@ fn diff_spawnattr_setflags_validates_flags() {
 #[test]
 fn diff_file_actions_addclose_negative_fd_is_ebadf() {
     for fd in [-1i32, 5] {
-        let mut fa_fl = vec![0u8; FA_BYTES];
-        let mut fa_g = vec![0u8; FA_BYTES];
+        let mut fa_fl = FileActionsBuf([0u8; FA_BYTES]);
+        let mut fa_g = FileActionsBuf([0u8; FA_BYTES]);
         assert_eq!(
-            unsafe { fl::posix_spawn_file_actions_init(fa_fl.as_mut_ptr() as *mut c_void) },
+            unsafe { fl::posix_spawn_file_actions_init(fa_fl.0.as_mut_ptr().cast()) },
             0
         );
         assert_eq!(
-            unsafe { posix_spawn_file_actions_init(fa_g.as_mut_ptr() as *mut c_void) },
+            unsafe { posix_spawn_file_actions_init(fa_g.0.as_mut_ptr().cast()) },
             0
         );
         let r_fl =
-            unsafe { fl::posix_spawn_file_actions_addclose(fa_fl.as_mut_ptr() as *mut c_void, fd) };
-        let r_g =
-            unsafe { posix_spawn_file_actions_addclose(fa_g.as_mut_ptr() as *mut c_void, fd) };
+            unsafe { fl::posix_spawn_file_actions_addclose(fa_fl.0.as_mut_ptr().cast(), fd) };
+        let r_g = unsafe { posix_spawn_file_actions_addclose(fa_g.0.as_mut_ptr().cast(), fd) };
         assert_eq!(r_fl, r_g, "addclose(fd={fd}): fl={r_fl} glibc={r_g}");
         // adddup2 with a negative oldfd must also match.
-        let d_fl = unsafe {
-            fl::posix_spawn_file_actions_adddup2(fa_fl.as_mut_ptr() as *mut c_void, fd, 1)
-        };
-        let d_g =
-            unsafe { posix_spawn_file_actions_adddup2(fa_g.as_mut_ptr() as *mut c_void, fd, 1) };
+        let d_fl =
+            unsafe { fl::posix_spawn_file_actions_adddup2(fa_fl.0.as_mut_ptr().cast(), fd, 1) };
+        let d_g = unsafe { posix_spawn_file_actions_adddup2(fa_g.0.as_mut_ptr().cast(), fd, 1) };
         assert_eq!(d_fl, d_g, "adddup2(oldfd={fd}): fl={d_fl} glibc={d_g}");
-        unsafe { fl::posix_spawn_file_actions_destroy(fa_fl.as_mut_ptr() as *mut c_void) };
-        unsafe { posix_spawn_file_actions_destroy(fa_g.as_mut_ptr() as *mut c_void) };
+        unsafe { fl::posix_spawn_file_actions_destroy(fa_fl.0.as_mut_ptr().cast()) };
+        unsafe { posix_spawn_file_actions_destroy(fa_g.0.as_mut_ptr().cast()) };
     }
 }
 
@@ -375,6 +371,25 @@ struct SpawnApi {
 /// check under a debug build depending on where the array happens to land.
 #[repr(C, align(16))]
 struct AttrBuf([u8; ATTR_BYTES]);
+
+/// A stand-in for `posix_spawn_file_actions_t` with the alignment the real
+/// type has. File-action initializers also store a word at offset zero.
+#[repr(C, align(16))]
+struct FileActionsBuf([u8; FA_BYTES]);
+
+#[test]
+fn spawn_abi_buffers_are_word_aligned() {
+    assert!(std::mem::align_of::<AttrBuf>() >= std::mem::align_of::<u64>());
+    assert!(std::mem::align_of::<FileActionsBuf>() >= std::mem::align_of::<u64>());
+
+    let attr = AttrBuf([0u8; ATTR_BYTES]);
+    let actions = FileActionsBuf([0u8; FA_BYTES]);
+    assert_eq!((attr.0.as_ptr() as usize) % std::mem::align_of::<u64>(), 0);
+    assert_eq!(
+        (actions.0.as_ptr() as usize) % std::mem::align_of::<u64>(),
+        0
+    );
+}
 
 /// `(comm, session id)` from `/proc/<pid>/stat`. `comm` is delimited by the
 /// first `(` and the LAST `)`, since a program name may itself contain either;
