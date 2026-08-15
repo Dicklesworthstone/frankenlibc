@@ -206,6 +206,42 @@ fn test_realloc_same_small_size_class_shrink_updates_bounds_in_place() {
 }
 
 #[test]
+fn test_realloc_same_small_size_class_grow_reuses_host_capacity_in_place() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    // glibc rounds this request to 248 bytes. Both requests remain in the
+    // FrankenLibC 256-byte class, so the fast path must retain the pointer
+    // while tightening the tracked logical range to the larger request.
+    let p = unsafe { malloc(241) };
+    assert!(!p.is_null());
+    unsafe {
+        let slice = std::slice::from_raw_parts_mut(p as *mut u8, 241);
+        for (i, byte) in slice.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(5).wrapping_add(3);
+        }
+    }
+
+    let p2 = unsafe { realloc(p, 248) };
+    assert_eq!(
+        p2, p,
+        "same-size-class growth within host capacity should stay in place"
+    );
+    assert_eq!(
+        malloc_known_remaining_for_tests(p2.cast_const()),
+        Some(248),
+        "in-place growth must widen fallback bounds metadata"
+    );
+    let prefix = unsafe { std::slice::from_raw_parts(p2 as *const u8, 241) };
+    for (i, &byte) in prefix.iter().enumerate() {
+        assert_eq!(byte, (i as u8).wrapping_mul(5).wrapping_add(3));
+    }
+    unsafe {
+        p2.cast::<u8>().add(247).write(0xD7);
+        assert_eq!(p2.cast::<u8>().add(247).read(), 0xD7);
+        free(p2);
+    }
+}
+
+#[test]
 fn test_segment_bounds_reject_rounded_class_slack() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     signal_runtime_ready_for_tests();

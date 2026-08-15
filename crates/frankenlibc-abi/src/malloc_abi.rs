@@ -41,12 +41,14 @@ type HostCallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 type HostReallocFn = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
 type HostFreeFn = unsafe extern "C" fn(*mut c_void);
 type HostMemalignFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
+type HostMallocUsableSizeFn = unsafe extern "C" fn(*mut c_void) -> usize;
 
 static HOST_MALLOC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_CALLOC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_REALLOC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FREE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_MEMALIGN_FN: OnceLock<usize> = OnceLock::new();
+static HOST_MALLOC_USABLE_SIZE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_ALLOCATOR_RAW_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
 static HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
 
@@ -90,6 +92,8 @@ const NATIVE_REENTRY_REALLOC: u8 = 1 << 2;
 const NATIVE_REENTRY_FREE: u8 = 1 << 3;
 #[allow(dead_code)]
 const NATIVE_REENTRY_MEMALIGN: u8 = 1 << 4;
+#[allow(dead_code)]
+const NATIVE_REENTRY_MALLOC_USABLE_SIZE: u8 = 1 << 5;
 
 struct AllocatorReentrySlot {
     tid: AtomicI32,
@@ -1861,6 +1865,11 @@ host_fn_accessor!(host_calloc_fn, HOST_CALLOC_FN, HostCallocFn);
 host_fn_accessor!(host_realloc_fn, HOST_REALLOC_FN, HostReallocFn);
 host_fn_accessor!(host_free_fn, HOST_FREE_FN, HostFreeFn);
 host_fn_accessor!(host_memalign_fn, HOST_MEMALIGN_FN, HostMemalignFn);
+host_fn_accessor!(
+    host_malloc_usable_size_fn,
+    HOST_MALLOC_USABLE_SIZE_FN,
+    HostMallocUsableSizeFn
+);
 
 /// Resolve and cache host allocator symbols.
 /// Called from __libc_start_main AFTER _dl_init, when dlvsym is safe.
@@ -1881,12 +1890,15 @@ pub(crate) fn prewarm_host_allocator_symbols() {
             .map(|host_fn| host_fn as usize)
             .unwrap_or_else(|| resolve_host_allocator_symbol(b"free\0") as usize);
         let memalign_ptr = resolve_host_allocator_symbol(b"memalign\0") as usize;
+        let malloc_usable_size_ptr =
+            resolve_host_allocator_symbol(b"malloc_usable_size\0") as usize;
 
         let _ = HOST_MALLOC_FN.get_or_init(|| malloc_ptr);
         let _ = HOST_CALLOC_FN.get_or_init(|| calloc_ptr);
         let _ = HOST_REALLOC_FN.get_or_init(|| realloc_ptr);
         let _ = HOST_FREE_FN.get_or_init(|| free_ptr);
         let _ = HOST_MEMALIGN_FN.get_or_init(|| memalign_ptr);
+        let _ = HOST_MALLOC_USABLE_SIZE_FN.get_or_init(|| malloc_usable_size_ptr);
     }
     let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
 }
@@ -2124,6 +2136,41 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         } else {
             unsafe { bump_alloc(size) }
         }
+    }
+}
+
+/// Returns the host allocator's physical capacity for a fallback-tracked pointer.
+///
+/// A pointer reaches this helper only after the fallback table proved it came from the
+/// host allocator.  Returning `None` makes callers retain the conservative realloc
+/// path when resolution is unavailable or this call would re-enter the allocator.
+#[inline]
+unsafe fn native_libc_malloc_usable_size(ptr: *mut c_void) -> Option<usize> {
+    #[cfg(feature = "standalone")]
+    {
+        let _ = ptr;
+        None
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC_USABLE_SIZE)
+        else {
+            return None;
+        };
+        let host_ptr = if let Some(&host_ptr) = HOST_MALLOC_USABLE_SIZE_FN.get() {
+            host_ptr
+        } else {
+            let resolved =
+                unsafe { resolve_host_allocator_symbol(b"malloc_usable_size\0") as usize };
+            let _ = HOST_MALLOC_USABLE_SIZE_FN.set(resolved);
+            resolved
+        };
+        if host_ptr == 0 {
+            return None;
+        }
+        let host_malloc_usable_size: HostMallocUsableSizeFn =
+            unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host malloc_usable_size symbol is resolved as this exact ABI fn pointer.
+        Some(unsafe { host_malloc_usable_size(ptr) })
     }
 }
 
@@ -4179,9 +4226,20 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     if strict_allocator_host_path_active() {
         if let Some(old_size) = fallback_size_for_slot(reentry_guard.slot, ptr) {
             let req = size.max(1);
-            if req == old_size || (req < old_size && same_small_malloc_size_class(req, old_size)) {
+            let same_class = same_small_malloc_size_class(req, old_size);
+            let can_reuse = req == old_size
+                || (req < old_size && same_class)
+                || (req > old_size
+                    && same_class
+                    && unsafe { native_libc_malloc_usable_size(ptr) }
+                        .is_some_and(|capacity| req <= capacity));
+            if can_reuse {
                 if req != old_size {
-                    fallback_insert_sized(ptr, req);
+                    let updated = fallback_update_size(ptr, req);
+                    debug_assert!(
+                        updated,
+                        "fallback lookup and update must agree for a live pointer"
+                    );
                     record_free_stats(Some(reentry_guard.slot), old_size);
                     record_alloc_stats(Some(reentry_guard.slot), req);
                 }
