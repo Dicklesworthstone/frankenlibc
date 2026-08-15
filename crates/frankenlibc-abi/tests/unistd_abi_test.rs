@@ -11525,6 +11525,9 @@ fn crypt_checksalt_classifies_known_prefixes() {
     let md5 = CString::new("$1$saltsalt$").unwrap();
     let sha256 = CString::new("$5$rounds=5000$saltsalt$").unwrap();
     let sha512 = CString::new("$6$saltsalt$").unwrap();
+    let yescrypt = CString::new("$y$j9T$usesomesalt$").unwrap();
+    let bcrypt = CString::new("$2b$05$abcdefghijklmnopqrstuu").unwrap();
+    let scrypt = CString::new("$7$C6..../....SodiumChloride$").unwrap();
     let bogus = CString::new("$plain$saltsalt$").unwrap();
     let des2 = CString::new("ab").unwrap();
 
@@ -11534,10 +11537,40 @@ fn crypt_checksalt_classifies_known_prefixes() {
     assert_eq!(unsafe { crypt_checksalt(md5.as_ptr()) }, 3);
     assert_eq!(unsafe { crypt_checksalt(sha256.as_ptr()) }, 3);
     assert_eq!(unsafe { crypt_checksalt(sha512.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(yescrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(bcrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(scrypt.as_ptr()) }, 0);
     assert_eq!(unsafe { crypt_checksalt(bogus.as_ptr()) }, 1);
     assert_eq!(unsafe { crypt_checksalt(des2.as_ptr()) }, 1);
     // NULL input must not crash; returns CRYPT_SALT_INVALID.
     assert_eq!(unsafe { crypt_checksalt(std::ptr::null()) }, 1);
+}
+
+#[test]
+fn crypt_delegates_modern_bcrypt_to_libxcrypt() {
+    use frankenlibc_abi::unistd_abi::crypt;
+
+    let key = CString::new("correct horse battery staple").unwrap();
+    let salt = CString::new("$2b$05$abcdefghijklmnopqrstuu").unwrap();
+    let hash = unsafe { crypt(key.as_ptr(), salt.as_ptr()) };
+
+    assert!(
+        !hash.is_null(),
+        "libxcrypt crypt must return a static result"
+    );
+    let hash = unsafe { CStr::from_ptr(hash) }.to_bytes();
+    assert!(
+        hash.starts_with(b"$2b$"),
+        "bcrypt result must retain its method"
+    );
+    assert_ne!(
+        hash, b"*0",
+        "supported bcrypt must not return failure token"
+    );
+    assert_ne!(
+        hash, b"*1",
+        "supported bcrypt must not return failure token"
+    );
 }
 
 #[test]

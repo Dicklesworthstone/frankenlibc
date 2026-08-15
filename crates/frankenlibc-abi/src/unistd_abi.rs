@@ -8418,6 +8418,53 @@ fn with_crypt_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
     }
 }
 
+/// Resolve libxcrypt's `crypt` implementation without ever resolving our own
+/// interposed export. Modern distributions ship yescrypt/bcrypt/scrypt in
+/// libcrypt rather than libc, while the native implementation below owns the
+/// historical SHA-based methods.
+fn host_extended_crypt() -> Option<unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char>
+{
+    type CryptFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
+    static HOST_CRYPT: std::sync::LazyLock<Option<CryptFn>> = std::sync::LazyLock::new(|| {
+        // Keep the handle open for the process lifetime: the cached function
+        // pointer is only valid while libcrypt remains loaded.
+        type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
+        let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
+        // SAFETY: the resolver reads the loaded host libc's ELF symbol table;
+        // these two POSIX loader symbols have the declared ABIs.
+        let host_dlopen: DlopenFn = unsafe { core::mem::transmute(dlopen_addr) }; // ubs:ignore — resolved host dlopen ABI
+        let host_dlsym: DlsymFn = unsafe { core::mem::transmute(dlsym_addr) }; // ubs:ignore — resolved host dlsym ABI
+        let handle = unsafe {
+            host_dlopen(
+                c"libcrypt.so.1".as_ptr(),
+                libc::RTLD_LAZY | libc::RTLD_LOCAL,
+            )
+        };
+        if handle.is_null() {
+            return None;
+        }
+        let symbol = unsafe { host_dlsym(handle, c"crypt".as_ptr()) };
+        if symbol.is_null() {
+            return None;
+        }
+        // SAFETY: `dlsym` returned libxcrypt's `crypt` symbol from the
+        // libcrypt handle above, whose ABI is exactly `CryptFn`.
+        Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt ABI
+    });
+    *HOST_CRYPT
+}
+
+fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<Vec<u8>> {
+    let host_crypt = host_extended_crypt()?;
+    // SAFETY: caller already supplied non-null, NUL-terminated C strings;
+    // libxcrypt's crypt contract accepts those borrowed inputs.
+    let result = unsafe { host_crypt(key, salt) };
+    // SAFETY: a non-null libxcrypt result is a NUL-terminated static buffer.
+    unsafe { read_c_string_bytes(result) }
+}
+
 /// POSIX `crypt` — one-way password hashing.
 ///
 /// Native implementation supporting:
@@ -8451,10 +8498,18 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
     } else {
-        // Traditional DES or unknown prefix — not implemented here. Report it the
-        // way libxcrypt reports a rejected setting, not with NULL. (Adding the
-        // missing algorithms themselves is bd-c6ykz1.)
-        return crypt_failure_token(&salt_bytes);
+        let Some(hash_bytes) = crypt_extended_with_host(key, salt) else {
+            return crypt_failure_token(&salt_bytes);
+        };
+        if hash_bytes.len() >= 256 {
+            unsafe { set_abi_errno(errno::ERANGE) };
+            return crypt_failure_token(&salt_bytes);
+        }
+        return with_crypt_buf(|buf| {
+            buf[..hash_bytes.len()].copy_from_slice(&hash_bytes);
+            buf[hash_bytes.len()] = 0;
+            buf.as_mut_ptr() as *mut c_char
+        });
     };
 
     match result {
@@ -8584,7 +8639,14 @@ pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
     const CRYPT_SALT_OK: c_int = 0;
     const CRYPT_SALT_INVALID: c_int = 1;
     const CRYPT_SALT_METHOD_LEGACY: c_int = 3;
-    if bytes.starts_with(b"$6$") {
+    if bytes.starts_with(b"$6$")
+        || bytes.starts_with(b"$y$")
+        || bytes.starts_with(b"$gy$")
+        || bytes.starts_with(b"$2a$")
+        || bytes.starts_with(b"$2b$")
+        || bytes.starts_with(b"$2y$")
+        || bytes.starts_with(b"$7$")
+    {
         CRYPT_SALT_OK
     } else if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") {
         CRYPT_SALT_METHOD_LEGACY
