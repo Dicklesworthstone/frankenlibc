@@ -26808,12 +26808,19 @@ pub unsafe extern "C" fn gethostent_r(
             let primary = &hostnames[0];
             let effective_buflen = tracked_output_capacity(buf, buflen);
 
-            // Layout in buf: name + NUL + addr_data + align + addr_list[2] + alias_list[n+1]
+            // Layout in buf: primary name + aliases + addr_data + align +
+            // addr_list[2] + alias_list[n+1].
             let name_end = match primary.len().checked_add(1) {
                 Some(offset) => offset,
                 None => return libc::ERANGE,
             };
-            let addr_off = name_end;
+            let aliases_end = match hostnames[1..].iter().try_fold(name_end, |end, alias| {
+                end.checked_add(alias.len().checked_add(1)?)
+            }) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+            let addr_off = aliases_end;
             let addr_end = match addr_off.checked_add(alen) {
                 Some(offset) => offset,
                 None => return libc::ERANGE,
@@ -26865,10 +26872,25 @@ pub unsafe extern "C" fn gethostent_r(
                 *(buf_u8.add(addr_list_off + ptr_size) as *mut *mut c_char) = std::ptr::null_mut();
             }
 
-            // aliases: pack remaining hostnames (skip for simplicity — would need
-            // more buffer space accounting). Just set empty alias list.
+            // aliases: every hostname after the first is an alias of the
+            // canonical primary name. The strings occupy the bytes between the
+            // primary name and the binary address; the pointer array follows
+            // the address list and is NULL terminated per `hostent`.
             unsafe {
-                *(buf_u8.add(alias_list_off) as *mut *mut c_char) = std::ptr::null_mut();
+                let mut alias_off = name_end;
+                for (slot, alias) in hostnames[1..].iter().enumerate() {
+                    let alias_ptr = buf_u8.add(alias_off).cast::<c_char>();
+                    std::ptr::copy_nonoverlapping(
+                        alias.as_ptr(),
+                        alias_ptr.cast::<u8>(),
+                        alias.len(),
+                    );
+                    *alias_ptr.add(alias.len()) = 0;
+                    *(buf_u8.add(alias_list_off + slot * ptr_size) as *mut *mut c_char) = alias_ptr;
+                    alias_off += alias.len() + 1;
+                }
+                *(buf_u8.add(alias_list_off + alias_count * ptr_size) as *mut *mut c_char) =
+                    std::ptr::null_mut();
             }
 
             let ent = result_buf.cast::<libc::hostent>();

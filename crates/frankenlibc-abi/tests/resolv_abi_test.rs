@@ -4872,6 +4872,10 @@ fn nss_files_gethostbyname_uses_hosts_backend() {
             unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
             b"nss-name"
         );
+        let alias = unsafe { *hostent.h_aliases };
+        assert!(!alias.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(alias) }.to_bytes(), b"nss-alias");
+        assert!(unsafe { *hostent.h_aliases.add(1) }.is_null());
         assert_eq!(hostent.h_addrtype, libc::AF_INET);
         assert_eq!(hostent.h_length, 4);
         let addr_ptr = unsafe { *hostent.h_addr_list };
