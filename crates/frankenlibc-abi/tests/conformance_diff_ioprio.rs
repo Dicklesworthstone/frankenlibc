@@ -11,6 +11,8 @@ use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
 use frankenlibc_abi::unistd_abi as fl;
 use std::ffi::{c_int, c_long};
 
+const IOPRIO_WHO_PROCESS: c_int = 1;
+
 fn host_errno() -> c_int {
     unsafe { *libc::__errno_location() }
 }
@@ -62,4 +64,27 @@ fn ioprio_invalid_which_matches_host_syscall() {
         );
         assert_eq!(host_set, (-1, libc::EINVAL));
     }
+}
+
+#[test]
+fn ioprio_get_current_process_matches_host_without_changing_errno() {
+    // This is a query only: `who = 0` selects the current process and does
+    // not change the process I/O priority.
+    set_host_errno(libc::EAGAIN);
+    let host_rc =
+        unsafe { libc::syscall(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, 0) as c_long } as c_int;
+    let host = (host_rc, host_errno());
+
+    set_fl_errno(libc::EAGAIN);
+    let fl_result = (unsafe { fl::ioprio_get(IOPRIO_WHO_PROCESS, 0) }, fl_errno());
+
+    assert_eq!(
+        fl_result, host,
+        "ioprio_get(current): fl={fl_result:?} host={host:?}"
+    );
+    assert!(
+        host.0 >= 0,
+        "host ioprio_get(current) must succeed: {host:?}"
+    );
+    assert_eq!(host.1, libc::EAGAIN);
 }
