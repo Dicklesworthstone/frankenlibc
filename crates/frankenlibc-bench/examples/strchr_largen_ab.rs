@@ -183,3 +183,37 @@ fn main() {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{NULL_BOUND, SquareRow};
+
+    fn row(ratio: f64, null_fl: f64, null_glibc: f64) -> SquareRow {
+        SquareRow {
+            fl: 1.0,
+            glibc: 1.0,
+            ratio,
+            null_fl,
+            null_glibc,
+            checksum: 0,
+        }
+    }
+
+    #[test]
+    fn balanced_square_refuses_a_contemporaneously_unstable_null() {
+        assert_eq!(
+            row(0.75, 1.0 + NULL_BOUND + 0.001, 1.0).verdict(),
+            "NULL-FAILED"
+        );
+        assert_eq!(
+            row(1.25, 1.0, 1.0 - NULL_BOUND - 0.001).verdict(),
+            "NULL-FAILED"
+        );
+    }
+
+    #[test]
+    fn balanced_square_labels_only_stable_rows_admissible() {
+        assert_eq!(row(0.75, 1.0, 1.0).verdict(), "ADMISSIBLE FL_FASTER");
+        assert_eq!(row(1.25, 1.0, 1.0).verdict(), "ADMISSIBLE FL_SLOWER");
+    }
+}
