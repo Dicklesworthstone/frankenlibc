@@ -976,6 +976,40 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     const BLOCK: usize = PANEL * 4; // 256
     let count = n.min(s.len());
     let scan = &s[..count];
+
+    // Two bounded probes cover the complete 8..31 element range. A matching
+    // first probe always wins; after it misses, an overlapping tail probe can
+    // only find a later match. This keeps first-match semantics while avoiding
+    // the scalar-only 8..15 range and the 16-lane loop-plus-tail path for the
+    // next size class.
+    if (16..32).contains(&count) {
+        let target = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
+        let first = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(&scan[..16]);
+        let first_matches = first.simd_eq(target).to_bitmask();
+        if first_matches != 0 {
+            return Some(first_matches.trailing_zeros() as usize);
+        }
+
+        let tail_base = count - WIDE_MEMCHR_SIMD_LANES;
+        let tail = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(&scan[tail_base..]);
+        let tail_matches = tail.simd_eq(target).to_bitmask();
+        return (tail_matches != 0).then(|| tail_base + tail_matches.trailing_zeros() as usize);
+    }
+    if (8..16).contains(&count) {
+        const SMALL_LANES: usize = 8;
+        let target = Simd::<u32, SMALL_LANES>::splat(c);
+        let first = Simd::<u32, SMALL_LANES>::from_slice(&scan[..SMALL_LANES]);
+        let first_matches = first.simd_eq(target).to_bitmask();
+        if first_matches != 0 {
+            return Some(first_matches.trailing_zeros() as usize);
+        }
+
+        let tail_base = count - SMALL_LANES;
+        let tail = Simd::<u32, SMALL_LANES>::from_slice(&scan[tail_base..]);
+        let tail_matches = tail.simd_eq(target).to_bitmask();
+        return (tail_matches != 0).then(|| tail_base + tail_matches.trailing_zeros() as usize);
+    }
+
     let target = Simd::<u32, PANEL>::splat(c);
     let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
@@ -2295,6 +2329,33 @@ mod tests {
         let haystack = [1u32, 2, 3, 4];
         assert_eq!(wmemchr(&haystack, 3, 4), Some(2));
         assert_eq!(wmemchr(&haystack, 5, 4), None);
+    }
+
+    #[test]
+    fn test_wmemchr_small_simd_ranges_preserve_first_match() {
+        const NEEDLE: u32 = 0xfeed_beef;
+        for count in [8usize, 9, 15, 16, 17, 31] {
+            let mut haystack = vec![0x41u32; count];
+            assert_eq!(wmemchr(&haystack, NEEDLE, count), None, "count={count}");
+
+            for pos in [0usize, count / 2, count - 1] {
+                haystack[pos] = NEEDLE;
+                assert_eq!(
+                    wmemchr(&haystack, NEEDLE, count),
+                    Some(pos),
+                    "count={count} pos={pos}"
+                );
+                haystack[pos] = 0x41;
+            }
+
+            haystack[count / 2] = NEEDLE;
+            haystack[count - 1] = NEEDLE;
+            assert_eq!(
+                wmemchr(&haystack, NEEDLE, count),
+                Some(count / 2),
+                "count={count} returns first overlapping-probe match"
+            );
+        }
     }
 
     #[test]
