@@ -101,12 +101,12 @@
       "inputs": {
         "symbol": "fsmount",
         "scenario": "unprivileged_mount_request_without_mount_creation",
-        "expected": "FSMOUNT_PERMISSION_GATE_ERROR_EPERM",
-        "oracle_source": "FrankenLibC fsmount unprivileged errno class",
+        "expected": "FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR",
+        "oracle_source": "raw fsmount(2) syscall on the same invalid fd in the same process. fsmount checks CAP_SYS_ADMIN before validating fs_fd, so the errno is privilege-dependent (EPERM unprivileged, EBADF as root) and no constant is portable; parity with the kernel is.",
         "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
       },
-      "expected_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "expected_errno": 1,
+      "expected_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "expected_errno": 0,
       "mode": "strict"
     },
     {
@@ -116,12 +116,12 @@
       "inputs": {
         "symbol": "fsmount",
         "scenario": "unprivileged_mount_request_without_mount_creation",
-        "expected": "FSMOUNT_PERMISSION_GATE_ERROR_EPERM",
-        "oracle_source": "FrankenLibC fsmount unprivileged errno class",
+        "expected": "FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR",
+        "oracle_source": "raw fsmount(2) syscall on the same invalid fd in the same process. fsmount checks CAP_SYS_ADMIN before validating fs_fd, so the errno is privilege-dependent (EPERM unprivileged, EBADF as root) and no constant is portable; parity with the kernel is.",
         "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
       },
-      "expected_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "expected_errno": 1,
+      "expected_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "expected_errno": 0,
       "mode": "hardened"
     },
     {
@@ -131,12 +131,12 @@
       "inputs": {
         "symbol": "fsopen",
         "scenario": "unprivileged_fsopen_without_fs_type_capture",
-        "expected": "FSOPEN_PERMISSION_GATE_ERROR_EPERM",
-        "oracle_source": "FrankenLibC fsopen unprivileged errno class",
+        "expected": "FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR",
+        "oracle_source": "raw fsopen(2) syscall on the same input in the same process. The new mount API checks CAP_SYS_ADMIN before validating its other arguments, so the errno is privilege-dependent (measured: EPERM at euid 1000, and fsmount reaches EBADF as root) and no constant is portable; parity with the kernel is.",
         "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
       },
-      "expected_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "expected_errno": 1,
+      "expected_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "expected_errno": 0,
       "mode": "strict"
     },
     {
@@ -146,12 +146,12 @@
       "inputs": {
         "symbol": "fsopen",
         "scenario": "unprivileged_fsopen_without_fs_type_capture",
-        "expected": "FSOPEN_PERMISSION_GATE_ERROR_EPERM",
-        "oracle_source": "FrankenLibC fsopen unprivileged errno class",
+        "expected": "FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR",
+        "oracle_source": "raw fsopen(2) syscall on the same input in the same process. The new mount API checks CAP_SYS_ADMIN before validating its other arguments, so the errno is privilege-dependent (measured: EPERM at euid 1000, and fsmount reaches EBADF as root) and no constant is portable; parity with the kernel is.",
         "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
       },
-      "expected_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "expected_errno": 1,
+      "expected_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "expected_errno": 0,
       "mode": "hardened"
     },
     {
@@ -161,12 +161,12 @@
       "inputs": {
         "symbol": "fspick",
         "scenario": "unprivileged_fspick_without_mount_tree_capture",
-        "expected": "FSPICK_PERMISSION_GATE_ERROR_EPERM",
-        "oracle_source": "FrankenLibC fspick unprivileged errno class",
+        "expected": "FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR",
+        "oracle_source": "raw fspick(2) syscall on the same input in the same process. The new mount API checks CAP_SYS_ADMIN before validating its other arguments, so the errno is privilege-dependent (measured: EPERM at euid 1000, and fsmount reaches EBADF as root) and no constant is portable; parity with the kernel is.",
         "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
       },
-      "expected_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "expected_errno": 1,
+      "expected_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "expected_errno": 0,
       "mode": "strict"
     },
     {
@@ -176,12 +176,12 @@
       "inputs": {
         "symbol": "fspick",
         "scenario": "unprivileged_fspick_without_mount_tree_capture",
-        "expected": "FSPICK_PERMISSION_GATE_ERROR_EPERM",
-        "oracle_source": "FrankenLibC fspick unprivileged errno class",
+        "expected": "FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR",
+        "oracle_source": "raw fspick(2) syscall on the same input in the same process. The new mount API checks CAP_SYS_ADMIN before validating its other arguments, so the errno is privilege-dependent (measured: EPERM at euid 1000, and fsmount reaches EBADF as root) and no constant is portable; parity with the kernel is.",
         "ambient_state_policy": "forbid_stream_fd_path_pid_account_xattr_ifaddrs_terminal_stderr_or_file_state_capture"
       },
-      "expected_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "expected_errno": 1,
+      "expected_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "expected_errno": 0,
       "mode": "hardened"
     },
     {

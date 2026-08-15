@@ -22302,22 +22302,86 @@ fn fsetxattr_fixture_actual() -> Result<String, String> {
     Ok(invalid_fd_error_result("FSETXATTR_INVALID_FD", rc))
 }
 
+/// Compare an fl mount-API entrypoint against the raw syscall on the same input, in the
+/// same process, and report a parity verdict.
+///
+/// The new mount API (fsopen/fsmount/fspick) checks CAP_SYS_ADMIN BEFORE it validates its
+/// other arguments, so a deliberately-invalid argument produces a PRIVILEGE-DEPENDENT
+/// errno. Measured: unprivileged (euid 1000) all three return EPERM, because the
+/// capability gate rejects first and the invalid argument is never reached; on a root CI
+/// worker fsmount(-1, ..) returns EBADF, because the gate passes and the fd is then
+/// examined. No errno constant is portable across those two hosts -- these arms pinned
+/// EPERM, which made them unpassable wherever they actually run.
+///
+/// Parity with the kernel IS portable, and is strictly stronger than the constant it
+/// replaces: it still fails a wrapper that invents an fd (`fl_fd >= 0`), swallows the
+/// error, or reports a different errno than the kernel just reported for the same call.
+///
+/// The two arms read DIFFERENT errno slots on purpose: the raw syscall reports through the
+/// host's slot and fl through its own. `poll_event_loop_errno` only ever reads fl's, so
+/// using it for the host arm silently yields fl's freshly-reset 0.
+fn mount_api_parity_result(
+    prefix: &str,
+    host_call: impl FnOnce() -> c_long,
+    fl_call: impl FnOnce() -> c_int,
+) -> String {
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = host_call();
+    let host_errno = unsafe { *libc::__errno_location() };
+    if host_rc >= 0 {
+        poll_event_loop_close_fd(c_int::try_from(host_rc).unwrap_or(-1));
+    }
+
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+        *libc::__errno_location() = 0;
+    }
+    let fl_fd = fl_call();
+    let fl_errno = poll_event_loop_errno();
+    if fl_fd >= 0 {
+        poll_event_loop_close_fd(fl_fd);
+    }
+
+    if fl_fd < 0 && host_rc < 0 && fl_errno == host_errno {
+        return format!("{prefix}_MATCHES_HOST_ERROR");
+    }
+    format!("{prefix}_DIVERGES_HOST_RC_{host_rc}_ERRNO_{host_errno}_FL_FD_{fl_fd}_ERRNO_{fl_errno}")
+}
+
 fn fsmount_fixture_actual() -> Result<String, String> {
-    poll_event_loop_reset_errno();
-    let fd = unsafe { frankenlibc_abi::unistd_abi::fsmount(-1, 0, 0) };
-    Ok(poll_event_loop_fd_class("FSMOUNT_PERMISSION_GATE", fd))
+    Ok(mount_api_parity_result(
+        "FSMOUNT_PERMISSION_GATE",
+        || unsafe { libc::syscall(libc::SYS_fsmount, -1, 0, 0) },
+        || unsafe { frankenlibc_abi::unistd_abi::fsmount(-1, 0, 0) },
+    ))
 }
 
 fn fsopen_fixture_actual() -> Result<String, String> {
-    poll_event_loop_reset_errno();
-    let fd = unsafe { frankenlibc_abi::unistd_abi::fsopen(std::ptr::null(), 0) };
-    Ok(poll_event_loop_fd_class("FSOPEN_PERMISSION_GATE", fd))
+    // Same privilege-dependent gate as fsmount; see `mount_api_parity_result`.
+    Ok(mount_api_parity_result(
+        "FSOPEN_PERMISSION_GATE",
+        || unsafe { libc::syscall(libc::SYS_fsopen, std::ptr::null::<c_char>(), 0) },
+        || unsafe { frankenlibc_abi::unistd_abi::fsopen(std::ptr::null(), 0) },
+    ))
 }
 
 fn fspick_fixture_actual() -> Result<String, String> {
-    poll_event_loop_reset_errno();
-    let fd = unsafe { frankenlibc_abi::unistd_abi::fspick(libc::AT_FDCWD, std::ptr::null(), 0) };
-    Ok(poll_event_loop_fd_class("FSPICK_PERMISSION_GATE", fd))
+    // Same privilege-dependent gate as fsmount; see `mount_api_parity_result`.
+    Ok(mount_api_parity_result(
+        "FSPICK_PERMISSION_GATE",
+        || unsafe {
+            libc::syscall(
+                libc::SYS_fspick,
+                libc::AT_FDCWD,
+                std::ptr::null::<c_char>(),
+                0,
+            )
+        },
+        || unsafe { frankenlibc_abi::unistd_abi::fspick(libc::AT_FDCWD, std::ptr::null(), 0) },
+    ))
 }
 
 fn fstat_fixture_actual() -> Result<String, String> {
@@ -28852,9 +28916,36 @@ fn process_spawn_bad_c_string() -> *const c_char {
 }
 
 fn process_spawn_acct_actual() -> Result<String, String> {
+    // acct(2) checks CAP_SYS_PACCT BEFORE it copies the filename in, so an unusable
+    // pointer yields a PRIVILEGE-DEPENDENT errno: EPERM unprivileged (rejected before
+    // the read is ever reached) and EFAULT as root (the check passes, then the
+    // dangling pointer is dereferenced). Pinning either constant hardcodes the host the
+    // arm happened to be recorded on -- pinning EPERM made this row permanently red on
+    // the root CI workers, where it can only ever produce EFAULT.
+    //
+    // Compare fl against the host's own acct in this same process instead. That is what
+    // the row is really claiming, it holds under either privilege, and it still fails a
+    // wrapper that swallows the error (rc 0) or reports a different errno than the host.
+    // Read the host arm's errno from the HOST slot explicitly. `process_spawn_current_errno`
+    // happens to reach it via its fl-slot-first fallback, but relying on that is how the
+    // sibling mount-API arm silently measured a freshly-reset 0 instead of the kernel's errno.
     process_spawn_reset_errno();
-    let rc = unsafe { frankenlibc_abi::unistd_abi::acct(process_spawn_bad_c_string()) };
-    Ok(process_spawn_errno_result("ACCT_BAD_PATH", rc))
+    let host_rc = unsafe { libc::acct(process_spawn_bad_c_string()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    process_spawn_reset_errno();
+    let fl_rc = unsafe { frankenlibc_abi::unistd_abi::acct(process_spawn_bad_c_string()) };
+    let fl_errno = process_spawn_current_errno();
+
+    if fl_rc == host_rc && fl_errno == host_errno {
+        Ok(format!("ACCT_BAD_PATH_MATCHES_HOST_RC_{fl_rc}"))
+    } else {
+        Ok(format!(
+            "ACCT_BAD_PATH_DIVERGES_HOST_RC_{host_rc}_ERRNO_{}_FL_RC_{fl_rc}_ERRNO_{}",
+            process_spawn_errno_class(host_errno),
+            process_spawn_errno_class(fl_errno)
+        ))
+    }
 }
 
 fn process_spawn_chroot_actual() -> Result<String, String> {

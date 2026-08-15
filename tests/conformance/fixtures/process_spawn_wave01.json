@@ -73,11 +73,11 @@
       "inputs": {
         "symbol": "acct",
         "scenario": "process_accounting_privilege_denied_without_accounting_state_change",
-        "expected": "ACCT_BAD_PATH_RC_-1_ERRNO_EPERM",
-        "oracle_source": "FrankenLibC unistd_abi::acct raw syscall errno replay",
+        "expected": "ACCT_BAD_PATH_MATCHES_HOST_RC_-1",
+        "oracle_source": "host acct(2) called on the same unusable pointer in the same process. acct checks CAP_SYS_PACCT before copying the filename in, so the errno is privilege-dependent (EPERM unprivileged, EFAULT as root) and no constant is portable; parity with the host is.",
         "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
       },
-      "expected_output": "symbol=acct;mode=strict;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
+      "expected_output": "symbol=acct;mode=strict;expected=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;actual=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -88,11 +88,11 @@
       "inputs": {
         "symbol": "acct",
         "scenario": "process_accounting_privilege_denied_without_accounting_state_change",
-        "expected": "ACCT_BAD_PATH_RC_-1_ERRNO_EPERM",
-        "oracle_source": "FrankenLibC unistd_abi::acct raw syscall errno replay",
+        "expected": "ACCT_BAD_PATH_MATCHES_HOST_RC_-1",
+        "oracle_source": "host acct(2) called on the same unusable pointer in the same process. acct checks CAP_SYS_PACCT before copying the filename in, so the errno is privilege-dependent (EPERM unprivileged, EFAULT as root) and no constant is portable; parity with the host is.",
         "ambient_state_policy": "forbid_ambient_pid_uid_gid_path_fd_or_process_state_capture"
       },
-      "expected_output": "symbol=acct;mode=hardened;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
+      "expected_output": "symbol=acct;mode=hardened;expected=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;actual=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
