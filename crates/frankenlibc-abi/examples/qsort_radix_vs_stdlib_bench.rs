@@ -1,14 +1,12 @@
-// Does the shipped ASCENDING integer radix lane (widths 2/4/8, num>threshold)
-// beat the stdlib fixed-width fallback it preempts? The radix lane's shipped wins
-// were measured vs glibc / the in-house pdqsort_recurse, NOT vs `std_sort_unstable_
-// fixed_width` (a `[u8;N]` stdlib pdqsort, added later, which runs when the radix
-// lane is skipped). Isolate the two on the SAME data with the SAME extern-"C"
-// comparator (both pay realistic FFI: radix ~n verify calls, stdlib ~n log n).
+// Compare the deployed qsort path against the fixed-width stdlib reference and
+// glibc on identical data and with the same extern-"C" comparator. The former
+// integer-radix probe was retired with that lane; this retained example guards
+// the path that actually ships.
 //
-//   radix  = __bench_integer_radix_attempt (the lane alone, must commit)
-//   stdlib = as_chunks_mut::<N>().sort_unstable_by(extern-C cmp)  (the fallback)
+//   qsort  = frankenlibc_core::stdlib::qsort
+//   stdlib = as_chunks_mut::<N>().sort_unstable_by(extern-C cmp)
 //   glibc  = libc::qsort
-// radix/stdlib > 1 ⇒ radix slower than the fallback ⇒ narrow/remove it.
+// qsort/stdlib > 1 shows the deployed path is slower than the reference.
 use std::ffi::c_void;
 use std::hint::black_box;
 use std::time::Instant;
@@ -97,19 +95,16 @@ fn bench(
 ) {
     let pristine = make(n, width, dist);
     {
-        let mut r = pristine.clone();
-        let committed =
-            frankenlibc_core::stdlib::sort::__bench_integer_radix_attempt(&mut r, width, &fl_cmp);
-        assert!(committed, "radix did not commit w{width} {dist} n={n}");
         let mut sb = pristine.clone();
         stdlib_sort(&mut sb, width, fl_cmp);
-        assert_eq!(r, sb, "radix vs stdlib mismatch w{width} {dist} n={n}");
-        // The DEPLOYED full-qsort path (incl. the already-ordered commit-lane, which
-        // commits sorted input as-is and reverses descending input) must match the
-        // reference sort byte-for-byte — the load-bearing check for the commit-lane.
+        // The deployed full-qsort path, including its i32 natural-order fast lane,
+        // must preserve the same byte order as the fixed-width reference.
         let mut qf = pristine.clone();
         frankenlibc_core::stdlib::qsort(&mut qf, width, fl_cmp);
-        assert_eq!(qf, sb, "qsort(full) vs reference mismatch w{width} {dist} n={n}");
+        assert_eq!(
+            qf, sb,
+            "qsort(full) vs reference mismatch w{width} {dist} n={n}"
+        );
     }
 
     let iters = (120_000_000usize / (n * width)).max(60);
@@ -133,14 +128,6 @@ fn bench(
         best
     };
 
-    let radix = best_of(K, iters, reset, || {
-        buf.copy_from_slice(&pristine);
-        black_box(frankenlibc_core::stdlib::sort::__bench_integer_radix_attempt(
-            black_box(&mut buf),
-            width,
-            &fl_cmp,
-        ));
-    });
     let stdlib = best_of(K, iters, reset, || {
         buf.copy_from_slice(&pristine);
         stdlib_sort(black_box(&mut buf), width, fl_cmp);
@@ -148,37 +135,40 @@ fn bench(
     });
     let gl = best_of(K, iters, reset, || {
         buf.copy_from_slice(&pristine);
-        unsafe { libc::qsort(black_box(buf.as_mut_ptr()) as *mut c_void, n, width, Some(gl_cmp)) };
+        unsafe {
+            libc::qsort(
+                black_box(buf.as_mut_ptr()) as *mut c_void,
+                n,
+                width,
+                Some(gl_cmp),
+            )
+        };
         black_box(&buf);
     });
-    // Full deployed qsort path (INCLUDES the new already-ordered guard): the metric
-    // that actually ships. On sorted input it should now route to pdqsort (≈ stdlib)
-    // instead of radix; on random it should still ≈ radix.
-    let qfull = best_of(K, iters, reset, || {
+    let qsort = best_of(K, iters, reset, || {
         buf.copy_from_slice(&pristine);
         frankenlibc_core::stdlib::qsort(black_box(&mut buf), width, fl_cmp);
         black_box(&buf);
     });
 
-    let verdict = if radix / stdlib > 1.10 {
-        "RADIX-LOSES"
-    } else if radix / stdlib < 0.90 {
-        "radix-wins"
+    let verdict = if qsort / stdlib > 1.10 {
+        "QSORT-LOSES"
+    } else if qsort / stdlib < 0.90 {
+        "qsort-wins"
     } else {
         "~parity"
     };
     println!(
-        "RADIXvsSTDLIB w{width} {dist:>7} n={n:>6} radix={radix:>9.0} stdlib={stdlib:>9.0} qfull={qfull:>9.0} glibc={gl:>9.0}  \
-         radix/stdlib={:.2}x  qfull/stdlib={:.2}x  {verdict}",
-        radix / stdlib,
-        qfull / stdlib,
+        "QSORTvsSTDLIB w{width} {dist:>7} n={n:>6} qsort={qsort:>9.0} stdlib={stdlib:>9.0} glibc={gl:>9.0}  \
+         qsort/stdlib={:.2}x  {verdict}",
+        qsort / stdlib,
     );
 }
 
 // The deployed `compare` closure is exactly this: hand the two element pointers to
 // the caller's extern-"C" comparator. NO Rust-side from_ne_bytes/try_into (that
 // bounds-check + panic path inflates the arm making more comparisons and does not
-// exist in the real lib). Both radix-verify and stdlib pay this identical cost.
+// exist in the real lib). The deployed qsort and stdlib arms pay this identical cost.
 fn cmp16(a: &[u8], b: &[u8]) -> i32 {
     gl_cmp_i16(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void)
 }
@@ -190,12 +180,42 @@ fn cmp64(a: &[u8], b: &[u8]) -> i32 {
 }
 
 fn main() {
-    let widths: [(usize, fn(&[u8], &[u8]) -> i32, extern "C" fn(*const c_void, *const c_void) -> i32); 3] =
-        [(2, cmp16, gl_cmp_i16), (4, cmp32, gl_cmp_i32), (8, cmp64, gl_cmp_i64)];
+    let widths: [(
+        usize,
+        fn(&[u8], &[u8]) -> i32,
+        extern "C" fn(*const c_void, *const c_void) -> i32,
+    ); 3] = [
+        (2, cmp16, gl_cmp_i16),
+        (4, cmp32, gl_cmp_i32),
+        (8, cmp64, gl_cmp_i64),
+    ];
     for (w, fl, gl) in widths {
         for &dist in &["rand", "dups", "nearly", "sorted"] {
             for &n in &[16384usize, 262144] {
                 bench(n, w, dist, fl, gl);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deployed_qsort_matches_stdlib_for_representative_fixed_width_inputs() {
+        let widths: [(usize, fn(&[u8], &[u8]) -> i32); 3] = [(2, cmp16), (4, cmp32), (8, cmp64)];
+        for (width, compare) in widths {
+            for dist in ["rand", "dups", "nearly", "sorted", "reverse"] {
+                let pristine = make(257, width, dist);
+                let mut deployed = pristine.clone();
+                let mut reference = pristine;
+                frankenlibc_core::stdlib::qsort(&mut deployed, width, compare);
+                stdlib_sort(&mut reference, width, compare);
+                assert_eq!(
+                    deployed, reference,
+                    "qsort mismatch for width={width}, distribution={dist}"
+                );
             }
         }
     }
