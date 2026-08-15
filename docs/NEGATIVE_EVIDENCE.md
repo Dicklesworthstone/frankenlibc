@@ -27092,3 +27092,7 @@ the next agent should not re-run it.
 - **CONCRETE RETRY PREDICATE.** Re-measure the allocator baseline on hz2 AND on a vmi-class worker
   in the same session before and after any lever, and report both. A lever validated only on hz2
   cannot be credited with closing a gap that is 1.7x larger on vmi-class hardware, and vice versa.
+
+## 2026-08-14 (Codex) — MEASURED LOSS, live same-invocation malloc/free baseline
+
+`RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release -j1 -p frankenlibc-bench --example malloc_st_probe --features abi-bench` on `hz2` produced in-process `ELF_SHA256=e3357747e7eaefbd739dec0f20aaba9a2791f74998d28e35cd98eca094c01bdb`; `host=hetzner2 observed_threads=16 isa=avx512f+avx2+sse4.2 loadavg=4.49 4.81 5.51`; the ABBAABBA same-process live-glibc rows were `16B 5.4301x [5.2160,5.4495] null_fl=0.9996 null_glibc=1.0009`, `64B 5.9459x [5.4529,6.3355] 1.0024/1.0003`, `256B 6.2208x [6.0288,6.4341] 0.9996/1.0005`, and `1024B 5.4187x [5.4003,5.4306] 0.9997/1.0001` (all `ADMISSIBLE FL_SLOWER`, n=41): a valid loss/baseline, not a lever win.
