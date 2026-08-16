@@ -10,8 +10,28 @@
 
 use std::ffi::{c_int, c_void};
 
-unsafe extern "C" {
-    fn memccpy(dst: *mut c_void, src: *const c_void, c: c_int, n: usize) -> *mut c_void;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type Memccpy = unsafe extern "C" fn(*mut c_void, *const c_void, c_int, usize) -> *mut c_void;
+
+/// Host glibc's `memccpy`, resolved by `dlsym` rather than declared at link
+/// time (bd-v0388t).
+///
+/// A link-time `unsafe extern "C" { fn memccpy(..) }` is not reliably glibc in
+/// an abi test binary: `catopen` and `fma` are both confirmed cases where such
+/// a reference bound locally in a plain `cargo test`, and `catopen`'s was hiding
+/// a live errno divergence. `host_fn` also asserts the resolved address is not
+/// fl's own, so a collapsed oracle fails loudly instead of comparing fl to
+/// itself.
+fn glibc_memccpy() -> Memccpy {
+    // SAFETY: `Memccpy` matches C's documented memccpy signature.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"memccpy",
+            frankenlibc_abi::string_abi::memccpy as *const (),
+        )
+    }
 }
 
 const FILL: u8 = 0xAB;
@@ -26,6 +46,7 @@ fn off(ret: *mut c_void, base: *const u8) -> isize {
 
 #[test]
 fn memccpy_matches_glibc() {
+    let memccpy = glibc_memccpy();
     // (src bytes, stop byte, n)
     let cases: &[(&[u8], u8, usize)] = &[
         (b"hello", b'l', 10), // stop at first 'l' (idx 2) -> copy 3, ret 3
