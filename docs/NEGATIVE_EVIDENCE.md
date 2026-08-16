@@ -27802,3 +27802,69 @@ What this changes, and what it does not:
   the fused family moves from 3.12-3.31x banked to 2.72-3.29x measured here, entirely from
   per-conversion work. It remains a loss, and the ladder still says fl pays ~3.3x glibc per
   conversion, so this is progress on the correct term rather than a fix.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup, paired, 7 of 7): both per-conversion fast paths together, and the integer half did NOT do what I predicted
+
+- **RESULT CLASS:**
+  `result_class=self-speedup`; `same_invocation=true`;
+  `self_effect_ratio=0.9594`;
+  `self_effect_bootstrap_median_ci=[0.9502,0.9687]`;
+  `null_bootstrap_median_ci=[0.995047,1.007663]`;
+  `bench_elf_sha256=43356bcffdec9c345808b78721cc0289b5e1fed2e7c8e36e5aff94fdeaa50345`;
+  `cv_used=false`.
+  NOT a campaign win: fl is still 2.70-3.25x slower than glibc. The quoted ratio is the WORST of the
+  seven cases.
+- **Provenance.** Built and run LOCALLY, `RCH_CARGO_WRAPPER_BYPASS=1` exported, no `[RCH] remote`
+  line, 21.38s build. In-process self-reports: `BENCH_ELF_OBJECT sha256=`
+  43356bcffdec9c345808b78721cc0289b5e1fed2e7c8e36e5aff94fdeaa50345; base `FL_OBJECT sha256=`
+  0fb5ef3d0aa583fd2f722c89c4c9bb63427b5831c7fcfa23d91726a9cdb400ad (neither fast path); candidate
+  `FL_OBJECT sha256=` b3dcf4f887bf3dfb198eb917383f3ec7631668aeee8718f94612830aa635804b (both).
+  `mismatches=0` on all four arms, the conformance arm running before every timed arm.
+- **Paired ABBA, one invocation, base/candidate/base/candidate.** Ratios against live glibc:
+
+  | case | base 1 / 2 | candidate 1 / 2 | change |
+  |---|---|---|---|
+  | syslog_line | 3.112533 / 3.211426 | 2.947172 / 2.980338 | 6.4% faster |
+  | http_log | 2.828059 / 2.829308 | 2.728147 / 2.699778 | 4.1% faster |
+  | kv_join | 3.275823 / 3.281239 | 3.112788 / 3.007475 | 6.6% faster |
+  | ladder_2s | 3.757531 / 3.574938 | 3.246356 / 3.232822 | 11.7% faster |
+  | ladder_3s | 3.384297 / 3.391532 | 3.033949 / 3.034754 | 10.4% faster |
+  | ladder_4s | 3.396141 / 3.325016 | 2.949540 / 3.063115 | 10.6% faster |
+  | ladder_6s | 3.392774 / 3.276088 | 2.960249 / 2.959958 | 11.2% faster |
+
+  **WORST BOUND: `http_log`, 4.1% faster (0.9594).** Seven of seven improve in both cycles.
+- **THE PREDICTION FAILED, and that is the informative part.** The bare-integer fast path was landed
+  with an explicit falsifiable claim: `http_log` gained least from the `%s` path (3.5%) *because* half
+  its conversions are integers, so giving integers the same treatment should move it closest to the
+  others. It did not. `http_log` went from 3.5% to 4.1% — about 0.6 points — and remains the LEAST
+  improved shape by a wide margin, while the pure-`%s` ladder rungs sit at 10-12%. Whatever makes
+  `http_log` different from `kv_join` is therefore NOT that its integer conversions were on the slow
+  path.
+- **What that leaves.** `%s %s %d %lu` differs from the `%s`-only shapes in more than conversion kind:
+  it is the only timed shape carrying a `%lu` and the only one whose arguments mix pointer and
+  64-bit-integer registers. The next hypothesis should be argument EXTRACTION rather than rendering —
+  `vprintf_extract_args` walks a per-conversion kind table, and a mixed-register format is exactly
+  where that walk would cost more than a uniform one. That is a different subsystem from the one both
+  fast paths touch, and it is consistent with the ladder's superlinear residual (bd-mh2ev3), which is
+  also an extraction-shaped defect.
+- **The `%s` half is confirmed independently.** The pure-`%s` ladder rungs improve 10-12% here against
+  a base with neither path, versus 9-11% in the `%s`-only row against the same base object on the same
+  host. Consistent, and it re-measures the earlier row rather than merely restating it.
+- **THE A/A NULL CONTROLS, pipe-free, same-invocation, bootstrap medians with bootstrap median CIs.**
+  Candidate arm, syslog_line: A/A null FL/FL median 0.999345, bootstrap median CI 0.988795 to 1.009001.
+  Candidate arm, http_log: A/A null FL/FL median 1.002118, bootstrap median CI 0.995047 to 1.007663.
+  Candidate arm, kv_join: A/A null FL/FL median 0.998634, bootstrap median CI 0.992399 to 1.005061.
+  Candidate arm, ladder_2s: A/A null FL/FL median 1.001484, bootstrap median CI 0.993505 to 1.010069.
+  Candidate arm, ladder_3s: A/A null FL/FL median 1.001100, bootstrap median CI 0.992975 to 1.007900.
+  Candidate arm, ladder_4s: A/A null FL/FL median 1.004009, bootstrap median CI 0.997130 to 1.011516.
+  Candidate arm, ladder_6s: A/A null FL/FL median 0.998786, bootstrap median CI 0.990641 to 1.006613.
+  Base arm, syslog_line: A/A null FL/FL median 1.000696, bootstrap median CI 0.999206 to 1.002180.
+  Base arm, http_log: A/A null FL/FL median 0.999452, bootstrap median CI 0.995573 to 1.000655.
+  Base arm, kv_join: A/A null FL/FL median 1.000558, bootstrap median CI 0.975906 to 1.009709.
+  Base arm, ladder_2s: A/A null FL/FL median 1.001644, bootstrap median CI 0.957544 to 1.059301.
+  Base arm, ladder_3s: A/A null FL/FL median 0.990502, bootstrap median CI 0.952208 to 1.003259.
+  Base arm, ladder_4s: A/A null FL/FL median 1.002951, bootstrap median CI 0.972204 to 1.034508.
+  Base arm, ladder_6s: A/A null FL/FL median 0.999564, bootstrap median CI 0.998812 to 1.001319.
+  The first base cycle's nulls are visibly looser than the second's — `ladder_2s` reaches 1.0593 —
+  which is why the second base cycle, whose nulls are all inside 0.9988 to 1.0047, is the one that
+  anchors the comparison. Every effect above exceeds even the widest null half-width.
