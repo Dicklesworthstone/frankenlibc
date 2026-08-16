@@ -29524,3 +29524,62 @@ What this changes, and what it does not:
   `tracked_void_output_capacity` around a call that no longer syscalls, i.e. fl's own entry framing
   against a glibc call that is nearly free. That is the same fixed-overhead layer the allocator
   profile named, and it is NOT reachable by more work inside `getrandom`.
+
+## 2026-08-16 (this session) — COUNTED MECHANISM ONLY, no timed claim: `calloc` no longer zero-fills never-handed-out segment slots (-25.1% instructions, -43.3% cycles on the growth shape)
+
+- **RESULT CLASS: counted mechanism. NO speedup is claimed and no ratio here may be quoted as a
+  campaign result.** The change is `b0e6b8551`. What is established below is that the WORK CHANGED,
+  by instruction and cycle counts; what is NOT established is a certified effect, because this
+  harness emits neither an in-process ELF self-hash nor a same-invocation A/A null, and the ledger
+  contract requires both for a positive timed row. That gap is the honest state, not an oversight:
+  the lint refused an earlier draft of this row that did claim a win, and it was right to.
+- **THE MECHANISM.** fl `calloc` zeroed every segment slot it handed out, including bump-cursor slots
+  that had never been handed to anyone. Those still hold the `MAP_PRIVATE | MAP_ANONYMOUS` pages the
+  arena was mapped with, which the kernel guarantees zero-filled on first touch, so the memset was
+  redundant on exactly the path a growing calloc workload lives in. The slot metadata already
+  distinguished the states -- `0` = never activated, `SEGMENT_SLOT_FREE` = live-then-retired -- and
+  the `debug_assert` above the code was already the statement of that invariant.
+- **Soundness rests on three facts checked in source:** the arena is MAP_ANONYMOUS; slot metadata
+  lives in a separate sidecar mapping (`SegmentDescriptor::meta_base`) so fl never writes a payload
+  to bookkeep it; and nothing writes poison or canaries into freed payloads.
+- **COUNTED, local box (AMD Ryzen Threadripper PRO 5975WX), pinned cpu8, arms interleaved,
+  `malloc_icount fl growth`, ICOUNT_PAIRS=50000, sizes 16/64/256/1024:**
+
+  | arm | load | cpu8 MHz | instructions | cycles | IPC |
+  |---|---|---|---|---|---|
+  | base | 14.35 | 2462 | 223,836,363 (+-0.29%) | 178,183,719 (+-3.21%) | 1.26 |
+  | cand | 14.35 | 3351 | 167,565,382 (+-0.05%) | 98,793,922 (+-0.22%) | 1.70 |
+  | base | 14.35 | 4131 | 223,263,386 (+-0.01%) | 171,136,943 (+-0.21%) | 1.30 |
+  | cand | 14.35 | 4217 | 167,295,879 (+-0.10%) | 99,294,867 (+-0.77%) | 1.68 |
+
+  **-25.1% instructions and -43.3% cycles**, consistent across both reps. Instructions are the
+  load-bearing half: they are deterministic to +-0.01-0.29% here and cannot be explained by the
+  clock or the load, both of which are recorded per arm above.
+- **CONTEXT ONLY, NOT A CLAIM:** the same harness run against a `dlmopen(LM_ID_NEWLM)` glibc arm
+  counted 195,749,939 instructions / 170,377,342 cycles. That comparison is recorded so the next
+  agent knows where to look; it is NOT a certified incumbent result and must not be quoted as one.
+- **WHAT A CERTIFIABLE ROW STILL NEEDS**, so this is a handoff and not a dead end: `malloc_icount`
+  must self-report the executing ELF's SHA-256 in-process (`malloc_st_probe` already does this and
+  the helper can be lifted), run a same-invocation A/A null for each arm, and report bootstrap median
+  CIs for null and effect. Until then this row stands as mechanism evidence only.
+- **SCOPE.** The elision fires only for FRESH slots. A churn loop that frees each block immediately
+  recycles the slot and still pays the zero-fill, so churn is unchanged; that is why the harness
+  gained an explicit `growth` mode instead of reusing the pair loop. Sizes above `MAX_SMALL_SIZE`
+  take the host path and are untouched.
+- **THIS ALSO DATES A STALE ROW.** The 2026-06-27 ranking has `calloc`/`free`(16) at ~8.9-9.1x
+  slower than glibc. On the growth shape at these sizes the counted comparison above does not look
+  like that at all, even before this change. The churn shape and the large sizes from that row remain
+  unmeasured today and are not characterised either way here.
+- **TESTS WERE MUTATION-CHECKED, and the mutation found a real flaw in one of them.**
+  `calloc_returns_zeroed_memory_fresh_and_recycled` and
+  `calloc_after_realloc_shrink_and_free_is_zeroed` were both run against a deliberately widened
+  elision (skip always). The first failed as intended. **The second PASSED** -- it re-requested the
+  shrunk size (32) after shrinking a 1024-byte block, and a shrinking realloc leaves the block in its
+  original class, so the re-calloc drew from a different class and never touched the dirtied slot.
+  Rewritten to re-request the original class size, it now fails under mutation too. A zero-fill test
+  that cannot fail is exactly the shape this file exists to catch.
+- **Harness note:** the growth mode's checksum was an XOR of returned pointers, which cancelled to
+  exactly `0x0` for fl -- indistinguishable from what an optimised-away loop prints. Replaced with an
+  order-sensitive mix before any number above was taken.
+- **Gates:** malloc_abi_test 75 passed / 1 ignored, hardened_mode_safety_test 15,
+  conformance_diff_malloc_stats_binning 5.
