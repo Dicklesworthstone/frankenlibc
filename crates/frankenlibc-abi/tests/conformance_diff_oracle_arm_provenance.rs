@@ -32,13 +32,26 @@
 //! other test binaries declare which symbols. When a new differential gate
 //! reaches for glibc through a link-time declaration, add its symbol here.
 //!
-//! ## What actually decides it: the BUILD PROFILE, not the symbol
+//! ## Two separate things, and only one of them is real
 //!
 //! An earlier version of this file claimed the binding was per-symbol and
 //! unpredictable — that `fma` collapsed onto fl while `memccpy` and friends did
-//! not, in the same binary. That is wrong, and believing it sends you looking
-//! for a per-symbol cause that does not exist. Every one of fl's exports is
-//! gated by the SAME attribute:
+//! not, in the same binary. Two independent findings killed that reading.
+//!
+//! **(1) The `fma` observation was a probe artifact, not a collapse.** The old
+//! predicate compared `dli_fname` and flagged any arm sharing an object with fl.
+//! But taking the address of an imported function can yield a PLT stub, which
+//! lives in the executable — the same object as fl — while calls through it
+//! still land in glibc. A standalone binary with **no frankenlibc in it at all**,
+//! running this same probe, reports `fma` and `fmaf` inside the executable with
+//! `dli_sname` NULL and `remquo`, `sinhf`, `memccpy`, `mempcpy`, `strlcpy`
+//! inside libc/libm — the exact asymmetry that was read as per-symbol collapse —
+//! and `fma(1,2,3)` still returns 5. So `conformance_diff_fma` was never
+//! comparing fl against fl. The predicate below now compares ADDRESSES, which is
+//! the only thing that answers the question.
+//!
+//! **(2) There IS a real collapse, and the build profile is what triggers it.**
+//! Every one of fl's exports is gated by the SAME attribute:
 //!
 //! ```ignore
 //! #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -117,12 +130,13 @@ unsafe extern "C" {
     fn freelocale(loc: *mut c_void);
 }
 
-/// Which shared object does this code address live in?
+/// What dladdr reports for a code address: the owning object and the symbol it
+/// attributes the address to (`dli_sname` is NULL for a PLT stub).
 ///
-/// Returns the `dli_fname` dladdr reports. Panicking rather than returning an
-/// Option keeps a failed lookup from reading as "not glibc" — an unresolvable
-/// address is a broken probe, not evidence about the arm.
-fn owning_object(addr: *const c_void, what: &str) -> String {
+/// Panicking rather than returning an Option keeps a failed lookup from reading
+/// as "not glibc" — an unresolvable address is a broken probe, not evidence
+/// about the arm.
+fn describe(addr: *const c_void, what: &str) -> (String, Option<String>) {
     let mut info = std::mem::MaybeUninit::<libc::Dl_info>::uninit();
     // SAFETY: addr is a live code address and info is writable.
     let rc = unsafe { libc::dladdr(addr, info.as_mut_ptr()) };
@@ -134,9 +148,26 @@ fn owning_object(addr: *const c_void, what: &str) -> String {
         "dladdr gave no object name for {what}"
     );
     // SAFETY: dli_fname is a NUL-terminated string owned by the loader.
-    unsafe { CStr::from_ptr(info.dli_fname) }
+    let object = unsafe { CStr::from_ptr(info.dli_fname) }
         .to_string_lossy()
-        .into_owned()
+        .into_owned();
+    let symbol = if info.dli_sname.is_null() {
+        None
+    } else {
+        // SAFETY: dli_sname is a NUL-terminated string owned by the loader.
+        Some(
+            unsafe { CStr::from_ptr(info.dli_sname) }
+                .to_string_lossy()
+                .into_owned(),
+        )
+    };
+    (object, symbol)
+}
+
+fn in_host_object(object: &str) -> bool {
+    // libm.so.6 counts: glibc still ships a separate math object on some
+    // layouts, and remquo/remquof legitimately resolve there.
+    object.contains("libc.so") || object.contains("libm.so")
 }
 
 #[test]
@@ -252,54 +283,89 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
     ];
 
     let mut vacuous = Vec::new();
-    let mut reached_libc = 0usize;
+    let mut classified = 0usize;
+    let mut via_plt_stub = Vec::new();
     for (linked, fl, name) in probes {
-        let linked_obj = owning_object(linked, &format!("link-time {name}"));
-        let fl_obj = owning_object(fl, &format!("fl {name}"));
+        let (linked_obj, linked_sym) = describe(linked, &format!("link-time {name}"));
+        let (fl_obj, _) = describe(fl, &format!("fl {name}"));
 
         // Probe validity: fl's own definition must live in this test binary, not
         // in libc. If dladdr reported fl inside libc.so the comparison below
         // would be meaningless, and the gate would pass for the wrong reason.
         assert!(
-            !fl_obj.contains("libc.so") && !fl_obj.contains("libm.so"),
+            !in_host_object(&fl_obj),
             "probe is broken: dladdr places fl's own {name} in {fl_obj}"
         );
-        // libm.so.6 counts: glibc still ships a separate math object on some
-        // layouts, and remquo/remquof legitimately resolve there.
-        let reaches_host = linked_obj.contains("libc.so") || linked_obj.contains("libm.so");
-        if reaches_host {
-            reached_libc += 1;
+
+        // THE DECISIVE CHECK IS THE ADDRESS, NOT THE OBJECT NAME.
+        //
+        // An earlier version compared `dli_fname` and flagged any arm sharing an
+        // object with fl. That is wrong, and it produced a false positive that
+        // cost a day: taking the address of an imported function does not
+        // necessarily yield the implementation's address. For some symbols the
+        // linker hands back a PLT stub, which lives in the EXECUTABLE — the same
+        // object as fl — while calls through it still land in glibc.
+        //
+        // Reproduced with fl absent entirely: a standalone binary declaring
+        // fma/fmaf/remquo/sinhf/memccpy/mempcpy/strlcpy and running this same
+        // dladdr probe reports fma and fmaf inside the executable with
+        // dli_sname NULL, and the other five inside libc/libm — and `fma(1,2,3)`
+        // still returns 5, the correct glibc result. "Same object as fl" is
+        // therefore not evidence of anything. "Same ADDRESS as fl" is.
+        if std::ptr::eq(linked, fl) {
+            vacuous.push(format!(
+                "  {name}: link-time arm IS fl's own definition at {linked:p} (object {linked_obj})"
+            ));
+            continue;
         }
 
-        // The decisive check. If the link-time arm lives in the same object as
-        // fl's own definition, the "glibc" arm IS fl and the gate that relies
-        // on it compares fl against itself.
-        if linked_obj == fl_obj || !reaches_host {
-            vacuous.push(format!(
-                "  {name}: link-time arm resolves into {linked_obj}, fl lives in {fl_obj}"
+        if in_host_object(&linked_obj) {
+            classified += 1;
+        } else {
+            // Exe-resident but NOT fl's address. That is a PLT stub: the call
+            // goes through the GOT to glibc. Recorded rather than ignored,
+            // because it is the shape that was previously misread as a collapse.
+            classified += 1;
+            via_plt_stub.push(format!(
+                "  {name}: PLT stub at {linked:p} in {linked_obj} (dli_sname {:?}); \
+                 fl's own {name} is at {fl:p} — different address, so the call \
+                 cannot be reaching fl",
+                linked_sym
             ));
         }
     }
 
     // A zero only counts if the probe did work: assert the positive fact that
-    // every arm was actually located in libc, not merely that none was flagged.
+    // every arm was reached and classified, not merely that none was flagged.
     assert_eq!(
-        reached_libc,
+        classified,
         probes.len(),
-        "only {reached_libc} of {} arms were located in libc",
+        "only {classified} of {} arms were classified",
         probes.len()
     );
     assert!(
         vacuous.is_empty(),
-        "{} of {} extern-\"C\" oracle arms do NOT reach host glibc, so every \
+        "{} of {} extern-\"C\" oracle arms ARE fl's own definition, so every \
          differential gate built on them is comparing fl against fl and passing \
-         vacuously:\n{}\n\nIf ALL of them are flagged, the cause is almost \
-         certainly the build profile rather than anything per-symbol — see \
+         vacuously:\n{}\n\nIf ALL of them are flagged, the cause is the build \
+         profile, not anything per-symbol — see \
          `differential_suite_is_only_evidence_with_debug_assertions_on` below.",
         vacuous.len(),
         probes.len(),
         vacuous.join("\n")
     );
+    if !via_plt_stub.is_empty() {
+        // Not a failure. Printed so the next person who runs this sees the shape
+        // that was once misdiagnosed as a collapse, with the address evidence
+        // that rules it out, instead of rediscovering it as a red.
+        println!(
+            "{} of {} arms are imported through a PLT stub (benign — the call \
+             still reaches glibc):\n{}",
+            via_plt_stub.len(),
+            probes.len(),
+            via_plt_stub.join("\n")
+        );
+    }
 }
 
 /// The precondition the whole `conformance_diff_*` suite rests on.

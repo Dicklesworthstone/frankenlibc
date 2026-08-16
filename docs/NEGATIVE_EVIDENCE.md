@@ -27915,15 +27915,40 @@ Two consequences, stated plainly:
   release  -> debug_assertions=false fl_arm=-12345 oracle_arm=-12345 verdict=VACUOUS (oracle IS fl)
   ```
   `fma(1,2,3)` is 5. The release arm returned the sentinel, i.e. the rlib's function.
-- **WHAT THIS CORRECTS.** The first version of `conformance_diff_oracle_arm_provenance` and the
-  commit that introduced it (cade98100) claimed the binding was **per-symbol and not predictable by
-  inspection** — that `fma` collapsed while `memccpy`, `mempcpy`, `rawmemchr`, `strlcpy` and
-  `wcsnlen` did not, "in the same binary, under the same toolchain." **That cannot happen and did
-  not happen.** All of them carry the identical `cfg_attr`, so they cannot disagree with each other;
-  the two observations must have come from different profiles. The per-symbol story is worse than
-  merely wrong — it invites a search for a per-symbol cause that does not exist, and it makes the
-  dladdr probe look like it is discriminating between symbols when in debug it can never fire and in
-  release it would flag all 13 at once.
+- **WHAT THIS CORRECTS, AND A CORRECTION TO MY OWN FIRST VERSION OF THIS ENTRY.** cade98100 and
+  bd-c4z8fx claimed the binding was **per-symbol and not predictable by inspection** — that `fma`
+  collapsed while `memccpy`, `mempcpy`, `rawmemchr`, `strlcpy` and `wcsnlen` did not, "in the same
+  binary, under the same toolchain." I first wrote here that this "cannot happen and did not
+  happen," on the reasoning that the shared `cfg_attr` makes fl's exports unable to disagree.
+  **That reasoning was sound but the conclusion overreached, and BlackThrush had the receipt:** the
+  run that produced the original red was a plain `cargo test`, i.e. `debug_assertions` ON, the case
+  my model says is safe. So the profile could not be the whole story, and dismissing the
+  observation as a profile mix-up was wrong.
+- **THE ACTUAL CAUSE OF THAT OBSERVATION: a `dladdr` PLT artifact, not a collapse.** The old
+  predicate compared `dli_fname` and flagged any arm sharing an object with fl. Taking the address
+  of an imported function does not necessarily yield the implementation's address — for some symbols
+  the linker hands back a **PLT stub, which lives in the executable**, the same object as fl, while
+  calls through it still land in glibc. Reproduced with **fl absent entirely**: a standalone binary
+  declaring `fma`/`fmaf`/`remquo`/`sinhf`/`memccpy`/`mempcpy`/`strlcpy` and running the same dladdr
+  probe, dev profile:
+  ```
+       fma: taken_addr=0x...cbb0 sname=<null>  obj=./pltprobe            <- flagged "vacuous"
+      fmaf: taken_addr=0x...d3a0 sname=<null>  obj=./pltprobe            <- flagged "vacuous"
+    remquo: taken_addr=0x...7bb0 sname=remquo  obj=/lib/.../libm.so.6
+     sinhf: taken_addr=0x...94e0 sname=sinhf   obj=/lib/.../libm.so.6
+   memccpy: taken_addr=0x...9520 sname=memccpy obj=/lib/.../libc.so.6
+   strlcpy: taken_addr=0x...ce10 sname=strlcpy obj=/lib/.../libc.so.6
+  sanity: fma(1,2,3)=5
+  ```
+  That is the *exact* asymmetry that was read as a per-symbol collapse, produced with no
+  frankenlibc in the binary, and the call still returns the correct glibc answer. **So
+  `conformance_diff_fma` was never comparing fl against fl.** The original red was a false positive
+  of the probe. The `dlsym` rewrite is still right — it is profile-proof — but it fixed a gate that
+  was not actually blind.
+- **THE PREDICATE FIX.** Compare **addresses**, not object names: `std::ptr::eq(linked, fl)` is the
+  only thing that answers "is this arm fl". An exe-resident address that differs from fl's is a PLT
+  stub and is now reported as benign rather than failing. Two of us independently misread
+  "same object" as "same function"; the gate now cannot repeat that.
 - **MEASURED, same session, worker vmi1293453, clean HEAD, default dev profile:**
   `conformance_diff_oracle_arm_provenance` 1 passed with all 13 curated arms located in `libc.so.6`,
   and `conformance_diff_fma` 4 passed. So the suite as normally run **is** sound. The exposure is
