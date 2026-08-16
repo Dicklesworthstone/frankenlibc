@@ -5147,6 +5147,125 @@ fn run_fused_kv_batch(function: SnprintfFn) -> u64 {
 /// captured by `exact_direct_s_format` and bypass the whole general path, which
 /// is the path under study. The single-space separator keeps the literal run
 /// between conversions identical at every rung, and both arms pay it.
+/// COMPOSITION probes at a FIXED conversion count of four (bd-ntb9fq).
+///
+/// The ladder varies conversion COUNT with the type held constant. These vary
+/// the TYPE with the count held constant, which is the experiment the ladder
+/// cannot do and which the `http_log` anomaly needs.
+///
+/// The anomaly: `http_log` ("%s %s %d %lu") gained the least from both
+/// per-conversion fast paths — 4.1% against 8-11% for the pure-`%s` rungs — and
+/// the obvious explanation was refuted by measurement. Giving bare integers
+/// their own fast path moved it only 3.5% to 4.1%, so "its integers were on the
+/// slow path" is NOT the cause. That leaves composition itself: `http_log` is
+/// the only timed shape mixing pointer and 64-bit-integer arguments, and on
+/// SysV AMD64 those travel in the same GP register class but are extracted
+/// through a per-conversion kind walk.
+///
+/// Four rungs, all n=4, so any difference between them is attributable to
+/// composition and not to conversion count:
+///   mix4_s   `%s %s %s %s`     all pointer arguments
+///   mix4_d   `%d %d %d %d`     all 32-bit integer arguments
+///   mix4_sd  `%s %d %s %d`     alternating, same register class
+///   mix4_slu `%s %s %d %lu`    http_log's exact conversion set, literals aside
+///
+/// If mix4_slu is materially slower than mix4_s while mix4_sd is not, the cost
+/// is in the 64-bit/32-bit width mix rather than in pointer-vs-integer. If all
+/// four are equal, composition is exonerated and the `http_log` difference is
+/// its literal runs, which no fast path touches.
+fn run_fused_mix4_batch(function: SnprintfFn, format: *const c_char, kind: u8) -> u64 {
+    let a = c"alpha";
+    let b = c"bravo";
+    let mut buffer = [0u8; FUSED_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let returned = unsafe {
+            match kind {
+                b's' => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                ),
+                b'd' => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(index as c_int),
+                    black_box(index as c_int),
+                    black_box(index as c_int),
+                    black_box(index as c_int),
+                ),
+                b'm' => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(index as c_int),
+                    black_box(b.as_ptr()),
+                    black_box(index as c_int),
+                ),
+                _ => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(index as c_int),
+                    black_box(1_048_576u64),
+                ),
+            }
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+fn time_fused_mix4_s_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_mix4_batch(
+        function,
+        c"%s %s %s %s".as_ptr(),
+        b's',
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_mix4_d_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_mix4_batch(
+        function,
+        c"%d %d %d %d".as_ptr(),
+        b'd',
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_mix4_sd_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_mix4_batch(
+        function,
+        c"%s %d %s %d".as_ptr(),
+        b'm',
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_mix4_slu_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_mix4_batch(
+        function,
+        c"%s %s %d %lu".as_ptr(),
+        b'x',
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
 fn run_fused_ladder_batch(function: SnprintfFn, format: *const c_char, count: usize) -> u64 {
     let a = c"alpha";
     let b = c"bravo";
@@ -5626,6 +5745,34 @@ fn run_snprintf_fused(config: &Config) {
             host,
             fl,
             time_fused_ladder6_batch,
+        ),
+        measure_snprintf_case(
+            "mix4_s",
+            "composition probe, n=4 all %s -- baseline for the mix4 set (bd-ntb9fq)",
+            host,
+            fl,
+            time_fused_mix4_s_batch,
+        ),
+        measure_snprintf_case(
+            "mix4_d",
+            "composition probe, n=4 all %d",
+            host,
+            fl,
+            time_fused_mix4_d_batch,
+        ),
+        measure_snprintf_case(
+            "mix4_sd",
+            "composition probe, n=4 alternating %s/%d",
+            host,
+            fl,
+            time_fused_mix4_sd_batch,
+        ),
+        measure_snprintf_case(
+            "mix4_slu",
+            "composition probe, n=4 http_log's set \"%s %s %d %lu\"",
+            host,
+            fl,
+            time_fused_mix4_slu_batch,
         ),
     ];
 
