@@ -27229,3 +27229,68 @@ the next agent should not re-run it.
   --clean-overlay` (candidate overlaying only `crates/frankenlibc-abi/src/malloc_abi.rs`, base
   rebuilt in the same target pool from `HEAD`) and then measured on `hz1`; the workspace pins
   `-Ctarget-feature=+avx2,+fma` with no `target-cpu=native`, so the objects are not host-specialised.
+
+## 2026-08-16 (BlackThrush) — CAMPAIGN WIN: live same-invocation `snprintf` vs host glibc, 5 of 5 cases
+
+- **RESULT CLASS:**
+  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.376448`;
+  `incumbent_bootstrap_median_ci=[0.375416,0.377742]`;
+  `null_bootstrap_median_ci=[0.998194,1.003419]`;
+  `bench_elf_sha256=e99c0bc12cfb57ca1f3c864a8970ffd9451e47da4b4e60293ec41cccbeba3039`;
+  `cv_used=false`.
+  Actual legacy incumbent, live, in the same process as the candidate, reached by
+  `INCUMBENT_LINKAGE direct_process_link` — not dlmopen, not a remembered number. Not a
+  self-speedup: the incumbent arm is the host's own `snprintf`.
+- **APPARATUS.** Harness `incumbent_coverage_ab --family snprintf --pin-quietest 4`, worker `hz1`
+  (`HOST_IDENTITY hostname=frankenlibc-test`, `loadavg=1.25,1.05,1.31`), `samples=36`,
+  `reps_per_arm=200000`, `threads_observed_pre=1` and `threads_observed_post=1` on every case,
+  `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`, `allowed_cpus=0:2:4:5`, `affinity_mask=35`,
+  host-wide exclusivity `verdict=clear` both pre_measurement and post_measurement.
+  `INCUMBENT_LINKAGE direct_process_link`, `FL_LINKAGE explicit_dlopen_local`.
+  In-process self-reported ELF SHA-256: bench
+  `e99c0bc12cfb57ca1f3c864a8970ffd9451e47da4b4e60293ec41cccbeba3039`, fl object
+  `1b598128b1fb35525059899e6216f7d4522e613c810901ea0dd3bf54531ff8b5`, incumbent
+  `/usr/lib/x86_64-linux-gnu/libc.so.6` `a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`.
+- **CORRECTNESS FIRST, so this is not fast-because-wrong.**
+  `INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf formats=%u,%p,%c,%d,%s comparisons=369
+  mismatches=0 compared=return_value_and_full_destination verdict=pass` — the RETURN VALUE and the
+  FULL destination buffer are compared for every case before any timing runs.
+- **THE FIVE CASES**, fl nanoseconds against live glibc nanoseconds, median of 36 samples:
+  `%u` 13.626 vs 36.441; `%p` 19.266 vs 35.025; `%c` 7.522 vs 21.652; `%d` 15.363 vs 37.317;
+  `%s` 13.087 vs 28.650. `INCUMBENT_COVERAGE_VERDICT symbol=snprintf verdict=DECIDABLE cases=5
+  wins=5 losses=0 undecidable=0`.
+- **EFFECT AND NULLS, pipe-free.** Every effect is an FL/glibc bootstrap median with a bootstrap
+  median CI, and every case carries BOTH same-invocation A/A null controls, each within the 0.020
+  tolerance with no CI straddle, and every effect clears twice the null half-width.
+  Case `%u`: effect median 0.376448, bootstrap median CI [0.375416,0.377742]; A/A null FL/FL median
+  0.999040 and A/A null glibc/glibc median 1.001240 with bootstrap median CI [0.998194,1.003419].
+  Case `%p`: effect median 0.548010, bootstrap median CI [0.546772,0.549066]; A/A null FL/FL median
+  0.999141, bootstrap median CI [0.997599,1.000117]; A/A null glibc/glibc median 1.000354,
+  bootstrap median CI [0.998078,1.004353].
+  Case `%c`: effect median 0.332434, bootstrap median CI [0.331569,0.333016]; A/A null FL/FL median
+  1.000070, bootstrap median CI [0.998716,1.001035]; A/A null glibc/glibc median 1.000114,
+  bootstrap median CI [0.999735,1.001851].
+  Case `%d`: effect median 0.407874, bootstrap median CI [0.407375,0.408890]; A/A null FL/FL median
+  1.000235, bootstrap median CI [0.998158,1.002204]; A/A null glibc/glibc median 0.999280,
+  bootstrap median CI [0.996769,1.000852].
+  Case `%s`: effect median 0.451700, bootstrap median CI [0.451009,0.453905]; A/A null FL/FL median
+  1.001770, bootstrap median CI [0.998337,1.003563]; A/A null glibc/glibc median 0.999290,
+  bootstrap median CI [0.998699,1.001594].
+  Every effect CI lies entirely below one.
+- **REPRODUCED.** Two independent invocations on the same worker gave headline `%u` effect medians
+  0.376448 and 0.374704, i.e. fl is about 2.7x faster than the host on the headline case and
+  between 1.8x and 3.0x faster across the five.
+- **HOW IT WAS RUN, and why not through RCH end to end.** RCH built the artifacts, but two
+  successive RCH attempts were REFUSED by the harness's own exclusivity gate rather than producing
+  a number: on `vmi1227854` every allowed CPU sat at 0.963 to 1.000 busy so the pre-measurement gate
+  never cleared, and on `vmi1293453` the pre gate cleared and the POST gate failed
+  (`cpu2=100.0%,cpu5=55.1%`) because another job landed mid-run. Both are recorded here as gate
+  refusals, not as measurements. The banked row was produced by copying the RCH-built bench ELF and
+  fl object to the quietest worker and running them there, with the SHA-256s above proving the same
+  objects were measured.
+- **SCOPE.** `%d` is labelled in the harness as the generality probe, the case with no exact fast
+  path, and it still wins 0.407874, so this is not a fast-path-only result. Nothing here says
+  anything about `%f`/`%e`/`%g`, which route through the dtoa path that this ledger records as
+  2 to 3.7x SLOWER than glibc.
