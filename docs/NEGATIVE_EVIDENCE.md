@@ -27951,3 +27951,50 @@ What this changes, and what it does not:
   result at 8-11% in every run; `kv_join` improves in all three; `http_log` improves in all three at
   an unstable magnitude; `syslog_line` improves in two of three and is the noisiest case relative to
   its effect. The fused family remains a LOSS at 2.49-3.26x against glibc.
+
+## 2026-08-16 (BlackThrush) — LEDGER MINING: the campaign's worst measured vs-incumbent ratio is the ALLOCATOR at 10.57-16.17x, not fused `snprintf` at 3.2x
+
+- **RESULT CLASS: loss/baseline.** No new measurement. This ranks what is already banked, because
+  effort has been going to the wrong primitive.
+- **The standing framing has been that fused multi-conversion `snprintf` is the largest banked loss.**
+  It is not. Ranking every banked loss row by its own quoted ratio puts deployed `malloc`+`free`
+  roughly FIVE TIMES further from glibc than the printf family:
+
+  | primitive | banked ratio vs live glibc | row |
+  |---|---|---|
+  | deployed `malloc`+`free` | **10.57x - 16.17x SLOWER** | 2026-08-14 (YellowPlateau) |
+  | `calloc`/`free`(16) | ~8.9x - 9.1x SLOWER | 2026-06-27, after two shipped self-speedups |
+  | `fputs` registry | 6.22x SLOWER | 2026-06-27 |
+  | fused `snprintf` | 2.49x - 3.26x SLOWER | this file, 2026-08-16 |
+
+- **The malloc row is current and well-evidenced, not stale.** Incumbent loaded live in the SAME
+  process by `dlmopen(LM_ID_NEWLM, "libc.so.6")` and called through `dlsym`'d pointers, so both arms
+  run in one invocation; ELF self-reported as
+  `9759277a0cca907be5661c458f21d42c91eca29348adf28894390bef834cc6b8`; median of per-round ratios with
+  arms interleaved and order alternated per round; n=61 rounds x 100,000 pairs per arm; bootstrap
+  percentile, 20,000 resamples, deterministic seed. Repo HEAD `14e9a1f2b` with `malloc_abi.rs` last
+  changed `8878330ca`, so the allocator measured is unambiguous.
+- **Two caveats that belong with it, and neither rescues the printf framing.** The worker was
+  saturated at launch ("0 slots remaining after reservation"), and the 16-byte A/A null was 1.1423
+  with a CI reaching 1.5774 — loose. But a null of 1.14 cannot explain an effect of 11.94, and the
+  other three sizes have nulls of 0.93-1.00. The magnitudes carry uncertainty; the ORDERING does not.
+- **The ratio RISES with allocation size — 11.94 at 16B, 10.57 at 64B, 12.58 at 256B, 16.17 at 1024B
+  — which is the opposite of what a fixed per-call overhead produces.** A constant framing or
+  membrane cost would be amortised as the allocation grows, so the ratio would FALL. Rising at 1024B
+  says fl's cost grows faster with size than glibc's. That is the same slope-versus-fixed question
+  that cracked the `snprintf` float loss (bd-4vwb9q, an 87.5ns constant) and correctly predicted the
+  fused loss would NOT yield to a fixed-cost lever (bd-ntb9fq, ~75% per-conversion). It is worth
+  answering here before any lever is chosen, and it needs absolute nanoseconds rather than ratios —
+  the banked row quotes only ratios, so the fit cannot be done from what is already recorded.
+- **What is already ruled out on this vein, so nobody re-derives it:** the guard-CAS explanation was
+  refuted by measurement (deleting the allocator guard's lock CAS buys ~0.35 ns/call, not the 5.6 ns
+  attributed to it — a ~16x over-attribution), and the layer split is roughly even (framing 30.3%
+  against data structures, bd-9j6h0d), so there is no single dominant term waiting to be removed.
+- **The nearest concrete lever, bd-tkcv3c, is PARTLY DONE and the remainder is correctly blocked.**
+  realloc's in-place SHRINK and same-size path is implemented (`if size <= old_size { return ptr }`)
+  and gated by `conformance_realloc_shrink_inplace.rs`. What remains is in-place GROWTH into the
+  block's size-class slack, which is the case Vec/String growth loops actually hit. That needs a new
+  arena API to update a live slot's tracked `user_size`: no `update_user_size`/`set_user_size` exists
+  today, `user_size` is a field on a slot the arena hands out, and mutating it on a shared arena has
+  concurrency implications. Writing that blind under a build freeze would be exactly the unverified
+  cross-crate change this ledger keeps catching, so it is left for a test-capable turn.
