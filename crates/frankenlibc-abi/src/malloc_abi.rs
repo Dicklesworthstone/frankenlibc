@@ -2805,6 +2805,35 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
         return None;
     };
     let _guard = lock_fallback_alloc_table();
+    // SAFETY-OF-EXCLUSION: the table lock is held for the whole probe below.
+    unsafe { fallback_insert_sized_index_unlocked(key, size) }
+}
+
+/// The probe-and-claim body of [`fallback_insert_sized_index`], WITHOUT taking
+/// the table lock.
+///
+/// # Safety
+///
+/// The caller must guarantee exclusive access to the fallback table for the
+/// duration of the call. Two conditions together are sufficient and are what
+/// the single-threaded caller relies on:
+///
+/// * `!MULTI_THREADED` — no other thread exists to mutate the table. This is a
+///   one-way latch set the first time a second distinct tid reaches the reentry
+///   slot, so it cannot go stale in the unsafe direction.
+/// * a held allocator reentry guard — `enter_native_reentry_guard_for_slot` is
+///   a per-slot `fetch_or` on a bitmask, so a signal handler re-entering malloc
+///   on this thread finds the bit set and takes a different path instead of
+///   racing this probe.
+///
+/// `record_stats` already makes exactly this argument for the stats accumulator
+/// ("guard held + single-threaded => exclusive"), so this is the established
+/// precondition in this file rather than a new one.
+///
+/// The lock this elides is not protecting the individual words — the table is
+/// built from atomics — but the multi-slot probe-then-claim sequence, which is
+/// precisely what exclusivity already guarantees.
+unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Option<usize> {
     let start = fallback_start_index(key);
     // A retired key preserves the probe chain just like a traditional
     // tombstone, but does not describe a live allocation. Reusing the first
@@ -2879,7 +2908,31 @@ fn fallback_insert_sized_for_slot(
     ptr: *mut c_void,
     size: usize,
 ) {
-    if let Some(idx) = fallback_insert_sized_index(ptr, size) {
+    // Single-threaded fast path, mirroring what `fallback_remove_sized_for_slot`
+    // has always done on the free side. malloc took a global spin-CAS on EVERY
+    // call while free skipped its lock in ST — an asymmetry recorded on
+    // 2026-07-02 and left unfixed since. This closes it.
+    //
+    // Callers of THIS function hold a reentry guard by construction (malloc
+    // passes `reentry_guard.slot`), and `!MULTI_THREADED` means no second thread
+    // exists, so the two preconditions of
+    // `fallback_insert_sized_index_unlocked` are met. The unguarded
+    // `fallback_insert_sized` entry point is deliberately NOT changed: its
+    // callers cannot be shown to hold a guard, and eliding a lock on an
+    // unproven precondition is how an allocator gets a rare, unreproducible
+    // corruption. bd-65p87u.
+    let indexed = if !MULTI_THREADED.load(Ordering::Relaxed) {
+        match fallback_key(ptr) {
+            // SAFETY: guard held by the caller + single-threaded => exclusive.
+            Some(key) if !ptr.is_null() => unsafe {
+                fallback_insert_sized_index_unlocked(key, size)
+            },
+            _ => None,
+        }
+    } else {
+        fallback_insert_sized_index(ptr, size)
+    };
+    if let Some(idx) = indexed {
         remember_fallback_cache(slot, ptr, idx);
     } else {
         clear_fallback_cache(slot);

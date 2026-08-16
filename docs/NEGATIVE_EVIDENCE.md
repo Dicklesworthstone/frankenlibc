@@ -28223,3 +28223,65 @@ What this changes, and what it does not:
   allocation. The SHAPE is unchanged — fixed per-call, flat in size — so the design's argument still
   holds, but its headroom is a quarter of what was assumed, and any estimate in that bead derived
   from 133 ns should be rescaled before it is used to justify the work.
+
+## 2026-08-16 (BlackThrush) — STRUCTURAL CHANGE, NO SPEEDUP CLAIMED: malloc's fallback-table lock is elided in single-threaded mode, and the ratio does not move outside this apparatus's resolution
+
+- **RESULT CLASS: loss/baseline.** The primitive remains a LOSS at ~7.0x. **No speedup is claimed
+  here and none should be quoted from this row.** The post-change readings sit 0.7-1.2% below the
+  pre-change ones, which this instrument cannot certify for the reason given below, so the change is
+  recorded as structural with its numbers attached as observations rather than as an effect.
+- **The asymmetry, recorded on 2026-07-02 and unfixed since.** `fallback_remove_sized_for_slot` opens
+  with a `!MULTI_THREADED` fast path that mutates the cached table index with no lock. The malloc
+  side had no equivalent: every `fallback_insert_sized_index` took
+  `lock_fallback_alloc_table()` — a spin CAS on a global `AtomicBool` — then probed. So free paid
+  nothing in ST and malloc paid a global CAS on every pair.
+- **The change.** The probe-and-claim body is split into
+  `fallback_insert_sized_index_unlocked(key, size)`, and `fallback_insert_sized_for_slot` calls it
+  directly when `!MULTI_THREADED`. Its two preconditions are documented at the function: the
+  `MULTI_THREADED` one-way latch means no second thread exists, and callers of that entry point hold
+  an allocator reentry guard by construction (malloc passes `reentry_guard.slot`), which is a
+  per-slot `fetch_or` bitmask so a signal handler re-entering malloc finds the bit set and takes a
+  different path rather than racing the probe. `record_stats` already makes exactly this argument for
+  the stats accumulator, so it is the established precondition in this file, not a new one.
+- **The unguarded `fallback_insert_sized` entry point is deliberately NOT changed.** Its callers
+  cannot be shown to hold a guard, and eliding a lock on an unproven precondition is how an allocator
+  acquires a rare unreproducible corruption.
+- **Correctness gate before any timing:** `malloc_abi_test` 72 passed / 1 ignored,
+  `hardened_mode_safety_test` 15 passed — 87 assertions, 0 failures.
+- **Measurement.** `examples/malloc_st_probe.rs`, built and run LOCALLY with the wrapper bypass
+  exported, executable path from `--message-format=json`, no `[RCH] remote` line. Each run is an
+  internally-balanced `square=ABBAABBA`, n=41, with each arm's A/A null derived contemporaneously.
+  Base `ELF_SHA256 d883da27f3fd928a59859ddf6f732d5c533367c058c13a5ff17957e2fca9f808`, candidate
+  `4d4963bf17cca38f15c293998407d5124185a1f4534ea642e5beea0d15ae0257`.
+
+  | sz | base fl/glibc | candidate fl/glibc | base null_fl | cand null_fl |
+  |---|---|---|---|---|
+  | 16 | 7.0943 [7.0752,7.1037] | 7.0107 [6.9965,7.0200] | 0.9985 | 1.0004 |
+  | 64 | 7.1000 [7.0803,7.1237] | 7.0172 [7.0120,7.0236] | 0.9988 | 1.0009 |
+  | 256 | 7.1025 [7.0875,7.1091] | 7.0146 [6.9997,7.0230] | 1.0008 | 0.9989 |
+  | 1024 | 7.0711 [7.0618,7.0828] | 7.0210 [7.0084,7.0361] | 0.9988 | 0.9994 |
+
+  All four post-change readings sit below their pre-change counterparts, by 0.7-1.2%, and the worst
+  CI upper bound reads 7.0361 after against 7.1237 before. Observations across separate invocations,
+  NOT a certified effect.
+- **A DISCARDED FIRST CANDIDATE RUN, disclosed because it would otherwise look like cherry-picking.**
+  The first candidate run reported sz=16 at 7.6934 [7.1571,8.3786] and sz=64 at 7.7046 — i.e. WORSE
+  than base — with visibly loose nulls (null_fl 1.0116 and 1.0047 against 0.998-1.001 everywhere
+  else) and CIs an order of magnitude wider than every other reading. The re-run of the SAME BINARY
+  produced 7.0107 and 7.0172 with tight CIs and clean nulls. The loose nulls are what flag the first
+  run as unreliable, and they are the reason it is discarded rather than averaged in — a rule this
+  ledger already applies to failed nulls elsewhere.
+- **WHY NO EFFECT IS CLAIMED, a property of the apparatus and not of the change.** `malloc_st_probe` links fl directly, so base and candidate are
+  separate BUILDS and therefore separate invocations; the ABBAABBA square is fl-against-glibc within
+  one run, not base-against-candidate. Load differed across runs (15.42, 8.12, 17.89). A ~1% effect
+  measured across invocations on a 64-thread box under varying load is at the edge of what this
+  apparatus resolves, even with 0.1% nulls. It is shipped on the structural case alone — it
+  deletes a global CAS from the ST path and makes malloc symmetric with free — and because it cannot
+  be slower in principle when the elided lock is uncontended by construction. The probe also emits no
+  bootstrap CI for its A/A nulls, so this row could not satisfy the timed-positive contract even if
+  the difference were larger; that is a second, independent reason the numbers here are observations
+  rather than an effect.
+- **For the slab design (bd-e0y02p):** this removes one of the three per-call costs that design
+  targets, and the remaining gap is still ~27 ns over a ~4.6 ns glibc. A ~1% return on deleting an
+  uncontended CAS is also a useful calibration: the diffuse-cost finding is holding, and no single
+  remaining item should be expected to be large.
