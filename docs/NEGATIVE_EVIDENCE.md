@@ -28825,3 +28825,51 @@ What this changes, and what it does not:
   Separately, the quiet gate cannot be won unpinned on a 64-thread host at loadavg 39: it burned 300s
   and reported BLOCKED. `--pin-quietest 4` narrowed to cpus 59+62+31+53 at 0.005-0.010 busy and every
   family then certified.
+
+## 2026-08-16 (NobleCreek) — CONTENTION CHECK against the fleet finding: confirmed, and it has a SECOND failure mode that is worse
+
+- **RESULT CLASS: method note.** No new timing. This checks the torch/mermaid finding (a 21-lane
+  board reading zero-certified for four ticks, cause = host contention) against my own rows, which
+  turn out to be an independent replication of it — plus a mode neither project reported.
+- **MY FOUR DATA POINTS, all with loadavg already recorded at the time:**
+
+  | run | host | loadavg | outcome | correct? |
+  |-----|------|---------|---------|----------|
+  | `snprintf_float` | frankenlibc-test | **2.01** | DECIDABLE, 3 wins | yes — replicated to 4 decimals |
+  | `snprintf_float` | vmi1152480 | **10.37** | `INCUMBENT_COVERAGE_BLOCKED`, no row | n/a — gate refused |
+  | `fprintf_float` | vmi1227854 | **9.99** | DECIDABLE, 3 wins, ratio 0.443 | **NO — certified and WRONG** |
+  | `fprintf_float` | hetzner2 | **2.83** | DECIDABLE, 4 losses, ratio 1.377 | yes |
+
+- **CONFIRMED, the part torch and mermaid saw.** The vmi1152480 run at loadavg 10.37 failed to
+  certify: `did not obtain 5 consecutive clear samples within 300000 ms after 296 samples`, with the
+  four `--pin-quietest 4` CPUs still 96-100% busy. Pinning to the quietest cores does NOT rescue a
+  contended host, because the quietest four were pegged too. Both quiet-host runs (2.01, 2.83)
+  certified cleanly. That is the same shape: **the gate is achievable when the host is quiet and
+  not otherwise.**
+- **THE SECOND MODE, WHICH IS WORSE AND WHICH I HIT.** Contention does not only SUPPRESS
+  certification. On vmi1227854 at loadavg 9.99 it produced a **certified, fully-gated, INVERTED**
+  result: `verdict=DECIDABLE cases=3 wins=3`, all six A/A nulls inside the 0.020 tolerance, every
+  effect clearing twice its null half-width, every effect CI entirely below one — and the answer was
+  backwards. The quiet-host re-run measured the same family at 1.377x SLOWER.
+  A zero-certified board announces itself. **A certified false positive does not.**
+- **WHY THE A/A NULLS DID NOT CATCH IT, which is the generalisable part.** A null compares an arm to
+  ITSELF. Any distortion that hits both halves of the null equally leaves it spotless while still
+  corrupting the BETWEEN-arm effect. That is the same mechanism this ledger already records for the
+  FormatSegment shrink — *"a clean A/A null does NOT certify an ABBA that a global load ramp is
+  dragging"* — arrived at here from the opposite direction, so the two are independent.
+  In my case contention was the trigger and an unvalidated timed object was the vulnerability: the
+  bench's conformance arm checked its own temp files and never touched the stream the timed batch
+  wrote to, so on a loaded host the timed arm could do less work and still pass every gate.
+- **WHAT THIS ADDS TO THE FLEET RULE.** "Re-run in a quiet window before calling it a LOSS" is right
+  but insufficient in one direction. **Re-run apparent WINS from a contended host too.** A loss on a
+  loaded host is at worst pessimistic; a win on a loaded host can be an artifact that survives every
+  statistical gate the harness has. Of my four runs, the only outright wrong answer was a WIN.
+- **PRACTICAL CHECK THAT CAUGHT IT, and it costs nothing:** carry the ABSOLUTE nanoseconds beside
+  the ratio and compare them across runs. fl read 51.2 ns on the contended host and 124.4 ns on the
+  quiet one while glibc barely moved (109.8 then 91.1). **fl cannot get 2.4x faster on a busier
+  machine.** The ratio alone looked immaculate; only the absolute numbers exposed it. Any row whose
+  absolute times move implausibly against host load should be re-run before it is trusted, in either
+  direction.
+- **HOUSEKEEPING.** Every row I have banked already records `loadavg` in its apparatus line
+  (frankenlibc-test 2.01, hetzner2 2.83, and the blocked vmi1152480 10.37), so no back-fill is
+  needed. Current host loadavg while writing this: 18.89, 29.61, 28.95 — no measurement attempted.
