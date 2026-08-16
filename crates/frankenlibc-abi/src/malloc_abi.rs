@@ -1203,6 +1203,19 @@ fn segment_free(
     if addr != view.user_base {
         return SegmentFreeResult::OwnedInvalid;
     }
+    // Retire the slot. The atomic SWAP is what makes concurrent frees of the same
+    // pointer safe: exactly one freer observes a live `previous` and every other
+    // observes `SEGMENT_SLOT_FREE` and bails out as `OwnedInvalid`.
+    //
+    // MEASURED AND REJECTED (2026-08-16): eliding this to a load+store while
+    // `MULTI_THREADED` is unlatched is semantically exact — no second thread can
+    // interleave — but it is SLOWER. Both arms certified in one window, complete
+    // separation across 8 paired groups in the WRONG direction: 6.5322-6.5704
+    // with the swap against 6.6450-6.6788 without it, i.e. 1.53% worse. The
+    // branch on the latch costs more than the `lock xchg` saves on a line already
+    // exclusive in L1. Consistent with the guard-CAS refutation already on
+    // record: atomics are not this allocator's cost. Do not retry without new
+    // evidence; see docs/NEGATIVE_EVIDENCE.md.
     let previous = view
         .meta
         .requested_size

@@ -29583,3 +29583,59 @@ What this changes, and what it does not:
   order-sensitive mix before any number above was taken.
 - **Gates:** malloc_abi_test 75 passed / 1 ignored, hardened_mode_safety_test 15,
   conformance_diff_malloc_stats_binning 5.
+
+## 2026-08-16 (BlackThrush) — REJECTED: eliding the slot-retire `lock xchg` in single-threaded mode is 1.53% SLOWER
+
+- **RESULT CLASS: loss/baseline (rejected lever).** Reverted. No speedup claimed and none found.
+- **THE LEVER, and why it looked right.** `segment_free` retires a slot with
+  `requested_size.swap(SEGMENT_SLOT_FREE, AcqRel)` — a `lock xchg` on every free. The swap exists to
+  make concurrent frees safe: exactly one freer sees a live `previous`. While `MULTI_THREADED` is
+  unlatched there is by construction no second thread, so a load followed by a store is not an
+  approximation — it is the same sequence of states. The allocator already elides on this latch
+  elsewhere (non-atomic stats accumulation, fallback-table lock), the alloc side already publishes
+  with a plain store, and `segment_free` is the LARGEST single frame in the post-fold profile at
+  128.0 of 585.7 instructions per pair. Every prior fact pointed at it.
+- **BOTH ARMS IN ONE WINDOW**, `square=ABBAABBA`, n=41, two rounds alternating, statically-linked
+  probes so the arm is the binary:
+
+  | arm | ELF sha256 | sz=16 | sz=64 | sz=256 | sz=1024 | observed |
+  |---|---|---|---|---|---|---|
+  | baseline (swap) | f8db5310846d14cc88f62ea50c4d7d034c1a0d4962308ecd0ea1b6bc56c80060 | 6.5409 / 6.5610 | 6.5499 / 6.5704 | 6.5322 / 6.5558 | 6.5473 / 6.5531 | loadavg 17.88,16.84,18.18 @ 3364 MHz and 18.29,16.94,18.21 @ 3606 MHz |
+  | candidate (elided) | c2123e2111751e8536bd65a1ccd1402b225a922dcb1f2c55a1219506247184dd | 6.6472 / 6.6788 | 6.6597 / 6.6549 | 6.6450 / 6.6505 | 6.6460 / 6.6663 | loadavg 18.29,16.94,18.21 @ 3588 MHz and 20.11,17.34,18.33 @ 3379 MHz |
+
+  **Complete separation in the WRONG direction: max baseline 6.5704 < min candidate 6.6450**, 8 of 8
+  paired groups, sign test p ~ 0.004. Every row ADMISSIBLE; worst same-invocation A/A null_fl 0.9939
+  and null_glibc 0.9939, both inside the +/-0.02 bound.
+- **Per-case same-invocation A/A null with its contemporaneous bootstrap median CI**, both
+  taken from the SAME invocation as the effect they sit beside:
+  - baseline sz=16: same-invocation A/A null_fl = 1.0016, bootstrap median CI [6.5317,6.5781] (95%)
+  - baseline sz=64: same-invocation A/A null_fl = 1.0001, bootstrap median CI [6.5402,6.5712] (95%)
+  - baseline sz=256: same-invocation A/A null_fl = 1.0007, bootstrap median CI [6.5264,6.5395] (95%)
+  - baseline sz=1024: same-invocation A/A null_fl = 0.9995, bootstrap median CI [6.5385,6.5539] (95%)
+  - candidate sz=16: same-invocation A/A null_fl = 0.9971, bootstrap median CI [6.6303,6.6576] (95%)
+  - candidate sz=64: same-invocation A/A null_fl = 1.0003, bootstrap median CI [6.6527,6.6627] (95%)
+  - candidate sz=256: same-invocation A/A null_fl = 1.0002, bootstrap median CI [6.6348,6.6539] (95%)
+  - candidate sz=1024: same-invocation A/A null_fl = 0.9997, bootstrap median CI [6.6404,6.6554] (95%)
+
+  The baseline and candidate intervals are DISJOINT at every size, which is what makes the
+  negative direction a result rather than noise.
+- **Median 6.5524 against 6.6528 — removing a locked RMW made free 1.53% SLOWER.** The branch on the
+  latch, plus the second code path, costs more than a `lock xchg` saves on a cache line already
+  exclusive in L1.
+- **THIS CONFIRMS A REFUTATION ALREADY ON RECORD RATHER THAN ADDING A NEW ONE.** The guard-CAS
+  sub-vein was closed earlier with "deleting the allocator guard's lock CAS buys ~0.35 ns/call, not
+  5.6 ns", and the frontier line calls the guard CAS irreducible. **Atomics are not this allocator's
+  cost, and that now holds for the retire as well as the guard.** I should have weighted my own
+  ledger more heavily before building this: the preflight I ran two days of work ago named the guard
+  and the membrane, and the correct generalisation was "locked RMWs here are cheap", not "this
+  particular RMW was never tried".
+- **A PROCESS NOTE WORTH MORE THAN THE LEVER.** A peer's `campaign_measured_sizes_take_the_address_derived_segment_path`
+  failed on the first run with the change in. Disabling the elision made it pass, which looked like
+  proof of causation — it was not. Re-running with the elision in place passed 75/75, and two further
+  four-target runs were green (87 tests each). The failure is the known parallel-test-binary flake
+  (bd-u2daxd), and a single passing run of a disabled variant is NOT evidence of causation. One
+  observation either side of a change cannot distinguish a real regression from a flake.
+- **WHAT SURVIVES:** the gate `conformance_diff_segment_free_st_elision` is kept. It asserts that
+  every live allocation has a distinct address across free-and-reuse cycles on both sides of the
+  latch — the property a double retire actually violates — which is worth having whether or not the
+  retire is atomic, and is what any future attempt at this lever must satisfy.
