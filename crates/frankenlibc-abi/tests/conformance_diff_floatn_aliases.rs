@@ -23,10 +23,12 @@
 //! derived from the export list with its signature checked against its base's,
 //! so the tables cannot silently drift from the source.
 //!
-//! STILL UNCOVERED, and deliberately: the ~30 aliases taking out-pointers or
-//! tagged strings (frexp, modf, remquo, sincos, canonicalize, getpayload,
-//! setpayload, setpayloadsig, nan), which need per-function scaffolding rather
-//! than a table. Also excluded, correctly, are the 12 C23 narrowing-arithmetic
+//! The out-pointer and tagged-string aliases (frexp, modf, remquo, sincos,
+//! canonicalize, getpayload, setpayload, setpayloadsig, nan) are covered at the
+//! END of this file under bd-xr8wyv. They could not go in a table because they
+//! write through caller pointers, return nothing at all (sincos), or take a NaN
+//! tag string, so each has its own arm and each compares EVERYTHING WRITTEN
+//! THROUGH THE OUT-POINTERS, not just the return value. Also excluded, correctly, are the 12 C23 narrowing-arithmetic
 //! entry points (`f32addf64`, `f32xmulf64`, …) — those are not aliases of any
 //! base and must not be asserted equal to one.
 
@@ -834,5 +836,324 @@ fn floatn_f64_totalorder_aliases_match_base() {
                 assert_eq!(a, b, "{name}f64({x:?}, {y:?}) = {a} but base = {b}");
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bd-xr8wyv: the out-pointer and tagged-string aliases the table-driven
+// expansion above could not reach.
+//
+// Every alias covered earlier fits a table because its arguments and result are
+// plain values. These do not: they write through caller pointers, return nothing
+// at all (sincos), or take a NaN tag string. Each needs its own scaffolding,
+// which is why they were filed rather than silently skipped.
+//
+// The contract is unchanged: alias(...) == base(...) BIT-FOR-BIT, INCLUDING
+// EVERYTHING WRITTEN THROUGH THE OUT-POINTERS. Comparing only the return value
+// would miss the whole point of these functions -- frexp's exponent, modf's
+// integral part and remquo's quotient bits live solely in the out-parameter, and
+// sincos has no return value at all.
+//
+// Still a pure self-consistency wiring gate over fl's own exports; no glibc
+// oracle is involved.
+
+/// Values chosen to exercise the out-parameters, not just the returns: signed
+/// zeros, a subnormal (frexp's exponent goes deeply negative), values with
+/// distinct integral and fractional halves for modf, and the specials.
+const OUTP_F64: &[f64] = &[
+    0.0,
+    -0.0,
+    1.0,
+    -1.0,
+    0.5,
+    -0.5,
+    3.75,
+    -3.75,
+    1024.0,
+    0.125,
+    1e300,
+    1e-300,
+    f64::MIN_POSITIVE,
+    f64::MAX,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
+    -f64::NAN,
+];
+
+fn outp_f32() -> Vec<f32> {
+    let mut v: Vec<f32> = OUTP_F64.iter().map(|&x| x as f32).collect();
+    v.extend_from_slice(&[f32::MIN_POSITIVE, f32::MAX, f32::from_bits(1)]);
+    v
+}
+
+fn outp_f64() -> Vec<f64> {
+    OUTP_F64.to_vec()
+}
+
+macro_rules! frexp_arm {
+    ($name:ident, $alias:path, $base:path, $vals:expr, $label:literal) => {
+        #[test]
+        fn $name() {
+            for x in $vals {
+                let mut ea: c_int = 0;
+                let mut eb: c_int = 0;
+                // SAFETY: both out-pointers address live locals.
+                let (ra, rb) = unsafe { ($alias(x, &mut ea), $base(x, &mut eb)) };
+                assert_eq!(
+                    (ra.to_bits(), ea),
+                    (rb.to_bits(), eb),
+                    "{} of {:?}: alias gave exponent {}, base gave {} — the EXPONENT lives only in \
+                     the out-parameter, so a returns-only check cannot see it",
+                    $label,
+                    x,
+                    ea,
+                    eb
+                );
+            }
+        }
+    };
+}
+frexp_arm!(floatn_frexpf32_matches_base, m::frexpf32, m::frexpf, outp_f32(), "frexpf32");
+frexp_arm!(floatn_frexpf64_matches_base, m::frexpf64, m::frexp, outp_f64(), "frexpf64");
+
+macro_rules! modf_arm {
+    ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
+        #[test]
+        fn $name() {
+            for x in $vals {
+                let mut ia: $ty = 0.0;
+                let mut ib: $ty = 0.0;
+                // SAFETY: both out-pointers address live locals.
+                let (ra, rb) = unsafe { ($alias(x, &mut ia), $base(x, &mut ib)) };
+                assert_eq!(
+                    (ra.to_bits(), ia.to_bits()),
+                    (rb.to_bits(), ib.to_bits()),
+                    "{} of {:?}: alias (frac {:?}, int {:?}), base (frac {:?}, int {:?})",
+                    $label,
+                    x,
+                    ra,
+                    ia,
+                    rb,
+                    ib
+                );
+            }
+        }
+    };
+}
+modf_arm!(floatn_modff32_matches_base, f32, m::modff32, m::modff, outp_f32(), "modff32");
+modf_arm!(floatn_modff64_matches_base, f64, m::modff64, m::modf, outp_f64(), "modff64");
+
+macro_rules! remquo_arm {
+    ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
+        #[test]
+        fn $name() {
+            let vs: Vec<$ty> = $vals;
+            for &x in &vs {
+                for &y in &vs {
+                    let mut qa: c_int = 0;
+                    let mut qb: c_int = 0;
+                    // SAFETY: both out-pointers address live locals.
+                    let (ra, rb) = unsafe { ($alias(x, y, &mut qa), $base(x, y, &mut qb)) };
+                    assert_eq!(
+                        (ra.to_bits(), qa),
+                        (rb.to_bits(), qb),
+                        "{} of ({:?}, {:?}): alias quotient bits {}, base {} — the QUOTIENT lives \
+                         only in the out-parameter",
+                        $label,
+                        x,
+                        y,
+                        qa,
+                        qb
+                    );
+                }
+            }
+        }
+    };
+}
+remquo_arm!(floatn_remquof32_matches_base, f32, m::remquof32, m::remquof, outp_f32(), "remquof32");
+remquo_arm!(floatn_remquof64_matches_base, f64, m::remquof64, m::remquo, outp_f64(), "remquof64");
+
+macro_rules! sincos_arm {
+    ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
+        #[test]
+        fn $name() {
+            for x in $vals {
+                let mut sa: $ty = 0.0;
+                let mut ca: $ty = 0.0;
+                let mut sb: $ty = 0.0;
+                let mut cb: $ty = 0.0;
+                // SAFETY: all four out-pointers address live locals.
+                unsafe {
+                    $alias(x, &mut sa, &mut ca);
+                    $base(x, &mut sb, &mut cb);
+                }
+                // sincos returns NOTHING, so the out-parameters are the entire
+                // observable. A mis-wired alias is invisible any other way.
+                assert_eq!(
+                    (sa.to_bits(), ca.to_bits()),
+                    (sb.to_bits(), cb.to_bits()),
+                    "{} of {:?}: alias (sin {:?}, cos {:?}), base (sin {:?}, cos {:?})",
+                    $label,
+                    x,
+                    sa,
+                    ca,
+                    sb,
+                    cb
+                );
+            }
+        }
+    };
+}
+sincos_arm!(floatn_sincosf32_matches_base, f32, m::sincosf32, m::sincosf, outp_f32(), "sincosf32");
+sincos_arm!(floatn_sincosf64_matches_base, f64, m::sincosf64, m::sincos, outp_f64(), "sincosf64");
+
+macro_rules! canonicalize_arm {
+    ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
+        #[test]
+        fn $name() {
+            for x in $vals {
+                let mut oa: $ty = 0.0;
+                let mut ob: $ty = 0.0;
+                // SAFETY: out-pointers address live locals; `x` is read-only.
+                let (ra, rb) = unsafe { ($alias(&mut oa, &x), $base(&mut ob, &x)) };
+                assert_eq!(
+                    (ra, oa.to_bits()),
+                    (rb, ob.to_bits()),
+                    "{} of {:?}: alias (rc {}, out {:?}), base (rc {}, out {:?})",
+                    $label,
+                    x,
+                    ra,
+                    oa,
+                    rb,
+                    ob
+                );
+            }
+        }
+    };
+}
+canonicalize_arm!(
+    floatn_canonicalizef32_matches_base,
+    f32,
+    m::canonicalizef32,
+    m::canonicalizef,
+    outp_f32(),
+    "canonicalizef32"
+);
+canonicalize_arm!(
+    floatn_canonicalizef64_matches_base,
+    f64,
+    m::canonicalizef64,
+    m::canonicalize,
+    outp_f64(),
+    "canonicalizef64"
+);
+
+/// getpayload / setpayload / setpayloadsig, driven together.
+///
+/// This is the highest-risk cluster in the whole alias surface and the reason
+/// the bead was filed rather than dropped: `setpayload` and `setpayloadsig`
+/// share a signature and differ by one token, so a copy-paste between them
+/// typechecks silently and yields a quiet NaN where a signalling one was asked
+/// for. Reading the payload back afterwards is what makes a swap visible --
+/// the two differ in the quiet/signalling bit, not in the payload itself.
+macro_rules! payload_arm {
+    ($name:ident, $ty:ty, $getp_a:path, $getp_b:path, $set_a:path, $set_b:path,
+     $sig_a:path, $sig_b:path, $label:literal) => {
+        #[test]
+        fn $name() {
+            let payloads: [$ty; 7] = [0.0, 1.0, 2.0, 42.0, 1023.0, -1.0, 0.5];
+            for pl in payloads {
+                let mut a: $ty = 0.0;
+                let mut b: $ty = 0.0;
+                // SAFETY: out-pointers address live locals.
+                let (ra, rb) = unsafe { ($set_a(&mut a, pl), $set_b(&mut b, pl)) };
+                assert_eq!(
+                    (ra, a.to_bits()),
+                    (rb, b.to_bits()),
+                    "{} setpayload({:?}): alias (rc {}, {:?}), base (rc {}, {:?})",
+                    $label,
+                    pl,
+                    ra,
+                    a,
+                    rb,
+                    b
+                );
+
+                let mut sa: $ty = 0.0;
+                let mut sb: $ty = 0.0;
+                // SAFETY: as above, for the signalling form.
+                let (rsa, rsb) = unsafe { ($sig_a(&mut sa, pl), $sig_b(&mut sb, pl)) };
+                assert_eq!(
+                    (rsa, sa.to_bits()),
+                    (rsb, sb.to_bits()),
+                    "{} setpayloadsig({:?}): alias (rc {}, {:?}), base (rc {}, {:?})",
+                    $label,
+                    pl,
+                    rsa,
+                    sa,
+                    rsb,
+                    sb
+                );
+
+                // SAFETY: pointers address live locals.
+                let (ga, gb) = unsafe { ($getp_a(&a), $getp_b(&b)) };
+                assert_eq!(
+                    ga.to_bits(),
+                    gb.to_bits(),
+                    "{} getpayload after setpayload({:?}): alias {:?}, base {:?}",
+                    $label,
+                    pl,
+                    ga,
+                    gb
+                );
+            }
+        }
+    };
+}
+payload_arm!(
+    floatn_payload_f32_matches_base,
+    f32,
+    m::getpayloadf32,
+    m::getpayloadf,
+    m::setpayloadf32,
+    m::setpayloadf,
+    m::setpayloadsigf32,
+    m::setpayloadsigf,
+    "f32"
+);
+payload_arm!(
+    floatn_payload_f64_matches_base,
+    f64,
+    m::getpayloadf64,
+    m::getpayload,
+    m::setpayloadf64,
+    m::setpayload,
+    m::setpayloadsigf64,
+    m::setpayloadsig,
+    "f64"
+);
+
+#[test]
+fn floatn_nan_aliases_match_base() {
+    // nan()/nanf() take a NaN TAG STRING, so they need a C string rather than a
+    // table row. Empty tag, a decimal tag, a hex tag and a non-numeric tag: the
+    // parse accepts a digit string and ignores what it cannot read, so all four
+    // shapes are worth driving.
+    for tag in [c"", c"1", c"0x3", c"abc"] {
+        // SAFETY: each tag is a NUL-terminated constant.
+        let (a32, b32) = unsafe { (m::nanf32(tag.as_ptr()), m::nanf(tag.as_ptr())) };
+        assert_eq!(
+            a32.to_bits(),
+            b32.to_bits(),
+            "nanf32({tag:?}): alias {a32:?}, base {b32:?}"
+        );
+        // SAFETY: as above.
+        let (a64, b64) = unsafe { (m::nanf64(tag.as_ptr()), m::nan(tag.as_ptr())) };
+        assert_eq!(
+            a64.to_bits(),
+            b64.to_bits(),
+            "nanf64({tag:?}): alias {a64:?}, base {b64:?}"
+        );
     }
 }
