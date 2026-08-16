@@ -123,6 +123,17 @@ unsafe extern "C" {
         compar: unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
         arg: *mut c_void,
     );
+    // bd-v6t3e6 (conformance_diff_exceptflag) and bd-ij9mvq
+    // (conformance_diff_reallocarray). The allocator pair matters most of any
+    // arm here: that gate frees each impl's blocks with that impl's own free,
+    // so if `malloc` and `free` did not both reach the same allocator it would
+    // be mixing allocators, not just measuring nothing.
+    fn fegetexceptflag(flagp: *mut u16, excepts: c_int) -> c_int;
+    fn fesetexceptflag(flagp: *const u16, excepts: c_int) -> c_int;
+    fn reallocarray(p: *mut c_void, nmemb: usize, size: usize) -> *mut c_void;
+    fn malloc_usable_size(p: *mut c_void) -> usize;
+    fn malloc(n: usize) -> *mut c_void;
+    fn free(p: *mut c_void);
     fn catopen(name: *const c_char, oflag: c_int) -> *mut c_void;
     fn catclose(catd: *mut c_void) -> c_int;
     fn setlocale(category: c_int, locale: *const c_char) -> *const c_char;
@@ -174,7 +185,37 @@ fn in_host_object(object: &str) -> bool {
 fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
     // (link-time arm, fl's own definition, name). The fl column is what the
     // link-time arm would collapse onto if the linker satisfied it locally.
-    let probes: [(*const c_void, *const c_void, &str); 21] = [
+    let probes: [(*const c_void, *const c_void, &str); 27] = [
+        (
+            fegetexceptflag as *const c_void,
+            frankenlibc_abi::fenv_abi::fegetexceptflag as *const c_void,
+            "fegetexceptflag",
+        ),
+        (
+            fesetexceptflag as *const c_void,
+            frankenlibc_abi::fenv_abi::fesetexceptflag as *const c_void,
+            "fesetexceptflag",
+        ),
+        (
+            reallocarray as *const c_void,
+            frankenlibc_abi::stdlib_abi::reallocarray as *const c_void,
+            "reallocarray",
+        ),
+        (
+            malloc_usable_size as *const c_void,
+            frankenlibc_abi::malloc_abi::malloc_usable_size as *const c_void,
+            "malloc_usable_size",
+        ),
+        (
+            malloc as *const c_void,
+            frankenlibc_abi::malloc_abi::malloc as *const c_void,
+            "malloc",
+        ),
+        (
+            free as *const c_void,
+            frankenlibc_abi::malloc_abi::free as *const c_void,
+            "free",
+        ),
         (
             lsearch as *const c_void,
             frankenlibc_abi::search_abi::lsearch as *const c_void,
