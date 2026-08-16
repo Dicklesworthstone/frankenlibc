@@ -15,15 +15,46 @@ use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
 
-unsafe extern "C" {
-    fn error_at_line(
-        status: c_int,
-        errnum: c_int,
-        file: *const c_char,
-        line: c_uint,
-        fmt: *const c_char,
-        ...
-    );
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type ErrorAtLine =
+    unsafe extern "C" fn(c_int, c_int, *const c_char, c_uint, *const c_char, ...);
+type Error = unsafe extern "C" fn(c_int, c_int, *const c_char, ...);
+type Warnx = unsafe extern "C" fn(*const c_char, ...);
+
+// The three oracles resolved by dlsym rather than declared at link time
+// (bd-v0388t).
+//
+// This file already called dlopen/dlsym -- for the `error_print_progname` hook
+// and glibc's `stdout` -- so it read as a gate with a real oracle. The three
+// functions actually under test were plain link-time externs alongside that,
+// the same shape that hid link-time scalb/scalbf behind dlvsym'd
+// __scalb_finite and link-time chflags/revoke/setlogin behind dlvsym'd bdflush.
+//
+// A hollow arm would be particularly quiet here: the observable is captured
+// stderr text, so fl-against-fl would produce two identical strings and the
+// gate would confirm fl's own formatting as glibc's.
+fn glibc_error_at_line() -> ErrorAtLine {
+    // SAFETY: matches glibc's documented error_at_line signature.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"error_at_line",
+            frankenlibc_abi::stdlib_abi::error_at_line as *const (),
+        )
+    }
+}
+
+fn glibc_error() -> Error {
+    // SAFETY: matches glibc's documented error signature.
+    unsafe {
+        dlsym_oracle::host_fn(c"error", frankenlibc_abi::stdlib_abi::error as *const ())
+    }
+}
+
+fn glibc_warnx() -> Warnx {
+    // SAFETY: matches BSD's documented warnx signature.
+    unsafe { dlsym_oracle::host_fn(c"warnx", frankenlibc_abi::err_abi::warnx as *const ()) }
 }
 
 static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
@@ -59,7 +90,7 @@ macro_rules! both {
     ($desc:literal, $errnum:expr, $file:expr, $line:expr, $fmt:expr $(, $arg:expr)*) => {{
         let file = CString::new($file).unwrap();
         let fmt = CString::new($fmt).unwrap();
-        let g = capture(|| unsafe { error_at_line(0, $errnum, file.as_ptr(), $line, fmt.as_ptr() $(, $arg)*) });
+        let g = capture(|| unsafe { glibc_error_at_line()(0, $errnum, file.as_ptr(), $line, fmt.as_ptr() $(, $arg)*) });
         let f = capture(|| unsafe {
             frankenlibc_abi::stdlib_abi::error_at_line(0, $errnum, file.as_ptr(), $line, fmt.as_ptr() $(, $arg)*)
         });
@@ -123,7 +154,6 @@ fn error_at_line_matches_glibc() {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    fn error(status: c_int, errnum: c_int, fmt: *const c_char, ...);
     fn dlopen(filename: *const i8, flag: c_int) -> *mut std::ffi::c_void;
     fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8) -> *mut std::ffi::c_void;
 }
@@ -170,7 +200,7 @@ fn error_honors_error_print_progname_like_glibc() {
     let fmt = CString::new("boom").unwrap();
 
     let (g, f) = with_progname_hook(hook, || {
-        let g = capture_inner(|| unsafe { error(0, 0, fmt.as_ptr()) });
+        let g = capture_inner(|| unsafe { glibc_error()(0, 0, fmt.as_ptr()) });
         let f = capture_inner(|| unsafe { frankenlibc_abi::stdlib_abi::error(0, 0, fmt.as_ptr()) });
         (g, f)
     });
@@ -197,7 +227,7 @@ fn error_at_line_honors_error_print_progname_like_glibc() {
     let fmt = CString::new("cannot read").unwrap();
 
     let (g, f) = with_progname_hook(hook, || {
-        let g = capture_inner(|| unsafe { error_at_line(0, 0, file.as_ptr(), 42, fmt.as_ptr()) });
+        let g = capture_inner(|| unsafe { glibc_error_at_line()(0, 0, file.as_ptr(), 42, fmt.as_ptr()) });
         let f = capture_inner(|| unsafe {
             frankenlibc_abi::stdlib_abi::error_at_line(0, 0, file.as_ptr(), 42, fmt.as_ptr())
         });
@@ -235,7 +265,7 @@ fn error_without_hook_still_prints_the_default_prefix() {
     // moved (hook leaked vs prefix wrong) instead of one opaque byte diff.
     let fmt = CString::new("boom").unwrap();
     let (g, f) = with_progname_hook(std::ptr::null_mut(), || {
-        let g = capture_inner(|| unsafe { error(0, 0, fmt.as_ptr()) });
+        let g = capture_inner(|| unsafe { glibc_error()(0, 0, fmt.as_ptr()) });
         let f = capture_inner(|| unsafe { frankenlibc_abi::stdlib_abi::error(0, 0, fmt.as_ptr()) });
         (g, f)
     });
@@ -507,7 +537,7 @@ fn error_at_line_honors_error_one_per_line_like_glibc() {
 
     // Prime each impl's statics to a location no step uses, so step 0 cannot be
     // suppressed by whatever a previously-run arm left behind.
-    let g_call = |f: *const c_char, l: c_uint| unsafe { error_at_line(0, 0, f, l, fmt.as_ptr()) };
+    let g_call = |f: *const c_char, l: c_uint| unsafe { glibc_error_at_line()(0, 0, f, l, fmt.as_ptr()) };
     let fl_call = |f: *const c_char, l: c_uint| unsafe {
         frankenlibc_abi::stdlib_abi::error_at_line(0, 0, f, l, fmt.as_ptr())
     };
@@ -578,7 +608,7 @@ fn error_at_line_repeats_when_error_one_per_line_is_clear() {
         frankenlibc_abi::glibc_internal_abi::error_one_per_line = 0;
     }
 
-    let g_call = |f: *const c_char, l: c_uint| unsafe { error_at_line(0, 0, f, l, fmt.as_ptr()) };
+    let g_call = |f: *const c_char, l: c_uint| unsafe { glibc_error_at_line()(0, 0, f, l, fmt.as_ptr()) };
     let fl_call = |f: *const c_char, l: c_uint| unsafe {
         frankenlibc_abi::stdlib_abi::error_at_line(0, 0, f, l, fmt.as_ptr())
     };
@@ -635,7 +665,7 @@ fn error_at_line_null_filename_keeps_the_space_separator() {
     ];
 
     for (label, file) in cases {
-        let g = capture(|| unsafe { error_at_line(0, 0, *file, 7, fmt.as_ptr()) });
+        let g = capture(|| unsafe { glibc_error_at_line()(0, 0, *file, 7, fmt.as_ptr()) });
         let f = capture(|| unsafe {
             frankenlibc_abi::stdlib_abi::error_at_line(0, 0, *file, 7, fmt.as_ptr())
         });
@@ -701,7 +731,6 @@ fn error_at_line_null_filename_keeps_the_space_separator() {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    fn warnx(fmt: *const c_char, ...);
 }
 
 /// glibc's `stdout` FILE*.
