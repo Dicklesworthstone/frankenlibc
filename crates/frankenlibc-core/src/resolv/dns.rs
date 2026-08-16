@@ -102,8 +102,22 @@ impl DnsHeader {
     pub fn new_query(id: u16) -> Self {
         Self {
             id,
-            // QR=0 (query), RD=1 (recursion desired)
-            flags: 0x0100,
+            // QR=0 (query), RD=1 (recursion desired), AD=1 (authentic data).
+            //
+            // AD is set because glibc sets it on outgoing queries by default:
+            // RES_TRUSTAD joined RES_DEFAULT in glibc 2.31, and byte 3 of the
+            // header is RA(7) Z(6) AD(5) CD(4) RCODE(3..0), so glibc emits 0x20
+            // there where fl emitted 0x00 (bd-ym6gw0).
+            //
+            // PINNED AS A CONSTANT, DELIBERATELY. In glibc this bit is a
+            // FUNCTION of `_res.options`, so a caller that clears RES_TRUSTAD
+            // gets AD=0. fl has no resolver options model to consult: `_res` is
+            // an opaque 600-byte blob in glibc_internal_abi and nothing in the
+            // tree defines RES_TRUSTAD or an options word. So this matches
+            // glibc's DEFAULT and cannot yet follow a caller that changes it.
+            // If fl ever grows an options word, this must become conditional on
+            // it rather than staying a literal.
+            flags: 0x0120,
             qdcount: 1,
             ancount: 0,
             nscount: 0,
