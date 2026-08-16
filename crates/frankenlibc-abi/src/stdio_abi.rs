@@ -7809,6 +7809,18 @@ pub unsafe extern "C" fn vsnprintf(
         let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
         return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
     }
+    // Float probe LAST, so it adds no byte-compare to the integer/string paths
+    // that carry the measured campaign win. Reads through `va_read_one_fp`: a
+    // `double` lives in the FP register save area (fp_offset @4), not the GP one.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one `double` from `ap`; we return
+        // immediately, so the slow path never re-reads the advanced `ap`.
+        let arg = unsafe { va_read_one_fp(ap) };
+        return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
+    }
     let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, size, true, false, 0);
