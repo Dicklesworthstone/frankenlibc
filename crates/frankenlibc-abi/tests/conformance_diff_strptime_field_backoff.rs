@@ -13,8 +13,54 @@
 use frankenlibc_abi::time_abi::strptime as fl_strptime;
 use std::os::raw::{c_char, c_int};
 
-unsafe extern "C" {
-    fn setlocale(c: c_int, n: *const c_char) -> *mut c_char;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// This gate had NO host arm (bd-v0388t): the GOLDEN table was, per the header,
+/// "captured from a gcc strptime oracle" — read off glibc once, offline, and
+/// frozen — while the test name claims it "matches_glibc". Nothing here called
+/// glibc, so it could only confirm fl still agreed with a snapshot.
+///
+/// That matters because glibc moves: 2.42 rewrote `ecvt`/`fcvt` to
+/// shortest-representation and broke four gates in this suite. The back-off rule
+/// under test lives in glibc's `get_number`, which is exactly the kind of internal
+/// parsing detail a release can retune.
+///
+/// The GOLDEN table is kept, and a live arm is added on the same inputs. A
+/// divergence now says WHICH side moved: fl regressing fails the golden check,
+/// glibc changing fails the live one.
+type StrptimeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
+type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
+
+fn host_strptime() -> StrptimeFn {
+    // SAFETY: signature matches POSIX strptime exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"strptime",
+            frankenlibc_abi::time_abi::strptime as *const (),
+        )
+    }
+}
+
+fn host_setlocale() -> SetlocaleFn {
+    // SAFETY: signature matches C's setlocale exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"setlocale",
+            frankenlibc_abi::locale_abi::setlocale as *const (),
+        )
+    }
+}
+
+/// Both implementations own separate locale state; set both, or the arms could
+/// disagree about the locale rather than about the back-off rule.
+fn both_c_locale() {
+    let c = c"C";
+    // SAFETY: LC_ALL with a NUL-terminated constant, through each arm in turn.
+    unsafe {
+        host_setlocale()(libc::LC_ALL, c.as_ptr());
+        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c.as_ptr());
+    }
 }
 
 type GoldenCase = (&'static str, &'static str, i64, i32, i32, i32, i32, i32);
@@ -37,7 +83,7 @@ const GOLDEN: &[GoldenCase] = &[
 
 #[test]
 fn strptime_numeric_field_backoff_matches_glibc() {
-    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    both_c_locale();
     let mut fails = Vec::new();
     for &(input, fmt, consumed, hour, min, sec, mday, mon) in GOLDEN {
         let ci = std::ffi::CString::new(input).unwrap();
@@ -60,7 +106,38 @@ fn strptime_numeric_field_backoff_matches_glibc() {
         let want = (consumed, hour, min, sec, mday, mon);
         if got != want {
             fails.push(format!(
-                "strptime({input:?},{fmt:?}): got {got:?}, want {want:?}"
+                "strptime({input:?},{fmt:?}): fl got {got:?}, golden want {want:?}"
+            ));
+        }
+
+        // Live arm, same input, same zeroed tm. A NULL return is encoded as -1
+        // exactly as fl's is, so "one arm rejected the input" is compared rather
+        // than skipped — that was the original defect's whole shape.
+        let mut gtm: libc::tm = unsafe { std::mem::zeroed() };
+        // SAFETY: NUL-terminated input and format, against the host.
+        let gr = unsafe { host_strptime()(ci.as_ptr(), cf.as_ptr(), &mut gtm) };
+        let g_consumed = if gr.is_null() {
+            -1
+        } else {
+            (gr as usize - ci.as_ptr() as usize) as i64
+        };
+        let g = (
+            g_consumed,
+            gtm.tm_hour,
+            gtm.tm_min,
+            gtm.tm_sec,
+            gtm.tm_mday,
+            gtm.tm_mon,
+        );
+        if got != g {
+            fails.push(format!(
+                "strptime({input:?},{fmt:?}): fl {got:?} vs LIVE glibc {g:?}"
+            ));
+        }
+        if g != want {
+            fails.push(format!(
+                "strptime({input:?},{fmt:?}): LIVE glibc {g:?} vs golden {want:?} \
+                 — the frozen oracle no longer matches this host's glibc"
             ));
         }
     }

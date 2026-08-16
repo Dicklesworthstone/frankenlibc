@@ -18,26 +18,111 @@
 use frankenlibc_abi::time_abi::strptime as fl_strptime;
 use std::os::raw::{c_char, c_int};
 
-unsafe extern "C" {
-    fn setlocale(c: c_int, n: *const c_char) -> *mut c_char;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// This gate used to have NO host arm at all (bd-v0388t).
+///
+/// Its header described the expected values as "golden values captured from a
+/// gcc strptime oracle", i.e. read off glibc ONCE, offline, and frozen into
+/// literals — while both test names end in `_matches_glibc`. That is a stronger
+/// claim than the code made: nothing here ever called glibc, so the gate could
+/// only ever confirm that fl still agreed with a snapshot of glibc's behaviour
+/// taken at authoring time.
+///
+/// The distinction is not academic on this host. glibc 2.42 rewrote `ecvt`/`fcvt`
+/// to shortest-representation and broke four gates in this suite, so glibc DOES
+/// move underneath frozen literals. A gate whose name promises parity has to
+/// measure it.
+///
+/// The golden literals are kept — they encode what the fix intended — and a live
+/// glibc arm is added alongside. Now a divergence identifies WHICH side moved:
+/// fl regressing fails the golden assertion, glibc changing fails the
+/// differential one.
+type StrptimeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
+type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
+
+fn host_strptime() -> StrptimeFn {
+    // SAFETY: signature matches POSIX strptime exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"strptime",
+            frankenlibc_abi::time_abi::strptime as *const (),
+        )
+    }
 }
 
-/// Parse with a zeroed tm; return the resulting tm.
+fn host_setlocale() -> SetlocaleFn {
+    // SAFETY: signature matches C's setlocale exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"setlocale",
+            frankenlibc_abi::locale_abi::setlocale as *const (),
+        )
+    }
+}
+
+/// Put BOTH implementations in the C locale. Each owns its own locale state, so
+/// setting only one would let the arms disagree over what a month name is rather
+/// than over the parsing rule under test.
+fn both_c_locale() {
+    let c = c"C";
+    // SAFETY: LC_ALL with a NUL-terminated constant, through each arm in turn.
+    unsafe {
+        host_setlocale()(libc::LC_ALL, c.as_ptr());
+        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c.as_ptr());
+    }
+}
+
+/// Every field strptime is allowed to touch, so a divergence cannot hide in a
+/// field this gate happens not to assert.
+fn fields(tm: &libc::tm) -> [i32; 9] {
+    [
+        tm.tm_sec, tm.tm_min, tm.tm_hour, tm.tm_mday, tm.tm_mon, tm.tm_year, tm.tm_wday,
+        tm.tm_yday, tm.tm_isdst,
+    ]
+}
+
+/// Parse with a zeroed tm through BOTH arms, assert they agree, return fl's tm.
+///
+/// The consumed-length comparison matters as much as the fields: an arm that
+/// stops early can still leave a correct-looking tm.
 fn parse(input: &str, fmt: &str) -> libc::tm {
     let ci = std::ffi::CString::new(input).unwrap();
     let cf = std::ffi::CString::new(fmt).unwrap();
+
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let r = unsafe { fl_strptime(ci.as_ptr(), cf.as_ptr(), &mut tm) };
     assert!(
         !r.is_null(),
         "strptime({input:?},{fmt:?}) unexpectedly failed"
     );
+
+    let mut gtm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: same NUL-terminated inputs, against the host implementation.
+    let gr = unsafe { host_strptime()(ci.as_ptr(), cf.as_ptr(), &mut gtm) };
+    assert!(
+        !gr.is_null(),
+        "host glibc strptime({input:?},{fmt:?}) failed where fl succeeded"
+    );
+
+    assert_eq!(
+        fields(&tm),
+        fields(&gtm),
+        "strptime({input:?},{fmt:?}) diverged from live glibc \
+         [sec,min,hour,mday,mon,year,wday,yday,isdst]"
+    );
+    assert_eq!(
+        (r as usize) - (ci.as_ptr() as usize),
+        (gr as usize) - (ci.as_ptr() as usize),
+        "strptime({input:?},{fmt:?}) consumed a different number of bytes than glibc"
+    );
     tm
 }
 
 #[test]
 fn strptime_ampm_hour_adjustment_matches_glibc() {
-    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    both_c_locale();
     // (input, format, expected tm_hour)
     let cases: &[(&str, &str, i32)] = &[
         ("PM", "%p", 0), // %p alone: no hour to adjust
@@ -65,7 +150,7 @@ fn strptime_ampm_hour_adjustment_matches_glibc() {
 
 #[test]
 fn strptime_day_of_year_recompute_matches_glibc() {
-    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    both_c_locale();
 
     // %j alone: tm_yday set, tm_wday left untouched (stays 0 from the zeroed tm).
     let tm = parse("166", "%j");
