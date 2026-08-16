@@ -1,4 +1,11 @@
 #![cfg(target_os = "linux")]
+// `c_variadic` is STABLE on the local toolchain (since 1.100.0-nightly) but not
+// on the rch build workers, which run an older nightly and reject the variadic
+// shim below with E0658. The attribute enables it there; on a newer toolchain it
+// is merely a `stable_features` warning, which the allow silences. Do not remove
+// either line until the whole fleet has moved past 1.100.
+#![allow(stable_features)]
+#![feature(c_variadic)]
 #![allow(unsafe_code)] // live host-glibc snprintf oracle resolved by dlsym
 
 //! Differential gate for the `%f` / `%.Nf` snprintf fast path (bd-4vwb9q).
