@@ -29315,3 +29315,44 @@ What this changes, and what it does not:
 - **FRONTIER UNCHANGED:** `getrandom` 91.58-92.17x, `malloc_free` 6.62x, `snprintf_fused` 2.64-3.92x,
   **`sscanf` 1.05-2.02x**, `mtx_trylock` 1.1246x, `thrd_current` 1.1109x. Still unmeasured at HEAD:
   `getaddrinfo_hosts`, `sinhf_coshf`, `snprintf`, `snprintf_float`, `fprintf_float`, `nl_langinfo`.
+
+## 2026-08-16 (BlackThrush) — PROVENANCE CORRECTION: `incumbent_coverage_ab` measured a NINE-HOUR-STALE fl cdylib all day
+
+- **RESULT CLASS: loss/baseline (provenance correction).** No new ratio is claimed. This corrects the
+  provenance of rows already banked, including my own.
+- **WHAT HAPPENED.** The harness does not statically link fl. It reports
+  `FL_OBJECT path=target/release/libfrankenlibc_abi.so` and **loads whatever cdylib is already on
+  disk**. It does not rebuild it when sources change. Every `incumbent_coverage_ab` row I banked today
+  reported `FL_OBJECT sha256 faf3aedb2943...`, and that file's mtime is **08:24:35**, while the source
+  I was measuring had been edited at **17:16:49** — nine hours later. An explicit
+  `cargo build -p frankenlibc-abi --lib` changed the sha immediately, to `c90fa11abf6a...`.
+- **HOW IT WAS CAUGHT, and why the check is worth keeping.** I tried to certify a scanf lever by
+  building a baseline and a candidate and diffing them. **Both binaries came out byte-identical**, and
+  the `FL_OBJECT` sha in the run was the same value it had been all day. An identical sha across two
+  arms that are supposed to differ is the tell. **Rule: for any lever-vs-baseline run on this harness,
+  assert the two `FL_OBJECT` sha256 values DIFFER before believing the numbers** — the same
+  arm-distinctness discipline `ARM_DISTINCT` already applies to fl-vs-glibc, applied to fl-vs-fl.
+- **WHICH BANKED ROWS ARE AFFECTED.** Every row of mine reporting `FL_OBJECT faf3aedb...` measured
+  the 08:24 build, not HEAD:
+  - `getrandom` 91.58-92.17x — **unaffected in substance**; `unistd_abi.rs` was not touched today, so
+    the 08:24 build and HEAD are the same code for that path. The mechanism finding (one syscall per
+    call vs glibc's vDSO) was measured separately by syscall counting and stands independently.
+  - `gethostbyname` 0.2172x / `gethostbyaddr` 0.1991x — unaffected for the same reason.
+  - `sscanf` 1.05-2.02x — **unaffected, and in fact now correctly labelled**: the scanf inline lever
+    landed AFTER 08:24, so that row is a clean PRE-LEVER BASELINE. It should be read as such rather
+    than as "at HEAD".
+  - `snprintf_fused` 2.64-3.92x — printf paths were edited today by others, so this row is "the 08:24
+    build" and not necessarily HEAD. Re-measure before treating it as current.
+- **THE SCANF LEVER IS STILL UNCERTIFIED.** Both arms are now built correctly and verified distinct —
+  baseline `b42284cb57d5...` (no `ScanBytes`) against candidate `c90fa11abf6a...` — but neither run
+  cleared the quiet gate: observed loadavg **56.54,43.53,36.53 at 3387 MHz** for the baseline arm and
+  **18.88,29.90,32.61 at 3144 MHz** for the candidate, with a 270 s budget against the gate's
+  300000 ms sampling window. **A failure to certify under load is not a loss and neither arm is
+  recorded as one.**
+- **A THIRD SHARED-WORKTREE COLLISION, and this one hid the code from its own commit.** My commit
+  `a52794c60`, whose message describes the scanf lever in detail, contains **only `.beads` files —
+  2 insertions, 2 deletions**. The code it describes was swept into a peer's commit `6a4016812`
+  minutes earlier. The lever IS in HEAD and is gated and green, but `git log` attributes it to a
+  message that is not about it, and `a52794c60^` is NOT its baseline — using that parent produced two
+  identical binaries and would have "measured" a no-op as a result. **When a commit's diffstat does
+  not contain the file its message is about, the baseline you derive from it is wrong.**
