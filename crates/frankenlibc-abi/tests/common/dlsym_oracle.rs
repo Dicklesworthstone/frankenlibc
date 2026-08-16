@@ -60,14 +60,31 @@
 
 use std::ffi::{CStr, c_void};
 
-/// Open the object that owns libc's entry points.
+/// Open the objects that between them own glibc's entry points.
 ///
-/// Modern glibc folds libm into `libc.so.6`, but older layouts keep `libm.so.6`
-/// separate, so math symbols may live in either. Callers get whichever object
-/// actually exports the symbol they asked for.
-fn handles() -> [*mut c_void; 2] {
-    let mut out = [std::ptr::null_mut(); 2];
-    for (slot, name) in out.iter_mut().zip([c"libc.so.6", c"libm.so.6"]) {
+/// Modern glibc folds libm into `libc.so.6`, older layouts keep `libm.so.6`
+/// separate, and the resolver entry points live in `libresolv.so.2`. Callers get
+/// whichever object actually exports the symbol they asked for.
+fn handles() -> [*mut c_void; 3] {
+    let mut out = [std::ptr::null_mut(); 3];
+    // libresolv.so.2 is NOT optional. Proven on this host while converting
+    // conformance_diff_loc_codec: libc.so.6 exports neither __loc_aton nor
+    // __loc_ntoa, libresolv.so.2 exports both, and a libc-only resolver made all
+    // 13 of that gate's tests panic on a null symbol.
+    //
+    // It also explains why the ORIGINAL link-time declaration worked: the test
+    // binary pulls libresolv in transitively, so the linker found the symbol
+    // while telling the reader nothing about which object answered. Searching
+    // explicitly is what makes the oracle's provenance legible instead of
+    // incidental.
+    //
+    // Order matters: libc first for everything ordinary, then libm, then
+    // libresolv. A symbol present in more than one object resolves to the same
+    // implementation glibc itself would use.
+    for (slot, name) in out
+        .iter_mut()
+        .zip([c"libc.so.6", c"libm.so.6", c"libresolv.so.2"])
+    {
         // SAFETY: name is a NUL-terminated constant; RTLD_LOCAL keeps the handle
         // out of the global namespace so it cannot perturb later resolution.
         *slot = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
@@ -109,8 +126,10 @@ pub unsafe fn host_addr(name: &CStr, fl_definition: *const ()) -> *mut c_void {
     }
     assert!(
         !resolved.is_null(),
-        "dlsym({name:?}) found nothing in libc.so.6 or libm.so.6 — the oracle is \
-         unavailable, so this gate cannot run"
+        "dlsym({name:?}) found nothing in libc.so.6, libm.so.6 or libresolv.so.2 — \
+         the oracle is unavailable, so this gate cannot run. If the symbol lives \
+         in another object (libcrypt, libnsl), add it to `handles` rather than \
+         falling back to a link-time declaration"
     );
     assert_ne!(
         resolved as usize, fl_definition as usize,
