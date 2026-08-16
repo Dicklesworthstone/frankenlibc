@@ -8,12 +8,22 @@
 //! engineered to expose double rounding, plus a randomized grid and special
 //! values, and requires fl to match host glibc bit-for-bit. No mocks.
 
-//! The host arm is resolved with `dlsym` rather than declared at link time. A
-//! link-time `extern "C" { fn fma(..) }` does NOT reach glibc here: fl exports
-//! its own `fma` into the same test binary and the linker satisfies the
-//! reference locally, so both arms become fl and all 40,000+ comparisons below
-//! pass while proving nothing. `conformance_diff_oracle_arm_provenance` pins
-//! that down with `dladdr` and is what caught it.
+//! The host arm is resolved with `dlsym` rather than declared at link time,
+//! because a link-time `extern "C" { fn fma(..) }` is only an oracle in some
+//! build profiles.
+//!
+//! fl's C exports are gated `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`.
+//! Under the default dev profile that attribute is inactive, fl exports no C
+//! symbols into the test binary, and the reference resolves through the PLT to
+//! `libc.so.6` — fine. Under any profile with `debug_assertions` off
+//! (`--release`, `--profile bench`, `release-perf`) fl's `fma` becomes a strong
+//! global in the rlib, ELF prefers the archive over the shared library, and the
+//! "glibc" arm silently becomes fl. All 40,000+ comparisons below would then
+//! pass while comparing fl against itself.
+//!
+//! `dlsym` is correct in both profiles, so this gate does not depend on how it
+//! was built. `conformance_diff_oracle_arm_provenance` documents the profile
+//! split and fails loudly for the gates that still use the link-time pattern.
 
 use std::ffi::c_void;
 
@@ -56,7 +66,7 @@ fn host_fma() -> Fma64 {
     // positive fact rather than trusting the resolution.
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::math_abi::fma as usize,
+        frankenlibc_abi::math_abi::fma as *const () as usize,
         "the resolved oracle IS fl's fma — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has C's documented fma signature.
@@ -69,7 +79,7 @@ fn host_fmaf() -> Fma32 {
     assert!(!raw.is_null(), "dlsym fmaf");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::math_abi::fmaf as usize,
+        frankenlibc_abi::math_abi::fmaf as *const () as usize,
         "the resolved oracle IS fl's fmaf — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has C's documented fmaf signature.

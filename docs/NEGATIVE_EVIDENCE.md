@@ -27893,3 +27893,52 @@ Two consequences, stated plainly:
   `_dprintf` 1 passed, `_fwprintf` 1 passed, all on vmi1149989; the `snprintf_fused` conformance arm
   (11 shapes, 9 destination sizes, full destination compared) was green on every timed run above.
   The change was correct. It was simply slower.
+
+## 2026-08-16 (NobleCreek) — MEASUREMENT TRAP: a green `conformance_diff_*` run in a release profile is not evidence — every link-time oracle arm becomes fl
+
+- **RESULT CLASS: gate-integrity finding.** No perf claim. This says when the differential suite's
+  results may be believed, and when they are worthless.
+- **THE MECHANISM.** Every C export in `frankenlibc-abi` is gated the same way:
+  `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`. 539 of the 619 `conformance_diff_*` gates
+  reach glibc through a link-time declaration — `unsafe extern "C" { fn memccpy(..); }` — covering
+  **1184 distinct symbols**. Those two facts interact:
+  - `debug_assertions` **ON** (plain `cargo test`): `no_mangle` inactive, fl exports no C symbols
+    into the test binary, the reference resolves through the PLT to `libc.so.6`. **Oracle is real.**
+  - `debug_assertions` **OFF** (`--release`, `--profile bench`, `release-perf`): fl's definitions are
+    strong globals in the rlib, ELF resolves the reference from the archive **before** the shared
+    library, and the "glibc" arm silently becomes fl. **All 1184 arms, all 539 gates, compare fl
+    against fl and pass unconditionally.**
+- **REPRODUCED DIRECTLY, not inferred.** Two-crate probe mirroring the attribute exactly, rlib's
+  `fma` returning a `-12345.0` sentinel, same `-Ctarget-feature=+avx2,+fma` as `.cargo/config.toml`:
+  ```
+  debug    -> debug_assertions=true  fl_arm=-12345 oracle_arm=5      verdict=OK (oracle reached libc)
+  release  -> debug_assertions=false fl_arm=-12345 oracle_arm=-12345 verdict=VACUOUS (oracle IS fl)
+  ```
+  `fma(1,2,3)` is 5. The release arm returned the sentinel, i.e. the rlib's function.
+- **WHAT THIS CORRECTS.** The first version of `conformance_diff_oracle_arm_provenance` and the
+  commit that introduced it (cade98100) claimed the binding was **per-symbol and not predictable by
+  inspection** — that `fma` collapsed while `memccpy`, `mempcpy`, `rawmemchr`, `strlcpy` and
+  `wcsnlen` did not, "in the same binary, under the same toolchain." **That cannot happen and did
+  not happen.** All of them carry the identical `cfg_attr`, so they cannot disagree with each other;
+  the two observations must have come from different profiles. The per-symbol story is worse than
+  merely wrong — it invites a search for a per-symbol cause that does not exist, and it makes the
+  dladdr probe look like it is discriminating between symbols when in debug it can never fire and in
+  release it would flag all 13 at once.
+- **MEASURED, same session, worker vmi1293453, clean HEAD, default dev profile:**
+  `conformance_diff_oracle_arm_provenance` 1 passed with all 13 curated arms located in `libc.so.6`,
+  and `conformance_diff_fma` 4 passed. So the suite as normally run **is** sound. The exposure is
+  entirely in how someone might choose to build it.
+- **WHY IT NEARLY GOT BANKED AS A DEFECT.** The suite is green in debug either way, so nothing about
+  a passing run distinguishes "oracle reached glibc" from "oracle would not have." That is the same
+  shape as the dark-test-targets and the zero-is-not-evidence entries: the failure mode is invisible
+  precisely because it makes things pass.
+- **WHAT LANDED.** `conformance_diff_fma` resolves its oracle with `dlsym` (correct in either
+  profile) and asserts the resolved address is not fl's own before comparing. The provenance gate
+  gained `differential_suite_is_only_evidence_with_debug_assertions_on`, which is deliberately NOT
+  `cfg`-skipped in the configuration it exists to catch — a release-profile run of the differential
+  suite now fails with the cause stated instead of passing silently.
+- **THE STANDING RULE.** Do not quote a `conformance_diff_*` result without knowing the profile it
+  was built in. `cargo test --release` over this suite is not a faster way to get the same answer;
+  it is a way to get no answer that looks like the same answer. The 28-red sweep in bd-aykfv1 used
+  `cargo build --tests` (dev profile) and is unaffected.
+

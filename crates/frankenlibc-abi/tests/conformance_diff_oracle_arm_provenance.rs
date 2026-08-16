@@ -32,13 +32,43 @@
 //! other test binaries declare which symbols. When a new differential gate
 //! reaches for glibc through a link-time declaration, add its symbol here.
 //!
-//! Whether a reference binds locally or to libc is per-symbol and NOT
-//! predictable by inspection, which is the whole reason this probe exists:
-//! `fma` collapsed onto fl while `memccpy`, `mempcpy`, `rawmemchr`, `strlcpy`
-//! and `wcsnlen` did not, in the same binary, under the same toolchain. That
-//! made `conformance_diff_fma` — 40,000+ random triples plus engineered
-//! double-rounding cases — compare fl against fl and pass unconditionally. It
-//! now resolves its oracle with `dlsym` and so is deliberately absent below.
+//! ## What actually decides it: the BUILD PROFILE, not the symbol
+//!
+//! An earlier version of this file claimed the binding was per-symbol and
+//! unpredictable — that `fma` collapsed onto fl while `memccpy` and friends did
+//! not, in the same binary. That is wrong, and believing it sends you looking
+//! for a per-symbol cause that does not exist. Every one of fl's exports is
+//! gated by the SAME attribute:
+//!
+//! ```ignore
+//! #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+//! pub unsafe extern "C" fn fma(..) -> f64
+//! ```
+//!
+//! so they cannot disagree with each other. What they disagree with is the
+//! profile, and the split is total:
+//!
+//! - **`debug_assertions` ON** (plain `cargo test`, this suite's normal mode):
+//!   `no_mangle` is OFF, fl exports no C symbols into the test binary, and every
+//!   link-time reference resolves through the PLT to `libc.so.6`. The oracle
+//!   arms are real.
+//! - **`debug_assertions` OFF** (`cargo test --release`, `--profile bench`,
+//!   `release-perf`): `no_mangle` is ON, fl's definitions land in the rlib as
+//!   strong globals, and ELF resolves the reference from the archive BEFORE the
+//!   shared library. **Every** link-time oracle arm becomes fl. Not one symbol —
+//!   all 1184 of them, across all 539 gates that use this pattern.
+//!
+//! Reproduced directly: a two-crate probe mirroring the attribute above, with
+//! the rlib's `fma` returning a sentinel, prints `oracle_arm=5` under
+//! `-Cdebug-assertions=on` and `oracle_arm=<sentinel>` under
+//! `-Cdebug-assertions=off`.
+//!
+//! The practical rule this gate enforces: **a green `conformance_diff_*` run is
+//! only evidence if it was built with `debug_assertions` on.** A release-profile
+//! run of the differential suite proves nothing at all, and looks identical to a
+//! passing one from the outside. `conformance_diff_fma` sidesteps the question
+//! entirely by resolving its oracle with `dlsym`, which is correct in either
+//! profile, and so is deliberately absent from the list below.
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 
@@ -57,6 +87,34 @@ unsafe extern "C" {
     fn putw(w: c_int, stream: *mut libc::FILE) -> c_int;
     fn wmempcpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize)
     -> *mut libc::wchar_t;
+    // The six gates bd-c4z8fx listed as unaudited. conformance_diff_fgetpos is
+    // absent because it has no glibc arm to audit at all — see that bead's note.
+    fn lsearch(
+        key: *const c_void,
+        base: *mut c_void,
+        nelp: *mut usize,
+        width: usize,
+        cmp: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+    ) -> *mut c_void;
+    fn lfind(
+        key: *const c_void,
+        base: *const c_void,
+        nelp: *mut usize,
+        width: usize,
+        cmp: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+    ) -> *mut c_void;
+    fn qsort_r(
+        base: *mut c_void,
+        nmemb: usize,
+        size: usize,
+        compar: unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int,
+        arg: *mut c_void,
+    );
+    fn catopen(name: *const c_char, oflag: c_int) -> *mut c_void;
+    fn catclose(catd: *mut c_void) -> c_int;
+    fn setlocale(category: c_int, locale: *const c_char) -> *const c_char;
+    fn newlocale(category_mask: c_int, locale: *const c_char, base: *mut c_void) -> *mut c_void;
+    fn freelocale(loc: *mut c_void);
 }
 
 /// Which shared object does this code address live in?
@@ -85,7 +143,47 @@ fn owning_object(addr: *const c_void, what: &str) -> String {
 fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
     // (link-time arm, fl's own definition, name). The fl column is what the
     // link-time arm would collapse onto if the linker satisfied it locally.
-    let probes: [(*const c_void, *const c_void, &str); 13] = [
+    let probes: [(*const c_void, *const c_void, &str); 21] = [
+        (
+            lsearch as *const c_void,
+            frankenlibc_abi::search_abi::lsearch as *const c_void,
+            "lsearch",
+        ),
+        (
+            lfind as *const c_void,
+            frankenlibc_abi::search_abi::lfind as *const c_void,
+            "lfind",
+        ),
+        (
+            qsort_r as *const c_void,
+            frankenlibc_abi::stdlib_abi::qsort_r as *const c_void,
+            "qsort_r",
+        ),
+        (
+            catopen as *const c_void,
+            frankenlibc_abi::locale_abi::catopen as *const c_void,
+            "catopen",
+        ),
+        (
+            catclose as *const c_void,
+            frankenlibc_abi::locale_abi::catclose as *const c_void,
+            "catclose",
+        ),
+        (
+            setlocale as *const c_void,
+            frankenlibc_abi::locale_abi::setlocale as *const c_void,
+            "setlocale",
+        ),
+        (
+            newlocale as *const c_void,
+            frankenlibc_abi::locale_abi::newlocale as *const c_void,
+            "newlocale",
+        ),
+        (
+            freelocale as *const c_void,
+            frankenlibc_abi::locale_abi::freelocale as *const c_void,
+            "freelocale",
+        ),
         (
             strlcat as *const c_void,
             frankenlibc_abi::string_abi::strlcat as *const c_void,
@@ -193,10 +291,43 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
     );
     assert!(
         vacuous.is_empty(),
-        "{} of 13 extern-\"C\" oracle arms do NOT reach host glibc, so every \
+        "{} of {} extern-\"C\" oracle arms do NOT reach host glibc, so every \
          differential gate built on them is comparing fl against fl and passing \
-         vacuously:\n{}",
+         vacuously:\n{}\n\nIf ALL of them are flagged, the cause is almost \
+         certainly the build profile rather than anything per-symbol — see \
+         `differential_suite_is_only_evidence_with_debug_assertions_on` below.",
         vacuous.len(),
+        probes.len(),
         vacuous.join("\n")
+    );
+}
+
+/// The precondition the whole `conformance_diff_*` suite rests on.
+///
+/// fl's C exports are gated `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`.
+/// With `debug_assertions` off they become strong globals in the rlib, ELF
+/// resolves every link-time `extern "C"` oracle arm from the archive instead of
+/// `libc.so.6`, and all 539 gates that use that pattern start comparing fl
+/// against fl — passing unconditionally while proving nothing.
+///
+/// The dladdr probe above would also catch that, but only for its 13 curated
+/// symbols and only with a message about provenance. This states the cause
+/// directly, so a release-profile run of the differential suite fails with the
+/// reason rather than a puzzle.
+///
+/// This is deliberately NOT `#[cfg(debug_assertions)]`-skipped: a gate that
+/// disappears in the exact configuration it exists to catch is no gate at all.
+#[test]
+fn differential_suite_is_only_evidence_with_debug_assertions_on() {
+    assert!(
+        cfg!(debug_assertions),
+        "this test binary was built with debug_assertions OFF (--release, \
+         --profile bench, or release-perf). In that configuration fl's \
+         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))] exports are LIVE, \
+         so every link-time `extern \"C\"` oracle arm in the conformance_diff \
+         suite binds to fl's own definition rather than to libc.so.6, and those \
+         gates compare fl against itself. A green run in this profile is not \
+         evidence of anything. Run the differential suite with the default dev \
+         profile, or resolve the oracle with dlsym as conformance_diff_fma does."
     );
 }
