@@ -2733,6 +2733,7 @@ pub extern "C" fn llabs(n: c_longlong) -> c_longlong {
 
 /// C `div_t` result type.
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CDiv {
     pub quot: c_int,
     pub rem: c_int,
@@ -2740,6 +2741,7 @@ pub struct CDiv {
 
 /// C `ldiv_t` result type.
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CLdiv {
     pub quot: c_long,
     pub rem: c_long,
@@ -2747,6 +2749,7 @@ pub struct CLdiv {
 
 /// C `lldiv_t` result type.
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CLldiv {
     pub quot: c_longlong,
     pub rem: c_longlong,
