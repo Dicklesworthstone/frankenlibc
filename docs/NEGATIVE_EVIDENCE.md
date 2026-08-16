@@ -29265,3 +29265,53 @@ What this changes, and what it does not:
   `post_measurement` once) while the certifying runs happened at loadavgs of 63 and 30. A loadavg
   number does not predict whether this gate passes; an 8-way competing job does. Anyone scheduling
   around this should watch for a saturated 8-CPU set rather than tuning a loadavg threshold.
+
+## 2026-08-16 (BlackThrush) — CERTIFIED: sscanf is 1.05-2.02x SLOWER on 10 of 12 cases, closing another frontier gap
+
+- **RESULT CLASS: loss/baseline.** Mostly losses; the one win is reported as ranking evidence and is
+  not banked as a campaign win (no live-incumbent bundle).
+- **WINDOW, tested by me on the signal that actually predicts the gate.** `uptime` gave
+  **6.90,17.87,22.87** then **6.86,17.15,22.52** twenty seconds apart — 1-min flat to 0.6%. The 5-min
+  at 17.15 had NOT converged on the strict test, but a per-CPU sample showed only **8 of 64 CPUs above
+  20% busy and 2 above 80%**, i.e. 56 idle. The 5-min is a decaying tail from earlier saturation and
+  lags by construction; the per-CPU picture is what blocked runs correlated with, so I certified on
+  that and the run went through first attempt.
+- **Observed loadavg AT THE RUN: `HOST_IDENTITY loadavg=7.39,15.98,21.90`** (7.17 at invocation
+  start). Genuinely quiet, unlike the 30.70 of the previous certification.
+- **Single invocation, `--family sscanf --pin-quietest 8`, `BENCH_ELF_OBJECT sha256
+  3103961f91a0c2238d00f56ab5370cb6e9bfb05ecf1cd61b39cac76609f69601`, `FL_OBJECT sha256
+  faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b`, `ARM_DISTINCT` holding.**
+  Conformance first: **64 comparisons, mismatches=0**, on `return_value_and_full_destination_block`,
+  covering int/width/suppression/scanset/string/char/float/hexfloat/octal/autobase/percent_n/
+  length_modifiers/eof/match_failure.
+
+  | case | fl/glibc | ratio_ci95 | A/A null_fl_fl | A/A null_glibc_glibc |
+  |---|---|---|---|---|
+  | string_token | **2.015637** | [1.997074,2.044270] | 1.004406 | 1.001569 |
+  | two_strings | 1.923065 | [1.920368,1.931726] | 1.003026 | 0.999951 |
+  | dotted_quad | 1.699158 | [1.696600,1.707351] | 0.999206 | 1.000012 |
+  | key_value | 1.511796 | [1.501055,1.517519] | 1.003131 | 0.998183 |
+  | string_then_int | 1.509131 | [1.497413,1.513214] | 1.000533 | 0.998137 |
+  | single_int | 1.435226 | [1.432598,1.437410] | 1.000120 | 1.000126 |
+  | scanset_only | 1.416112 | [1.411473,1.420538] | 0.998519 | 1.003542 |
+  | two_ints | 1.408052 | [1.406347,1.411562] | 0.999986 | 1.001749 |
+  | mixed_record | 1.402759 | [1.396537,1.414440] | 1.003052 | 1.004191 |
+  | long_string | 1.054231 | [1.047613,1.060008] | 1.001494 | 0.994680 |
+  | long_hex | 0.987297 FL_FASTER | [0.986195,0.988130] | 0.999351 | 1.000315 |
+  | float_only | 1.003090 **UNDECIDABLE** | [0.991015,1.010412] | 1.010392 | 1.000666 |
+
+- **`INCUMBENT_COVERAGE_VERDICT verdict=INCOMPLETE cases=12 wins=1 losses=10 undecidable=1`
+  (the single `wins` count is `long_hex` at 0.987297, a 1.3% edge, reported as ranking evidence
+  only). **INCOMPLETE IS NOT A FAILED RUN AND NOT A LOSS.** Every null held; `float_only` simply reports
+  `clears_2x_null=false` — its 1.003 effect does not exceed twice the null width, so the harness
+  declines to call it either way. Recording it as a loss would be inventing a result the measurement
+  refused to give.
+- **THE SHAPE MATCHES THE BANKED LEVER LIST, and updates it.** A prior note put sscanf's losses on
+  three levers: a float `Vec`, a per-byte whitespace call, and a `%s` memcpy call. **The float lever
+  now measures at parity** (`float_only` undecidable at 1.003, `long_hex` actually FL_FASTER at
+  0.987), so that one appears resolved. **The `%s` levers are exactly the two worst cases left** —
+  `string_token` 2.016 and `two_strings` 1.923, against 1.40-1.51 for the integer shapes. The string
+  path is the remaining sscanf work, and the numbers now say so directly rather than by inference.
+- **FRONTIER UNCHANGED:** `getrandom` 91.58-92.17x, `malloc_free` 6.62x, `snprintf_fused` 2.64-3.92x,
+  **`sscanf` 1.05-2.02x**, `mtx_trylock` 1.1246x, `thrd_current` 1.1109x. Still unmeasured at HEAD:
+  `getaddrinfo_hosts`, `sinhf_coshf`, `snprintf`, `snprintf_float`, `fprintf_float`, `nl_langinfo`.
