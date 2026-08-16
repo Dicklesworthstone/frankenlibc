@@ -4177,14 +4177,24 @@ fn ns_sprintrrf_formats_txt_record_with_quoting() {
     );
 }
 
+/// The arm previously passed buflen=64 and asserted `TYPE999` / `010203`. Both were wrong, and
+/// the first made the oracle unreachable: glibc needs 80 bytes for this rendering and returns -1
+/// at 64, so `assert_sprintrrf_matches_host` panicked with "host oracle refused" and the arm
+/// could never compare anything. What live libresolv actually produces (bd-mz6xqf):
+///
+/// ```text
+/// weird.example.\t\t1M IN 999\t\# 4 (\t; unknown RR type 999\n\tde ad be ef )\t\t\t\t\t; ....
+/// ```
+///
+/// So glibc prints the BARE type number, not RFC 3597's `TYPE999` spelling, and lays the rdata
+/// out as a parenthesized, space-separated hex block with trailing comments — not a bare hex run.
 #[test]
 fn ns_sprintrrf_falls_back_to_rfc3597_for_unknown_type() {
-    let rdata = b"\x01\x02\x03";
-    let s =
-        assert_sprintrrf_matches_host(&[], "weird.example", 1, 999 /*unknown*/, 0, rdata, 64);
-    // RFC 3597 generic encoding: TYPE999 and \# <len> <hex>.
-    assert!(s.contains("TYPE999"), "got: {s}");
-    assert!(s.contains("010203"), "got: {s}");
+    let rdata = b"\xde\xad\xbe\xef";
+    let s = assert_sprintrrf_matches_host(&[], "weird.example", 1, 999 /*unknown*/, 60, rdata, 256);
+    // Positive facts about the shared answer, so this cannot pass on two empty renderings.
+    assert!(s.contains("999"), "got: {s}");
+    assert!(s.contains("de ad be ef"), "got: {s}");
 }
 
 #[test]
