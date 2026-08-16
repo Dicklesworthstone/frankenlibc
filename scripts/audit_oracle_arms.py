@@ -100,9 +100,35 @@ def fl_exported_symbols() -> set[str]:
     return names
 
 
+def strip_comments(src: str) -> str:
+    """Remove Rust comments before any pattern matching.
+
+    NOT cosmetic. Without this the scan counts PROSE as a declaration: a gate
+    that has been correctly converted to dlsym typically documents what it
+    replaced, e.g.
+
+        /// A link-time `unsafe extern "C" { fn memccpy(..) }` is not reliably
+        /// glibc in an abi test binary...
+
+    and `EXTERN_BLOCK` matches that sentence. The effect is perverse -- the
+    better a conversion is documented, the more certain the tool is that it did
+    not happen -- so converted gates never leave the at-risk list and the
+    burn-down cannot converge. Confirmed on conformance_diff_memccpy and
+    conformance_diff_fma, both of which resolve their oracle with dlsym and were
+    still reported as at risk.
+
+    Block comments are removed first, then line comments. String literals are
+    left alone: a `//` inside a string would be dropped by a naive pass, but no
+    declaration is expressed inside a string literal, so the only risk is
+    over-stripping prose, which is what we want gone anyway.
+    """
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"//[^\n]*", "", src)
+
+
 def audit_file(path: pathlib.Path, exports: set[str]) -> tuple[list[tuple[str, str]], bool]:
     """Return ([(linked_symbol, rust_name)], file_resolves_at_runtime)."""
-    src = path.read_text(encoding="utf-8", errors="replace")
+    src = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
     resolves = bool(RUNTIME_RESOLVE.search(src))
     at_risk: list[tuple[str, str]] = []
     for block in EXTERN_BLOCK.findall(src):
