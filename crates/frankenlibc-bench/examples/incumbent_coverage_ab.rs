@@ -7260,6 +7260,31 @@ fn run_stream_float_batch(arm: StreamArm, format: &CStr) -> u64 {
     black_box(accumulator)
 }
 
+/// `%.9f` — the LAST precision `exact_direct_f_format` accepts, so the probe FIRES.
+fn time_stream_9f_batch(arm: StreamArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_stream_float_batch(arm, c"%.9f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+/// `%.10f` — one digit further, which `exact_direct_f_format` DECLINES, so fl
+/// takes the general parse + extract + render path instead.
+///
+/// These two exist as a PAIR and only mean something together. The stream family
+/// measures fl 1.24-1.33x slower than glibc, but that family was created at the
+/// same time as the probe, so nothing has ever measured fl's stream float path
+/// WITHOUT it. Comparing a precision the probe takes against the adjacent one it
+/// refuses, in the same run and against the same incumbent, is what separates
+/// "fl's stream path is slow" from "my probe made it slow".
+///
+/// The confound is one extra digit of output, which is small against a 30% gap;
+/// the buffer family's own ladder puts a digit at roughly 4 ns.
+fn time_stream_10f_batch(arm: StreamArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_stream_float_batch(arm, c"%.10f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
 fn time_stream_2f_batch(arm: StreamArm) -> f64 {
     let started = Instant::now();
     black_box(run_stream_float_batch(arm, c"%.2f"));
@@ -7491,6 +7516,20 @@ fn run_fprintf_float(config: &Config) {
             host_default,
             fl_default,
             time_stream_2f_batch,
+        ),
+        measure_arm_case(
+            "stream_9dp_probe_fires",
+            "fprintf \"%.9f\" -- last precision exact_direct_f_format accepts; the probe FIRES",
+            host,
+            fl,
+            time_stream_9f_batch,
+        ),
+        measure_arm_case(
+            "stream_10dp_probe_declines",
+            "fprintf \"%.10f\" -- one digit further; the probe DECLINES and fl takes the general path",
+            host,
+            fl,
+            time_stream_10f_batch,
         ),
         measure_arm_case(
             "stream_6dp",

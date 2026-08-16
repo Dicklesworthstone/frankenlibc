@@ -29104,3 +29104,64 @@ What this changes, and what it does not:
 - Allocation work proper -- `segment_free` + `allocate_from_local_class` + `segment_allocate` +
   `small_bin_index` -- is 275 instr/pair, 47% of the budget. That part is doing real work and is 3.5x
   glibc's whole cost on its own.
+
+## 2026-08-16 (NobleCreek) — CORRECTION: the `fprintf` stream result is HOST-DEPENDENT, and the probe is what makes fl competitive
+
+- **RESULT CLASS: correction + attribution, NOT a lever.** This corrects my own retraction from
+  earlier today. I retracted a stream win as "wrong" and banked a loss as "correct". **Both rows
+  were right on the host that produced them, and my explanation of the difference was wrong.**
+- **THE SPLIT IS BY HOST, NOT BY LOAD.** Four runs of the same family, `stream_2dp`:
+
+  | host | incumbent glibc | loadavg | fl ns | glibc ns | ratio |
+  |------|-----------------|---------|-------|----------|-------|
+  | vmi1227854 | `6791cc9b`, 2326088 B | 9.99 | 51.201 | 109.817 | 0.443 WIN |
+  | vmi1149989 | `6791cc9b`, 2326088 B | 5.61 | 41.322 | 91.715 | 0.440 WIN |
+  | hetzner2 | `a3947513`, 2186512 B | 2.83 | 124.361 | 91.140 | 1.377 LOSS |
+  | hetzner2 | `a3947513`, 2186512 B | 6.09 | 119.552 | 90.110 | 1.330 LOSS |
+
+  glibc is 90-110 ns on every host. **fl is the arm that moves: 41-51 ns on the vmi hosts against
+  120-124 ns on hetzner2.** Load explains none of it — the quietest run (2.83) and the busiest (9.99)
+  sit on opposite sides. The hosts also carry different glibc builds and different ISA (hetzner2
+  reports avx512f, the vmi hosts do not), either of which could route fl differently.
+- **WHAT I GOT WRONG, precisely.** My retraction attributed the discrepancy to host contention plus
+  an unvalidated timed object, and concluded the win was an artifact. The contention framing was
+  wrong: the loss came from the QUIETER host. The harness defect was real and worth fixing — the
+  conformance arm never touched the timed stream — but fixing it did not change the answer:
+  `TIMED_STREAM_LIVE verdict=pass` now appears on both hetzner2 (loss) and vmi1149989 (win). I had
+  a true defect and a true discrepancy and wrongly assumed one caused the other.
+- **THE PROBE ATTRIBUTION, and it reverses my recommendation.** Both cases certified individually on
+  `vmi1149989`, **loadavg 5.61,6.58,7.09** (`nulls_hold=true`, `clears_2x_null=true`), in the same
+  invocation against the same incumbent:
+
+  Case `stream_9dp_probe_fires` (`%.9f`, the last precision `exact_direct_f_format` accepts): fl
+  70.564 ns against live glibc 128.774 ns. Effect median 0.543374, bootstrap median CI
+  [0.516430,0.563120]. A/A null FL/FL median 1.006135, bootstrap median CI [0.978246,1.027400];
+  A/A null glibc/glibc median 1.012373, bootstrap median CI [0.987000,1.058808]. null_half_width
+  0.058808, comparison=FL_FASTER.
+
+  Case `stream_10dp_probe_declines` (`%.10f`, one digit further, which the probe REFUSES): fl
+  157.932 ns against live glibc 134.125 ns. Effect median 1.153806, bootstrap median CI
+  [1.083172,1.190228]. A/A null FL/FL median 0.994626, bootstrap median CI [0.963727,1.034737];
+  A/A null glibc/glibc median 0.988215, bootstrap median CI [0.948838,1.010237]. null_half_width
+  0.051162, comparison=FL_SLOWER.
+
+  **fl is 70.6 ns with the probe and 157.9 ns without it — 2.24x faster because of it**, for one
+  digit's difference in output. I wrote yesterday that "the stream probes buy nothing and cost about
+  30%, and the next move is to consider removing them". **That was exactly backwards.** Removing them
+  would roughly double fl's stream float cost.
+- **HOW THE PAIR WORKS, since it is reusable.** `%.9f` and `%.10f` straddle the probe's acceptance
+  boundary, so one takes the fast path and the other takes the general parse + extract +
+  render_segments path, in the same binary, same run, same incumbent, one digit apart. That isolates
+  a fast path's contribution without an fl-vs-fl build comparison and without touching the source.
+  The confound is one extra output digit, worth roughly 4 ns by the buffer family's own ladder —
+  negligible against an 87 ns difference.
+- **FAMILY VERDICT WAS `INCOMPLETE`** (`cases=6 wins=4 losses=1 undecidable=1`), so no family-level
+  claim is made here. The two attribution cases are quoted because each carries its own
+  `nulls_hold=true` and `clears_2x_null=true`; the undecidable case is a different case and is not
+  being counted.
+- **WHAT NOW STANDS.** No single vs-incumbent number describes fl's stream float path. Any future
+  quote must name the host and the incumbent glibc build. The buffer half (`snprintf_float`
+  0.430/0.493/0.510) was measured on frankenlibc-test and hz2 and needs the same treatment before it
+  is called universal. **The probe stays.** The open question is no longer "is the stream path slow"
+  but "why is fl 2.5-3x slower on hetzner2 than on the vmi hosts when glibc is flat across both",
+  which is an fl-side question and the right next target.
