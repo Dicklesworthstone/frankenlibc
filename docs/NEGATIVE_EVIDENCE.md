@@ -27998,3 +27998,42 @@ What this changes, and what it does not:
   today, `user_size` is a field on a slot the arena hands out, and mutating it on a shared arena has
   concurrency implications. Writing that blind under a build freeze would be exactly the unverified
   cross-crate change this ledger keeps catching, so it is left for a test-capable turn.
+
+### CORRECTION to the row above, same day: the allocator gap is FIXED per-call, not size-scaling — I read four noisy ratios and a 2026-07-02 row already answered it with absolute nanoseconds
+
+- **RESULT CLASS: loss/baseline.** Withdrawing an inference I published hours earlier. The ranking in
+  that row stands; one paragraph of it does not.
+- **What I claimed:** that the banked malloc ratios "RISE with allocation size — 11.94 at 16B, 10.57
+  at 64B, 12.58 at 256B, 16.17 at 1024B — which is the opposite of what a fixed per-call overhead
+  produces", and therefore that fl's cost grows faster with size than glibc's and a fixed-cost lever
+  would not suffice.
+- **What the ledger already contained, and I should have found before theorising.** The 2026-07-02
+  row "malloc ST re-measured 16.7x (not 50x); cost is DIFFUSE membrane, no single lever" reports the
+  same four sizes with ABSOLUTE nanoseconds from `examples/malloc_st_probe.rs`:
+  `sz=16 fl=142.1 glibc=8.55 = 16.6x; sz=64 16.9x; sz=256 16.7x; sz=1024 16.7x`, and states the
+  conclusion outright: **FLAT across sizes, therefore fixed per-call overhead (membrane machinery),
+  not the allocation itself** — `native_libc_malloc` IS glibc at ~8 ns, so fl's ~142 ns at 16 bytes
+  is ~133 ns of machinery wrapped around an 8.55 ns allocator.
+- **Why my reading was wrong, mechanically.** I inferred a slope from four RATIOS in a row that
+  itself disclosed a saturated worker ("0 slots remaining after reservation") and a 16-byte A/A null
+  of 1.1423 reaching 1.5774. Ratios cannot separate "fl grew" from "glibc shrank", and across
+  10.57-16.17 the spread is comfortably inside what that row's own nulls admit. The 2026-07-02 run
+  has absolute nanoseconds for both arms and a flat ratio at 16.6-16.9 across a 64x size range, which
+  is far stronger evidence about SHAPE than four ratios from a saturated host.
+- **This flips the lever class, which is why the correction matters rather than being bookkeeping.**
+  A size-scaling gap would have meant per-byte work and ruled out a bypass. A FIXED ~133 ns per-call
+  gap is the same shape as the `snprintf` float loss — an 87.5 ns constant that a probe removed
+  outright, turning a 1.56-1.78x loss into at least 1.95x faster (bd-4vwb9q). So the allocator's
+  worst-in-campaign 10-16x is, on the better evidence, a fixed-overhead problem, and fixed overhead
+  is the one shape this campaign has already beaten twice.
+- **The caution that comes with it, from the same 2026-07-02 row:** its author looked for a single
+  strict-fast-path lever and found the cost DIFFUSE rather than concentrated, noting among other
+  things that `fallback_insert_sized_index` takes a global spinlock on every malloc while free
+  already skips its lock in single-threaded mode. Diffuse fixed cost is still fixed cost, but it
+  means the win comes from removing several small things or from bypassing the machinery wholesale,
+  not from deleting one hot call. bd-9j6h0d's "layer split is roughly even" says the same thing from
+  another angle, and the guard-CAS refutation says one plausible single cause was already tested and
+  is not it.
+- **Standing correction for anyone reading the row above:** treat its RANKING as sound (the allocator
+  is the campaign's worst measured primitive by a factor of ~5 over fused `snprintf`) and its
+  size-scaling paragraph as WITHDRAWN.
