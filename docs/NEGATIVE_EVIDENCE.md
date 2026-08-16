@@ -27346,3 +27346,54 @@ the next agent should not re-run it.
   `render_pct_f`/`render_pct_e`/`render_gcvt`; it is byte-identical by construction because all
   correctly-rounded dtoas emit the same digits, which the 1440-comparison conformance arm above would
   hold to.
+
+## 2026-08-16 (BlackThrush) — MEASURED BASELINES: `sscanf` (11 of 12 cases slower) and `sinhf`/`coshf` (2.26x, 2.61x slower)
+
+- **RESULT CLASS: loss/baseline, not levers.** Two more families measured on the SAME fl object,
+  bench ELF, worker and harness as the same-day `snprintf` win and float loss, so all four rows are
+  mutually comparable.
+- **APPARATUS.** Harness `incumbent_coverage_ab --family <name> --pin-quietest 4`, worker `hz1`
+  (`HOST_IDENTITY hostname=frankenlibc-test`), `samples=36`, `threads_observed_pre=1` and
+  `threads_observed_post=1`, exclusivity clear pre and post, `INCUMBENT_LINKAGE
+  direct_process_link`. In-process ELF SHA-256: bench
+  `e99c0bc12cfb57ca1f3c864a8970ffd9451e47da4b4e60293ec41cccbeba3039`, fl object
+  `1b598128b1fb35525059899e6216f7d4522e613c810901ea0dd3bf54531ff8b5`. Incumbents:
+  `/usr/lib/x86_64-linux-gnu/libc.so.6` for `sscanf`, `/usr/lib/x86_64-linux-gnu/libm.so.6` for the
+  two math symbols.
+- **`sscanf`, `reps_per_arm=600000`, DECIDABLE, 1 win and 11 losses.** Correctness first:
+  `comparisons=64 mismatches=0 compared=return_value_and_full_destination_block
+  covers=int,width,suppression,scanset,string,char,float,hexfloat,octal,autobase verdict=pass`.
+  fl nanoseconds against live glibc nanoseconds, with the FL/glibc effect median and its bootstrap
+  median CI. Every case cleared twice its A/A null half-width and both A/A nulls held.
+  `long_string` 298.733 vs 123.047, effect 2.387015 CI [2.378948,2.472148];
+  `string_token` 106.572 vs 54.401, effect 1.963818 CI [1.956197,1.967811];
+  `two_strings` 156.312 vs 83.938, effect 1.861659 CI [1.856639,1.868431];
+  `dotted_quad` 255.805 vs 151.767, effect 1.687949 CI [1.683560,1.690228];
+  `key_value` 172.249 vs 103.020, effect 1.669702 CI [1.666455,1.672494];
+  `scanset_only` 120.390 vs 72.943, effect 1.650779 CI [1.649247,1.653368];
+  `string_then_int` 142.356 vs 90.099, effect 1.578153 CI [1.564695,1.583594];
+  `single_int` 90.991 vs 64.019, effect 1.421648 CI [1.417595,1.423867];
+  `mixed_record` 341.630 vs 240.395, effect 1.421269 CI [1.418886,1.424078];
+  `two_ints` 120.111 vs 87.013, effect 1.380253 CI [1.376563,1.382347];
+  `long_hex` 95.923 vs 93.626, effect 1.024759 CI [1.023363,1.026827];
+  and the one WIN, `float_only` 124.949 vs 157.215, effect 0.794757 CI [0.792876,0.796099].
+- **THE SHAPE IS THE FINDING.** The gap tracks STRING conversion, not parsing in general. The four
+  worst cases are all `%s`-shaped (2.39x, 1.96x, 1.86x, 1.58x) while pure integer work sits at
+  1.38-1.42x, hex is at parity (1.02x) and float parsing is a WIN. `long_string` being the worst,
+  and being the case with the most bytes to move, points at per-byte copy cost in the `%s`
+  destination write rather than at conversion dispatch. That is a bounded, testable lever, and it
+  matches the standing note that sscanf's losses decompose into a float Vec, a per-byte whitespace
+  call, and a `%s` memcpy call.
+- **`sinhf` and `coshf`, `reps_per_arm=1000000`, DECIDABLE, 0 wins and 2 losses.** Accuracy first:
+  `comparisons=282 special_values_bit_exact=true sweep_inputs_per_sign=64 ulp_limit=4
+  worst_sinhf_ulp=0 worst_coshf_ulp=1 verdict=pass`.
+  `sinhf` 19.066 vs 8.433, effect 2.258996 CI [2.254916,2.262442]; A/A null FL/FL median 1.000630 CI
+  [0.999535,1.001570], A/A null glibc/glibc median 1.000589 CI [0.998717,1.001132].
+  `coshf` 21.975 vs 8.430, effect 2.605360 CI [2.604389,2.608459]; A/A null FL/FL median 0.999530 CI
+  [0.998720,1.000555], A/A null glibc/glibc median 1.000290 CI [0.999534,1.001051].
+  Both effect CIs lie entirely above one. fl is bit-exact on specials and within 1 ULP on the sweep,
+  so this is again correct-but-slower, not a defect.
+- **CAMPAIGN COVERAGE AFTER TODAY.** Four families now carry live vs-incumbent rows on one worker
+  and one harness: `snprintf` 0.33-0.55x (WIN), `snprintf_float` 1.56-1.78x, `sscanf` 0.79-2.39x,
+  `sinhf`/`coshf` 2.26-2.61x. The worst measured ratio on this surface is now `sinhf`/`coshf`, not
+  the dtoa path everyone assumed.
