@@ -14,21 +14,63 @@ use frankenlibc_abi::search_abi::{lfind as fl_lfind, lsearch as fl_lsearch};
 
 type Cmp = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 
-unsafe extern "C" {
-    fn lfind(
-        key: *const c_void,
-        base: *const c_void,
-        nelp: *mut usize,
-        width: usize,
-        c: Cmp,
-    ) -> *mut c_void;
-    fn lsearch(
-        key: *const c_void,
-        base: *mut c_void,
-        nelp: *mut usize,
-        width: usize,
-        c: Cmp,
-    ) -> *mut c_void;
+// The host arm is resolved with `dlsym` rather than declared at link time.
+//
+// A link-time `unsafe extern "C" { fn lfind(..) }` is not reliably an oracle
+// here: fl exports its own `lfind`/`lsearch` into this same test binary, and
+// when those exports are live the linker can satisfy the reference locally —
+// at which point both arms are fl and every assertion below passes while
+// proving nothing. That is not hypothetical; `conformance_diff_fma` was found
+// doing exactly this across 40,000+ comparisons (bd-h95z6y), and whether it
+// happens depends on the build profile, so a gate that is honest under `cargo
+// test` can go hollow under `--release` without any visible change.
+//
+// `dlsym` on an explicit `libc.so.6` handle is correct in either profile, and
+// the `assert_ne!` below turns the remaining doubt into a failing test rather
+// than a silent one.
+type LfindFn =
+    unsafe extern "C" fn(*const c_void, *const c_void, *mut usize, usize, Cmp) -> *mut c_void;
+type LsearchFn =
+    unsafe extern "C" fn(*const c_void, *mut c_void, *mut usize, usize, Cmp) -> *mut c_void;
+
+union LfindSym {
+    raw: *mut c_void,
+    function: LfindFn,
+}
+union LsearchSym {
+    raw: *mut c_void,
+    function: LsearchFn,
+}
+
+fn libc_handle() -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    handle
+}
+
+fn host_lfind() -> LfindFn {
+    // SAFETY: the handle came from dlopen; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(libc_handle(), c"lfind".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym lfind");
+    assert_ne!(
+        raw as usize, fl_lfind as usize,
+        "the resolved oracle IS fl's lfind — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has POSIX's documented lfind signature.
+    unsafe { LfindSym { raw }.function }
+}
+
+fn host_lsearch() -> LsearchFn {
+    // SAFETY: as above, for lsearch.
+    let raw = unsafe { libc::dlsym(libc_handle(), c"lsearch".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym lsearch");
+    assert_ne!(
+        raw as usize, fl_lsearch as usize,
+        "the resolved oracle IS fl's lsearch — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has POSIX's documented lsearch signature.
+    unsafe { LsearchSym { raw }.function }
 }
 
 unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
@@ -48,6 +90,7 @@ fn idx(ret: *mut c_void, base: *const i32) -> isize {
 
 #[test]
 fn lfind_matches_glibc() {
+    let lfind = host_lfind();
     let data = [10i32, 20, 30, 40, 50];
     for key in [10i32, 20, 30, 50, 0, 25, 99, 40] {
         let arr_f = data;
@@ -84,6 +127,7 @@ fn lfind_matches_glibc() {
 
 #[test]
 fn lsearch_appends_like_glibc() {
+    let lsearch = host_lsearch();
     // Backing capacity of 8, three live elements.
     let template = [10i32, 20, 30, 0, 0, 0, 0, 0];
     for key in [20i32 /* present */, 99 /* absent */, 10, 77] {

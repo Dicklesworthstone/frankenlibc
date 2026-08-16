@@ -12,8 +12,39 @@ use std::ffi::{c_int, c_void};
 
 type CmpR = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
 
-unsafe extern "C" {
-    fn qsort_r(base: *mut c_void, nmemb: usize, size: usize, compar: CmpR, arg: *mut c_void);
+// The host arm is resolved with `dlsym` rather than declared at link time.
+//
+// A link-time `unsafe extern "C" { fn qsort_r(..) }` is not reliably an oracle:
+// fl exports its own `qsort_r` into this same test binary, and when those
+// exports are live the linker can satisfy the reference locally, making both
+// arms fl so every assertion below passes while proving nothing.
+// `conformance_diff_fma` was found doing exactly that (bd-h95z6y), and whether
+// it happens depends on the build profile — so a gate that is honest under
+// `cargo test` can go hollow under `--release` with no visible change. `dlsym`
+// on an explicit `libc.so.6` handle is correct in either profile, and the
+// `assert_ne!` makes the remaining doubt a failing test rather than a silent
+// one.
+type QsortRFn = unsafe extern "C" fn(*mut c_void, usize, usize, CmpR, *mut c_void);
+
+union QsortRSym {
+    raw: *mut c_void,
+    function: QsortRFn,
+}
+
+fn host_qsort_r() -> QsortRFn {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(handle, c"qsort_r".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym qsort_r");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::stdlib_abi::qsort_r as usize,
+        "the resolved oracle IS fl's qsort_r — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has glibc's documented qsort_r signature.
+    unsafe { QsortRSym { raw }.function }
 }
 
 /// Compares two i32 using the direction flag read from `arg` (1 = ascending,
@@ -34,6 +65,7 @@ fn sorted(v: &[i32], dir: i32) -> bool {
 
 #[test]
 fn qsort_r_threads_context_like_glibc() {
+    let qsort_r = host_qsort_r();
     let inputs: &[&[i32]] = &[
         &[3, 1, 2],
         &[5, 4, 3, 2, 1],
