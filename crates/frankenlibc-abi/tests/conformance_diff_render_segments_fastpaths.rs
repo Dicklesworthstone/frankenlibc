@@ -159,3 +159,114 @@ fn shapes_the_fast_paths_must_decline_still_match_glibc() {
         a.as_ptr()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Segment-count coverage across the inline/heap boundary (bd-mh2ev3).
+//
+// `FormatSegments` holds `INLINE_SEGMENTS` segments inline and spills to a heap
+// `Vec` past that. A format of n conversions separated by single spaces parses
+// to n specs plus n-1 literals, so the segment count is 2n-1 and the boundary
+// is crossed part-way up this range.
+//
+// Both sides of it are exercised on purpose. The POSITIVE case is that a format
+// which fits inline renders correctly; the NEGATIVE case — the one that matters
+// when the constant is raised — is that a format which STILL spills renders
+// correctly too. Raising `INLINE_SEGMENTS` without a case past the new boundary
+// would silently stop testing the spill path altogether: every existing format
+// would fit, the heap `Vec` would never be constructed, and a bug in it would
+// become invisible rather than fixed. The 20-conversion case below is 39
+// segments, so it spills at any plausible value of the constant.
+
+#[test]
+fn segment_counts_across_the_inline_boundary_match_glibc() {
+    let a = CString::new("alpha").unwrap();
+
+    // 2n-1 segments for n conversions: 3, 9, 15, 17, 19, 21, 39.
+    // 8 and 16 both fall inside this sweep, so it brackets the old constant and
+    // the new one regardless of which is in force.
+    compare!("n=2 (3 seg)", c"%s %s".as_ptr(), a.as_ptr(), a.as_ptr());
+    compare!(
+        "n=5 (9 seg)",
+        c"%s %s %s %s %s".as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+    );
+    compare!(
+        "n=8 (15 seg)",
+        c"%s %s %s %s %s %s %s %s".as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+    );
+    compare!(
+        "n=9 (17 seg)",
+        c"%s %s %s %s %s %s %s %s %s".as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+    );
+    // NEGATIVE CASE: still spills at INLINE_SEGMENTS = 16, and at 32, and at 38.
+    // This is what keeps the heap path under test as the constant grows.
+    compare!(
+        "n=20 (39 seg) — spills at any plausible constant",
+        c"%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s".as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+        a.as_ptr(),
+    );
+}
+
+#[test]
+fn mixed_conversions_past_the_boundary_match_glibc() {
+    let a = CString::new("alpha").unwrap();
+    // Interleaves both fast paths and the general path past the spill point, so
+    // an argument-index slip between inline and heap storage shows up as wrong
+    // VALUES rather than merely a wrong length.
+    compare!(
+        "mixed, 12 conversions",
+        c"%s %d %s %u %s %x %s %d %8s %s %+d %s".as_ptr(),
+        a.as_ptr(),
+        1i32,
+        a.as_ptr(),
+        2u32,
+        a.as_ptr(),
+        0x3fu32,
+        a.as_ptr(),
+        -4i32,
+        a.as_ptr(),
+        a.as_ptr(),
+        5i32,
+        a.as_ptr(),
+    );
+}

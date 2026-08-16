@@ -662,7 +662,25 @@ pub enum FormatSegment<'a> {
 /// inline slots keep the common multi-segment case (e.g. `"%s: %d\n"`)
 /// allocation-free. `FormatSegment` is `Copy`, so the inline array needs no
 /// `unsafe`/`MaybeUninit`.
-const INLINE_SEGMENTS: usize = 8;
+// Inline capacity of `FormatSegments` before `push` spills to a heap `Vec`.
+//
+// A format of n conversions separated by literal text parses to n specs plus
+// roughly n-1 literals, so this bounds the format at about five conversions
+// before it allocates. The conversion ladder's measured superlinearity in fl
+// (per-step increments 50.966, 60.643, 67.733 ns/conversion, against glibc's
+// flat 18.440, 18.245, 19.485) has its largest step exactly where the segment
+// count crosses this constant: ladder_4s is 7 segments and inline, ladder_6s is
+// 11 and spills. fl's own malloc+free is ~142ns against glibc's ~8.55ns, so one
+// spill is expensive relative to the work it wraps. bd-mh2ev3.
+//
+// RAISED 8 -> 16 AS A MEASURED CANDIDATE, not as an obvious improvement. The
+// cost is symmetric: `FormatSegments::new` initialises this array on EVERY
+// printf call, so doubling it doubles that per-call write from 8 x 64 to
+// 16 x 64 bytes. This ledger already records a change of exactly that shape
+// going the wrong way — shrinking `FormatSegment` by 37.5% measured 7-9%
+// SLOWER (bd-5pagbr) — so the already-inline shapes are the ones to watch, and
+// a regression there is grounds to revert rather than tune.
+const INLINE_SEGMENTS: usize = 16;
 
 /// Parsed printf segments with a no-heap fast path for small formats.
 #[derive(Debug, Clone)]
