@@ -19738,6 +19738,7 @@ fn execute_getppid_case(mode: &str) -> Result<DifferentialExecution, String> {
 
 fn execute_fork_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
+    let _children = child_process_lock();
     let pid = unsafe { frankenlibc_abi::process_abi::fork() };
     if pid == 0 {
         unsafe { libc::_exit(0) };
@@ -20388,6 +20389,7 @@ fn capital_exit_fixture_actual(inputs: &serde_json::Value) -> Result<String, Str
 }
 
 fn capital_fork_fixture_actual() -> Result<String, String> {
+    let _children = child_process_lock();
     let child = unsafe { frankenlibc_abi::unistd_abi::_Fork() };
     if child == 0 {
         unsafe { libc::_exit(0) };
@@ -22247,6 +22249,7 @@ fn fmtmsg_fixture_actual() -> Result<String, String> {
 }
 
 fn forkpty_fixture_actual() -> Result<String, String> {
+    let _children = child_process_lock();
     poll_event_loop_reset_errno();
     let rc = unsafe {
         frankenlibc_abi::unistd_abi::forkpty(
@@ -23403,6 +23406,12 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             ))
         }
         "popen" => {
+            // popen forks INSIDE fl, so this child is invisible to a lock that
+            // only covers the harness's own libc::fork() sites. Without it a
+            // no-child arm sees a live child (WAIT4/WAITID_NO_CHILD_RC_0) and a
+            // wait(-1) arm steals the child pclose is waiting for
+            // (PCLOSE_STATUS_-1). Both were observed. bd-u2daxd.
+            let _children = child_process_lock();
             let command = CString::new(":").map_err(|_| "popen command has NUL".to_string())?;
             let mode = CString::new("r").map_err(|_| "popen mode has NUL".to_string())?;
             let stream =
@@ -23415,6 +23424,8 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             }
         }
         "pclose" => {
+            // Same as the popen arm: hold the lock across fork AND reap.
+            let _children = child_process_lock();
             let command = CString::new(":").map_err(|_| "pclose command has NUL".to_string())?;
             let mode = CString::new("r").map_err(|_| "pclose mode has NUL".to_string())?;
             let stream =
@@ -27027,6 +27038,57 @@ fn execute_sigismember_case(
     })
 }
 
+/// Run one library's `execve` in a forked child and report what the kernel did with that child.
+///
+/// A child that returns from `execve` exits 127, which is distinguishable from `/bin/true`'s own
+/// exit 0 — so "the wrapper silently failed to exec" cannot be mistaken for success.
+fn execve_child_status(
+    use_frankenlibc: bool,
+    path_c: &CStr,
+    argv: &[*const c_char],
+    envp: &[*const c_char],
+) -> Result<String, String> {
+    let _children = child_process_lock();
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return Err(String::from("execve arm could not fork a child"));
+    }
+    if pid == 0 {
+        if use_frankenlibc {
+            unsafe {
+                frankenlibc_abi::process_abi::execve(path_c.as_ptr(), argv.as_ptr(), envp.as_ptr())
+            };
+        } else {
+            unsafe { libc::execve(path_c.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        }
+        // Only reachable when execve failed to replace the image.
+        unsafe { libc::_exit(127) };
+    }
+
+    let mut wait_status: c_int = 0;
+    if unsafe { libc::waitpid(pid, &mut wait_status, 0) } != pid {
+        return Err(String::from("execve arm could not reap its child"));
+    }
+    if libc::WIFEXITED(wait_status) {
+        return Ok(format!("EXIT_STATUS_{}", libc::WEXITSTATUS(wait_status)));
+    }
+    if libc::WIFSIGNALED(wait_status) {
+        return Ok(format!("EXIT_SIGNAL_{}", libc::WTERMSIG(wait_status)));
+    }
+    Ok(String::from("EXIT_UNKNOWN"))
+}
+
+/// Compare fl's `execve` against the host's on the same arguments, in this process.
+///
+/// This arm used to return a hardcoded `"-1"` whenever the fixture's pathname happened to be
+/// `/etc/passwd`, without calling execve at all. That is a tautology: the fixture asserted the
+/// value the executor derived from the fixture's own input, so the arm passed identically whether
+/// fl's execve was correct, wrong, or absent. bd-7t61h9.
+///
+/// A failing execve returns, so both calls are made directly here rather than under a fork. If a
+/// future fixture ever points at something executable, execve would replace this process instead
+/// of returning — the arm refuses that input up front rather than letting the harness subprocess
+/// vanish and be reported as a malformed payload.
 fn execute_execve_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -27035,14 +27097,82 @@ fn execute_execve_case(
     let pathname = inputs
         .get("pathname")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    // execve replaces process, so we stub expected values based on inputs
-    let result = if pathname.is_empty() || pathname == "/etc/passwd" {
-        "-1" // EACCES for non-executable or ENOENT for empty
+        .ok_or_else(|| String::from("execve fixture missing string input `pathname`"))?;
+
+    let path_c = CString::new(pathname)
+        .map_err(|err| format!("execve fixture pathname has an interior NUL: {err}"))?;
+
+    // X_OK on the exact path we are about to hand to execve. /etc/passwd is mode 644, so this
+    // is -1 even for root: Linux grants root exec only when at least one x bit is set.
+    let path_is_executable = unsafe { libc::access(path_c.as_ptr(), libc::X_OK) } == 0;
+
+    let argv_owned: Vec<CString> = inputs
+        .get("argv")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| CString::new(s).map_err(|err| format!("execve argv entry: {err}")))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let envp_owned: Vec<CString> = inputs
+        .get("envp")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| CString::new(s).map_err(|err| format!("execve envp entry: {err}")))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    let mut argv: Vec<*const c_char> = argv_owned.iter().map(|s| s.as_ptr()).collect();
+    argv.push(std::ptr::null());
+    let mut envp: Vec<*const c_char> = envp_owned.iter().map(|s| s.as_ptr()).collect();
+    envp.push(std::ptr::null());
+
+    if path_is_executable {
+        // The success contract cannot be observed in-process: a working execve never returns.
+        // Run each library's execve in its own forked child and compare what the kernel did with
+        // that child, which is the only thing "replaces the process image" can mean. Same
+        // fork/waitpid shape the clone arm in this file already uses. A child that comes BACK
+        // from execve exits 127, so a wrapper that silently fails to exec is a divergence rather
+        // than a pass.
+        let host_status = execve_child_status(false, &path_c, &argv, &envp)?;
+        let fl_status = execve_child_status(true, &path_c, &argv, &envp)?;
+        return Ok(non_host_execution(if fl_status == host_status {
+            format!("EXECVE_REPLACES_PROCESS_MATCHES_HOST_{fl_status}")
+        } else {
+            format!("EXECVE_REPLACES_PROCESS_DIVERGES_HOST_{host_status}_FL_{fl_status}")
+        }));
+    }
+
+    // Read the host arm's errno from the HOST slot explicitly, the same way the acct arm does.
+    process_spawn_reset_errno();
+    let host_rc = unsafe { libc::execve(path_c.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    process_spawn_reset_errno();
+    let fl_rc =
+        unsafe { frankenlibc_abi::process_abi::execve(path_c.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+    let fl_errno = process_spawn_current_errno();
+
+    // The match token deliberately carries no errno: execve's errno for a non-executable file
+    // is the same under either privilege today, but pinning the value into the passing token
+    // would re-introduce the host-dependence this arm exists to remove. Divergence spells it out.
+    let verdict = if fl_rc == host_rc && fl_errno == host_errno {
+        format!("EXECVE_MATCHES_HOST_RC_{fl_rc}")
     } else {
-        "NO_RETURN" // successful execve does not return
+        format!(
+            "EXECVE_DIVERGES_HOST_RC_{host_rc}_ERRNO_{host_errno}_FL_RC_{fl_rc}_ERRNO_{fl_errno}"
+        )
     };
-    Ok(non_host_execution(result.to_string()))
+    Ok(non_host_execution(verdict))
 }
 
 fn execute_posix_spawn_case(
@@ -29243,6 +29373,7 @@ fn process_spawn_wait_status(prefix: &str, wait_status: c_int) -> String {
 }
 
 fn process_spawn_vfork_actual(inputs: &serde_json::Value) -> Result<String, String> {
+    let _children = child_process_lock();
     let status = parse_i32(inputs, "status").unwrap_or(17);
     let child = unsafe { frankenlibc_abi::process_abi::vfork() };
     if child == 0 {
@@ -29589,6 +29720,10 @@ fn execute_system_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
+    // `system` forks, and it reaps with a targeted wait, so an overlapping
+    // wait(-1) arm can steal its child and an overlapping no-child arm can see
+    // it (bd-ry1dg5 / bd-u2daxd).
+    let _children = child_process_lock();
     let command = parse_string(inputs, "command")?;
     if command != "true" {
         return Err(format!("unsupported system command fixture: {command}"));
