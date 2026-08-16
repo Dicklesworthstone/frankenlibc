@@ -29356,3 +29356,38 @@ What this changes, and what it does not:
   message that is not about it, and `a52794c60^` is NOT its baseline — using that parent produced two
   identical binaries and would have "measured" a no-op as a result. **When a commit's diffstat does
   not contain the file its message is about, the baseline you derive from it is wrong.**
+
+## 2026-08-16 (BlackThrush) — CROSS-CORE SPREAD: this harness IS structurally susceptible, and the control already exists
+
+- **RESULT CLASS: loss/baseline (methodology).** No timing: `uptime` read **51.61,32.72,29.16**, so no
+  certification was attempted and nothing here is recorded as a win or a loss.
+- **MEASURED FOR THIS HARNESS RATHER THAN ASSUMED FROM OTHERS.** The fleet reports the effect as
+  harness-specific — networkx immune because it runs arms sequentially, torch saw no movement, scipy a
+  small effect, fs a real defect. So the question is what THIS harness does, and that is answerable by
+  reading it plus one host measurement, without needing a quiet window.
+- **THE DESIGN.** `incumbent_coverage_ab` calls `sched_setaffinity(0, ..)` on the WHOLE PROCESS across
+  the `--pin-quietest N` set; every run reports `threads_observed_pre=1 threads_observed_post=1`; and
+  `balanced_square` runs `ABBAABBA` **inside one round on one thread**. So the two arms are NOT on
+  different cores concurrently — they alternate on one thread. That rules out the networkx-style
+  concurrent-contention mechanism entirely.
+- **BUT IT IS SUSCEPTIBLE TO A DIFFERENT ONE: migration within the pinned set.** With `N = 8` the
+  thread may be migrated between rounds or mid-round, and on this host the cores are NOT running at
+  one frequency — sampled just now, `cpu MHz` spans **min 1429, max 4001, mean 2422 across 64 CPUs**,
+  a 2.8x spread. An A-slot on a 4001 MHz core against a B-slot on a 1429 MHz core is a ratio error of
+  the same order as most effects being measured.
+- **THE CONTROL IS ALREADY IN THE OUTPUT, and it has been holding.** `null_fl_fl` and
+  `null_glibc_glibc` run the SAME arm through the SAME square, so migration between slots perturbs
+  them exactly as it would a real effect. Across every certified row today those nulls sat inside
+  +/-0.02 and usually inside +/-0.005 — e.g. sscanf's 24 nulls, worst 1.010392. **That is evidence
+  the mechanism has not been biting, not proof it cannot.** A null is a detector, and a detector that
+  has never fired is weaker evidence than one that fired and was fixed.
+- **THE DECISIVE TEST, owed when a window appears:** run the same family at `--pin-quietest 1` (single
+  CPU, migration impossible) against `--pin-quietest 8`, in one window, and compare both the ratios
+  and the null widths. If the pin=1 nulls are tighter, migration is contributing and every multi-CPU
+  row carries that noise; if they match, this harness is immune in practice and the spread can be
+  set aside for it. **Recording the prediction before running it**, so the result cannot be read
+  either way after the fact.
+- **PRACTICAL NOTE MEANWHILE:** `--pin-quietest 1` is strictly safer for a two-arm comparison and
+  costs nothing but scheduling flexibility, whereas the quiet gate is HOST-WIDE and is not helped by a
+  narrower pin at all (established earlier today: blocks correlate with a saturated 8-CPU competing
+  job, not with the loadavg).
