@@ -27613,3 +27613,29 @@ What this changes, and what it does not:
   `FormatSegment` loop and its per-conversion arg read), NOT the digit kernels, which the same-day
   value-set walk already cleared for the float case. Do not start a Schubfach port on the strength of
   this row.
+
+### What the `snprintf` CAMPAIGN WIN is actually measuring — read this next to it
+
+The replicated win above (at least 1.82x faster, worst format) is real, reproduced on two workers,
+and byte-identical to glibc. But tracing the code shows WHICH path it exercises, and that changes how
+the number should be quoted.
+
+`snprintf` carries a chain of `exact_direct_*_format` probes — `%d`, `%s`, `%c`, `%u`, `%x`, `%ld`,
+`%lu`, `%zu`, `%zd`, `%lx`, `%p`, and pure-literal. Each is a three or four byte compare, and on a hit
+it returns through `strict_direct_snprintf_*` BEFORE `runtime_policy::entrypoint_scope`, before
+`runtime_policy::decide`, and before `observe`. So every format in the winning row takes a path that
+BYPASSES the membrane and the parse/extract/render machinery entirely.
+
+The existing rows measure the size of that bypass without any new experiment: fl `%d` is 15.363 ns
+(exact-direct) while fl `%.2f` is 188.651 ns (ONE conversion, but no exact-direct pattern, so the
+general path) — the same conversion count, 12x apart, both on `hz1`. The general path therefore
+carries roughly 170 ns of fixed overhead that the fast paths skip.
+
+Two consequences, stated plainly:
+
+1. **The win is honest but narrow.** "snprintf is at least 1.82x faster than live glibc" is true for
+   the exact single-conversion formats fl special-cases, which are common in real code. It is NOT a
+   claim about fl's printf implementation in general, and the fused row (3.12-3.31x SLOWER, same
+   symbol, same process) is the other half of the same picture.
+2. **The optimisation target is the general path, not the kernels.** Both the fused loss and the
+   float loss run through it. Anyone quoting the win should quote the fused row alongside it.
