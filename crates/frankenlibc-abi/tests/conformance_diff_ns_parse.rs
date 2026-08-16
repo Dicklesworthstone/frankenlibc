@@ -36,6 +36,21 @@ mod g {
             buf: *mut c_char,
             buflen: usize,
         ) -> c_int;
+        #[allow(clippy::too_many_arguments)]
+        pub fn ns_sprintrrf(
+            msg: *const u8,
+            msglen: usize,
+            name: *const c_char,
+            class: u16,
+            ty: u16,
+            ttl: u32,
+            rdata: *const u8,
+            rdlen: usize,
+            name_ctx: *const c_char,
+            origin: *const c_char,
+            buf: *mut c_char,
+            buflen: usize,
+        ) -> c_int;
     }
 }
 use frankenlibc_abi::resolv_abi as fl;
@@ -147,4 +162,57 @@ fn ns_parse_pipeline_matches_glibc() {
         gres.1,
         gres.3
     );
+}
+
+/// Pin the master-file PADDING LAW against live glibc, not one sample.
+///
+/// glibc pads the owner name to column 24 and the rdata to column 40 with 8-column tab stops,
+/// falls back to two spaces once the column is within one of the target, and — the part no
+/// single row can reveal — makes that fallback STICKY for the rest of the line. A long TTL
+/// alone therefore changes the rdata separator while the name separator stays tabs.
+///
+/// Sweeping every owner-name length across the 22/23 tab-to-space boundary and TTLs from 1s to
+/// u32::MAX is what makes this a law rather than a fitted constant.
+#[test]
+fn ns_sprintrrf_padding_matches_glibc_across_lengths_and_ttls() {
+    const RDATA: [u8; 4] = [93, 184, 216, 34];
+    let mut checked = 0usize;
+
+    for name_len in 1..=30usize {
+        for ttl in [1u32, 300, 86_400, 604_800, i32::MAX as u32, u32::MAX] {
+            let name = "x".repeat(name_len);
+            let name_c = std::ffi::CString::new(name.as_str()).expect("no interior NUL");
+
+            let mut fl_buf = [0i8; 1024];
+            let fl_rc = unsafe {
+                fl::ns_sprintrrf(
+                    std::ptr::null(), 0, name_c.as_ptr(), 1, 1, ttl,
+                    RDATA.as_ptr(), RDATA.len(), std::ptr::null(), std::ptr::null(),
+                    fl_buf.as_mut_ptr(), fl_buf.len(),
+                )
+            };
+            let mut g_buf = [0i8; 1024];
+            let g_rc = unsafe {
+                g::ns_sprintrrf(
+                    std::ptr::null(), 0, name_c.as_ptr(), 1, 1, ttl,
+                    RDATA.as_ptr(), RDATA.len(), std::ptr::null(), std::ptr::null(),
+                    g_buf.as_mut_ptr(), g_buf.len(),
+                )
+            };
+            assert!(g_rc >= 0, "glibc ns_sprintrrf failed for len={name_len} ttl={ttl}");
+
+            let fl_txt = unsafe { CStr::from_ptr(fl_buf.as_ptr()) }.to_string_lossy().into_owned();
+            let g_txt = unsafe { CStr::from_ptr(g_buf.as_ptr()) }.to_string_lossy().into_owned();
+            assert_eq!(
+                (fl_rc, fl_txt.as_str()),
+                (g_rc, g_txt.as_str()),
+                "ns_sprintrrf name_len={name_len} ttl={ttl}: fl={fl_txt:?} glibc={g_txt:?}"
+            );
+            checked += 1;
+        }
+    }
+
+    // The sweep must actually have crossed the boundary that makes this a law: with the root dot
+    // appended, name_len 22 pads with a tab and 23 with two spaces.
+    assert_eq!(checked, 30 * 6, "sweep did not run every case");
 }

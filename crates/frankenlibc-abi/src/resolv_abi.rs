@@ -5874,6 +5874,10 @@ unsafe fn format_rdata(
 /// not used (the BIND reference uses them for zone-relative name
 /// shortening; we always emit fully-qualified names).
 ///
+/// Layout follows glibc's master-file presentation format, derived from live
+/// `libresolv.so.2` across owner names of every length from 1 to 30 and TTLs from 1s to
+/// 2^31-1 rather than fitted to one sample (bd-mz6xqf). See [`ns_addtab`].
+///
 /// Returns the number of bytes written (excluding the terminating
 /// NUL) on success, or -1 on overflow / malformed rdata.
 ///
@@ -5908,8 +5912,18 @@ pub unsafe extern "C" fn ns_sprintrrf(
     let name_str = String::from_utf8_lossy(name_bytes);
 
     let mut out = String::new();
-    out.push_str(&name_str);
-    out.push(' ');
+    let mut spaced = false;
+
+    // Owner name is always root-dot terminated; glibc prints a bare "." for an empty name.
+    if name_str.is_empty() {
+        out.push('.');
+    } else {
+        out.push_str(&name_str);
+        if !name_str.ends_with('.') {
+            out.push('.');
+        }
+    }
+    ns_addtab(&mut out, 24, &mut spaced);
 
     let mut ttl_buf = [0u8; 32];
     let ttl_n = unsafe {
@@ -5928,7 +5942,7 @@ pub unsafe extern "C" fn ns_sprintrrf(
     write_class_into(class, &mut out);
     out.push(' ');
     write_type_into(ty, &mut out);
-    out.push(' ');
+    ns_addtab(&mut out, 40, &mut spaced);
 
     if unsafe { format_rdata(msg, msglen, ty, rdata, rdlen, &mut out) }.is_err() {
         return -1;
@@ -5945,6 +5959,42 @@ pub unsafe extern "C" fn ns_sprintrrf(
         *buf.add(bytes.len()) = 0;
     }
     bytes.len() as c_int
+}
+
+/// Pad `out` to column `target` the way glibc's `ns_print.c` `addtab` does.
+///
+/// Tabs advance to the next 8-column stop until the target is reached, EXCEPT that once the
+/// current column is within one of the target there is no room for a tab and glibc emits two
+/// spaces instead. `spaced` is sticky: the moment one pad falls back to spaces, every later pad
+/// on the same line uses spaces too.
+///
+/// Derived from live `libresolv.so.2` (glibc 2.42), not from a single row — the sticky flag is
+/// invisible in any one sample. Rows that pin it:
+///
+/// ```text
+/// name len (incl. root dot)  1..7  -> "\t\t\t"    22 -> "\t"      23 -> "  "  (target-1 rule)
+///                            8..15 -> "\t\t"      16..22 -> "\t"
+/// ttl 2^31-1 ("3550w5d3h14m7s") with a SHORT name -> name pad stays "\t\t"
+///                                                   but the rdata pad becomes "  "  (sticky)
+/// ```
+fn ns_addtab(out: &mut String, target: usize, spaced: &mut bool) {
+    // The COLUMN, not the byte length: a tab is one byte but advances to the next 8-column
+    // stop, so byte length under-counts every pad after the first and over-tabs the next one.
+    let mut len = out.bytes().fold(0usize, |col, b| {
+        if b == b'\t' { (col + 8) & !7 } else { col + 1 }
+    });
+    if *spaced || len + 1 >= target {
+        out.push_str("  ");
+        *spaced = true;
+        return;
+    }
+    loop {
+        out.push('\t');
+        len = (len + 8) & !7;
+        if len >= target {
+            return;
+        }
+    }
 }
 
 /// libresolv `ns_sprintrr(handle, rr, name_ctx, origin, buf,
