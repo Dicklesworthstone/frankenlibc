@@ -27397,3 +27397,41 @@ the next agent should not re-run it.
   and one harness: `snprintf` 0.33-0.55x (WIN), `snprintf_float` 1.56-1.78x, `sscanf` 0.79-2.39x,
   `sinhf`/`coshf` 2.26-2.61x. The worst measured ratio on this surface is now `sinhf`/`coshf`, not
   the dtoa path everyone assumed.
+
+## 2026-08-16 (BlackThrush) — LEVER NOT BANKED: two-phase `%s` copy in `scan_string` never got an admissible measurement
+
+- **THE LEVER.** `scan_string` and `scan_scanset` in `frankenlibc-core/src/stdio/scanf.rs` built the
+  token by `Vec::push`-ing one byte at a time into a `Vec::new()`, which starts at zero capacity, so
+  a long token pays a reallocate-and-memcpy at every doubling plus a capacity check per byte — while
+  the token is contiguous in the input the whole time. Candidate: scan for the end without copying,
+  then `input[pos..i].to_vec()`, one exact-sized allocation and one memcpy.
+- **WHY IT LOOKED RIGHT.** The same-day `sscanf` baseline shows the gap tracks STRING conversion
+  specifically: `long_string` 2.387x, `string_token` 1.964x, `two_strings` 1.862x against
+  `single_int` 1.422x, `long_hex` 1.025x and a `float_only` WIN at 0.795x. `long_string` is both the
+  worst ratio and the case with the most bytes to move.
+- **CORRECTNESS HELD.** Behaviour-identical by construction (`buf.is_empty()` becomes `i == pos`),
+  and all five scanf differential suites stayed green on RCH worker `vmi1227854`:
+  `sscanf_differential_fuzz`, `conformance_diff_scanf_scanset`, `conformance_diff_scanf_malloc`,
+  `conformance_diff_swscanf`, `sscanf_char_differential_fuzz`.
+- **NOT BANKED, because no run was admissible.** Three attempts, none usable:
+  `hz1` refused at the pre-measurement exclusivity gate (the fleet had filled the box);
+  `vmi1167313`, the one idle worker, returned `verdict=INCOMPLETE cases=12 losses=9 undecidable=3`
+  with `RC=2` on the candidate arm and `INCOMPLETE ... undecidable=4` on the base arm, and its
+  in-run glibc control itself moved 6 percent between arms (`long_string` glibc 174.641 then
+  167.214), which is larger than any effect being sought;
+  `hz2` ran out of the ssh window mid-arm.
+- **DIRECTION OF THE INADMISSIBLE READS, recorded only so nobody re-runs it expecting a win.** On
+  `vmi1167313` the candidate was neutral to WORSE: `string_token` ratio 2.240 then 2.265,
+  `scanset_only` 1.584 then 1.623, `long_string` 1.468 then 1.726. That is inside the drift the
+  glibc control showed, so it is not evidence of a regression either — it is simply not evidence.
+- **REVERTED.** An unmeasured change to a hot path is not worth keeping on the strength of "does
+  strictly less work", which is exactly the reasoning the guard-CAS lever (2026-08-15, bd-7wubke)
+  falsified at 16x over-attribution. The two-phase shape is cheap to re-apply when a quiet worker
+  exists.
+- **RETRY PREDICATE.** Re-run only with a base/candidate pair on ONE idle worker where the family
+  returns `verdict=DECIDABLE` with zero undecidable cases and the in-run glibc control agrees within
+  1 percent between arms. Measure `long_string`, `string_token` and `scanset_only`; the other nine
+  cases are noise for this lever. If the allocation itself dominates, the real lever is not the copy
+  shape at all but writing the token straight into the caller's destination and deleting the
+  intermediate `ScanValue::String(Vec<u8>)` — note fl's own allocator is the interposed one, which
+  the malloc rows put at 12x glibc.
