@@ -27294,3 +27294,55 @@ the next agent should not re-run it.
   path, and it still wins 0.407874, so this is not a fast-path-only result. Nothing here says
   anything about `%f`/`%e`/`%g`, which route through the dtoa path that this ledger records as
   2 to 3.7x SLOWER than glibc.
+
+## 2026-08-16 (BlackThrush) — MEASURED LOSS: `snprintf` float/dtoa path is 1.56-1.78x SLOWER than host glibc
+
+- **RESULT CLASS: loss/baseline, not a lever.** The companion to the same-day `snprintf` CAMPAIGN
+  WIN. Deliberately taken with the SAME fl object, the SAME bench ELF, the SAME worker and the SAME
+  harness as that win, so the integer/string result and the float result are directly comparable and
+  neither can be explained by build or host differences.
+- **APPARATUS.** Harness `incumbent_coverage_ab --family snprintf_float --pin-quietest 4`, worker
+  `hz1` (`HOST_IDENTITY hostname=frankenlibc-test`, `loadavg=1.92,1.74,1.71`), `samples=36`,
+  `reps_per_arm=200000`, `threads_observed_pre=1` and `threads_observed_post=1`, host-wide
+  exclusivity `verdict=clear` pre and post, `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`.
+  `INCUMBENT_LINKAGE direct_process_link`, `FL_LINKAGE explicit_dlopen_local`. In-process
+  self-reported ELF SHA-256: bench
+  `e99c0bc12cfb57ca1f3c864a8970ffd9451e47da4b4e60293ec41cccbeba3039`, fl object
+  `1b598128b1fb35525059899e6216f7d4522e613c810901ea0dd3bf54531ff8b5`, incumbent
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  `a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`.
+- **fl IS CORRECT HERE AND STILL SLOWER**, which is what makes this a clean algorithmic target
+  rather than a bug: `INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_float formats=10 values=16
+  destination_sizes=9 comparisons=1440 mismatches=0 compared=return_value_and_full_destination
+  covers=signed_zero,subnormal,u64_scale_overflow,huge_finite,nan,inf verdict=pass`.
+- **THE THREE CASES.** fl nanoseconds against live glibc nanoseconds, median of 36 samples:
+  `%.2f` 188.651 vs 106.344; `%.4f` 198.335 vs 117.583; bare `%f` 205.066 vs 131.326.
+  `INCUMBENT_COVERAGE_VERDICT symbol=snprintf_float verdict=DECIDABLE cases=3 wins=0 losses=3
+  undecidable=0`.
+- **EFFECT AND NULLS, pipe-free.** Every effect is an FL/glibc bootstrap median with a bootstrap
+  median CI; both same-invocation A/A null controls are inside the 0.020 tolerance with no CI
+  straddle; every effect clears twice the null half-width.
+  Case `%.2f`: effect median 1.777287, bootstrap median CI [1.761112,1.780998]; A/A null FL/FL
+  median 1.002111, bootstrap median CI [0.993544,1.010994]; A/A null glibc/glibc median 0.999607,
+  bootstrap median CI [0.998910,1.002247].
+  Case `%.4f`: effect median 1.688747, bootstrap median CI [1.676751,1.696622]; A/A null FL/FL
+  median 1.001644, bootstrap median CI [0.993438,1.015343]; A/A null glibc/glibc median 0.999836,
+  bootstrap median CI [0.998258,1.000795].
+  Case bare `%f`: effect median 1.558860, bootstrap median CI [1.545732,1.570328]; A/A null FL/FL
+  median 1.000684, bootstrap median CI [0.992408,1.012878]; A/A null glibc/glibc median 0.999277,
+  bootstrap median CI [0.997349,1.001668].
+  Every effect CI lies entirely ABOVE one.
+- **THIS SHARPENS THE OLD ESTIMATE.** The 2026-07-04 entries put Rust std dtoa at 2 to 3.7x slower
+  than glibc from ISOLATED in-process probes (`e_iso`: `write!("{:.6}")` 89.9ns against glibc's whole
+  `strfromd` at 27-47ns). Measured end to end through the real `snprintf` entry point the gap is
+  smaller and better bounded: 1.56x to 1.78x, worse at higher precision. Prefer these numbers over
+  the isolated ones when sizing the Schubfach port, and note the direction of the error — the
+  isolated probe OVER-stated the deployed gap, the same way the guard microbench did for malloc
+  (2026-08-15 bd-7wubke).
+- **NOT A CEILING, and the lever is already named.** `%.2f` is the worst case and it is also the one
+  with the most headroom: the exact-integer fast path shipped 2026-07-04 covers integral values only,
+  so ordinary fractional money-style `%.2f` still runs the full flt2dec. The standing lever remains a
+  correctly-rounded fixed-precision dtoa (Schubfach / Ryu-printf / Dragonbox-fixed) routed through
+  `render_pct_f`/`render_pct_e`/`render_gcvt`; it is byte-identical by construction because all
+  correctly-rounded dtoas emit the same digits, which the 1440-comparison conformance arm above would
+  hold to.
