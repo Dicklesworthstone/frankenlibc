@@ -27639,3 +27639,54 @@ Two consequences, stated plainly:
    symbol, same process) is the other half of the same picture.
 2. **The optimisation target is the general path, not the kernels.** Both the fused loss and the
    float loss run through it. Anyone quoting the win should quote the fused row alongside it.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup, at least ~4% on one shape, replicated): lazy `positional_value_arg_kind`
+
+- **RESULT CLASS: self-speedup, i.e. MAINTENANCE.** fl-vs-fl. No vs-glibc claim: the fused family
+  returned `INCOMPLETE` verdicts with undecidable cases on both workers, so the ratio is not
+  certifiable from these runs and is not quoted.
+- **FOUND BY PROFILING, not by guessing — after two guesses were wrong.** I had blamed the membrane,
+  then the `%s` bounds check; a flat perf profile refuted both. Driver: a 30-line C program on the
+  worker that `dlopen`s the fl object and calls `snprintf(buf, 128, "%s[%d]: %s", ...)` 4,000,000
+  times, profiled with `perf record -F 3999 -e cycles:u` and **no call graph** (dwarf call-graphs
+  wreck flat self-time). Nothing was added to the repo and the certified harness was not modified —
+  its exclusivity gate cannot be satisfied under perf, and weakening it to profile would have been
+  the wrong trade.
+  Self time, fl object, three-conversion format:
+  `positional_printf_arg_plan` 15.74%; `render_segments` 14.92%; `FormatSegments::push` 13.08%;
+  `snprintf` 11.88%; `parse_format_spec` 9.09%; `scan_c_string` 6.12%; `format_signed` 3.03%;
+  `parse_format_string` 2.91%; `entrypoint_scope` 2.68%; `decide` 1.52%.
+  **The membrane is ~4% combined and the parse/plan side is ~42%.** Both of my earlier hypotheses
+  were wrong, and the one I nearly acted on — making the membrane cheaper — would have risked the
+  safety contract for 4%.
+- **THE CHANGE.** `FormatSpec::positional_value_arg_kind` was
+  `self.value_position.zip(self.value_arg_kind())`. `Option::zip` evaluates its argument EAGERLY, so
+  `value_arg_kind()` — and through it `route()` — ran for every spec of every format even though
+  almost nothing uses positional (`%1$s`) arguments and the result was discarded. It is on the hot
+  path twice per call, because `positional_printf_arg_plan` is computed by `count_printf_args` during
+  extraction and again at the top of `render_segments`. Now short-circuits on the position first.
+  Identical result: `a.zip(b)` is `Some((a?, b?))`, only lazier.
+- **MEASURED, ABBA, worst bound quoted.** Harness `incumbent_coverage_ab --family snprintf_fused
+  --pin-quietest 4`. Base object `509d590c43ef9847…`, candidate `b699c00fed367ae2…`, differing only
+  by the above; candidate built on RCH worker `hz1`.
+  Worker `vmi1167313` (base, cand, base, cand; load 0.24 to 0.91): `kv_join` base 649.805 and
+  652.602 against cand 623.156 and 622.289; `syslog_line` base 563.836 and 574.711 against cand
+  546.086 and 555.857; `http_log` base 725.237 and 740.058 against cand 716.815 and 746.636.
+  Worker `hz1` (one base arm was refused at the post-measurement gate, so base x1, cand x2; load rose
+  0.91 to 2.76, a real delta): `kv_join` base 318.413 against cand 304.021 and 302.911; `http_log`
+  base 373.404 against cand 323.346 and 320.280; `syslog_line` base 255.327 against cand 247.113 and
+  264.757.
+- **THE CONSERVATIVE STANDING.** Only `kv_join` separates cleanly on BOTH workers — every candidate
+  reading below every base reading, −4.4% on `vmi1167313` and −4.9% on `hz1`. So the defensible claim
+  is **"at least about 4% faster on the four-`%s` shape, reproduced on two workers"**, and NOT the
+  −14% `http_log` reading from `hz1`, which the `vmi1167313` runs contradict (interleaved there).
+  `syslog_line` separates on `vmi1167313` and interleaves on `hz1`, so it is not claimed either.
+- **KEPT.** Behaviour-identical by construction, gates green
+  (`conformance_diff_printf_fastpaths` 3, `conformance_diff_printf_hexfloat` 1,
+  `conformance_diff_printf_positional` 1, on `vmi1264463`), strictly less work, and the one shape that
+  replicates does so on two machines.
+- **THE GAP IS MOSTLY STILL THERE, and the profile says where.** ~4% off a 3.12-3.31x loss leaves the
+  bulk untouched. The remaining parse/plan cost is the rest of `positional_printf_arg_plan` (the loop
+  and its `Vec`, still computed twice per call), `FormatSegments::push` at 13%, and
+  `parse_format_spec` at 9%. Computing the plan ONCE per call, or skipping it entirely via a flag the
+  parser already has the information to set, is the next lever and is larger than this one.

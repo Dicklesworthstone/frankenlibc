@@ -385,7 +385,23 @@ impl FormatSpec {
     }
 
     pub fn positional_value_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
-        self.value_position.zip(self.value_arg_kind())
+        // Short-circuit on the POSITION first. `Option::zip` evaluates its
+        // argument eagerly, so the previous `self.value_position.zip(
+        // self.value_arg_kind())` computed `value_arg_kind` — and through it
+        // `route()` — for every spec of every format, even though almost no
+        // format uses positional (`%1$s`) arguments and the result was then
+        // discarded.
+        //
+        // This is on the hot path twice per call: `positional_printf_arg_plan`
+        // runs it for every spec, and that plan is computed both by
+        // `count_printf_args` during argument extraction and again at the top of
+        // `render_segments`. A flat perf profile of a three-conversion format
+        // put `positional_printf_arg_plan` at 15.74% self time, the single
+        // largest entry, ahead of `render_segments` itself (bd-ntb9fq).
+        //
+        // Identical result: `a.zip(b)` is `Some((a?, b?))`, only lazier.
+        let position = self.value_position?;
+        Some((position, self.value_arg_kind()?))
     }
 
     pub fn value_arg_is_float(&self) -> bool {
