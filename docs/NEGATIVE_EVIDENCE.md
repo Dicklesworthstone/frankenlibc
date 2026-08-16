@@ -27435,3 +27435,26 @@ the next agent should not re-run it.
   shape at all but writing the token straight into the caller's destination and deleting the
   intermediate `ScanValue::String(Vec<u8>)` — note fl's own allocator is the interposed one, which
   the malloc rows put at 12x glibc.
+
+### CORRECTION to the row above, same day: a peer landed this shape independently
+
+The row above says the two-phase `%s` copy was REVERTED. That is true of MY edit and false about the
+tree. While my measurement attempts were failing the exclusivity gate, another agent landed the same
+lever as `6417308b8` ("perf(scanf): copy %s / %[ tokens in one shot instead of growing a Vec"), with
+the same reasoning and the same `input[pos..i].to_vec()` shape in both `scan_string` and
+`scan_scanset`. My revert restored `HEAD`, which by then already contained that commit, so nothing of
+theirs was undone — but a reader of the row above would wrongly conclude the shape is absent.
+
+What this changes, and what it does not:
+
+- **The shape IS in the tree** at `crates/frankenlibc-core/src/stdio/scanf.rs` lines 1459 and 1488.
+- **It is still UNMEASURED.** Neither that commit nor my attempt produced an admissible
+  base/candidate pair; the numbers in the row above (the `vmi1167313` reads that leaned neutral to
+  worse) remain the only data, and they are inadmissible. So the tree now carries a perf-motivated
+  change to a hot path whose effect nobody has measured — exactly the state the row above argued
+  against.
+- **The retry predicate is unchanged and now applies to the LANDED code.** One idle worker, a
+  base/candidate pair, `verdict=DECIDABLE` with zero undecidable cases, and the in-run glibc control
+  agreeing within 1 percent between arms. Measure `long_string`, `string_token` and `scanset_only`.
+  The honest outcome may well be that it is neutral, in which case the row above should be read as
+  the reason to check rather than as a reason to revert someone else's commit.
