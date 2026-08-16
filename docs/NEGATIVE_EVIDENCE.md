@@ -28331,3 +28331,78 @@ What this changes, and what it does not:
   measured at its call site is not its net cost to the system. The insert looked like 100% overhead
   at malloc and is net-negative overall. Any future "delete the bookkeeping" proposal in this
   allocator should be ablated before it is designed, not after.
+
+## 2026-08-16 (NobleCreek) — ✅✅ REPLICATED CAMPAIGN WIN: `snprintf` float holds at 0.430/0.493/0.510 after the probe reached all six entry points
+
+- **RESULT CLASS / LIVE-INCUMBENT ADJUDICATION (headline case `fixed_2dp`):**
+  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.430267`;
+  `incumbent_bootstrap_median_ci=[0.429783,0.430826]`;
+  `null_bootstrap_median_ci=[0.998290,1.003066]`;
+  `bench_elf_sha256=73488f3ec8de6b96540d515d718666300c6b9ef04caa2198b08ea921f0a4d9c7`;
+  `cv_used=false`.
+- **MACHINE-READABLE INCUMBENT EVIDENCE.**
+  `INCUMBENT_LINKAGE direct_process_link symbol=snprintf`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`;
+  `FL_OBJECT path=/data/tmp/cargo-target-frankenlibc/release/libfrankenlibc_abi.so
+  sha256=7bbdf4cef1d08663efa7907787172edb12f71ca106956853310e435008d6bd94`;
+  `FL_LINKAGE explicit_dlopen_local`;
+  `ARM_DISTINCT incumbent_address=0x7219d826a7f0 fl_address=0x7219c7105320`.
+- **WHY THIS RE-RUN EXISTS — it is a REGRESSION CHECK, not a discovery.** The row was already banked
+  as a win. What changed under it since: the float probe reached all six entry points rather than
+  one (`sprintf`, `vsnprintf`, `vsprintf`, `fprintf`, `printf` joined `snprintf`), a new
+  `strict_direct_stream_f` landed, `stdio_abi.rs` went through a **conflict resolution performed
+  without a compiler**, and BlackThrush's `%s` per-conversion lever landed in the same file. The
+  question was whether the win survived all of that. It did.
+- **APPARATUS.** Worker `frankenlibc-test` (`loadavg=2.01,1.85,1.23`), `--family snprintf_float
+  --pin-quietest 4`, `samples=36`, `reps_per_arm=200000`, `threads_observed_pre=1`,
+  `threads_observed_post=1`, `allowed_cpus=3:5:6:7`, `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`.
+  Host-wide exclusivity `verdict=clear` both phases, observed busy fraction **0.050 pre / 0.030
+  post** against a 0.200 ceiling.
+
+  **Each case: effect and both same-invocation A/A nulls, each with its bootstrap median CI.**
+
+  Case `fixed_2dp`: fl 45.054 ns against live glibc 104.852 ns. Effect median 0.430267, bootstrap median CI
+  [0.429783,0.430826]. A/A null FL/FL median 1.000369, bootstrap median CI [0.998290,1.003066]; A/A null
+  glibc/glibc median 0.999708, bootstrap median CI [0.998555,1.002209]. null_half_width 0.003066,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_FASTER. Prior run 0.430136.
+
+  Case `fixed_4dp`: fl 57.535 ns against live glibc 116.183 ns. Effect median 0.492701, bootstrap median CI
+  [0.489851,0.495347]. A/A null FL/FL median 0.997243, bootstrap median CI [0.993658,1.005771]; A/A null
+  glibc/glibc median 0.998614, bootstrap median CI [0.996074,1.001494]. null_half_width 0.006342,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_FASTER. Prior run 0.490711.
+
+  Case `default_6dp`: fl 65.568 ns against live glibc 128.734 ns. Effect median 0.510385, bootstrap median CI
+  [0.507125,0.511066]. A/A null FL/FL median 0.998915, bootstrap median CI [0.997182,1.001654]; A/A null
+  glibc/glibc median 1.003333, bootstrap median CI [1.000325,1.005878]. null_half_width 0.005878,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_FASTER. Prior run 0.537617.
+
+  All six A/A nulls sit inside the 0.020 bias tolerance with no CI straddle, every effect clears
+  twice its null half-width, and every effect CI lies entirely below one.
+  `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=3 wins=3 losses=0 undecidable=0`.
+- **REPLICATION QUALITY.** `fixed_2dp` reproduces to **four decimal places** across two runs on
+  different hosts (0.430136 then 0.430267) — and this is a within-run fl/glibc ratio both times, so
+  the agreement is not an artifact of the hosts being similar. They are not: glibc's own `%.2f` reads
+  81.0 ns on hz2 and 104.9 ns here. `default_6dp` moved most (0.538 → 0.510), still a win and still
+  decidable.
+- **CORRECTNESS HELD.** `INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_float formats=10 values=16
+  destination_sizes=9 comparisons=1440 mismatches=0 compared=return_value_and_full_destination
+  covers=signed_zero,subnormal,u64_scale_overflow,huge_finite,nan,inf verdict=pass` — in the same
+  invocation, and it runs BEFORE the timing so a byte change would have blocked the row rather than
+  producing a fast wrong number.
+- **A BLOCKED ATTEMPT, RECORDED BECAUSE IT IS THE GATE WORKING.** The first attempt this session,
+  worker `vmi1152480` (`loadavg=10.37`), returned
+  `INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement ... 296 samples; cpu1=98.1% cpu5=100.0%
+  cpu6=96.3% cpu8=100.0%`. `--pin-quietest 4` had narrowed to the four quietest CPUs and they were
+  still pegged, because the whole fleet resumed at once when the disk freeze lifted. **No row was
+  produced and none should have been.** Reported here so the absence is legible: a blocked run is
+  not a slow run, and retrying onto a quiet host is the correct response rather than relaxing the
+  gate.
+- **WHAT REMAINS UNMEASURABLE.** `fprintf` and `printf` carry the probe and are gated for
+  correctness (2 and 3 arms green) but there is **no stream float family**, so the stream half of
+  this lever still has no vs-incumbent ratio. Design for that family is on bd-5pfs0p. Expect it to
+  be SMALLER than these numbers when it exists: the buffer probes return before
+  `runtime_policy::entrypoint_scope`, whereas `fprintf`/`printf` run `runtime_policy::decide` before
+  any fast path, so the membrane is not skipped there.
