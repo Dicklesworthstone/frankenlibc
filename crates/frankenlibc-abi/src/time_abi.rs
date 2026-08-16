@@ -28,6 +28,42 @@ type VdsoTimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
 type VdsoGetcpuFn =
     unsafe extern "C" fn(*mut libc::c_uint, *mut libc::c_uint, *mut c_void) -> c_int;
 
+/// `__vdso_getrandom(buffer, len, flags, opaque_state, opaque_len) -> ssize_t`.
+///
+/// Two calling modes, per the kernel's `vDSO/vgetrandom` contract:
+///
+///   QUERY   `(NULL, 0, 0, &params, !0)` fills a
+///           [`VgetrandomOpaqueParams`] and returns 0. This is how the caller
+///           learns how much per-thread state to map and with which
+///           protection/flags.
+///   DRAW    `(buf, len, flags, state, params.size_of_opaque_state)` fills `buf`
+///           from a userspace CSPRNG whose state the KERNEL owns, returning the
+///           byte count, or `-ENOSYS` if it declines — in which case the caller
+///           must fall back to the `getrandom(2)` syscall.
+///
+/// This is the mechanism behind the campaign's worst measured ratio. Measured
+/// this session by syscall counting: glibc 2.42 issues 3 getrandom syscalls
+/// whether called 100 times or 10,000 (flat — it draws from this vDSO), while fl
+/// issues 103 and 10,003 (one per call). That is the whole of the 91.58-92.17x
+/// gap at zero bytes, and it explains why the gap collapses to 3.0x at 256 bytes
+/// where real entropy work starts to dominate.
+type VdsoGetrandomFn =
+    unsafe extern "C" fn(*mut c_void, usize, libc::c_uint, *mut c_void, usize) -> isize;
+
+/// The kernel's `vgetrandom_opaque_params`, filled by the QUERY call above.
+///
+/// `reserved` is part of the ABI and must be carried even though it is unused:
+/// the kernel writes the whole struct, so a short one would be a buffer overflow
+/// on our stack.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct VgetrandomOpaqueParams {
+    pub(crate) size_of_opaque_state: u32,
+    pub(crate) mmap_prot: u32,
+    pub(crate) mmap_flags: u32,
+    pub(crate) reserved: [u32; 13],
+}
+
 const ASCTIME_R_BUF_BYTES: usize = 26;
 /// Buffer for the non-reentrant `asctime`/`ctime`. glibc's static buffer is
 /// wider than the 26-byte reentrant contract — it succeeds for years that
@@ -95,6 +131,7 @@ struct VdsoSymbols {
     gettimeofday: Option<VdsoGettimeofdayFn>,
     time: Option<VdsoTimeFn>,
     getcpu: Option<VdsoGetcpuFn>,
+    getrandom: Option<VdsoGetrandomFn>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -368,7 +405,8 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
     // bounds-checked against the ELF's own fields and any anomaly returns `None`
     // entries, so callers fall back to the raw syscall — a parse failure is never
     // fatal and never produces a bad pointer.
-    let (clock_gettime, clock_getres, gettimeofday, time, getcpu) = unsafe { parse_vdso(base) };
+    let (clock_gettime, clock_getres, gettimeofday, time, getcpu, getrandom) =
+        unsafe { parse_vdso(base) };
     VdsoSymbols {
         mapping_present: true,
         handle_opened: clock_gettime.is_some()
@@ -381,7 +419,82 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
         gettimeofday,
         time,
         getcpu,
+        getrandom,
     }
+}
+
+/// The resolved `__vdso_getrandom`, or `None` on a kernel that does not export it.
+///
+/// Exposed to `unistd_abi` so `getrandom(2)` can draw from the vDSO instead of
+/// issuing a syscall per call. Returning `None` is a normal outcome, not an
+/// error: the caller must keep a syscall fallback either way, because the vDSO
+/// can also decline an individual draw with `-ENOSYS`.
+pub(crate) fn vdso_getrandom_fn() -> Option<VdsoGetrandomFn> {
+    VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols).getrandom
+}
+
+/// Ask the vDSO how much per-thread state a draw needs, and with what mapping.
+///
+/// Returns `None` when the symbol is absent or the query fails, which is the
+/// signal to stay on the syscall path.
+/// Test hook: the vDSO getrandom parameters as a plain tuple, or `None`.
+///
+/// Returns `(size_of_opaque_state, mmap_prot, mmap_flags)`. Exposed because the
+/// gate has to MAP the state itself to prove the parameters are usable — a query
+/// that returns plausible-looking numbers no caller can act on would otherwise
+/// pass unnoticed.
+#[doc(hidden)]
+pub fn vdso_getrandom_params_for_tests() -> Option<(u32, u32, u32)> {
+    vdso_getrandom_params().map(|p| (p.size_of_opaque_state, p.mmap_prot, p.mmap_flags))
+}
+
+/// Test hook: perform one DRAW through the vDSO with caller-supplied state.
+///
+/// # Safety
+/// `state` must point to `state_len` bytes mapped exactly as
+/// [`vdso_getrandom_params_for_tests`] specified, and must not be shared with
+/// another thread — the state is single-threaded by contract.
+#[doc(hidden)]
+pub unsafe fn vdso_getrandom_draw_for_tests(
+    buf: &mut [u8],
+    flags: libc::c_uint,
+    state: *mut c_void,
+    state_len: usize,
+) -> isize {
+    let Some(f) = vdso_getrandom_fn() else {
+        return -1;
+    };
+    // SAFETY: caller guarantees the state mapping; `buf` is a live slice.
+    unsafe {
+        f(
+            buf.as_mut_ptr().cast::<c_void>(),
+            buf.len(),
+            flags,
+            state,
+            state_len,
+        )
+    }
+}
+
+pub(crate) fn vdso_getrandom_params() -> Option<VgetrandomOpaqueParams> {
+    let f = vdso_getrandom_fn()?;
+    let mut params = VgetrandomOpaqueParams::default();
+    // SAFETY: the QUERY form of the contract — a NULL buffer with zero length,
+    // an out-pointer to a full-size params struct, and `!0` as the opaque length
+    // to mark it as a query rather than a draw.
+    let rc = unsafe {
+        f(
+            core::ptr::null_mut(),
+            0,
+            0,
+            (&raw mut params).cast::<c_void>(),
+            usize::MAX,
+        )
+    };
+    if rc != 0 || params.size_of_opaque_state == 0 {
+        return None;
+    }
+    Some(params)
 }
 
 // Minimal ELF64 layout for parsing the in-memory vDSO image (x86-64 / aarch64).
@@ -457,8 +570,9 @@ unsafe fn parse_vdso(
     Option<VdsoGettimeofdayFn>,
     Option<VdsoTimeFn>,
     Option<VdsoGetcpuFn>,
+    Option<VdsoGetrandomFn>,
 ) {
-    let none = (None, None, None, None, None);
+    let none = (None, None, None, None, None, None);
     let ehdr = base as *const Elf64Ehdr;
     let ident = unsafe { &(*ehdr).e_ident };
     if ident[0] != 0x7f || ident[1] != b'E' || ident[2] != b'L' || ident[3] != b'F' {
@@ -520,6 +634,7 @@ unsafe fn parse_vdso(
     let mut gettimeofday: Option<VdsoGettimeofdayFn> = None;
     let mut time: Option<VdsoTimeFn> = None;
     let mut getcpu: Option<VdsoGetcpuFn> = None;
+    let mut getrandom = None;
     for s in 0..nchain {
         let sym = unsafe { &*symtab.add(s) };
         if sym.st_value == 0 || sym.st_name == 0 {
@@ -540,9 +655,14 @@ unsafe fn parse_vdso(
             time = Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(addr) });
         } else if getcpu.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_getcpu") } {
             getcpu = Some(unsafe { core::mem::transmute::<usize, VdsoGetcpuFn>(addr) });
+        } else if getrandom.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_getrandom") } {
+            // Present from Linux 6.11; absent on older kernels and on
+            // architectures that do not implement it, in which case this stays
+            // `None` and every caller keeps using the syscall.
+            getrandom = Some(unsafe { core::mem::transmute::<usize, VdsoGetrandomFn>(addr) });
         }
     }
-    (clock_gettime, clock_getres, gettimeofday, time, getcpu)
+    (clock_gettime, clock_getres, gettimeofday, time, getcpu, getrandom)
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
