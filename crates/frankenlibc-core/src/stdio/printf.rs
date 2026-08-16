@@ -2000,11 +2000,15 @@ pub fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
     } else {
         round_shift_right_ties_even(n, (-shift) as u32)?
     };
-    if rounded <= u64::MAX as u128 {
-        Some(rounded)
-    } else {
-        None
-    }
+    // Return the full u128. This used to reject anything above `u64::MAX`, which
+    // sent ordinary large magnitudes — 1e18 and 1e19 are in the bench's own value
+    // set — down the `format!("{:.prec$}")` path: flt2dec plus a String
+    // allocation, on an allocator this campaign measured at ~12x glibc. The
+    // scaled value is already computed in u128 and both consumers
+    // (`push_fixed_scaled_u128`, `decimal_digits_u128`) are u128-wide, so the
+    // narrower gate discarded a correct answer. Overflow is still rejected
+    // above, by the `n << shift` and `checked_mul` guards.
+    Some(rounded)
 }
 
 fn round_shift_right_ties_even(n: u128, shift: u32) -> Option<u128> {
@@ -2643,7 +2647,10 @@ pub(crate) fn render_pct_a_into(
     out.push(p_byte);
     out.push(if bin_exp < 0 { b'-' } else { b'+' });
     let mut tmp = [0u8; 40];
-    out.extend_from_slice(decimal_digits_u128(bin_exp.unsigned_abs() as u128, &mut tmp));
+    out.extend_from_slice(decimal_digits_u128(
+        bin_exp.unsigned_abs() as u128,
+        &mut tmp,
+    ));
 }
 
 fn exact_hex_fraction_digits(mantissa_bits: u64, default_prec: usize) -> usize {

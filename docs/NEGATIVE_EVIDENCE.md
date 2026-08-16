@@ -27458,3 +27458,52 @@ What this changes, and what it does not:
   agreeing within 1 percent between arms. Measure `long_string`, `string_token` and `scanset_only`.
   The honest outcome may well be that it is neutral, in which case the row above should be read as
   the reason to check rather than as a reason to revert someone else's commit.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup ~3%, ratio NOT moved): `rounded_scaled_fixed` no longer discards results above `u64::MAX`
+
+- **RESULT CLASS: self-speedup, i.e. MAINTENANCE, not a win.** fl-vs-fl. The vs-glibc ratio did not
+  separate, and that is stated plainly below rather than buried.
+- **THE CHANGE, one line plus its comment.** `rounded_scaled_fixed` computes the scaled fixed-point
+  value in `u128` and then returned `None` for anything above `u64::MAX`. Both consumers
+  (`push_fixed_scaled_u128`, `decimal_digits_u128`) are u128-wide, and overflow is already rejected
+  earlier by the `checked_mul` and `n << shift` guards, so that gate discarded a CORRECT answer and
+  sent ordinary large magnitudes — 1e18 and 1e19 sit in the bench's own value set — down
+  `format!("{:.prec$}")`, which is flt2dec plus a `String` allocation on an allocator this campaign
+  measures at ~12x glibc.
+- **CORRECTNESS, asserted before timing and directly covering what changed.**
+  `comparisons=1440 mismatches=0 compared=return_value_and_full_destination
+  covers=signed_zero,subnormal,u64_scale_overflow,huge_finite,nan,inf verdict=pass`. The
+  `u64_scale_overflow` coverage is exactly the boundary this widens. Also green:
+  `conformance_diff_printf_fastpaths` 3 passed, `conformance_diff_printf_hexfloat` 2 passed,
+  `conformance_diff_asprintf` 1 passed (worker `vmi1149989`).
+- **MEASURED, ABBA, both arms pinned to ONE worker.** Harness
+  `incumbent_coverage_ab --family snprintf_float --pin-quietest 4`, worker `vmi1167313`, base and
+  candidate objects differing ONLY by the line above (base `a89feeb709fd73bb…`, candidate
+  `509d590c43ef9847…`), run base, cand, base, cand. Load was low AND STABLE across the sequence
+  (0.01, 0.52, 0.70, 0.74), which is the condition that matters; absolute load is not.
+  fl nanoseconds, base then base, against cand then cand:
+  `%.2f` 387.770 and 378.713 against 379.414 and 367.194;
+  `%.4f` 389.075 and 388.468 against 375.722 and 371.239;
+  bare `%f` 393.930 and 395.643 against 382.938 and 383.150.
+  Every candidate reading is below every base reading, 12 of 12 case-arm comparisons, for a
+  self-speedup of about 3 to 4 percent.
+- **AND YET THE RATIO DOES NOT MOVE, which is the honest headline.** The FL/glibc ratios were base
+  1.566 and 1.594 against candidate 1.574 and 1.535 — INTERLEAVED. The in-run glibc control itself
+  moved about 4 percent between arms (`%.2f` 247.544, 241.054, 237.641, 239.243), which is the same
+  size as the effect. So this is a real but small fl-side gain that the vs-incumbent metric cannot
+  resolve, and NOTHING is claimed against glibc for it. The `snprintf_float` loss row of the same day
+  (1.56-1.78x on `hz1`) stands unchanged.
+- **KEPT, not reverted, and here is the distinction from the sscanf `%s` lever.** That one was
+  reverted because it had NO admissible measurement at all. This one has four arms on a pinned quiet
+  worker with a consistent direction and a conformance arm that covers the exact boundary it widens,
+  and it removes an arbitrary narrowing rather than adding machinery. It is banked as MAINTENANCE so
+  nobody later mistakes it for a vs-glibc win.
+- **WHAT THIS CORRECTS ABOUT THE STANDING dtoa LEVER.** The ledger's named lever for this surface is
+  "port a correctly-rounded fixed-precision dtoa (Schubfach class)". That is aimed at digit
+  GENERATION, and fl already has an exact fixed-precision path for precision 1..=9
+  (`rounded_scaled_fixed`) plus exact-integer and exact-dyadic paths ahead of it, all
+  allocation-free and reached for bare `%.Nf` with no field width. Widening its range bought only
+  3 percent, so digit generation is NOT where the remaining 1.5x lives for these shapes. Before
+  anyone spends a multi-turn Schubfach port, profile the float path end to end and find what the
+  other ~230ns per call actually is; `%d` through the same framing costs 15.4ns, so the float
+  overhead is float-specific and is not the framing either.
