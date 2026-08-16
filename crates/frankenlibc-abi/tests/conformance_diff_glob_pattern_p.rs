@@ -11,8 +11,24 @@ use std::ffi::{CString, c_char, c_int};
 
 use frankenlibc_abi::stdlib_abi as fl;
 
-unsafe extern "C" {
-    fn glob_pattern_p(pattern: *const c_char, quote: c_int) -> c_int;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// these symbols into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing, which would leave
+/// the defect documented above ungated and free to regress (bd-v0388t).
+
+type GlobPatternPFn = unsafe extern "C" fn(*const c_char, c_int) -> c_int;
+
+fn host_glob_pattern_p() -> GlobPatternPFn {
+    // SAFETY: signature matches GNU glob_pattern_p exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"glob_pattern_p",
+            frankenlibc_abi::stdlib_abi::glob_pattern_p as *const (),
+        )
+    }
 }
 
 #[test]
@@ -39,7 +55,7 @@ fn diff_glob_pattern_p_simple_cases() {
     for &(input, expected_fl) in cases {
         let cs = CString::new(input).unwrap();
         let fl_v = unsafe { fl::glob_pattern_p(cs.as_ptr(), 0) };
-        let lc_v = unsafe { glob_pattern_p(cs.as_ptr(), 0) };
+        let lc_v = unsafe { host_glob_pattern_p()(cs.as_ptr(), 0) };
         assert_eq!(
             fl_v, lc_v,
             "glob_pattern_p({input:?}, 0): fl={fl_v} lc={lc_v}"
@@ -62,7 +78,7 @@ fn diff_glob_pattern_p_quote_arg_default() {
     for &input in cases {
         let cs = CString::new(input).unwrap();
         let fl0 = unsafe { fl::glob_pattern_p(cs.as_ptr(), 0) };
-        let lc0 = unsafe { glob_pattern_p(cs.as_ptr(), 0) };
+        let lc0 = unsafe { host_glob_pattern_p()(cs.as_ptr(), 0) };
         assert_eq!(fl0, lc0, "quote=0, {input:?}: fl={fl0} lc={lc0}");
     }
 }
@@ -73,7 +89,7 @@ fn diff_glob_pattern_p_path_with_only_alpha() {
     for &p in &["readme.md", "Cargo.toml", "src/lib.rs", "/etc/hosts", ""] {
         let cs = CString::new(p).unwrap();
         let fl_v = unsafe { fl::glob_pattern_p(cs.as_ptr(), 0) };
-        let lc_v = unsafe { glob_pattern_p(cs.as_ptr(), 0) };
+        let lc_v = unsafe { host_glob_pattern_p()(cs.as_ptr(), 0) };
         assert_eq!(fl_v, lc_v);
         assert_eq!(fl_v, 0, "should be unmatched: {p:?}");
     }

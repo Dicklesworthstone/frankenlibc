@@ -18,8 +18,23 @@ struct HostImaxdiv {
     rem: i64,
 }
 
-unsafe extern "C" {
-    fn imaxdiv(numer: i64, denom: i64) -> HostImaxdiv;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// these symbols into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing, which would leave
+/// the defect documented above ungated and free to regress (bd-v0388t).
+
+type ImaxdivFn = unsafe extern "C" fn(i64, i64) -> HostImaxdiv;
+
+fn host_imaxdiv() -> ImaxdivFn {
+    // SAFETY: signature matches C's imaxdiv, INCLUDING the by-value 16-byte
+    // struct return this gate exists to pin. Resolving through a function
+    // pointer preserves that ABI exactly as a link-time call would.
+    unsafe {
+        dlsym_oracle::host_fn(c"imaxdiv", frankenlibc_abi::stdlib_abi::imaxdiv as *const ())
+    }
 }
 
 #[test]
@@ -61,7 +76,7 @@ fn imaxdiv_matches_glibc() {
             continue;
         }
         let CImaxdiv { quot: fq, rem: fr } = fl::imaxdiv(n, d);
-        let h = unsafe { imaxdiv(n, d) };
+        let h = unsafe { host_imaxdiv()(n, d) };
         if fq != h.quot || fr != h.rem {
             div.push(format!(
                 "imaxdiv({n}, {d}) = {{quot:{fq}, rem:{fr}}}, glibc = {{quot:{}, rem:{}}}",

@@ -12,8 +12,19 @@ use std::ffi::{CString, c_char, c_int};
 
 use frankenlibc_abi::string_abi::fnmatch as fl_fnmatch;
 
-unsafe extern "C" {
-    fn fnmatch(pattern: *const c_char, string: *const c_char, flags: c_int) -> c_int;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// these symbols into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing, which would leave
+/// the defect documented above ungated and free to regress (bd-v0388t).
+
+type FnmatchFn = unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_int;
+
+fn host_fnmatch() -> FnmatchFn {
+    // SAFETY: signature matches POSIX fnmatch exactly.
+    unsafe { dlsym_oracle::host_fn(c"fnmatch", frankenlibc_abi::string_abi::fnmatch as *const ()) }
 }
 
 const PERIOD: c_int = 1 << 2;
@@ -23,7 +34,7 @@ fn check(pat: &str, s: &str, flags: c_int) {
     let cp = CString::new(pat).unwrap();
     let cs = CString::new(s).unwrap();
     let fl = unsafe { fl_fnmatch(cp.as_ptr(), cs.as_ptr(), flags) } == 0;
-    let gl = unsafe { fnmatch(cp.as_ptr(), cs.as_ptr(), flags) } == 0;
+    let gl = unsafe { host_fnmatch()(cp.as_ptr(), cs.as_ptr(), flags) } == 0;
     assert_eq!(
         fl, gl,
         "fnmatch({pat:?},{s:?},{flags:#x}): fl={fl} glibc={gl}"

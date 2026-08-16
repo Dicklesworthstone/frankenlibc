@@ -10,8 +10,24 @@ use frankenlibc_abi::string_abi as fa;
 use sha2::{Digest, Sha256};
 use std::ffi::CString;
 use std::os::raw::c_char;
-unsafe extern "C" {
-    fn strcasecmp(a: *const c_char, b: *const c_char) -> i32;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// these symbols into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing, which would leave
+/// the defect documented above ungated and free to regress (bd-v0388t).
+
+type StrcasecmpFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+
+fn host_strcasecmp() -> StrcasecmpFn {
+    // SAFETY: signature matches POSIX strcasecmp exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"strcasecmp",
+            frankenlibc_abi::string_abi::strcasecmp as *const (),
+        )
+    }
 }
 fn norm(x: i32) -> i32 {
     x.signum()
@@ -57,7 +73,7 @@ fn iso_and_golden() {
         let ca = CString::new(&a[..a.len() - 1]).unwrap();
         let cb = CString::new(&b[..b.len() - 1]).unwrap();
         let fl = norm(unsafe { fa::strcasecmp(ca.as_ptr(), cb.as_ptr()) });
-        let gl = norm(unsafe { strcasecmp(ca.as_ptr(), cb.as_ptr()) });
+        let gl = norm(unsafe { host_strcasecmp()(ca.as_ptr(), cb.as_ptr()) });
         if fl != gl {
             div += 1;
             if div <= 5 {

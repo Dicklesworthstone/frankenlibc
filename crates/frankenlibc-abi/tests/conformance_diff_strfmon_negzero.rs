@@ -13,9 +13,36 @@
 use frankenlibc_abi::unistd_abi as fl;
 use std::ffi::{CString, c_char};
 
-unsafe extern "C" {
-    fn strfmon(s: *mut c_char, m: usize, f: *const c_char, ...) -> isize;
-    fn setlocale(c: i32, l: *const c_char) -> *mut c_char;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// these symbols into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing, which would leave
+/// the defect documented above ungated and free to regress (bd-v0388t).
+
+type StrfmonFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> isize;
+type SetlocaleFn = unsafe extern "C" fn(i32, *const c_char) -> *mut c_char;
+
+fn host_strfmon() -> StrfmonFn {
+    // SAFETY: signature matches POSIX strfmon exactly.
+    unsafe {
+        dlsym_oracle::host_fn(c"strfmon", frankenlibc_abi::unistd_abi::strfmon as *const ())
+    }
+}
+
+/// Resolved through the host as well, although it is setup rather than the
+/// comparison: `strfmon` renders through the locale's monetary data, so a locale
+/// established by fl would change what the ORACLE prints and the gate would no
+/// longer be measuring fl against glibc on equal terms.
+fn host_setlocale() -> SetlocaleFn {
+    // SAFETY: signature matches C's setlocale exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"setlocale",
+            frankenlibc_abi::locale_abi::setlocale as *const (),
+        )
+    }
 }
 
 fn render(eng: u8, fmt: &str, v: f64) -> (isize, String) {
@@ -24,7 +51,7 @@ fn render(eng: u8, fmt: &str, v: f64) -> (isize, String) {
     let n = if eng == 0 {
         unsafe { fl::strfmon(b.as_mut_ptr() as *mut c_char, 128, cf.as_ptr(), v) }
     } else {
-        unsafe { strfmon(b.as_mut_ptr() as *mut c_char, 128, cf.as_ptr(), v) }
+        unsafe { host_strfmon()(b.as_mut_ptr() as *mut c_char, 128, cf.as_ptr(), v) }
     };
     let s = if n < 0 {
         String::new()
@@ -37,7 +64,7 @@ fn render(eng: u8, fmt: &str, v: f64) -> (isize, String) {
 #[test]
 fn strfmon_sign_matches_glibc() {
     let loc = CString::new("C").unwrap();
-    unsafe { setlocale(6, loc.as_ptr()) };
+    unsafe { host_setlocale()(6, loc.as_ptr()) };
 
     let vals = [
         -0.0f64, 0.0, -1234.567, 1234.567, -0.001, 0.001, -1.0, 1.0, -0.5, 0.5, 99.999,
