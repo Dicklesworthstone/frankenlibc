@@ -28406,3 +28406,48 @@ What this changes, and what it does not:
   be SMALLER than these numbers when it exists: the buffer probes return before
   `runtime_policy::entrypoint_scope`, whereas `fprintf`/`printf` run `runtime_policy::decide` before
   any fast path, so the membrane is not skipped there.
+
+## 2026-08-16 (BlackThrush) — SECOND ABLATION UNINTERPRETABLE, and the pattern is the finding: the allocator's per-call components are mutually load-bearing, so "delete X" cannot be priced by deleting X
+
+- **RESULT CLASS: loss/baseline.** A diagnostic build, measured, reverted, and reported as
+  UNINTERPRETABLE rather than as a cost. No lever is claimed.
+- **The attempt.** Having refuted the slab premise by ablating the fallback insert, I picked the next
+  target from my own evidence rather than by reasoning: the membrane `decide`/`observe` pair on
+  malloc's PCC fast path, which the 2026-07-02 row named as "diffuse membrane machinery". Both calls
+  removed. Ablation `ELF_SHA256
+  cf4d5e2b5c2f79c23f995793a4ffc9fe5dd1c80380c392b7e92aead98efd53a8`.
+
+  | sz | control | decide/observe REMOVED |
+  |---|---|---|
+  | 16 | 7.0406 | **7.0774** — essentially unchanged |
+  | 64 | 7.0315 | **9.3907** |
+  | 256 | 6.7179 | **9.2444** |
+  | 1024 | 7.0403 | **9.3111** |
+
+- **CONTROL: the correct build re-run immediately after, at loadavg 59.94** (the ablation ran at
+  67.11), read 7.0406 / 7.0315 / 6.7179 / 7.0403 with all nulls inside +/-0.02, `ELF_SHA256
+  4d4963bf17cca38f15c293998407d5124185a1f4534ea642e5beea0d15ae0257`. So the ablation's ~9.3 is a
+  property of the code, not the host — the same control that made the first ablation readable.
+- **BUT IT IS NOT A COST MEASUREMENT, and the shape says so.** Removing work cannot make the work
+  slower, and one size was untouched while three degraded by a third. A uniform ~33% rise across
+  sizes 64-1024 with sz=16 unmoved is the signature of a PATH SWITCH, not of deleted instructions:
+  `observe` feeds the runtime-policy state that `proof_carried_fast_path_active()` consults, so
+  removing it appears to deactivate the PCC fast path for the larger sizes while 16 continues to
+  qualify. The ablation changed which code runs instead of how much of it runs, so it prices nothing.
+- **THAT IS THE SECOND ABLATION IN A ROW TO GO THE WRONG WAY, FOR A DIFFERENT REASON EACH TIME.** The
+  fallback insert came back 34% slower because it is a lookup accelerator that `free` depends on. The
+  decide/observe pair comes back ~33% slower because it gates the fast path it sits on. Two
+  components, two distinct couplings, both invisible at the call site.
+- **THE STRUCTURAL CONCLUSION, which is worth more than either measurement.** In this allocator the
+  per-call components are MUTUALLY LOAD-BEARING: each one is cheap where it appears and is relied on
+  elsewhere. That explains, mechanically, why the 2026-07-02 hunt found the cost "diffuse with no
+  single lever", why the guard-CAS attribution was ~16x too large, and why every "delete the
+  bookkeeping" proposal has failed on measurement. **The remaining ~27 ns may not be decomposable by
+  ablation at all**, because ablation requires the removed component to be inert with respect to
+  control flow, and in this code most are not.
+- **WHAT THAT LEAVES, stated so nobody repeats the last three attempts.** Pricing individual
+  components here needs a technique ablation cannot provide — a counted mechanism (instructions,
+  cycles or cache misses per call) rather than a wall-clock delta. `perf_event_paranoid=4` on this
+  host and on every rch worker blocks that today, so the honest position is that the allocator's
+  ~27 ns is currently UNATTRIBUTED, and further "remove a component and time it" experiments should
+  not be run until either that constraint changes or someone builds an instruction-count harness.
