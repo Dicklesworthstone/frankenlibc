@@ -14,20 +14,99 @@ use std::ffi::{CString, c_char, c_int, c_void};
 
 use libc::wchar_t;
 
-unsafe extern "C" {
-    fn strxfrm_l(dest: *mut c_char, src: *const c_char, n: usize, loc: *mut c_void) -> usize;
-    fn wcsxfrm_l(dest: *mut wchar_t, src: *const wchar_t, n: usize, loc: *mut c_void) -> usize;
-    fn newlocale(mask: c_int, name: *const c_char, base: *mut c_void) -> *mut c_void;
-    fn freelocale(loc: *mut c_void);
+// Host arms are resolved with `dlsym`, not declared at link time: fl exports
+// all four of these into this binary, so link-time references can bind to fl
+// and leave both arms as fl — green while proving nothing (bd-v0388t;
+// conformance_diff_catopen was doing exactly that in a plain debug build and
+// hiding a live errno defect).
+//
+// The locale is part of the same problem: this gate built ONE locale_t from the
+// link-time `newlocale` and passed it to BOTH implementations, so whichever did
+// not create it received a foreign handle, and freed it through whichever
+// freelocale the linker picked. Each arm now builds and frees its own.
+type StrxfrmLFn = unsafe extern "C" fn(*mut c_char, *const c_char, usize, *mut c_void) -> usize;
+type WcsxfrmLFn = unsafe extern "C" fn(*mut wchar_t, *const wchar_t, usize, *mut c_void) -> usize;
+type NewlocaleFn = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
+type FreelocaleFn = unsafe extern "C" fn(*mut c_void);
+
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+fn host_strxfrm_l() -> StrxfrmLFn {
+    // SAFETY: resolved symbol has POSIX's documented strxfrm_l signature.
+    unsafe {
+        std::mem::transmute::<_, StrxfrmLFn>(host_symbol(
+            c"strxfrm_l",
+            frankenlibc_abi::unistd_abi::strxfrm_l as usize,
+        ))
+    }
+}
+fn host_wcsxfrm_l() -> WcsxfrmLFn {
+    // SAFETY: resolved symbol has POSIX's documented wcsxfrm_l signature.
+    unsafe {
+        std::mem::transmute::<_, WcsxfrmLFn>(host_symbol(
+            c"wcsxfrm_l",
+            frankenlibc_abi::wchar_abi::wcsxfrm_l as usize,
+        ))
+    }
+}
+fn host_newlocale() -> NewlocaleFn {
+    // SAFETY: resolved symbol has POSIX's documented newlocale signature.
+    unsafe {
+        std::mem::transmute::<_, NewlocaleFn>(host_symbol(
+            c"newlocale",
+            frankenlibc_abi::locale_abi::newlocale as usize,
+        ))
+    }
+}
+fn host_freelocale() -> FreelocaleFn {
+    // SAFETY: paired with host_newlocale — freeing a glibc locale_t through fl's
+    // freelocale would be a cross-implementation free, not a test.
+    unsafe {
+        std::mem::transmute::<_, FreelocaleFn>(host_symbol(
+            c"freelocale",
+            frankenlibc_abi::locale_abi::freelocale as usize,
+        ))
+    }
+}
+
+/// Build a C locale from each implementation. Returned as (host, fl).
+fn c_locales() -> (*mut c_void, *mut c_void) {
+    let cloc = CString::new("C").unwrap();
+    let newlocale = host_newlocale();
+    // SAFETY: LC_ALL_MASK with a valid name and no base locale.
+    let host = unsafe { newlocale(libc::LC_ALL_MASK, cloc.as_ptr(), std::ptr::null_mut()) };
+    assert!(!host.is_null(), "host newlocale(C) failed");
+    // SAFETY: as above, against fl.
+    let fl = unsafe {
+        frankenlibc_abi::locale_abi::newlocale(
+            libc::LC_ALL_MASK,
+            cloc.as_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(!fl.is_null(), "fl newlocale(C) failed");
+    (host, fl)
 }
 
 const FILL: u8 = 0x7e;
 
 #[test]
 fn strxfrm_l_matches_glibc() {
-    let cloc = CString::new("C").unwrap();
-    let loc = unsafe { newlocale(libc::LC_ALL_MASK, cloc.as_ptr(), std::ptr::null_mut()) };
-    assert!(!loc.is_null());
+    let strxfrm_l = host_strxfrm_l();
+    let freelocale = host_freelocale();
+    let (loc, fl_loc) = c_locales();
 
     for s in ["abc", "hello world", "", "Z", "a longer collation string"] {
         let src = CString::new(s).unwrap();
@@ -40,7 +119,7 @@ fn strxfrm_l_matches_glibc() {
                     fd.as_mut_ptr() as *mut c_char,
                     src.as_ptr(),
                     n,
-                    loc as *mut c_void,
+                    fl_loc as *mut c_void,
                 )
             };
             assert_eq!(f, g, "strxfrm_l({s:?}, n={n}) return");
@@ -59,13 +138,14 @@ fn strxfrm_l_matches_glibc() {
         }
     }
     unsafe { freelocale(loc) };
+    unsafe { frankenlibc_abi::locale_abi::freelocale(fl_loc) };
 }
 
 #[test]
 fn wcsxfrm_l_matches_glibc() {
-    let cloc = CString::new("C").unwrap();
-    let loc = unsafe { newlocale(libc::LC_ALL_MASK, cloc.as_ptr(), std::ptr::null_mut()) };
-    assert!(!loc.is_null());
+    let wcsxfrm_l = host_wcsxfrm_l();
+    let freelocale = host_freelocale();
+    let (loc, fl_loc) = c_locales();
 
     for s in ["abc", "wide str", ""] {
         let src: Vec<wchar_t> = s
@@ -82,7 +162,7 @@ fn wcsxfrm_l_matches_glibc() {
                     fd.as_mut_ptr(),
                     src.as_ptr(),
                     n,
-                    loc as *mut c_void,
+                    fl_loc as *mut c_void,
                 )
             };
             assert_eq!(f, g, "wcsxfrm_l({s:?}, n={n}) return");
@@ -97,4 +177,5 @@ fn wcsxfrm_l_matches_glibc() {
         }
     }
     unsafe { freelocale(loc) };
+    unsafe { frankenlibc_abi::locale_abi::freelocale(fl_loc) };
 }

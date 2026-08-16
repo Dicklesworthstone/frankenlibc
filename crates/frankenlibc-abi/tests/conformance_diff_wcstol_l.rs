@@ -12,13 +12,79 @@ use std::ffi::{CString, c_char, c_int, c_long, c_ulong, c_void};
 use libc::wchar_t;
 
 unsafe extern "C" {
-    fn wcstol_l(p: *const wchar_t, e: *mut *mut wchar_t, b: c_int, l: *mut c_void) -> c_long;
-    fn wcstoul_l(p: *const wchar_t, e: *mut *mut wchar_t, b: c_int, l: *mut c_void) -> c_ulong;
-    fn wcstoll_l(p: *const wchar_t, e: *mut *mut wchar_t, b: c_int, l: *mut c_void) -> i64;
-    fn wcstoull_l(p: *const wchar_t, e: *mut *mut wchar_t, b: c_int, l: *mut c_void) -> u64;
-    fn newlocale(mask: c_int, name: *const c_char, base: *mut c_void) -> *mut c_void;
-    fn freelocale(loc: *mut c_void);
     fn __errno_location() -> *mut c_int;
+}
+
+// Host arms are resolved with `dlsym`, not declared at link time: fl exports
+// the whole wcsto*_l family plus newlocale/freelocale into this binary, so
+// link-time references can bind to fl and leave both arms as fl — green while
+// proving nothing (bd-v0388t; conformance_diff_catopen was doing exactly that
+// in a plain debug build and hiding a live errno defect).
+//
+// The locale is part of the same problem: this gate built ONE locale_t from the
+// link-time `newlocale` and passed it to BOTH implementations, so whichever did
+// not create it received a foreign handle. Each arm now builds and frees its
+// own. That matters more here than elsewhere, because these functions read
+// locale state to decide what counts as a digit.
+type WcstolLFn =
+    unsafe extern "C" fn(*const wchar_t, *mut *mut wchar_t, c_int, *mut c_void) -> c_long;
+type WcstoulLFn =
+    unsafe extern "C" fn(*const wchar_t, *mut *mut wchar_t, c_int, *mut c_void) -> c_ulong;
+type WcstollLFn =
+    unsafe extern "C" fn(*const wchar_t, *mut *mut wchar_t, c_int, *mut c_void) -> i64;
+type WcstoullLFn =
+    unsafe extern "C" fn(*const wchar_t, *mut *mut wchar_t, c_int, *mut c_void) -> u64;
+type NewlocaleFn = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
+type FreelocaleFn = unsafe extern "C" fn(*mut c_void);
+
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+/// Build a C locale from each implementation. Returned as (host, fl).
+fn c_locales() -> (*mut c_void, *mut c_void) {
+    let cloc = CString::new("C").unwrap();
+    // SAFETY: resolved symbol has POSIX's documented newlocale signature.
+    let newlocale = unsafe {
+        std::mem::transmute::<_, NewlocaleFn>(host_symbol(
+            c"newlocale",
+            frankenlibc_abi::locale_abi::newlocale as usize,
+        ))
+    };
+    // SAFETY: LC_ALL_MASK with a valid name and no base locale.
+    let host = unsafe { newlocale(libc::LC_ALL_MASK, cloc.as_ptr(), std::ptr::null_mut()) };
+    assert!(!host.is_null(), "host newlocale(C) failed");
+    // SAFETY: as above, against fl.
+    let fl = unsafe {
+        frankenlibc_abi::locale_abi::newlocale(
+            libc::LC_ALL_MASK,
+            cloc.as_ptr(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(!fl.is_null(), "fl newlocale(C) failed");
+    (host, fl)
+}
+
+fn host_freelocale() -> FreelocaleFn {
+    // SAFETY: paired with the host newlocale above — freeing a glibc locale_t
+    // through fl's freelocale would be a cross-implementation free, not a test.
+    unsafe {
+        std::mem::transmute::<_, FreelocaleFn>(host_symbol(
+            c"freelocale",
+            frankenlibc_abi::locale_abi::freelocale as usize,
+        ))
+    }
 }
 
 fn wide(s: &str) -> Vec<wchar_t> {
@@ -51,9 +117,36 @@ const UNSIGNED_CASES: &[(&str, c_int)] = &[
 
 #[test]
 fn wcstol_l_family_matches_glibc() {
-    let cloc = CString::new("C").unwrap();
-    let loc = unsafe { newlocale(libc::LC_ALL_MASK, cloc.as_ptr(), std::ptr::null_mut()) };
-    assert!(!loc.is_null());
+    // SAFETY: each resolved symbol has its documented POSIX signature.
+    let wcstol_l = unsafe {
+        std::mem::transmute::<_, WcstolLFn>(host_symbol(
+            c"wcstol_l",
+            frankenlibc_abi::wchar_abi::wcstol_l as usize,
+        ))
+    };
+    // SAFETY: as above.
+    let wcstoul_l = unsafe {
+        std::mem::transmute::<_, WcstoulLFn>(host_symbol(
+            c"wcstoul_l",
+            frankenlibc_abi::wchar_abi::wcstoul_l as usize,
+        ))
+    };
+    // SAFETY: as above.
+    let wcstoll_l = unsafe {
+        std::mem::transmute::<_, WcstollLFn>(host_symbol(
+            c"wcstoll_l",
+            frankenlibc_abi::wchar_abi::wcstoll_l as usize,
+        ))
+    };
+    // SAFETY: as above.
+    let wcstoull_l = unsafe {
+        std::mem::transmute::<_, WcstoullLFn>(host_symbol(
+            c"wcstoull_l",
+            frankenlibc_abi::wchar_abi::wcstoull_l as usize,
+        ))
+    };
+    let freelocale = host_freelocale();
+    let (loc, fl_loc) = c_locales();
 
     for &(s, base) in SIGNED_CASES {
         let w = wide(s);
@@ -64,7 +157,7 @@ fn wcstol_l_family_matches_glibc() {
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
         let f = unsafe {
-            frankenlibc_abi::wchar_abi::wcstol_l(w.as_ptr(), &mut fe, base, loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstol_l(w.as_ptr(), &mut fe, base, fl_loc as *mut c_void)
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstol_l({s:?},{base}) value");
@@ -82,7 +175,7 @@ fn wcstol_l_family_matches_glibc() {
         let g2 = unsafe { wcstoll_l(w.as_ptr(), &mut ge2, base, loc) };
         let _ = unsafe { *__errno_location() };
         let f2 = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoll_l(w.as_ptr(), &mut fe2, base, loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstoll_l(w.as_ptr(), &mut fe2, base, fl_loc as *mut c_void)
         };
         assert_eq!(f2, g2, "wcstoll_l({s:?},{base}) value");
     }
@@ -96,7 +189,7 @@ fn wcstol_l_family_matches_glibc() {
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
         let f = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoul_l(w.as_ptr(), &mut fe, base, loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstoul_l(w.as_ptr(), &mut fe, base, fl_loc as *mut c_void)
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstoul_l({s:?},{base}) value");
@@ -111,9 +204,15 @@ fn wcstol_l_family_matches_glibc() {
         let mut fe2: *mut wchar_t = std::ptr::null_mut();
         let g2 = unsafe { wcstoull_l(w.as_ptr(), &mut ge2, base, loc) };
         let f2 = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoull_l(w.as_ptr(), &mut fe2, base, loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstoull_l(
+                w.as_ptr(),
+                &mut fe2,
+                base,
+                fl_loc as *mut c_void,
+            )
         };
         assert_eq!(f2, g2, "wcstoull_l({s:?},{base}) value");
     }
     unsafe { freelocale(loc) };
+    unsafe { frankenlibc_abi::locale_abi::freelocale(fl_loc) };
 }
