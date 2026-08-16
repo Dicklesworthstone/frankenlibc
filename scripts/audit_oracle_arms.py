@@ -77,7 +77,17 @@ DECL = re.compile(
     re.S,
 )
 
-RUNTIME_RESOLVE = re.compile(r'\bdl(?:v)?sym\b')
+# Runtime resolution, in any of the forms this suite actually uses.
+#
+# `\bdlsym\b` ALONE IS WRONG and silently under-reports. `_` is a word character,
+# so that pattern does not match `dlsym_oracle::host_fn(..)` -- the shared helper
+# most converted gates now call. Left uncorrected it reports every gate using the
+# helper as having no host arm at all, which manufactured a 99-gate "finding" that
+# included gates converted the same day. Match the helper's entry points by name
+# as well as the raw libc calls.
+RUNTIME_RESOLVE = re.compile(
+    r'\bdl(?:v)?sym\b|\bdlsym_oracle\b|\bhost_fn\b|\bhost_addr\b'
+)
 
 # Symbols that are NOT fl-vs-glibc oracles even when declared at link time:
 # test infrastructure and loader plumbing. Listed explicitly so the report does
@@ -141,6 +151,85 @@ def audit_file(path: pathlib.Path, exports: set[str]) -> tuple[list[tuple[str, s
     return at_risk, resolves
 
 
+# A gate may reach the host by spawning something instead of calling it. Rare,
+# but a subprocess oracle IS a host arm and must not be reported as absent.
+SUBPROCESS_ORACLE = re.compile(r"\bCommand::new\b|\bstd::process::Command\b")
+
+# `libc::foo(..)` -- a CALL, not a type or constant, so `libc::c_int` and
+# `libc::EINVAL` are excluded by requiring the open paren.
+#
+# THIS IS A LINK-TIME ARM AND CARRIES THE SAME CAPTURE RISK as a hand-written
+# `extern "C"` block. The `libc` crate declares these as ordinary `extern "C"`
+# imports, so the linker resolves them exactly the same way, and fl exporting the
+# same symbol into the test binary can satisfy them. A reviewer reading
+# `libc::strchr(..)` sees "the libc crate", which reads as "definitely the host" --
+# it is not; it is a declaration like any other.
+#
+# Discovered while checking a `--no-host-arm` result by hand: `conformance_diff_strchr`
+# and `_memcpy` were reported as having NO host arm, yet both plainly compare
+# against glibc -- through `libc::strchr` and `libc::memcpy`. Two detector bugs in
+# one scan is the reason this file now states its mechanisms explicitly instead of
+# pattern-matching for the word "dlsym".
+LIBC_CRATE_CALL = re.compile(r"\blibc::(\w+)\s*\(")
+
+
+def has_any_host_arm(path: pathlib.Path) -> tuple[bool, str]:
+    """Does this gate reach host glibc AT ALL, by any mechanism?
+
+    Returns (has_arm, mechanism).
+
+    WHY THIS IS A SEPARATE QUESTION from the link-time audit above. That audit
+    asks "is this file's declared oracle reliable?" and can only see files that
+    declare one. A gate that declares NOTHING is invisible to it -- and three such
+    gates were found by hand: `conformance_diff_strftime_oor_names`,
+    `_strptime_ampm_yday` and `_strptime_field_backoff`. All three are named
+    `conformance_diff_*`, all three claim parity with glibc in their headers, two
+    have test names ending in `_matches_glibc`, and none of them ever called
+    glibc. Their expected values were, per their own headers, "golden values
+    captured from a gcc strptime oracle": read off glibc once, offline, and frozen
+    into literals.
+
+    Frozen literals are not equivalent to an oracle, because glibc moves. glibc
+    2.42 rewrote `ecvt`/`fcvt` to shortest-representation and broke four gates in
+    this suite. Worse, some pinned behaviour is UNSPECIFIED -- what `strftime`
+    does with a `tm_wday` of 99 is a glibc implementation detail, exactly the kind
+    of thing a release may retune -- so the literal records what one glibc did
+    once, while the test name promises ongoing parity.
+
+    A golden-value test is legitimate. What is not legitimate is a golden-value
+    test WEARING A DIFFERENTIAL NAME, because a reader auditing coverage counts it
+    as a live comparison. This function finds them.
+    """
+    src = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+    if RUNTIME_RESOLVE.search(src):
+        return True, "dlsym"
+    if SUBPROCESS_ORACLE.search(src):
+        return True, "subprocess"
+    for block in EXTERN_BLOCK.findall(src):
+        for link_name, rust_name in DECL.findall(block):
+            symbol = link_name or rust_name
+            if symbol not in INFRASTRUCTURE:
+                return True, "link-time"
+    if any(s not in INFRASTRUCTURE for s in LIBC_CRATE_CALL.findall(src)):
+        return True, "libc-crate"
+    return False, "NONE"
+
+
+def libc_crate_arms(path: pathlib.Path, exports: set[str]) -> set[str]:
+    """`libc::foo(..)` calls where fl also exports `foo`.
+
+    Same capture risk as a hand-written extern block, and invisible to the
+    link-time audit above, so the AT RISK totals it reports UNDERCOUNT by
+    whatever this finds.
+    """
+    src = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+    return {
+        s
+        for s in LIBC_CRATE_CALL.findall(src)
+        if s in exports and s not in INFRASTRUCTURE
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", action="store_true", help="counts only")
@@ -151,7 +240,62 @@ def main() -> int:
         help="only the REVIEW gates: files that resolve SOMETHING at runtime and "
         "still declare an fl-exported symbol at link time",
     )
+    parser.add_argument(
+        "--libc-calls",
+        action="store_true",
+        help="gates reaching the host through `libc::foo(..)` where fl also "
+        "exports foo — a link-time arm with the same capture risk as an extern "
+        "block, which the AT RISK scan does not inspect",
+    )
+    parser.add_argument(
+        "--no-host-arm",
+        action="store_true",
+        help="gates that never reach glibc by ANY mechanism — no dlsym, no "
+        "subprocess, no non-infrastructure link-time declaration. These are "
+        "golden-value tests wearing a differential name, and the link-time "
+        "audit is structurally blind to them",
+    )
     args = parser.parse_args()
+
+    if args.libc_calls:
+        # `exports` is computed further down, after the early-exit modes; this
+        # mode needs it, so resolve it here rather than reordering main().
+        exports = fl_exported_symbols()
+        if not exports:
+            print("REFUSING: found no fl exports to compare against.", file=sys.stderr)
+            return 0
+        gates = sorted(TESTS.glob("conformance_diff_*.rs"))
+        rows = [(p, libc_crate_arms(p, exports)) for p in gates]
+        rows = [(p, syms) for p, syms in rows if syms]
+        total = sum(len(s) for _, s in rows)
+        print(f"gates scanned: {len(gates)}")
+        print(
+            f"LIBC-CRATE ARM  {len(rows)} gates / {total} symbols — reach the host "
+            f"via `libc::foo(..)` on a symbol fl also exports. Same link-time "
+            f"capture risk as an extern block; NOT counted in the AT RISK total."
+        )
+        for p, syms in rows:
+            print(f"    {p.name}: {', '.join(sorted(syms))}")
+        return 0
+
+    if args.no_host_arm:
+        gates = sorted(TESTS.glob("conformance_diff_*.rs"))
+        missing = [p for p in gates if not has_any_host_arm(p)[0]]
+        print(f"gates scanned: {len(gates)}")
+        print(
+            f"NO HOST ARM  {len(missing)} gates — named conformance_diff_*, but no "
+            f"dlsym, no subprocess and no link-time host declaration anywhere in "
+            f"the file. Each compares fl against frozen literals only."
+        )
+        for p in missing:
+            src = p.read_text(encoding="utf-8", errors="replace")
+            # Surface the tell: a test name promising parity it never measures.
+            promises = sorted(
+                set(re.findall(r"fn\s+(\w*(?:matches|parity|vs)_?\w*glibc\w*)\s*\(", src))
+            )
+            note = f"   [test name claims parity: {', '.join(promises)}]" if promises else ""
+            print(f"    {p.name}{note}")
+        return 0
 
     exports = fl_exported_symbols()
     if not exports:
