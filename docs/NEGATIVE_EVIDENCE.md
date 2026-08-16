@@ -28568,3 +28568,50 @@ What this changes, and what it does not:
   workload: 55,223,261 -> 55,111,198 instructions, i.e. 0.2%, because in this process every symbol
   resolves and the pathological rescan never triggers. Kept as a robustness fix, NOT as a lever.
   `malloc_abi_test` 72 passed / 1 ignored and `hardened_mode_safety_test` 15 passed with it.
+
+## 2026-08-16 (BlackThrush) — THE PRIZE MEASURED: allocator telemetry costs 124 instructions per malloc/free pair and 1.4x of the ratio (7.22x -> 5.81x)
+
+- **RESULT CLASS: loss/baseline.** A diagnostic ablation, measured on BOTH mechanisms, then reverted.
+  Nothing is shipped from it: removing telemetry removes functionality. It prices a lever rather than
+  being one.
+- **Why this ablation is interpretable when the previous two were not.** Callgrind shows per-function
+  counts, so a path switch announces itself as OTHER functions changing. Removing `record_stats`
+  left `segment_free` (126.0), `allocate_from_local_class` (93.0), `segment_allocate` (37.0),
+  `runtime_policy::mode` (27.0), `entrypoint_scope` (22.0) and `small_bin_index` (11.0) **byte-for-byte
+  identical per pair**. No path moved. That is the property the fallback-insert and decide/observe
+  ablations lacked, and it is why this one can be read as a cost.
+- **INSTRUCTION COST, by two-point difference (20,000-pair profile minus 1,000-pair, so startup is
+  excluded):** baseline **624.8** instructions per pair, stats-ablated **500.8**. **Delta 124.0 per
+  pair, 19.8%.** That is more than `record_stats`'s own 59.0 of self cost, because the removal also
+  takes `size_class::bin_index` (22.0 -> 0, reached only from the stats binning) and inlined stats
+  work inside `free` (73.0 -> 33.0) and `malloc` (65.3 -> 60.1). **Attributing telemetry by its self
+  cost alone would have understated it by a factor of two.**
+- **WALL COST, same square harness, `square=ABBAABBA`, n=41, one invocation per build:**
+
+  | sz | control (stats present) | stats ABLATED |
+  |---|---|---|
+  | 16 | 7.2308 [7.2213,7.3058] | *(7.3414, NULL-FAILED, null_fl=1.0419 — not counted)* |
+  | 64 | 7.2186 [7.2050,7.2290] | **5.8102** [5.7894,5.8603] |
+  | 256 | 7.2268 [7.1960,7.2513] | **5.8240** [5.7927,6.2631] |
+  | 1024 | 7.2115 [7.1944,7.2376] | **5.8240** [5.7827,6.0556] |
+
+  Control `ELF_SHA256 11bf74470ae8d7e6240d4dfed43920dc438108a83d04e0b4620f59ee397f960c` at loadavg
+  51.42, all four nulls inside +/-0.02. Ablated `ELF_SHA256
+  97a42466cfcabba2368eded9bfa24c8ee1b568d26cf836c6c5ef81efa0be034a` at loadavg 82.07; its sz=16 case
+  failed its own null and is excluded rather than quoted.
+- **THE TWO MECHANISMS AGREE, which is the load-bearing result.** 19.8% fewer instructions produced a
+  17.2% smaller ratio (7.22 -> 5.81 on the three admissible cases). Instructions map to wall time
+  close to one-for-one on this path, exactly as the corrected 7.98x-instructions-against-7.0x-wall
+  reading predicted. **On this allocator, instruction count is a valid proxy for the ratio**, which
+  makes callgrind — available without privileges — a usable design tool where `perf` is blocked.
+- **THE SIZE OF THE PRIZE.** glibc's ENTIRE per-pair cost is 77.9 instructions. fl spends **124 on
+  telemetry alone**, i.e. 1.6x glibc's whole budget on counting what it just did. Removing it takes
+  the campaign's worst ratio from ~7.2x to ~5.8x in a single change — larger than every printf lever
+  of the last three days combined.
+- **BUT IT IS NOT SHIPPABLE AS ABLATED, and the honest version is smaller.** `record_stats` feeds
+  `mallinfo`/`malloc_stats`-class observability that callers can legitimately read, so deleting it
+  changes behaviour rather than cost. What the measurement licenses is a REDESIGN: make the
+  accumulator cheap (the 22 instructions of `bin_index` per pair are pure classification and could be
+  folded into the size-class work the allocator already does), or make it opt-in. Whatever fraction of
+  124 survives that is the real win, and it must be re-measured rather than assumed — this vein has
+  now refuted four predictions and one of my own attributions.
