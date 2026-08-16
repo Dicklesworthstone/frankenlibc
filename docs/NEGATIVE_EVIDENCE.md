@@ -27734,3 +27734,50 @@ Two consequences, stated plainly:
   nothing here changes that headline. The profile still says where the rest is:
   `FormatSegments::push` 13.08% and `parse_format_spec` 9.09%, i.e. the parse itself, which no
   amount of plan-skipping touches.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup, at least ~1.2% replicated): record `any_positional` at parse time
+
+- **RESULT CLASS: self-speedup, MAINTENANCE.** fl-vs-fl. No vs-glibc claim.
+- **THE CHANGE.** `FormatSegments` now records `any_positional` during `push`, and both hot callers
+  read the field instead of re-deriving it: `render_segments` calls `segments.any_positional()`, and
+  a new `count_printf_args_of` takes the `FormatSegments` so the non-positional path goes straight to
+  the sequential count. Previously each of those walked every segment, twice per printf call.
+- **PROFILE-DIRECTED, and the profile confirms the previous lever landed.** Re-profiling the object
+  built after the same-day `positional_value_arg_kind` change (same C driver, `perf -F 3999
+  -e cycles:u`, no call graph, worker `vmi1167313`) showed `positional_printf_arg_plan` down from
+  **15.74% to 10.63%** self time — the earlier lever hit its target — with the residue being the
+  `any_positional_spec` walk itself, which is what this change removes. Post-lever ordering:
+  `render_segments` 15.69%, `snprintf` 13.58%, `FormatSegments::push` 12.86%,
+  `positional_printf_arg_plan` 10.63%, `parse_format_spec` 9.33%, `scan_c_string` 6.78%,
+  `entrypoint_scope` 2.63%, `decide` 1.46%.
+- **CORRECTNESS.** `conformance_diff_printf_positional` 2 passed, `conformance_diff_printf_fastpaths`
+  3, `conformance_diff_asprintf` 3, `conformance_diff_dprintf` 1, on `vmi1152480`. The positional gate
+  is the one that can catch a wrong flag and it is green.
+- **MEASURED, ABBA, two workers.** Harness `incumbent_coverage_ab --family snprintf_fused`. Base
+  object `e45f369fda9e5559…`, candidate `d6c802d9c2097651…`, differing only by the above; candidate
+  built on RCH worker `vmi1153651`.
+  `hz1` (`--pin-quietest 4`, load 1.22 to 0.90): base `syslog_line` 242.766 and 242.734 against cand
+  233.108 and 233.787; base `http_log` 306.400 and 320.708 against cand 313.252 and 320.876; base
+  `kv_join` 292.583 and 302.777 against cand 294.124 and 305.888.
+  `hz2` (`--pin-quietest 6`, load 1.68 to 3.54 — a real ramp, disclosed): base `syslog_line` 175.280
+  and 183.666 against cand 170.177 and 173.111; base `http_log` 223.126 and 228.270 against cand
+  227.102 and 218.022; base `kv_join` 221.909 and 214.546 against cand 215.048 and 208.804.
+- **THE CONSERVATIVE STANDING.** Only `syslog_line` separates on BOTH workers — every candidate
+  reading below every base reading. Quoting the least favourable bound either machine produced:
+  **at least about 1.2%** (`hz2`, cand maximum 173.111 against base minimum 175.280). `hz1`'s bound is
+  −3.7% and the means are near −4% on both, but −1.2% is what survives. `http_log` and `kv_join`
+  INTERLEAVE on both machines and are not claimed at all.
+- **NOTE THE SHAPES SWAPPED, which is a caution about single-shape claims.** The same-day plan-skip
+  lever separated on `http_log` and `kv_join` and failed to reproduce on `syslog_line`; this one is
+  the exact opposite. Two levers in the same code path, each reproducing on a disjoint set of shapes,
+  is a sign that per-shape effects at this size are near the resolution of the harness. Neither
+  should be quoted as a general printf speedup.
+- **THE HEADLINE IS UNCHANGED.** Fused `snprintf` was 3.12-3.31x slower than glibc and remains far
+  above parity. Three profile-directed levers have now bought single-digit percentages each. The
+  profile says the remainder is the segment machinery itself — `render_segments` 15.69%,
+  `FormatSegments::push` 12.86%, `parse_format_spec` 9.33% — and `FormatSegment` is roughly 72 bytes
+  (`FormatSpec` carries three `usize`-payload fields: `Width`, `Precision`, `value_position`), so an
+  8-slot inline array is initialised per call and each push copies 72 bytes. Shrinking those payloads
+  to 32-bit (C's width/precision/positions are `int`) would cut both, and touches 94 sites across two
+  files — mechanical but exactly the shape that produces a silent truncation bug, so it needs a turn
+  that can gate it properly rather than a hurried edit.

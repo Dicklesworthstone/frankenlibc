@@ -4794,8 +4794,8 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 
 use frankenlibc_core::stdio::{
     FormatSegment, LengthMod, Precision, ValueArgKind, Width,
-    count_printf_args as core_count_printf_args, format_str, parse_format_string,
-    positional_printf_arg_plan as core_positional_printf_arg_plan,
+    count_printf_args as core_count_printf_args, count_printf_args_of as core_count_printf_args_of,
+    format_str, parse_format_string, positional_printf_arg_plan as core_positional_printf_arg_plan,
 };
 
 /// Maximum variadic arguments we extract per printf call.
@@ -4996,7 +4996,10 @@ pub(crate) unsafe fn render_segments(
     wide_output: bool,
 ) -> ScratchVec {
     let mut buf = printf_out_pool::take();
-    let uses_positional = core_positional_printf_arg_plan(segments).is_some();
+    // Field read, not a walk: `FormatSegments` records this during parsing, so
+    // the common non-positional format no longer re-derives it on every render
+    // (bd-ntb9fq).
+    let uses_positional = segments.any_positional();
     let mut arg_idx = 0usize;
 
     let read_arg = |position: Option<usize>, next_idx: &mut usize| -> Option<u64> {
@@ -6581,7 +6584,7 @@ pub unsafe extern "C" fn snprintf(
         (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
     } else {
         let segments = parse_format_string(fmt_bytes);
-        let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+        let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
         let mut arg_buf = [0u64; MAX_VA_ARGS];
         extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
         match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
@@ -6735,7 +6738,7 @@ pub unsafe extern "C" fn sprintf(
         (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
     } else {
         let segments = parse_format_string(fmt_bytes);
-        let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+        let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
         let mut arg_buf = [0u64; MAX_VA_ARGS];
         extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
         match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
@@ -6848,7 +6851,7 @@ pub unsafe extern "C" fn fprintf(
         return unsafe { strict_direct_stream_long(id, stream, conv, bits, newline) };
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -7072,7 +7075,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
         return unsafe { strict_direct_stream_long(id, stdout_ptr, conv, bits, newline) };
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -7304,7 +7307,7 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -7357,7 +7360,7 @@ pub unsafe extern "C" fn asprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -7590,7 +7593,7 @@ pub unsafe extern "C" fn vsnprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -7708,7 +7711,7 @@ pub unsafe extern "C" fn vsprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -7838,7 +7841,7 @@ pub unsafe extern "C" fn vfprintf(
         return r;
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -8042,7 +8045,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         return r;
     }
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -8247,7 +8250,7 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -8315,7 +8318,7 @@ pub unsafe extern "C" fn vasprintf(
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+    let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 

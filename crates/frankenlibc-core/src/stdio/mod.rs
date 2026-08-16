@@ -21,8 +21,8 @@ pub use buffer::{BUFSIZ, BufMode, StreamBuffer};
 pub use file::{MemBacking, OpenFlags, ReadUntil, StdioStream, flags_to_oflags, parse_mode};
 pub use printf::{
     FormatArg, FormatFlags, FormatSegment, FormatSpec, LengthMod, Precision, ValueArgKind, Width,
-    count_printf_args, format_char, format_float, format_pointer, format_signed, format_str,
-    format_unsigned, parse_format_spec, parse_format_string, positional_printf_arg_plan,
-    decimal_digits_u128, rounded_scaled_fixed,
+    count_printf_args, count_printf_args_of, decimal_digits_u128, format_char, format_float,
+    format_pointer, format_signed, format_str, format_unsigned, parse_format_spec,
+    parse_format_string, positional_printf_arg_plan, rounded_scaled_fixed,
 };
 pub use scanf::{ScanResult, ScanValue, parse_scanf_format, scan_input};

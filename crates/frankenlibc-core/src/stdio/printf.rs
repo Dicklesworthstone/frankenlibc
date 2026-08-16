@@ -581,11 +581,26 @@ pub fn positional_printf_arg_plan(segments: &[FormatSegment<'_>]) -> Option<Vec<
     })
 }
 
+/// Argument count for an already-parsed format, using the recorded
+/// `any_positional` flag so the common (non-positional) path never builds or
+/// walks a plan. Prefer this over [`count_printf_args`] when you hold the
+/// `FormatSegments` rather than a bare slice. bd-ntb9fq.
+pub fn count_printf_args_of(segments: &FormatSegments<'_>) -> usize {
+    if segments.any_positional() {
+        return count_printf_args(segments.as_slice());
+    }
+    count_printf_args_sequential(segments.as_slice())
+}
+
 pub fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
     if let Some(plan) = positional_printf_arg_plan(segments) {
         return plan.len();
     }
+    count_printf_args_sequential(segments)
+}
 
+/// The ordinary left-to-right argument count, with no positional handling.
+fn count_printf_args_sequential(segments: &[FormatSegment<'_>]) -> usize {
     let mut needed = 0usize;
     for seg in segments {
         if let FormatSegment::Spec(spec) = seg {
@@ -650,6 +665,13 @@ pub struct FormatSegments<'a> {
     inline: [FormatSegment<'a>; INLINE_SEGMENTS],
     inline_len: usize,
     heap: Option<Vec<FormatSegment<'a>>>,
+    /// Set when a pushed spec references an explicit argument position
+    /// (`%1$s`, `%*2$d`). Recorded HERE, once, because the alternative is
+    /// re-deriving it by walking every segment on every call — and that walk
+    /// happens twice per printf (argument extraction and rendering both ask).
+    /// A flat perf profile still put that walk at 10.63% self time after the
+    /// plan itself was short-circuited. bd-ntb9fq.
+    any_positional: bool,
 }
 
 impl<'a> FormatSegments<'a> {
@@ -658,6 +680,7 @@ impl<'a> FormatSegments<'a> {
             inline: [FormatSegment::Percent; INLINE_SEGMENTS],
             inline_len: 0,
             heap: None,
+            any_positional: false,
         }
     }
 
@@ -668,7 +691,21 @@ impl<'a> FormatSegments<'a> {
         }
     }
 
+    /// Does any spec in this format reference an explicit argument position?
+    ///
+    /// Recorded during `push`, so this is a field read rather than a walk.
+    pub fn any_positional(&self) -> bool {
+        self.any_positional
+    }
+
     pub fn push(&mut self, segment: FormatSegment<'a>) {
+        if let FormatSegment::Spec(spec) = &segment
+            && (spec.value_position.is_some()
+                || spec.width.position().is_some()
+                || spec.precision.position().is_some())
+        {
+            self.any_positional = true;
+        }
         if let Some(heap) = &mut self.heap {
             heap.push(segment);
             return;
