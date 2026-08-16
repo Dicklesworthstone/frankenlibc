@@ -14,6 +14,12 @@ const NS_S_AN: c_int = 1; // answer section
 
 mod g {
     use super::*;
+    // The ns_* parser lives in libresolv, NOT libc: nm -D libresolv.so.2 shows
+    // ns_initparse@@GLIBC_2.9, ns_parserr@@GLIBC_2.9, ns_sprintrr@@GLIBC_2.9, and libc.so.6
+    // exports none of them. Without this the target does not link, and an unlinkable target is
+    // silent rather than green — this one never compiled once, so bd-yrwdqn could not have been
+    // observed. It also aborted the whole `cargo test -p frankenlibc-abi` run. bd-5wckql.
+    #[link(name = "resolv")]
     unsafe extern "C" {
         pub fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mut c_void) -> c_int;
         pub fn ns_parserr(
