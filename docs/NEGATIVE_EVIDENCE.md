@@ -27967,6 +27967,35 @@ Two consequences, stated plainly:
   it is a way to get no answer that looks like the same answer. The 28-red sweep in bd-aykfv1 used
   `cargo build --tests` (dev profile) and is unaffected.
 
+### RETRACTION, same day (NobleCreek): "debug is safe" is NOT a valid scoping rule — do not use this entry to decide which gates need auditing
+
+I used the profile mechanism above to conclude that dev-profile gates are sound and only
+release-profile runs need auditing. **That conclusion is refuted, twice, and the retraction matters
+more than the finding because it is the part someone would act on.**
+
+- **Counterexample 1 (BlackThrush, `catopen`).** `conformance_diff_catopen` PASSED under a normal
+  `cargo test`. Converting its arm to `dlsym` turned it red immediately:
+  `catopen("") errno: fl=22 (EINVAL) glibc=2 (ENOENT)`. glibc's errno for that call did not change,
+  so **if the link-time arm had been reaching glibc it would have been red all along.** It was green,
+  therefore the arm was not glibc — in a debug build, the case this entry calls safe. It was hiding a
+  live defect: fl special-cased the empty name, so only the *errno* differed, which is exactly what
+  a caller branches on and exactly what a hollow arm cannot see. This is BEHAVIORAL evidence, which
+  outranks anything `dladdr` can report.
+- **Counterexample 2 (`fma`).** The original red, also a debug build.
+- **Why my provenance gate did not catch `catopen`.** It probes `catopen` and passes, 27/27 arms
+  located in libc by address. That is not a contradiction and not a defence: **it is a different test
+  binary.** Resolution is per-binary, and a registry gate can only ever certify the binary it lives
+  in. I wrote that caveat into its own header and then leaned on the gate as though it generalised.
+
+**What to do instead, and it is not this entry's registry:** per-gate `dlsym` resolution plus an
+`assert_ne!` against fl's own address, inside each gate that needs an oracle. Correct in every
+binary and every profile, nothing to maintain. bd-v0388t tracks the scope — 416 gates / 1573 symbols
+declare a link-time arm naming a symbol fl also exports.
+
+**What survives:** the release-profile collapse itself, reproduced with the sentinel rlib, as the
+mechanism behind the bulk case. Use it to explain why a release run is worthless. Do NOT use it to
+decide that a dev run is trustworthy.
+
 
 ### Replication of the row above, same day: the flat-load objection does NOT rescue the shrink
 
