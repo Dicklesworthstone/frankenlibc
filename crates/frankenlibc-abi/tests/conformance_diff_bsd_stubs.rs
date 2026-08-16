@@ -5,10 +5,44 @@
 use frankenlibc_abi::{errno_abi, glibc_internal_abi as fl};
 use std::ffi::{CString, c_char, c_int, c_long, c_ulong, c_void};
 
-unsafe extern "C" {
-    fn chflags(path: *const c_char, flags: c_ulong) -> c_int;
-    fn revoke(path: *const c_char) -> c_int;
-    fn setlogin(name: *const c_char) -> c_int;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type Chflags = unsafe extern "C" fn(*const c_char, c_ulong) -> c_int;
+type Revoke = unsafe extern "C" fn(*const c_char) -> c_int;
+type Setlogin = unsafe extern "C" fn(*const c_char) -> c_int;
+
+// chflags / revoke / setlogin resolved by dlsym rather than declared at link
+// time (bd-v0388t).
+//
+// This file already used dlvsym for bdflush/sstk, which are versioned compat
+// symbols, so it LOOKED like a gate with a real oracle. These three were plain
+// link-time externs sitting alongside that machinery -- the same shape that hid
+// a link-time scalb/scalbf behind dlvsym'd __scalb_finite.
+//
+// It matters more here than in most gates because the ENTIRE observable is
+// (return code, errno). These are stub syscalls: there is no output buffer to
+// disagree about, so if the "host" arm were fl, every comparison would be fl's
+// ENOSYS against fl's ENOSYS and the gate would be green by construction. That
+// is the catopen shape exactly, and catopen's version hid a real EINVAL vs
+// ENOENT divergence.
+fn glibc_chflags() -> Chflags {
+    // SAFETY: matches BSD's documented chflags signature.
+    unsafe {
+        dlsym_oracle::host_fn(c"chflags", fl::chflags as *const ())
+    }
+}
+
+fn glibc_revoke() -> Revoke {
+    // SAFETY: matches BSD's documented revoke signature.
+    unsafe { dlsym_oracle::host_fn(c"revoke", fl::revoke as *const ()) }
+}
+
+fn glibc_setlogin() -> Setlogin {
+    // SAFETY: matches BSD's documented setlogin signature.
+    unsafe {
+        dlsym_oracle::host_fn(c"setlogin", fl::setlogin as *const ())
+    }
 }
 
 const GLIBC_2_2_5: &std::ffi::CStr = c"GLIBC_2.2.5";
@@ -58,7 +92,7 @@ fn host_errno() -> c_int {
 fn bsd_stubs_match_host_enosys_contract() {
     let path = CString::new("/nonexistent/frankenlibc-chflags").unwrap();
     clear_errnos();
-    let host_chflags = unsafe { chflags(path.as_ptr(), 0) };
+    let host_chflags = unsafe { glibc_chflags()(path.as_ptr(), 0) };
     let host_chflags_errno = host_errno();
     clear_errnos();
     let fl_chflags = unsafe { fl::chflags(path.as_ptr(), 0) };
@@ -70,7 +104,7 @@ fn bsd_stubs_match_host_enosys_contract() {
 
     let login = CString::new("frankenlibc").unwrap();
     clear_errnos();
-    let host_setlogin = unsafe { setlogin(login.as_ptr()) };
+    let host_setlogin = unsafe { glibc_setlogin()(login.as_ptr()) };
     let host_setlogin_errno = host_errno();
     clear_errnos();
     let fl_setlogin = unsafe { fl::setlogin(login.as_ptr()) };
@@ -85,7 +119,7 @@ fn bsd_stubs_match_host_enosys_contract() {
 fn revoke_matches_host_enosys_contract() {
     let path = CString::new("/nonexistent/frankenlibc-revoke").unwrap();
     clear_errnos();
-    let host_result = unsafe { revoke(path.as_ptr()) };
+    let host_result = unsafe { glibc_revoke()(path.as_ptr()) };
     let host_result_errno = host_errno();
     clear_errnos();
     let fl_result = unsafe { fl::revoke(path.as_ptr()) };
