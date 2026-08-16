@@ -29165,3 +29165,52 @@ What this changes, and what it does not:
   is called universal. **The probe stays.** The open question is no longer "is the stream path slow"
   but "why is fl 2.5-3x slower on hetzner2 than on the vmi hosts when glibc is flat across both",
   which is an fl-side question and the right next target.
+
+## 2026-08-16 (NobleCreek) — the 92x getrandom lever is CHEAPER than its diagnosis assumed: fl already parses the vDSO
+
+- **RESULT CLASS: loss/baseline (re-scoping an open lever). NO TIMED ROW.** `uptime` read
+  **8.78/15.75/26.42** when this turn's run started and **56.31/46.41/35.33** by the time it reached
+  the guard; the run blocked at `post_measurement` with pinned CPUs at 87-100%. Per the standing
+  rule that is not a loss and nothing here is recorded as one.
+- **THE RE-SCOPING.** The 92x diagnosis (BlackThrush, same day) ends: *"the correct fix is to use
+  `__vdso_getrandom` itself (per-thread state via the `vgetrandom_alloc` syscall) ... the mmap'd
+  per-thread state and the vDSO call are the hard parts, not the algorithm."*
+  **Half of that already exists in this repo.** `crates/frankenlibc-abi/src/time_abi.rs:452` is a
+  port of the kernel's reference `parse_vdso`, already resolving five symbols —
+  `__vdso_clock_gettime`, `__vdso_clock_getres`, `__vdso_gettimeofday`, `__vdso_time`,
+  `__vdso_getcpu` — off `AT_SYSINFO_EHDR` via `raw_getauxval`, with a `OnceLock<VdsoSymbols>` cache
+  and symbol-version checking. It is not a sketch; `__vdso_getcpu` is live behind `sched_getcpu`.
+  So the vDSO *lookup* half of the lever is done and tested. What remains is genuinely new: the
+  `vgetrandom_alloc` syscall for per-thread state, its lifecycle across threads, and the call itself.
+- **THE ONE STRUCTURAL FRICTION, named so the next person budgets for it.** `parse_vdso` returns a
+  FIXED 5-TUPLE of `Option<...Fn>` and its caller destructures positionally. Adding a sixth symbol
+  is a signature change touching both, not a one-line addition — small, but not free, and worth
+  knowing before someone estimates this as "add a symbol name to a list".
+- **THE SECURITY WARNING IN THE ORIGINAL DIAGNOSIS STANDS AND SHOULD BE RE-READ BEFORE STARTING:**
+  do not buffer a block of random bytes in userspace to amortise the syscall. The kernel owns
+  vgetrandom state and invalidates it across `fork`; a userspace buffer would hand a parent's
+  unconsumed bytes to its child. Being 92x slow is the lesser defect.
+
+## 2026-08-16 (NobleCreek) — the stdio fast-path gate does NOT explain the fprintf host split, on the faster host at least
+
+- **RESULT CLASS: loss/baseline (hypothesis half-refuted). NO TIMED ROW** — same blocked run as
+  above, `uptime` 8.78/15.75/26.42 at start, 56.31 at the guard.
+- **THE HYPOTHESIS.** fl's stdio write fast path bails unless `__libc_single_threaded` reads 1, and
+  fourteen fast paths in `stdio_abi.rs` are gated on that one flag. It is fl's OWN static, not an
+  alias of glibc's, so a reference resolving to the wrong copy would silently disable all fourteen —
+  a binary gate that could explain the fprintf host split recorded in the host-dependence row above
+  (fl roughly three times slower on hetzner2 than on the vmi hosts while glibc is flat across both;
+  see that row for the figures).
+- **MEASURED STATE, which needs no quiet host because it is a read and not a timing.**
+  On `vmi1227854` — one of the two FASTER hosts — `STDIO_FASTPATH_GATE` reports
+  `fl___libc_single_threaded=1 host___libc_single_threaded=1 same_object=false`.
+  **Both copies read 1.** The two objects are distinct, as expected under `RTLD_LOCAL`, but fl's flag
+  is set correctly and the fast path is enabled. So the gate is not disabled on the faster host, and
+  the hypothesis cannot explain the split by itself.
+- **WHAT WOULD FINISH IT:** the same one-line read on hetzner2. If its `fl___libc_single_threaded`
+  reads 0, the gate is the cause after all; if it reads 1, the split is elsewhere and this
+  hypothesis is dead. The diagnostic is already in the bench and costs one `println`, so the answer
+  arrives free with the next fprintf_float run on that host.
+- **RECORDED BECAUSE A HALF-REFUTED HYPOTHESIS IS STILL EVIDENCE.** I have twice today assumed a
+  real defect explained a real discrepancy and been wrong. This one gets confirmed on both hosts
+  before it gets believed.
