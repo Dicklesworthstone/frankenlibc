@@ -4475,6 +4475,109 @@ pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
 // getrandom — RawSyscall
 // ---------------------------------------------------------------------------
 
+/// Bounded pool of `vgetrandom` per-thread states.
+///
+/// THE PROBLEM THIS SOLVES. Drawing from `__vdso_getrandom` needs a per-thread
+/// state that the kernel owns. The two obvious ways to manage it are both bad
+/// inside a libc:
+///
+///   * a `thread_local!` carrying `Drop` registers a TLS destructor through
+///     `__cxa_thread_atexit_impl` — re-entering our own libc from a teardown
+///     path, the interposed-symbol re-entry class already on record here;
+///   * no destructor at all leaks one mapping per thread that ever draws, which
+///     is unbounded in a thread-churning process.
+///
+/// This takes neither. A fixed number of states is handed out, never reclaimed,
+/// and **exhaustion falls back to the syscall** — the path fl uses today, which
+/// is correct and merely slower. So the memory is bounded by construction at
+/// `VG_STATE_SLOTS` states no matter how many threads run, there is no
+/// destructor and therefore no teardown re-entry, and no thread can ever be
+/// wrong — only slow.
+///
+/// The cost of the simplification is that a process churning through more than
+/// `VG_STATE_SLOTS` threads eventually serves later threads from the syscall.
+/// That is a graceful degradation to today's behaviour, not a defect, and it is
+/// the right trade while the fast path is new: glibc's free list of retired
+/// states is strictly better and is the follow-on, but it is more machinery than
+/// belongs in the change that first turns the path on.
+const VG_STATE_SLOTS: usize = 64;
+
+static VG_STATES_CLAIMED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+thread_local! {
+    /// This thread's state, or null. `const` init and no `Drop`: nothing here
+    /// allocates and nothing registers a TLS destructor.
+    ///
+    /// `VG_TRIED` keeps a thread that failed to claim from re-attempting the
+    /// mmap on every single call — without it, a process past the slot limit
+    /// would pay a failed syscall on top of the real one.
+    static VG_STATE: core::cell::Cell<*mut c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static VG_TRIED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// This thread's vgetrandom state and its size, or `None` to use the syscall.
+fn vg_state() -> Option<(*mut c_void, usize)> {
+    let params = crate::time_abi::vdso_getrandom_params()?;
+    let size = params.size_of_opaque_state as usize;
+
+    let existing = VG_STATE.with(|c| c.get());
+    if !existing.is_null() {
+        return Some((existing, size));
+    }
+    if VG_TRIED.with(|c| c.get()) {
+        return None;
+    }
+    VG_TRIED.with(|c| c.set(true));
+
+    // Claim a slot. `fetch_add` past the cap is harmless: the count only ever
+    // rises and the comparison rejects it.
+    if VG_STATES_CLAIMED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= VG_STATE_SLOTS {
+        return None;
+    }
+
+    // Mapped one state per slot rather than one big region carved into slots:
+    // the kernel requires a state not to straddle a page boundary, and a
+    // separate mapping makes that true by construction instead of by arithmetic
+    // this code would have to keep correct.
+    //
+    // SAFETY: an anonymous mapping of the size the kernel asked for, with the
+    // protection and flags it specified in the params query.
+    let ptr = unsafe {
+        libc::mmap(
+            core::ptr::null_mut(),
+            size,
+            params.mmap_prot as c_int,
+            params.mmap_flags as c_int,
+            -1,
+            0,
+        )
+    };
+    if ptr == libc::MAP_FAILED {
+        return None;
+    }
+    VG_STATE.with(|c| c.set(ptr));
+    Some((ptr, size))
+}
+
+/// Try to satisfy a `getrandom` from the vDSO. `None` means "use the syscall".
+///
+/// ONLY A NON-NEGATIVE RETURN IS ACCEPTED. The contract says the vDSO may
+/// decline with `-ENOSYS`, but treating every negative the same way is both
+/// simpler and strictly safe: any error the vDSO would report, the syscall
+/// reports identically, so falling through can never turn a failure into a
+/// success or change the errno a caller sees. It can only cost a syscall on a
+/// path that was going to fail anyway.
+unsafe fn vdso_getrandom_draw(buf: *mut c_void, buflen: usize, flags: c_uint) -> Option<isize> {
+    let f = crate::time_abi::vdso_getrandom_fn()?;
+    let (state, state_len) = vg_state()?;
+    // SAFETY: `state` was mapped for this thread alone with the kernel's own
+    // parameters, and `buf`/`buflen` are the caller's output buffer as already
+    // bounded by `tracked_void_output_capacity`.
+    let n = unsafe { f(buf, buflen, flags, state, state_len) };
+    (n >= 0).then_some(n)
+}
+
 /// Linux `getrandom` — fill buffer with random bytes from the kernel CSPRNG.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
@@ -4487,6 +4590,27 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
     }
 
     let effective_buflen = tracked_void_output_capacity(buf, buflen);
+
+    // FAST PATH: draw from `__vdso_getrandom` instead of issuing a syscall.
+    //
+    // This is the whole of the campaign's worst measured ratio. getrandom was
+    // 91.58-92.17x slower than glibc, replicated on two binaries, and syscall
+    // counting showed why: glibc 2.42 issues 3 getrandom syscalls whether called
+    // 100 times or 10,000 because it draws from this vDSO, while fl issued 103
+    // and 10,003 — one per call. The ratio collapsed from 92x at zero bytes to
+    // 3.0x at 256 because the fixed syscall cost is everything at small sizes and
+    // amortises at large ones.
+    //
+    // Anything unexpected falls through to the syscall below, which is the path
+    // fl shipped before this: an absent symbol on a pre-6.11 kernel, an exhausted
+    // state pool, a failed mapping, or any negative return from the vDSO itself.
+    // The fallback is what makes the fast path safe to add — it cannot change an
+    // outcome, only skip a syscall.
+    if let Some(n) = unsafe { vdso_getrandom_draw(buf, effective_buflen, flags) } {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return n;
+    }
+
     match unsafe { syscall::sys_getrandom(buf as *mut u8, effective_buflen, flags) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
