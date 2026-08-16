@@ -27781,3 +27781,54 @@ Two consequences, stated plainly:
   to 32-bit (C's width/precision/positions are `int`) would cut both, and touches 94 sites across two
   files — mechanical but exactly the shape that produces a silent truncation bug, so it needs a turn
   that can gate it properly rather than a hurried edit.
+
+## 2026-08-16 (BlackThrush) — MEASURED, and it reframes both standing printf rows: fl's printf GENERAL path costs 11-20x its exact path for the SAME conversion
+
+- **RESULT CLASS: measurement/diagnosis, no lever claimed.** This is the number that reframes both
+  standing printf rows.
+- **THE MEASUREMENT.** A standalone C driver on worker `vmi1167313` (`gcc -O2`, `dlopen` of the fl
+  object, 3,000,000 iterations per format, load 0.80), timing formats that differ ONLY in whether
+  they match one of fl's `exact_direct_*_format` patterns. fl object
+  `d6c802d9c2097651b91d9c378b500c17714d0b6aa0508f6dd5bfb447eb661415`:
+
+  | format | path | ns/call |
+  |---|---|---|
+  | `%d` | exact-direct | **29.14** |
+  | `[%d]` | general | **322.34** |
+  | `%s` | exact-direct | **24.50** |
+  | `[%s]` | general | **493.45** |
+  | `%s[%d]` | general | 430.87 |
+  | `%s[%d]: %s` | general | 886.00 |
+  | `%s[%d]: %s %s` | general | 770.95 |
+
+  `[%d]` is the same single conversion as `%d`, merely wrapped in two literal bytes so it misses the
+  exact match. It costs **11x** more. `[%s]` against `%s` is **20x**. These are absolute driver
+  numbers, not harness medians, and they run higher than the pinned harness — but the COMPARISON is
+  within one loop in one process, which is what makes it robust.
+- **SO THE FIXED COST OF THE GENERAL PATH IS ROUGHLY 300-470ns, and the per-conversion slope is
+  secondary.** Going 1 to 2 conversions adds about 109ns; the intercept is several times that. The
+  3-versus-4 conversion inversion (886 against 771) is driver noise and is reported rather than
+  smoothed.
+- **WHAT THAT MEANS FOR THE TWO STANDING ROWS.** The replicated `snprintf` standing (at least 1.82x faster) measures formats that take the exact-direct bypass. The fused row (3.12-3.31x slower)
+  and the float loss (1.56-1.78x) both measure the general path. They are not in tension: fl is very
+  fast when it can skip its own machinery and slow when it cannot. Quoting either row without the
+  other misrepresents the surface.
+- **WHERE THE FIXED COST IS, from a flat perf profile of `[%d]` alone** (same driver, `perf -F 3999
+  -e cycles:u`, no call graph): `render_segments` 17.81%, `snprintf` 17.16%,
+  `FormatSegments::push` **14.63%**, `format_signed` 5.80%, `parse_format_spec` 5.15%,
+  `entrypoint_scope` 4.39%, `parse_format_string` 3.34%, `decide` 3.23%,
+  `positional_printf_arg_plan` 3.09%, `__tls_get_addr` 2.86%, `count_printf_args_of` 2.08%.
+  The membrane is 7.6% combined here and is NOT the story. `FormatSegments::push` taking 14.63% for
+  a format with THREE segments is: `FormatSegment` is about 72 bytes, because `FormatSpec` carries
+  `Width`, `Precision` and `value_position` as `usize`-payload types, so every push copies 72 bytes
+  and `FormatSegments::new` initialises an 8-slot inline array — about 576 bytes — on every call
+  before parsing starts.
+- **CONFIRMS THE PREVIOUS LEVER, AGAIN.** `positional_printf_arg_plan` is now 3.09% here, down from
+  15.74% before the two same-day levers. That target is finished; the remaining cost is elsewhere.
+- **THE NEXT LEVER, sized but NOT taken.** Shrink the three payloads to 32-bit — C's width,
+  precision and argument positions are `int`, so `u32` is sufficient — which takes `FormatSpec` from
+  roughly 64 bytes to roughly 40 and `FormatSegment` from 72 to 48, cutting both the per-push copy
+  and the per-call array init by about a third. It touches 94 sites across two files. That is
+  mechanical but it is exactly the shape that produces a silent truncation bug, and this ledger
+  already carries one of those (`into`-refactor buffer truncation, printf `%g` 4.49x to 2.7x). It
+  needs a turn that can gate it with the full printf differential suite, not a hurried edit.
