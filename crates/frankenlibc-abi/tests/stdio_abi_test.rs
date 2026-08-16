@@ -6597,3 +6597,95 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         "the cookie should hold the full payload"
     );
 }
+
+// ---------------------------------------------------------------------------
+// printf output-buffer pooling must not leak stale bytes (bd-9e0yka)
+// ---------------------------------------------------------------------------
+
+/// `render_segments` borrows its output buffer from a thread-local single-slot
+/// pool and returns it on drop, so the SAME allocation serves consecutive
+/// printf calls on a thread. The bead that designed this named the one way it
+/// can go wrong: the buffer must be cleared when taken, or a short result
+/// inherits the tail of a longer previous one.
+///
+/// This formats a long value first, then a short one into a generous
+/// destination, and requires the short result to be exactly itself — return
+/// value, NUL position, and no surviving bytes past the NUL. A pool that handed
+/// back an uncleared buffer would append the short text to the long one and
+/// fail on the return value alone.
+#[test]
+fn printf_pooled_output_buffer_does_not_leak_stale_bytes() {
+    let long_fmt = CString::new("%s").expect("no NUL");
+    let long_arg = CString::new("X".repeat(200)).expect("no NUL");
+    let mut big = [0u8; 512];
+    // SAFETY: big has room for the 200-byte payload and its NUL.
+    let long_n = unsafe {
+        snprintf(
+            big.as_mut_ptr() as *mut c_char,
+            big.len(),
+            long_fmt.as_ptr(),
+            long_arg.as_ptr(),
+        )
+    };
+    assert_eq!(long_n, 200, "the long call should report 200 bytes");
+
+    // Same thread, so this call receives the pooled buffer the previous one used.
+    let short_fmt = CString::new("%s").expect("no NUL");
+    let short_arg = CString::new("ab").expect("no NUL");
+    let mut dst = [0xAAu8; 512];
+    // SAFETY: dst is far larger than the 2-byte payload and its NUL.
+    let short_n = unsafe {
+        snprintf(
+            dst.as_mut_ptr() as *mut c_char,
+            dst.len(),
+            short_fmt.as_ptr(),
+            short_arg.as_ptr(),
+        )
+    };
+    assert_eq!(
+        short_n, 2,
+        "a pooled buffer that was not cleared would make this 202"
+    );
+    assert_eq!(
+        &dst[..3],
+        b"ab\0",
+        "short result should be exactly \"ab\\0\""
+    );
+    assert!(
+        dst[3..].iter().all(|&b| b == 0xAA),
+        "snprintf wrote past the NUL, so stale pooled bytes reached the caller"
+    );
+
+    // asprintf takes OWNERSHIP of the buffer (into_vec), removing it from the
+    // pooling path. Exercise it between pooled calls so a mistake there — such
+    // as returning a pooled buffer that is later reused — shows up as corruption
+    // in the following call rather than silently.
+    let mut owned: *mut c_char = std::ptr::null_mut();
+    let a_fmt = CString::new("%s").expect("no NUL");
+    let a_arg = CString::new("owned-value").expect("no NUL");
+    // SAFETY: owned is a valid out-parameter; freed below on success.
+    let a_n = unsafe { asprintf(&mut owned, a_fmt.as_ptr(), a_arg.as_ptr()) };
+    assert_eq!(a_n, 11, "asprintf should report the payload length");
+    assert!(!owned.is_null());
+    // SAFETY: asprintf returned a NUL-terminated allocation.
+    let got = unsafe { CStr::from_ptr(owned) }.to_bytes().to_vec();
+    assert_eq!(got, b"owned-value");
+    // SAFETY: the allocation came from fl's allocator via asprintf.
+    unsafe { libc::free(owned.cast::<c_void>()) };
+
+    let mut after = [0xBBu8; 64];
+    // SAFETY: after has room for the payload and its NUL.
+    let after_n = unsafe {
+        snprintf(
+            after.as_mut_ptr() as *mut c_char,
+            after.len(),
+            short_fmt.as_ptr(),
+            short_arg.as_ptr(),
+        )
+    };
+    assert_eq!(
+        after_n, 2,
+        "the pooled path should still be intact after asprintf"
+    );
+    assert_eq!(&after[..3], b"ab\0");
+}
