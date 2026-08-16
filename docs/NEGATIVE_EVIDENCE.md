@@ -27906,3 +27906,48 @@ What this changes, and what it does not:
 - **What to do about it, cheaply:** `syslog_line` is `"%s[%d]: %s"` — the only shape in the family
   that mixes `%s` and `%d` with literal text between every conversion. Re-running it alone on a quiet
   host, with more cycles, would settle it without a rebuild, since both objects already exist.
+
+### RESOLUTION of the `syslog_line` disagreement: a full four-arm ABBA says FASTER, but by less than first banked
+
+- **RESULT CLASS: loss/baseline.** Settles a case the previous two rows disagreed on. No new lever.
+- Same already-built artifacts, no rebuild, `RCH_CARGO_WRAPPER_BYPASS=1` exported: base
+  `FL_OBJECT sha256=0fb5ef3d0aa583fd…`, candidate `b3dcf4f887bf3dfb…`, bench ELF
+  `43356bcffdec9c34…`. Four arms completed this time, `mismatches=0` on all four.
+- Ratios against live glibc, base 1 / base 2 then candidate 1 / candidate 2:
+
+  | case | base 1 / 2 | candidate 1 / 2 | mean change |
+  |---|---|---|---|
+  | syslog_line | 3.111780 / 3.129954 | 2.935449 / 3.081448 | 3.6% faster |
+  | http_log | 2.858864 / 2.795313 | 2.485815 / 2.701252 | 8.3% faster |
+  | kv_join | 3.290510 / 3.235369 | 3.121666 / 3.105218 | 4.9% faster |
+  | ladder_2s | 3.564548 / 3.571893 | 3.244355 / 3.257400 | 8.9% faster |
+  | ladder_3s | 3.385441 / 3.390187 | 3.024610 / 3.055183 | 10.4% faster |
+  | ladder_4s | 3.280757 / 3.281996 | 2.979139 / 3.017944 | 8.7% faster |
+  | ladder_6s | 3.283661 / 3.287280 | 2.958023 / 2.942712 | 10.3% faster |
+
+- **`syslog_line` is faster, and the 4.8%-slower reading in the previous row does not reproduce.**
+  Both candidate readings here sit below both base readings. But the magnitude is 3.6%, not the 6.4%
+  originally banked, so the resolution is "improves, less than claimed" rather than a vindication of
+  the first number.
+- **WORST BOUND, taken as the least favourable single pairing rather than a mean: `syslog_line`
+  candidate 3.081448 against base 3.111780, i.e. 0.9902 — 1.0% faster.** That is the conservative
+  claim this family supports for its headline case.
+- **`http_log` swings the most between runs** — 4.1%, then 1.7%, now 8.3%, with a candidate reading
+  of 2.485815 well below its neighbour 2.701252. Its improvement is real in all three runs but its
+  magnitude is not stable, so it should not be quoted to a decimal place either.
+- **THE A/A NULL CONTROLS, pipe-free, same-invocation, candidate arm, bootstrap medians with
+  bootstrap median CIs.**
+  syslog_line: A/A null FL/FL median 0.995711, bootstrap median CI 0.985161 to 1.010794.
+  http_log: A/A null FL/FL median 1.006364, bootstrap median CI 0.994575 to 1.025958.
+  kv_join: A/A null FL/FL median 1.005599, bootstrap median CI 0.995409 to 1.020340.
+  ladder_2s: A/A null FL/FL median 0.992153, bootstrap median CI 0.981465 to 1.008840.
+  ladder_3s: A/A null FL/FL median 1.004440, bootstrap median CI 1.000891 to 1.010388.
+  ladder_4s: A/A null FL/FL median 1.000502, bootstrap median CI 0.994545 to 1.005194.
+  ladder_6s: A/A null FL/FL median 1.001483, bootstrap median CI 0.995968 to 1.004446.
+  Every null across all four arms sits within 0.992153 to 1.010419. Note that `syslog_line`'s null
+  half-width (~1.5%) is a substantial fraction of its 3.6% effect, which is exactly why this case has
+  been unstable across three runs and why its bound is quoted at 1.0% rather than its mean.
+- **Standing position for this family after three runs:** the pure-`%s` ladder rungs are the stable
+  result at 8-11% in every run; `kv_join` improves in all three; `http_log` improves in all three at
+  an unstable magnitude; `syslog_line` improves in two of three and is the noisiest case relative to
+  its effect. The fused family remains a LOSS at 2.49-3.26x against glibc.
