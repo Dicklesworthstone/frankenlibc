@@ -27967,3 +27967,30 @@ Two consequences, stated plainly:
   it is a way to get no answer that looks like the same answer. The 28-red sweep in bd-aykfv1 used
   `cargo build --tests` (dev profile) and is unaffected.
 
+
+### Replication of the row above, same day: the flat-load objection does NOT rescue the shrink
+
+- **RESULT CLASS: loss/baseline.** A follow-up run made because the original conclusion had a real
+  weakness, not because it was challenged.
+- **The weakness.** That row leaned on "worst bound either run produced" to call the shrink a
+  regression, while the discriminator this ledger actually endorses is load DELTA — and by that
+  criterion the most trustworthy of the three runs was vmi1167313 (load 0.92 to 0.88, delta 0.04),
+  which said the shrink was FASTER in 6 of 6. hz2 (delta 0.80) and hz1 (delta 0.76) were both
+  ramping. So the conclusion rested on the two runs my own noise criterion ranks lowest.
+- **The re-measurement.** hz1, 8 cores, three full ABBA cycles (cand, shrink, cand, shrink, cand,
+  shrink), load sampled between every arm and never leaving 0.33 to 1.31 — the quietest and flattest
+  conditions of the campaign. Harness bench_sn e99c0bc12cfb57ca, base d6c802d9c2097651, candidate
+  8244f5b6ecce49a8.
+- kv_join, base 3.435244 then 3.490168 then 3.520376, against candidate 3.561796 then 3.769928 then
+  3.771200. Slower in all three cycles, CIs disjoint in all three.
+- http_log, base 2.975657 then 3.054664 then 3.050297, against candidate 2.990674 then 3.144467
+  then 3.146242. Slower in all three cycles.
+- syslog_line, base 3.206180 then 3.368687 then 3.338798, against candidate 3.213579 then 3.313056
+  then 3.312247. Neutral: two cycles marginally faster, one marginally slower.
+- **Sign test across the nine pairings: 7 slower, 2 faster**, under the flattest load in the
+  campaign. The revert stands, and now on the run that best satisfies the criterion the original
+  conclusion was weakest on. vmi1167313 is the outlier, not hz2.
+- **Method note.** A mild warming drift is visible WITHIN the run — the base arm alone goes 3.435,
+  3.490, 3.520 on kv_join across the three cycles — which is exactly why the comparison is made
+  between ADJACENT arms rather than between cycle 1 and cycle 3. Cross-cycle differences here are
+  larger than the effect being measured.
