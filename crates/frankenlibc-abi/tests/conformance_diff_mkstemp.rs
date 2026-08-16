@@ -18,12 +18,63 @@ use frankenlibc_abi::stdlib_abi as fl;
 use frankenlibc_abi::unistd_abi as fl_unistd;
 use frankenlibc_abi::wchar_abi as fl_wchar;
 
-unsafe extern "C" {
-    fn mkstemp(template: *mut c_char) -> c_int;
-    fn mkstemps(template: *mut c_char, suffixlen: c_int) -> c_int;
-    fn mkostemp(template: *mut c_char, flags: c_int) -> c_int;
-    fn mkostemps(template: *mut c_char, suffixlen: c_int, flags: c_int) -> c_int;
-    fn mkdtemp(template: *mut c_char) -> *mut c_char;
+// The host arms are resolved with `dlsym`, not declared at link time. fl
+// exports its own mkstemp family into this binary, and a link-time reference
+// can bind to those instead of libc's — making both arms fl so every assertion
+// passes while proving nothing. Measured, not theoretical:
+// conformance_diff_catopen was passing exactly this way in a plain debug build
+// and was concealing a live errno defect (bd-rp1e32, bd-v0388t). dlsym on an
+// explicit libc.so.6 handle is correct in every build profile, and the
+// assert_ne! makes the remaining doubt a failing test.
+type MkstempFn = unsafe extern "C" fn(*mut c_char) -> c_int;
+type MkstempsFn = unsafe extern "C" fn(*mut c_char, c_int) -> c_int;
+type MkostempFn = unsafe extern "C" fn(*mut c_char, c_int) -> c_int;
+type MkostempsFn = unsafe extern "C" fn(*mut c_char, c_int, c_int) -> c_int;
+type MkdtempFn = unsafe extern "C" fn(*mut c_char) -> *mut c_char;
+
+/// Resolve `name` from libc.so.6 and refuse to hand back fl's own code.
+///
+/// The address check is the point: it is what turns "the oracle silently became
+/// the implementation" from an invisible pass into a failing test.
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+fn host_mkstemp() -> MkstempFn {
+    // SAFETY: the resolved symbol has POSIX's documented mkstemp signature.
+    unsafe {
+        std::mem::transmute::<_, MkstempFn>(host_symbol(c"mkstemp", fl_wchar::mkstemp as usize))
+    }
+}
+fn host_mkstemps() -> MkstempsFn {
+    // SAFETY: the resolved symbol has glibc's documented mkstemps signature.
+    unsafe { std::mem::transmute::<_, MkstempsFn>(host_symbol(c"mkstemps", fl::mkstemps as usize)) }
+}
+fn host_mkostemp() -> MkostempFn {
+    // SAFETY: the resolved symbol has glibc's documented mkostemp signature.
+    unsafe { std::mem::transmute::<_, MkostempFn>(host_symbol(c"mkostemp", fl::mkostemp as usize)) }
+}
+fn host_mkostemps() -> MkostempsFn {
+    // SAFETY: the resolved symbol has glibc's documented mkostemps signature.
+    unsafe {
+        std::mem::transmute::<_, MkostempsFn>(host_symbol(c"mkostemps", fl::mkostemps as usize))
+    }
+}
+fn host_mkdtemp() -> MkdtempFn {
+    // SAFETY: the resolved symbol has POSIX's documented mkdtemp signature.
+    unsafe {
+        std::mem::transmute::<_, MkdtempFn>(host_symbol(c"mkdtemp", fl_unistd::mkdtemp as usize))
+    }
 }
 
 fn nano_template(suffix: &str) -> Vec<u8> {
@@ -51,6 +102,7 @@ unsafe fn read_lc_errno() -> c_int {
 
 #[test]
 fn diff_mkstemp_creates_unique_files() {
+    let mkstemp = host_mkstemp();
     // Both impls accept the standard template; both must produce
     // valid distinct fds when called twice.
     let mut t1 = b"/tmp/fl_mkstemp_a_XXXXXX\0".to_vec();
@@ -75,6 +127,7 @@ fn diff_mkstemp_creates_unique_files() {
 
 #[test]
 fn diff_mkstemp_invalid_template_returns_einval() {
+    let mkstemp = host_mkstemp();
     // Template not ending in XXXXXX → both impls must reject.
     let mut t1 = b"/tmp/fl_mkstemp_no_marker\0".to_vec();
     let mut t2 = b"/tmp/fl_mkstemp_no_marker\0".to_vec();
@@ -92,6 +145,7 @@ fn diff_mkstemp_invalid_template_returns_einval() {
 
 #[test]
 fn diff_mkstemps_with_suffix_works() {
+    let mkstemps = host_mkstemps();
     // Template "...XXXXXX.tmp" with suffixlen=4 means the .tmp is
     // a suffix preserved, XXXXXX gets randomized.
     let mut t1 = b"/tmp/fl_mkstemps_a_XXXXXX.tmp\0".to_vec();
@@ -118,6 +172,7 @@ fn diff_mkstemps_with_suffix_works() {
 
 #[test]
 fn diff_mkostemp_with_o_cloexec_sets_close_on_exec() {
+    let mkostemp = host_mkostemp();
     let mut t1 = nano_template("ostemp_a_XXXXXX");
     let mut t2 = nano_template("ostemp_b_XXXXXX");
     let fl_fd = unsafe { fl::mkostemp(t1.as_mut_ptr() as *mut c_char, libc::O_CLOEXEC) };
@@ -140,6 +195,7 @@ fn diff_mkostemp_with_o_cloexec_sets_close_on_exec() {
 
 #[test]
 fn diff_mkostemps_invalid_template_returns_einval() {
+    let mkostemps = host_mkostemps();
     let mut t1 = b"/tmp/fl_mkostemps_no_marker.tmp\0".to_vec();
     let mut t2 = b"/tmp/fl_mkostemps_no_marker.tmp\0".to_vec();
     unsafe { reset_errno_slots() };
@@ -156,6 +212,7 @@ fn diff_mkostemps_invalid_template_returns_einval() {
 
 #[test]
 fn diff_mkdtemp_creates_directory() {
+    let mkdtemp = host_mkdtemp();
     let mut t1 = nano_template("mkdtemp_a_XXXXXX");
     let mut t2 = nano_template("mkdtemp_b_XXXXXX");
     let fl_p = unsafe { fl_unistd::mkdtemp(t1.as_mut_ptr() as *mut c_char) };
@@ -177,6 +234,7 @@ fn diff_mkdtemp_creates_directory() {
 
 #[test]
 fn diff_mkdtemp_invalid_template_rejected() {
+    let mkdtemp = host_mkdtemp();
     let mut t1 = b"/tmp/fl_mkdtemp_no_marker\0".to_vec();
     let mut t2 = b"/tmp/fl_mkdtemp_no_marker\0".to_vec();
     let fl_p = unsafe { fl_unistd::mkdtemp(t1.as_mut_ptr() as *mut c_char) };
