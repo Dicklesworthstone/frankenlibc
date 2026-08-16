@@ -29,20 +29,20 @@
       "function": "execve",
       "spec_section": "POSIX execve(2)",
       "inputs": { "pathname": "/bin/true", "argv": ["true"], "envp": [] },
-      "expected_output": "NO_RETURN",
+      "expected_output": "EXECVE_REPLACES_PROCESS_MATCHES_HOST_EXIT_STATUS_0",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "execve replaces process image (does not return on success)"
+      "note": "fl's execve and the host's each run in their own forked child on this same input; the token is a parity verdict on what the kernel did with that child. A child that RETURNS from execve exits 127, so a wrapper that fails to exec cannot pass. Previously the executor returned a hardcoded NO_RETURN and never called execve. bd-7t61h9"
     },
     {
       "name": "execve_eacces_strict",
       "function": "execve",
       "spec_section": "POSIX execve(2)",
       "inputs": { "pathname": "/etc/passwd", "argv": ["passwd"], "envp": [] },
-      "expected_output": -1,
-      "expected_errno": 13,
+      "expected_output": "EXECVE_MATCHES_HOST_RC_-1",
+      "expected_errno": 0,
       "mode": "strict",
-      "note": "execve fails with EACCES for non-executable file"
+      "note": "execve is called for real, on this same input, against BOTH fl and the host; the token is a parity verdict, not a pinned errno. Previously the executor returned a hardcoded -1 because the pathname was /etc/passwd and never called execve. bd-7t61h9"
     },
     {
       "name": "system_returns_status_strict",
