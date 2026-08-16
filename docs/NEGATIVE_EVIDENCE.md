@@ -29214,3 +29214,54 @@ What this changes, and what it does not:
 - **RECORDED BECAUSE A HALF-REFUTED HYPOTHESIS IS STILL EVIDENCE.** I have twice today assumed a
   real defect explained a real discrepancy and been wrong. This one gets confirmed on both hosts
   before it gets believed.
+
+## 2026-08-16 (BlackThrush) — CERTIFIED: snprintf_fused 2.64-3.92x, closing a gap the frontier row flagged as unmeasured
+
+- **RESULT CLASS: loss/baseline.** fl is slower in all 12 cases. No speedup claimed.
+- **STABILITY TEST BEFORE STARTING, run by me rather than taken on report.** Two `uptime` reads 20 s
+  apart gave **8.86,16.13,26.71** then **8.72,15.62,26.32** — the 1-min flat to within 1.6% across
+  samples, both 1- and 5-min under 30, and the series monotonically decaying. That is convergence, not
+  a spike, so this turn certified.
+- **Observed loadavg AT THE CERTIFYING RUN: `HOST_IDENTITY loadavg=30.70,25.36,28.24`** (27.54 when
+  the invocation started). Higher than the window I entered on — the host moved under me — and it is
+  recorded as observed rather than as the load I would have chosen. **The result stands on the
+  harness's own admissibility, not on the load being low:** all 24 A/A nulls are same-invocation and
+  `null_median_within_tolerance=true`, and every one of the 12 effects reports `clears_2x_null=true`
+  and `nulls_hold=true`.
+- **Single invocation, `--family snprintf_fused --pin-quietest 8`, `BENCH_ELF_OBJECT sha256
+  3103961f91a0c2238d00f56ab5370cb6e9bfb05ecf1cd61b39cac76609f69601`, `FL_OBJECT sha256
+  faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b`, `ARM_DISTINCT` holding.**
+  Conformance first: 11 shapes x 9 destination sizes = **99 comparisons, mismatches=0**, compared on
+  `return_value_and_full_destination`. `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=12 wins=0
+  losses=12 undecidable=0`.
+
+  | case | fl/glibc | ratio_ci95 | A/A null_fl_fl | A/A null_glibc_glibc |
+  |---|---|---|---|---|
+  | ladder_5s | **3.924954** | [3.918706,3.944139] | 0.998584 | 1.000871 |
+  | ladder_2s | 3.885580 | [3.870956,3.907906] | 0.999898 | 0.999190 |
+  | ladder_6s | 3.711543 | [3.700034,3.718695] | 0.998696 | 0.999771 |
+  | ladder_3s | 3.542352 | [3.535989,3.563491] | 0.998409 | 1.000945 |
+  | ladder_4s | 3.509238 | [3.500550,3.518509] | 1.002212 | 1.002396 |
+  | mix4_s | 3.442352 | [3.433063,3.446544] | 0.996630 | 0.999988 |
+  | kv_join | 3.417512 | [3.397207,3.445617] | 1.000282 | 1.001260 |
+  | syslog_line | 3.365829 | [3.354423,3.382178] | 1.004031 | 1.000767 |
+  | mix4_sd | 3.056406 | [2.992022,3.103148] | 1.003106 | 1.004019 |
+  | mix4_slu | 3.013680 | [2.991958,3.023726] | 0.995901 | 0.999327 |
+  | http_log | 3.009791 | [2.984454,3.027695] | 1.000605 | 1.000370 |
+  | mix4_d | 2.643790 | [2.629669,2.651827] | 0.999915 | 0.999780 |
+
+- **REPRODUCED ACROSS TWO INVOCATIONS.** An earlier certifying run of the same binary gave
+  `headline_ratio_median=3.347815` against this run's `3.365829` — 0.5% apart, at loadavgs of 63.02
+  and 30.70 respectively. A paired same-invocation design is doing its job.
+- **IT DOES NOT MOVE THE FRONTIER, which is the point of measuring it.** Ranking is unchanged:
+  `getrandom` 91.58-92.17x, `malloc_free` 6.62x, **`snprintf_fused` 2.64-3.92x**, `mtx_trylock`
+  1.1246x, `thrd_current` 1.1109x. The frontier row could only say "confirmed-worst-so-far" while
+  this family was unmeasured; it is now measured and getrandom's lead is intact.
+- **THE LADDER IS FLAT, so the cost is per-conversion, not per-format.** 2s 3.886, 3s 3.542, 4s 3.509,
+  5s 3.925, 6s 3.712 — no trend with conversion count. Consistent with the earlier ladder regression
+  that put ~75% of the fused gap in per-conversion work rather than in parse or setup.
+- **THE REAL BLOCKER IS A COMPETING WORKLOAD, NOT THE LOADAVG.** Four attempts: two BLOCKED, two
+  certified. Both blocks named exactly **8 CPUs at 83-100%** (`pre_measurement` once,
+  `post_measurement` once) while the certifying runs happened at loadavgs of 63 and 30. A loadavg
+  number does not predict whether this gate passes; an 8-way competing job does. Anyone scheduling
+  around this should watch for a saturated 8-CPU set rather than tuning a loadavg threshold.
