@@ -29053,3 +29053,54 @@ What this changes, and what it does not:
   `__vdso_getrandom` itself (per-thread state via the `vgetrandom_alloc` syscall), which is a real
   feature and not a micro-optimisation -- and it is worth noting fl is pure-safe-Rust, so the mmap'd
   per-thread state and the vDSO call are the hard parts, not the algorithm.
+
+## 2026-08-16 (BlackThrush) — POST-FOLD ALLOCATOR PROFILE: 585.7 instr/pair, and 22% of it sits in levers the ledger has ALREADY REFUTED
+
+- **RESULT CLASS: loss/baseline (profile + ledger preflight).** No timing: `uptime` read **67.13,
+  60.80, 41.52** and the host was reported at 90, so no certification was attempted. Callgrind counts
+  instructions in SOFTWARE, so this profile is deterministic under contention -- only its wall-clock
+  slows -- which is why it was the right work for a loaded host.
+- **Two-point marginal at HEAD `a1ef49eda`** (20,000 pairs minus 1,000, four sizes, so startup is
+  excluded): I refs 52,243,852 and 7,730,924, giving **585.7 instr/pair**, against **621.7** measured
+  pre-fold from 55,111,198 / 7,864,481.
+- **THE FOLD REMOVED 36, NOT THE 22 PREDICTED.** `size_class::bin_index` (22.0) and `record_stats`
+  (59.0) have both vanished from the profile entirely -- the recorder is now fully inlined into its
+  callers (`malloc` 65.3 -> 97.9, `free` 73.0 -> 74.0). Removing more instructions than the target
+  function's self cost is why wall moved 6.6-9.7% against a 3.5% prediction; at 36/621.7 = 5.8% the
+  instruction and wall accounts now agree, where before they did not. **This closes the discrepancy
+  flagged in this morning's correction row.**
+
+  | instr/pair | function | note |
+  |---|---|---|
+  | 128.0 | `segment_free` | allocation work |
+  | 97.9 | `malloc` | entry body incl. inlined stats |
+  | 93.0 | `allocate_from_local_class` | allocation work |
+  | **80.0** | `enter_allocator_reentry_guard` | **bookkeeping, REFUTED as a lever** |
+  | 74.0 | `free` | entry body incl. inlined stats |
+  | 43.0 | `segment_allocate` | allocation work |
+  | **27.0** | `runtime_policy::mode` | **membrane, REFUTED as a lever** |
+  | **22.0** | `runtime_policy::entrypoint_scope` | **membrane, REFUTED as a lever** |
+  | 11.0 | `size_class::small_bin_index` | allocation work |
+  | 9.5 | `main` | harness |
+
+- **THE PREFLIGHT IS THE POINT, and it stopped me proposing two dead levers.** The two largest
+  non-allocation components are exactly the ones this file has already rejected:
+  - the reentry guard -- "guard CAS irreducible" (L3169), "reentry guard x2 (~16 ns): cod,
+    safety-critical, not removable" (L3527), and `GUARD_AB` measured at 3.73 ns/call (L4304) against
+    a sub-vein I closed earlier as over-attributing ~16x;
+  - `entrypoint_scope` -- the strlen hoist measured **perfectly neutral** and was reverted with
+    "do not retry per-symbol entrypoint hoists" (L9437), and stubbing it out of `snprintf` "did not
+    reduce the time" (L10903).
+
+  Together that is **129 of 585.7 instr/pair, 22% of the budget, in territory with standing
+  refutations.** Anyone reading only the profile would propose one of them next; the ledger says do
+  not.
+- **THE STRUCTURAL STATEMENT, which is what is actually new.** glibc's ENTIRE malloc+free costs 77.9
+  instructions per pair. **fl's reentrancy guard alone costs 80.** The remaining gap is therefore not
+  reachable by shaving components: any real lever has to remove a whole layer -- e.g. one guard entry
+  serving both halves of a malloc/free pair, or the guard and the membrane sharing a single entry --
+  rather than making the existing layers cheaper. That is a design change, and it should not be
+  attempted as a perf micro-lever.
+- Allocation work proper -- `segment_free` + `allocate_from_local_class` + `segment_allocate` +
+  `small_bin_index` -- is 275 instr/pair, 47% of the budget. That part is doing real work and is 3.5x
+  glibc's whole cost on its own.
