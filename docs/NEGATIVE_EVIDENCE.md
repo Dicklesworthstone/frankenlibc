@@ -28128,3 +28128,52 @@ What this changes, and what it does not:
     should be reverted rather than tuned.
   A pooled spill buffer avoids the third risk entirely and is the better first attempt if the second
   check passes.
+
+## 2026-08-16 (BlackThrush) — REFUTED AND REVERTED: raising `INLINE_SEGMENTS` 8 -> 16 lost on BOTH pre-registered counts
+
+- **RESULT CLASS: loss/baseline.** A lever measured against the exact predictions registered before
+  the run, which failed both. No speedup is claimed.
+- **The hypothesis.** `FormatSegments` holds 8 segments inline and spills to a heap `Vec` past that.
+  The conversion ladder's superlinear residual had its largest step where the segment count crosses
+  that constant (`ladder_4s` = 7 segments, inline; `ladder_6s` = 11, spills), and fl's own
+  `malloc`+`free` is ~142 ns against glibc's ~8.55 ns, so the spill looked expensive relative to the
+  work it wraps (bd-mh2ev3).
+- **Provenance.** Built LOCALLY with the cargo wrapper bypassed and exported, no `[RCH] remote` line;
+  cdylib path taken from `--message-format=json`. Base `FL_OBJECT sha256=68ba7af8e38c3a7e…`
+  (`INLINE_SEGMENTS = 8`), candidate `5aad410ea717abb6…` (= 16); the two hashes differ, so the arms
+  are distinct objects. `mismatches=0` on all four arms.
+- **INCOMPLETE SCHEDULE, disclosed: base x1, candidate x2, not a full ABBA.** The second base arm was
+  stopped by the host-wide exclusivity guard — it loaded its object and passed conformance, then
+  emitted no timed rows. The conclusion below does not rest on a single pair: the two candidate
+  cycles agree closely with each other (syslog_line 2.994 / 2.973, kv_join 3.127 / 3.095), and the
+  candidate is worse than base on all TWELVE cases, so the only way the reading flips is if that one
+  base cycle was uniformly ~10-19% fast across twelve independent shapes.
+
+  | case | base | candidate 1 / 2 | direction |
+  |---|---|---|---|
+  | ladder_2s | 3.027973 | 3.596817 / 3.549412 | 18% SLOWER |
+  | ladder_4s | 2.609509 | 3.095342 / 3.129269 | 19% SLOWER |
+  | kv_join | 2.763498 | 3.126832 / 3.094735 | 12% SLOWER |
+  | mix4_s | 2.784649 | 3.128906 / 3.083808 | 11% SLOWER |
+  | syslog_line | 2.720956 | 2.994333 / 2.972980 | 10% SLOWER |
+  | http_log | 2.512969 | 2.674627 / 2.635728 | 6% SLOWER |
+  | mix4_d | 2.234928 | 2.543613 / 2.526803 | 13% SLOWER |
+  | mix4_slu | 2.345114 | 2.698244 / 2.696310 | 15% SLOWER |
+  | ladder_5s | 2.818453 | 2.955828 / 3.134112 | 8% SLOWER |
+  | **ladder_6s** | **2.773322** | **2.930497 / 2.867157** | **5% SLOWER** |
+
+- **OUTCOME (b) — the spill hypothesis is DEAD.** `ladder_6s` is 11 segments: it spills at 8 and does
+  NOT spill at 16. If the spill were the superlinear cost, that case had to improve. It got 5%
+  slower. So the ladder's superlinearity is not the heap `Vec`, however exactly the segment counts
+  lined up with the boundary — and they lined up very well, which is the lesson. `ladder_5s` was
+  added specifically to bracket the boundary and it agrees: 8% slower, no discontinuity rescued.
+- **OUTCOME (c) — the already-inline shapes REGRESSED, 10-19%.** `FormatSegments::new` initialises
+  this array on EVERY printf call, so doubling it doubles a per-call write from 8 x 64 to 16 x 64
+  bytes, and that swamps any saved allocation. This is the `FormatSegment` shrink (bd-5pagbr, 37.5%
+  smaller, 7-9% SLOWER) in reverse.
+- **Taken together the two rows now bracket the same constant from both sides: making this structure
+  smaller was slower, and making it bigger is slower.** Its size is load-bearing and 8 is not an
+  accident. That is worth more than either lever would have been, and it is recorded in the source at
+  the constant itself so the next person does not re-derive it.
+- **Reverted to 8.** The prediction registered before the run said a regression on the inline shapes
+  was grounds to revert rather than tune, and it is being honoured rather than reinterpreted.

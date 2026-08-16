@@ -673,14 +673,20 @@ pub enum FormatSegment<'a> {
 // 11 and spills. fl's own malloc+free is ~142ns against glibc's ~8.55ns, so one
 // spill is expensive relative to the work it wraps. bd-mh2ev3.
 //
-// RAISED 8 -> 16 AS A MEASURED CANDIDATE, not as an obvious improvement. The
-// cost is symmetric: `FormatSegments::new` initialises this array on EVERY
-// printf call, so doubling it doubles that per-call write from 8 x 64 to
-// 16 x 64 bytes. This ledger already records a change of exactly that shape
-// going the wrong way — shrinking `FormatSegment` by 37.5% measured 7-9%
-// SLOWER (bd-5pagbr) — so the already-inline shapes are the ones to watch, and
-// a regression there is grounds to revert rather than tune.
-const INLINE_SEGMENTS: usize = 16;
+// MEASURED AT 16 AND REVERTED TO 8. Raising it was tested against exactly the
+// prediction registered beforehand, and lost on both counts:
+//   - `ladder_6s` (11 segments) STOPS spilling at 16 and did not improve —
+//     2.773 base against 2.930 / 2.867 candidate. So the spill was not the
+//     superlinear cost, and bd-mh2ev3's hypothesis is dead.
+//   - every already-inline shape got SLOWER by 10-19%, e.g. `ladder_4s`
+//     2.610 -> 3.095 / 3.129 and `ladder_2s` 3.028 -> 3.597 / 3.549.
+// `FormatSegments::new` initialises this array on EVERY printf call, so the
+// per-call write cost of a bigger array swamps any saved allocation. That is
+// the bd-5pagbr result in reverse (shrinking `FormatSegment` 37.5% measured
+// 7-9% slower), and it is now measured in both directions: this array's size is
+// load-bearing and 8 is not an accident. Do not raise it again without a
+// measurement, and do not lower it either.
+const INLINE_SEGMENTS: usize = 8;
 
 /// Parsed printf segments with a no-heap fast path for small formats.
 #[derive(Debug, Clone)]
