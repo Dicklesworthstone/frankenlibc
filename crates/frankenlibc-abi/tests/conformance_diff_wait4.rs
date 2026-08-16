@@ -6,9 +6,35 @@
 //! known code; the parent reaps it through the function under test and the
 //! decoded result (reaped pid, WIFEXITED, WEXITSTATUS, or waitid's si_code) is
 //! compared vs glibc. Each impl reaps its own child. No mocks.
+//!
+//! THE ARMS MUST NOT RUN CONCURRENTLY, and that is a property of what is being
+//! tested, not a workaround. Child reaping is process-wide: `wait3` reaps ANY
+//! child, so when libtest runs these three arms on separate threads of one
+//! process, `wait3_matches_glibc` can reap a child forked by `wait4_matches_glibc`
+//! or `waitid_matches_glibc` — and those arms then block or reap the wrong pid.
+//! Measured: 2 of 3 arms FAILED under default parallelism (vmi1264463) and all
+//! 3 passed with `--test-threads=1` (vmi1153651), i.e. the red was manufactured
+//! by the harness, not by fl. Different workers, so the discriminator is the
+//! thread count rather than the host.
+//!
+//! Serializing on a mutex is the fix rather than requiring `--test-threads=1`,
+//! because a gate that is only correct under a flag nobody passes is a gate that
+//! reads as a real defect every time the suite is swept.
 
 use std::ffi::c_int;
 use std::mem::MaybeUninit;
+use std::sync::{Mutex, MutexGuard};
+
+/// Held for the whole of each arm: fork, reap, and compare. Covers both the
+/// glibc and fl halves, since a stolen child breaks either one.
+static REAPING: Mutex<()> = Mutex::new(());
+
+/// Take the reaping lock, ignoring poisoning: if another arm panicked mid-fork
+/// the remaining arms should still report their own result rather than all
+/// failing with a poison error that hides which arm actually broke.
+fn exclusive_reaping() -> MutexGuard<'static, ()> {
+    REAPING.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 mod g {
     use super::*;
@@ -46,6 +72,7 @@ fn decode(pid: libc::pid_t, st: c_int) -> (bool, bool, c_int) {
 
 #[test]
 fn wait4_matches_glibc() {
+    let _reaping = exclusive_reaping();
     let gr = unsafe {
         let pid = spawn_child(42);
         let mut st = 0;
@@ -66,6 +93,7 @@ fn wait4_matches_glibc() {
 
 #[test]
 fn wait3_matches_glibc() {
+    let _reaping = exclusive_reaping();
     let gr = unsafe {
         let _pid = spawn_child(17);
         let mut st = 0;
@@ -86,6 +114,7 @@ fn wait3_matches_glibc() {
 
 #[test]
 fn waitid_matches_glibc() {
+    let _reaping = exclusive_reaping();
     let gr = unsafe {
         let pid = spawn_child(99);
         let mut si = MaybeUninit::<libc::siginfo_t>::zeroed();
