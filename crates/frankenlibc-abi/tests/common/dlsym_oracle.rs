@@ -139,6 +139,37 @@ pub unsafe fn host_addr(name: &CStr, fl_definition: *const ()) -> *mut c_void {
     resolved
 }
 
+/// Resolve `name` if the host exports it, or `None` if it does not.
+///
+/// For symbols glibc reaches through a versioned alias -- `sscanf` is routed to
+/// `__isoc23_sscanf` on this platform -- a gate wants to prefer the real entry
+/// point and fall back to the plain name rather than panic on the first miss.
+/// A resolved address is still checked against fl's own definition, because a
+/// fallback that silently returned fl would be exactly the hollow arm this
+/// module exists to prevent.
+pub unsafe fn host_addr_optional(name: &CStr, fl_definition: *const ()) -> Option<*mut c_void> {
+    let mut resolved = std::ptr::null_mut();
+    for h in handles() {
+        if h.is_null() {
+            continue;
+        }
+        // SAFETY: `h` came from dlopen and `name` is NUL-terminated.
+        let sym = unsafe { libc::dlsym(h, name.as_ptr()) };
+        if !sym.is_null() {
+            resolved = sym;
+            break;
+        }
+    }
+    if resolved.is_null() {
+        return None;
+    }
+    assert_ne!(
+        resolved as usize, fl_definition as usize,
+        "the resolved oracle for {name:?} IS fl's own definition (bd-v0388t)"
+    );
+    Some(resolved)
+}
+
 /// Resolve `name` in host glibc as a callable function pointer of type `F`.
 ///
 /// # Safety

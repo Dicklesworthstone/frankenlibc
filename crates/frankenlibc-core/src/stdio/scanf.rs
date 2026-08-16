@@ -1262,36 +1262,39 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     }
 
     // Decimal float: digits, decimal point, exponent.
-    let mut buf = Vec::with_capacity(64);
-    if negative {
-        buf.push(b'-');
-    }
+    //
+    // The accepted token is CONTIGUOUS in `input`, so it is parsed in place.
+    // This used to copy it byte by byte into a `Vec::with_capacity(64)` just to
+    // hand a slice to `str::parse` -- one heap allocation and one push per
+    // character on every float conversion, where glibc allocates nothing at all.
+    //
+    // The sign is applied AFTER parsing the magnitude rather than being
+    // prepended to a buffer, which is what lets the token be read straight out
+    // of `input`. That is exact for the cases that matter: "0.0" negated is
+    // -0.0, and "1e400" negated is -inf, matching what parsing "-0.0" and
+    // "-1e400" produced before.
+    let tok_start = i;
     let mut any_digit = false;
     let mut seen_dot = false;
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         if c.is_ascii_digit() {
             any_digit = true;
-            buf.push(c);
         } else if c == b'.' && !seen_dot {
             // Only the FIRST decimal point is part of the float; a second '.'
             // ends the token (glibc reads the longest valid prefix, e.g.
             // "03.1.5" -> 3.1 consuming 4 bytes). Found by sscanf_differential_fuzz.
             seen_dot = true;
-            buf.push(c);
         } else if (c == b'e' || c == b'E') && any_digit {
-            buf.push(c);
             i += 1;
             chars_read += 1;
             // Optional exponent sign.
             if i < input.len() && chars_read < max_chars && (input[i] == b'+' || input[i] == b'-') {
-                buf.push(input[i]);
                 i += 1;
                 chars_read += 1;
             }
             // Exponent digits.
             while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
-                buf.push(input[i]);
                 i += 1;
                 chars_read += 1;
             }
@@ -1307,9 +1310,10 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         return None;
     }
 
-    // Parse the collected float string.
-    let s = core::str::from_utf8(&buf).ok()?;
-    let val: f64 = s.parse().ok()?;
+    // Parse the accepted token straight out of `input`.
+    let s = core::str::from_utf8(input.get(tok_start..i)?).ok()?;
+    let magnitude: f64 = s.parse().ok()?;
+    let val = if negative { -magnitude } else { magnitude };
 
     Some((Some(ScanValue::Float(val)), i))
 }
