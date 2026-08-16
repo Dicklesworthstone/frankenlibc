@@ -16,6 +16,7 @@
 use std::ffi::c_int;
 
 mod g {
+    use super::*;
     unsafe extern "C" {
         pub fn sockatmark(fd: c_int) -> c_int;
     }
@@ -104,7 +105,7 @@ fn sockatmark_matches_glibc_on_a_live_stream_socket() {
 fn sockatmark_matches_glibc_on_rejected_descriptors() {
     // A never-opened descriptor and a negative one: the kernel rejects both, and
     // fl must surface the SAME errno glibc does, not merely the same -1.
-    let mut probe = [-1i32, 2048];
+    let probe = [-1i32, 2048];
     // A regular file is a valid fd that is NOT a socket, which is the other
     // rejection glibc's implementation can produce.
     let path = std::ffi::CString::new("/dev/null").expect("no NUL");
@@ -133,8 +134,6 @@ fn sockatmark_matches_glibc_on_rejected_descriptors() {
         );
     }
 
-    probe[0] = notsock; // silence the unused-write lint on the array reuse
-    let _ = probe;
     // SAFETY: notsock is open and owned here.
     unsafe { libc::close(notsock) };
 }
