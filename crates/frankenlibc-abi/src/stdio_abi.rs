@@ -7725,26 +7725,6 @@ unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
     unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) }
 }
 
-/// Read a single `double` argument from a SysV AMD64 `va_list` `ap`, advancing it.
-///
-/// The floating-point sibling of [`va_read_one_gp`], and it has to be a separate
-/// function rather than a cast of that one: on this ABI a `double` travels in an
-/// SSE register (`fp_offset` at +4, `xmm0..xmm7` at reg_save_area 48..176), not
-/// in the general-purpose area, so reading it through the GP path would return
-/// an unrelated integer argument. Reuses `vprintf_read_fp`, the same decode
-/// `vprintf_extract_args` uses for float conversions.
-///
-/// Same contract as its GP sibling: the caller must return immediately after,
-/// because `ap` is now advanced and the slow path would re-read from it.
-#[inline]
-unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
-    let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
-    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
-    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
-    let bits = unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
-    f64::from_bits(bits)
-}
-
 /// Read exactly one `double` out of a va_list for the `%f` / `%.Nf` fast path,
 /// without parsing the format.
 ///
@@ -7759,6 +7739,13 @@ unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
 ///
 /// The caller must return immediately after (no fall-through to the slow path,
 /// which would re-read from the now-advanced `ap`).
+///
+/// NOT YET WIRED INTO `vsnprintf`. The dispatch that uses it is held back until
+/// `vsnprintf_fixed_reads_the_fp_register_save_area` has been RUN green -- see
+/// bd-5pfs0p. The pointer arithmetic below is byte-identical to the proven
+/// general path (`vprintf_extract_args`), but "identical to working code" is not
+/// a measurement, and a wrong read here prints an unrelated number silently.
+#[allow(dead_code)]
 #[inline]
 unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
     let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
@@ -7811,32 +7798,10 @@ pub unsafe extern "C" fn vsnprintf(
         let arg = unsafe { va_read_one_gp(ap) } as c_uint;
         return unsafe { strict_direct_snprintf_x(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active()
-        && let Some(precision) = unsafe { exact_direct_f_format(format) }
-    {
-        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double`, which on this
-        // ABI arrives in an SSE register — hence `va_read_one_fp`, not the gp
-        // reader the integer probes above use.
-        let arg = unsafe { va_read_one_fp(ap) };
-        // SAFETY: same bounded-destination contract as snprintf's probe.
-        return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
-    }
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
         // SAFETY: exact `%p` consumes one promoted `void *` (full 64-bit gp arg).
         let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
         return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
-    }
-    // Float probe LAST, so it adds no byte-compare to the integer/string paths
-    // that carry the measured campaign win. Reads through `va_read_one_fp`: a
-    // `double` lives in the FP register save area, not the GP one.
-    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
-    if runtime_policy::strict_passthrough_active()
-        && let Some(precision) = unsafe { exact_direct_f_format(format) }
-    {
-        // SAFETY: exact `%f`/`%.Nf` consumes one `double` from `ap`; we return
-        // immediately, so the slow path never re-reads the advanced `ap`.
-        let arg = unsafe { va_read_one_fp(ap) };
-        return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
     }
     let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
     let (mode, decision) =
