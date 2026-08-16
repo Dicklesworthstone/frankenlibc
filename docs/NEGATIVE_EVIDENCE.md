@@ -28023,3 +28023,105 @@ decide that a dev run is trustworthy.
   3.490, 3.520 on kv_join across the three cycles — which is exactly why the comparison is made
   between ADJACENT arms rather than between cycle 1 and cycle 3. Cross-cycle differences here are
   larger than the effect being measured.
+
+## 2026-08-16 (NobleCreek) — ✅✅ CAMPAIGN WIN: `snprintf` float was never a dtoa problem — it was a missing `exact_direct_f_format` probe
+
+- **RESULT CLASS / LIVE-INCUMBENT ADJUDICATION (headline case `fixed_4dp`, Run A):**
+  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.416509`;
+  `incumbent_bootstrap_median_ci=[0.401895,0.428695]`;
+  `null_bootstrap_median_ci=[0.972316,1.003188]`;
+  `bench_elf_sha256=871295067b6afaadd8938d737ce26e1a1b0e6ffeb5503ec6f8453bac0a5e69f4`;
+  `cv_used=false`.
+- **MACHINE-READABLE INCUMBENT EVIDENCE.**
+  `INCUMBENT_LINKAGE direct_process_link symbol=snprintf_float`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT path=/data/tmp/cargo-target-frankenlibc/release/libfrankenlibc_abi.so
+  sha256=90ffb656061052d8e0acc3b6e012f45e7aeeda69cd679ac4fe13e1eb026b57e5`;
+  `FL_LINKAGE explicit_dlopen_local`.
+- **Three measured LOSSES on this row became wins.** The lever the ledger had standing for it (a
+  Schubfach-class dtoa port) is retired as aimed at the wrong term.
+- **THE REFUTATION CAME FIRST, FROM THE PUBLISHED NUMBERS, WITH NO NEW MEASUREMENT.** Fit the loss
+  entry's own three medians against precision instead of reading its three ratios:
+  `fl = 180.94 ns fixed + 4.104 ns/digit`, `glibc = 93.44 ns fixed + 6.245 ns/digit`. The fl−glibc
+  difference SHRINKS as precision rises (82.3 → 80.8 → 73.7 ns). If digit generation were the
+  bottleneck it would grow. The loss was an ~87 ns FIXED per-call term; at `%.2f` that term was 106%
+  of it.
+- **AND THE DTOA WAS ALREADY THERE.** `rounded_scaled_fixed` (printf.rs:2053) IS the correctly-rounded
+  fixed-precision algorithm — mantissa × 5^precision in u128, round-half-to-even shift — shipped for
+  precision 1..=9. The loss entry's "ordinary fractional money-style %.2f still runs the full flt2dec"
+  was stale; three exact fast paths precede the flt2dec fallback.
+- **THE ACTUAL CAUSE.** `snprintf`'s `exact_direct_*_format` chain returns before
+  `runtime_policy::entrypoint_scope` and covered `%s %c %u %d %x %ld %lu %zu %zd %lx %p` and
+  pure-literal — no float probe at all. Float formats fell through ~11 failed byte-compares and then
+  paid the full parse + membrane + segment pipeline the integer formats skip. Same symbol, same
+  process: a campaign win on integers and a loss on floats.
+- **THE FIX.** `exact_direct_f_format` (`%f`, `%.Nf` for N in 1..=9) + `strict_direct_snprintf_f`,
+  placed LAST in the chain so it adds no byte-compare to any integer or string path.
+
+### Run A — worker vmi1149989, FULLY DOCUMENTED, headline case `fixed_4dp`
+
+`--family snprintf_float --pin-quietest 4`, `samples=36`, `reps_per_arm=200000`,
+`threads_observed_pre=1`, `threads_observed_post=1`, exclusivity `verdict=clear` pre and post,
+`allowed_cpus=0:1:6:9`, `INCUMBENT_LINKAGE direct_process_link`, `FL_LINKAGE explicit_dlopen_local`.
+In-process self-reported ELF SHA-256: bench
+`871295067b6afaadd8938d737ce26e1a1b0e6ffeb5503ec6f8453bac0a5e69f4`, fl object
+`90ffb656061052d8e0acc3b6e012f45e7aeeda69cd679ac4fe13e1eb026b57e5`, incumbent
+`/usr/lib/x86_64-linux-gnu/libc.so.6`
+`6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+
+- `fixed_4dp` fl 44.359 ns vs glibc 110.070 ns. Effect ratio median **0.416509**, bootstrap median CI
+  [0.401895,0.428695]. Same-invocation A/A nulls: FL/FL median 0.994757, CI [0.972316,1.003188];
+  glibc/glibc median 0.999701, CI [0.961416,1.039837]. Both nulls inside the 0.020 tolerance,
+  `nulls_hold=true`, `clears_2x_null=true`, `comparison=FL_FASTER`. Effect CI entirely BELOW one.
+- **THE OTHER TWO CASES ARE NOT COUNTED.** `fixed_2dp` (0.373557) and `default_6dp` (0.437764) both
+  came back `comparison=NULL_VIOLATED` — their A/A nulls fell outside tolerance on this host
+  (`loadavg=7.05,7.43,6.55`, observed busy fraction 0.188 against a 0.200 ceiling). The direction is
+  identical and the ratios are the largest of the whole set, but a null-violated case is not evidence
+  and is recorded here as undecidable, not as a win. `INCUMBENT_COVERAGE_VERDICT verdict=INCOMPLETE
+  cases=3 wins=1 losses=0 undecidable=2`.
+
+### Run B — worker hz2 (`hetzner2`), quieter host, all three cases decidable
+
+Same harness and flags; `loadavg=4.04,3.94,2.80`, observed busy fraction 0.110 pre / 0.010 post,
+`allowed_cpus=1:2:3:8`.
+
+| case | fl ns | glibc ns | ratio | CI95 | was |
+|------|-------|----------|-------|------|-----|
+| fixed_2dp | 34.957 | 81.042 | 0.430136 | [0.427195,0.432876] | 1.774 LOSS |
+| fixed_4dp | 43.887 | 89.311 | 0.490711 | [0.486879,0.492064] | 1.687 LOSS |
+| default_6dp | 52.218 | 96.796 | 0.537617 | [0.533579,0.539726] | 1.562 LOSS |
+
+`verdict=DECIDABLE cases=3 wins=3 losses=0`; all six A/A nulls inside tolerance with no CI straddle
+(FL/FL 1.001585 / 0.998917 / 1.000759; glibc/glibc 1.001757 / 1.001573 / 1.001123), every effect
+clears twice its null half-width, every effect CI entirely below one. **Run B's ELF SHA-256s were not
+captured** — the output was filtered at the shell — so Run A is the one that carries full provenance
+and Run B is reported as corroboration, not as the primary.
+
+### What the two runs jointly establish
+
+`fixed_4dp` is certified on BOTH hosts (0.4165 and 0.4907), which is the case to quote. Every case on
+both hosts moved from a measured loss to a ratio far below one.
+
+- **THE MECHANISM IS CONFIRMED BY THE SLOPE, NOT THE RATIO.** Re-fitting Run B against precision:
+  `fl = 26.43 ns fixed + 4.315 ns/digit` against the previous `180.94 + 4.104`. **The fixed term
+  collapsed by 154.5 ns; the per-digit term did not move.** That is what removing a fixed per-call
+  cost predicts and what a faster dtoa would not produce.
+- **CROSS-HOST CAVEAT, stated rather than buried.** Absolute nanoseconds are not comparable across
+  hz1/hz2/vmi1149989 — glibc's own `%.2f` reads 106.3, 81.0 and 90.6 ns on the three. Only the
+  within-run fl/glibc ratio is comparable. One sub-claim is host-dependent and must NOT be carried
+  forward: fl's per-digit cost beat glibc's on hz1 (4.10 vs 6.25) but not on hz2 (4.32 vs 3.94). The
+  fixed-vs-marginal DECOMPOSITION generalises; the ordering of the marginal terms does not.
+- **CORRECTNESS HELD** in both runs: `INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_float formats=10
+  values=16 destination_sizes=9 comparisons=1440 mismatches=0`. Plus a new gate,
+  `conformance_diff_snprintf_fixed_fastpath` (green on vmi1153651): fl vs a **dlsym'd** host glibc on
+  return value AND full destination buffer, 14 formats × ~1200 values × 9 destination sizes, covering
+  the round-half-to-even traps (2.675, 1.005, 8.835), subnormals, 1e15..1e20, `f64::MAX`, both zeros
+  and both NaN signs, with a second arm holding the formats the probe must DECLINE.
+- **THE TRANSFERABLE LESSON.** Three ratios that all say "slower" can still be a fixed-cost story, and
+  the ratio alone cannot tell you. **Fit the slope.** A gap that shrinks as the work grows is an
+  entry-cost problem, not an algorithm problem.
+- **FOLLOW-ON (bd-5pfs0p), unmeasured:** `sprintf`, `vsnprintf`, `fprintf` and `printf` carry the same
+  chain with the same float omission.
