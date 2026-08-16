@@ -11,9 +11,56 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 
 unsafe extern "C" {
-    fn newlocale(category_mask: c_int, locale: *const c_char, base: *mut c_void) -> *mut c_void;
-    fn freelocale(loc: *mut c_void);
     fn __errno_location() -> *mut c_int;
+}
+
+// The host arms are resolved with `dlsym`, not declared at link time: fl
+// exports its own newlocale/freelocale into this binary, and when those exports
+// are live a link-time reference can bind locally, making both arms fl so the
+// comparisons pass while proving nothing (bd-h95z6y found conformance_diff_fma
+// doing exactly that). Whether it happens depends on the build profile, so a
+// gate honest under `cargo test` can go hollow under `--release`. dlsym on an
+// explicit libc.so.6 handle is correct in either profile.
+type NewlocaleFn = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
+type FreelocaleFn = unsafe extern "C" fn(*mut c_void);
+
+union NewlocaleSym {
+    raw: *mut c_void,
+    function: NewlocaleFn,
+}
+union FreelocaleSym {
+    raw: *mut c_void,
+    function: FreelocaleFn,
+}
+
+fn libc_handle() -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    handle
+}
+
+fn host_newlocale() -> NewlocaleFn {
+    // SAFETY: the handle came from dlopen; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(libc_handle(), c"newlocale".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym newlocale");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::locale_abi::newlocale as usize,
+        "the resolved oracle IS fl's newlocale — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has POSIX's documented newlocale signature.
+    unsafe { NewlocaleSym { raw }.function }
+}
+
+fn host_freelocale() -> FreelocaleFn {
+    // SAFETY: as above, for freelocale. Pairing the host's own deallocator with
+    // the host's newlocale matters: freeing a glibc locale_t through fl's
+    // freelocale would be a cross-allocator free, not a test.
+    let raw = unsafe { libc::dlsym(libc_handle(), c"freelocale".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym freelocale");
+    // SAFETY: the resolved symbol has POSIX's documented freelocale signature.
+    unsafe { FreelocaleSym { raw }.function }
 }
 
 fn errno() -> c_int {
@@ -21,10 +68,12 @@ fn errno() -> c_int {
 }
 
 fn glibc_new(mask: c_int, name: &CString) -> (bool, c_int) {
+    let newlocale = host_newlocale();
     unsafe { *__errno_location() = 0 };
     let r = unsafe { newlocale(mask, name.as_ptr(), std::ptr::null_mut()) };
     let e = errno();
     if !r.is_null() {
+        let freelocale = host_freelocale();
         unsafe { freelocale(r) };
     }
     (r.is_null(), e)

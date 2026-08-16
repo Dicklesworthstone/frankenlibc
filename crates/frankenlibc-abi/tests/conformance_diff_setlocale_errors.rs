@@ -11,8 +11,39 @@
 use std::ffi::{CString, c_char, c_int};
 
 unsafe extern "C" {
-    fn setlocale(category: c_int, locale: *const c_char) -> *const c_char;
     fn __errno_location() -> *mut c_int;
+}
+
+// The host `setlocale` is resolved with `dlsym`, not declared at link time.
+//
+// fl exports its own `setlocale` into this test binary, and when those exports
+// are live the linker can satisfy a link-time reference locally — making both
+// arms fl, so the comparisons below would pass while proving nothing.
+// `conformance_diff_fma` was found doing exactly that (bd-h95z6y). Whether it
+// happens depends on the build profile, so a gate honest under `cargo test` can
+// go hollow under `--release` with no visible change. `dlsym` on an explicit
+// `libc.so.6` handle is correct in either profile.
+type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *const c_char;
+
+union SetlocaleSym {
+    raw: *mut std::ffi::c_void,
+    function: SetlocaleFn,
+}
+
+fn host_setlocale() -> SetlocaleFn {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(handle, c"setlocale".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym setlocale");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::locale_abi::setlocale as usize,
+        "the resolved oracle IS fl's setlocale — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has C's documented setlocale signature.
+    unsafe { SetlocaleSym { raw }.function }
 }
 
 fn errno() -> c_int {
@@ -20,6 +51,7 @@ fn errno() -> c_int {
 }
 
 fn glibc_setlocale(cat: c_int, name: *const c_char) -> (bool, c_int) {
+    let setlocale = host_setlocale();
     unsafe { *__errno_location() = 0 };
     let r = unsafe { setlocale(cat, name) };
     (r.is_null(), errno())

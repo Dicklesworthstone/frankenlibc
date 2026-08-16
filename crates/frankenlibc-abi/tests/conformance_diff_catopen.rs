@@ -15,9 +15,55 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 
 unsafe extern "C" {
-    fn catopen(name: *const c_char, oflag: c_int) -> *mut c_void; // glibc nl_catd
-    fn catclose(catd: *mut c_void) -> c_int;
     fn __errno_location() -> *mut c_int;
+}
+
+// The host arms are resolved with `dlsym`, not declared at link time: fl
+// exports its own catopen/catclose into this binary, and when those exports are
+// live a link-time reference can bind locally, making both arms fl so the
+// comparisons pass while proving nothing (bd-h95z6y found conformance_diff_fma
+// doing exactly that). Whether it happens depends on the build profile, so a
+// gate honest under `cargo test` can go hollow under `--release`. dlsym on an
+// explicit libc.so.6 handle is correct in either profile.
+type CatopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void; // glibc nl_catd
+type CatcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+union CatopenSym {
+    raw: *mut c_void,
+    function: CatopenFn,
+}
+union CatcloseSym {
+    raw: *mut c_void,
+    function: CatcloseFn,
+}
+
+fn libc_handle() -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    handle
+}
+
+fn host_catopen() -> CatopenFn {
+    // SAFETY: the handle came from dlopen; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(libc_handle(), c"catopen".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym catopen");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::locale_abi::catopen as usize,
+        "the resolved oracle IS fl's catopen — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has POSIX's documented catopen signature.
+    unsafe { CatopenSym { raw }.function }
+}
+
+fn host_catclose() -> CatcloseFn {
+    // SAFETY: as above. The host's own catclose must close a host catd; closing
+    // it through fl's would be a cross-implementation free, not a test.
+    let raw = unsafe { libc::dlsym(libc_handle(), c"catclose".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym catclose");
+    // SAFETY: the resolved symbol has POSIX's documented catclose signature.
+    unsafe { CatcloseSym { raw }.function }
 }
 
 fn errno() -> c_int {
@@ -26,11 +72,13 @@ fn errno() -> c_int {
 
 /// Returns (failed?, errno) for glibc catopen of `name`.
 fn glibc_open(name: &CString) -> (bool, c_int) {
+    let catopen = host_catopen();
     unsafe { *__errno_location() = 0 };
     let r = unsafe { catopen(name.as_ptr(), 0) };
     let e = errno();
     let failed = r as isize == -1;
     if !failed {
+        let catclose = host_catclose();
         unsafe { catclose(r) };
     }
     (failed, e)

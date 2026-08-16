@@ -682,10 +682,11 @@ pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd 
         unsafe { set_abi_errno(libc::EINVAL) };
         return INVALID_NL_CATD;
     };
-    if name_bytes.is_empty() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return INVALID_NL_CATD;
-    }
+    // An empty name is NOT special-cased. glibc does not reject it up front; it
+    // simply tries to open "", and the kernel answers ENOENT. Returning EINVAL
+    // here made `catopen("")` report errno 22 where glibc reports 2, which is
+    // what the caller branches on. Letting the open below produce the errno is
+    // both simpler and what the host actually does.
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&name_bytes));
     if path.is_dir() {
         unsafe { set_abi_errno(libc::EINVAL) };
