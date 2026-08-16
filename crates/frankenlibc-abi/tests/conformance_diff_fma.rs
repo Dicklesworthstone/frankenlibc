@@ -8,9 +8,72 @@
 //! engineered to expose double rounding, plus a randomized grid and special
 //! values, and requires fl to match host glibc bit-for-bit. No mocks.
 
-unsafe extern "C" {
-    fn fma(x: f64, y: f64, z: f64) -> f64;
-    fn fmaf(x: f32, y: f32, z: f32) -> f32;
+//! The host arm is resolved with `dlsym` rather than declared at link time. A
+//! link-time `extern "C" { fn fma(..) }` does NOT reach glibc here: fl exports
+//! its own `fma` into the same test binary and the linker satisfies the
+//! reference locally, so both arms become fl and all 40,000+ comparisons below
+//! pass while proving nothing. `conformance_diff_oracle_arm_provenance` pins
+//! that down with `dladdr` and is what caught it.
+
+use std::ffi::c_void;
+
+type Fma64 = unsafe extern "C" fn(f64, f64, f64) -> f64;
+type Fma32 = unsafe extern "C" fn(f32, f32, f32) -> f32;
+
+union Sym64 {
+    raw: *mut c_void,
+    function: Fma64,
+}
+union Sym32 {
+    raw: *mut c_void,
+    function: Fma32,
+}
+
+/// Open the object that owns the libm entry points. Modern glibc folds libm
+/// into libc.so.6, but older layouts keep libm.so.6 separate, so try both
+/// rather than assuming either.
+fn libm_handle() -> *mut c_void {
+    for name in [c"libm.so.6", c"libc.so.6"] {
+        // SAFETY: name is a NUL-terminated constant; flags request a local handle.
+        let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if !handle.is_null() {
+            // SAFETY: handle came from dlopen.
+            let probe = unsafe { libc::dlsym(handle, c"fma".as_ptr()) };
+            if !probe.is_null() {
+                return handle;
+            }
+        }
+    }
+    panic!("no host object exporting fma — the oracle is unavailable, so this gate cannot run");
+}
+
+fn host_fma() -> Fma64 {
+    // SAFETY: the handle exports fma; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(libm_handle(), c"fma".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym fma");
+    // The defect this gate was fixed for: if the oracle and fl are the same
+    // code, every comparison below passes while proving nothing. Assert the
+    // positive fact rather than trusting the resolution.
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::math_abi::fma as usize,
+        "the resolved oracle IS fl's fma — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has C's documented fma signature.
+    unsafe { Sym64 { raw }.function }
+}
+
+fn host_fmaf() -> Fma32 {
+    // SAFETY: as above, for the float entry point.
+    let raw = unsafe { libc::dlsym(libm_handle(), c"fmaf".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym fmaf");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::math_abi::fmaf as usize,
+        "the resolved oracle IS fl's fmaf — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has C's documented fmaf signature.
+    unsafe { Sym32 { raw }.function }
 }
 
 fn eq64(a: f64, b: f64) -> bool {
@@ -34,6 +97,7 @@ impl Rng {
 
 #[test]
 fn fma_matches_glibc_double_rounding_cases() {
+    let fma = host_fma();
     // Engineered cases where naive (x*y+z) double-rounds but a correct fma does
     // not. a = 1 + 2^-52, b = 1 + 2^-52, c = -(1 + 2^-51):
     //   exact a*b = 1 + 2^-51 + 2^-104; + c = 2^-104  (correct fma)
@@ -59,6 +123,7 @@ fn fma_matches_glibc_double_rounding_cases() {
 
 #[test]
 fn fma_matches_glibc_special_values() {
+    let fma = host_fma();
     let sv = [
         0.0f64,
         -0.0,
@@ -81,6 +146,7 @@ fn fma_matches_glibc_special_values() {
 
 #[test]
 fn fma_matches_glibc_random_grid() {
+    let fma = host_fma();
     let mut rng = Rng(0x664D_0000_0000_0001);
     for _ in 0..20000 {
         let x = f64::from_bits(rng.next());
@@ -94,6 +160,7 @@ fn fma_matches_glibc_random_grid() {
 
 #[test]
 fn fmaf_matches_glibc() {
+    let fmaf = host_fmaf();
     let mut rng = Rng(0x6D2B_0000_0000_0001);
     for _ in 0..20000 {
         let x = f32::from_bits(rng.next() as u32);
