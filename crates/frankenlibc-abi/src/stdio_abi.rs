@@ -5021,7 +5021,6 @@ pub(crate) unsafe fn render_segments(
                 // FAST PATH: plain narrow `%s` — no width, no precision, no
                 // flags, no length modifier, non-positional.
                 //
-<<<<<<< Updated upstream
                 // The conversion byte is tested FIRST so a non-`%s` segment
                 // pays one load and one compare before falling through. An
                 // earlier ordering put the two loop-invariant bools first and
@@ -5051,38 +5050,6 @@ pub(crate) unsafe fn render_segments(
                     && matches!(spec.precision, Precision::None)
                     && !wide_output
                     && !uses_positional
-=======
-                // WHY THIS SHAPE. The conversion-count ladder (bd-ntb9fq,
-                // 569dbf921) regressed the fused penalty as
-                //   fl    = 59.83 ns fixed + 62.35 ns/conversion
-                //   glibc =  7.27 ns fixed + 18.92 ns/conversion
-                // so roughly three quarters of the gap at the shipped shapes is
-                // PER-CONVERSION, and a probe-style lever that only removes
-                // fixed cost cannot close it. This attacks the per-conversion
-                // term instead, on the conversion the fused shapes are mostly
-                // made of: `%s[%d]: %s`, `%s %s %d %lu` and `%s=%s %s=%s` are
-                // seven `%s` out of eleven conversions between them.
-                //
-                // BYTE-IDENTICAL BY CONSTRUCTION, which is why the predicate is
-                // this narrow. With `Width::None`, `Precision::None` and no
-                // `left_justify`, `format_str` reduces to exactly
-                // `buf.extend_from_slice(s)` — `max_len` becomes `s.len()`,
-                // `pad_total` becomes 0 and both `pad` calls are no-ops. The
-                // NULL spelling is the same reduction: with `Precision::None`
-                // the general path selects `b"(null)"` and renders it through
-                // that same no-op-padding `format_str`. Out of arguments emits
-                // nothing here and nothing there.
-                //
-                // Anything outside the predicate — any flag, any width or
-                // precision, `%ls`, wide output, or a positional format — falls
-                // through to the general path completely unchanged.
-                if !wide_output
-                    && !uses_positional
-                    && spec.conversion == b's'
-                    && matches!(spec.length, LengthMod::None)
-                    && matches!(spec.width, Width::None)
-                    && matches!(spec.precision, Precision::None)
->>>>>>> Stashed changes
                     && !spec.flags.left_justify
                     && !spec.flags.force_sign
                     && !spec.flags.space_sign
@@ -5104,7 +5071,6 @@ pub(crate) unsafe fn render_segments(
                     continue;
                 }
 
-<<<<<<< Updated upstream
                 // FAST PATH: a bare integer conversion — `%d %i %u %x %X %o`
                 // with no flags, no width and no precision, narrow output,
                 // non-positional. Any length modifier is fine, because the spec
@@ -5142,8 +5108,6 @@ pub(crate) unsafe fn render_segments(
                     continue;
                 }
 
-=======
->>>>>>> Stashed changes
                 // Resolve width from args if needed.
                 let mut resolved_spec = *spec;
                 if spec.width.uses_arg() {
