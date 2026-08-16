@@ -28177,3 +28177,49 @@ What this changes, and what it does not:
   the constant itself so the next person does not re-derive it.
 - **Reverted to 8.** The prediction registered before the run said a regression on the inline shapes
   was grounds to revert rather than tune, and it is being honoured rather than reinterpreted.
+
+## 2026-08-16 (BlackThrush) — RE-MEASURED, and the campaign's worst ratio is 7.07-7.10x, NOT 10-16x: deployed `malloc`+`free` on the current allocator
+
+- **RESULT CLASS: loss/baseline.** Still the worst measured vs-incumbent ratio in the campaign, but
+  materially smaller than the number that has been quoted from it for two days. Recorded because
+  decisions were being made against 10-16x.
+- **Provenance.** `examples/malloc_st_probe.rs`, built and run LOCALLY with
+  `RCH_CARGO_WRAPPER_BYPASS=1` exported and the executable path taken from `--message-format=json`;
+  no `[RCH] remote` line. In-process self-report: `ELF_SHA256
+  d883da27f3fd928a59859ddf6f732d5c533367c058c13a5ff17957e2fca9f808`. `RUN_PROVENANCE
+  host=thinkstation1 observed_threads=64 governor=powersave isa=avx2+sse4.2 loadavg=15.42 18.56
+  23.86`. Incumbent is host glibc loaded in the same process; both arms execute inside ONE
+  invocation.
+- **Schedule: `square=ABBAABBA`, n=41 rounds, interleaved with arm order alternated.** Not a
+  two-arm comparison — a balanced square with each arm's A/A null derived contemporaneously from the
+  same rounds.
+
+  | sz (B) | fl/glibc p50 | ci95 | A/A null fl | A/A null glibc | verdict |
+  |---|---|---|---|---|---|
+  | 16 | **7.0943** | [7.0752, 7.1037] | 0.9985 | 0.9998 | ADMISSIBLE FL_SLOWER |
+  | 64 | **7.1000** | [7.0803, 7.1237] | 0.9988 | 1.0000 | ADMISSIBLE FL_SLOWER |
+  | 256 | **7.1025** | [7.0875, 7.1091] | 1.0008 | 0.9998 | ADMISSIBLE FL_SLOWER |
+  | 1024 | **7.0711** | [7.0618, 7.0828] | 0.9988 | 1.0000 | ADMISSIBLE FL_SLOWER |
+
+  Every null is inside the harness's own +/-0.02 admissibility bound, and every effect CI is far
+  above 1.0 and disjoint from any null. **WORST BOUND: 7.1237** (the highest CI upper bound, sz=64).
+- **Absolute nanoseconds, from the same run's telemetry:** fl 32.89 / 32.89 / 31.61 / 32.25 ns
+  against glibc 4.70 / 4.74 / 4.54 / 4.59 ns at 16 / 64 / 256 / 1024 bytes. **A ~27.4 ns FIXED gap,
+  flat across a 64x size range** — the shape the 2026-07-02 row established and the one my own
+  size-scaling claim was withdrawn for. Confirmed again, now on the current allocator.
+- **The ratio really has fallen, and this is not just a faster host.** The 2026-07-02 row used THIS
+  SAME probe and reported `sz=16 fl=142.1 glibc=8.55 = 16.6x`. Today the same apparatus reports fl
+  32.89 against glibc 4.70. The host is quicker — glibc went 8.55 -> 4.70, about 1.8x — but fl went
+  142.1 -> 32.89, about 4.3x. Normalising by the incumbent, fl improved roughly 2.4x beyond the
+  hardware, and the ratio fell 16.6 -> 7.09. Same harness, so the comparison is meaningful; different
+  hosts, so the absolute numbers are not directly comparable and only the ratio should be quoted
+  onward.
+- **A landed free-path lever is visible in the same output:** `FREE_NULL_AB old=12.41 new=1.70
+  new/old=0.137 saves=10.71ns/call`, and `FREE_NULL_SERIAL_TELEMETRY_ONLY fl=1.70 glibc=2.18
+  fl/glibc=0.780` — fl's `free(NULL)` is now FASTER than glibc's. That is someone else's win, noted
+  here because it is part of why the headline moved.
+- **What this changes for the slab design (bd-e0y02p).** The design targeted "~133 ns of machinery
+  wrapped around an 8.55 ns allocation". The real target is now ~27.4 ns of machinery around a 4.7 ns
+  allocation. The SHAPE is unchanged — fixed per-call, flat in size — so the design's argument still
+  holds, but its headroom is a quarter of what was assumed, and any estimate in that bead derived
+  from 133 ns should be rescaled before it is used to justify the work.
