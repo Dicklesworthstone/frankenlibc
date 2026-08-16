@@ -28672,3 +28672,79 @@ What this changes, and what it does not:
   observes. Deleting it outright is worth more than this fold was, but that is a functionality
   decision (something may be intended to expose it later), so it is left for an owner to call rather
   than taken unilaterally. Recorded on bd-dcrhgl.
+
+## 2026-08-16 (NobleCreek) — ✅✅ CAMPAIGN WIN: the STREAM half of the printf float lever, measurable for the first time
+
+- **RESULT CLASS / LIVE-INCUMBENT ADJUDICATION (headline case `stream_2dp`):**
+  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.442598`;
+  `incumbent_bootstrap_median_ci=[0.430556,0.466530]`;
+  `null_bootstrap_median_ci=[0.984048,1.037235]`;
+  `bench_elf_sha256=9d7c2089c2824f30aea57958c3a3f07ed6836cd80537049e62ec10f240d6884d`;
+  `cv_used=false`.
+- **MACHINE-READABLE INCUMBENT EVIDENCE.**
+  `INCUMBENT_LINKAGE direct_process_link symbol=fprintf`;
+  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
+  `FL_OBJECT path=/data/tmp/cargo-target-frankenlibc/release/libfrankenlibc_abi.so
+  sha256=f1c7141e3b0cccc1229c54e5078ab617c0674461595149967e9808cc247e578c`;
+  `FL_LINKAGE explicit_dlopen_local`;
+  `ARM_DISTINCT incumbent_address=0x753979c635c0 fl_address=0x753968af8850`.
+- **WHAT WAS NOT MEASURABLE BEFORE.** `fprintf`/`printf` carried the float probe and were gated for
+  correctness, but no stream float family existed, so the stream half of this lever had NO
+  vs-incumbent ratio at all. This is the first one.
+- **APPARATUS.** Worker `vmi1227854`, `--family fprintf_float --pin-quietest 4`, `samples=36`,
+  `reps_per_arm=200000`, `threads_observed_pre=1`, `threads_observed_post=1`, exclusivity clear both
+  phases. Each arm opens `/dev/null` with ITS OWN `fopen` and drives its own `fprintf`/`fflush`: a
+  `FILE*` is not portable between libcs, so cross-passing would be undefined behaviour rather than a
+  comparison.
+
+  **Each case: effect and both same-invocation A/A nulls, each with its bootstrap median CI.**
+
+  Case `stream_2dp`: fl 51.201 ns against live glibc 109.817 ns. Effect median 0.442598, bootstrap
+  median CI [0.430556,0.466530]. A/A null FL/FL median 1.011180, bootstrap median CI
+  [1.002230,1.030863]; A/A null glibc/glibc median 1.005628, bootstrap median CI
+  [0.984048,1.037235]. null_half_width 0.037235, clears_2x_null=true, nulls_hold=true,
+  comparison=FL_FASTER.
+
+  Case `stream_4dp`: fl 62.773 ns against live glibc 131.376 ns. Effect median 0.477576, bootstrap
+  median CI [0.473395,0.481693]. A/A null FL/FL median 0.999381, bootstrap median CI
+  [0.994832,1.005028]; A/A null glibc/glibc median 1.002516, bootstrap median CI
+  [0.992712,1.012001]. null_half_width 0.012001, clears_2x_null=true, nulls_hold=true,
+  comparison=FL_FASTER.
+
+  Case `stream_6dp`: fl 70.845 ns against live glibc 142.956 ns. Effect median 0.495101, bootstrap
+  median CI [0.489439,0.502239]. A/A null FL/FL median 1.002675, bootstrap median CI
+  [0.989589,1.009946]; A/A null glibc/glibc median 1.009249, bootstrap median CI
+  [0.998614,1.019491]. null_half_width 0.019491, clears_2x_null=true, nulls_hold=true,
+  comparison=FL_FASTER.
+
+  All six A/A nulls inside the 0.020 bias tolerance with no CI straddle, every effect clearing twice
+  its null half-width, every effect CI entirely below one.
+  `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=3 wins=3 losses=0 undecidable=0`.
+- **THE FIRST TWO ATTEMPTS WERE INCOMPLETE, AND THE FIX IS THE INTERESTING PART.** Both returned
+  `wins=2 undecidable=1`, the SAME case failing both times: `stream_2dp` `NULL_VIOLATED` with a
+  glibc/glibc A/A null at 0.974688. The control was drifting, not the effect. Effect CVs were
+  11.1-22.4% and null MADs 0.050-0.085, against 1.3-10.2% and 0.003-0.009 for the buffer family on
+  the same fleet — so it was the harness, not the host.
+  I first blamed the end-of-batch `fflush` and wrote that on the bead. **That was wrong**: one
+  syscall in 200_000 formats cannot dominate. The real cause is the DEFAULT 4 KiB stream buffer —
+  ~7 bytes per call over 200_000 calls is ~1.4 MB per batch, so the stream auto-flushes roughly 340
+  times and each of those write syscalls contributes jitter. Giving both arms a 1 MiB fully-buffered
+  sink through their OWN `setvbuf` takes that to ~2 flushes per batch.
+  **Effect CVs fell to 7.6-10.0% and every null came inside tolerance — on a host at loadavg 9.99,
+  BUSIER than either failed attempt.** That is what makes it a variance fix rather than luck.
+- **CORRECTNESS.** `INCUMBENT_COVERAGE_CONFORMANCE symbol=fprintf_float formats=5 values=16
+  comparisons=80 mismatches=0 compared=stream_bytes_and_return_value
+  covers=signed_zero,subnormal,huge_finite,nan,inf verdict=pass`, run BEFORE the timing. Each arm
+  writes through its own `fopen`/`fprintf`/`fclose` and the check compares delivered bytes, the
+  return value, and the stream-specific invariant that the count equals what reached the file.
+  An earlier draft of that check called the linked HOST `snprintf` for BOTH arms — glibc against
+  glibc, green by construction. Caught before commit; recorded because it is the same hollow-oracle
+  failure bd-v0388t exists for, appearing inside the harness built to detect it.
+- **THE PREDICTION HELD.** Before measuring I recorded that the stream win should be SMALLER than the
+  buffer win, because `snprintf`'s probes return before `runtime_policy::entrypoint_scope` and so
+  skip the membrane, whereas `fprintf`/`printf` run `runtime_policy::decide` before any fast path.
+  Buffer: 0.430 / 0.493 / 0.510. Stream: 0.443 / 0.478 / 0.495. Smaller on every case, as stated in
+  advance rather than rationalised afterwards.

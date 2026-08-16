@@ -195,6 +195,13 @@ unsafe extern "C" {
     fn linked_host_fflush(stream: *mut c_void) -> c_int;
     #[link_name = "fclose"]
     fn linked_host_fclose(stream: *mut c_void) -> c_int;
+    #[link_name = "setvbuf"]
+    fn linked_host_setvbuf(
+        stream: *mut c_void,
+        buffer: *mut c_char,
+        mode: c_int,
+        size: usize,
+    ) -> c_int;
     #[link_name = "vsscanf"]
     fn linked_host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
     #[link_name = "wcsnrtombs"]
@@ -7179,6 +7186,12 @@ type FprintfFn = unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> c_int;
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
 type FflushFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type SetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
+
+/// Fully-buffered mode, and a buffer large enough that a whole timed batch is a
+/// couple of write syscalls rather than hundreds.
+const STREAM_IOFBF: c_int = 0;
+const STREAM_BUF_BYTES: usize = 1 << 20;
 
 /// One implementation's stream arm: its `fprintf`, its `fflush`, and a stream
 /// that IT opened.
@@ -7244,11 +7257,13 @@ fn run_fprintf_float(config: &Config) {
     let fl_fopen_sym = unsafe { libc::dlsym(handle, c"fopen".as_ptr()) };
     let fl_fflush_sym = unsafe { libc::dlsym(handle, c"fflush".as_ptr()) };
     let fl_fclose_sym = unsafe { libc::dlsym(handle, c"fclose".as_ptr()) };
+    let fl_setvbuf_sym = unsafe { libc::dlsym(handle, c"setvbuf".as_ptr()) };
     for (sym, what) in [
         (fl_fprintf_sym, "fprintf"),
         (fl_fopen_sym, "fopen"),
         (fl_fflush_sym, "fflush"),
         (fl_fclose_sym, "fclose"),
+        (fl_setvbuf_sym, "setvbuf"),
     ] {
         assert!(!sym.is_null(), "{}", dl_error(&format!("dlsym FrankenLibC {what}")));
     }
@@ -7258,11 +7273,13 @@ fn run_fprintf_float(config: &Config) {
     let fl_fopen: FopenFn = unsafe { std::mem::transmute(fl_fopen_sym) };
     let fl_fflush: FflushFn = unsafe { std::mem::transmute(fl_fflush_sym) };
     let fl_fclose: FcloseFn = unsafe { std::mem::transmute(fl_fclose_sym) };
+    let fl_setvbuf: SetvbufFn = unsafe { std::mem::transmute(fl_setvbuf_sym) };
 
     let host_fprintf: FprintfFn = linked_host_fprintf;
     let host_fopen: FopenFn = linked_host_fopen;
     let host_fflush: FflushFn = linked_host_fflush;
     let host_fclose: FcloseFn = linked_host_fclose;
+    let host_setvbuf: SetvbufFn = linked_host_setvbuf;
 
     let incumbent_identity = symbol_object(host_fprintf as *const () as *const c_void)
         .expect("identify host fprintf object");
@@ -7295,6 +7312,39 @@ fn run_fprintf_float(config: &Config) {
     let fl_stream = unsafe { fl_fopen(devnull.as_ptr(), mode.as_ptr()) };
     assert!(!host_stream.is_null(), "glibc fopen(/dev/null) failed");
     assert!(!fl_stream.is_null(), "FrankenLibC fopen(/dev/null) failed");
+
+    // GIVE BOTH ARMS A 1 MiB FULLY-BUFFERED SINK.
+    //
+    // This is the variance fix, and it is aimed at the right thing. The first
+    // two runs of this family came back INCOMPLETE with glibc/glibc A/A nulls
+    // drifting to 0.9747 and effect CVs of 11-22%, against 1-10% for the buffer
+    // family on the same fleet. I first blamed the end-of-batch fflush, but that
+    // is one syscall in 200_000 formats. The real source is the DEFAULT 4 KiB
+    // buffer: ~7 bytes per call over 200_000 calls is ~1.4 MB per batch, so the
+    // stream auto-flushes roughly 340 times and every one of those write
+    // syscalls contributes latency jitter that the formatting work cannot
+    // amortise.
+    //
+    // A 1 MiB buffer takes that to ~2 flushes per batch. Both arms get identical
+    // treatment through their OWN setvbuf, so the comparison stays fair; what
+    // changes is that the timed quantity becomes the format-and-buffer path,
+    // which is exactly what the probe alters, instead of format-plus-syscall-storm.
+    let mut host_buffer = vec![0 as c_char; STREAM_BUF_BYTES];
+    let mut fl_buffer = vec![0 as c_char; STREAM_BUF_BYTES];
+    // SAFETY: each buffer outlives its stream (both are dropped after fclose
+    // below), and each setvbuf is the one belonging to the stream's own libc.
+    unsafe {
+        assert_eq!(
+            host_setvbuf(host_stream, host_buffer.as_mut_ptr(), STREAM_IOFBF, STREAM_BUF_BYTES),
+            0,
+            "glibc setvbuf failed"
+        );
+        assert_eq!(
+            fl_setvbuf(fl_stream, fl_buffer.as_mut_ptr(), STREAM_IOFBF, STREAM_BUF_BYTES),
+            0,
+            "FrankenLibC setvbuf failed"
+        );
+    }
 
     let host = StreamArm {
         fprintf: host_fprintf,
@@ -7420,6 +7470,8 @@ fn run_fprintf_float(config: &Config) {
         host_fclose(host_stream);
         fl_fclose(fl_stream);
     }
+    drop(host_buffer);
+    drop(fl_buffer);
 
     if verdict == "INCOMPLETE" {
         std::process::exit(2);
