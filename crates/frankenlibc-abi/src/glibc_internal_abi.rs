@@ -525,10 +525,34 @@ pub unsafe extern "C" fn __libc_allocate_rtsig(high: c_int) -> c_int {
 // __libc_sa_len: return size of socket address structure by family
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_sa_len(af: u16) -> c_int {
+    // glibc's table (sysdeps/unix/sysv/linux/sa_len.c) covers TEN families, not
+    // three. fl knew only AF_INET/AF_INET6/AF_UNIX and returned 0 for the rest,
+    // so a caller using this to bound a copy for an AX.25, IPX, AppleTalk,
+    // Rose, packet, Ash or Econet address got 0 where glibc gives a real size.
+    //
+    // Every value below was read from the live host, not from the headers:
+    //   af=1  AF_UNIX/AF_LOCAL 110    af=2  AF_INET      16
+    //   af=3  AF_AX25           16    af=4  AF_IPX       16
+    //   af=5  AF_APPLETALK      16    af=10 AF_INET6     28
+    //   af=11 AF_ROSE           28    af=17 AF_PACKET    20
+    //   af=18 AF_ASH            32    af=19 AF_ECONET    16
+    // Everything else is 0, which is glibc's "I do not know this family"
+    // sentinel and NOT an error. bd-vw56nz.
+    //
+    // The three families with a Rust type available stay expressed as
+    // `size_of` so they track the struct rather than a literal; the rest are
+    // the sizes of kernel sockaddr variants libc does not expose here.
     match af as c_int {
         libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as c_int,
         libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as c_int,
         libc::AF_UNIX => std::mem::size_of::<libc::sockaddr_un>() as c_int, // AF_LOCAL == AF_UNIX
+        libc::AF_AX25 => 16,
+        libc::AF_IPX => 16,
+        libc::AF_APPLETALK => 16,
+        libc::AF_ROSE => 28,
+        libc::AF_PACKET => std::mem::size_of::<libc::sockaddr_ll>() as c_int,
+        libc::AF_ASH => 32,
+        libc::AF_ECONET => 16,
         _ => 0,
     }
 }
