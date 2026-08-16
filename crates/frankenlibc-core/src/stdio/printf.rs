@@ -515,7 +515,34 @@ impl FormatSpec {
     }
 }
 
+/// Does any spec reference an explicit argument position (`%1$s`, `%*2$d`)?
+///
+/// Plain field reads, no closure and no allocation — deliberately cheaper than
+/// building the plan just to discover there is nothing to plan. Almost no real
+/// format uses positional arguments, so this is the answer nearly every time.
+fn any_positional_spec(segments: &[FormatSegment<'_>]) -> bool {
+    segments.iter().any(|seg| match seg {
+        FormatSegment::Spec(spec) => {
+            spec.value_position.is_some()
+                || spec.width.position().is_some()
+                || spec.precision.position().is_some()
+        }
+        _ => false,
+    })
+}
+
 pub fn positional_printf_arg_plan(segments: &[FormatSegment<'_>]) -> Option<Vec<ValueArgKind>> {
+    // Bail before the closure and the `Vec` when nothing is positional. This
+    // function is the hot path's largest self-time entry (15.74% on a flat perf
+    // profile of a three-conversion format) and it runs TWICE per printf call:
+    // `count_printf_args` builds the plan during argument extraction, and
+    // `render_segments` builds it again to decide whether positional handling is
+    // needed. For a non-positional format both calls did the full walk with a
+    // capturing closure only to return `None`. bd-ntb9fq.
+    if !any_positional_spec(segments) {
+        return None;
+    }
+
     let mut any_positional = false;
     let mut plan: Vec<Option<ValueArgKind>> = Vec::new();
 

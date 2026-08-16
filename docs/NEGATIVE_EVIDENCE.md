@@ -27690,3 +27690,47 @@ Two consequences, stated plainly:
   and its `Vec`, still computed twice per call), `FormatSegments::push` at 13%, and
   `parse_format_spec` at 9%. Computing the plan ONCE per call, or skipping it entirely via a flag the
   parser already has the information to set, is the next lever and is larger than this one.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup, replicated): skip the positional plan entirely for non-positional formats
+
+- **RESULT CLASS: self-speedup, MAINTENANCE.** fl-vs-fl. No vs-glibc claim.
+- **THE CHANGE.** `positional_printf_arg_plan` now bails via a cheap `any_positional_spec` predicate
+  (plain field reads, no closure, no `Vec`) before building anything. It is the hot path's largest
+  self-time entry at 15.74%, and it runs TWICE per printf call — `count_printf_args` builds the plan
+  during argument extraction and `render_segments` builds it again to decide whether positional
+  handling is needed. For a non-positional format, which is nearly every format, both calls did the
+  full walk with a capturing closure only to return `None`; `count_printf_args` then walked the
+  segments a THIRD time for its ordinary count.
+- **CORRECTNESS.** `conformance_diff_printf_positional` 2 passed, `conformance_diff_printf_fastpaths`
+  3, `conformance_diff_printf_hexfloat` 1, `conformance_diff_asprintf` 1, on `vmi1264463`. The
+  positional gate is the one that matters here and it is green.
+- **MEASURED, ABBA, two workers.** Harness `incumbent_coverage_ab --family snprintf_fused`. Base
+  object `b699c00fed367ae2…` (the previous lever), candidate `e45f369fda9e5559…`, differing only by
+  the above; candidate built on RCH worker `hz2`.
+  `vmi1167313` (`--pin-quietest 4`, five interleaved arms, load 2.25 to 2.04):
+  base `syslog_line` 563.278, 606.127, 566.958 against cand 531.051, 520.296;
+  base `http_log` 716.558, 741.495, 741.684 against cand 711.596, 695.019;
+  base `kv_join` 646.959, 644.591, 662.454 against cand 635.986, 642.955.
+  `hz2` (`--pin-quietest 6`, four arms, load 2.49 to 2.46):
+  base `syslog_line` 190.254, 185.927 against cand 175.024, 187.204;
+  base `http_log` 240.025, 238.883 against cand 220.981, 235.169;
+  base `kv_join` 229.765, 232.193 against cand 211.321, 219.040.
+- **THE CONSERVATIVE STANDING.** Two shapes separate on BOTH workers — every candidate reading below
+  every base reading: `http_log` and `kv_join`. Quoting the least favourable worst-bound separation
+  either machine produced, that is **at least about 0.7%** (`http_log` on `vmi1167313`, 711.596
+  against a base minimum of 716.558). Means are considerably better — `syslog_line` −9.2% and −3.7%,
+  `http_log` −4.1% and −4.8%, `kv_join` −1.8% and −6.9% — but the means are not what replicates, so
+  the bound is what gets quoted. `syslog_line` separates cleanly on `vmi1167313` and INTERLEAVES on
+  `hz2`, so it is not claimed at all.
+- **ON THE NULLS, per the fleet convention.** These rows are fl-vs-fl A/B, not vs-incumbent, so no
+  A/A null gates them; the fused family returned `INCOMPLETE` verdicts on both workers and the
+  vs-glibc ratio is deliberately not quoted. Worth recording why that is the right call here: a load
+  ramp was visible WITHIN the base arms on `vmi1167313` (`syslog_line` 563.278 then 606.127, +7.6%
+  between two runs of the SAME object), which is exactly the situation where an A/A null breaks while
+  an interleaved comparison stays meaningful. The ABBA interleave is what makes these numbers usable,
+  not the nulls.
+- **CUMULATIVE EFFECT ON THE ACTUAL GAP.** This plus the same-day `positional_value_arg_kind` lever
+  are both small. Fused `snprintf` was 3.12-3.31x slower than glibc and remains far above parity;
+  nothing here changes that headline. The profile still says where the rest is:
+  `FormatSegments::push` 13.08% and `parse_format_spec` 9.09%, i.e. the parse itself, which no
+  amount of plan-skipping touches.
