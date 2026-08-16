@@ -29479,3 +29479,48 @@ What this changes, and what it does not:
 - **Correctness:** exactness proven against real division at every quotient transition for all 32
   classes (500k+ points); `SEGMENT_SIZE` tied to the derivation range by a compile-time assert;
   malloc_abi_test 73/1 ignored, hardened_mode_safety_test 15, conformance_diff_malloc_stats_binning 5.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE: the vDSO routing takes getrandom from 94.43x to 4.00x — the campaign's worst ratio, cut 23.6x
+
+- **RESULT CLASS: self-speedup.** fl against fl's own prior build. **fl is STILL SLOWER than glibc**
+  (4.00x at zero bytes, 1.04x at 256), so this is NOT a campaign win and no vs-incumbent claim is
+  made. What changed is the size of the loss.
+- **BOTH ARMS CERTIFIED IN ONE WINDOW, each a single invocation, `--family getrandom
+  --pin-quietest 4`, `verdict=DECIDABLE cases=4 wins=0 losses=4 undecidable=0` on both.**
+
+  | case | base (syscall) | candidate (vDSO) | factor |
+  |---|---|---|---|
+  | zero_bytes | 94.427196 | **4.003414** | **23.6x** |
+  | one_byte | 78.965695 | **2.786831** | **28.3x** |
+  | thirty_two_bytes | 10.720446 | **1.240750** | **8.6x** |
+  | two_fifty_six_bytes | 3.058538 | **1.039244** | **2.9x** |
+
+- **Provenance and per-arm conditions.**
+  - base `FL_OBJECT sha256 0f8a2317577ad9be1912fa914cc9b967b1315af90e7fdb950606e816e66c6f05`,
+    observed **loadavg 15.17,16.63,19.74 at 2254 MHz**
+  - candidate `FL_OBJECT sha256 8d9e901bd0cd5386b8ca5c1ec49b095826269e8204dcd0d4a7e435b77987292f`,
+    observed **loadavg 17.54,17.84,20.44 at 3675 MHz**
+  - `BENCH_ELF_OBJECT sha256 3103961f91a0c2238d00f56ab5370cb6e9bfb05ecf1cd61b39cac76609f69601`;
+    `ARM_DISTINCT` holding; conformance passed 5 comparisons over lengths 0/1/32/256 and flags
+    0/GRND_NONBLOCK before timing.
+- **THE 1.6x CLOCK DIFFERENCE BETWEEN ARMS DOES NOT CONTAMINATE THIS, and that is the point of the
+  design.** Each number is an fl/glibc ratio formed INSIDE one invocation, so the core clock scales
+  numerator and denominator together and cancels to first order. A cross-run comparison of absolute
+  times at 2254 MHz against 3675 MHz would have been worthless; a comparison of ratios is not.
+- **Nulls, same-invocation, contemporaneous with the rows above:** every A/A null median is inside the
+  0.020 tolerance. Candidate `null_fl_fl` 1.000469 / 1.000151 / 1.000358 / 0.999900 and
+  `null_glibc_glibc` 1.000052 / 1.010502 / 0.999424 / 1.000509; baseline `null_fl_fl` 1.002701 /
+  0.998046 / 0.999113 / 1.001107. Bootstrap median CI95 on the headline case: baseline zero_bytes
+  [92.936575,95.547534] against candidate [3.942396,4.028563] — disjoint by more than an order of
+  magnitude.
+- **THE BASELINE REPRODUCES THE BANKED VALUE**, which is what licenses reading this against the
+  earlier rows: 94.427196 here against 91.580141 and 92.174166 banked on two other binaries at
+  loadavgs 11.70 and 15.93. Same magnitude, three independent builds.
+- **THE MECHANISM WAS ALREADY PROVEN EXACTLY, and the ratio only confirms it.** Syscall counting
+  before and after: fl went from 103 syscalls at 100 calls and 10,003 at 10,000, to **4 and 4** —
+  flat, matching glibc's 3. That evidence is exact rather than statistical and is load-immune; this
+  row is the wall-clock consequence of it.
+- **WHAT REMAINS.** 4.00x at zero bytes is now the residue — the membrane `decide`/`observe` pair and
+  `tracked_void_output_capacity` around a call that no longer syscalls, i.e. fl's own entry framing
+  against a glibc call that is nearly free. That is the same fixed-overhead layer the allocator
+  profile named, and it is NOT reachable by more work inside `getrandom`.
