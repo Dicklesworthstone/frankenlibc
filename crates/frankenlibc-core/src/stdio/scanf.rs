@@ -270,8 +270,11 @@ impl<const N: usize> PartialEq<[u8; N]> for ScanBytes {
 }
 
 /// A successfully scanned value from input.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ScanValue {
+    /// Placeholder for unused inline slots in [`ScanValues`]; never read.
+    #[default]
+    Unset,
     SignedInt(i64),
     UnsignedInt(u64),
     Float(f64),
@@ -285,6 +288,17 @@ pub enum ScanValue {
 // Scan spec types
 // ---------------------------------------------------------------------------
 
+impl Default for ScanDirective {
+    /// Placeholder for unused inline slots in [`ScanDirectives`], never read.
+    ///
+    /// `Malformed` is chosen deliberately over a plausible-looking directive: if
+    /// a bug ever exposed a slot past `len`, the inert value that performs no
+    /// conversion is the one that fails safe.
+    fn default() -> Self {
+        ScanDirective::Malformed
+    }
+}
+
 /// A parsed scanf format directive.
 #[derive(Debug, Clone)]
 pub enum ScanDirective {
@@ -293,7 +307,15 @@ pub enum ScanDirective {
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
     /// A conversion specifier.
-    Spec(Box<ScanSpec>),
+    /// A conversion specifier.
+    ///
+    /// Held INLINE, not boxed. It used to be `Box<ScanSpec>` because `ScanSpec`
+    /// embedded a `ScanSet` (a 257-byte table) and that would have made every
+    /// directive huge — but only `%[...]` needs a scanset, so the TABLE is boxed
+    /// instead and the ordinary spec costs nothing. Counted with a global
+    /// allocator, the box was one allocation per conversion: `sscanf("%s%n")`
+    /// made three allocations where glibc makes none.
+    Spec(ScanSpec),
     /// A malformed directive: parsing stops here, performing no conversion.
     ///
     /// Currently only an unterminated scanset (`%[^]`). This is deliberately
@@ -310,7 +332,9 @@ pub struct ScanSpec {
     pub width: Option<usize>,
     pub length: LengthMod,
     pub conversion: u8,
-    pub scanset: Option<ScanSet>,
+    /// Boxed so a spec without a scanset — every conversion except `%[...]` —
+    /// stays small enough to live inline in [`ScanDirective::Spec`].
+    pub scanset: Option<Box<ScanSet>>,
     /// True when this directive is scanned from a WIDE input stream (swscanf /
     /// fwscanf), whose bytes are the UTF-8 encoding of wide characters. In that
     /// mode leading-whitespace skipping and `%s` token boundaries recognise
@@ -424,8 +448,8 @@ pub struct ScanSet {
 // ---------------------------------------------------------------------------
 
 /// Parse a scanf format string into a list of directives.
-pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
-    let mut directives = Vec::new();
+pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
+    let mut directives = ScanDirectives::default();
     let mut i = 0;
 
     while i < fmt.len() {
@@ -588,7 +612,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 }
                 i += 1;
                 spec.conversion = b'[';
-                spec.scanset = Some(ScanSet { negated, chars });
+                spec.scanset = Some(Box::new(ScanSet { negated, chars }));
             } else {
                 // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
                 // string / wide char): normalise to (s|c, length `L`) so they
@@ -611,7 +635,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 break;
             }
 
-            directives.push(ScanDirective::Spec(Box::new(spec)));
+            directives.push(ScanDirective::Spec(spec));
         } else if is_c_space(fmt[i]) {
             directives.push(ScanDirective::Whitespace);
             i += 1;
@@ -632,10 +656,126 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
 // Input scanner
 // ---------------------------------------------------------------------------
 
+/// Inline capacity for one call's scanned values.
+///
+/// Four covers the overwhelming majority of real formats (`%d`, `%s`, `%d %d`,
+/// `key=%s`, a dotted quad is four but arrives through the int fast path), and
+/// `ScanValue` is ~40 bytes, so the array costs ~160 bytes of stack against one
+/// heap allocation avoided.
+pub const SCAN_VALUES_INLINE: usize = 4;
+
+/// One call's scanned values, without a heap allocation for the common case.
+///
+/// WHY THIS EXISTS. `scan_input` used to collect into `Vec::new()`, so the first
+/// push allocated and the buffer doubled from there. Counted with a global
+/// allocator, one engine-path `sscanf` made FOUR allocations where glibc makes
+/// none, and this family is a measured loss (`string_token` 2.238x, fl 93.765 ns
+/// against 41.880 ns). The cases that already avoid the engine —
+/// `single_int`, `two_ints`, served by `strict_scan_decimal_ints` — are the
+/// least bad in the family, which is the existing evidence that the per-call
+/// heap traffic is worth removing.
+///
+/// The inline half is a real `[ScanValue; N]` rather than `[Option<ScanValue>; N]`
+/// because the ABI writer consumes a contiguous `&[ScanValue]`; an Option array
+/// cannot produce one. That is what `ScanValue: Default` is for, and the default
+/// slots past `len` are never read.
+pub struct InlineVec<T: Default, const N: usize> {
+    inline: [T; N],
+    inline_len: usize,
+    spill: Vec<T>,
+}
+
+impl<T: Default, const N: usize> Default for InlineVec<T, N> {
+    fn default() -> Self {
+        Self {
+            inline: core::array::from_fn(|_| T::default()),
+            inline_len: 0,
+            spill: Vec::new(),
+        }
+    }
+}
+
+impl<T: Default, const N: usize> InlineVec<T, N> {
+    /// Append, moving to the heap only past the inline capacity.
+    pub fn push(&mut self, value: T) {
+        if !self.spill.is_empty() {
+            self.spill.push(value);
+            return;
+        }
+        if self.inline_len < N {
+            self.inline[self.inline_len] = value;
+            self.inline_len += 1;
+            return;
+        }
+        // Overflow: migrate the inline run once, then continue on the heap.
+        self.spill.reserve(N + 1);
+        for slot in self.inline.iter_mut() {
+            self.spill.push(core::mem::take(slot));
+        }
+        self.spill.push(value);
+    }
+
+    /// One contiguous slice, which is what both consumers want: the ABI value
+    /// writer takes `&[ScanValue]` and the engine takes `&[ScanDirective]`.
+    pub fn as_slice(&self) -> &[T] {
+        if self.spill.is_empty() {
+            &self.inline[..self.inline_len]
+        } else {
+            &self.spill
+        }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        if self.spill.is_empty() {
+            &mut self.inline[..self.inline_len]
+        } else {
+            &mut self.spill
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<T: Default, const N: usize> core::ops::Deref for InlineVec<T, N> {
+    type Target = [T];
+
+    /// Deref to the slice so this drops into every place a `Vec` stood:
+    /// indexing, `iter()`, `first()`, and `&values` coercing to `&[T]` at a call
+    /// site. Without it the switch away from `Vec` would have meant touching
+    /// every consumer and every test that reads a scanned value.
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: Default, const N: usize> core::ops::DerefMut for InlineVec<T, N> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+/// One call's scanned values.
+pub type ScanValues = InlineVec<ScanValue, SCAN_VALUES_INLINE>;
+
+/// Inline capacity for one format's directives.
+///
+/// Eight covers ordinary formats: each literal byte, whitespace run and
+/// conversion is one directive, so `"%d %d"` is three and `"key=%s"` is five.
+pub const SCAN_DIRECTIVES_INLINE: usize = 8;
+
+/// One format's parsed directives.
+pub type ScanDirectives = InlineVec<ScanDirective, SCAN_DIRECTIVES_INLINE>;
+
 /// Scan result from the engine.
 pub struct ScanResult {
     /// Successfully scanned non-suppressed values.
-    pub values: Vec<ScanValue>,
+    pub values: ScanValues,
     /// Number of successful assignments.
     pub count: i32,
     /// Total input bytes consumed.
@@ -661,7 +801,7 @@ pub fn scan_input_wide(input: &[u8], directives: &[ScanDirective]) -> ScanResult
 
 fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool) -> ScanResult {
     let mut pos = 0;
-    let mut values = Vec::new();
+    let mut values = ScanValues::default();
     let mut count: i32 = 0;
     let mut input_failure = true; // true until first successful read
 
@@ -1709,7 +1849,7 @@ mod tests {
         let dirs = parse_scanf_format(fmt);
         assert_eq!(dirs.len(), 1, "expected exactly one directive from {fmt:?}");
         match &dirs[0] {
-            ScanDirective::Spec(s) => (**s).clone(),
+            ScanDirective::Spec(s) => s.clone(),
             other => panic!("expected Spec from {fmt:?}, got {other:?}"),
         }
     }

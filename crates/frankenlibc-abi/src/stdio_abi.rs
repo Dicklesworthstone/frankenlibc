@@ -8775,7 +8775,7 @@ pub unsafe extern "C" fn vasprintf(
 // ===========================================================================
 
 use frankenlibc_core::stdio::scanf::{
-    ScanDirective, ScanResult, ScanValue, parse_scanf_format, scan_input,
+    ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format, scan_input,
 };
 
 fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
@@ -8856,6 +8856,11 @@ macro_rules! scanf_write_values {
 macro_rules! scanf_write_one {
     ($val:expr, $spec:expr, $args:expr) => {
         match $val {
+            // `Unset` is the inline-slot placeholder from `ScanValues`; it never
+            // appears inside `as_slice()`'s populated prefix, and writing nothing
+            // is the safe answer if it ever did — a libc entry point must not
+            // panic on its own bookkeeping.
+            ScanValue::Unset => {}
             ScanValue::SignedInt(v) => match $spec.length {
                 LengthMod::Hh => {
                     let ptr = $args.next_arg::<*mut i8>();
@@ -8978,7 +8983,7 @@ macro_rules! scanf_write_one {
 pub(crate) fn scanf_core(
     input: &[u8],
     format: *const c_char,
-) -> Option<(ScanResult, Vec<ScanDirective>)> {
+) -> Option<(ScanResult, ScanDirectives)> {
     scanf_core_impl(input, format, false)
 }
 
@@ -8988,7 +8993,7 @@ pub(crate) fn scanf_core(
 pub(crate) fn scanf_core_wide(
     input: &[u8],
     format: *const c_char,
-) -> Option<(ScanResult, Vec<ScanDirective>)> {
+) -> Option<(ScanResult, ScanDirectives)> {
     scanf_core_impl(input, format, true)
 }
 
@@ -8996,7 +9001,7 @@ fn scanf_core_impl(
     input: &[u8],
     format: *const c_char,
     wide_input: bool,
-) -> Option<(ScanResult, Vec<ScanDirective>)> {
+) -> Option<(ScanResult, ScanDirectives)> {
     // PERF (bd-2g7oyh, same lever family as the sscanf input scan):
     // this is the SHARED scanf engine, so EVERY scanf variant (sscanf/fscanf/
     // vfscanf/vsscanf/wide) lengths a short caller FORMAT string here. Strict mode
@@ -9010,14 +9015,14 @@ fn scanf_core_impl(
     let result = if wide_input {
         // Mark every conversion as reading from a wide stream so leading-
         // whitespace skipping and `%s` token boundaries are Unicode-aware.
-        for dir in &mut directives {
+        for dir in directives.as_mut_slice() {
             if let ScanDirective::Spec(spec) = dir {
                 spec.wide_input = true;
             }
         }
-        frankenlibc_core::stdio::scanf::scan_input_wide(input, &directives)
+        frankenlibc_core::stdio::scanf::scan_input_wide(input, directives.as_slice())
     } else {
-        scan_input(input, &directives)
+        scan_input(input, directives.as_slice())
     };
     Some((result, directives))
 }
@@ -9201,7 +9206,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return libc::EOF;
     }
 
-    scanf_write_values!(&result.values, &directives, args);
+    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     result.count
 }
@@ -9243,7 +9248,7 @@ pub unsafe extern "C" fn fscanf(
         return libc::EOF;
     }
 
-    scanf_write_values!(&result.values, &directives, args);
+    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     result.count
 }
@@ -9282,7 +9287,7 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
         return libc::EOF;
     }
 
-    scanf_write_values!(&result.values, &directives, args);
+    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     result.count
 }
@@ -9332,7 +9337,7 @@ pub unsafe extern "C" fn vsscanf(
     // SAFETY: On x86_64 Linux, the raw va_list pointer has the same layout
     // as Rust's VaListImpl. We transmute to access arg().
     unsafe {
-        vscanf_write_values(&result.values, &directives, ap);
+        vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap);
     }
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
@@ -9389,7 +9394,7 @@ pub unsafe extern "C" fn vfscanf(
     }
 
     unsafe {
-        vscanf_write_values(&result.values, &directives, ap);
+        vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap);
     }
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
@@ -9476,6 +9481,8 @@ pub(crate) unsafe fn vscanf_write_one(
     dest: *mut c_void,
 ) {
     match val {
+        // See the macro: placeholder slot, never inside the populated prefix.
+        ScanValue::Unset => {}
         ScanValue::SignedInt(v) => match spec.length {
             LengthMod::Hh => unsafe { *(dest as *mut i8) = *v as i8 },
             LengthMod::H => unsafe { *(dest as *mut i16) = *v as i16 },

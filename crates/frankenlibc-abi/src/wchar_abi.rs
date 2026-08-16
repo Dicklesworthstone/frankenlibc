@@ -4330,6 +4330,11 @@ macro_rules! scanf_write_values {
 macro_rules! wscanf_write_one {
     ($val:expr, $spec:expr, $args:expr) => {
         match $val {
+            // `Unset` is the inline-slot placeholder from `ScanValues`; it never
+            // appears inside `as_slice()`'s populated prefix, and writing nothing
+            // is the safe answer if it ever did — a libc entry point must not
+            // panic on its own bookkeeping.
+            ScanValue::Unset => {}
             ScanValue::SignedInt(v) => match $spec.length {
                 LengthMod::Hh => {
                     let ptr = $args.next_arg::<*mut i8>();
@@ -5302,7 +5307,7 @@ pub unsafe extern "C" fn swscanf(
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    scanf_write_values!(result.values, directives, args);
+    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
     result.count
 }
 
@@ -5327,7 +5332,7 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    scanf_write_values!(result.values, directives, args);
+    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
     result.count
 }
 
@@ -5356,7 +5361,7 @@ pub unsafe extern "C" fn fwscanf(
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    scanf_write_values!(result.values, directives, args);
+    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
     result.count
 }
 
@@ -5382,7 +5387,7 @@ pub unsafe extern "C" fn vswscanf(
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    unsafe { super::stdio_abi::vscanf_write_values(&result.values, &directives, ap) };
+    unsafe { super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap) };
     result.count
 }
 
@@ -5407,7 +5412,7 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    unsafe { super::stdio_abi::vscanf_write_values(&result.values, &directives, ap) };
+    unsafe { super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap) };
     result.count
 }
 
@@ -5436,7 +5441,7 @@ pub unsafe extern "C" fn vfwscanf(
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    unsafe { super::stdio_abi::vscanf_write_values(&result.values, &directives, ap) };
+    unsafe { super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap) };
     result.count
 }
 
