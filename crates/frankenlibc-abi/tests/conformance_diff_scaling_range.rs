@@ -17,8 +17,26 @@
 //!      ERANGE iff result is ±inf or 0 (and the input was finite & nonzero).
 //!
 //! Golden values captured from this host's glibc via a gcc -lm oracle.
+//!
+//! ## Live arm added 2026-08-16 (bd-v0388t)
+//!
+//! Captured, then frozen: the test was named `scaling_range_matches_glibc` and
+//! never called glibc. The risk is concentrated in the half of each row that is
+//! an ERRNO, which is precisely the shape that hid the `catopen` defect this
+//! audit found — both arms return the same value and only the errno differs, so
+//! nothing looks wrong until a caller branches on it.
+//!
+//! The goldens are KEPT and every row now also runs through dlsym-resolved
+//! `scalbn`/`scalbln`/`ldexp` (+f32), reading GLIBC's errno slot rather than
+//! fl's. The two implementations keep separate errno storage, so using fl's
+//! location for the host arm would have compared fl against itself in exactly
+//! the field under test.
 
 use frankenlibc_abi::{errno_abi, math_abi as fa};
+use std::os::raw::{c_int, c_long};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
 
 const ERANGE: i32 = 34;
 
@@ -27,6 +45,50 @@ fn clr() {
 }
 fn erange() -> bool {
     unsafe { *errno_abi::__errno_location() == ERANGE }
+}
+
+type Scalbn64 = unsafe extern "C" fn(f64, c_int) -> f64;
+type Scalbln64 = unsafe extern "C" fn(f64, c_long) -> f64;
+type Scalbn32 = unsafe extern "C" fn(f32, c_int) -> f32;
+type Scalbln32 = unsafe extern "C" fn(f32, c_long) -> f32;
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+struct HostArm {
+    scalbn: Scalbn64,
+    scalbln: Scalbln64,
+    ldexp: Scalbn64,
+    scalbnf: Scalbn32,
+    scalblnf: Scalbln32,
+    errno_location: ErrnoLocationFn,
+}
+
+fn host() -> HostArm {
+    // SAFETY: every signature below matches the C declaration in <math.h>, and
+    // __errno_location's in <errno.h>.
+    unsafe {
+        HostArm {
+            scalbn: dlsym_oracle::host_fn(c"scalbn", fa::scalbn as *const ()),
+            scalbln: dlsym_oracle::host_fn(c"scalbln", fa::scalbln as *const ()),
+            ldexp: dlsym_oracle::host_fn(c"ldexp", fa::ldexp as *const ()),
+            scalbnf: dlsym_oracle::host_fn(c"scalbnf", fa::scalbnf as *const ()),
+            scalblnf: dlsym_oracle::host_fn(c"scalblnf", fa::scalblnf as *const ()),
+            errno_location: dlsym_oracle::host_fn(
+                c"__errno_location",
+                errno_abi::__errno_location as *const (),
+            ),
+        }
+    }
+}
+
+impl HostArm {
+    fn clear_errno(&self) {
+        // SAFETY: the resolved location is glibc's per-thread errno slot.
+        unsafe { *(self.errno_location)() = 0 };
+    }
+    fn erange(&self) -> bool {
+        // SAFETY: as above.
+        unsafe { *(self.errno_location)() == ERANGE }
+    }
 }
 
 #[test]
@@ -120,5 +182,107 @@ fn scaling_range_matches_glibc() {
         "scaling range-error divergences vs glibc ({}):\n  {}",
         div.len(),
         div.join("\n  ")
+    );
+}
+
+/// The same rows, value AND errno, against the glibc that is actually running.
+#[test]
+fn scaling_range_matches_live_glibc_on_the_same_rows() {
+    let h = host();
+    let mut fl_vs_live: Vec<String> = Vec::new();
+    let mut compared = 0usize;
+
+    macro_rules! both64 {
+        ($lbl:literal, $fl:expr, $host:expr) => {{
+            clr();
+            let fr: f64 = unsafe { $fl };
+            let fe = erange();
+            h.clear_errno();
+            // SAFETY: the host arm's signature was checked at resolution.
+            let hr: f64 = unsafe { $host };
+            let he = h.erange();
+            compared += 1;
+            if (fr.to_bits(), fe) != (hr.to_bits(), he) {
+                fl_vs_live.push(format!(
+                    "{}: fl bits={:016x}/erange={} live bits={:016x}/erange={}",
+                    $lbl,
+                    fr.to_bits(),
+                    fe,
+                    hr.to_bits(),
+                    he
+                ));
+            }
+        }};
+    }
+    macro_rules! both32 {
+        ($lbl:literal, $fl:expr, $host:expr) => {{
+            clr();
+            let fr: f32 = unsafe { $fl };
+            let fe = erange();
+            h.clear_errno();
+            // SAFETY: the host arm's signature was checked at resolution.
+            let hr: f32 = unsafe { $host };
+            let he = h.erange();
+            compared += 1;
+            if (fr.to_bits(), fe) != (hr.to_bits(), he) {
+                fl_vs_live.push(format!(
+                    "{}: fl bits={:08x}/erange={} live bits={:08x}/erange={}",
+                    $lbl,
+                    fr.to_bits(),
+                    fe,
+                    hr.to_bits(),
+                    he
+                ));
+            }
+        }};
+    }
+
+    // (1) the i64 exponent clamp. glibc's scalbln takes a C `long`, so these
+    // rows pass the same bit pattern to both arms and the clamp is compared
+    // rather than assumed.
+    both64!("scalbln(1,LMAX)", fa::scalbln(1.0, i64::MAX), (h.scalbln)(1.0, c_long::MAX));
+    both64!("scalbln(1,LMIN)", fa::scalbln(1.0, i64::MIN), (h.scalbln)(1.0, c_long::MIN));
+    both64!("scalbln(1,2^31)", fa::scalbln(1.0, 2147483648), (h.scalbln)(1.0, 2147483648));
+    both64!(
+        "scalbln(1,-2^31-1)",
+        fa::scalbln(1.0, -2147483649),
+        (h.scalbln)(1.0, -2147483649)
+    );
+    both64!("scalbln(0,LMAX)", fa::scalbln(0.0, i64::MAX), (h.scalbln)(0.0, c_long::MAX));
+    both64!(
+        "scalbln(inf,LMIN)",
+        fa::scalbln(f64::INFINITY, i64::MIN),
+        (h.scalbln)(f64::INFINITY, c_long::MIN)
+    );
+    both32!("scalblnf(1,LMAX)", fa::scalblnf(1.0, i64::MAX), (h.scalblnf)(1.0, c_long::MAX));
+    both32!(
+        "scalblnf(1,2^31)",
+        fa::scalblnf(1.0, 2147483648),
+        (h.scalblnf)(1.0, 2147483648)
+    );
+    both32!("scalblnf(1,LMIN)", fa::scalblnf(1.0, i64::MIN), (h.scalblnf)(1.0, c_long::MIN));
+
+    // (2) ERANGE on underflow only when the result is exactly 0.
+    both64!("scalbn(1,-1050)", fa::scalbn(1.0, -1050), (h.scalbn)(1.0, -1050));
+    both64!("scalbn(1,-1074)", fa::scalbn(1.0, -1074), (h.scalbn)(1.0, -1074));
+    both64!("scalbn(1,-1075)", fa::scalbn(1.0, -1075), (h.scalbn)(1.0, -1075));
+    both64!("scalbn(1.5,-1074)", fa::scalbn(1.5, -1074), (h.scalbn)(1.5, -1074));
+    both64!("scalbn(1,-1022)", fa::scalbn(1.0, -1022), (h.scalbn)(1.0, -1022));
+    both64!("scalbn(1,1024)", fa::scalbn(1.0, 1024), (h.scalbn)(1.0, 1024));
+    both64!("ldexp(1,-1075)", fa::ldexp(1.0, -1075), (h.ldexp)(1.0, -1075));
+    both64!("ldexp(1,-1074)", fa::ldexp(1.0, -1074), (h.ldexp)(1.0, -1074));
+    both32!("scalbnf(1,-149)", fa::scalbnf(1.0, -149), (h.scalbnf)(1.0, -149));
+    both32!("scalbnf(1,-150)", fa::scalbnf(1.0, -150), (h.scalbnf)(1.0, -150));
+    both32!("scalbnf(1,128)", fa::scalbnf(1.0, 128), (h.scalbnf)(1.0, 128));
+
+    // The golden test above covers 20 rows; a live run that silently covered
+    // fewer would be the same "green while testing nothing" this gate exists to
+    // rule out.
+    assert_eq!(compared, 20, "not every row reached the live arm");
+    assert!(
+        fl_vs_live.is_empty(),
+        "scaling range: {} row(s) where fl and the running glibc disagree on value or ERANGE:\n  {}",
+        fl_vs_live.len(),
+        fl_vs_live.join("\n  ")
     );
 }
