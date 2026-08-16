@@ -27507,3 +27507,69 @@ What this changes, and what it does not:
   anyone spends a multi-turn Schubfach port, profile the float path end to end and find what the
   other ~230ns per call actually is; `%d` through the same framing costs 15.4ns, so the float
   overhead is float-specific and is not the framing either.
+
+## 2026-08-16 (BlackThrush) — CAMPAIGN WIN, REPLICATED: `snprintf` is AT LEAST 1.82x faster than live glibc, worst case, across two workers
+
+- **RESULT CLASS:**
+  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
+  `incumbent_ratio=0.549066`;
+  `incumbent_bootstrap_median_ci=[0.546772,0.549066]`;
+  `null_bootstrap_median_ci=[0.998078,1.004353]`;
+  `bench_elf_sha256=e99c0bc12cfb57ca1f3c864a8970ffd9451e47da4b4e60293ec41cccbeba3039`;
+  `cv_used=false`.
+  The quoted `incumbent_ratio` is the WORST bound either replicate produced, not the headline.
+- **THE CONSERVATIVE STANDING.** Two independent runs, two different workers, two different fl
+  objects. For each format the bound below is the HIGHEST CI upper bound either run produced — the
+  least favourable reading, not the best one:
+
+  | format | conservative bound | i.e. at least |
+  |---|---|---|
+  | `%p` | 0.549066 | **1.82x faster** |
+  | `%s` | 0.453905 | 2.20x faster (single worker, see below) |
+  | `%d` | 0.408890 | 2.44x faster |
+  | `%u` | 0.377742 | 2.65x faster |
+  | `%c` | 0.333016 | 3.00x faster |
+
+  So the defensible one-line claim is **"snprintf is at least 1.82x faster than live glibc on its
+  worst format, and at least 2.4x on integer and character formats"**, NOT the 3.0x headline.
+- **REPLICATE A.** Worker `hz1`, harness `incumbent_coverage_ab --family snprintf --pin-quietest 4`,
+  fl object `1b598128b1fb35525059899e6216f7d4522e613c810901ea0dd3bf54531ff8b5`, `samples=36`,
+  `reps_per_arm=200000`, exclusivity clear pre and post, one thread observed. Effects with bootstrap
+  median CIs: `%u` 0.376448 [0.375416,0.377742]; `%p` 0.548010 [0.546772,0.549066]; `%c` 0.332434
+  [0.331569,0.333016]; `%d` 0.407874 [0.407375,0.408890]; `%s` 0.451700 [0.451009,0.453905]. All ten
+  A/A nulls inside the 0.020 tolerance. `DECIDABLE cases=5 wins=5 losses=0`.
+- **REPLICATE B.** Worker `vmi1167313` (different hardware, 6 logical CPUs), same bench ELF, fl
+  object `509d590c43ef984766c336637851b4fab83d5dc89f9c2e17270e965a1c4a6241` — a NEWER object that
+  includes the same-day printf and resolv commits, disclosed because it is not the same binary as
+  replicate A. Load was low and STABLE across the run (0.02 before, 0.15 after). Effects: `%u`
+  0.320644 [0.314494,0.333282]; `%p` 0.444962 [0.441076,0.466400]; `%c` 0.326136
+  [0.318139,0.331915]; `%d` 0.364734 [0.345215,0.380181]. Every case is FASTER and every effect
+  clears twice its null half-width.
+- **ONE CASE IS EXCLUDED FROM THE REPLICATE, BY ITS OWN NULL.** `string_bare` on replicate B had
+  `null_glibc_glibc ratio_median=0.973236`, OUTSIDE the 0.020 tolerance, so the harness marked the
+  family `INCOMPLETE cases=5 wins=4 losses=0 undecidable=1` and that case contributes nothing. Its
+  bound above therefore rests on replicate A alone and is labelled as such. A failed null invalidates
+  its row; it does not get quietly averaged in.
+- **WHY THE BOUND IS LOWER THAN EITHER HEADLINE.** Replicate B is faster in every case (0.32-0.44
+  against A's 0.33-0.55), so quoting B, or quoting A's `%c`, would overstate what is reproducible.
+  Taking the worst upper bound across both machines is the number that survives someone re-running
+  this on hardware I have not tried.
+- **THE A/A NULL CONTROLS, pipe-free, both replicates.** Each case carries two same-invocation A/A
+  controls, each a bootstrap median with a bootstrap median CI, tolerance 0.020.
+  Replicate A, worker hz1: `%p` A/A null FL/FL median 0.999141, bootstrap median CI
+  [0.997599,1.000117], and A/A null glibc/glibc median 1.000354, bootstrap median CI
+  [0.998078,1.004353]; `%u` A/A null glibc/glibc median 1.001240, bootstrap median CI
+  [0.998194,1.003419]; `%c` A/A null FL/FL median 1.000070, bootstrap median CI [0.998716,1.001035];
+  `%d` A/A null FL/FL median 1.000235, bootstrap median CI [0.998158,1.002204]; `%s` A/A null FL/FL
+  median 1.001770, bootstrap median CI [0.998337,1.003563].
+  Replicate B, worker vmi1167313: `%u` A/A null FL/FL median 0.996705, bootstrap median CI
+  [0.976357,1.021740], and A/A null glibc/glibc median 0.996251, bootstrap median CI
+  [0.980728,1.013115]; `%p` A/A null FL/FL median 1.004773, bootstrap median CI [0.997113,1.021588],
+  and A/A null glibc/glibc median 1.000402, bootstrap median CI [0.996407,1.002471]; `%c` A/A null
+  FL/FL median 1.000537, bootstrap median CI [0.971187,1.044931]; `%d` A/A null FL/FL median
+  1.006056, bootstrap median CI [0.984362,1.034168]. The one A/A null that FAILED is replicate B's
+  `%s` glibc/glibc at median 0.973236, which is why that case is excluded above.
+- **CORRECTNESS, unchanged and asserted before timing in BOTH runs:**
+  `comparisons=369 mismatches=0 compared=return_value_and_full_destination verdict=pass` across
+  `%u,%p,%c,%d,%s`.
