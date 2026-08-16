@@ -27573,3 +27573,43 @@ What this changes, and what it does not:
 - **CORRECTNESS, unchanged and asserted before timing in BOTH runs:**
   `comparisons=369 mismatches=0 compared=return_value_and_full_destination verdict=pass` across
   `%u,%p,%c,%d,%s`.
+
+## 2026-08-16 (BlackThrush) — MEASURED LOSS, and the new WORST ratio: fused multi-conversion `snprintf` is 3.12-3.31x slower than glibc
+
+- **RESULT CLASS: loss/baseline.** This is the same `snprintf` symbol that the same-day CAMPAIGN WIN
+  measures at 0.33-0.55x on SINGLE conversions. Both rows are true, and the pair is the finding.
+- **APPARATUS.** Harness `incumbent_coverage_ab --family snprintf_fused --pin-quietest 4`, worker
+  `vmi1167313`, `samples=36`, one thread observed pre and post, exclusivity clear pre and post,
+  incumbent reached by `direct_process_link`. Load low and STABLE across the run (0.06 before, 0.60
+  after). Bench ELF `e99c0bc12cfb57ca…`, fl object `509d590c43ef9847…`, incumbent
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`.
+- **CORRECTNESS FIRST.** `INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_fused shapes=11
+  destination_sizes=9 destination_bytes=128 comparisons=99 mismatches=0` — fl produces glibc's exact
+  bytes for all eleven shapes, and is simply slower.
+- **THE THREE CASES**, fl nanoseconds against live glibc nanoseconds, each with its FL/glibc
+  bootstrap median and bootstrap median CI. All six A/A nulls are inside the 0.020 tolerance and
+  every effect clears twice its null half-width:
+  `syslog_line` 563.348 against 170.368, effect 3.306192 CI [3.212339,3.339345]; A/A null FL/FL
+  median 1.004323 CI [0.980696,1.045332], A/A null glibc/glibc median 0.997054 CI
+  [0.969512,1.011156].
+  `http_log` 702.980 against 223.393, effect 3.122353 CI [3.001211,3.313668]; A/A null FL/FL median
+  0.990071 CI [0.949810,1.006126], A/A null glibc/glibc median 1.008325 CI [0.979603,1.025377].
+  `kv_join` 633.316 against 191.111, effect 3.292032 CI [3.169907,3.366995]; A/A null FL/FL median
+  1.004805 CI [0.984103,1.013532], A/A null glibc/glibc median 0.997807 CI [0.979382,1.011326].
+  Every effect CI lies entirely above one.
+- **THIS IS NOW THE WORST MEASURED RATIO ON THE LIBC SURFACE**, ahead of `sinhf`/`coshf` (2.26-2.61x)
+  and well ahead of the dtoa path (1.56-1.78x) that the campaign had been treating as the float
+  problem. It also displaces the assumption that `snprintf` is a solved surface.
+- **THE SHAPE IS THE LEVER, and it is visible without a profiler.** fl WINS single-conversion formats
+  by 1.8-3.0x and LOSES multi-conversion formats by 3.1-3.3x, on the same symbol, in the same
+  process, with byte-identical output. A cost that inverts between one conversion and several is
+  PER-CONVERSION or PER-SEGMENT, not per-call: fl's fixed entry cost is clearly lower than glibc's
+  (that is the single-conversion win), so the crossover means each additional conversion costs fl
+  much more than it costs glibc. These are the highest-traffic real shapes there are — a syslog line,
+  an HTTP access-log line, a key/value join.
+- **RETRY PREDICATE / NEXT STEP.** Count conversions per format and measure the slope, not just the
+  ratio: time a 1-, 2-, 4- and 8-conversion format on one worker and fit fl and glibc separately. If
+  fl's slope is the problem, the target is the per-segment path in `render_segments` (the
+  `FormatSegment` loop and its per-conversion arg read), NOT the digit kernels, which the same-day
+  value-set walk already cleared for the float case. Do not start a Schubfach port on the strength of
+  this row.
