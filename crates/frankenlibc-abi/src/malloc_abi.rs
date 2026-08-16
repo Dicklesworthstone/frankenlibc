@@ -954,11 +954,38 @@ fn activate_segment_slot(
         0 | SEGMENT_SLOT_FREE
     ));
     if zeroed {
-        // SAFETY: the caller exclusively removed this slot from its local
-        // magazine/spill bitmap or advanced its private bump cursor.  The
-        // pointer is not externally observable until this function returns.
-        unsafe {
-            std::ptr::write_bytes(view.user_base as *mut u8, 0, requested as usize);
+        // A slot that has NEVER been handed out still holds the pages the arena
+        // was mapped with, and that mapping is `MAP_PRIVATE | MAP_ANONYMOUS`,
+        // which the kernel guarantees zero-filled on first touch. Zeroing it
+        // again is pure work, so `calloc` skips it.
+        //
+        // The slot's own metadata already distinguishes the two states, and the
+        // debug assertion above is the statement of that invariant: `0` means
+        // never activated, `SEGMENT_SLOT_FREE` means live-then-retired. Only the
+        // second can hold a previous caller's bytes.
+        //
+        // THREE FACTS MAKE THE ELISION SOUND, all checked rather than assumed:
+        //   1. the arena mapping is MAP_ANONYMOUS (see `initialize_segment_arena`),
+        //      so untouched payload pages read as zero;
+        //   2. slot metadata lives in a SEPARATE sidecar mapping
+        //      (`SegmentDescriptor::meta_base`), so fl never writes into a
+        //      slot's payload to bookkeep it;
+        //   3. nothing writes a poison or canary pattern into a freed payload --
+        //      the only zero-fills in this file are this one and the non-strict
+        //      `calloc` path.
+        // If any of those three ever changes, `calloc_reuses_a_freed_slot_zeroed`
+        // fails, because it frees a slot it has filled with 0xAA and re-callocs it.
+        //
+        // The load is paid only by `calloc`; `malloc` passes `zeroed = false` and
+        // never reaches it.
+        let previously_handed_out = view.meta.requested_size.load(Ordering::Acquire) != 0;
+        if previously_handed_out {
+            // SAFETY: the caller exclusively removed this slot from its local
+            // magazine/spill bitmap or advanced its private bump cursor.  The
+            // pointer is not externally observable until this function returns.
+            unsafe {
+                std::ptr::write_bytes(view.user_base as *mut u8, 0, requested as usize);
+            }
         }
     }
     // Magazine pop, spill-bit CAS, and the owner-only bump cursor are three

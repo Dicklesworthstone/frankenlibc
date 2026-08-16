@@ -1777,3 +1777,96 @@ fn campaign_measured_sizes_take_the_address_derived_segment_path() {
     // SAFETY: `p` came from `malloc` above and is freed exactly once.
     unsafe { free(p) };
 }
+
+/// `calloc` must return zeroed memory whether the slot is fresh or recycled.
+///
+/// `activate_segment_slot` skips the zero-fill for a slot that has never been
+/// handed out, because such a slot still holds the `MAP_ANONYMOUS` pages the
+/// arena was mapped with. This is the test that keeps that elision honest: it
+/// dirties a slot with 0xAA, frees it, and re-`calloc`s the same size, which is
+/// exactly the path a naive "the arena is zeroed" argument gets wrong.
+///
+/// Both halves matter. The fresh half would pass even with the zero-fill
+/// removed unconditionally, so on its own it proves nothing about the elision;
+/// the recycled half is the one that fails if the skip ever widens.
+#[test]
+fn calloc_returns_zeroed_memory_fresh_and_recycled() {
+    signal_runtime_ready_for_tests();
+
+    for size in [16usize, 48, 256, 1024] {
+        // Fresh: whatever slot this lands on, the result must be zero.
+        // SAFETY: single-element calloc of `size` bytes.
+        let fresh = unsafe { calloc(1, size) };
+        assert!(!fresh.is_null(), "calloc(1, {size}) returned NULL");
+        // SAFETY: `fresh` is a live allocation of at least `size` bytes.
+        let fresh_bytes = unsafe { std::slice::from_raw_parts(fresh.cast::<u8>(), size) };
+        assert!(
+            fresh_bytes.iter().all(|&b| b == 0),
+            "calloc(1, {size}) returned non-zero bytes on a fresh slot"
+        );
+
+        // Dirty it, hand it back, and take it again. The slot is now recycled,
+        // so the zero-fill must run.
+        // SAFETY: `fresh` is live and `size` bytes are writable.
+        unsafe { std::ptr::write_bytes(fresh.cast::<u8>(), 0xAA, size) };
+        // SAFETY: `fresh` came from this allocator and is freed once.
+        unsafe { free(fresh) };
+
+        // SAFETY: single-element calloc of the same size, which is what makes
+        // the previously-dirtied slot the likely one to come back.
+        let recycled = unsafe { calloc(1, size) };
+        assert!(!recycled.is_null(), "recycled calloc(1, {size}) returned NULL");
+        // SAFETY: `recycled` is a live allocation of at least `size` bytes.
+        let recycled_bytes = unsafe { std::slice::from_raw_parts(recycled.cast::<u8>(), size) };
+        assert!(
+            recycled_bytes.iter().all(|&b| b == 0),
+            "calloc(1, {size}) returned 0xAA bytes from a recycled slot — the fresh-slot \
+             zero-fill elision in activate_segment_slot has widened to slots that were \
+             previously handed out"
+        );
+        // SAFETY: `recycled` came from this allocator and is freed once.
+        unsafe { free(recycled) };
+    }
+}
+
+/// The elision must not survive a `realloc` that shrinks and re-grows a slot.
+///
+/// `segment_resize_in_place` rewrites a slot's requested size without moving it,
+/// so a slot can carry a caller's bytes while its metadata says something
+/// smaller. If the freshness test ever keyed on the requested size rather than
+/// on "was this slot ever handed out", this is where it would break.
+#[test]
+fn calloc_after_realloc_shrink_and_free_is_zeroed() {
+    signal_runtime_ready_for_tests();
+
+    // SAFETY: plain allocation, then dirty every byte.
+    let p = unsafe { malloc(1024) };
+    assert!(!p.is_null());
+    // SAFETY: `p` is live and 1024 bytes are writable.
+    unsafe { std::ptr::write_bytes(p.cast::<u8>(), 0xBB, 1024) };
+
+    // SAFETY: shrink in place; the block stays in its original class.
+    let shrunk = unsafe { realloc(p, 32) };
+    assert!(!shrunk.is_null());
+    // SAFETY: `shrunk` came from realloc above and is freed once.
+    unsafe { free(shrunk) };
+
+    // Re-request the ORIGINAL class size, not the shrunk one. A shrinking
+    // realloc leaves the block in its original, larger class, so the freed slot
+    // returns to the 1024 magazine -- asking for 32 here would draw from a
+    // different class and never touch the dirtied slot at all. That is not a
+    // hypothetical: the first version of this test did exactly that and passed
+    // even with the zero-fill removed unconditionally, which is how the flaw was
+    // found rather than shipped.
+    // SAFETY: single-element calloc of the original class size.
+    let z = unsafe { calloc(1, 1024) };
+    assert!(!z.is_null());
+    // SAFETY: `z` is a live allocation of at least 1024 bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(z.cast::<u8>(), 1024) };
+    assert!(
+        bytes.iter().all(|&b| b == 0),
+        "calloc after a shrink/free cycle returned 0xBB — the slot was treated as never used"
+    );
+    // SAFETY: `z` came from calloc above and is freed once.
+    unsafe { free(z) };
+}

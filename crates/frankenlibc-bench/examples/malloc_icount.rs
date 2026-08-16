@@ -35,6 +35,7 @@ use std::ffi::c_void;
 
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
+type CallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 
 fn dl<T: Copy>(handle: *mut c_void, name: &[u8]) -> T {
     // SAFETY: handle came from dlmopen; name is a NUL-terminated byte string.
@@ -89,6 +90,65 @@ fn main() {
         }
         other => panic!("unknown arm {other:?}; expected 'fl' or 'glibc'"),
     };
+
+    // GROWTH MODE (`malloc_icount <arm> growth`): calloc a run of blocks and
+    // free them only at the END, instead of churning one block at a time.
+    //
+    // WHY IT IS A SEPARATE MODE. fl's `calloc` skips the zero-fill for a segment
+    // slot that has never been handed out, because those pages are still the
+    // MAP_ANONYMOUS zeros the arena was mapped with. A churn loop frees each
+    // block immediately, so the next call recycles the same slot and the skip
+    // NEVER fires -- measuring churn would report "no effect" for a change that
+    // only applies to growth, which is the shape real calloc callers have.
+    if std::env::args().nth(2).as_deref() == Some("growth") {
+        let calloc_fn: CallocFn = match arm.as_str() {
+            "fl" => frankenlibc_abi::malloc_abi::calloc,
+            "glibc" => {
+                // SAFETY: LM_ID_NEWLM with a NUL-terminated soname, as above.
+                let handle = unsafe {
+                    libc::dlmopen(
+                        libc::LM_ID_NEWLM,
+                        c"libc.so.6".as_ptr(),
+                        libc::RTLD_NOW | libc::RTLD_LOCAL,
+                    )
+                };
+                assert!(!handle.is_null(), "dlmopen libc.so.6");
+                dl(handle, b"calloc\0")
+            }
+            other => panic!("unknown arm {other:?}"),
+        };
+        let live = pairs();
+        let mut checksum = 0u64;
+        let mut held: Vec<*mut core::ffi::c_void> = Vec::with_capacity(live);
+        for size in SIZES {
+            for _ in 0..live {
+                // SAFETY: one element of `size` bytes; every pointer is freed
+                // once below through the same arm.
+                let p = unsafe { calloc_fn(1, std::hint::black_box(size)) };
+                // Touch the first byte so a zero-fill that did not happen would
+                // show up as a wrong checksum rather than as free speed.
+                // SAFETY: `p` is live and at least one byte wide.
+                // Order-sensitive mix, NOT an XOR. An XOR of fl's addresses
+                // cancelled to exactly 0x0 -- indistinguishable from what a loop
+                // that had been optimised away would print, which defeats the
+                // whole point of carrying a checksum.
+                checksum = checksum
+                    .wrapping_mul(0x100_0000_01b3)
+                    .wrapping_add(p as u64)
+                    .wrapping_add(unsafe { *p.cast::<u8>() } as u64);
+                held.push(p);
+            }
+            for p in held.drain(..) {
+                // SAFETY: allocated by this arm just above, freed exactly once.
+                unsafe { free_fn(std::hint::black_box(p)) };
+            }
+        }
+        println!(
+            "CALLOC_ICOUNT arm={arm} mode=growth live_per_size={live} sizes={SIZES:?} \
+             checksum=0x{checksum:x}"
+        );
+        return;
+    }
 
     // Checksum-accumulate the pointers so the loop cannot be optimised away and
     // so a miscompiled arm shows up as a different checksum rather than as a
