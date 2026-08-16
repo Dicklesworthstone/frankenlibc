@@ -311,3 +311,52 @@ fn vsnprintf_fixed_reads_the_fp_register_save_area() {
     assert!(compared > 50_000, "only {compared} vsnprintf comparisons ran");
     println!("vsnprintf: compared {compared} triples against host glibc");
 }
+
+/// Forge a va_list for fl's `vsprintf`, the unbounded va_list twin.
+///
+/// Landed BEFORE the fast path it will gate, deliberately. Right now vsprintf
+/// takes the general path for floats, so this arm establishes the baseline the
+/// optimisation must preserve; when the probe is added it becomes the gate that
+/// holds it. A gate written after the change can only confirm the change agrees
+/// with itself.
+unsafe extern "C" fn fl_vsprintf_shim(
+    buf: *mut c_char,
+    fmt: *const c_char,
+    mut ap: ...
+) -> c_int {
+    // SAFETY: the caller passes exactly the arguments `fmt` names.
+    unsafe { frankenlibc_abi::stdio_abi::vsprintf(buf, fmt, &mut ap as *mut _ as *mut c_void) }
+}
+
+#[test]
+fn vsprintf_fixed_matches_glibc() {
+    let host = host_snprintf();
+    let mut compared = 0usize;
+    for (fmt, label) in formats() {
+        for &value in &values() {
+            let mut fbuf = [FILL; CAP];
+            // SAFETY: CAP exceeds the longest %.Nf rendering for N <= 12, and
+            // vsprintf's contract is an unbounded caller buffer.
+            let frc = unsafe {
+                fl_vsprintf_shim(fbuf.as_mut_ptr().cast::<c_char>(), fmt.as_ptr(), value)
+            };
+            let (grc, gbuf) = render_host(host, &fmt, value, CAP);
+            assert_eq!(
+                frc, grc,
+                "vsprintf {label} of {value:?} [{:#018x}]: return fl={frc} glibc={grc} — a wrong \
+                 value here usually means the double was read from the GP register save area \
+                 instead of the FP one",
+                value.to_bits()
+            );
+            let n = grc.max(0) as usize;
+            assert_eq!(
+                &fbuf[..=n], &gbuf[..=n],
+                "vsprintf {label} of {value:?} [{:#018x}]: bytes differ",
+                value.to_bits()
+            );
+            compared += 1;
+        }
+    }
+    assert!(compared > 10_000, "only {compared} vsprintf comparisons ran");
+    println!("vsprintf: compared {compared} (format, value) pairs against host glibc");
+}
