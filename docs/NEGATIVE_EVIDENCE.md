@@ -28873,3 +28873,44 @@ What this changes, and what it does not:
 - **HOUSEKEEPING.** Every row I have banked already records `loadavg` in its apparatus line
   (frankenlibc-test 2.01, hetzner2 2.83, and the blocked vmi1152480 10.37), so no back-fill is
   needed. Current host loadavg while writing this: 18.89, 29.61, 28.95 — no measurement attempted.
+
+## 2026-08-16 (BlackThrush) — getrandom 92.17x REPLICATES at 91.58x on a different binary, quiet window
+
+- **RESULT CLASS: loss/baseline.** Independent confirmation of the campaign's worst ratio. fl is
+  slower; no speedup claimed.
+- **WHY THIS IS NOT A RE-RUN.** The 92.17x row was a single observation, and a 92x number deserves
+  replication before anyone designs against it. This run used a **different bench binary** -- the
+  harness changed under `ac774700b`, so `BENCH_ELF_OBJECT sha256` moved from
+  `24d6ebb428391540f8611c6acccd042922bb3a848af1898d287de5da44d3b82f` to
+  `275b6f6c06ab5223d1e1431bf1cd22ad39e176895e673162245629e5a9d9259f` -- at a different load. Agreement
+  across both is what makes the finding load-bearing.
+
+  | case | run 1 (ELF 24d6ebb4, loadavg 11.70) | run 2 (ELF 275b6f6c, loadavg 15.93) | agreement |
+  |---|---|---|---|
+  | zero_bytes | 92.174166 | **91.580141** [91.021389,92.259375] | 0.6% |
+  | one_byte | 75.931691 | 77.299343 [76.309634,77.927292] | 1.8% |
+  | thirty_two_bytes | 10.684455 | 10.855668 [10.713475,10.985162] | 1.6% |
+  | two_fifty_six_bytes | 3.039052 | 3.112790 [3.088280,3.134272] | 2.4% |
+
+- **Run 2 provenance and nulls.** Single invocation, `--family getrandom --pin-quietest 8`,
+  thinkstation1, `HOST_IDENTITY loadavg=15.93,25.13,28.39`. `INCUMBENT_COVERAGE_VERDICT
+  verdict=DECIDABLE cases=4 wins=0 losses=4 undecidable=0`. Every same-invocation A/A null median is
+  inside the 0.020 bias tolerance: null_fl_fl 0.999211 / 0.994316 / 0.996369 / 0.998476, and
+  null_glibc_glibc 1.001579 / 1.007995 / 1.000394 / 1.003079. `FL_OBJECT sha256
+  faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b`; `INCUMBENT_OBJECT
+  /usr/lib/x86_64-linux-gnu/libc.so.6 sha256
+  6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`; `ARM_DISTINCT` holds
+  (incumbent 0x77313c649fa0, fl 0x77312b4c37d0); conformance passed 5 comparisons over lengths
+  0/1/32/256 and flags 0/GRND_NONBLOCK before timing.
+- **The size-collapse signature reproduces exactly** -- 91.6 -> 77.3 -> 10.9 -> 3.1. Fixed per-call
+  overhead, confirmed twice, not a one-run artifact.
+- **STILL UNMEASURED, so the frontier is confirmed-worst-so-far and not proven-worst.** Of 17
+  families, these remain unmeasured at HEAD: `getaddrinfo_hosts`, `gethostbyaddr`, `gethostbyname`,
+  `snprintf`, `snprintf_fused`, `snprintf_float`, `fprintf_float`, `sscanf`, `sinhf_coshf`,
+  `malloc_free` (measured separately by its own probe), and `nl_langinfo` (returned no contract
+  rows). `wcsnrtombs` reports `runner_not_yet_implemented` -- it has no runner, so it can never
+  contribute a row and should not be counted as covered. Two attempts at `sinhf_coshf` were
+  BLOCKED by the quiet gate even pinned, because the gate is HOST-WIDE rather than cpuset-scoped:
+  at loadavg 39 it burned its full 300000 ms on 300 samples with `cpu16=65.7%`. Anyone finishing
+  this sweep needs a genuinely quiet host, not merely a pinned cpuset, and must allow more than
+  300 s per family.
