@@ -27648,3 +27648,80 @@ What this changes, and what it does not:
 - **This corroborates bd-5pagbr from an independent direction.** Shrinking `FormatSegment` by 37.5%
   did not help because the segment REPRESENTATION is not what costs; what happens per conversion is.
   Two different methods, same conclusion.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup on 6 of 7 shapes, one regression): a plain-`%s` per-conversion fast path, with `http_log` 5.9% slower
+
+- **RESULT CLASS:**
+  `result_class=self-speedup`; `same_invocation=true`;
+  `self_effect_ratio=0.938`;
+  `self_effect_bootstrap_median_ci=[0.925,0.951]`;
+  `null_bootstrap_median_ci=[0.999466,1.001210]`;
+  `bench_elf_sha256=843ae5ea4a2c631658c25639c5706c4aac51eb3b68c13187b891c8c2be729a3e`;
+  `cv_used=false`.
+  NOT a campaign win: fl remains 3.27x slower than glibc at best here. This measures fl against its
+  own prior object, and the worst bound it produced is a REGRESSION, quoted below.
+- **ARM PROVENANCE, self-reported in process.** `BENCH_ELF_OBJECT sha256=`
+  843ae5ea4a2c631658c25639c5706c4aac51eb3b68c13187b891c8c2be729a3e; base `FL_OBJECT sha256=`
+  d6c802d9c2097651b91d9c378b500c17714d0b6aa0508f6dd5bfb447eb661415; candidate `FL_OBJECT sha256=`
+  faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b; `INCUMBENT_LINKAGE
+  direct_process_link`; `ARM_DISTINCT incumbent_address=0x70db5826a9b0 fl_address=0x70db47104c50`.
+- **THE A/A NULL CONTROLS, pipe-free, same-invocation, each a bootstrap median with a bootstrap
+  median confidence interval.**
+  Base arm, syslog_line: A/A null FL/FL median 1.000296, bootstrap median CI 0.999466 to 1.001210.
+  Base arm, http_log: A/A null FL/FL median 0.999585, bootstrap median CI 0.998203 to 1.001082.
+  Base arm, kv_join: A/A null FL/FL median 0.999102, bootstrap median CI 0.998208 to 1.001104.
+  Base arm, ladder_2s: A/A null FL/FL median 0.998397, bootstrap median CI 0.996354 to 1.002282.
+  Base arm, ladder_3s: A/A null FL/FL median 0.998952, bootstrap median CI 0.995508 to 1.002646.
+  Base arm, ladder_4s: A/A null FL/FL median 0.999324, bootstrap median CI 0.997199 to 1.000134.
+  Base arm, ladder_6s: A/A null FL/FL median 1.000351, bootstrap median CI 0.998692 to 1.002228.
+  Candidate arm, syslog_line: A/A null FL/FL median 1.000783, bootstrap median CI 0.997396 to 1.005474.
+  Candidate arm, http_log: A/A null FL/FL median 1.004488, bootstrap median CI 0.998636 to 1.008727.
+  Candidate arm, kv_join: A/A null FL/FL median 1.001138, bootstrap median CI 0.994552 to 1.004210.
+  Candidate arm, ladder_2s: A/A null FL/FL median 0.999765, bootstrap median CI 0.995246 to 1.005288.
+  Candidate arm, ladder_3s: A/A null FL/FL median 0.999727, bootstrap median CI 0.995971 to 1.002415.
+  Candidate arm, ladder_4s: A/A null FL/FL median 1.000280, bootstrap median CI 0.996989 to 1.001493.
+  Candidate arm, ladder_6s: A/A null FL/FL median 0.999497, bootstrap median CI 0.998145 to 1.001249.
+  All fourteen sit within 0.9946 to 1.0087, so none of the 6-9% effects below is null-sized.
+- **The hypothesis under test.** The ladder regression (same day) put roughly three quarters of the
+  fused gap in the PER-CONVERSION term: fl 62.354 ns/conversion against glibc 18.922. That predicted
+  a per-conversion lever should move the family and a fixed-cost lever should not. This tests the
+  first half of that prediction.
+- **The change.** In `render_segments`, a fast path for a plain narrow `%s` — no width, no precision,
+  no flags, no length modifier, non-positional, narrow output — that copies the bytes straight into
+  the buffer. Byte-identical by construction: with `Width::None`, `Precision::None` and no
+  `left_justify`, `format_str` reduces to exactly `extend_from_slice` (`max_len` becomes `s.len()`,
+  `pad_total` becomes 0, both `pad` calls are no-ops), and the NULL spelling with `Precision::None`
+  is exactly `b"(null)"` through that same reduction.
+- **Measured on hz1, ABBA over two cycles, load 2.07 falling to 1.04, bench ELF
+  843ae5ea4a2c631658c25639c5706c4a, base object d6c802d9c2097651, candidate
+  faf3aedb2943073c7fc1d122d4da6b63.**
+
+  | case | base cycle 1 / 2 | candidate cycle 1 / 2 | direction |
+  |---|---|---|---|
+  | kv_join | 3.693592 / 3.691591 | 3.379334 / 3.360989 | 8.7% faster |
+  | ladder_6s | 3.621063 / 3.743163 | 3.358375 / 3.357708 | 8.8% faster |
+  | ladder_4s | 3.675314 / 3.679383 | 3.408115 / 3.410665 | 7.3% faster |
+  | ladder_2s | 4.194945 / 4.159172 | 3.879794 / 3.837133 | 7.7% faster |
+  | ladder_3s | 4.372004 / 3.780336 | 3.504128 / 3.513655 | faster, noisy base |
+  | syslog_line | 3.532206 / 3.493787 | 3.267071 / 3.322704 | 6.2% faster |
+  | http_log | 3.161629 / 3.160494 | 3.351898 / 3.290515 | **5.9% SLOWER** |
+
+- **WORST BOUND: `http_log` 3.161629 to 3.351898, 5.9% slower.** That is the number to quote against
+  this lever.
+- **Why `http_log` and not the others, and it is not a mystery.** `%s %s %d %lu` is the only shape
+  where most conversions are NOT `%s`. Its `%d` and `%lu` segments pay the predicate and take nothing
+  from it. The six shapes that improve are `%s`-dominated. So the lever behaves exactly as its
+  mechanism predicts, in both directions.
+- **A caution about one row.** `ladder_3s`'s base arm read 4.372004 then 3.780336 — a 15% swing on
+  the SAME object between cycles. Its improvement is directionally consistent with its neighbours but
+  should not be quoted as a magnitude. `http_log`'s base, by contrast, was 3.161629 and 3.160494,
+  stable to 0.04%, which is why its regression is treated as real.
+- **What it establishes for bd-ntb9fq.** The per-conversion hypothesis is now supported from the
+  intervention side, not just the regression side: touching per-conversion work moved six shapes by
+  6-9%, where the FormatSegment representation change moved nothing. The remaining gap is still large
+  — 3.27x at best here against glibc — so this is a step on the term that matters, not a fix.
+- **The obvious follow-up, unmeasured and therefore not applied:** order the predicate so a non-`%s`
+  segment pays a single byte compare (`spec.conversion == b's'`) before anything else, which may
+  remove the `http_log` cost. It could not be measured this turn because /data fell to 58G, below the
+  59G build floor, and an unverified reorder is exactly the kind of change this ledger exists to
+  refuse.
