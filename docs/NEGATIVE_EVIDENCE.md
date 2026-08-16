@@ -28615,3 +28615,60 @@ What this changes, and what it does not:
   folded into the size-class work the allocator already does), or make it opt-in. Whatever fraction of
   124 survives that is the real win, and it must be re-measured rather than assumed — this vein has
   now refuted four predictions and one of my own attributions.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE: stop recomputing the size class the allocator already knows — malloc/free 7.27x -> 6.56x (bd-dcrhgl)
+
+- **RESULT CLASS: self-speedup.** fl measured against fl's own prior build. fl remains ~6.6x
+  SLOWER than glibc on this path; nothing here is a campaign win and no vs-incumbent claim is made.
+- **THE LEVER, and where it came from.** The stats histogram is indexed by size class. It recomputed
+  that class from the allocation size on every record, via `size_class::bin_index` and its 2KB
+  granule LUT, twice per malloc/free pair -- for a value the allocator had already computed and
+  thrown away. `segment_allocate` now returns the class it allocated from and `segment_free` returns
+  the retiring slot's `class_index`; the hot paths carry it into a new `record_*_stats_binned`.
+  Chosen from the callgrind attribution banked earlier today (`bin_index` = 22.0 instr/pair, reached
+  ONLY from stats binning), not from a steer.
+- **MEASUREMENT: two independent candidate builds, each run ABBA-square against the same baseline
+  binary, alternating arms inside one shell at one load.** 16 baseline rows and 16 candidate rows,
+  every row ADMISSIBLE.
+
+  | build | baseline (ELF 11bf7447…) | candidate | separation |
+  |---|---|---|---|
+  | first fold | 7.2012 – 7.2620 | 6.6995 – 6.7253 (ELF faf469da…) | complete |
+  | + resize fix | 7.2211 – 7.3046 | 6.5105 – 6.5974 (ELF d531bd26…) | complete |
+
+  Baseline `BENCH_ELF_OBJECT sha256 11bf74470ae8d7e6240d4dfed43920dc438108a83d04e0b4620f59ee397f960c`;
+  candidates `faf469da87a74f4862527675dda6616c071b1f5ebae65cf348d08ecb72e26033` and
+  `d531bd26da4e81ae3c80c8fe485967bc153a4d47a9d433bfa86c227abe342392`. The baseline was REBUILT from
+  `git show HEAD:` after the candidate and reproduced its sha byte-for-byte, so the two arms differ
+  only in this change.
+- **Nulls, same-invocation, contemporaneous with the rows above:** worst same-invocation A/A null_fl
+  = 1.0054 and worst same-invocation A/A null_glibc = 1.0042 across all 32 rows, both inside the
+  harness bound of +/-0.02. Bootstrap median CI95 on the tightest pairing: baseline sz=16
+  [7.2629,7.2710], candidate sz=16 [6.5527,6.5927] -- disjoint by a wide margin.
+- **Effect size, stated as a bound rather than a point.** Median 7.0% faster on the first build and
+  9.7% on the second; the two builds' arms both drifted (baseline +0.8%, candidate -2.2%), which is
+  the build-layout sensitivity already banked under the FormatSegment row. The defensible claim is
+  the WORST pairing across both builds: max candidate 6.7261 against min baseline 7.2012 = **>=6.6%
+  faster**. Sign test across the 8 paired groups: 8/8 in both builds, p ~ 0.004 each.
+- **THE INSTRUCTION MODEL OVER-DELIVERED, WHICH CORRECTS THIS MORNING'S ROW.** 22 of 624.8 instr/pair
+  is 3.5%; wall moved 6.6-9.7%. Earlier today I banked that "instructions map to wall ~1:1 on this
+  allocator" off the whole-stats ablation (19.8% instr -> 17.2% wall). That holds in AGGREGATE but
+  NOT component-by-component: the bin lookup is disproportionately expensive per instruction because
+  it touches a 2KB table, which instruction counting cannot see, while the counter updates are
+  cheaper per instruction than average. Use callgrind to FIND components, not to size them.
+- **THE GATE CAUGHT A BUG IN THIS LEVER BEFORE IT SHIPPED.** A `debug_assert` added to `segment_free`
+  fired in `malloc_abi_test::test_realloc_shrink`: `segment_resize_in_place` rewrites a slot's
+  requested-size field but leaves the block in its original, larger class, so class and size-derived
+  bin genuinely disagree after a shrink. The first fold would have decremented a different bin than
+  it incremented -- `saturating_sub` flooring one bin at zero and stranding a phantom count in
+  another, invisible to every aggregate. Fixed by binning the resize path by class too (an in-place
+  resize does not move a block between classes; the OLD code's bin-to-bin transfer was itself
+  wrong). The assertion was then restated from equality to CONTAINMENT, which is the property that
+  actually holds. New gate `conformance_diff_malloc_stats_binning`, 5 arms, drives every size class
+  plus the large-fallback bin; `malloc_abi_test` back to 72 passed / 0 failed.
+- **FOLLOW-ON, NOT TAKEN HERE: `per_size_class` is write-only.** It is incremented, decremented and
+  merged, and never read -- it reaches neither `MallocStatsSnapshot` nor `malloc_stats` nor
+  `malloc_info`. So this histogram costs instructions on every allocation to feed state nothing
+  observes. Deleting it outright is worth more than this fold was, but that is a functionality
+  decision (something may be intended to expose it later), so it is left for an owner to call rather
+  than taken unilaterally. Recorded on bd-dcrhgl.

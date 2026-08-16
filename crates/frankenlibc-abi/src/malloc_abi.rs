@@ -575,7 +575,11 @@ struct SegmentSlotView {
 enum SegmentFreeResult {
     NotOwned,
     OwnedInvalid,
-    Freed(usize),
+    /// The slot was retired. `size` is the requested size recorded on it; `bin` is
+    /// the size class it lived in, carried out so the stats accumulator does not
+    /// have to recompute from `size` what the segment already knows (see
+    /// [`StatsBin`]).
+    Freed { size: usize, bin: usize },
 }
 
 #[inline]
@@ -1079,11 +1083,21 @@ fn allocate_from_local_class(
 }
 
 #[inline]
+/// Allocate from the segment arena, returning the pointer AND the size class it
+/// came from.
+///
+/// The class is returned rather than recovered later because it is computed here
+/// anyway (`small_bin_index` on the next line) and is exactly the stats bin --
+/// see [`StatsBin`]. Every path below allocates from `class_index` specifically:
+/// `allocate_from_local_class` skips any slot whose `class_index` differs, so the
+/// returned pointer is always in the class named here and never promoted to a
+/// larger one.
+#[inline]
 fn segment_allocate(
     slot: &'static AllocatorReentrySlot,
     requested: usize,
     zeroed: bool,
-) -> Option<*mut c_void> {
+) -> Option<(*mut c_void, usize)> {
     let class = small_bin_index(requested)?;
     let class_index = class.get();
     // SAFETY: all callers hold the successful outer allocator guard associated
@@ -1092,15 +1106,16 @@ fn segment_allocate(
     let local = local_state.classes.get_mut(class_index)?;
 
     if let Some(ptr) = allocate_from_local_class(local, class_index, requested, zeroed) {
-        return Some(ptr);
+        return Some((ptr, class_index));
     }
 
     if claim_existing_class_chunk(local, class_index) {
-        return allocate_from_local_class(local, class_index, requested, zeroed);
+        return allocate_from_local_class(local, class_index, requested, zeroed)
+            .map(|ptr| (ptr, class_index));
     }
 
     if let Some(ptr) = allocate_from_spill(class_index, requested, zeroed) {
-        return Some(ptr);
+        return Some((ptr, class_index));
     }
 
     let segment_index = initialize_segment(class_index)?;
@@ -1108,7 +1123,7 @@ fn segment_allocate(
     local.active_segment = segment_index as u16;
     local.next_unused_slot = start;
     local.bump_end = end;
-    allocate_from_local_class(local, class_index, requested, zeroed)
+    allocate_from_local_class(local, class_index, requested, zeroed).map(|ptr| (ptr, class_index))
 }
 
 #[inline]
@@ -1138,6 +1153,40 @@ fn segment_free(
         return SegmentFreeResult::OwnedInvalid;
     }
 
+    // The stats bin carried out below is `view.class_index` rather than a bin
+    // recomputed from `requested` (see [`StatsBin`]).
+    //
+    // The invariant that licenses that is CONTAINMENT, not equality: the class a
+    // block lives in must always be big enough for its current requested size.
+    // Equality holds at allocation -- `segment_allocate` picks
+    // `small_bin_index(requested)` and `allocate_from_local_class` skips slots of
+    // any other class, so there is no promotion -- but it does NOT survive a
+    // shrinking `realloc`: `segment_resize_in_place` rewrites the requested-size
+    // field while leaving the block in its original, larger class. An earlier
+    // version of this assertion demanded equality and fired on exactly that,
+    // in `malloc_abi_test::test_realloc_shrink`, which is how the accompanying
+    // stats-binning bug was found rather than shipped.
+    //
+    // Containment is the property that actually matters here, because binning by
+    // class is only sound while every site agrees to bin by class; the resize
+    // path was corrected to do so. If a future change ever violates containment
+    // -- a best-fit search, or a resize that lets a block outgrow its slot -- the
+    // alloc would be counted in one histogram bin and the free subtracted from
+    // another, `saturating_sub` would floor the wrong bin at zero, and a phantom
+    // count would sit in the right one forever. Nothing else would catch it,
+    // because every individual number still looks plausible.
+    //
+    // Debug only: free in the measured release build, and the integration gate
+    // `conformance_diff_malloc_stats_binning` drives a full size sweep in debug
+    // so this fires if containment ever breaks.
+    debug_assert!(
+        small_bin_index(requested).is_some_and(|c| c.get() <= view.class_index),
+        "segment slot class {} cannot hold its own requested size {}; \
+         stats binning by class_index would count the alloc and the free in different bins",
+        view.class_index,
+        requested,
+    );
+
     let encoded = encode_segment_slot(view.segment_index, view.slot_index);
     if let (Some(slot), Some(encoded)) = (slot, encoded) {
         // SAFETY: the public free path holds this slot's successful outer guard.
@@ -1145,12 +1194,19 @@ fn segment_free(
         if let Some(local) = local_state.classes.get_mut(view.class_index)
             && local.magazine.push(encoded)
         {
-            return SegmentFreeResult::Freed(requested);
+            return SegmentFreeResult::Freed {
+                size: requested,
+                bin: view.class_index,
+            };
         }
     }
 
+    let bin = view.class_index;
     spill_segment_slot(view);
-    SegmentFreeResult::Freed(requested)
+    SegmentFreeResult::Freed {
+        size: requested,
+        bin,
+    }
 }
 
 #[inline]
@@ -1184,7 +1240,7 @@ pub fn malloc_segment_owned_for_tests(ptr: *const c_void) -> bool {
 /// and therefore retains the allocation in that thread's local magazine.
 #[doc(hidden)]
 pub fn malloc_segment_retire_for_tests(ptr: *mut c_void) -> bool {
-    matches!(segment_free(None, ptr), SegmentFreeResult::Freed(_))
+    matches!(segment_free(None, ptr), SegmentFreeResult::Freed { .. })
 }
 
 /// Raw allocator for internal ABI use.
@@ -1259,7 +1315,7 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
                 requested.min(capacity),
             );
         }
-        if !matches!(segment_free(None, ptr), SegmentFreeResult::Freed(_)) {
+        if !matches!(segment_free(None, ptr), SegmentFreeResult::Freed { .. }) {
             // SAFETY: `host` was allocated immediately above and has not
             // escaped if the segment lifecycle check unexpectedly failed.
             unsafe { native_libc_free(host) };
@@ -2576,13 +2632,76 @@ unsafe fn flush_slot_stats(slot: &AllocatorReentrySlot, global: &FlatCombiningSt
 /// non-atomically in the slot, skipping the combiner-lock CAS.
 #[inline]
 fn record_stats(slot: Option<&AllocatorReentrySlot>, op: usize, size: usize) {
+    record_stats_binned(slot, op, size, StatsBin::for_size(size));
+}
+
+/// A stats bin the allocator has ALREADY determined, passed in rather than recomputed.
+///
+/// The stats histogram is indexed by size class -- `MALLOC_STATS_BIN_COUNT` is
+/// `NUM_SIZE_CLASSES + 1`, the classes plus one large-allocation bin -- so for any
+/// segment-backed allocation the bin IS the class the object lives in, and the
+/// allocator has that in hand at both ends:
+///
+///   alloc  `segment_allocate` computes `small_bin_index(requested)` (the class it
+///          then allocates from, and `allocate_from_local_class` skips any slot whose
+///          `class_index` differs, so no promotion to a larger class can occur).
+///   free   `segment_free` reads `view.class_index` off the slot it is retiring.
+///
+/// Deriving the bin from `size` again therefore recomputes a value that is already
+/// known, through a 2KB granule LUT, twice per malloc/free pair. Measured under
+/// callgrind (see docs/NEGATIVE_EVIDENCE.md, 2026-08-16): `size_class::bin_index`
+/// costs 22.0 instructions per pair and is reached ONLY from stats binning -- it
+/// falls to zero when the stats accumulator is ablated, while `small_bin_index`
+/// (the allocator's own call) is unchanged.
+///
+/// This is a newtype rather than a bare `usize` on purpose: `record_stats_binned`
+/// takes an index that is trusted to be a real size class, and an ordinary `usize`
+/// parameter would let a *size* be passed where a *bin* belongs -- silently writing
+/// a 1024-byte allocation into whatever histogram slot index 1024 clamps to. The
+/// only two constructors are the size-derived one and the allocator-derived one.
+#[derive(Clone, Copy)]
+struct StatsBin(usize);
+
+impl StatsBin {
+    /// Derive the bin from the allocation size. The general path, for callers that
+    /// do not have a class in hand (host-fallback allocations, realloc bookkeeping,
+    /// bootstrap).
+    #[inline]
+    fn for_size(size: usize) -> Self {
+        Self(stats_bin_for_size(size))
+    }
+
+    /// Reuse a size-class index the allocator has already computed.
+    ///
+    /// Callers must pass a real size-class index, i.e. one obtained from
+    /// `small_bin_index` or read from a segment view's `class_index`. Clamped on
+    /// the way in regardless, so a wrong value can only mis-bin a statistic and
+    /// can never index out of the histogram.
+    #[inline]
+    fn from_size_class(class_index: usize) -> Self {
+        Self(class_index.min(MALLOC_STATS_BIN_COUNT - 1))
+    }
+
+    #[inline]
+    fn get(self) -> usize {
+        self.0
+    }
+}
+
+#[inline]
+fn record_stats_binned(
+    slot: Option<&AllocatorReentrySlot>,
+    op: usize,
+    size: usize,
+    bin: StatsBin,
+) {
     if size == 0 {
         return;
     }
     let Some(global) = global_alloc_stats() else {
         return;
     };
-    let bin = stats_bin_for_size(size);
+    let bin = bin.get();
     if let Some(slot) = slot {
         if !MULTI_THREADED.load(Ordering::Relaxed) {
             // SAFETY: guard held (caller passed its guard slot) + single-threaded => exclusive.
@@ -2616,6 +2735,36 @@ fn record_alloc_stats(slot: Option<&AllocatorReentrySlot>, size: usize) {
 #[inline]
 fn record_free_stats(slot: Option<&AllocatorReentrySlot>, size: usize) {
     record_stats(slot, FC_OP_FREE, size);
+}
+
+/// `record_alloc_stats` for a caller that already knows the size class.
+#[inline]
+fn record_alloc_stats_binned(
+    slot: Option<&AllocatorReentrySlot>,
+    size: usize,
+    class_index: usize,
+) {
+    record_stats_binned(
+        slot,
+        FC_OP_ALLOC,
+        size,
+        StatsBin::from_size_class(class_index),
+    );
+}
+
+/// `record_free_stats` for a caller that already knows the size class.
+#[inline]
+fn record_free_stats_binned(
+    slot: Option<&AllocatorReentrySlot>,
+    size: usize,
+    class_index: usize,
+) {
+    record_stats_binned(
+        slot,
+        FC_OP_FREE,
+        size,
+        StatsBin::from_size_class(class_index),
+    );
 }
 
 #[inline]
@@ -3595,9 +3744,9 @@ unsafe fn strict_small_or_host_allocate(
     slot: &'static AllocatorReentrySlot,
     requested: usize,
     zeroed: bool,
-) -> (*mut c_void, bool) {
-    if let Some(ptr) = segment_allocate(slot, requested, zeroed) {
-        return (ptr, true);
+) -> (*mut c_void, Option<usize>) {
+    if let Some((ptr, class_index)) = segment_allocate(slot, requested, zeroed) {
+        return (ptr, Some(class_index));
     }
     let ptr = if zeroed {
         // SAFETY: multiplication was checked by the public calloc entrypoint;
@@ -3608,7 +3757,7 @@ unsafe fn strict_small_or_host_allocate(
         // bounded-segment-arena exhaustion.
         unsafe { native_libc_malloc(requested) }
     };
-    (ptr, false)
+    (ptr, None)
 }
 
 #[inline]
@@ -3625,24 +3774,39 @@ unsafe fn realloc_segment_owned(
             let Some(previous) = segment_resize_in_place(ptr, requested) else {
                 return std::ptr::null_mut();
             };
-            record_free_stats(slot, previous);
-            record_alloc_stats(slot, requested);
+            // Both records are binned by the class the object LIVES in, not by
+            // the two sizes -- an in-place resize does not move the block between
+            // size classes, it only rewrites the requested-size field on a slot
+            // that stays exactly where it was.
+            //
+            // This is a fix, not just a fold. The previous code binned the free
+            // by `previous` and the alloc by `requested`, so shrinking a 1000-byte
+            // block to 100 bytes in place moved its count out of the 1024 bin and
+            // into the 112 bin -- while the block still occupied a 1024-byte slot.
+            // The subsequent `free` then decremented whichever bin ITS size
+            // mapped to, and the two no longer agreed: one bin kept a permanent
+            // phantom count and another was floored at zero by `saturating_sub`.
+            // Binning by class at every site makes alloc and free agree by
+            // construction, which is what lets the hot paths carry the class
+            // instead of recomputing it (see [`StatsBin`]).
+            record_free_stats_binned(slot, previous, view.class_index);
+            record_alloc_stats_binned(slot, requested, view.class_index);
         }
         return ptr;
     }
 
-    let (out, segment_owned) = match slot {
+    let (out, segment_class) = match slot {
         Some(slot) => match segment_allocate(slot, requested, false) {
-            Some(out) => (out, true),
+            Some((out, class_index)) => (out, Some(class_index)),
             None => {
                 // SAFETY: fallback is used only when the request has no small
                 // class or the bounded segment arena is exhausted.
-                (unsafe { native_libc_malloc(requested) }, false)
+                (unsafe { native_libc_malloc(requested) }, None)
             }
         },
         // A reentrant/bootstrap realloc must not borrow thread-local segment
         // state without the outer guard; move it to the retained host path.
-        None => (unsafe { native_libc_malloc(requested) }, false),
+        None => (unsafe { native_libc_malloc(requested) }, None),
     };
     if out.is_null() {
         return out;
@@ -3656,13 +3820,16 @@ unsafe fn realloc_segment_owned(
             old_requested.min(requested),
         );
     }
-    if !segment_owned {
+    if segment_class.is_none() {
         fallback_insert_sized(out, requested);
     }
-    if let SegmentFreeResult::Freed(freed_size) = segment_free(slot, ptr) {
-        record_free_stats(slot, freed_size);
+    if let SegmentFreeResult::Freed { size, bin } = segment_free(slot, ptr) {
+        record_free_stats_binned(slot, size, bin);
     }
-    record_alloc_stats(slot, requested);
+    match segment_class {
+        Some(class_index) => record_alloc_stats_binned(slot, requested, class_index),
+        None => record_alloc_stats(slot, requested),
+    }
     out
 }
 
@@ -3722,8 +3889,8 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
 #[inline]
 unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
     match segment_free(None, ptr) {
-        SegmentFreeResult::Freed(size) => {
-            record_free_stats(None, size);
+        SegmentFreeResult::Freed { size, bin } => {
+            record_free_stats_binned(None, size, bin);
             return;
         }
         SegmentFreeResult::OwnedInvalid => return,
@@ -3865,13 +4032,18 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
                 runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
             // SAFETY: strict-mode preload delegates allocator semantics to host libc
             // to preserve compatibility while the PCC gate records explainability.
-            let (out, segment_owned) =
+            let (out, segment_class) =
                 unsafe { strict_small_or_host_allocate(reentry_guard.slot, req, false) };
             if !out.is_null() {
-                if !segment_owned {
-                    fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+                match segment_class {
+                    Some(class_index) => {
+                        record_alloc_stats_binned(Some(reentry_guard.slot), req, class_index)
+                    }
+                    None => {
+                        fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+                        record_alloc_stats(Some(reentry_guard.slot), req);
+                    }
                 }
-                record_alloc_stats(Some(reentry_guard.slot), req);
             }
             runtime_policy::observe(
                 ApiFamily::Allocator,
@@ -3884,13 +4056,18 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
         // to preserve process compatibility while hardened mode exercises the
         // membrane allocator and repair pipeline.
-        let (out, segment_owned) =
+        let (out, segment_class) =
             unsafe { strict_small_or_host_allocate(reentry_guard.slot, req, false) };
         if !out.is_null() {
-            if !segment_owned {
-                fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+            match segment_class {
+                Some(class_index) => {
+                    record_alloc_stats_binned(Some(reentry_guard.slot), req, class_index)
+                }
+                None => {
+                    fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+                    record_alloc_stats(Some(reentry_guard.slot), req);
+                }
             }
-            record_alloc_stats(Some(reentry_guard.slot), req);
         }
         return out;
     }
@@ -3981,8 +4158,8 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     match segment_free(Some(reentry_guard.slot), ptr) {
-        SegmentFreeResult::Freed(size) => {
-            record_free_stats(Some(reentry_guard.slot), size);
+        SegmentFreeResult::Freed { size, bin } => {
+            record_free_stats_binned(Some(reentry_guard.slot), size, bin);
             return;
         }
         SegmentFreeResult::OwnedInvalid => return,
@@ -4151,13 +4328,18 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     }
 
     if strict_allocator_host_path_active() {
-        let (out, segment_owned) =
+        let (out, segment_class) =
             unsafe { strict_small_or_host_allocate(reentry_guard.slot, total, true) };
         if !out.is_null() {
-            if !segment_owned {
-                fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
+            match segment_class {
+                Some(class_index) => {
+                    record_alloc_stats_binned(Some(reentry_guard.slot), total, class_index)
+                }
+                None => {
+                    fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
+                    record_alloc_stats(Some(reentry_guard.slot), total);
+                }
             }
-            record_alloc_stats(Some(reentry_guard.slot), total);
         }
         return out;
     }
