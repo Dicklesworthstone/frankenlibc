@@ -1429,8 +1429,14 @@ fn scan_string(
     let wide = wide_input || matches!(spec.length, LengthMod::L);
     let mut i = pos;
     let mut chars_read = 0usize;
-    let mut buf = Vec::new();
 
+    // Find the token end WITHOUT copying, then take the bytes in one shot.
+    // This used to push a byte at a time into a `Vec::new()`, which starts at
+    // zero capacity: a long token paid a reallocate-and-memcpy every time the
+    // buffer doubled, plus a capacity check per byte, and the token is
+    // contiguous in `input` the whole time. `long_string` was the worst case in
+    // the whole sscanf family at 2.387x glibc, and it is precisely the case
+    // with the most bytes to move.
     while i < input.len() && chars_read < max_chars {
         // The token ends at whitespace. For a wide stream that means Unicode
         // whitespace (a whole UTF-8 sequence), not only ASCII — `wide_input` is
@@ -1439,21 +1445,18 @@ fn scan_string(
             break;
         }
         if wide {
-            let next = (i + utf8_seq_len(input[i])).min(input.len());
-            buf.extend_from_slice(&input[i..next]);
-            i = next;
+            i = (i + utf8_seq_len(input[i])).min(input.len());
         } else {
-            buf.push(input[i]);
             i += 1;
         }
         chars_read += 1;
     }
 
-    if buf.is_empty() {
+    if i == pos {
         return None;
     }
 
-    Some((Some(ScanValue::String(buf)), i))
+    Some((Some(ScanValue::String(input[pos..i].to_vec())), i))
 }
 
 /// Scan a scanset (%[...]). No whitespace skip.
@@ -1463,8 +1466,10 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
     let max_chars = effective_width(spec, usize::MAX);
     let mut i = pos;
     let mut chars_read = 0usize;
-    let mut buf = Vec::new();
 
+    // Same two-phase shape as `scan_string`: locate the run, then copy it once.
+    // A scanset run is contiguous, so growing a Vec byte by byte only added
+    // reallocations (`scanset_only` measured 1.651x glibc).
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         let in_set = scanset.chars[c as usize];
@@ -1472,16 +1477,15 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
         if !accept {
             break;
         }
-        buf.push(c);
         i += 1;
         chars_read += 1;
     }
 
-    if buf.is_empty() {
+    if i == pos {
         return None;
     }
 
-    Some((Some(ScanValue::String(buf)), i))
+    Some((Some(ScanValue::String(input[pos..i].to_vec())), i))
 }
 
 /// Scan a pointer (%p). Expects 0xHEX or (nil).
