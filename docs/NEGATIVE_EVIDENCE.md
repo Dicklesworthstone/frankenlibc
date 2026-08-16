@@ -27832,3 +27832,64 @@ Two consequences, stated plainly:
   mechanical but it is exactly the shape that produces a silent truncation bug, and this ledger
   already carries one of those (`into`-refactor buffer truncation, printf `%g` 4.49x to 2.7x). It
   needs a turn that can gate it with the full printf differential suite, not a hurried edit.
+
+## 2026-08-16 (BlackThrush) — REFUTED AND REVERTED: shrinking `FormatSegment` by 37.5% made fused `snprintf` SLOWER
+
+- **RESULT CLASS: loss/baseline.** A lever that was implemented in full, gated green, measured on
+  three workers, and then reverted because it is a regression. Nothing here is a speedup claim.
+- **What was built (bd-5pagbr).** `Width::Fixed`/`FromArgPosition`, `Precision::Fixed`/
+  `FromArgPosition` and `FormatSpec::value_position` narrowed from `usize`/`Option<usize>` to
+  `u32`/`Option<u32>`, with the `position()` accessors still handing out `usize` via casts so the
+  edit stayed at compiler-found sites in `printf.rs` and `stdio_abi.rs`. C's width, precision and
+  positional indices are all `int`, so no representable value can be lost.
+- **The size premise was RIGHT, and bigger than predicted.** Measured with `core::mem::size_of` on
+  both trees, build worker vmi1227854, via a unit test rather than by reading the struct:
+  `FormatSpec` 64 to 36 bytes, `FormatSegment` 64 to 40 bytes, and the eight-slot inline array that
+  `FormatSegments::new` initialises on EVERY printf call 512 to 320 bytes. That is a 37.5% cut in
+  both the per-push copy and the per-call init. The bead had predicted 72 to 48; the real cut was
+  larger.
+- **The performance model was WRONG.** Harness `bench_sn` sha256 e99c0bc12cfb57ca, family
+  `snprintf_fused`, ABBA order cand,shrink,cand,shrink, `--pin-quietest 4`. Base object
+  d6c802d9c2097651, candidate object 8244f5b6ecce49a8.
+- hz2, 16 cores, load 3.23 falling to 2.43, SLOWER in 6 of 6 arm pairs with disjoint CIs:
+  syslog_line 2.771045 then 2.901712 for base against 3.635263 then 3.155014 for the candidate;
+  http_log 2.753872 and 2.801377 against 3.006365 and 3.004955; kv_join 3.109638 and 3.103731
+  against 3.349471 and 3.326316.
+- hz2 A/A nulls, base arm: null_fl_fl ratio_median 0.995992 ci95 0.991725 to 1.000797 on
+  syslog_line, 1.001350 ci95 0.997373 to 1.005494 on http_log, 1.006169 ci95 0.986558 to 1.020332
+  on kv_join.
+- hz2 A/A nulls, candidate arm: null_fl_fl ratio_median 0.995066 ci95 0.976803 to 1.004518 on
+  syslog_line, 1.006172 ci95 0.996206 to 1.011073 on http_log, 0.998942 ci95 0.991286 to 1.004092
+  on kv_join.
+- vmi1167313, load 0.92 falling to 0.88, FASTER in 6 of 6 by 2 to 6 percent: syslog_line 2.993974
+  and 2.915325 for base against 2.809003 and 2.773496; http_log 2.867047 and 2.783273 against
+  2.765689 and 2.776065; kv_join 2.928395 and 2.957118 against 2.837143 and 2.801946.
+- hz1, load 0.42 rising to 1.18, SLOWER in 6 of 6 on ratio-of-medians.
+- **WORST BOUND EITHER RUN PRODUCED: 31% SLOWER** (hz2 syslog_line, 2.771045 against 3.635263). Two
+  of the three coherent runs say regression, and the run with disjoint CIs is one of them. Reverted.
+- **A methods finding worth more than the lever.** A fourth run on hz1 with load falling 3.53 to
+  2.22 was INCOHERENT — the sign flipped between passes on every shape — while all six of its A/A
+  nulls sat within 0.9989 to 1.0011 with CIs tighter than any other run's. A clean A/A null does NOT
+  certify an ABBA that a global load ramp is dragging: the null compares an arm's own first half to
+  its second, so a drift slow relative to a single arm leaves it spotless and still corrupts every
+  between-arm comparison. Load DELTA, not load level, is what separated the two hz1 runs.
+- **What this kills for bd-ntb9fq.** The per-segment-memory-traffic explanation for the 3.12-3.31x
+  fused penalty is dead. Traffic was cut by over a third with no benefit and a measured cost. The
+  segment array is stack-local and already hot in L1, so 320 stores instead of 512 is noise; the
+  narrower payloads instead add an `as usize` widening on every width/precision/position READ, and
+  those reads are in the per-conversion path, which is what actually runs hot. The fused penalty has
+  to be attacked in the per-conversion work.
+- **And a caution about the profile that motivated it.** `FormatSegments::push` really did carry
+  14.63% self time on a three-segment format. Self time on a copy does not make the copy the cost —
+  it is where the pipeline stalls on work attributed elsewhere. A 37.5% size cut did not move it in
+  the predicted direction at all.
+- **What landed instead.** The revert, plus a permanent unit test
+  `printf::tests::format_segment_representation_has_the_measured_size` pinning `FormatSpec` and
+  `FormatSegment` at 64/64 and carrying this result in its comment, so the next person to reach for
+  this lever re-measures instead of re-deriving it from byte counts.
+- **Gates observed on the shrink build before reverting:** 54 core printf unit tests passed;
+  `conformance_diff_printf_positional` 2 passed, `_fastpaths` 3 passed, `_hexfloat` 1 passed,
+  `_null_string` 3 passed, `_pointer` 1 passed, `conformance_diff_asprintf` 1 passed,
+  `_dprintf` 1 passed, `_fwprintf` 1 passed, all on vmi1149989; the `snprintf_fused` conformance arm
+  (11 shapes, 9 destination sizes, full destination compared) was green on every timed run above.
+  The change was correct. It was simply slower.

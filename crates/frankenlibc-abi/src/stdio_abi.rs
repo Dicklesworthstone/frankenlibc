@@ -5030,9 +5030,9 @@ pub(crate) unsafe fn render_segments(
                         let w = (raw_width as core::ffi::c_int) as i64;
                         if w < 0 {
                             resolved_spec.flags.left_justify = true;
-                            resolved_spec.width = Width::Fixed((-w) as u32);
+                            resolved_spec.width = Width::Fixed((-w) as usize);
                         } else {
-                            resolved_spec.width = Width::Fixed(w as u32);
+                            resolved_spec.width = Width::Fixed(w as usize);
                         }
                     } else {
                         resolved_spec.width = Width::None;
@@ -5049,7 +5049,7 @@ pub(crate) unsafe fn render_segments(
                         resolved_spec.precision = if p < 0 {
                             Precision::None
                         } else {
-                            Precision::Fixed(p as u32)
+                            Precision::Fixed(p as usize)
                         };
                     } else {
                         resolved_spec.precision = Precision::None;
@@ -5081,9 +5081,7 @@ pub(crate) unsafe fn render_segments(
                     // values (every non-continuation byte begins one).
                     // Respects length modifier: %hhn→i8, %hn→i16,
                     // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
-                    if let Some(raw_ptr) =
-                        read_arg(value_position.map(|p| p as usize), &mut arg_idx)
-                    {
+                    if let Some(raw_ptr) = read_arg(value_position, &mut arg_idx) {
                         let ptr_val = raw_ptr as usize;
                         if ptr_val != 0 {
                             let count = if wide_output {
@@ -5170,7 +5168,7 @@ pub(crate) unsafe fn render_segments(
                         }
                     }
                 } else if resolved_spec.value_arg_is_string() {
-                    if let Some(raw) = read_arg(value_position.map(|p| p as usize), &mut arg_idx) {
+                    if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                         let ptr = raw as usize as *const u8;
                         if ptr.is_null() {
                             // glibc substitutes "(null)" for a NULL `%s`/`%ls`
@@ -5179,7 +5177,7 @@ pub(crate) unsafe fn render_segments(
                             // precision yields the empty string rather than a
                             // truncated "(nu". (fl previously truncated it.)
                             let null_str: &[u8] = match resolved_spec.precision {
-                                Precision::Fixed(p) if (p as usize) < b"(null)".len() => b"",
+                                Precision::Fixed(p) if p < b"(null)".len() => b"",
                                 _ => b"(null)",
                             };
                             format_str(null_str, &resolved_spec, &mut buf);
@@ -5197,14 +5195,14 @@ pub(crate) unsafe fn render_segments(
                                 // padding `format_str` applies lands on wide-column
                                 // boundaries after the caller decodes back to wide.
                                 let limit = match resolved_spec.precision {
-                                    Precision::Fixed(n) => Some(n as usize),
+                                    Precision::Fixed(n) => Some(n),
                                     _ => None,
                                 };
                                 let (utf8, wide_count) =
                                     unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
                                 if let Width::Fixed(w) = width_spec.width {
                                     let extra = utf8.len().saturating_sub(wide_count);
-                                    width_spec.width = Width::Fixed(w + extra as u32);
+                                    width_spec.width = Width::Fixed(w + extra);
                                 }
                                 format_str(&utf8, &width_spec, &mut buf);
                             } else {
@@ -5215,7 +5213,7 @@ pub(crate) unsafe fn render_segments(
                                 let (mut utf8, _) =
                                     unsafe { wide_cstr_to_utf8(ptr as *const u32, None) };
                                 if let Precision::Fixed(p) = resolved_spec.precision {
-                                    utf8.truncate(utf8_byte_limit(&utf8, p as usize));
+                                    utf8.truncate(utf8_byte_limit(&utf8, p));
                                 }
                                 format_str(&utf8, &width_spec, &mut buf);
                             }
@@ -5229,7 +5227,7 @@ pub(crate) unsafe fn render_segments(
                             // wide-column boundaries after the caller decodes back.
                             let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
                             let limit = match resolved_spec.precision {
-                                Precision::Fixed(n) => Some(n as usize),
+                                Precision::Fixed(n) => Some(n),
                                 _ => None,
                             };
                             let (utf8, wide_count) = utf8_take_chars(s_bytes, limit);
@@ -5237,7 +5235,7 @@ pub(crate) unsafe fn render_segments(
                             width_spec.precision = Precision::None;
                             if let Width::Fixed(w) = width_spec.width {
                                 let extra = utf8.len().saturating_sub(wide_count);
-                                width_spec.width = Width::Fixed(w + extra as u32);
+                                width_spec.width = Width::Fixed(w + extra);
                             }
                             format_str(&utf8, &width_spec, &mut buf);
                         } else {
@@ -5251,7 +5249,7 @@ pub(crate) unsafe fn render_segments(
                     // `%lc` / `%C`: the argument is a `wint_t` wide character, not
                     // a byte. The default char path would emit only its low byte
                     // (garbage for non-ASCII); instead UTF-8-encode the code point.
-                    if let Some(raw) = read_arg(value_position.map(|p| p as usize), &mut arg_idx) {
+                    if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                         let mut utf8 = Vec::new();
                         if let Some(c) = char::from_u32(raw as u32) {
                             let mut b = [0u8; 4];
@@ -5266,12 +5264,11 @@ pub(crate) unsafe fn render_segments(
                         width_spec.precision = Precision::None;
                         if wide_output && let Width::Fixed(w) = width_spec.width {
                             let extra = utf8.len().saturating_sub(1);
-                            width_spec.width = Width::Fixed(w + extra as u32);
+                            width_spec.width = Width::Fixed(w + extra);
                         }
                         format_str(&utf8, &width_spec, &mut buf);
                     }
-                } else if let Some(raw) = read_arg(value_position.map(|p| p as usize), &mut arg_idx)
-                {
+                } else if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                     let _ = resolved_spec.render_value_arg(raw, &mut buf);
                 }
             }
