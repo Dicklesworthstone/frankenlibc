@@ -7746,6 +7746,12 @@ unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
 /// general path (`vprintf_extract_args`), but "identical to working code" is not
 /// a measurement, and a wrong read here prints an unrelated number silently.
 #[allow(dead_code)]
+// Retained with no current caller: the vsnprintf/vsprintf float dispatch that
+// used it was held back in 811e6b94b for being committed unverified, and will
+// need this again when it returns under a build (bd-fpdisp). Deleting it would
+// only mean rewriting the FP-vs-GP register-save-area reasoning from scratch,
+// which is the part that is easy to get silently wrong.
+#[allow(dead_code)]
 #[inline]
 unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
     let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
@@ -7917,14 +7923,6 @@ pub unsafe extern "C" fn vsprintf(
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
         let arg = unsafe { va_read_one_gp(ap) } as c_uint;
         return unsafe { strict_direct_sprintf_x(str_buf, arg) };
-    }
-    if runtime_policy::strict_passthrough_active()
-        && let Some(precision) = unsafe { exact_direct_f_format(format) }
-    {
-        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` from the SSE
-        // save area; sprintf's contract makes the destination unbounded.
-        let arg = unsafe { va_read_one_fp(ap) };
-        return unsafe { strict_direct_sprintf_f(str_buf, arg, precision) };
     }
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
         let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
