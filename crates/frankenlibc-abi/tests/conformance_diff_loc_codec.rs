@@ -28,12 +28,34 @@ type LocAtonFn = unsafe extern "C" fn(*const c_char, *mut u8) -> c_int;
 type LocNtoaFn = unsafe extern "C" fn(*const u8, *mut c_char) -> *const c_char;
 
 fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
-    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
-    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "dlopen libc.so.6");
-    // SAFETY: handle came from dlopen; name is NUL-terminated.
-    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
-    assert!(!raw.is_null(), "dlsym {name:?}");
+    // libresolv FIRST, and that ordering is the point. `__loc_aton`/`__loc_ntoa`
+    // are NOT in libc.so.6 — they live in libresolv.so.2. Probed on this host:
+    //   libc.so.6      __loc_aton absent   __loc_ntoa absent
+    //   libresolv.so.2 __loc_aton FOUND    __loc_ntoa FOUND
+    // The original `#[link_name]` declaration resolved anyway because the test
+    // binary pulls in libresolv transitively, which is exactly what made the
+    // link-time form look correct while saying nothing about WHICH object
+    // answered. A dlsym conversion that assumed libc would fail every test —
+    // and did, until this was measured rather than assumed.
+    let mut raw = std::ptr::null_mut();
+    for lib in [c"libresolv.so.2", c"libc.so.6"] {
+        // SAFETY: lib is a NUL-terminated constant; flags request a local handle.
+        let handle = unsafe { libc::dlopen(lib.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if handle.is_null() {
+            continue;
+        }
+        // SAFETY: handle came from dlopen; name is NUL-terminated.
+        let found = unsafe { libc::dlsym(handle, name.as_ptr()) };
+        if !found.is_null() {
+            raw = found;
+            break;
+        }
+    }
+    assert!(
+        !raw.is_null(),
+        "dlsym {name:?} in libresolv.so.2 or libc.so.6 — the oracle is unavailable, \
+         so this gate must not silently compare against nothing"
+    );
     assert_ne!(
         raw as usize, fl_addr,
         "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"

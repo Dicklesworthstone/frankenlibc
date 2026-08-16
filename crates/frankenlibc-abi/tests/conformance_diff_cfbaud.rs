@@ -113,7 +113,7 @@ fn cfsetibaud_cfsetobaud_independent_like_glibc() {
         // input only
         let (mut ht, mut ft) = (zt(), zt());
         unsafe {
-            h_setibaud((&mut ht) as *mut _ as *mut c_void, b);
+            h_setibaud_fn()((&mut ht) as *mut _ as *mut c_void, b);
             fl::cfsetibaud((&mut ft) as *mut _ as *mut c_void, b);
         }
         let hi = unsafe { h_getibaud_fn()((&ht) as *const _ as *const c_void) };
@@ -124,7 +124,7 @@ fn cfsetibaud_cfsetobaud_independent_like_glibc() {
         // output only
         let (mut ht, mut ft) = (zt(), zt());
         unsafe {
-            h_setobaud((&mut ht) as *mut _ as *mut c_void, b);
+            h_setobaud_fn()((&mut ht) as *mut _ as *mut c_void, b);
             fl::cfsetobaud((&mut ft) as *mut _ as *mut c_void, b);
         }
         let ho = unsafe { h_getobaud_fn()((&ht) as *const _ as *const c_void) };
