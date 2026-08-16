@@ -65,6 +65,29 @@ fn pairs() -> usize {
 }
 const SIZES: [usize; 4] = [16, 64, 256, 1024];
 
+/// Resolve `calloc` for an arm, mirroring how `main` resolves malloc/free.
+///
+/// The glibc arm comes from a NEW link map so the incumbent allocator is
+/// untouched by fl's interposition -- the same reason `main` uses `dlmopen`.
+fn calloc_for_arm(arm: &str) -> CallocFn {
+    match arm {
+        "fl" => frankenlibc_abi::malloc_abi::calloc,
+        "glibc" => {
+            // SAFETY: LM_ID_NEWLM with a NUL-terminated soname.
+            let handle = unsafe {
+                libc::dlmopen(
+                    libc::LM_ID_NEWLM,
+                    c"libc.so.6".as_ptr(),
+                    libc::RTLD_NOW | libc::RTLD_LOCAL,
+                )
+            };
+            assert!(!handle.is_null(), "dlmopen libc.so.6");
+            dl(handle, b"calloc\0")
+        }
+        other => panic!("unknown arm {other:?}; expected 'fl' or 'glibc'"),
+    }
+}
+
 fn main() {
     let arm = std::env::args().nth(1).unwrap_or_else(|| "fl".to_string());
 
@@ -91,6 +114,53 @@ fn main() {
         other => panic!("unknown arm {other:?}; expected 'fl' or 'glibc'"),
     };
 
+    // CHURN MODE (`malloc_icount <arm> churn [size ...]`): calloc one block and
+    // free it immediately, repeatedly.
+    //
+    // This is the shape the fresh-slot zero-fill elision does NOT help: every
+    // iteration after the first recycles the same slot, so the fill still runs.
+    // It is measured separately for exactly that reason -- quoting the growth
+    // number for a churning caller would be quoting a case they never hit.
+    // Optional trailing arguments override the size list, which is how the
+    // above-MAX_SMALL_SIZE host path gets exercised without a rebuild.
+    if std::env::args().nth(2).as_deref() == Some("churn") {
+        let calloc_fn: CallocFn = calloc_for_arm(&arm);
+        let iters = pairs();
+        let sizes: Vec<usize> = {
+            let overrides: Vec<usize> = std::env::args()
+                .skip(3)
+                .filter_map(|a| a.parse().ok())
+                .collect();
+            if overrides.is_empty() {
+                SIZES.to_vec()
+            } else {
+                overrides
+            }
+        };
+        let mut checksum = 0u64;
+        for &size in &sizes {
+            for _ in 0..iters {
+                // SAFETY: one element of `size` bytes, freed once immediately.
+                let p = unsafe { calloc_fn(1, std::hint::black_box(size)) };
+                assert!(!p.is_null(), "calloc(1, {size}) returned NULL");
+                // Reading the first byte keeps the zero-fill observable: a fill
+                // that silently stopped happening would change this sum.
+                // SAFETY: `p` is live and at least one byte wide.
+                checksum = checksum
+                    .wrapping_mul(0x100_0000_01b3)
+                    .wrapping_add(p as u64)
+                    .wrapping_add(unsafe { *p.cast::<u8>() } as u64);
+                // SAFETY: allocated by this arm above, freed exactly once.
+                unsafe { free_fn(std::hint::black_box(p)) };
+            }
+        }
+        println!(
+            "CALLOC_ICOUNT arm={arm} mode=churn iters_per_size={iters} sizes={sizes:?} \
+             checksum=0x{checksum:x}"
+        );
+        return;
+    }
+
     // GROWTH MODE (`malloc_icount <arm> growth`): calloc a run of blocks and
     // free them only at the END, instead of churning one block at a time.
     //
@@ -101,22 +171,7 @@ fn main() {
     // NEVER fires -- measuring churn would report "no effect" for a change that
     // only applies to growth, which is the shape real calloc callers have.
     if std::env::args().nth(2).as_deref() == Some("growth") {
-        let calloc_fn: CallocFn = match arm.as_str() {
-            "fl" => frankenlibc_abi::malloc_abi::calloc,
-            "glibc" => {
-                // SAFETY: LM_ID_NEWLM with a NUL-terminated soname, as above.
-                let handle = unsafe {
-                    libc::dlmopen(
-                        libc::LM_ID_NEWLM,
-                        c"libc.so.6".as_ptr(),
-                        libc::RTLD_NOW | libc::RTLD_LOCAL,
-                    )
-                };
-                assert!(!handle.is_null(), "dlmopen libc.so.6");
-                dl(handle, b"calloc\0")
-            }
-            other => panic!("unknown arm {other:?}"),
-        };
+        let calloc_fn: CallocFn = calloc_for_arm(&arm);
         let live = pairs();
         let mut checksum = 0u64;
         let mut held: Vec<*mut core::ffi::c_void> = Vec::with_capacity(live);

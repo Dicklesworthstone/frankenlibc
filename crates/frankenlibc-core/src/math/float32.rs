@@ -813,19 +813,25 @@ pub fn sinhf(x: f32) -> f32 {
 
 #[inline]
 pub fn coshf(x: f32) -> f32 {
-    // cosh(x) = (e^|x| + e^-|x|)/2 = (u + 1/u)/2, u = e^|x|. cosh is even and the
-    // sum never cancels (result >= 1), so this is well-conditioned for ALL x,
-    // including near 0. Evaluate in f64 with the fast `exp` (whose [-5,5] fast
-    // path covers |x| here) and round once — correctly-rounded for f32, matching
-    // glibc bit-for-bit on the conformance CASES. |x| > 5 (where the f64 exp
-    // kernel itself defers to libm, and large x eventually overflows) stays on
-    // libm::coshf for the exact overflow/FE semantics. Mirrors `sinhf`.
-    let ax = x.abs();
-    if ax <= 5.0 {
-        let u = crate::math::exp::exp(ax as f64);
-        return ((u + 1.0 / u) * 0.5) as f32;
-    }
-    libm::coshf(x)
+    // Evaluate the whole range through fl's f64 `cosh` and round once, exactly as
+    // `sinhf` above does. cosh is even and its sum never cancels (result >= 1),
+    // so f64 precision absorbs everything; ±inf/±0/NaN and f32 overflow fall out
+    // of the cast.
+    //
+    // WHAT THIS REPLACED, and why the old shape cost more on the measured band.
+    // The previous code carried its own ad-hoc split: `(u + 1/u)/2` with
+    // `u = exp(|x|)` for |x| <= 5, and `libm::coshf` above that. fl's f64 `cosh`
+    // is strictly better on both sides of that line -- it runs an even Taylor
+    // polynomial on |x| <= 3 with NO exp and NO division at all, and reroutes
+    // through the fast exp up to 700 -- so the old band paid an exp plus a
+    // divide where a polynomial would do, and handed everything past 5 to libm.
+    // On the 64-point 0.5..6.8 sweep the campaign times, that is 26 points that
+    // now skip an exp and a divide and 18 more that leave libm entirely.
+    //
+    // `sinhf` was moved to this same delegation earlier and its comment records
+    // the same finding: the f64 kernel beat the f32 exp-reroute it replaced.
+    // coshf simply never followed.
+    crate::math::cosh(x as f64) as f32
 }
 
 // Bounds of the WITHDRAWN pure-f32 tanhf fast band (see `tanhf`). Retained,
