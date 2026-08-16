@@ -187,6 +187,14 @@ unsafe extern "C" {
     fn linked_host_gethostbyname(name: *const c_char) -> *mut libc::hostent;
     #[link_name = "snprintf"]
     fn linked_host_snprintf(s: *mut c_char, n: usize, format: *const c_char, ...) -> c_int;
+    #[link_name = "fprintf"]
+    fn linked_host_fprintf(stream: *mut c_void, format: *const c_char, ...) -> c_int;
+    #[link_name = "fopen"]
+    fn linked_host_fopen(path: *const c_char, mode: *const c_char) -> *mut c_void;
+    #[link_name = "fflush"]
+    fn linked_host_fflush(stream: *mut c_void) -> c_int;
+    #[link_name = "fclose"]
+    fn linked_host_fclose(stream: *mut c_void) -> c_int;
     #[link_name = "vsscanf"]
     fn linked_host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
     #[link_name = "wcsnrtombs"]
@@ -357,6 +365,7 @@ enum Family {
     Snprintf,
     SnprintfFused,
     SnprintfFloat,
+    FprintfFloat,
     Sscanf,
     Wcsnrtombs,
 }
@@ -640,6 +649,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
                 Some(value) if value == OsStr::new("snprintf_fused") => Family::SnprintfFused,
                 Some(value) if value == OsStr::new("snprintf_float") => Family::SnprintfFloat,
+                Some(value) if value == OsStr::new("fprintf_float") => Family::FprintfFloat,
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
@@ -7099,6 +7109,7 @@ fn main() {
         Family::Snprintf => run_snprintf(&config),
         Family::SnprintfFused => run_snprintf_fused(&config),
         Family::SnprintfFloat => run_snprintf_float(&config),
+        Family::FprintfFloat => run_fprintf_float(&config),
         Family::Sscanf => run_sscanf(&config),
         // Peer-owned family (WildRaven): the variant and its batch helper have
         // landed but the top-level runner has not. This arm only keeps the
@@ -7142,4 +7153,326 @@ mod tests {
         assert_eq!(TEST_ALLOCATIONS.load(Ordering::Relaxed), 17);
         assert_eq!(TEST_FREES.load(Ordering::Relaxed), 17);
     }
+}
+
+// ---------------------------------------------------------------------------
+// fprintf_float family (bd-5pfs0p).
+//
+// The four BUFFER entry points are measurable through snprintf_float. The two
+// STREAM entry points were not measurable AT ALL -- no stream float family
+// existed -- so fprintf/printf could be gated for correctness and never given a
+// vs-incumbent ratio. This closes that.
+//
+// THE CONSTRAINT THAT SHAPES THIS CODE: each arm must open its destination with
+// ITS OWN fopen. A FILE* is not portable between libcs -- fl's and glibc's FILE
+// layouts differ -- so handing an fl-opened stream to glibc's fprintf is
+// undefined behaviour, not a comparison. That is why StreamArm carries the
+// stream alongside the function instead of the two arms sharing one.
+//
+// SINK IS /dev/null. It is the only destination that keeps the batch bounded: a
+// real file grows by ~7 bytes x 200_000 per sample, which on this fleet is
+// exactly the failure that stopped everything. Both arms pay identical write
+// cost so the ratio is unaffected, and both stay fully buffered, so the timed
+// work is the format-and-buffer path the probe actually changes.
+
+type FprintfFn = unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> c_int;
+type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+type FflushFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+/// One implementation's stream arm: its `fprintf`, its `fflush`, and a stream
+/// that IT opened.
+#[derive(Clone, Copy)]
+struct StreamArm {
+    fprintf: FprintfFn,
+    fflush: FflushFn,
+    fclose: FcloseFn,
+    fopen: FopenFn,
+    stream: *mut c_void,
+}
+
+fn run_stream_float_batch(arm: StreamArm, format: &CStr) -> u64 {
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = FLOAT_TIMING[index & (FLOAT_TIMING.len() - 1)];
+        // SAFETY: `arm.stream` was opened by this arm's own implementation and
+        // stays open for the whole batch; `format` names exactly one double.
+        let returned = unsafe {
+            black_box(arm.fprintf)(
+                black_box(arm.stream),
+                black_box(format.as_ptr()),
+                black_box(value),
+            )
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // Flush INSIDE the timed region through this arm's OWN fflush. Without it
+    // one arm can end the batch holding more buffered bytes than the other and
+    // the difference is charged to whoever flushes first afterwards.
+    // SAFETY: `arm.stream` is this arm's own live stream.
+    unsafe { black_box(arm.fflush)(black_box(arm.stream)) };
+    black_box(accumulator)
+}
+
+fn time_stream_2f_batch(arm: StreamArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_stream_float_batch(arm, c"%.2f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_stream_4f_batch(arm: StreamArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_stream_float_batch(arm, c"%.4f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_stream_6f_batch(arm: StreamArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_stream_float_batch(arm, c"%f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn run_fprintf_float(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+
+    let fl_fprintf_sym = unsafe { libc::dlsym(handle, c"fprintf".as_ptr()) };
+    let fl_fopen_sym = unsafe { libc::dlsym(handle, c"fopen".as_ptr()) };
+    let fl_fflush_sym = unsafe { libc::dlsym(handle, c"fflush".as_ptr()) };
+    let fl_fclose_sym = unsafe { libc::dlsym(handle, c"fclose".as_ptr()) };
+    for (sym, what) in [
+        (fl_fprintf_sym, "fprintf"),
+        (fl_fopen_sym, "fopen"),
+        (fl_fflush_sym, "fflush"),
+        (fl_fclose_sym, "fclose"),
+    ] {
+        assert!(!sym.is_null(), "{}", dl_error(&format!("dlsym FrankenLibC {what}")));
+    }
+
+    // SAFETY: each resolved symbol has the C signature its type names.
+    let fl_fprintf: FprintfFn = unsafe { std::mem::transmute(fl_fprintf_sym) };
+    let fl_fopen: FopenFn = unsafe { std::mem::transmute(fl_fopen_sym) };
+    let fl_fflush: FflushFn = unsafe { std::mem::transmute(fl_fflush_sym) };
+    let fl_fclose: FcloseFn = unsafe { std::mem::transmute(fl_fclose_sym) };
+
+    let host_fprintf: FprintfFn = linked_host_fprintf;
+    let host_fopen: FopenFn = linked_host_fopen;
+    let host_fflush: FflushFn = linked_host_fflush;
+    let host_fclose: FcloseFn = linked_host_fclose;
+
+    let incumbent_identity = symbol_object(host_fprintf as *const () as *const c_void)
+        .expect("identify host fprintf object");
+    let fl_identity =
+        symbol_object(fl_fprintf_sym.cast_const()).expect("identify FrankenLibC fprintf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=fprintf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=fprintf");
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_fprintf as usize, fl_fprintf as usize,
+        "both fprintf arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=fprintf_float incumbent_address={:#x} fl_address={:#x}",
+        host_fprintf as usize, fl_fprintf as usize,
+    );
+
+    // Each arm opens /dev/null with ITS OWN fopen. Cross-passing a FILE* between
+    // the two libcs is undefined behaviour, not a comparison.
+    let devnull = c"/dev/null";
+    let mode = c"w";
+    // SAFETY: both arguments are NUL-terminated constants.
+    let host_stream = unsafe { host_fopen(devnull.as_ptr(), mode.as_ptr()) };
+    // SAFETY: as above, through FrankenLibC's own fopen.
+    let fl_stream = unsafe { fl_fopen(devnull.as_ptr(), mode.as_ptr()) };
+    assert!(!host_stream.is_null(), "glibc fopen(/dev/null) failed");
+    assert!(!fl_stream.is_null(), "FrankenLibC fopen(/dev/null) failed");
+
+    let host = StreamArm {
+        fprintf: host_fprintf,
+        fflush: host_fflush,
+        fclose: host_fclose,
+        fopen: host_fopen,
+        stream: host_stream,
+    };
+    let fl = StreamArm {
+        fprintf: fl_fprintf,
+        fflush: fl_fflush,
+        fclose: fl_fclose,
+        fopen: fl_fopen,
+        stream: fl_stream,
+    };
+
+    // Conformance for the stream form: each arm writes through ITS OWN
+    // fopen/fprintf/fclose into its own file and the delivered bytes are
+    // compared, along with the return value and the stream-specific invariant
+    // that the count equals what actually reached the file.
+    let (comparisons, mismatches) = check_stream_float_conformance(host, fl);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=fprintf_float formats=5 values=16 \
+         comparisons={comparisons} mismatches={mismatches} \
+         compared=stream_bytes_and_return_value \
+         covers=signed_zero,subnormal,huge_finite,nan,inf verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=fprintf_float phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!(
+            "INCUMBENT_COVERAGE_VERIFY_ONLY symbol=fprintf_float verdict={conformance_verdict}"
+        );
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(
+        mismatches, 0,
+        "stream float arms are not observationally equivalent; refusing to time them"
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+
+    let results = [
+        measure_arm_case(
+            "stream_2dp",
+            "fprintf \"%.2f\" to /dev/null -- money shape through the stream path",
+            host,
+            fl,
+            time_stream_2f_batch,
+        ),
+        measure_arm_case(
+            "stream_4dp",
+            "fprintf \"%.4f\" -- mid precision through the stream path",
+            host,
+            fl,
+            time_stream_4f_batch,
+        ),
+        measure_arm_case(
+            "stream_6dp",
+            "fprintf bare \"%f\" -- C's default precision 6 through the stream path",
+            host,
+            fl,
+            time_stream_6f_batch,
+        ),
+    ];
+
+    let threads_post = observed_threads();
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print(
+            "fprintf_float",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let headline = results
+        .iter()
+        .find(|result| result.label == "stream_2dp")
+        .expect("missing stream_2dp result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=fprintf_float verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={} \
+         headline_case=stream_2dp headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        results.len() - wins - losses,
+        headline.effect_median,
+    );
+
+    // SAFETY: each stream is closed by the implementation that opened it.
+    unsafe {
+        host_fclose(host_stream);
+        fl_fclose(fl_stream);
+    }
+
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
+/// Compare the BYTES each implementation's fprintf actually puts on a stream,
+/// plus its return value, over the shared float value set.
+///
+/// EACH ARM WRITES THROUGH ITS OWN fopen/fprintf/fclose INTO ITS OWN FILE. An
+/// earlier draft of this function called the linked host snprintf for both arms,
+/// which would have compared glibc against glibc and been green by
+/// construction -- the exact hollow-oracle failure bd-v0388t exists to catch.
+/// Writing through each arm is what makes this a differential at all.
+fn check_stream_float_conformance(host: StreamArm, fl: StreamArm) -> (usize, usize) {
+    let formats = [c"%.2f", c"%.4f", c"%f", c"%.0f", c"%.9f"];
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+
+    let render = |arm: StreamArm, path: &CStr, format: &CStr, value: f64| -> (c_int, Vec<u8>) {
+        // SAFETY: path and mode are NUL-terminated; the stream is closed below.
+        let stream = unsafe { (arm.fopen)(path.as_ptr(), c"w".as_ptr()) };
+        assert!(!stream.is_null(), "conformance fopen failed");
+        // SAFETY: `stream` is this arm's own; `format` names one double.
+        let returned = unsafe { (arm.fprintf)(stream, format.as_ptr(), value) };
+        // SAFETY: closing flushes, which is what makes the bytes observable.
+        assert_eq!(unsafe { (arm.fclose)(stream) }, 0, "conformance fclose failed");
+        let text = path.to_str().expect("ascii temp path");
+        let bytes = std::fs::read(text).expect("read conformance temp file");
+        (returned, bytes)
+    };
+
+    let host_path = CString::new(format!("/tmp/fl-fprintf-conf-host-{}", std::process::id()))
+        .expect("temp path has no NUL");
+    let fl_path = CString::new(format!("/tmp/fl-fprintf-conf-fl-{}", std::process::id()))
+        .expect("temp path has no NUL");
+
+    for format in formats {
+        for &value in FLOAT_VALUES.iter() {
+            let (host_rc, host_bytes) = render(host, &host_path, format, value);
+            let (fl_rc, fl_bytes) = render(fl, &fl_path, format, value);
+            comparisons += 1;
+            // The return value AND the delivered bytes, plus the stream-specific
+            // invariant that the count equals what actually reached the file.
+            if host_rc != fl_rc
+                || host_bytes != fl_bytes
+                || fl_rc as usize != fl_bytes.len()
+            {
+                mismatches += 1;
+            }
+        }
+    }
+    let _ = std::fs::remove_file(host_path.to_str().expect("ascii"));
+    let _ = std::fs::remove_file(fl_path.to_str().expect("ascii"));
+    (comparisons, mismatches)
 }
