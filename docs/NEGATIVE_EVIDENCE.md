@@ -28980,3 +28980,40 @@ What this changes, and what it does not:
   before any fast path and never skip the membrane. **The honest read is that the stream probes buy
   nothing and cost about 30%, and the next move is to consider removing them rather than tuning
   them.**
+
+## 2026-08-16 (BlackThrush) — FRONTIER CLOSURE: the two strongest candidates to beat getrandom's 92x are WINS, not losses
+
+- **RESULT CLASS: loss/baseline (frontier ranking).** No speedup claim: the two wins below are
+  reported as evidence about the RANKING, not banked as campaign wins, and neither carries the
+  structured live-incumbent bundle a win row requires.
+- **WHY THESE TWO.** "getrandom is the campaign's worst ratio" is a ranking claim, and I have already
+  had a ranking claim refuted once today -- the allocator was not the worst. The resolver family was
+  the strongest remaining candidate to exceed 92x, because those entry points parse `/etc/hosts` and
+  a slow parser there could plausibly cost far more than a syscall wrapper. Measuring them is the
+  test that could have overturned the frontier. It did not.
+- **Single invocation each, `--pin-quietest 8`, `BENCH_ELF_OBJECT sha256
+  7ff4584bcf046d263f82d5eb264afe3086033a1a05b339dbb1a9a09dc3964c0c`, `FL_OBJECT sha256
+  faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b`:**
+
+  | family / case | fl/glibc | ratio_ci95 | same-invocation A/A null_fl_fl | same-invocation A/A null_glibc_glibc | observed loadavg |
+  |---|---|---|---|---|---|
+  | gethostbyname / localhost_ipv4_hosts_lookup | **0.217203** FL_FASTER | [0.216494,0.217527] | 0.999909 | 0.999138 | 10.14,17.53,24.44 |
+  | gethostbyaddr / loopback_ipv4_hosts_reverse | **0.199115** FL_FASTER | [0.198760,0.199520] | 0.999899 | 0.998845 | 8.23,13.79,21.22 |
+
+  Both `verdict=DECIDABLE cases=1 wins=1 losses=0`. `ARM_DISTINCT` holds for each (gethostbyname
+  incumbent 0x71e9b256c1f0 / fl 0x71e9a13a8b20; gethostbyaddr incumbent 0x7e7d82d6bb60 / fl
+  0x7e7d71ba8970), and each passed 16 conformance comparisons with
+  `exact_semantic_result_verdict=pass` before timing. All four A/A null medians sit inside the 0.020
+  bias tolerance.
+- **RANKING AS IT NOW STANDS**, worst first, all at HEAD: `getrandom` 91.58-92.17x (replicated on two
+  binaries), `malloc_free` 6.62x, `mtx_trylock` 1.1246x, `thrd_current` 1.1109x. Wins: `gethostbyaddr`
+  0.1991x, `gethostbyname` 0.2172x, `getauxval` 0.5243-0.6915x, `sem_post` 0.9716x.
+- **STILL UNMEASURED, so this remains confirmed-worst-so-far.** `getaddrinfo_hosts`, `sscanf`,
+  `sinhf_coshf`, `snprintf`, `snprintf_fused`, `snprintf_float`, `fprintf_float`, `nl_langinfo`.
+  Prior campaign rows put the printf/scanf families in the 1.2-3.3x band, an order of magnitude
+  below getrandom, so none is a plausible frontier candidate -- but that is inference from earlier
+  runs, not a measurement at HEAD, and it is recorded as inference. `wcsnrtombs` is excluded on
+  mechanism: it reports `runner_not_yet_implemented` and has no runner, so it can never produce a row.
+- **A failure to certify is not a loss, and is recorded as neither.** `getaddrinfo_hosts` and `sscanf`
+  produced no contract rows inside a 180 s budget at loadavg 10.22. That is a budget too short for
+  the gate's 300000 ms sampling window, not evidence about either family.
