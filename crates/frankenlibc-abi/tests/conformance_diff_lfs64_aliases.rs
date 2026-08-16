@@ -58,6 +58,40 @@ fn statfs64_matches_statfs() {
     }
 }
 
+/// The fourth alias bd-6pvt1k names. It was missing from this gate while the
+/// other three were covered, so the bead's ask was only three-quarters met.
+///
+/// Uses a file descriptor rather than a path, which is the whole difference
+/// between this pair and `statfs64`/`statfs`: a mis-wired `fstatfs64` that
+/// forwarded to the PATH-taking `statfs` would interpret the fd as a pointer,
+/// so this arm covers a failure mode the statfs64 arm cannot reach.
+#[test]
+fn fstatfs64_matches_fstatfs() {
+    // SAFETY: "/" is a NUL-terminated constant and O_RDONLY|O_DIRECTORY opens a
+    // directory fd suitable for fstatfs.
+    let fd = unsafe { libc::open(c"/".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(fd >= 0, "opening / for fstatfs failed");
+
+    let mut a: libc::statfs = unsafe { std::mem::zeroed() };
+    let mut b: libc::statfs64 = unsafe { std::mem::zeroed() };
+    let ra = unsafe { u::fstatfs(fd, &mut a as *mut _ as *mut c_void) };
+    let rb = unsafe { u::fstatfs64(fd, &mut b as *mut _ as *mut c_void) };
+    // SAFETY: fd was opened above and is not used after this point.
+    unsafe { libc::close(fd) };
+
+    assert_eq!(ra, rb, "fstatfs/fstatfs64 rc differ");
+    if ra == 0 {
+        assert_eq!(a.f_type, b.f_type, "f_type differs");
+        assert_eq!(a.f_bsize, b.f_bsize, "f_bsize differs");
+        assert_eq!(a.f_blocks, b.f_blocks, "f_blocks differs");
+        assert_eq!(a.f_files, b.f_files, "f_files differs");
+        assert_eq!(a.f_namelen, b.f_namelen, "f_namelen differs");
+        // The point of the alias: same fd, same filesystem, so the two calls
+        // must agree on free space as well, not merely on the static geometry.
+        assert_eq!(a.f_bfree, b.f_bfree, "f_bfree differs");
+    }
+}
+
 #[test]
 fn statvfs64_matches_statvfs() {
     let path = c"/";
