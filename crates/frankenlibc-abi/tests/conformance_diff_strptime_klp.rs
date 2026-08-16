@@ -10,8 +10,27 @@
 
 use std::ffi::{CString, c_char, c_int};
 
-unsafe extern "C" {
-    fn strptime(s: *const c_char, format: *const c_char, tm: *mut libc::tm) -> *mut c_char;
+// The host arm is resolved with `dlsym`, not declared at link time: fl exports
+// its own `strptime` into this binary, so a link-time reference can bind to fl
+// and leave both arms as fl — green while proving nothing (bd-v0388t;
+// conformance_diff_catopen was doing exactly that in a plain debug build and
+// hiding a live errno defect).
+type StrptimeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
+
+fn host_strptime() -> StrptimeFn {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; the name is a NUL-terminated constant.
+    let raw = unsafe { libc::dlsym(handle, c"strptime".as_ptr()) };
+    assert!(!raw.is_null(), "dlsym strptime");
+    assert_ne!(
+        raw as usize,
+        frankenlibc_abi::time_abi::strptime as usize,
+        "the resolved oracle IS fl's strptime — this gate would compare fl to itself"
+    );
+    // SAFETY: the resolved symbol has POSIX's documented strptime signature.
+    unsafe { std::mem::transmute::<_, StrptimeFn>(raw) }
 }
 
 /// (parsed-ok?, consumed-len, tm_hour) for one impl.
@@ -33,7 +52,7 @@ fn run(
 
 #[test]
 fn strptime_klp_match_glibc() {
-    let g = strptime;
+    let g = host_strptime();
     let f: unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char =
         frankenlibc_abi::time_abi::strptime;
 

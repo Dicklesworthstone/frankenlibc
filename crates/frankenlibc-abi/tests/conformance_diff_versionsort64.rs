@@ -9,9 +9,45 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-unsafe extern "C" {
-    fn versionsort64(a: *mut *const libc::dirent64, b: *mut *const libc::dirent64) -> c_int;
-    fn alphasort64(a: *mut *const libc::dirent64, b: *mut *const libc::dirent64) -> c_int;
+// Host arms are resolved with `dlsym`, not declared at link time: fl exports
+// its own versionsort64/alphasort64 into this binary, so a link-time reference
+// can bind to fl and leave both arms as fl — green while proving nothing
+// (bd-v0388t; conformance_diff_catopen was doing exactly that in a plain debug
+// build and hiding a live errno defect).
+type CmpFn = unsafe extern "C" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int;
+
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: the handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+fn host_versionsort64() -> CmpFn {
+    // SAFETY: resolved symbol has glibc's documented versionsort64 signature.
+    unsafe {
+        std::mem::transmute::<_, CmpFn>(host_symbol(
+            c"versionsort64",
+            frankenlibc_abi::unistd_abi::versionsort64 as usize,
+        ))
+    }
+}
+
+fn host_alphasort64() -> CmpFn {
+    // SAFETY: resolved symbol has glibc's documented alphasort64 signature.
+    unsafe {
+        std::mem::transmute::<_, CmpFn>(host_symbol(
+            c"alphasort64",
+            frankenlibc_abi::unistd_abi::alphasort64 as usize,
+        ))
+    }
 }
 
 fn make(name: &str) -> libc::dirent64 {
@@ -35,6 +71,7 @@ const PAIRS: &[(&str, &str)] = &[
 
 #[test]
 fn versionsort64_matches_glibc_sign() {
+    let versionsort64 = host_versionsort64();
     for &(na, nb) in PAIRS {
         let a = make(na);
         let b = make(nb);
@@ -57,6 +94,7 @@ fn versionsort64_matches_glibc_sign() {
 
 #[test]
 fn alphasort64_matches_glibc_sign() {
+    let alphasort64 = host_alphasort64();
     for &(na, nb) in PAIRS {
         let a = make(na);
         let b = make(nb);
