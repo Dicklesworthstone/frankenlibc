@@ -21,9 +21,14 @@
 //! the rows at once.
 //!
 //! The table is KEPT and the same cases now run through a dlsym-resolved
-//! `re_comp`/`re_exec` as well. Both implementations hold their own compiled
-//! pattern in their own global state, so each arm compiles before it executes
-//! and the two never share a buffer.
+//! `re_comp`/`re_exec` as well. Each arm compiles before it executes, so within
+//! one test fl's buffer and glibc's are never confused for each other.
+//!
+//! ACROSS tests is the part that bites, and it is why `RE_STATE` below exists:
+//! the buffers are per-LIBRARY globals, not per-thread, so two tests running
+//! concurrently — libtest's default — corrupt each other regardless of which
+//! arm each is driving. Adding the second test to this file is what created
+//! that hazard; the guard is what contains it.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 use frankenlibc_abi::glibc_internal_abi as g;
@@ -45,6 +50,36 @@ fn host_re_exec() -> ReExec {
     // SAFETY: signature matches C's re_exec exactly.
     unsafe { dlsym_oracle::host_fn(c"re_exec", g::re_exec as *const ()) }
 }
+
+/// Serialises every test in this file, because `re_comp`/`re_exec` are NOT
+/// REENTRANT — in fl or in glibc.
+///
+/// The V7/BSD interface holds ONE compiled pattern per library in a process
+/// global: fl in `RE_COMPILED_BUF`, glibc in its own static. `re_comp` writes
+/// it and `re_exec` reads it, so two threads interleaving compile/exec pairs
+/// will execute one thread's subject against the other's pattern. That is a
+/// caller error against the API's contract, not a defect in either
+/// implementation.
+///
+/// MEASURED, not theorised (2026-08-16). This file had one test until a live
+/// glibc arm was added, and libtest runs tests in PARALLEL by default. Every
+/// verification run of the new arm had used `--test-threads=1`, so the hazard
+/// stayed invisible until a placement/contention sweep ran the suite the way
+/// CI does. It failed exactly as the shape predicts:
+///
+/// ```text
+///   re_comp("\(ab\)*"); re_exec("ababab") = 0, glibc = 1
+///   re_comp("\(a\)+");  re_exec("aaa")    = 0, glibc = 1
+///   re_comp("a?");      re_exec("x")      = 0, glibc = 1
+/// ```
+///
+/// — subjects matched against the wrong pattern, in both directions.
+///
+/// A new test in this file MUST take this guard. `into_inner` on poison is
+/// deliberate: a panic in one test has already been reported, and turning it
+/// into a second, misleading "poisoned mutex" failure in the next test would
+/// hide the original.
+static RE_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // (pattern, string, glibc re_exec result: 1=match, 0=no match)
 const CASES: &[(&str, &str, i32)] = &[
@@ -91,6 +126,7 @@ const CASES: &[(&str, &str, i32)] = &[
 
 #[test]
 fn recomp_matches_glibc() {
+    let _re_state = RE_STATE.lock().unwrap_or_else(|e| e.into_inner());
     let mut div: Vec<String> = Vec::new();
     for &(pat, s, want) in CASES {
         let cp = CString::new(pat).unwrap();
@@ -135,6 +171,7 @@ fn recomp_matches_glibc() {
 /// last.
 #[test]
 fn recomp_matches_live_glibc_on_the_same_cases() {
+    let _re_state = RE_STATE.lock().unwrap_or_else(|e| e.into_inner());
     let comp = host_re_comp();
     let exec = host_re_exec();
     let mut fl_vs_live: Vec<String> = Vec::new();
