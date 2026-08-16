@@ -28506,3 +28506,65 @@ What this changes, and what it does not:
   counts instructions, not cycles; a memory-bound path retires few instructions slowly. This row
   attributes INSTRUCTIONS and must not be read as attributing TIME. The ~4.47x instruction ratio
   against a ~7.0x wall ratio is direct evidence that the two differ here.
+
+## 2026-08-16 (BlackThrush) — CORRECTION to the attribution row above: the "7.7% symbol resolution" was STARTUP, not per-call, and the real instruction ratio is 7.98x not 4.47x
+
+- **RESULT CLASS: loss/baseline.** Withdrawing the headline numbers and the identified lever from the
+  row immediately above, and replacing them with per-call figures. The apparatus was right; my
+  reading of it was not.
+- **What I claimed.** That fl retires 690.3 instructions per malloc/free pair against glibc's 154.4
+  (4.47x), that 7.73% of fl's budget is host symbol resolution, and that symbol resolution was
+  therefore a memoisable lever worth roughly 7.0x -> 6.7x.
+- **The control that refutes it.** `malloc_icount` was re-run at 1,000 pairs instead of 20,000.
+  `symbol_name_matches` reported **exactly 2,995,432 instructions in both runs**, and
+  `resolve_symbol_from_data` exactly 1,275,972 in both, while `segment_free` scaled 506,800 ->
+  10,082,674 (about 20x, as a per-call cost must). **A count that does not move with the loop is not
+  in the loop.** Symbol resolution is one-time startup; there is nothing in the hot path to memoise
+  and the lever does not exist.
+- **Why I got it wrong, because the mechanism will recur.** I read SHARE OF TOTAL from a profile whose
+  total included process startup. In a driver doing 80,000 pairs that still leaves ~5.4M startup
+  instructions, so any fixed cost looks like a plausible few percent of "the workload". The fix is
+  the two-point control, now built into the harness as `ICOUNT_PAIRS`: profile at two loop counts and
+  difference them. Share-of-total answers "what did this process execute", never "what does this call
+  cost".
+- **The corrected totals, from the two-point difference.** fl **621.7 instructions per pair** with
+  ~5,377,812 of startup; glibc **77.9 per pair** with ~6,113,240 of startup.
+  **Marginal instruction ratio = 7.98x**, against the 4.46x that the naive total-based reading gave.
+- **That also inverts the conclusion I drew from it.** I wrote that fl retires 4.5x the instructions
+  but takes 7x the time, so "roughly a third of the wall gap is stalls that no instruction-level lever
+  will remove". The true marginal ratio, 7.98x, slightly EXCEEDS the ~7.0x wall ratio. There is no
+  stall penalty to explain away: **fl's extra instructions execute at least as efficiently as
+  glibc's, so the wall gap is essentially all instruction count and reducing instructions should move
+  the wall ratio close to one-for-one.** That is a better position than the one I withdrew.
+- **The real per-call attribution** (20,000-pair profile minus 1,000-pair profile, 624.8
+  instructions/pair):
+
+  | per pair | share | function |
+  |---|---|---|
+  | 126.0 | 20.2% | `malloc_abi::segment_free` |
+  | 93.0 | 14.9% | `malloc_abi::allocate_from_local_class` |
+  | 80.0 | 12.8% | `malloc_abi::enter_allocator_reentry_guard` |
+  | 73.0 | 11.7% | `free` |
+  | 65.3 | 10.5% | `malloc` |
+  | 59.0 | 9.4% | `malloc_abi::record_stats` |
+  | 37.0 | 5.9% | `malloc_abi::segment_allocate` |
+  | 27.0 | 4.3% | `runtime_policy::mode` |
+  | 22.0 | 3.5% | `size_class::bin_index` |
+  | 22.0 | 3.5% | `runtime_policy::entrypoint_scope` |
+  | 11.0 | 1.8% | `size_class::small_bin_index` |
+
+- **What that says, now that the numbers are per-call.** Roughly **188 instructions per pair — 30% —
+  is bookkeeping rather than allocation**: the reentry guard (80), stats (59), and policy
+  mode/entrypoint_scope (49). glibc's ENTIRE per-pair cost is 78 instructions. So fl spends more on
+  guard-plus-stats alone than glibc spends in total. Those three are the candidates, and unlike the
+  ablation targets they are not obviously load-bearing for other paths — but given this vein's record,
+  that must be tested and not assumed.
+- **A latent defect found and fixed on the way, with no measured performance effect.** `RESOLVED` in
+  `host_resolve.rs` was written at the end of `bootstrap_host_symbols` and **never read anywhere**, so
+  the 22-symbol table was walked on every call and any symbol that could not resolve was re-scanned —
+  a full ELF symbol-table walk per call — forever. It is now read as an early-out, with exponential
+  backoff on the retry so late-resolving symbols (`dlvsym`, `dl_iterate_phdr`, which need the loader
+  image mapped) are still found rather than latched off permanently. Measured effect on this
+  workload: 55,223,261 -> 55,111,198 instructions, i.e. 0.2%, because in this process every symbol
+  resolves and the pathological rescan never triggers. Kept as a robustness fix, NOT as a lever.
+  `malloc_abi_test` 72 passed / 1 ignored and `hardened_mode_safety_test` 15 passed with it.

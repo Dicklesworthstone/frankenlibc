@@ -47,7 +47,21 @@ fn dl<T: Copy>(handle: *mut c_void, name: &[u8]) -> T {
 /// Pairs per size class. Deliberately modest: callgrind runs ~50x slower than
 /// native, and instruction counts are exact rather than statistical, so there is
 /// nothing to gain from a large N and a lot of wall time to lose.
-const PAIRS: usize = 20_000;
+const PAIRS_DEFAULT: usize = 20_000;
+
+/// Overridable so a run can be repeated at two loop counts.
+///
+/// That is not a convenience: it is the control that distinguishes a PER-CALL
+/// cost from one-time startup. A function whose instruction count is identical
+/// at 1,000 and 20,000 pairs is not in the hot path however large its share of
+/// the total looks, and a share-of-total reading alone cannot tell the two
+/// apart.
+fn pairs() -> usize {
+    std::env::var("ICOUNT_PAIRS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(PAIRS_DEFAULT)
+}
 const SIZES: [usize; 4] = [16, 64, 256, 1024];
 
 fn main() {
@@ -80,8 +94,9 @@ fn main() {
     // so a miscompiled arm shows up as a different checksum rather than as a
     // suspiciously cheap run.
     let mut checksum = 0u64;
+    let pairs = pairs();
     for size in SIZES {
-        for _ in 0..PAIRS {
+        for _ in 0..pairs {
             // SAFETY: `size` is non-zero; every pointer returned is freed once
             // through the same arm's `free`.
             unsafe {
@@ -93,6 +108,6 @@ fn main() {
     }
 
     println!(
-        "MALLOC_ICOUNT arm={arm} pairs_per_size={PAIRS} sizes={SIZES:?} checksum=0x{checksum:x}"
+        "MALLOC_ICOUNT arm={arm} pairs_per_size={pairs} sizes={SIZES:?} checksum=0x{checksum:x}"
     );
 }

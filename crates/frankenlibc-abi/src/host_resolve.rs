@@ -484,7 +484,35 @@ pub(crate) fn ensure_host_dlvsym() {
     }
 }
 
+/// Counts entries into [`bootstrap_host_symbols`] so the rescan can back off.
+/// Separate from `RESOLVED`, which records that every symbol has been found.
+static BOOTSTRAP_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+
 pub(crate) fn bootstrap_host_symbols() {
+    // EARLY-OUT ON FULL RESOLUTION. `RESOLVED` was written at the end of this
+    // function and never read anywhere, so the table below was walked on EVERY
+    // call — and every symbol still at 0 was re-resolved, which means a full ELF
+    // symbol-table scan with string comparison per call. Measured with callgrind
+    // on a malloc/free loop, `symbol_name_matches` was 5.42% of fl's entire
+    // instruction budget and `resolve_symbol_from_data` a further 2.31%, i.e.
+    // 7.7% of malloc+free spent looking up host symbols. bd-dcrhgl.
+    if RESOLVED.load(Ordering::Acquire) != 0 {
+        return;
+    }
+
+    // BACKOFF, because a plain one-shot latch would be wrong. Some of these
+    // resolve only once the loader image is mapped (`dlvsym`,
+    // `dl_iterate_phdr`), so an early call can legitimately fail and a later one
+    // succeed; latching after the first pass would lose them permanently.
+    // Retrying on attempts 0, 1, 2 and then only on powers of two keeps the
+    // late-resolution path working while making the steady state — a symbol
+    // that is genuinely absent — cost one atomic increment and a branch instead
+    // of a symbol-table walk.
+    let attempt = BOOTSTRAP_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+    if attempt > 2 && !attempt.is_power_of_two() {
+        return;
+    }
+
     let mut unresolved = 0usize;
     for (symbol, cache) in [
         ("pthread_create", &HOST_PTHREAD_CREATE),
