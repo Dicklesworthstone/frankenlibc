@@ -7475,6 +7475,48 @@ fn run_fprintf_float(config: &Config) {
         "stream float arms are not observationally equivalent; refusing to time them"
     );
 
+    // WHY fl MIGHT BE 2.5-3x SLOWER ON ONE HOST THAN ANOTHER — report the gate,
+    // do not guess at it.
+    //
+    // fl's stdio write fast path (`try_fwrite_fast`) bails immediately unless
+    // `__libc_single_threaded` reads 1, and FOURTEEN stdio fast paths are gated
+    // on that one flag. It is fl's OWN static, not an alias of glibc's, so which
+    // object a reference to it resolves to decides whether the fast path runs at
+    // all. glibc's copy is cleared to 0 the moment any thread is created; fl's
+    // stays 1 unless fl's own pthread_create runs.
+    //
+    // That makes it a candidate for the host split observed across the fprintf
+    // rows (fl 41-51 ns on the vmi hosts against 120-124 ns on hetzner2, with
+    // glibc flat at 90-110 ns on both). Printing both copies costs nothing and
+    // turns a guess into an attribution on the next run.
+    {
+        // SAFETY: the handle is fl's, and the name is a NUL-terminated constant.
+        let fl_flag = unsafe { libc::dlsym(handle, c"__libc_single_threaded".as_ptr()) };
+        // SAFETY: RTLD_DEFAULT searches the process's global scope, which is the
+        // host glibc's copy.
+        let host_flag = unsafe {
+            libc::dlsym(std::ptr::null_mut(), c"__libc_single_threaded".as_ptr())
+        };
+        let read = |p: *mut c_void| -> i32 {
+            if p.is_null() {
+                -1
+            } else {
+                // SAFETY: the symbol is a single byte in both libcs.
+                i32::from(unsafe { *(p as *const u8) })
+            }
+        };
+        println!(
+            "STDIO_FASTPATH_GATE symbol=fprintf_float fl___libc_single_threaded={} \
+             host___libc_single_threaded={} fl_addr={:?} host_addr={:?} same_object={} \
+             note=\"fast path requires 1; 14 stdio fast paths gated on it\"",
+            read(fl_flag),
+            read(host_flag),
+            fl_flag,
+            host_flag,
+            fl_flag == host_flag,
+        );
+    }
+
     // Both stream pairs are proven live before any timing. See
     // assert_timed_stream_is_live for why this exists.
     assert_timed_stream_is_live(host, fl);
