@@ -28748,3 +28748,27 @@ What this changes, and what it does not:
   skip the membrane, whereas `fprintf`/`printf` run `runtime_policy::decide` before any fast path.
   Buffer: 0.430 / 0.493 / 0.510. Stream: 0.443 / 0.478 / 0.495. Smaller on every case, as stated in
   advance rather than rationalised afterwards.
+
+## 2026-08-16 (BlackThrush) — WORST MEASURED RATIO AT HEAD e6959139a: malloc/free 6.6217x, one invocation
+
+- **RESULT CLASS: loss/baseline.** The campaign's worst vs-incumbent ratio, re-measured at HEAD after
+  the size-class fold landed. fl is SLOWER; no speedup is claimed here.
+- **Single invocation, `square=ABBAABBA`, n=41 per case, `BENCH_ELF_OBJECT sha256
+  d531bd26da4e81ae3c80c8fe485967bc153a4d47a9d433bfa86c227abe342392`**, built from HEAD `e6959139a`
+  on thinkstation1, governor powersave, isa avx2+sse4.2, loadavg 28.53.
+
+  | sz | ratio_p50 | ci95 | same-invocation A/A null_fl | same-invocation A/A null_glibc |
+  |---|---|---|---|---|
+  | 16 | **6.6217** | [6.5758,6.6696] | 0.9914 | 0.9998 |
+  | 64 | 6.5352 | [6.5036,6.5598] | 0.9929 | 1.0060 |
+  | 256 | 6.5466 | [6.5297,6.5849] | 1.0008 | 1.0000 |
+  | 1024 | 6.5838 | [6.5553,6.5998] | 0.9940 | 0.9998 |
+
+  All four ADMISSIBLE. Worst same-invocation A/A null across the run is 0.9914 (fl/fl) and 1.0060
+  (glibc/glibc), both inside the harness bound of +/-0.02.
+- **Absolute, telemetry only:** fl 30.65-31.01 ns/pair against glibc 4.74-4.76 ns/pair. The gap is
+  ~26 ns/pair, flat across the four sizes -- it is fixed per-call overhead, not size-dependent work,
+  which is the same shape every prior measurement on this vein has shown.
+- **The ELF sha is byte-identical to the candidate measured before that commit landed**, so the
+  >=6.6%-faster row banked earlier today describes exactly what is now shipped, and this run is a
+  confirmation rather than a new claim.
