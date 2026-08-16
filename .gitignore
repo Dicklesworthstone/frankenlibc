@@ -107,6 +107,9 @@ storage.recovered.sqlite3
 .beads/*.recover*.sql
 .beads/*.orphan_*
 .beads/.br_recovery/
+.beads/*wal-cert
+.beads/*wal-cert-head
+.beads/beads.db-fsqlite-ns-*
 .beads/beads.db.bad_*
 .beads/beads.db-shm.bad_*
 .beads/beads.db-wal.bad_*
