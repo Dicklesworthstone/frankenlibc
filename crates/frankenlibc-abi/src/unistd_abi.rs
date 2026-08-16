@@ -8883,30 +8883,49 @@ fn gensalt_nrbytes(nrbytes: c_int) -> Result<usize, c_int> {
 /// Encode `rbytes[0..nrbytes]` (capped at 12 bytes → 16 base64
 /// chars) into the libxcrypt-style `./0-9A-Za-z` base64 alphabet
 /// and append exactly 16 chars to `out`.
-fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, out: &mut Vec<u8>) {
+/// Salt characters libxcrypt emits for each supported prefix.
+///
+/// This is per-ALGORITHM, not one length for everything: MD5-crypt takes at
+/// most an 8-character salt, while SHA-256/SHA-512 take 16. fl used to emit 16
+/// for all of them, so `crypt_gensalt("$1$")` produced a salt twice as long as
+/// MD5-crypt allows (bd-5rfmrp).
+fn gensalt_salt_chars(prefix: &[u8]) -> usize {
+    match prefix {
+        b"$1$" => 8,
+        _ => 16,
+    }
+}
+
+fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, want: usize, out: &mut Vec<u8>) {
     const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let n = nrbytes.min(12);
     if n == 0 || rbytes.is_null() {
-        out.extend_from_slice(b"AAAAAAAAAAAAAAAA");
+        out.extend(std::iter::repeat_n(b'A', want));
         return;
     }
     // SAFETY: caller-supplied buffer of at least nrbytes bytes.
     let bytes = unsafe { core::slice::from_raw_parts(rbytes as *const u8, n) };
     let mut emitted = 0usize;
     let mut i = 0;
-    while i + 3 <= bytes.len() && emitted + 4 <= 16 {
-        let b0 = bytes[i] as u32;
-        let b1 = bytes[i + 1] as u32;
-        let b2 = bytes[i + 2] as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[((triple >> 18) & 0x3F) as usize]);
-        out.push(ALPHABET[((triple >> 12) & 0x3F) as usize]);
-        out.push(ALPHABET[((triple >> 6) & 0x3F) as usize]);
-        out.push(ALPHABET[(triple & 0x3F) as usize]);
-        emitted += 4;
+    while i + 3 <= bytes.len() && emitted < want {
+        // libxcrypt packs each 3 random bytes LITTLE-ENDIAN and emits the LOW
+        // 6 bits first. fl packed them big-endian and emitted the high bits
+        // first, so identical input bytes produced different salt characters:
+        // for rbytes "0123456789abcdef..." libxcrypt yields "k2XAnEHB" where fl
+        // yielded "A12mAnEp..." (bd-5rfmrp). Verified against libcrypt.so.1 for
+        // $1$, $5$ and $6$.
+        let value =
+            (bytes[i] as u32) | ((bytes[i + 1] as u32) << 8) | ((bytes[i + 2] as u32) << 16);
+        for shift in [0u32, 6, 12, 18] {
+            if emitted == want {
+                break;
+            }
+            out.push(ALPHABET[((value >> shift) & 0x3F) as usize]);
+            emitted += 1;
+        }
         i += 3;
     }
-    while emitted < 16 {
+    while emitted < want {
         out.push(b'A');
         emitted += 1;
     }
@@ -8928,7 +8947,7 @@ fn build_gensalt(
         use std::io::Write;
         let _ = write!(out, "rounds={count}$");
     }
-    gensalt_encode_bytes(rbytes, nrbytes, out);
+    gensalt_encode_bytes(rbytes, nrbytes, gensalt_salt_chars(p), out);
     if out.len() + 1 > CRYPT_GENSALT_OUTPUT_SIZE {
         return Err(errno::ERANGE);
     }
