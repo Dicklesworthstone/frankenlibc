@@ -5732,7 +5732,12 @@ fn write_type_into(ty: u16, out: &mut String) {
         16 => out.push_str("TXT"),
         28 => out.push_str("AAAA"),
         n => {
-            let _ = write!(out, "TYPE{n}");
+            // Bare decimal, NOT "TYPE<n>". glibc's ns_sprintrrf renders the type
+            // through p_type/__p_type, which falls back to the decimal number,
+            // so the host emits "0S IN 999" where fl emitted "0S IN TYPE999"
+            // (bd-6z6apt). fl's own __p_type already does this correctly — the
+            // two renderings had simply drifted apart.
+            let _ = write!(out, "{n}");
         }
     }
 }
@@ -5829,13 +5834,70 @@ fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
     Ok(())
 }
 
-fn format_generic_rdata(rdata: &[u8], out: &mut String) {
+/// RFC 3597 generic rdata, in the BIND layout glibc actually emits.
+///
+/// fl used to write a compact uppercase run (`\# 3 010203`). The host writes a
+/// hex DUMP, measured against `libresolv.so.2` at lengths 0, 1, 3, 8, 16, 24 and
+/// 40 (bd-6z6apt):
+///
+/// ```text
+/// \# 3 (\t; unknown RR type 999\n\t01 02 03 )\t\t\t\t\t; ...
+/// ```
+///
+/// The rules that reproduce every probed length:
+///  - the byte count, then ` (` and a `\t; unknown RR type <ty>` comment; a
+///    ZERO-length rdata gets no parens at all, just `\t;` and the comment;
+///  - 16 bytes per line, each written lowercase as `"%02x "` (with its trailing
+///    space), after a leading tab;
+///  - the closing paren goes on the final line ONLY when that line is PARTIAL.
+///    A dump whose length is an exact multiple of 16 ends without one — that is
+///    a BIND quirk, reproduced deliberately rather than corrected;
+///  - then tabs pad to column 56, then `; ` and an ASCII column with
+///    non-printables shown as `.`.
+fn format_generic_rdata(rdata: &[u8], ty: u16, out: &mut String) {
     use std::fmt::Write;
+    /// Column the trailing `; <ascii>` comment starts at.
+    const COMMENT_COLUMN: usize = 56;
+    /// Bytes per dump line.
+    const PER_LINE: usize = 16;
+
     let _ = write!(out, "\\# {}", rdata.len());
-    if !rdata.is_empty() {
-        out.push(' ');
-        for &b in rdata {
-            let _ = write!(out, "{b:02X}");
+    if rdata.is_empty() {
+        let _ = write!(out, "\t; unknown RR type {ty}");
+        return;
+    }
+    let _ = write!(out, " (\t; unknown RR type {ty}");
+
+    let mut remaining = rdata;
+    while !remaining.is_empty() {
+        let take = remaining.len().min(PER_LINE);
+        let (chunk, rest) = remaining.split_at(take);
+        remaining = rest;
+
+        out.push('\n');
+        // One leading tab, so the hex starts at column 8.
+        out.push('\t');
+        let mut column = 8usize;
+        for &b in chunk {
+            let _ = write!(out, "{b:02x} ");
+            column += 3;
+        }
+        // Only a partial final line carries the closing paren.
+        if remaining.is_empty() && chunk.len() < PER_LINE {
+            out.push(')');
+            column += 1;
+        }
+        while column < COMMENT_COLUMN {
+            out.push('\t');
+            column = (column / 8 + 1) * 8;
+        }
+        out.push_str("; ");
+        for &b in chunk {
+            out.push(if (0x20..0x7f).contains(&b) {
+                b as char
+            } else {
+                '.'
+            });
         }
     }
 }
@@ -5873,7 +5935,7 @@ unsafe fn format_rdata(
         }
         16 => format_txt_rdata(slice, out),
         _ => {
-            format_generic_rdata(slice, out);
+            format_generic_rdata(slice, ty, out);
             Ok(())
         }
     }
