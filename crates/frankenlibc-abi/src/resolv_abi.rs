@@ -5781,7 +5781,20 @@ unsafe fn format_name_rdata(
         return Err(());
     }
     let len = tmp.iter().position(|&b| b == 0).unwrap_or(tmp.len());
-    out.push_str(&String::from_utf8_lossy(&tmp[..len]));
+    // Names embedded in rdata are root-dot terminated exactly like the owner name, and the
+    // root itself renders as a bare ".". Verified against live libresolv (bd-mz6xqf):
+    //   MX -> mail.com  =>  "... IN MX\t10 mail.com."
+    //   MX -> root      =>  "... IN MX\t10 ."
+    //   NS -> ns.com    =>  "... IN NS\tns.com."
+    let expanded = String::from_utf8_lossy(&tmp[..len]);
+    if expanded.is_empty() {
+        out.push('.');
+    } else {
+        out.push_str(&expanded);
+        if !expanded.ends_with('.') {
+            out.push('.');
+        }
+    }
     Ok(())
 }
 
