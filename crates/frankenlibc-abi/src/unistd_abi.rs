@@ -110,7 +110,35 @@ fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
 }
 
 #[inline]
+/// Clamp a syscall's output length to what the allocator knows about `ptr`.
+///
+/// TWO SHORT-CIRCUITS AHEAD OF THE LOOKUP, both behaviour-preserving and both
+/// gated by `conformance_diff_known_remaining_stack` rather than argued.
+/// `known_remaining` walks the bump-mmap ranges, then the segment arena, then the
+/// membrane validator and the fallback table — up to three lookups on every call.
+/// That was invisible next to a syscall; after the vDSO change removed the
+/// syscall from `getrandom`, fl's own entry framing is what is left of that gap.
+///
+///   1. A ZERO-LENGTH request cannot be changed by the lookup, because
+///      `min(remaining, 0)` is 0 for every `remaining`. No assumption at all.
+///   2. A CURRENT-STACK output is never allocator-tracked, so the lookup would
+///      return `None` and the answer is `requested`. That is a claim about the
+///      membrane rather than the caller, so it was MEASURED before this was
+///      written: the gate asserts `known_remaining` is `None` for five shapes of
+///      stack address — including a page-spanning array and an interior pointer
+///      — while a positive control confirms it still reports `Some` for tracked
+///      heap, so the negative result cannot come from a lookup that broke.
+///
+/// The probe is `time_abi`'s, shared rather than copied, so this cannot drift
+/// from the `clock_getres`/`gettimeofday` path that established it.
+#[inline]
 fn tracked_void_output_capacity(ptr: *mut c_void, requested: usize) -> usize {
+    if requested == 0 {
+        return 0;
+    }
+    if crate::time_abi::likely_current_stack_object(ptr) {
+        return requested;
+    }
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 

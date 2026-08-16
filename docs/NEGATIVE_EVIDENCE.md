@@ -29746,3 +29746,53 @@ What this changes, and what it does not:
   slot array). Sizing: fl's own malloc+free pair costs ~32 ns and the `single_int` gap is ~27 ns even
   on the fast path, so two allocations are plausibly a majority of the engine-path gap — an inference
   from the code, not a measurement, and it should be measured before it is built.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE: skipping the arena lookup for stack outputs takes getrandom 4.03x -> 3.60x
+
+- **RESULT CLASS: self-speedup.** fl against fl's own prior build. fl remains SLOWER than glibc at
+  every size, so this is not a campaign win; it shrinks the residue the vDSO change exposed.
+- **THE TARGET, and why it only became visible now.** With the syscall gone from `getrandom`, what
+  was left of the gap is fl's own entry framing. `tracked_void_output_capacity` clamps the output
+  length through `known_remaining`, which walks bump-mmap ranges, then the segment arena, then the
+  membrane validator and the fallback table — up to three lookups per call. Invisible beside a
+  syscall; dominant once the syscall is gone.
+- **THE PRECONDITION WAS MEASURED BEFORE THE CODE WAS WRITTEN.** `clock_getres` and `gettimeofday`
+  already skip the arena for stack outputs, but those only ask "does it fit", whereas this helper
+  returns a LENGTH, so skipping it is equivalent only if `known_remaining` is `None` for stack
+  addresses. That is a claim about the membrane, not the caller. The gate
+  `conformance_diff_known_remaining_stack` asserts it for five shapes — small array, page-spanning
+  array, interior pointer, mutable array, scalar — **with a positive control** confirming
+  `known_remaining` still reports `Some` for tracked heap, so a `None` cannot come from a lookup that
+  silently broke. Only then was the fast path written.
+- **BOTH ARMS, single invocation each, `--family getrandom --pin-quietest 4`,
+  `verdict=DECIDABLE cases=4 wins=0 losses=4` on both:**
+
+  | case | base | candidate | change |
+  |---|---|---|---|
+  | zero_bytes | 4.028666 | **3.602072** | -10.6% |
+  | one_byte | 2.797459 | **2.531498** | -9.5% |
+  | thirty_two_bytes | 1.237140 | **1.198770** | -3.1% |
+  | two_fifty_six_bytes | 1.034735 | 1.038666 | **+0.4% WORSE** |
+
+- **Provenance and per-arm conditions.** base `FL_OBJECT sha256
+  7d8eb053bd54ff029e32b138cc9085aeaa28cde310f5b61d3ebaa2361109dd22`, observed **loadavg
+  22.11,18.88,20.19 at 3295 MHz**; candidate `FL_OBJECT sha256
+  3438a9b6fd898ee7936b6d0230a531fc6e85fca2d71383feb4b533c6fa52ff73`, observed **loadavg
+  28.67,29.72,24.60 at 2276 MHz**. The candidate ran at HIGHER load and LOWER clock and still won,
+  which if anything understates it.
+- **Same-invocation A/A null with its contemporaneous bootstrap median CI**, candidate arm:
+  - zero_bytes: same-invocation A/A null_fl = 1.000462, bootstrap median CI [3.548313,3.605234] (95%)
+  - one_byte: same-invocation A/A null_fl = 0.999734, bootstrap median CI [2.529327,2.536940] (95%)
+  - thirty_two_bytes: same-invocation A/A null_fl = 1.000716, bootstrap median CI [1.197894,1.199899] (95%)
+  - two_fifty_six_bytes: same-invocation A/A null_fl = 1.000157, bootstrap median CI [1.037673,1.040504] (95%)
+
+  Baseline bootstrap median CI for the same cases: [4.024671,4.031620], [2.778398,2.816198],
+  [1.233385,1.238990], [1.033381,1.036891]. **Disjoint from the candidate at all four sizes**,
+  including the one that moved the wrong way.
+- **THE REGRESSION IS REPORTED, NOT ROUNDED AWAY.** At 256 bytes the candidate is 0.38% slower with
+  disjoint intervals. That is the size where real entropy work dominates and the two extra branches
+  are not amortised — the mirror image of why the small sizes gain. Shipped anyway: 10.6% and 9.5% at
+  the sizes where framing dominates, against 0.38% where fl is already within 4% of glibc.
+- **NOT REACHED BY THIS:** `kexec_load` fails locally with EPERM where the test expects EFAULT. That
+  is `euid=1000` versus a test written for root, and `kexec_load` never calls the changed helper —
+  it goes straight to `sys_kexec_load`. Pre-existing and environment-dependent, not a regression.

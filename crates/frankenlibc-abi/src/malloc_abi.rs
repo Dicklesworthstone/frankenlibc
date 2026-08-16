@@ -4039,6 +4039,17 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
 /// Returns `None` if the pipeline is not yet initialized (reentrant guard).
 #[must_use]
 #[inline(never)]
+/// Test hook: what `known_remaining` reports for an address.
+///
+/// Exists to TEST A PRECONDITION rather than assume it. A hot-path lever wants to
+/// skip this lookup for stack buffers on the grounds that the stack is never an
+/// allocator-tracked region, which is only sound if this returns `None` there.
+/// That is a fact about the membrane, not about the caller, so it is measured.
+#[doc(hidden)]
+pub fn known_remaining_for_tests(addr: usize) -> Option<usize> {
+    known_remaining(addr)
+}
+
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     // Strict mode skips the full membrane validator, but allocator-owned
     // fallback bookkeeping is still cheap and required for bounded C-string

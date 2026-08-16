@@ -89,8 +89,11 @@ fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
     ptr.is_null() || tracked_required_object_fits(ptr)
 }
 
+/// Shared with `unistd_abi` so syscall wrappers can take the same fast path
+/// `clock_getres` and `gettimeofday` already use, rather than growing a second
+/// copy of the probe that could drift from this one.
 #[inline]
-fn likely_current_stack_object<T>(ptr: *const T) -> bool {
+pub(crate) fn likely_current_stack_object<T>(ptr: *const T) -> bool {
     let probe = 0u8;
     let probe_addr = (&probe as *const u8) as usize;
     (ptr as usize).abs_diff(probe_addr) <= CURRENT_STACK_OBJECT_WINDOW_BYTES
