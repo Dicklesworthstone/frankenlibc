@@ -8,12 +8,33 @@
 //! width > 53 and the wide-overflow clamp/flags were wrong (bd-8f6gck). This
 //! gate pins the corrected integer ABI.
 //!
-//! glibc's fromfp is an IFUNC, so calling it through a pointer (dlsym/&fromfp)
-//! hits the resolver and returns garbage — only direct calls work. The expected
-//! (result, flags) tuples below are GROUND TRUTH captured from a standalone
-//! `gcc -fno-builtin` program calling the real IFUNC-resolved glibc. fl is
-//! called via Rust paths; its FP exception flags are read in-process (hardware
-//! MXCSR). result_bits = the 64-bit pattern of the returned intmax_t/uintmax_t.
+//! The expected (result, flags) tuples below are GROUND TRUTH captured from a
+//! standalone `gcc -fno-builtin` program calling the real glibc. fl is called
+//! via Rust paths; its FP exception flags are read in-process (hardware MXCSR).
+//! result_bits = the 64-bit pattern of the returned intmax_t/uintmax_t.
+//!
+//! ## The premise that froze this table was wrong (bd-v0388t, 2026-08-16)
+//!
+//! This header used to read: "glibc's fromfp is an IFUNC, so calling it through
+//! a pointer (dlsym/&fromfp) hits the resolver and returns garbage — only direct
+//! calls work." That is why the largest gate in this suite — 15,000+ tuples —
+//! had no host arm. Both halves of it are false on this host:
+//!
+//! - `nm -D /lib/x86_64-linux-gnu/libm.so.6` reports `fromfp`, `fromfpf`,
+//!   `fromfpx` and `ufromfp` as `W` (weak), not `i` (IFUNC). They are not
+//!   indirect functions at all.
+//! - IFUNC or not, `dlsym` RESOLVES the symbol: the loader runs the resolver and
+//!   hands back the selected implementation. Verified by calling each through a
+//!   dlsym-resolved pointer, which returns the documented values —
+//!   `fromfp(2.5, FP_INT_TONEAREST, 64) = 2`,
+//!   `fromfp(2.5, FP_INT_TONEARESTFROMZERO, 64) = 3`,
+//!   `fromfp(-2.5, FP_INT_UPWARD, 64) = -2`. Nothing is garbage. The same holds
+//!   throughout this suite for symbols that ARE ifuncs: `libc::memcpy` resolves
+//!   to `__memcpy_avx_unaligned_erms` and works.
+//!
+//! So the table is KEPT — it records the intended integer ABI, which is what
+//! bd-8f6gck fixed — and every row now also runs through a dlsym-resolved host
+//! arm on the same inputs and the same MXCSR.
 //! flags: bit0=FE_INVALID, bit1=FE_INEXACT. Covers all 5 rounding modes x
 //! widths {1,2,3,8,16,31,32,53,63,64} x a value matrix of fractions / ties /
 //! overflow (signed+unsigned, both ends) / negatives / width-64 boundaries /
@@ -22,6 +43,10 @@
 #![allow(unsafe_code)]
 use frankenlibc_abi::math_abi as fl;
 use std::ffi::c_int;
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 unsafe extern "C" {
     fn feclearexcept(e: c_int) -> c_int;
     fn fetestexcept(e: c_int) -> c_int;
@@ -123889,6 +123914,125 @@ fn call_fl(name: &str, xbits: u64, mode: i32, width: u32) -> u64 {
             other => panic!("unknown fn {other}"),
         }
     }
+}
+
+type FromFp64 = unsafe extern "C" fn(f64, c_int, u32) -> i64;
+type FromFp32 = unsafe extern "C" fn(f32, c_int, u32) -> i64;
+type UFromFp64 = unsafe extern "C" fn(f64, c_int, u32) -> u64;
+type UFromFp32 = unsafe extern "C" fn(f32, c_int, u32) -> u64;
+
+/// The eight host entry points, each checked against fl's own definition at
+/// resolution time.
+struct HostArm {
+    fromfp: FromFp64,
+    fromfpx: FromFp64,
+    fromfpf: FromFp32,
+    fromfpxf: FromFp32,
+    ufromfp: UFromFp64,
+    ufromfpx: UFromFp64,
+    ufromfpf: UFromFp32,
+    ufromfpxf: UFromFp32,
+}
+
+fn host() -> HostArm {
+    // SAFETY: glibc declares these `intmax_t fromfp(double, int, unsigned int)`
+    // and `uintmax_t ufromfp(..)` in bits/mathcalls.h; intmax_t is i64 on LP64.
+    // Getting this wrong is the one thing no assertion here could catch, and it
+    // is also the defect the golden table exists to pin (bd-8f6gck), so the
+    // return width is the part to read twice.
+    unsafe {
+        HostArm {
+            fromfp: dlsym_oracle::host_fn(c"fromfp", fl::fromfp as *const ()),
+            fromfpx: dlsym_oracle::host_fn(c"fromfpx", fl::fromfpx as *const ()),
+            fromfpf: dlsym_oracle::host_fn(c"fromfpf", fl::fromfpf as *const ()),
+            fromfpxf: dlsym_oracle::host_fn(c"fromfpxf", fl::fromfpxf as *const ()),
+            ufromfp: dlsym_oracle::host_fn(c"ufromfp", fl::ufromfp as *const ()),
+            ufromfpx: dlsym_oracle::host_fn(c"ufromfpx", fl::ufromfpx as *const ()),
+            ufromfpf: dlsym_oracle::host_fn(c"ufromfpf", fl::ufromfpf as *const ()),
+            ufromfpxf: dlsym_oracle::host_fn(c"ufromfpxf", fl::ufromfpxf as *const ()),
+        }
+    }
+}
+
+fn call_host(h: &HostArm, name: &str, xbits: u64, mode: i32, width: u32) -> u64 {
+    let xd = f64::from_bits(xbits);
+    let xf = f32::from_bits(xbits as u32);
+    // SAFETY: each pointer was resolved with the signature applied here.
+    unsafe {
+        match name {
+            "fromfp" => (h.fromfp)(xd, mode, width) as u64,
+            "fromfpx" => (h.fromfpx)(xd, mode, width) as u64,
+            "fromfpf" => (h.fromfpf)(xf, mode, width) as u64,
+            "fromfpxf" => (h.fromfpxf)(xf, mode, width) as u64,
+            "ufromfp" => (h.ufromfp)(xd, mode, width),
+            "ufromfpx" => (h.ufromfpx)(xd, mode, width),
+            "ufromfpf" => (h.ufromfpf)(xf, mode, width),
+            "ufromfpxf" => (h.ufromfpxf)(xf, mode, width),
+            other => panic!("unknown fn {other}"),
+        }
+    }
+}
+
+/// Read the raised flags in this file's 2-bit encoding, around one call.
+fn flags_around<T>(f: impl FnOnce() -> T) -> i32 {
+    // SAFETY: both are the host's fenv entry points, acting on this thread.
+    unsafe { feclearexcept(FE_INVALID | FE_INEXACT) };
+    let _ = core::hint::black_box(f());
+    let raised = unsafe { fetestexcept(FE_INVALID | FE_INEXACT) };
+    (if raised & FE_INVALID != 0 { 1 } else { 0 }) | (if raised & FE_INEXACT != 0 { 2 } else { 0 })
+}
+
+/// Every golden row, against the glibc that is actually running.
+///
+/// Both arms share one thread's MXCSR, so the flags are read the same way for
+/// each — this compares the rule, not a transcript of it.
+#[test]
+fn fromfp_family_matches_live_glibc_on_the_same_tuples() {
+    let h = host();
+    let mut fl_vs_live = Vec::new();
+    let mut host_moved = Vec::new();
+    let mut compared = 0usize;
+
+    for &(name, xbits, _is_f32, mode, width, want_bits, want_flags) in GOLDEN {
+        let mut fl_val = 0u64;
+        let fl_flags = flags_around(|| {
+            fl_val = call_fl(name, xbits, mode, width);
+        });
+        let mut host_val = 0u64;
+        let host_flags = flags_around(|| {
+            host_val = call_host(&h, name, xbits, mode, width);
+        });
+        compared += 1;
+
+        if (fl_val, fl_flags) != (host_val, host_flags) && fl_vs_live.len() < 40 {
+            fl_vs_live.push(format!(
+                "{name}(x={xbits:#018x}, mode={mode}, width={width}): fl value={fl_val:#018x} \
+                 flags={fl_flags}, live value={host_val:#018x} flags={host_flags}"
+            ));
+        }
+        if (host_val, host_flags) != (want_bits, want_flags) && host_moved.len() < 40 {
+            host_moved.push(format!(
+                "{name}(x={xbits:#018x}, mode={mode}, width={width}): live value={host_val:#018x} \
+                 flags={host_flags}, golden value={want_bits:#018x} flags={want_flags}"
+            ));
+        }
+    }
+
+    assert_eq!(
+        compared,
+        GOLDEN.len(),
+        "not every golden tuple reached the live arm"
+    );
+    assert!(
+        fl_vs_live.is_empty() && host_moved.is_empty(),
+        "fromfp family over {compared} tuples: {}+ fl-vs-live divergence(s), {}+ tuple(s) where \
+         LIVE GLIBC differs from the frozen golden (that second list means the host moved, not \
+         fl):\n{}\n{}",
+        fl_vs_live.len(),
+        host_moved.len(),
+        fl_vs_live.join("\n"),
+        host_moved.join("\n")
+    );
 }
 
 #[test]

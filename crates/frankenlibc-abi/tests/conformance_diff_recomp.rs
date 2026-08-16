@@ -9,10 +9,42 @@
 //! preprocessor now reproduces that. The one remaining engine-superset gap is
 //! POSIX `[[:class:]]`: glibc syntax 0 takes it literally while fl's BRE engine
 //! recognises it, so those constructs are deliberately NOT covered here.
+//!
+//! ## Live arm added 2026-08-16 (bd-v0388t)
+//!
+//! "Expected results were captured from a gcc oracle calling the real glibc
+//! re_comp/re_exec" — once, offline. The test was named `recomp_matches_glibc`
+//! and never called glibc. That is a poor bargain for THIS interface in
+//! particular: what these cases pin is `re_syntax_options == 0`, a GNU default
+//! rather than a standard, and the table encodes it indirectly through 38
+//! match/no-match answers. A single change to that default would move most of
+//! the rows at once.
+//!
+//! The table is KEPT and the same cases now run through a dlsym-resolved
+//! `re_comp`/`re_exec` as well. Both implementations hold their own compiled
+//! pattern in their own global state, so each arm compiles before it executes
+//! and the two never share a buffer.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 use frankenlibc_abi::glibc_internal_abi as g;
 use std::ffi::CString;
+use std::os::raw::{c_char, c_int};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type ReComp = unsafe extern "C" fn(*const c_char) -> *const c_char;
+type ReExec = unsafe extern "C" fn(*const c_char) -> c_int;
+
+fn host_re_comp() -> ReComp {
+    // SAFETY: signature matches C's re_comp exactly.
+    unsafe { dlsym_oracle::host_fn(c"re_comp", g::re_comp as *const ()) }
+}
+
+fn host_re_exec() -> ReExec {
+    // SAFETY: signature matches C's re_exec exactly.
+    unsafe { dlsym_oracle::host_fn(c"re_exec", g::re_exec as *const ()) }
+}
 
 // (pattern, string, glibc re_exec result: 1=match, 0=no match)
 const CASES: &[(&str, &str, i32)] = &[
@@ -92,5 +124,87 @@ fn recomp_matches_glibc() {
         "re_comp/re_exec divergences vs glibc ({}):\n  {}",
         div.len(),
         div.join("\n  ")
+    );
+}
+
+/// The same 38 cases, against the glibc that is actually running.
+///
+/// Each arm compiles and then executes its own pattern before the other arm is
+/// touched, because `re_comp` stores the compiled pattern in a per-library
+/// global and interleaving the two would compare whichever buffer was written
+/// last.
+#[test]
+fn recomp_matches_live_glibc_on_the_same_cases() {
+    let comp = host_re_comp();
+    let exec = host_re_exec();
+    let mut fl_vs_live: Vec<String> = Vec::new();
+    let mut host_moved: Vec<String> = Vec::new();
+    let mut compared = 0usize;
+
+    for &(pat, s, want) in CASES {
+        let cp = CString::new(pat).unwrap();
+        let cs = CString::new(s).unwrap();
+
+        let fl_err = unsafe { g::re_comp(cp.as_ptr()) };
+        let fl_got = if fl_err.is_null() {
+            unsafe { g::re_exec(cs.as_ptr()) }
+        } else {
+            -1
+        };
+
+        // SAFETY: both pointers are NUL-terminated CStrings that outlive the calls.
+        let host_err = unsafe { comp(cp.as_ptr()) };
+        let host_got = if host_err.is_null() {
+            // SAFETY: the host arm compiled successfully, so its buffer is live.
+            unsafe { exec(cs.as_ptr()) }
+        } else {
+            -1
+        };
+
+        compared += 1;
+        // A compile error is encoded as -1 rather than skipped: "one arm
+        // rejected the pattern" is a divergence, not an absence of data.
+        if fl_got != host_got {
+            fl_vs_live.push(format!(
+                "re_comp({pat:?}); re_exec({s:?}): fl={fl_got} live={host_got} \
+                 (-1 = re_comp reported an error)"
+            ));
+        }
+        if host_got != want {
+            host_moved.push(format!(
+                "re_comp({pat:?}); re_exec({s:?}): live={host_got} golden={want}"
+            ));
+        }
+    }
+
+    // NULL-pattern reuse, through the host arm this time.
+    let cz = CString::new("z").unwrap();
+    // SAFETY: NUL-terminated pattern, then the documented NULL reuse form.
+    unsafe {
+        assert!(
+            comp(cz.as_ptr()).is_null(),
+            "live glibc re_comp(\"z\") reported an error"
+        );
+        assert!(
+            comp(std::ptr::null()).is_null(),
+            "live glibc re_comp(NULL) should reuse the previous pattern"
+        );
+        assert_eq!(
+            exec(cz.as_ptr()),
+            1,
+            "live glibc re_exec after NULL-reuse should match"
+        );
+    }
+
+    assert_eq!(compared, CASES.len(), "not every case reached the live arm");
+    assert!(
+        fl_vs_live.is_empty() && host_moved.is_empty(),
+        "re_comp/re_exec: {} fl-vs-live divergence(s), {} case(s) where LIVE GLIBC differs from \
+         the frozen golden (that second list means the host's re_syntax_options default moved, \
+         not fl):\n  {}\n  {}",
+        fl_vs_live.len(),
+        host_moved.len(),
+        fl_vs_live.join("\n  "),
+        host_moved.join("\n  ")
     );
 }
