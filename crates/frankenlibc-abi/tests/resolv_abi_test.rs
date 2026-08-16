@@ -4009,7 +4009,10 @@ fn glibc_sprintrrf(
         // SAFETY: dlopen/dlsym with a literal library and symbol name.
         unsafe {
             let handle = libc::dlopen(so.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-            assert!(!handle.is_null(), "oracle unavailable: dlopen libresolv.so.2");
+            assert!(
+                !handle.is_null(),
+                "oracle unavailable: dlopen libresolv.so.2"
+            );
             let sym = CString::new("ns_sprintrrf").expect("no NUL");
             let p = libc::dlsym(handle, sym.as_ptr());
             assert!(!p.is_null(), "oracle unavailable: dlsym ns_sprintrrf");
@@ -4069,16 +4072,28 @@ fn assert_sprintrrf_matches_host(
 ) -> String {
     let host = glibc_sprintrrf(msg, name, class, ty, ttl, rdata, buflen)
         .unwrap_or_else(|| panic!("host oracle refused {name} type={ty}"));
-    let ours = sprintrrf_to_str(msg, name, class, ty, ttl, rdata, buflen)
-        .unwrap_or_else(|| panic!("fl returned no output for {name} type={ty}; host gave {host:?}"));
-    assert_eq!(ours, host, "fl vs live glibc ns_sprintrrf for {name} type={ty}");
+    let ours = sprintrrf_to_str(msg, name, class, ty, ttl, rdata, buflen).unwrap_or_else(|| {
+        panic!("fl returned no output for {name} type={ty}; host gave {host:?}")
+    });
+    assert_eq!(
+        ours, host,
+        "fl vs live glibc ns_sprintrrf for {name} type={ty}"
+    );
     ours
 }
 
 #[test]
 fn ns_sprintrrf_formats_a_record() {
     // No msg context needed for A; pass an empty slice (msglen=0).
-    let s = assert_sprintrrf_matches_host(&[], "foo.com", 1 /*IN*/, 1 /*A*/, 3600, &[127, 0, 0, 1], 64);
+    let s = assert_sprintrrf_matches_host(
+        &[],
+        "foo.com",
+        1, /*IN*/
+        1, /*A*/
+        3600,
+        &[127, 0, 0, 1],
+        64,
+    );
     // Positive facts about the shared answer, so this cannot pass on two
     // identically-empty renderings.
     assert!(s.contains("127.0.0.1"), "got: {s}");
@@ -4131,11 +4146,22 @@ fn ns_sprintrrf_formats_mx_record() {
     // Compared against the live host for the SAME msg/rdata rather than against
     // a hand-written string: the previous expectation used single spaces and no
     // trailing dot, which is not the format glibc emits (bd-tdx6ac).
-    let host = glibc_sprintrrf(&msg, "example.com", 1, 15, 60, &msg[rdata_off..rdata_off + 4], 128)
-        .unwrap_or_else(|| panic!("host oracle refused the MX record; fl gave {s:?}"));
+    let host = glibc_sprintrrf(
+        &msg,
+        "example.com",
+        1,
+        15,
+        60,
+        &msg[rdata_off..rdata_off + 4],
+        128,
+    )
+    .unwrap_or_else(|| panic!("host oracle refused the MX record; fl gave {s:?}"));
     assert_eq!(s, host, "fl vs live glibc ns_sprintrrf for an MX record");
     assert!(s.contains("mail.com"), "got: {s}");
-    assert!(s.contains("10"), "the preference should be rendered; got: {s}");
+    assert!(
+        s.contains("10"),
+        "the preference should be rendered; got: {s}"
+    );
 }
 
 #[test]
@@ -4145,13 +4171,17 @@ fn ns_sprintrrf_formats_txt_record_with_quoting() {
     let rdata = b"\x05hello\x06wo\"rld";
     let s = assert_sprintrrf_matches_host(&[], "txt.example", 1, 16 /*TXT*/, 1, rdata, 128);
     assert!(s.contains("hello"), "got: {s}");
-    assert!(s.contains('\\'), "the embedded quote should be escaped; got: {s}");
+    assert!(
+        s.contains('\\'),
+        "the embedded quote should be escaped; got: {s}"
+    );
 }
 
 #[test]
 fn ns_sprintrrf_falls_back_to_rfc3597_for_unknown_type() {
     let rdata = b"\x01\x02\x03";
-    let s = assert_sprintrrf_matches_host(&[], "weird.example", 1, 999 /*unknown*/, 0, rdata, 64);
+    let s =
+        assert_sprintrrf_matches_host(&[], "weird.example", 1, 999 /*unknown*/, 0, rdata, 64);
     // RFC 3597 generic encoding: TYPE999 and \# <len> <hex>.
     assert!(s.contains("TYPE999"), "got: {s}");
     assert!(s.contains("010203"), "got: {s}");
@@ -4301,8 +4331,15 @@ fn ns_sprintrr_wraps_sprintrrf_via_handle_and_rr() {
     };
     assert!(n > 0);
     let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
-    assert!(s.contains(" IN A "), "got: {s}");
+    // The owner name carries a trailing dot and the fields are TAB separated,
+    // so the old `s.contains(" IN A ")` could never match. Assert the pieces
+    // that are actually part of glibc's format (bd-tdx6ac).
+    assert!(s.contains("IN A"), "got: {s}");
     assert!(s.contains("127.0.0.1"), "got: {s}");
+    assert!(
+        s.starts_with("foo.com."),
+        "owner name should be dot-terminated; got: {s}"
+    );
 }
 
 #[test]
@@ -5418,10 +5455,17 @@ fn fl_hosts_af_inet() -> Vec<(String, [u8; 4])> {
                 break;
             }
             let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
-            assert_eq!((*h).h_addrtype, libc::AF_INET, "fl entry {name} not AF_INET");
+            assert_eq!(
+                (*h).h_addrtype,
+                libc::AF_INET,
+                "fl entry {name} not AF_INET"
+            );
             assert_eq!((*h).h_length, 4, "fl entry {name} length != 4");
             let first = *(*h).h_addr_list;
-            assert!(!first.is_null(), "fl entry {name} has an empty address list");
+            assert!(
+                !first.is_null(),
+                "fl entry {name} has an empty address list"
+            );
             let mut octets = [0u8; 4];
             std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), 4);
             out.push((name, octets));
@@ -5531,7 +5575,10 @@ fn fl_public_hostent_view() -> Vec<(String, c_int, c_int, [u8; 4])> {
             let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
             let mut octets = [0u8; 4];
             let first = *(*h).h_addr_list;
-            assert!(!first.is_null(), "fl entry {name} has an empty address list");
+            assert!(
+                !first.is_null(),
+                "fl entry {name} has an empty address list"
+            );
             let n = ((*h).h_length as usize).min(4);
             std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), n);
             out.push((name, (*h).h_addrtype, (*h).h_length, octets));
@@ -5555,7 +5602,10 @@ fn glibc_public_hostent_view() -> Vec<(String, c_int, c_int, [u8; 4])> {
             let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
             let mut octets = [0u8; 4];
             let first = *(*h).h_addr_list;
-            assert!(!first.is_null(), "glibc entry {name} has an empty address list");
+            assert!(
+                !first.is_null(),
+                "glibc entry {name} has an empty address list"
+            );
             let n = ((*h).h_length as usize).min(4);
             std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), n);
             out.push((name, (*h).h_addrtype, (*h).h_length, octets));
@@ -5587,11 +5637,19 @@ fn public_gethostent_matches_glibc_af_inet_view() {
     // Positive fact, independent of fl==glibc: glibc's iterator is AF_INET-only,
     // so a joint regression to AF_INET6 still fails here.
     for (name, af, len, _) in &glibc {
-        assert_eq!(*af, libc::AF_INET, "oracle: glibc entry {name} must be AF_INET");
+        assert_eq!(
+            *af,
+            libc::AF_INET,
+            "oracle: glibc entry {name} must be AF_INET"
+        );
         assert_eq!(*len, 4, "oracle: glibc entry {name} must have h_length 4");
     }
     for (name, af, len, _) in &fl {
-        assert_eq!(*af, libc::AF_INET, "fl entry {name} must be AF_INET, not AF_INET6");
+        assert_eq!(
+            *af,
+            libc::AF_INET,
+            "fl entry {name} must be AF_INET, not AF_INET6"
+        );
         assert_eq!(*len, 4, "fl entry {name} must have h_length 4");
     }
 }
