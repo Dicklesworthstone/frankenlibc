@@ -12,6 +12,11 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_ulong};
 
+// crypt_gensalt is libxcrypt's, exported by libcrypt.so.1 — libc.so.6 exports nothing of the
+// crypt family on this host. Without the link attribute this target does not link, and an
+// unlinkable target is silent rather than green; it also aborted the whole
+// `cargo test -p frankenlibc-abi` run. bd-5wckql.
+#[link(name = "crypt")]
 unsafe extern "C" {
     fn crypt_gensalt(
         prefix: *const c_char,
