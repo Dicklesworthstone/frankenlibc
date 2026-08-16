@@ -29639,3 +29639,65 @@ What this changes, and what it does not:
   every live allocation has a distinct address across free-and-reuse cycles on both sides of the
   latch — the property a double retire actually violates — which is worth having whether or not the
   retire is atomic, and is what any future attempt at this lever must satisfy.
+
+## 2026-08-16 (this session) — MAINTENANCE self-speedup: `coshf` delegated to fl's f64 `cosh`, 2.027x -> 1.764x against live glibc, and 1 ULP -> 0 ULP
+
+- `result_class=self-speedup`. This REDUCES A LOSS; it is not a campaign win. `coshf` remains slower
+  than the incumbent at 1.764x. Code `f529b3979`.
+- **THE CHANGE.** `coshf` carried its own split -- `(u + 1/u)/2` with `u = exp(|x|)` for |x| <= 5 and
+  `libm::coshf` above -- while `sinhf` had already been moved onto fl's f64 kernel, whose comment
+  records that the f64 path beat the f32 exp-reroute it replaced. fl's f64 `cosh` runs an even Taylor
+  polynomial on |x| <= 3 with NO exp and NO division and reroutes through the fast exp to 700. On the
+  campaign's own 64-point 0.5..6.8 sweep the old shape paid an exp plus a divide on 26 points and
+  handed 18 more to libm. coshf now delegates, as sinhf does.
+- **APPARATUS.** `incumbent_coverage_ab --family sinhf_coshf`, host `thinkstation1`, pinned to cpu8
+  (`allowed_cpu_count=1 allowed_cpus=8`), `samples=36`, `reps_per_arm=1000000`,
+  `threads_observed_pre=1` and `threads_observed_post=1`, host-wide exclusivity `verdict=clear` pre
+  and post on both arms, `INCUMBENT_LINKAGE direct_process_link`, `FL_LINKAGE
+  explicit_dlopen_local`, and `ARM_DISTINCT` printed for both symbols with different addresses.
+  In-process self-reported executing ELF: bench_elf_sha256=4b6460a39efa31e64d60cd00e82dd050db8c80fcb5291bc1bae6bf7ceaf5b643.
+  Incumbent object `/usr/lib/x86_64-linux-gnu/libm.so.6`
+  sha256=ff06daa44363e14ff00c80e28d87a281447f23599bf47c72f4fef0028bc41795. fl object base
+  sha256=fd3f5f7e87481fda971ab32c634f7659fad9f19545ef6b3c4908b961a0b1f3ef, candidate
+  sha256=fd2c8e8bcf8385ded7c82dea179839bcd29716315cce6f134f7ed6f8e269368d.
+- **BASE ARM**, loadavg 14.40 24.30 22.86 at launch, cpu8 at 3195 MHz, fl 16.683 ns against live
+  glibc 8.194 ns: FL/glibc effect median 2.026995 with bootstrap median CI [2.020240, 2.036677].
+  Its same-invocation A/A null FL/FL median is 0.998803 with bootstrap median CI
+  [0.994273, 1.003708], and its same-invocation A/A null glibc/glibc median is 0.999975 with
+  bootstrap median CI [0.997420, 1.002239]. `clears_2x_null=true nulls_hold=true`.
+- **CANDIDATE ARM**, loadavg 23.25 22.77 22.37 at launch, cpu8 at 3276 MHz, fl 14.350 ns against live
+  glibc 8.118 ns: FL/glibc effect median 1.763953 with bootstrap median CI [1.759334, 1.771626].
+  Its same-invocation A/A null FL/FL median is 1.000691 with bootstrap median CI
+  [0.997568, 1.004145], and its same-invocation A/A null glibc/glibc median is 0.999612 with
+  bootstrap median CI [0.995660, 1.001853]. `clears_2x_null=true nulls_hold=true`.
+- **THE TWO EFFECT CIs ARE DISJOINT** -- the base bootstrap median CI lower bound 2.020240 lies above
+  the candidate bootstrap median CI upper bound 1.771626 -- so the improvement is not a reading of the
+  gap between two windows. In absolute terms fl's own median fell from 16.683 ns to 14.350 ns. No
+  bootstrap CI is quoted for a base-against-candidate self ratio because this harness does not compute
+  one; the incumbent-referenced effect medians above, each with its own bootstrap median CI, are the
+  evidence.
+- **THE INCUMBENT ARM IS THE CONTROL FOR CROSS-INVOCATION DRIFT.** Base and candidate are separate
+  `.so` files and therefore separate invocations; live glibc was re-measured contemporaneously inside
+  each one and moved only 8.194 ns to 8.118 ns, so the window did not shift under the comparison.
+- **ACCURACY IMPROVED TOO, by the harness's own contract:** `INCUMBENT_COVERAGE_CONFORMANCE
+  comparisons=282 special_values_bit_exact=true ulp_limit=4` reports `worst_coshf_ulp=1` for the base
+  object and `worst_coshf_ulp=0` for the candidate. The delegation is bit-exact with glibc where the
+  old split was not.
+- **THE TWINS CONVERGED, which is the internal check on the whole story.** `sinhf`, untouched, gave
+  FL/glibc effect median 1.763746 with bootstrap median CI [1.757988, 1.767078] in the first run and
+  1.757703 with bootstrap median CI [1.751901, 1.762266] in the second, while `coshf` moved from
+  2.026995 to 1.763953. Both now run the same f64 kernel and now sit at the same ratio -- what the
+  change predicts, and not something a noisy window produces.
+- **GATE.** `conformance_diff_coshf_band` (new, dlsym-resolved live glibc): 70 points over the timed
+  band plus both old seams (3.0, 5.0) and their bit-neighbours at worst 0 ULP; evenness asserted
+  bit-for-bit on negatives, which the positive-only campaign sweep never covers; specials and the
+  overflow edge (88.0, 88.7, 89.0, 1e30, +-inf, NaN, +-0) held to BIT equality, since the old code
+  kept libm above 5 expressly for those semantics; `sinhf` pinned on the same band so a later change
+  to the shared f64 path cannot move one twin unnoticed. Plus conformance_diff_hyperbolic_special 2
+  and conformance_diff_math_special 9.
+- **WHY THE STARTING RATIO DIFFERS FROM THE 2026-08-16 hz1 ROW (2.605x).** That row was taken on a
+  different host; cross-host ratios are not comparable and are not compared here. Both numbers above
+  come from one host, one bench ELF, and one window.
+- **HARNESS ERROR WORTH RECORDING.** The first attempt piped the harness through `head -14` per arm,
+  which silently dropped every `coshf` row and left only `sinhf` -- truncation that looked like "the
+  harness does not measure coshf". The re-run captured full output.
