@@ -1,97 +1,140 @@
 #![cfg(target_os = "linux")]
-#![allow(unsafe_code)] // live host-glibc sockatmark oracle + socketpair fds
+#![allow(unsafe_code)] // live host-glibc sockatmark oracle
 
-//! Differential coverage for `sockatmark(3)`.
+//! Differential gate for `sockatmark` (bd-e0pcqx).
 //!
-//! `sockatmark` is a thin SIOCATMARK query. This gate checks the stable error
-//! contract for an invalid descriptor and the ordinary not-at-mark result on a
-//! live stream socket, comparing FrankenLibC with host glibc in one process.
+//! `sockatmark(fd)` reports whether a socket's read pointer sits at an
+//! out-of-band mark. fl implements it as `ioctl(fd, SIOCATMARK, &flag)`,
+//! returning the flag on success and `-1` with the syscall's errno otherwise.
+//! That is glibc's implementation too, so every observable — the return value
+//! AND the errno — should agree exactly.
+//!
+//! Both arms run in this process against the same descriptors. No mocks: the
+//! not-at-mark case uses a real connected `AF_UNIX` stream pair, and the error
+//! cases use descriptors the kernel genuinely rejects.
 
-use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
-use frankenlibc_abi::unistd_abi as fl;
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::c_int;
 
-type SockatmarkFn = unsafe extern "C" fn(c_int) -> c_int;
-
-const RTLD_NOW: c_int = 2;
-
-unsafe extern "C" {
-    fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-}
-
-fn host_sockatmark() -> SockatmarkFn {
-    unsafe {
-        let lib = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
-        assert!(!lib.is_null(), "dlopen(libc.so.6) failed");
-        let symbol = dlsym(lib, c"sockatmark".as_ptr());
-        assert!(!symbol.is_null(), "dlsym(sockatmark) failed");
-        std::mem::transmute(symbol)
+mod g {
+    unsafe extern "C" {
+        pub fn sockatmark(fd: c_int) -> c_int;
     }
 }
 
-fn host_errno() -> c_int {
-    unsafe { *libc::__errno_location() }
-}
+use frankenlibc_abi::unistd_abi::sockatmark as fl_sockatmark;
 
-fn set_host_errno(value: c_int) {
-    unsafe { *libc::__errno_location() = value };
-}
+/// (return value, errno) — errno is only meaningful when the call failed, but
+/// it is captured unconditionally so a spurious errno write is visible too.
+type Outcome = (c_int, c_int);
 
-fn fl_errno() -> c_int {
-    unsafe { *fl_errno_location() }
-}
-
-fn set_fl_errno(value: c_int) {
-    unsafe { *fl_errno_location() = value };
-}
-
-#[test]
-fn sockatmark_invalid_fd_matches_host_errno() {
-    let host = host_sockatmark();
-
-    set_host_errno(0);
-    let host_rc = unsafe { host(-1) };
-    let host_err = host_errno();
-
-    set_fl_errno(0);
-    let fl_rc = unsafe { fl::sockatmark(-1) };
-    let fl_err = fl_errno();
-
-    assert_eq!(
-        (fl_rc, fl_err),
-        (host_rc, host_err),
-        "sockatmark(-1): fl=({fl_rc}, {fl_err}) glibc=({host_rc}, {host_err})"
-    );
-    assert_eq!((fl_rc, fl_err), (-1, libc::EBADF));
-}
-
-#[test]
-fn sockatmark_stream_socket_not_at_mark_matches_host() {
-    let host = host_sockatmark();
-    let mut fds = [-1 as c_int; 2];
-    let pair_rc =
-        unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
-    assert_eq!(pair_rc, 0, "socketpair failed with errno {}", host_errno());
-
-    set_host_errno(0);
-    let host_rc = unsafe { host(fds[0]) };
-    let host_err = host_errno();
-
-    set_fl_errno(0);
-    let fl_rc = unsafe { fl::sockatmark(fds[0]) };
-    let fl_err = fl_errno();
-
+fn host(fd: c_int) -> Outcome {
+    // SAFETY: errno location is always valid; sockatmark takes an int.
     unsafe {
-        libc::close(fds[0]);
-        libc::close(fds[1]);
+        *libc::__errno_location() = 0;
+        let rc = g::sockatmark(fd);
+        (rc, *libc::__errno_location())
+    }
+}
+
+fn fl(fd: c_int) -> Outcome {
+    // SAFETY: as above, against fl's implementation and fl's errno slot.
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+        let rc = fl_sockatmark(fd);
+        (rc, *frankenlibc_abi::errno_abi::__errno_location())
+    }
+}
+
+/// A connected AF_UNIX stream pair. Returned fds are closed by the caller.
+fn stream_pair() -> (c_int, c_int) {
+    let mut fds = [-1i32; 2];
+    // SAFETY: fds has room for the two descriptors socketpair writes.
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    assert_eq!(rc, 0, "socketpair should succeed");
+    (fds[0], fds[1])
+}
+
+#[test]
+fn sockatmark_matches_glibc_on_a_live_stream_socket() {
+    let (a, b) = stream_pair();
+
+    // A freshly connected stream socket has no out-of-band mark pending, so both
+    // implementations must report 0 — and neither may invent an errno.
+    let host_out = host(a);
+    let fl_out = fl(a);
+    assert_eq!(
+        fl_out.0, host_out.0,
+        "return value diverged on a live stream socket: fl={fl_out:?} glibc={host_out:?}"
+    );
+    assert_eq!(
+        host_out.0, 0,
+        "oracle: a fresh stream socket should not be at the OOB mark (got {host_out:?})"
+    );
+
+    // Written after the payload so a mistake here cannot pass by both sides
+    // failing identically for an unrelated reason.
+    let mut data = [0u8; 4];
+    // SAFETY: writing 4 bytes into a 4-byte buffer on a valid socket.
+    let sent = unsafe { libc::write(b, data.as_ptr().cast(), data.len()) };
+    assert_eq!(
+        sent,
+        data.len() as isize,
+        "write to the peer should succeed"
+    );
+    // SAFETY: reading 4 bytes into a 4-byte buffer.
+    let got = unsafe { libc::read(a, data.as_mut_ptr().cast(), data.len()) };
+    assert_eq!(got, data.len() as isize, "read should drain the payload");
+
+    // Still not at a mark after ordinary (non-OOB) traffic.
+    let host_after = host(a);
+    let fl_after = fl(a);
+    assert_eq!(
+        fl_after.0, host_after.0,
+        "return value diverged after ordinary traffic: fl={fl_after:?} glibc={host_after:?}"
+    );
+
+    // SAFETY: both descriptors are open and owned here.
+    unsafe {
+        libc::close(a);
+        libc::close(b);
+    }
+}
+
+#[test]
+fn sockatmark_matches_glibc_on_rejected_descriptors() {
+    // A never-opened descriptor and a negative one: the kernel rejects both, and
+    // fl must surface the SAME errno glibc does, not merely the same -1.
+    let mut probe = [-1i32, 2048];
+    // A regular file is a valid fd that is NOT a socket, which is the other
+    // rejection glibc's implementation can produce.
+    let path = std::ffi::CString::new("/dev/null").expect("no NUL");
+    // SAFETY: opening /dev/null read-only.
+    let notsock = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) };
+    assert!(notsock >= 0, "opening /dev/null should succeed");
+
+    for fd in probe.iter().copied().chain(std::iter::once(notsock)) {
+        let host_out = host(fd);
+        let fl_out = fl(fd);
+        assert_eq!(
+            fl_out.0, host_out.0,
+            "return value diverged for fd {fd}: fl={fl_out:?} glibc={host_out:?}"
+        );
+        assert_eq!(
+            fl_out.1, host_out.1,
+            "errno diverged for fd {fd}: fl={fl_out:?} glibc={host_out:?}"
+        );
+        assert_eq!(
+            host_out.0, -1,
+            "oracle: fd {fd} should be rejected (got {host_out:?})"
+        );
+        assert_ne!(
+            host_out.1, 0,
+            "oracle: a rejected fd should set errno (fd {fd}, got {host_out:?})"
+        );
     }
 
-    assert_eq!(
-        (fl_rc, fl_err),
-        (host_rc, host_err),
-        "sockatmark(stream socket): fl=({fl_rc}, {fl_err}) \
-         glibc=({host_rc}, {host_err})"
-    );
-    assert_eq!((fl_rc, fl_err), (0, 0));
+    probe[0] = notsock; // silence the unused-write lint on the array reuse
+    let _ = probe;
+    // SAFETY: notsock is open and owned here.
+    unsafe { libc::close(notsock) };
 }
