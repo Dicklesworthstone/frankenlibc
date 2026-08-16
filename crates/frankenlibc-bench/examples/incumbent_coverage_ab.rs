@@ -5298,6 +5298,16 @@ fn run_fused_ladder_batch(function: SnprintfFn, format: *const c_char, count: us
                     black_box(a.as_ptr()),
                     black_box(b.as_ptr()),
                 ),
+                5 => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                ),
                 _ => black_box(function)(
                     black_box(buffer.as_mut_ptr().cast()),
                     black_box(FUSED_BUF),
@@ -5333,6 +5343,30 @@ fn time_fused_ladder3_batch(function: SnprintfFn) -> f64 {
 fn time_fused_ladder4_batch(function: SnprintfFn) -> f64 {
     let started = Instant::now();
     black_box(run_fused_ladder_batch(function, c"%s %s %s %s".as_ptr(), 4));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+/// n=5 exists to bracket the INLINE_SEGMENTS boundary, not to extend the count
+/// sweep (bd-mh2ev3). A rung of n `%s` separated by single spaces parses to n
+/// specs plus n-1 literals, so segment counts run 3, 5, 7, 9, 11 for n = 2, 3,
+/// 4, 5, 6 -- and `FormatSegments` holds 8 inline before spilling to a heap
+/// `Vec`. The boundary therefore falls between n=4 (7 segments, inline) and n=5
+/// (9 segments, heap).
+///
+/// That makes n=5 the discriminating point. If the ladder's superlinearity is
+/// the spill, the n=4 -> n=5 step should be visibly larger than n=3 -> n=4 and
+/// the n=5 -> n=6 step should fall back to the normal per-conversion increment.
+/// If the increments instead rise smoothly across the boundary, the cost grows
+/// with format length for some other reason and the spill hypothesis is dead --
+/// which is worth knowing before anyone edits INLINE_SEGMENTS, a constant that
+/// also controls the size of a per-call array.
+fn time_fused_ladder5_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_ladder_batch(
+        function,
+        c"%s %s %s %s %s".as_ptr(),
+        5,
+    ));
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
@@ -5738,6 +5772,13 @@ fn run_snprintf_fused(config: &Config) {
             host,
             fl,
             time_fused_ladder4_batch,
+        ),
+        measure_snprintf_case(
+            "ladder_5s",
+            "conversion ladder n=5: 9 segments — first rung PAST the 8-segment inline array (bd-mh2ev3)",
+            host,
+            fl,
+            time_fused_ladder5_batch,
         ),
         measure_snprintf_case(
             "ladder_6s",
