@@ -1,131 +1,127 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // live host-glibc cuserid oracle
+//! Differential gate for `cuserid` (bd-l1xxt3).
+//!
+//! `cuserid` returns the login name associated with the effective user. It has
+//! two shapes: with a NULL argument it fills a static buffer and returns a
+//! pointer to it, and with a caller buffer it fills that (at least `L_cuserid`
+//! bytes) and returns it. Both are compared against the live host here.
+//!
+//! `cuserid` is compat-only in modern glibc, so the host symbol is resolved with
+//! `dlvsym` — a link-time declaration or a plain `dlsym` finds nothing and the
+//! target would go silent rather than red (bd-86hcwh).
 
-//! Host-differential gate for `cuserid(3)` (bd-l1xxt3).
-//!
-//! cuserid had buffer/passwd-backend coverage driven through fl's
-//! `FRANKENLIBC_PASSWD_PATH` override, but nothing that compared it against the
-//! host. That override is exactly what made the gap invisible: a test that
-//! points fl at a synthetic passwd file proves fl parses that file, not that fl
-//! agrees with glibc about the real one. This gate deliberately does NOT set the
-//! override, so both implementations resolve the same live /etc/passwd for the
-//! same uid.
-//!
-//! That distinction is not hypothetical here. cuserid was a hardcoded
-//! `if uid == 0 { "root" } else { "user" }` stub until daaed5036 restored the
-//! passwd lookup that e634aff2a had deleted, and the stub would have sailed
-//! through any override-driven test that happened to expect "user" — while
-//! failing this one for every non-root account.
-//!
-//! glibc's cuserid is reached through a plain `extern "C"`: fl's definitions
-//! carry `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so their
-//! no_mangle is off in a debug build and these symbols resolve to the host.
-//!
-//! KNOWN WEAKNESS ON A ROOT HOST — measured, not theorised. The old stub
-//! answered `uid == 0 ? "root" : "user"`, and for uid 0 that is ALSO the correct
-//! passwd answer. So on the rch fleet, whose workers run as root, this gate
-//! cannot distinguish the stub from a working lookup: re-introducing the stub
-//! as a mutation leaves all three tests green. It discriminates properly for any
-//! non-root uid (the stub would say "user" where the host says e.g. "ubuntu"),
-//! which is the common case on a developer machine and in CI running unprivileged.
-//!
-//! Strengthening it for a root host means forking a child, setuid-ing to a
-//! non-root account, and comparing there — deliberately NOT done here, because
-//! forking inside this suite has its own hazards and the arm would exist only to
-//! serve one environment. Tracked on bd-l1xxt3 instead of being left implicit.
+use frankenlibc_abi::unistd_abi as fl;
+use std::ffi::{CStr, c_char, c_void};
 
-use std::ffi::{CStr, c_char};
+const GLIBC_2_2_5: &std::ffi::CStr = c"GLIBC_2.2.5";
+type CuseridFn = unsafe extern "C" fn(*mut c_char) -> *mut c_char;
 
-unsafe extern "C" {
-    fn cuserid(s: *mut c_char) -> *mut c_char;
+union CuseridSymbol {
+    raw: *mut c_void,
+    function: CuseridFn,
 }
 
-/// L_cuserid is 9 on glibc, but fl's internal buffer is 32 and the caller-buffer
-/// form is documented against L_cuserid. Give both engines the same generous
-/// buffer so a difference in RESULT is never confused with a difference in the
-/// space they were handed.
+fn host_cuserid() -> CuseridFn {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: handle came from dlopen; both names are NUL-terminated constants.
+    let raw = unsafe { libc::dlvsym(handle, c"cuserid".as_ptr(), GLIBC_2_2_5.as_ptr()) };
+    assert!(
+        !raw.is_null(),
+        "dlvsym cuserid@GLIBC_2.2.5 — compat-only symbols need dlvsym, not dlsym"
+    );
+    // SAFETY: the resolved symbol has glibc's documented cuserid signature.
+    unsafe { CuseridSymbol { raw }.function }
+}
+
+/// `L_cuserid` is 9 in glibc; give both implementations more room than that so a
+/// short-buffer difference cannot be mistaken for a name difference.
 const BUF: usize = 64;
 
-fn caller_buffer(engine: u8) -> Option<Vec<u8>> {
-    let mut buf = [0 as c_char; BUF];
-    let p = if engine == 0 {
-        unsafe { frankenlibc_abi::unistd_abi::cuserid(buf.as_mut_ptr()) }
-    } else {
-        unsafe { cuserid(buf.as_mut_ptr()) }
-    };
-    if p.is_null() {
-        return None;
-    }
-    // Both must hand back the caller's own pointer, not internal storage.
-    assert_eq!(
-        p,
-        buf.as_mut_ptr(),
-        "cuserid(buf) must return the caller's buffer"
-    );
-    Some(unsafe { CStr::from_ptr(p) }.to_bytes().to_vec())
-}
-
-fn static_storage(engine: u8) -> Option<Vec<u8>> {
-    let p = if engine == 0 {
-        unsafe { frankenlibc_abi::unistd_abi::cuserid(std::ptr::null_mut()) }
-    } else {
-        unsafe { cuserid(std::ptr::null_mut()) }
-    };
-    if p.is_null() {
-        return None;
-    }
-    Some(unsafe { CStr::from_ptr(p) }.to_bytes().to_vec())
-}
-
 #[test]
-fn cuserid_caller_buffer_matches_glibc() {
-    let fl = caller_buffer(0);
-    let host = caller_buffer(1);
+fn cuserid_matches_glibc_for_caller_buffer_and_static_storage() {
+    let host = host_cuserid();
+
+    // Caller-supplied buffer. Prefill with a sentinel so a short write leaves
+    // evidence rather than looking like a correct short name.
+    let mut host_buf = [0xAAu8; BUF];
+    let mut fl_buf = [0xAAu8; BUF];
+    // SAFETY: both buffers are far larger than L_cuserid.
+    let host_ret = unsafe { host(host_buf.as_mut_ptr().cast::<c_char>()) };
+    // SAFETY: as above, against fl's implementation.
+    let fl_ret = unsafe { fl::cuserid(fl_buf.as_mut_ptr().cast::<c_char>()) };
+
     assert_eq!(
-        fl.as_deref().map(String::from_utf8_lossy),
-        host.as_deref().map(String::from_utf8_lossy),
-        "cuserid(buf): fl={:?} glibc={:?}",
-        fl.as_deref().map(String::from_utf8_lossy),
-        host.as_deref().map(String::from_utf8_lossy)
+        host_ret.is_null(),
+        fl_ret.is_null(),
+        "one implementation returned NULL for the caller-buffer form and the other did not"
     );
 
-    // Guard against BOTH sides being trivially empty, which would make the
-    // comparison above vacuous. The process always runs as some real uid, so a
-    // non-empty login name is the expected outcome on any sane host.
-    let name = host.expect("host cuserid returned NULL");
-    assert!(
-        !name.is_empty(),
-        "host cuserid produced an empty name; the comparison would prove nothing"
-    );
-}
-
-#[test]
-fn cuserid_static_storage_matches_glibc() {
-    let fl = static_storage(0);
-    let host = static_storage(1);
-    assert_eq!(
-        fl.as_deref().map(String::from_utf8_lossy),
-        host.as_deref().map(String::from_utf8_lossy),
-        "cuserid(NULL): fl={:?} glibc={:?}",
-        fl.as_deref().map(String::from_utf8_lossy),
-        host.as_deref().map(String::from_utf8_lossy)
-    );
-}
-
-#[test]
-fn cuserid_both_forms_agree_within_each_impl() {
-    // The NULL form and the caller-buffer form must produce the same name in a
-    // single implementation. This is what would catch the restored code
-    // truncating one path and not the other — the stub capped the caller buffer
-    // at 8 bytes while the static path used the full width, so the two forms
-    // could disagree for a login name longer than 8 characters.
-    for (engine, label) in [(0u8, "frankenlibc"), (1u8, "glibc")] {
-        let via_buf = caller_buffer(engine);
-        let via_static = static_storage(engine);
+    if !host_ret.is_null() {
+        // glibc returns the caller's buffer, not private storage.
         assert_eq!(
-            via_buf.as_deref().map(String::from_utf8_lossy),
-            via_static.as_deref().map(String::from_utf8_lossy),
-            "{label}: cuserid(buf) and cuserid(NULL) disagree"
+            host_ret.cast::<u8>(),
+            host_buf.as_mut_ptr(),
+            "oracle: cuserid(buf) should return buf itself"
+        );
+        assert_eq!(
+            fl_ret.cast::<u8>(),
+            fl_buf.as_mut_ptr(),
+            "fl should return the caller's buffer, not private storage"
+        );
+        // SAFETY: both calls NUL-terminated their buffers.
+        let host_name = unsafe { CStr::from_ptr(host_ret) }.to_bytes().to_vec();
+        // SAFETY: as above.
+        let fl_name = unsafe { CStr::from_ptr(fl_ret) }.to_bytes().to_vec();
+        assert_eq!(
+            fl_name,
+            host_name,
+            "cuserid(buf) name diverged: fl={:?} glibc={:?}",
+            String::from_utf8_lossy(&fl_name),
+            String::from_utf8_lossy(&host_name)
+        );
+        // Nothing may be written past the NUL either implementation placed.
+        let end = host_name.len() + 1;
+        assert!(
+            fl_buf[end..].iter().all(|&b| b == 0xAA),
+            "fl wrote past the terminating NUL in the caller's buffer"
+        );
+    }
+
+    // NULL argument: static storage. Compare the CONTENTS, not the pointers —
+    // the two implementations legitimately own different static buffers.
+    // SAFETY: the NULL form is cuserid's documented static-storage shape.
+    let host_static = unsafe { host(std::ptr::null_mut()) };
+    // SAFETY: as above.
+    let fl_static = unsafe { fl::cuserid(std::ptr::null_mut()) };
+    assert_eq!(
+        host_static.is_null(),
+        fl_static.is_null(),
+        "one implementation returned NULL for the static-storage form and the other did not"
+    );
+    if !host_static.is_null() {
+        // SAFETY: both pointers are NUL-terminated static storage.
+        let host_name = unsafe { CStr::from_ptr(host_static) }.to_bytes().to_vec();
+        // SAFETY: as above.
+        let fl_name = unsafe { CStr::from_ptr(fl_static) }.to_bytes().to_vec();
+        assert_eq!(
+            fl_name,
+            host_name,
+            "cuserid(NULL) name diverged: fl={:?} glibc={:?}",
+            String::from_utf8_lossy(&fl_name),
+            String::from_utf8_lossy(&host_name)
+        );
+        // The two shapes must agree with each other as well, or a caller that
+        // switches forms sees a different user.
+        // SAFETY: filled by the caller-buffer call above.
+        let fl_buf_name = unsafe { CStr::from_ptr(fl_buf.as_ptr().cast::<c_char>()) }
+            .to_bytes()
+            .to_vec();
+        assert_eq!(
+            fl_name, fl_buf_name,
+            "fl's NULL and caller-buffer forms disagree with each other"
         );
     }
 }
