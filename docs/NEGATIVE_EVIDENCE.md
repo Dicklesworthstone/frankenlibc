@@ -28037,3 +28037,39 @@ What this changes, and what it does not:
 - **Standing correction for anyone reading the row above:** treat its RANKING as sound (the allocator
   is the campaign's worst measured primitive by a factor of ~5 over fused `snprintf`) and its
   size-scaling paragraph as WITHDRAWN.
+
+## 2026-08-16 (BlackThrush) — CROSS-PROJECT CHECK: allocator pressure does NOT explain fl's printf ratios, though the allocator IS fl's worst primitive
+
+- **RESULT CLASS: loss/baseline.** Source analysis against a cross-project signal, no new measurement.
+  Answering "does allocator pressure explain your worst ratio?" with the parts of it that are yes and
+  the parts that are no.
+- **The convergence is real at the level of PRIMITIVE.** fl's worst measured vs-incumbent ratio is
+  deployed `malloc`+`free` at 10.57-16.17x, five times further out than fused `snprintf` at
+  2.49-3.26x. Two projects independently landing on the allocator is a genuine signal about where the
+  remaining cost lives.
+- **But it does NOT explain fl's printf ratios, and the source says so specifically.** The tempting
+  inference — printf is slow because printf allocates — is wrong here, on three checks:
+  - The per-call output buffer is POOLED, not allocated. `render_segments` takes its buffer from
+    `printf_out_pool::take()`, a thread-local reuse pool added precisely because every copy-out printf
+    used to build and drop a fresh `Vec` (one alloc+free per call). In steady state that is a
+    thread-local pop, not a `malloc`.
+  - The hot float path renders with NO String. `format_float`'s width-0, `precision >= 1` fixed branch
+    writes digits straight into the caller's buffer. The `String`-returning formers (`format_f`,
+    `format_e`, `format_g`) are reached only when that branch declines — width, alt-form, `%e`/`%g`/
+    `%a` — none of which is what the float or fused families measure.
+  - The fused shapes contain no float conversions at all: `"%s[%d]: %s"`, `"%s %s %d %lu"`,
+    `"%s=%s %s=%s"`. There is no per-conversion allocation on that path to remove.
+- **And the direct measurement already agreed.** The conversion-count ladder put ~75% of the fused gap
+  in PER-CONVERSION work (fl 62.354 ns/conversion against glibc 18.922, R^2 0.996), which is rendering
+  cost, not allocation. A per-conversion `%s` fast path then moved 7 of 7 shapes, and a bare-integer
+  one moved them again — both rendering levers, neither touching the allocator. If allocation were the
+  driver, neither would have worked and the ladder's slope would have been flat with a fixed offset.
+- **So the honest position: the convergence identifies the right PRIMITIVE for fl, and the wrong
+  EXPLANATION for fl's printf numbers.** The allocator is worth attacking because it is 10-16x on its
+  own account, not because it is upstream of printf. Anyone reading the cross-project signal as
+  "therefore printf will improve when malloc does" should expect roughly nothing on these shapes.
+- **Where allocator pressure WOULD show up in fl's stdio, for whoever wants to test the link:** the
+  declined float shapes (`%e`/`%g`/`%a`, width, alt-form) still build a `String` per conversion, and
+  `asprintf`/`getline`/`strdup`-shaped APIs allocate by contract. Those are the surfaces where a
+  ~133 ns per-pair allocator overhead would be visible, and none of them is currently measured by the
+  `snprintf` families. That is a gap in the bench, not a claim about the code.
