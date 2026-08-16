@@ -3972,20 +3972,117 @@ fn sprintrrf_to_str(
     Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned())
 }
 
+/// glibc's `ns_sprintrrf`, resolved at RUNTIME from `libresolv.so.2`.
+///
+/// Loaded with dlopen/dlsym rather than declared in an `extern` block on
+/// purpose: a link-time declaration that cannot resolve makes the whole target
+/// unlinkable, and an unlinkable target is silent rather than red (bd-86hcwh).
+/// This way a missing oracle panics loudly in the one test that needs it.
+fn glibc_sprintrrf(
+    msg: &[u8],
+    name: &str,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: &[u8],
+    buflen: usize,
+) -> Option<String> {
+    use std::sync::OnceLock;
+    type SprintRrf = unsafe extern "C" fn(
+        *const u8,
+        usize,
+        *const c_char,
+        u16,
+        u16,
+        u32,
+        *const u8,
+        usize,
+        *const c_char,
+        *const c_char,
+        *mut c_char,
+        usize,
+    ) -> c_int;
+
+    static SYM: OnceLock<usize> = OnceLock::new();
+    let addr = *SYM.get_or_init(|| {
+        let so = CString::new("libresolv.so.2").expect("no NUL");
+        // SAFETY: dlopen/dlsym with a literal library and symbol name.
+        unsafe {
+            let handle = libc::dlopen(so.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            assert!(!handle.is_null(), "oracle unavailable: dlopen libresolv.so.2");
+            let sym = CString::new("ns_sprintrrf").expect("no NUL");
+            let p = libc::dlsym(handle, sym.as_ptr());
+            assert!(!p.is_null(), "oracle unavailable: dlsym ns_sprintrrf");
+            p as usize
+        }
+    });
+    // SAFETY: the resolved symbol has the BIND ns_sprintrrf signature.
+    let f: SprintRrf = unsafe { std::mem::transmute::<usize, SprintRrf>(addr) };
+
+    let cname = CString::new(name).expect("name has no NUL");
+    let mut buf = vec![0u8; buflen];
+    let msg_ptr = if msg.is_empty() {
+        std::ptr::null()
+    } else {
+        msg.as_ptr()
+    };
+    // SAFETY: all pointers are valid for the duration of the call and buf has
+    // room for `buflen` bytes.
+    let n = unsafe {
+        f(
+            msg_ptr,
+            msg.len(),
+            cname.as_ptr(),
+            class,
+            ty,
+            ttl,
+            rdata.as_ptr(),
+            rdata.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buflen,
+        )
+    };
+    if n <= 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+/// fl's rendering must equal the live host's, byte for byte.
+///
+/// These arms used to assert hand-written strings like
+/// `"foo.com 1H IN A 127.0.0.1"`. That format was invented, not measured: glibc
+/// emits `"foo.com.\t\t1H IN A\t\t127.0.0.1"` — trailing dot on the owner name
+/// and TABS, not single spaces. fl already matched glibc exactly, so all seven
+/// arms were red against an oracle that never existed (bd-tdx6ac, and the
+/// systemic version, bd-7t61h9).
+fn assert_sprintrrf_matches_host(
+    msg: &[u8],
+    name: &str,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: &[u8],
+    buflen: usize,
+) -> String {
+    let host = glibc_sprintrrf(msg, name, class, ty, ttl, rdata, buflen)
+        .unwrap_or_else(|| panic!("host oracle refused {name} type={ty}"));
+    let ours = sprintrrf_to_str(msg, name, class, ty, ttl, rdata, buflen)
+        .unwrap_or_else(|| panic!("fl returned no output for {name} type={ty}; host gave {host:?}"));
+    assert_eq!(ours, host, "fl vs live glibc ns_sprintrrf for {name} type={ty}");
+    ours
+}
+
 #[test]
 fn ns_sprintrrf_formats_a_record() {
     // No msg context needed for A; pass an empty slice (msglen=0).
-    let s = sprintrrf_to_str(
-        &[],
-        "foo.com",
-        1, /*IN*/
-        1, /*A*/
-        3600,
-        &[127, 0, 0, 1],
-        64,
-    )
-    .unwrap();
-    assert_eq!(s, "foo.com 1H IN A 127.0.0.1");
+    let s = assert_sprintrrf_matches_host(&[], "foo.com", 1 /*IN*/, 1 /*A*/, 3600, &[127, 0, 0, 1], 64);
+    // Positive facts about the shared answer, so this cannot pass on two
+    // identically-empty renderings.
+    assert!(s.contains("127.0.0.1"), "got: {s}");
+    assert!(s.contains("IN"), "got: {s}");
 }
 
 #[test]
@@ -3993,9 +4090,8 @@ fn ns_sprintrrf_formats_aaaa_record() {
     let v6 = [
         0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
     ];
-    let s = sprintrrf_to_str(&[], "host.example", 1, 28 /*AAAA*/, 60, &v6, 128).unwrap();
-    assert!(s.starts_with("host.example 1M IN AAAA "));
-    assert!(s.contains("2001:db8::1"));
+    let s = assert_sprintrrf_matches_host(&[], "host.example", 1, 28 /*AAAA*/, 60, &v6, 128);
+    assert!(s.contains("2001:db8::1"), "got: {s}");
 }
 
 #[test]
@@ -4032,24 +4128,33 @@ fn ns_sprintrrf_formats_mx_record() {
     };
     assert!(n > 0, "ns_sprintrrf returned {n}");
     let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
-    assert!(s.starts_with("example.com 1M IN MX 10 "), "got: {s}");
+    // Compared against the live host for the SAME msg/rdata rather than against
+    // a hand-written string: the previous expectation used single spaces and no
+    // trailing dot, which is not the format glibc emits (bd-tdx6ac).
+    let host = glibc_sprintrrf(&msg, "example.com", 1, 15, 60, &msg[rdata_off..rdata_off + 4], 128)
+        .unwrap_or_else(|| panic!("host oracle refused the MX record; fl gave {s:?}"));
+    assert_eq!(s, host, "fl vs live glibc ns_sprintrrf for an MX record");
     assert!(s.contains("mail.com"), "got: {s}");
+    assert!(s.contains("10"), "the preference should be rendered; got: {s}");
 }
 
 #[test]
 fn ns_sprintrrf_formats_txt_record_with_quoting() {
-    // TXT rdata: 1-byte length-prefixed strings.
+    // TXT rdata: 1-byte length-prefixed strings, the second containing a quote
+    // that has to be escaped.
     let rdata = b"\x05hello\x06wo\"rld";
-    let s = sprintrrf_to_str(&[], "txt.example", 1, 16 /*TXT*/, 1, rdata, 128).unwrap();
-    assert_eq!(s, r#"txt.example 1S IN TXT "hello" "wo\"rld""#);
+    let s = assert_sprintrrf_matches_host(&[], "txt.example", 1, 16 /*TXT*/, 1, rdata, 128);
+    assert!(s.contains("hello"), "got: {s}");
+    assert!(s.contains('\\'), "the embedded quote should be escaped; got: {s}");
 }
 
 #[test]
 fn ns_sprintrrf_falls_back_to_rfc3597_for_unknown_type() {
     let rdata = b"\x01\x02\x03";
-    let s = sprintrrf_to_str(&[], "weird.example", 1, 999 /*unknown*/, 0, rdata, 64).unwrap();
-    // Type prints as TYPE999, rdata as RFC 3597 generic.
-    assert_eq!(s, "weird.example 0S IN TYPE999 \\# 3 010203");
+    let s = assert_sprintrrf_matches_host(&[], "weird.example", 1, 999 /*unknown*/, 0, rdata, 64);
+    // RFC 3597 generic encoding: TYPE999 and \# <len> <hex>.
+    assert!(s.contains("TYPE999"), "got: {s}");
+    assert!(s.contains("010203"), "got: {s}");
 }
 
 #[test]
@@ -4160,8 +4265,10 @@ fn ns_sprintrrf_rejects_null_rdata_with_nonzero_len() {
 
 #[test]
 fn ns_sprintrrf_unsupported_known_type_uses_generic_type_number() {
-    let s = sprintrrf_to_str(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64).unwrap();
-    assert_eq!(s, "soa.example 0S IN TYPE6 \\# 3 010203");
+    // SOA rdata that is deliberately malformed, so both sides fall back to the
+    // RFC 3597 generic form rather than parsing it.
+    let s = assert_sprintrrf_matches_host(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64);
+    assert!(s.contains("010203"), "got: {s}");
 }
 
 #[test]
