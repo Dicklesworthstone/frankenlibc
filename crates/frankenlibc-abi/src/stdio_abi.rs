@@ -5394,6 +5394,156 @@ unsafe fn exact_direct_lx_format(format: *const c_char) -> bool {
     unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'x' && *f.add(3) == 0 }
 }
 
+/// Match exact `"%f"` (precision 6, C's default) or `"%.Nf"` for a single digit
+/// `N` in 1..=9. Returns the precision. `None` for anything carrying a width, a
+/// flag, a length modifier, `%e`/`%g`/`%a`, or `%.0f`.
+///
+/// This probe is why `bd-4vwb9q` exists. Every other conversion in the
+/// `exact_direct_*` chain returns before `runtime_policy::entrypoint_scope`;
+/// the float conversions had no probe at all, so they fell through ~11 failed
+/// byte-compares and then paid the whole parse + membrane + segment pipeline.
+/// Fitting the published `snprintf_float` medians against precision separates
+/// that cost cleanly:
+///
+///   fl    = 180.94 ns fixed + 4.104 ns/digit
+///   glibc =  93.44 ns fixed + 6.245 ns/digit
+///
+/// fl's per-digit cost already BEATS glibc's; the entire 1.56-1.78x loss is the
+/// 87.5 ns fixed term. That is what this probe removes.
+#[inline]
+unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so scanning to the first NUL is in bounds.
+    unsafe {
+        if *f != b'%' {
+            return None;
+        }
+        if *f.add(1) == b'f' && *f.add(2) == 0 {
+            return Some(6);
+        }
+        if *f.add(1) == b'.' {
+            let digit = *f.add(2);
+            if digit.is_ascii_digit() && *f.add(3) == b'f' && *f.add(4) == 0 {
+                let precision = usize::from(digit - b'0');
+                // Precision 0 is excluded deliberately: the general path
+                // pre-rounds there and emits no radix point, a different shape
+                // from the branch below.
+                if (1..=9).contains(&precision) {
+                    return Some(precision);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Render `%.<precision>f` of `value` exactly as the general path renders a bare
+/// fixed conversion with no width and no flags. Returns the byte length written
+/// into `out`.
+///
+/// TOTAL by construction, which it has to be: the dispatch below consumes the
+/// variadic argument before calling this, so there is no way to decline and fall
+/// through afterwards. The three branches mirror the general path one for one:
+/// non-finite takes the early return's `sign + "inf"/"nan"`, the exact scaled
+/// case takes `rounded_scaled_fixed` + the same digit placement, and anything
+/// `rounded_scaled_fixed` rejects (magnitudes where mantissa * 5^precision
+/// overflows the shift) takes the same `{:.prec$}` fallback the general path
+/// ends with.
+///
+/// 352 bytes is enough for every finite case: `%.9f` of `f64::MAX` is 309
+/// integer digits + `.` + 9 fractional digits = 319.
+fn render_direct_fixed(value: f64, precision: usize, out: &mut [u8; 352]) -> usize {
+    use core::fmt::Write as _;
+
+    struct SliceWriter<'a> {
+        buf: &'a mut [u8; 352],
+        len: usize,
+    }
+    impl core::fmt::Write for SliceWriter<'_> {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let bytes = s.as_bytes();
+            let end = self.len + bytes.len();
+            if end > self.buf.len() {
+                return Err(core::fmt::Error);
+            }
+            self.buf[self.len..end].copy_from_slice(bytes);
+            self.len = end;
+            Ok(())
+        }
+    }
+
+    let mut w = SliceWriter { buf: out, len: 0 };
+    if value.is_sign_negative() {
+        let _ = w.write_str("-");
+    }
+    if value.is_nan() {
+        let _ = w.write_str("nan");
+        return w.len;
+    }
+    if value.is_infinite() {
+        let _ = w.write_str("inf");
+        return w.len;
+    }
+
+    let abs = value.abs();
+    if let Some(scaled) = frankenlibc_core::stdio::printf::rounded_scaled_fixed(abs, precision) {
+        let mut tmp = [0u8; 40];
+        let ds = frankenlibc_core::stdio::printf::decimal_digits_u128(scaled, &mut tmp);
+        // Same placement as `push_fixed_scaled_digits_vec`.
+        if ds.len() > precision {
+            let point = ds.len() - precision;
+            let start = w.len;
+            w.buf[start..start + point].copy_from_slice(&ds[..point]);
+            w.buf[start + point] = b'.';
+            w.buf[start + point + 1..start + 1 + ds.len()].copy_from_slice(&ds[point..]);
+            w.len = start + 1 + ds.len();
+        } else {
+            let start = w.len;
+            w.buf[start] = b'0';
+            w.buf[start + 1] = b'.';
+            let zeros = precision - ds.len();
+            for i in 0..zeros {
+                w.buf[start + 2 + i] = b'0';
+            }
+            w.buf[start + 2 + zeros..start + 2 + zeros + ds.len()].copy_from_slice(ds);
+            w.len = start + 2 + zeros + ds.len();
+        }
+        return w.len;
+    }
+
+    let _ = write!(w, "{abs:.precision$}");
+    w.len
+}
+
+/// `snprintf` for an exact `%f` / `%.Nf`: renders into a stack buffer and applies
+/// snprintf's full-length / truncation contract with no format parsing, no heap
+/// render buffer, and no membrane entry.
+unsafe fn strict_direct_snprintf_f(
+    str_buf: *mut c_char,
+    size: usize,
+    value: f64,
+    precision: usize,
+) -> c_int {
+    let mut rendered = [0u8; 352];
+    let len = render_direct_fixed(value, precision, &mut rendered);
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` is writable by snprintf's caller,
+            // and the local source holds exactly `len` initialized bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf.cast::<u8>(), copy_len)
+            };
+        }
+        // SAFETY: `copy_len <= size - 1`, so this terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    // snprintf returns the length it WOULD have written, not the truncated one.
+    len as c_int
+}
+
 /// Match exact `"%d"` (→ `Some(false)`) or `"%d\n"` (→ `Some(true)`) for the printf/fprintf
 /// stream fast path. `None` otherwise. `"%d\n"` (printf a signed int + newline) is the single
 /// most common formatted-output pattern.
@@ -6550,6 +6700,22 @@ pub unsafe extern "C" fn snprintf(
         // SAFETY: snprintf's C contract supplies `size` writable bytes when
         // `size > 0`; the helper bounds every write to that region.
         return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
+    }
+    // Placed LAST in the chain so it cannot add a byte-compare to any integer or
+    // string format's path — those are the measured campaign win and must not
+    // regress. A float format currently reaches this point having failed every
+    // probe above and then pays the full pipeline below; bd-4vwb9q measures that
+    // fixed cost at 87.5 ns, which is the whole of the 1.56-1.78x float loss.
+    // SAFETY: `format` is non-null and valid through its NUL terminator under
+    // the printf-family C contract checked by `exact_direct_f_format`.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        // SAFETY: snprintf's C contract supplies `size` writable bytes when
+        // `size > 0`; the helper bounds every write to that region.
+        return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
