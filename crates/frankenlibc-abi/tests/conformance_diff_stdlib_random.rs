@@ -28,33 +28,97 @@ use frankenlibc_abi::stdlib_abi as fl;
 // generator unseeded and one call ahead — a harness false-negative. fl's whole
 // TYPE_3 rand + rand48 family is byte-exact vs a fresh glibc. The externs below
 // are only the caller-state functions (rand_r / e·n·jrand48 standalone cases).
-unsafe extern "C" {
-    /// Host glibc `rand_r` — not currently exposed by the `libc` crate
-    /// (POSIX-only, gated behind `_POSIX_C_SOURCE`), so we link it
-    /// directly. This is a thin C-ABI declaration; the real symbol is
-    /// resolved at link time against libc.so.6.
-    fn rand_r(seedp: *mut c_uint) -> std::ffi::c_int;
+// Host arms resolved with `dlsym`, not declared at link time.
+//
+// The block these replace carried the comment "the real symbol is resolved at
+// link time against libc.so.6". That is what the declaration INTENDS; it is not
+// what it guarantees. fl exports all ten of these from `stdlib_abi` into this
+// same test binary, so the linker may satisfy the reference locally and leave
+// both arms as fl (bd-v0388t).
+//
+// This gate is the worst place in the suite for that to happen, which is why it
+// was converted first of the affected three. Every other vacuous gate has some
+// chance of being caught by a divergence someone stumbles into. A vacuous PRNG
+// gate does not: both arms emit plausible pseudo-random numbers and agree
+// perfectly, which is exactly the result a working gate produces. It would agree
+// with itself forever.
+type RandRFn = unsafe extern "C" fn(*mut c_uint) -> std::ffi::c_int;
+type Xsubi48F64Fn = unsafe extern "C" fn(*mut u16) -> std::ffi::c_double;
+type Xsubi48LongFn = unsafe extern "C" fn(*mut u16) -> std::ffi::c_long;
+type Global48F64Fn = unsafe extern "C" fn() -> std::ffi::c_double;
+type Global48LongFn = unsafe extern "C" fn() -> std::ffi::c_long;
+type Srand48Fn = unsafe extern "C" fn(std::ffi::c_long);
+type Seed48Fn = unsafe extern "C" fn(*mut u16) -> *mut u16;
+type Lcong48Fn = unsafe extern "C" fn(*mut u16);
 
-    /// Host glibc `erand48` — also not in libc crate's surface.
-    fn erand48(xsubi: *mut u16) -> std::ffi::c_double;
-    /// Host glibc `nrand48`.
-    fn nrand48(xsubi: *mut u16) -> std::ffi::c_long;
-    /// Host glibc `jrand48`.
-    fn jrand48(xsubi: *mut u16) -> std::ffi::c_long;
+/// Resolve `name` from libc.so.6, refusing to hand back fl's own code.
+///
+/// The `assert_ne!` is the whole point: for this family, output equality cannot
+/// distinguish a real oracle from fl compared against itself.
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself, and for a \
+         PRNG that failure is invisible: both arms would agree perfectly"
+    );
+    raw
+}
 
-    /// Host glibc `drand48` — global-state f64 in [0,1).
-    fn drand48() -> std::ffi::c_double;
-    /// Host glibc `lrand48` — global-state non-negative i32 in [0, 2^31).
-    fn lrand48() -> std::ffi::c_long;
-    /// Host glibc `mrand48` — global-state signed i32 in [-2^31, 2^31).
-    fn mrand48() -> std::ffi::c_long;
-    /// Host glibc `srand48` — seed global state from a single long.
-    fn srand48(seedval: std::ffi::c_long);
-    /// Host glibc `seed48` — seed global state from a 3-element u16 array,
-    /// returning the previous state as 3 u16s.
-    fn seed48(seed16v: *mut u16) -> *mut u16;
-    /// Host glibc `lcong48` — set global state plus LCG multiplier/increment.
-    fn lcong48(param: *mut u16);
+// SAFETY (all ten): each resolved symbol has the signature POSIX documents for
+// it, matched against fl's own declaration in stdlib_abi.
+unsafe fn rand_r(seedp: *mut c_uint) -> std::ffi::c_int {
+    let f: RandRFn = unsafe { std::mem::transmute(host_symbol(c"rand_r", fl::rand_r as usize)) };
+    unsafe { f(seedp) }
+}
+unsafe fn erand48(xsubi: *mut u16) -> std::ffi::c_double {
+    let f: Xsubi48F64Fn =
+        unsafe { std::mem::transmute(host_symbol(c"erand48", fl::erand48 as usize)) };
+    unsafe { f(xsubi) }
+}
+unsafe fn nrand48(xsubi: *mut u16) -> std::ffi::c_long {
+    let f: Xsubi48LongFn =
+        unsafe { std::mem::transmute(host_symbol(c"nrand48", fl::nrand48 as usize)) };
+    unsafe { f(xsubi) }
+}
+unsafe fn jrand48(xsubi: *mut u16) -> std::ffi::c_long {
+    let f: Xsubi48LongFn =
+        unsafe { std::mem::transmute(host_symbol(c"jrand48", fl::jrand48 as usize)) };
+    unsafe { f(xsubi) }
+}
+unsafe fn drand48() -> std::ffi::c_double {
+    let f: Global48F64Fn =
+        unsafe { std::mem::transmute(host_symbol(c"drand48", fl::drand48 as usize)) };
+    unsafe { f() }
+}
+unsafe fn lrand48() -> std::ffi::c_long {
+    let f: Global48LongFn =
+        unsafe { std::mem::transmute(host_symbol(c"lrand48", fl::lrand48 as usize)) };
+    unsafe { f() }
+}
+unsafe fn mrand48() -> std::ffi::c_long {
+    let f: Global48LongFn =
+        unsafe { std::mem::transmute(host_symbol(c"mrand48", fl::mrand48 as usize)) };
+    unsafe { f() }
+}
+unsafe fn srand48(seedval: std::ffi::c_long) {
+    let f: Srand48Fn =
+        unsafe { std::mem::transmute(host_symbol(c"srand48", fl::srand48 as usize)) };
+    unsafe { f(seedval) }
+}
+unsafe fn seed48(seed16v: *mut u16) -> *mut u16 {
+    let f: Seed48Fn = unsafe { std::mem::transmute(host_symbol(c"seed48", fl::seed48 as usize)) };
+    unsafe { f(seed16v) }
+}
+unsafe fn lcong48(param: *mut u16) {
+    let f: Lcong48Fn =
+        unsafe { std::mem::transmute(host_symbol(c"lcong48", fl::lcong48 as usize)) };
+    unsafe { f(param) }
 }
 
 fn global_rng_lock() -> MutexGuard<'static, ()> {
