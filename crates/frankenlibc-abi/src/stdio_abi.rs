@@ -5071,6 +5071,43 @@ pub(crate) unsafe fn render_segments(
                     continue;
                 }
 
+                // FAST PATH: a bare integer conversion — `%d %i %u %x %X %o`
+                // with no flags, no width and no precision, narrow output,
+                // non-positional. Any length modifier is fine, because the spec
+                // is handed to the same renderer either way.
+                //
+                // WHY. `http_log` ("%s %s %d %lu") gained the least from the
+                // plain-`%s` fast path — 3.5% against 6-11% for the `%s`-heavy
+                // shapes — precisely because its integer conversions still walk
+                // the resolve-and-dispatch chain. The ladder puts ~75% of the
+                // fused gap in per-conversion work (bd-ntb9fq), so this is the
+                // same lever pointed at the other half of the real shapes.
+                //
+                // BYTE-IDENTICAL BY CONSTRUCTION, and this one is exact rather
+                // than argued: when neither width nor precision takes an
+                // argument, `resolved_spec` below is a plain bit-copy of
+                // `*spec`, so calling `render_value_arg` on `spec` runs the SAME
+                // renderer on the SAME value. What is skipped is the copy and
+                // the predicate chain in front of it — `is_literal_percent`,
+                // `is_errno_message`, `stores_count`, and the string and char
+                // arms — none of which a bare integer can reach.
+                //
+                // The conversion set is explicit rather than derived from
+                // `is_bare_integer` alone: that predicate checks only flags,
+                // width and precision, so `%s` with no flags satisfies it too.
+                // Listing the integer conversions is what keeps `%s`, `%c`,
+                // `%n`, `%m` and the float set on the general path.
+                if !wide_output
+                    && !uses_positional
+                    && matches!(spec.conversion, b'd' | b'i' | b'u' | b'x' | b'X' | b'o')
+                    && spec.is_bare_integer()
+                {
+                    if let Some(raw) = read_arg(None, &mut arg_idx) {
+                        let _ = spec.render_value_arg(raw, &mut buf);
+                    }
+                    continue;
+                }
+
                 // Resolve width from args if needed.
                 let mut resolved_spec = *spec;
                 if spec.width.uses_arg() {

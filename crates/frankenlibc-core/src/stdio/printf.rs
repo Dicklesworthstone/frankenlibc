@@ -443,7 +443,12 @@ impl FormatSpec {
     /// no prefix or padding. Lets the integer formatters skip the entire
     /// prefix/precision/width/justify pipeline on the overwhelmingly common
     /// case. A few branch tests in exchange for ~15 skipped operations.
-    fn is_bare_integer(&self) -> bool {
+    /// No flags, no width, no precision. Says nothing about the CONVERSION, so
+    /// a caller must also establish that the spec is an integer one — `%s` with
+    /// no flags satisfies this predicate too. Public because `render_segments`
+    /// in the ABI crate uses it to decide whether a segment can skip the
+    /// resolve-and-dispatch chain (bd-ntb9fq).
+    pub fn is_bare_integer(&self) -> bool {
         let f = &self.flags;
         !f.left_justify
             && !f.force_sign
