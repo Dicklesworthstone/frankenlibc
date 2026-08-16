@@ -29017,3 +29017,39 @@ What this changes, and what it does not:
 - **A failure to certify is not a loss, and is recorded as neither.** `getaddrinfo_hosts` and `sscanf`
   produced no contract rows inside a 180 s budget at loadavg 10.22. That is a budget too short for
   the gate's 300000 ms sampling window, not evidence about either family.
+
+## 2026-08-16 (BlackThrush) — MECHANISM FOUND for the 92x: glibc serves getrandom from the vDSO, fl issues a syscall on every call
+
+- **RESULT CLASS: loss/baseline (diagnosis).** No new timed row: `uptime` read **42.95, 25.26, 25.18**
+  when this turn started, above the ~30 defer threshold, so no certification was run. By the end of
+  the turn the host was at **97.37**, which confirms deferring was right. The timing this explains is
+  the already-banked pair of runs at 91.58x and 92.17x. **A failure to certify under load is not a
+  loss and nothing here is recorded as one.**
+- **THE DIAGNOSIS NEEDED NO TIMING AT ALL**, which is why it was the right work for a loaded host.
+  Counting syscalls is load-immune: `strace -c -e trace=getrandom`, same program, two call counts.
+
+  | arm | 100 calls | 10,000 calls | scaling |
+  |---|---|---|---|
+  | host glibc 2.42 | **3** syscalls | **3** syscalls | FLAT |
+  | fl (`libfrankenlibc_abi.so` sha256 faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b) | **103** syscalls | **10,003** syscalls | LINEAR, exactly one per call |
+
+  The three in every row are the interpreter's own startup draws. glibc's count does not move between
+  100 and 10,000 calls; fl's tracks the call count exactly.
+- **WHY.** The kernel here (6.17.0-41-generic) exports `__vdso_getrandom` -- verified by reading this
+  process's own `[vdso]` mapping out of `/proc/self/maps` and finding the symbol name in it -- and
+  glibc 2.42 uses it, serving each call from a per-thread userspace CSPRNG and syscalling only to
+  allocate and reseed that state. `unistd_abi.rs:4480` does the opposite unconditionally: every call
+  goes through `syscall::sys_getrandom`. **The gap is not a slow implementation, it is a missing
+  mechanism**, which is why no amount of tuning inside fl's current path could have closed it.
+- **IT ALSO EXPLAINS THE SIZE COLLAPSE EXACTLY** (92 -> 77 -> 11 -> 3). The syscall is a fixed cost
+  that is 100% of fl's zero-byte call and ~0% of glibc's; as the buffer grows, real CSPRNG work grows
+  on both sides and swamps it. A ratio that collapses with size was already the signature of fixed
+  per-call overhead; this names the overhead.
+- **WARNING FOR WHOEVER TAKES THE LEVER: the obvious fix is a security regression.** The tempting
+  shortcut is to draw a large block once and hand out slices. Do not. glibc's vgetrandom is safe
+  because the KERNEL owns the state and invalidates it across `fork`; a userspace buffer in fl would
+  hand a parent's unconsumed random bytes to its child, so two processes would return identical
+  "random" output. That is a far worse defect than being 92x slow. The correct fix is to use
+  `__vdso_getrandom` itself (per-thread state via the `vgetrandom_alloc` syscall), which is a real
+  feature and not a micro-optimisation -- and it is worth noting fl is pure-safe-Rust, so the mmap'd
+  per-thread state and the vDSO call are the hard parts, not the algorithm.
