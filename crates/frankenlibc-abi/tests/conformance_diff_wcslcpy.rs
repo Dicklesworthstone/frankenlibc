@@ -11,9 +11,29 @@
 
 use libc::wchar_t;
 
-unsafe extern "C" {
-    fn wcslcpy(dst: *mut wchar_t, src: *const wchar_t, siz: usize) -> usize;
-    fn wcslcat(dst: *mut wchar_t, src: *const wchar_t, siz: usize) -> usize;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this symbol into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing (bd-v0388t). That
+/// matters especially here: this gate covers a hand-written SIMD kernel, whose
+/// whole risk is diverging from the scalar contract at a vector boundary.
+
+type WcslcpyFn = unsafe extern "C" fn(*mut wchar_t, *const wchar_t, usize) -> usize;
+
+fn host_wcslcpy() -> WcslcpyFn {
+    // SAFETY: signature matches BSD wcslcpy exactly.
+    unsafe {
+        dlsym_oracle::host_fn(c"wcslcpy", frankenlibc_abi::wchar_abi::wcslcpy as *const ())
+    }
+}
+
+fn host_wcslcat() -> WcslcpyFn {
+    // SAFETY: wcslcat shares wcslcpy's signature exactly.
+    unsafe {
+        dlsym_oracle::host_fn(c"wcslcat", frankenlibc_abi::wchar_abi::wcslcat as *const ())
+    }
 }
 
 fn wstr(s: &str) -> Vec<wchar_t> {
@@ -31,7 +51,7 @@ fn wcslcpy_matches_glibc() {
     for siz in [0usize, 1, 3, 5, 6, 10] {
         let mut gd = vec![FILL; 16];
         let mut fd = vec![FILL; 16];
-        let g = unsafe { wcslcpy(gd.as_mut_ptr(), src.as_ptr(), siz) };
+        let g = unsafe { host_wcslcpy()(gd.as_mut_ptr(), src.as_ptr(), siz) };
         let f = unsafe { frankenlibc_abi::wchar_abi::wcslcpy(fd.as_mut_ptr(), src.as_ptr(), siz) };
         assert_eq!(f, g, "wcslcpy siz={siz} ret: fl={f} glibc={g}");
         assert_eq!(fd, gd, "wcslcpy siz={siz} buffer mismatch");
@@ -49,7 +69,7 @@ fn wcslcat_matches_glibc() {
             gd[i] = c;
             fd[i] = c;
         }
-        let g = unsafe { wcslcat(gd.as_mut_ptr(), src.as_ptr(), siz) };
+        let g = unsafe { host_wcslcat()(gd.as_mut_ptr(), src.as_ptr(), siz) };
         let f = unsafe { frankenlibc_abi::wchar_abi::wcslcat(fd.as_mut_ptr(), src.as_ptr(), siz) };
         assert_eq!(f, g, "wcslcat siz={siz} ret: fl={f} glibc={g}");
         assert_eq!(fd, gd, "wcslcat siz={siz} buffer mismatch");

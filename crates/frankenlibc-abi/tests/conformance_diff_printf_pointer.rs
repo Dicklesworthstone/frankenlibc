@@ -13,8 +13,24 @@
 use frankenlibc_abi::stdio_abi as fl;
 use std::ffi::{CString, c_char, c_void};
 
-unsafe extern "C" {
-    fn snprintf(b: *mut c_char, s: usize, f: *const c_char, ...) -> i32;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this same symbol into this test binary, so a link-time reference can bind to
+/// fl and leave BOTH arms as fl -- green while comparing nothing, which is
+/// exactly how the defect this gate pins would have been able to regress
+/// unnoticed (bd-v0388t).
+type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> i32;
+
+fn host_snprintf() -> SnprintfFn {
+    // SAFETY: the signature matches C's snprintf exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"snprintf",
+            frankenlibc_abi::stdio_abi::snprintf as *const (),
+        )
+    }
 }
 
 fn render(eng: u8, fmt: &str, p: *const c_void) -> String {
@@ -23,7 +39,7 @@ fn render(eng: u8, fmt: &str, p: *const c_void) -> String {
     let n = if eng == 0 {
         unsafe { fl::snprintf(b.as_mut_ptr() as *mut c_char, 96, cf.as_ptr(), p) }
     } else {
-        unsafe { snprintf(b.as_mut_ptr() as *mut c_char, 96, cf.as_ptr(), p) }
+        unsafe { host_snprintf()(b.as_mut_ptr() as *mut c_char, 96, cf.as_ptr(), p) }
     };
     String::from_utf8_lossy(&b[..n.max(0) as usize]).into_owned()
 }

@@ -10,8 +10,22 @@
 use frankenlibc_abi::wchar_abi::wmemcmp as fl_wmemcmp;
 use std::os::raw::c_int;
 
-unsafe extern "C" {
-    fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> c_int;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this symbol into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing (bd-v0388t). That
+/// matters especially here: this gate covers a hand-written SIMD kernel, whose
+/// whole risk is diverging from the scalar contract at a vector boundary.
+
+type WmemcmpFn = unsafe extern "C" fn(*const u32, *const u32, usize) -> c_int;
+
+fn host_wmemcmp() -> WmemcmpFn {
+    // SAFETY: signature matches C's wmemcmp exactly.
+    unsafe {
+        dlsym_oracle::host_fn(c"wmemcmp", frankenlibc_abi::wchar_abi::wmemcmp as *const ())
+    }
 }
 
 fn sign(x: i32) -> i32 {
@@ -34,7 +48,7 @@ fn wmemcmp_matches_glibc() {
         let a = base.clone();
         let b = base.clone();
         let fl = unsafe { fl_wmemcmp(a.as_ptr(), b.as_ptr(), len) };
-        let gl = unsafe { wmemcmp(a.as_ptr(), b.as_ptr(), len) };
+        let gl = unsafe { host_wmemcmp()(a.as_ptr(), b.as_ptr(), len) };
         assert_eq!(sign(fl), sign(gl), "wmemcmp equal len={len}");
         checked += 1;
 
@@ -49,7 +63,7 @@ fn wmemcmp_matches_glibc() {
                 // Compare over n = len AND a few n straddling pos.
                 for &n in &[len, pos, pos + 1, (pos + 8).min(len)] {
                     let fln = unsafe { fl_wmemcmp(a.as_ptr(), b2.as_ptr(), n) };
-                    let gln = unsafe { wmemcmp(a.as_ptr(), b2.as_ptr(), n) };
+                    let gln = unsafe { host_wmemcmp()(a.as_ptr(), b2.as_ptr(), n) };
                     assert_eq!(
                         sign(fln),
                         sign(gln),

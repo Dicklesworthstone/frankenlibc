@@ -11,8 +11,24 @@
 
 use frankenlibc_abi::string_abi as fl;
 
-unsafe extern "C" {
-    fn regerror(e: i32, p: *const libc::regex_t, b: *mut i8, n: usize) -> usize;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this same symbol into this test binary, so a link-time reference can bind to
+/// fl and leave BOTH arms as fl -- green while comparing nothing, which is
+/// exactly how the defect this gate pins would have been able to regress
+/// unnoticed (bd-v0388t).
+type RegerrorFn = unsafe extern "C" fn(i32, *const libc::regex_t, *mut i8, usize) -> usize;
+
+fn host_regerror() -> RegerrorFn {
+    // SAFETY: the signature matches POSIX's regerror exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"regerror",
+            frankenlibc_abi::string_abi::regerror as *const (),
+        )
+    }
 }
 
 fn render(eng: u8, code: i32) -> (usize, String) {
@@ -20,7 +36,7 @@ fn render(eng: u8, code: i32) -> (usize, String) {
     let n = if eng == 0 {
         unsafe { fl::regerror(code, std::ptr::null(), buf.as_mut_ptr(), buf.len()) }
     } else {
-        unsafe { regerror(code, std::ptr::null(), buf.as_mut_ptr(), buf.len()) }
+        unsafe { host_regerror()(code, std::ptr::null(), buf.as_mut_ptr(), buf.len()) }
     };
     let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
         .to_string_lossy()
@@ -45,7 +61,7 @@ fn regerror_messages_match_glibc() {
         .to_string_lossy()
         .into_owned();
     let mut small_g = [0i8; 5];
-    let needed_gl = unsafe { regerror(2, std::ptr::null(), small_g.as_mut_ptr(), small_g.len()) };
+    let needed_gl = unsafe { host_regerror()(2, std::ptr::null(), small_g.as_mut_ptr(), small_g.len()) };
     let gl_s = unsafe { std::ffi::CStr::from_ptr(small_g.as_ptr()) }
         .to_string_lossy()
         .into_owned();

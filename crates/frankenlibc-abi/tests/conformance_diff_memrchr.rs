@@ -9,8 +9,22 @@
 
 use std::ffi::{c_int, c_void};
 
-unsafe extern "C" {
-    fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this symbol into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing (bd-v0388t). That
+/// matters especially here: this gate covers a hand-written SIMD kernel, whose
+/// whole risk is diverging from the scalar contract at a vector boundary.
+
+type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_void;
+
+fn host_memrchr() -> MemrchrFn {
+    // SAFETY: signature matches GNU memrchr exactly.
+    unsafe {
+        dlsym_oracle::host_fn(c"memrchr", frankenlibc_abi::string_abi::memrchr as *const ())
+    }
 }
 
 fn off(ret: *mut c_void, base: *const u8) -> isize {
@@ -38,7 +52,7 @@ fn memrchr_matches_glibc() {
         (b'c', 4),         // within first 4 -> 'c' at idx 2
     ];
     for &(c, n) in cases {
-        let g = unsafe { memrchr(hay.as_ptr() as *const c_void, c as c_int, n) };
+        let g = unsafe { host_memrchr()(hay.as_ptr() as *const c_void, c as c_int, n) };
         let f = unsafe {
             frankenlibc_abi::string_abi::memrchr(hay.as_ptr() as *const c_void, c as c_int, n)
         };

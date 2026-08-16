@@ -12,8 +12,22 @@ use frankenlibc_abi::string_abi as fa;
 use sha2::{Digest, Sha256};
 use std::os::raw::c_char;
 
-unsafe extern "C" {
-    fn strnlen(s: *const c_char, n: usize) -> usize;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this symbol into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing (bd-v0388t). That
+/// matters especially here: this gate covers a hand-written SIMD kernel, whose
+/// whole risk is diverging from the scalar contract at a vector boundary.
+
+type StrnlenFn = unsafe extern "C" fn(*const c_char, usize) -> usize;
+
+fn host_strnlen() -> StrnlenFn {
+    // SAFETY: signature matches POSIX strnlen exactly.
+    unsafe {
+        dlsym_oracle::host_fn(c"strnlen", frankenlibc_abi::string_abi::strnlen as *const ())
+    }
 }
 
 #[test]
@@ -37,7 +51,7 @@ fn strnlen_matches_glibc() {
         buf.push(0); // guaranteed terminator
         let n = (rng() as usize) % (buflen + 40);
         let fl = unsafe { fa::strnlen(buf.as_ptr() as *const c_char, n) };
-        let gl = unsafe { strnlen(buf.as_ptr() as *const c_char, n) };
+        let gl = unsafe { host_strnlen()(buf.as_ptr() as *const c_char, n) };
         if fl != gl {
             div += 1;
             if div <= 5 {

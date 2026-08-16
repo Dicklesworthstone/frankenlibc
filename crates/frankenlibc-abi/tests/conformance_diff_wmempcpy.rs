@@ -10,8 +10,25 @@ use std::os::raw::c_int;
 
 type Wch = c_int; // wchar_t == int on Linux
 
-unsafe extern "C" {
-    fn wmempcpy(dst: *mut Wch, src: *const Wch, n: usize) -> *mut Wch;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The host arm is resolved with `dlsym`, not declared at link time. fl exports
+/// this symbol into this test binary, so a link-time reference can bind to fl
+/// and leave BOTH arms as fl -- green while comparing nothing (bd-v0388t). That
+/// matters especially here: this gate covers a hand-written SIMD kernel, whose
+/// whole risk is diverging from the scalar contract at a vector boundary.
+
+type WmempcpyFn = unsafe extern "C" fn(*mut Wch, *const Wch, usize) -> *mut Wch;
+
+fn host_wmempcpy() -> WmempcpyFn {
+    // SAFETY: signature matches GNU wmempcpy exactly.
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"wmempcpy",
+            frankenlibc_abi::glibc_internal_abi::wmempcpy as *const (),
+        )
+    }
 }
 
 fn off(ret: *mut Wch, base: *const Wch) -> isize {
@@ -30,7 +47,7 @@ fn wmempcpy_matches_glibc() {
         let fill: Wch = 0x7e7e;
         let mut gd = vec![fill; 20];
         let mut fd = vec![fill; 20];
-        let rg = unsafe { wmempcpy(gd.as_mut_ptr(), src.as_ptr(), n) };
+        let rg = unsafe { host_wmempcpy()(gd.as_mut_ptr(), src.as_ptr(), n) };
         let rf = unsafe {
             frankenlibc_abi::glibc_internal_abi::wmempcpy(
                 fd.as_mut_ptr() as *mut _,
