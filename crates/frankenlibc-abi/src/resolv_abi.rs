@@ -456,9 +456,7 @@ impl ServiceLookupCache {
         for key in &self.name_keys[start..end] {
             // Hash equality only narrows the search; exact comparison is the
             // collision guard and remains ASCII case-insensitive.
-            if !key.name.eq_ignore_ascii_case(name)
-                || last_entry_index == Some(key.entry_index)
-            {
+            if !key.name.eq_ignore_ascii_case(name) || last_entry_index == Some(key.entry_index) {
                 continue;
             }
 
@@ -6055,9 +6053,12 @@ pub unsafe extern "C" fn ns_sprintrrf(
 fn ns_addtab(out: &mut String, target: usize, spaced: &mut bool) {
     // The COLUMN, not the byte length: a tab is one byte but advances to the next 8-column
     // stop, so byte length under-counts every pad after the first and over-tabs the next one.
-    let mut len = out.bytes().fold(0usize, |col, b| {
-        if b == b'\t' { (col + 8) & !7 } else { col + 1 }
-    });
+    let mut len = out.bytes().fold(
+        0usize,
+        |col, b| {
+            if b == b'\t' { (col + 8) & !7 } else { col + 1 }
+        },
+    );
     if *spaced || len + 1 >= target {
         out.push_str("  ");
         *spaced = true;

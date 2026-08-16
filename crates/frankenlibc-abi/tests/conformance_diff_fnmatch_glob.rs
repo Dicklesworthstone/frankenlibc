@@ -290,7 +290,10 @@ fn glob_errfunc_snapshot() -> (usize, c_int, Option<String>) {
     (
         GLOB_ERRFUNC_CALLS.load(Ordering::SeqCst),
         GLOB_ERRFUNC_ERRNO.load(Ordering::SeqCst),
-        GLOB_ERRFUNC_PATH.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        GLOB_ERRFUNC_PATH
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
     )
 }
 

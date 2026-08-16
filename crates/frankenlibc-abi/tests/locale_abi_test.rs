@@ -271,7 +271,9 @@ fn ngettext_zero_is_plural() {
 
 #[test]
 fn textdomain_null_returns_default() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let result = unsafe { textdomain(ptr::null()) };
     assert!(!result.is_null());
@@ -281,7 +283,9 @@ fn textdomain_null_returns_default() {
 
 #[test]
 fn textdomain_set_returns_name() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let name = CString::new("myapp").unwrap();
     let result = unsafe { textdomain(name.as_ptr()) };
@@ -291,7 +295,9 @@ fn textdomain_set_returns_name() {
 
 #[test]
 fn textdomain_query_reflects_previous_set() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let name = CString::new("frankenlibc-test-domain").unwrap();
     let set_result = unsafe { textdomain(name.as_ptr()) };
@@ -305,7 +311,9 @@ fn textdomain_query_reflects_previous_set() {
 
 #[test]
 fn textdomain_empty_resets_to_default() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let empty = CString::new("").unwrap();
     let result = unsafe { textdomain(empty.as_ptr()) };
@@ -315,7 +323,9 @@ fn textdomain_empty_resets_to_default() {
 
 #[test]
 fn textdomain_queries_observe_live_published_storage() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
 
     const READERS: usize = 4;
@@ -360,7 +370,9 @@ fn textdomain_queries_observe_live_published_storage() {
 
 #[test]
 fn bindtextdomain_null_dirname_returns_default() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let domain = CString::new("myapp-default-query").unwrap();
     let result = unsafe { bindtextdomain(domain.as_ptr(), ptr::null()) };
@@ -371,7 +383,9 @@ fn bindtextdomain_null_dirname_returns_default() {
 
 #[test]
 fn bindtextdomain_null_domain_returns_null() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let dirname = CString::new("/tmp/frankenlibc-locale").unwrap();
     let result = unsafe { bindtextdomain(ptr::null(), dirname.as_ptr()) };
@@ -383,7 +397,9 @@ fn bindtextdomain_null_domain_returns_null() {
 
 #[test]
 fn bindtextdomain_empty_domain_returns_null() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let domain = CString::new("").unwrap();
     let dirname = CString::new("/tmp/frankenlibc-locale").unwrap();
@@ -396,7 +412,9 @@ fn bindtextdomain_empty_domain_returns_null() {
 
 #[test]
 fn bindtextdomain_set_dirname() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let domain = CString::new("myapp").unwrap();
     let dirname = CString::new("/opt/locale").unwrap();
@@ -407,7 +425,9 @@ fn bindtextdomain_set_dirname() {
 
 #[test]
 fn bindtextdomain_query_reflects_previous_set() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let domain = CString::new("myapp").unwrap();
     let dirname = CString::new("/tmp/frankenlibc-locale").unwrap();
@@ -422,7 +442,9 @@ fn bindtextdomain_query_reflects_previous_set() {
 
 #[test]
 fn bindtextdomain_keeps_domains_separate() {
-    let _guard = GETTEXT_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = GETTEXT_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     reset_gettext_state();
     let domain_a = CString::new("app-a").unwrap();
     let domain_b = CString::new("app-b").unwrap();
@@ -617,7 +639,9 @@ fn nl_langinfo_l_codeset() {
 
 #[test]
 fn catopen_missing_catalog_matches_host_errno() {
-    let _guard = CATALOG_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CATALOG_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     locale_reset_catalog_state_for_tests();
 
     let Some(host_catopen_ptr) = (unsafe { load_host_symbol("catopen") }) else {
@@ -645,7 +669,9 @@ fn catopen_missing_catalog_matches_host_errno() {
 
 #[test]
 fn catgets_failed_open_descriptor_returns_default_like_host() {
-    let _guard = CATALOG_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CATALOG_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     locale_reset_catalog_state_for_tests();
 
     let Some(host_catgets_ptr) = (unsafe { load_host_symbol("catgets") }) else {
@@ -675,7 +701,9 @@ fn catgets_failed_open_descriptor_returns_default_like_host() {
 
 #[test]
 fn generated_catalog_hit_miss_and_close_match_host() {
-    let _guard = CATALOG_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CATALOG_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     locale_reset_catalog_state_for_tests();
 
     let Some(host_catopen_ptr) = (unsafe { load_host_symbol("catopen") }) else {
@@ -762,7 +790,9 @@ fn generated_catalog_hit_miss_and_close_match_host() {
 
 #[test]
 fn catclose_invalid_descriptor_matches_host_ebadf() {
-    let _guard = CATALOG_STATE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = CATALOG_STATE_GUARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     locale_reset_catalog_state_for_tests();
 
     let Some(host_catclose_ptr) = (unsafe { load_host_symbol("catclose") }) else {

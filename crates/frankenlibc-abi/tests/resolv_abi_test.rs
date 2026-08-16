@@ -4191,7 +4191,15 @@ fn ns_sprintrrf_formats_txt_record_with_quoting() {
 #[test]
 fn ns_sprintrrf_falls_back_to_rfc3597_for_unknown_type() {
     let rdata = b"\xde\xad\xbe\xef";
-    let s = assert_sprintrrf_matches_host(&[], "weird.example", 1, 999 /*unknown*/, 60, rdata, 256);
+    let s = assert_sprintrrf_matches_host(
+        &[],
+        "weird.example",
+        1,
+        999, /*unknown*/
+        60,
+        rdata,
+        256,
+    );
     // Positive facts about the shared answer, so this cannot pass on two empty renderings.
     assert!(s.contains("999"), "got: {s}");
     assert!(s.contains("de ad be ef"), "got: {s}");

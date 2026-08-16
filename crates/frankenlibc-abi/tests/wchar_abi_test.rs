@@ -23,7 +23,9 @@ struct StdioGlobalStreamGuard {
 
 impl StdioGlobalStreamGuard {
     unsafe fn install(new_stdin: *mut c_void, new_stdout: *mut c_void) -> Self {
-        let guard = STDIO_GLOBAL_STREAM_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = STDIO_GLOBAL_STREAM_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let old_stdin = unsafe { frankenlibc_abi::stdio_abi::stdin };
         let old_stdout = unsafe { frankenlibc_abi::stdio_abi::stdout };
         unsafe {

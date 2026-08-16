@@ -186,23 +186,48 @@ fn ns_sprintrrf_padding_matches_glibc_across_lengths_and_ttls() {
             let mut fl_buf = [0i8; 1024];
             let fl_rc = unsafe {
                 fl::ns_sprintrrf(
-                    std::ptr::null(), 0, name_c.as_ptr(), 1, 1, ttl,
-                    RDATA.as_ptr(), RDATA.len(), std::ptr::null(), std::ptr::null(),
-                    fl_buf.as_mut_ptr(), fl_buf.len(),
+                    std::ptr::null(),
+                    0,
+                    name_c.as_ptr(),
+                    1,
+                    1,
+                    ttl,
+                    RDATA.as_ptr(),
+                    RDATA.len(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    fl_buf.as_mut_ptr(),
+                    fl_buf.len(),
                 )
             };
             let mut g_buf = [0i8; 1024];
             let g_rc = unsafe {
                 g::ns_sprintrrf(
-                    std::ptr::null(), 0, name_c.as_ptr(), 1, 1, ttl,
-                    RDATA.as_ptr(), RDATA.len(), std::ptr::null(), std::ptr::null(),
-                    g_buf.as_mut_ptr(), g_buf.len(),
+                    std::ptr::null(),
+                    0,
+                    name_c.as_ptr(),
+                    1,
+                    1,
+                    ttl,
+                    RDATA.as_ptr(),
+                    RDATA.len(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    g_buf.as_mut_ptr(),
+                    g_buf.len(),
                 )
             };
-            assert!(g_rc >= 0, "glibc ns_sprintrrf failed for len={name_len} ttl={ttl}");
+            assert!(
+                g_rc >= 0,
+                "glibc ns_sprintrrf failed for len={name_len} ttl={ttl}"
+            );
 
-            let fl_txt = unsafe { CStr::from_ptr(fl_buf.as_ptr()) }.to_string_lossy().into_owned();
-            let g_txt = unsafe { CStr::from_ptr(g_buf.as_ptr()) }.to_string_lossy().into_owned();
+            let fl_txt = unsafe { CStr::from_ptr(fl_buf.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            let g_txt = unsafe { CStr::from_ptr(g_buf.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
             assert_eq!(
                 (fl_rc, fl_txt.as_str()),
                 (g_rc, g_txt.as_str()),

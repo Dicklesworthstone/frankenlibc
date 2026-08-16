@@ -297,7 +297,10 @@ unsafe extern "C" fn constructor_order_main(
     _argv: *mut *mut c_char,
     _envp: *mut *mut c_char,
 ) -> c_int {
-    CONSTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push("main");
+    CONSTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push("main");
     0
 }
 
@@ -306,20 +309,31 @@ unsafe extern "C" fn destructor_order_main(
     _argv: *mut *mut c_char,
     _envp: *mut *mut c_char,
 ) -> c_int {
-    DESTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push("main_return");
+    DESTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push("main_return");
     7
 }
 
 unsafe extern "C" fn destructor_order_fini_hook() {
-    DESTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push("fini_array");
+    DESTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push("fini_array");
 }
 
 unsafe extern "C" fn destructor_order_rtld_fini_hook() {
-    DESTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push("rtld_fini");
+    DESTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push("rtld_fini");
 }
 
 unsafe extern "C" fn init_fini_array_init_hook() {
-    let mut order = INIT_FINI_ARRAY_ORDER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut order = INIT_FINI_ARRAY_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     order.push("preinit_array");
     order.push("init_array");
 }
@@ -329,12 +343,18 @@ unsafe extern "C" fn init_fini_array_main(
     _argv: *mut *mut c_char,
     _envp: *mut *mut c_char,
 ) -> c_int {
-    INIT_FINI_ARRAY_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push("main");
+    INIT_FINI_ARRAY_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push("main");
     0
 }
 
 unsafe extern "C" fn init_fini_array_fini_hook() {
-    INIT_FINI_ARRAY_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push("fini_array");
+    INIT_FINI_ARRAY_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push("fini_array");
 }
 
 fn write_exit_callback_byte(byte: u8) {
@@ -365,7 +385,10 @@ unsafe extern "C" fn cxa_atexit_record_arg(arg: *mut c_void) {
     } else {
         unsafe { *(arg.cast::<c_int>()) }
     };
-    CXA_ATEXIT_ORDER.lock().unwrap_or_else(|e| e.into_inner()).push(value);
+    CXA_ATEXIT_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(value);
 }
 
 #[test]
@@ -396,7 +419,10 @@ fn phase0_calls_init_and_fini_hooks() {
 #[test]
 fn phase0_runs_preinit_and_init_constructors_before_main() {
     let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    CONSTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    CONSTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 
     let mut fix = StartupFixture::new(b"constructors");
     let rc = unsafe {
@@ -412,7 +438,10 @@ fn phase0_runs_preinit_and_init_constructors_before_main() {
     };
 
     assert_eq!(rc, 0);
-    let order = CONSTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let order = CONSTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     assert_eq!(order, ["preinit_array", "init_array", "main"]);
 
     let snap = startup_policy_snapshot_for_tests();
@@ -426,7 +455,10 @@ fn phase0_runs_preinit_and_init_constructors_before_main() {
 #[test]
 fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
     let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    DESTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    DESTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 
     let mut fix = StartupFixture::new(b"destructors");
     let rc = unsafe {
@@ -442,7 +474,10 @@ fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
     };
 
     assert_eq!(rc, 7);
-    let order = DESTRUCTOR_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let order = DESTRUCTOR_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     assert_eq!(order, ["main_return", "fini_array", "rtld_fini"]);
 
     let snap = startup_policy_snapshot_for_tests();
@@ -456,7 +491,10 @@ fn phase0_runs_fini_array_and_rtld_fini_after_main_return() {
 #[test]
 fn phase0_runs_preinit_init_main_and_fini_arrays_in_order() {
     let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    INIT_FINI_ARRAY_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    INIT_FINI_ARRAY_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 
     let mut fix = StartupFixture::new(b"init-fini-arrays");
     let rc = unsafe {
@@ -472,7 +510,10 @@ fn phase0_runs_preinit_init_main_and_fini_arrays_in_order() {
     };
 
     assert_eq!(rc, 0);
-    let order = INIT_FINI_ARRAY_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let order = INIT_FINI_ARRAY_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     assert_eq!(order, ["preinit_array", "init_array", "main", "fini_array"]);
 
     let snap = startup_policy_snapshot_for_tests();
@@ -546,7 +587,10 @@ fn phase0_exit_registration_rejects_missing_callbacks() {
 fn cxa_atexit_finalize_filters_dso_and_runs_lifo_once() {
     let _lock = STARTUP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe { __cxa_finalize(ptr::null_mut()) };
-    CXA_ATEXIT_ORDER.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    CXA_ATEXIT_ORDER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 
     let mut one = 1;
     let mut two = 2;
@@ -589,21 +633,30 @@ fn cxa_atexit_finalize_filters_dso_and_runs_lifo_once() {
 
     unsafe { __cxa_finalize(dso_one_ptr) };
     assert_eq!(
-        CXA_ATEXIT_ORDER.lock().unwrap_or_else(|e| e.into_inner()).as_slice(),
+        CXA_ATEXIT_ORDER
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_slice(),
         &[3, 1],
         "__cxa_finalize(dso) should run matching handlers in LIFO order"
     );
 
     unsafe { __cxa_finalize(ptr::null_mut()) };
     assert_eq!(
-        CXA_ATEXIT_ORDER.lock().unwrap_or_else(|e| e.into_inner()).as_slice(),
+        CXA_ATEXIT_ORDER
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_slice(),
         &[3, 1, 2],
         "__cxa_finalize(NULL) should drain the remaining handlers"
     );
 
     unsafe { __cxa_finalize(ptr::null_mut()) };
     assert_eq!(
-        CXA_ATEXIT_ORDER.lock().unwrap_or_else(|e| e.into_inner()).as_slice(),
+        CXA_ATEXIT_ORDER
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_slice(),
         &[3, 1, 2],
         "__cxa_finalize should not rerun drained handlers"
     );
