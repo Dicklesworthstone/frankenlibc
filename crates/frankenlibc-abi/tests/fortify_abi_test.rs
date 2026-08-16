@@ -2533,3 +2533,97 @@ fn fgetws_unlocked_chk_n_over_real_buffer_aborts_child_process() {
         };
     });
 }
+
+// ---------------------------------------------------------------------------
+// Overflow-abort coverage for the _chk wrappers that previously had only
+// happy-path arms (bd-w57ywx, bd-lsuhmq, bd-8aazre, bd-kzurp6, bd-e2je3m,
+// bd-i0naz6).
+//
+// Every one of these symbols was already exercised in this file with a
+// correctly-sized buffer, which proves the wrapper forwards but says nothing
+// about the guard. A _chk wrapper whose overflow branch is missing entirely
+// passes every happy-path arm — the object-size argument is simply ignored and
+// the call succeeds. These arms assert the other half of the contract: when the
+// requested length exceeds the compiler-supplied object size, the process must
+// die with SIGABRT rather than write past the end.
+//
+// Fork-isolated through the same `assert_child_sigabrt` helper the memcpy/
+// memmove/memset arms use, for the reason its counterpart documents: a guard
+// that fires in-process takes the whole test binary with it, which reads as a
+// harness crash rather than a failed assertion.
+
+#[test]
+fn confstr_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("confstr_chk overflow", || {
+        let mut buf = [0u8; 8];
+        // len (256) exceeds the object size (8): the guard must abort before
+        // confstr writes the answer.
+        unsafe {
+            __confstr_chk(0, buf.as_mut_ptr().cast(), 256, buf.len());
+        }
+    });
+}
+
+#[test]
+fn readlink_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("readlink_chk overflow", || {
+        let path = CString::new("/proc/self/exe").unwrap();
+        let mut buf = [0u8; 8];
+        // A real symlink, so the failure under test is the size guard rather
+        // than a readlink error path that would return before the guard runs.
+        unsafe {
+            __readlink_chk(path.as_ptr(), buf.as_mut_ptr().cast(), 4096, buf.len());
+        }
+    });
+}
+
+#[test]
+fn getlogin_r_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("getlogin_r_chk overflow", || {
+        let mut buf = [0u8; 4];
+        unsafe {
+            __getlogin_r_chk(buf.as_mut_ptr().cast(), 256, buf.len());
+        }
+    });
+}
+
+#[test]
+fn recv_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("recv_chk overflow", || {
+        let mut fds = [0i32; 2];
+        // socketpair rather than pipe: __recv_chk takes a socket. The guard is
+        // expected to fire on the length/object-size mismatch before any data
+        // is moved, so the socket never needs to carry a payload.
+        let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+        if rc != 0 {
+            // Cannot set up the precondition; abort so the arm does not report
+            // a false pass, and so the failure names itself in the parent.
+            unsafe { libc::abort() };
+        }
+        let mut buf = [0u8; 8];
+        unsafe {
+            __recv_chk(fds[0], buf.as_mut_ptr().cast(), 4096, buf.len(), 0);
+        }
+    });
+}
+
+#[test]
+fn poll_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("poll_chk overflow", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        // nfds claims two entries; the object holds one. glibc's __poll_chk
+        // compares nfds * sizeof(pollfd) against the object size.
+        unsafe {
+            __poll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                2,
+                0,
+                std::mem::size_of::<libc::pollfd>(),
+            );
+        }
+    });
+}
