@@ -1708,3 +1708,72 @@ fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
     assert_eq!(cleared["active_allocations"].as_u64(), Some(0));
     assert_eq!(cleared["bytes_allocated"].as_u64(), Some(0));
 }
+
+/// Pin the address-derived fast path over the exact sizes the allocator
+/// campaign measures (bd-e0y02p).
+///
+/// ## Why this is a pin and not a coverage test
+///
+/// bd-e0y02p proposes an address-derived slab to delete three per-call costs
+/// from malloc: the arena hash insert, the size index, and the malloc-side
+/// global spinlock. Its own first instruction is to prototype the cheap,
+/// foreign-pointer-safe ownership test before building anything, because if
+/// that test is not cheap the design is dead.
+///
+/// That design is ALREADY IMPLEMENTED. `segment_owned_index` range-checks the
+/// address against the segment arena and then tests one bit of an `AtomicU64`
+/// bitmap — no hash, no lock, and no dereference of memory fl does not own,
+/// which is exactly the safety property the bead says the design hinges on.
+/// `strict_small_or_host_allocate` tries `segment_allocate` FIRST and only falls
+/// back to the host allocator plus `fallback_insert_sized_for_slot` when the
+/// segment path declines.
+///
+/// So the open question is not "can we build it" but "does the measured
+/// operating point actually reach it". These are the four sizes the campaign
+/// times (16/64/256/1024, measured flat at ~7.0x fl/glibc), plus both sides of
+/// the `MAX_SMALL_SIZE` boundary. If a future change narrows segment coverage,
+/// the campaign's headroom estimate silently changes meaning — the ratio would
+/// then include a hash insert and a lock that the numbers were never taken
+/// against. This test fails instead.
+///
+/// The boundary case is asserted in the NEGATIVE direction on purpose: a test
+/// that only checks "small sizes are segment-owned" passes just as well if
+/// everything is segment-owned, which would mean the host fallback had stopped
+/// being reachable and `fallback_*` had become dead code.
+#[test]
+fn campaign_measured_sizes_take_the_address_derived_segment_path() {
+    use frankenlibc_core::malloc::size_class::MAX_SMALL_SIZE;
+
+    signal_runtime_ready_for_tests();
+
+    for size in [16usize, 64, 256, 1024, MAX_SMALL_SIZE] {
+        // SAFETY: plain allocation of `size` bytes through fl's public entry point.
+        let p = unsafe { malloc(size) };
+        assert!(!p.is_null(), "malloc({size}) returned NULL");
+        assert!(
+            malloc_segment_owned_for_tests(p.cast_const()),
+            "malloc({size}) did NOT come from the address-derived segment heap, so this \
+             allocation paid an arena hash insert, a size-index update and the malloc-side \
+             lock. bd-e0y02p's headroom figures were measured against the segment path; if \
+             this size no longer reaches it, re-measure before quoting them."
+        );
+        // SAFETY: `p` came from `malloc` above and is freed exactly once.
+        unsafe { free(p) };
+    }
+
+    // Above the class ceiling the host fallback must still be the one that
+    // answers, or the fallback bookkeeping this campaign is trying to delete
+    // would already be unreachable and the whole comparison would be moot.
+    let big = MAX_SMALL_SIZE + 1;
+    // SAFETY: plain allocation of `big` bytes through fl's public entry point.
+    let p = unsafe { malloc(big) };
+    assert!(!p.is_null(), "malloc({big}) returned NULL");
+    assert!(
+        !malloc_segment_owned_for_tests(p.cast_const()),
+        "malloc({big}) is above MAX_SMALL_SIZE ({MAX_SMALL_SIZE}) yet reports segment \
+         ownership — either the ceiling moved or the ownership predicate is answering \
+         true for a host pointer, which would be a memory-safety defect and not a perf one"
+    );
+    // SAFETY: `p` came from `malloc` above and is freed exactly once.
+    unsafe { free(p) };
+}
