@@ -27868,3 +27868,41 @@ What this changes, and what it does not:
   The first base cycle's nulls are visibly looser than the second's — `ladder_2s` reaches 1.0593 —
   which is why the second base cycle, whose nulls are all inside 0.9988 to 1.0047, is the one that
   anchors the comparison. Every effect above exceeds even the widest null half-width.
+
+### REPLICATION of the row above, same host, same binaries: 6 of 7 hold, `syslog_line` does NOT
+
+- **RESULT CLASS: loss/baseline.** A replication attempt that partially fails, recorded because the
+  row above quotes per-case magnitudes that a reader would otherwise trust.
+- Same already-built artifacts, no rebuild: base `FL_OBJECT sha256=0fb5ef3d0aa583fd…`, candidate
+  `b3dcf4f887bf3dfb…`, bench ELF `43356bcffdec9c34…`, `mismatches=0` on every completed arm.
+- **INCOMPLETE: three arms, not four.** The run was base/candidate/base and the fourth arm was cut
+  off by my own command timeout, so this is an ABA, not an ABBA. It is reported as such rather than
+  presented as a second full replicate.
+- Ratios against live glibc, base cycle 1 / cycle 2, then candidate:
+
+  | case | base 1 / 2 | candidate | vs the banked row |
+  |---|---|---|---|
+  | kv_join | 3.417691 / 3.402166 | 2.974800 | holds (12.8% here, 6.6% there) |
+  | ladder_3s | 3.488760 / 3.495918 | 3.099028 | holds (11.3% / 10.4%) |
+  | ladder_6s | 3.435377 / 3.418584 | 3.061750 | holds (10.7% / 11.2%) |
+  | ladder_4s | 3.277928 / 3.292826 | 2.996764 | holds (8.7% / 10.6%) |
+  | ladder_2s | 3.681686 / 3.577841 | 3.325431 | holds (8.4% / 11.7%) |
+  | http_log | 2.927780 / 2.892126 | 2.860528 | weaker (1.7% here, 4.1% there) |
+  | syslog_line | 3.113976 / 3.212629 | 3.315549 | **FAILS: 4.8% SLOWER, against 6.4% faster** |
+
+- **`syslog_line` did not replicate and its banked magnitude should not be relied on.** In the row
+  above it was 6.4% faster across two clean cycles; here the candidate reads 3.315549 against a base
+  of 3.113976 and 3.212629, i.e. slower than both. The two readings are irreconcilable, so the honest
+  position is that this case is unresolved on this host, not that it improved by 6.4%.
+- **The host was noisier for this run**, which is the most likely explanation but is not established:
+  the candidate's `ladder_3s` A/A null reached 1.019902 and its `syslog_line` null 1.008568, against
+  a spread of 0.9988 to 1.0047 in the second base cycle of the banked run. A ~2% null on the arm whose
+  effect is ~5% is not disqualifying on its own, but combined with a sign flip it is enough to
+  withhold the number.
+- **What still stands.** The five pure-`%s` ladder rungs and `kv_join` improve in BOTH runs, by 8-13%,
+  and `http_log` improves in both though by less. The direction of the `%s` fast path is replicated;
+  the specific `syslog_line` magnitude is not. `syslog_line` is the family's `headline_case`, so this
+  is the figure most likely to be quoted onward, which is exactly why it needs the caveat.
+- **What to do about it, cheaply:** `syslog_line` is `"%s[%d]: %s"` — the only shape in the family
+  that mixes `%s` and `%d` with literal text between every conversion. Re-running it alone on a quiet
+  host, with more cycles, would settle it without a rebuild, since both objects already exist.
