@@ -27743,3 +27743,62 @@ What this changes, and what it does not:
   short-circuit tests over the same body, so it is semantically identical to the version that gated
   green on 13 assertions, but the `http_log` question is open until it is measured again. Nothing in
   this correction claims the regression is fixed.
+
+## 2026-08-16 (BlackThrush) — MAINTENANCE (self-speedup, paired, 7 of 7 shapes): the plain-`%s` fast path with the conversion test first, measured on a LOCALLY-LINKED binary
+
+- **RESULT CLASS:**
+  `result_class=self-speedup`; `same_invocation=true`;
+  `self_effect_ratio=0.9638`;
+  `self_effect_bootstrap_median_ci=[0.9526,0.9749]`;
+  `null_bootstrap_median_ci=[0.998252,1.001577]`;
+  `bench_elf_sha256=43356bcffdec9c345808b78721cc0289b5e1fed2e7c8e36e5aff94fdeaa50345`;
+  `cv_used=false`.
+  NOT a campaign win: fl is still 2.7-3.3x slower than glibc here. The quoted `self_effect_ratio` is
+  the WORST of the seven cases, not the best.
+- **This supersedes the mixed row above.** That row measured the ORIGINAL predicate ordering and
+  reported `http_log` 5.9% slower. This one measures the reordered predicate (conversion byte tested
+  first) and `http_log` improves. The regression is gone.
+- **Provenance, and it matters for this row specifically.** Built and run LOCALLY with the cargo
+  wrapper bypassed, artifact paths taken from `--message-format=json` rather than guessed. No
+  `[RCH] remote` line in the build. In-process self-reports: `BENCH_ELF_OBJECT sha256=`
+  43356bcffdec9c345808b78721cc0289b5e1fed2e7c8e36e5aff94fdeaa50345; base `FL_OBJECT sha256=`
+  0fb5ef3d0aa583fd2f722c89c4c9bb63427b5831c7fcfa23d91726a9cdb400ad; candidate `FL_OBJECT sha256=`
+  42904b31967c5dd836f13fd29a6d4dafdfbbea2a7b1a7af23b0f3da4c5df07b1;
+  `ARM_DISTINCT incumbent_address=0x79065826a7f0 fl_address=0x790647104ec0`.
+- **Paired ABBA in one invocation, base then candidate, twice.** Ratios against live glibc:
+
+  | case | base 1 / 2 | candidate 1 / 2 | change |
+  |---|---|---|---|
+  | syslog_line | 3.116259 / 3.213214 | 2.967778 / 2.965659 | 6.2% faster |
+  | http_log | 2.836339 / 2.852365 | 2.723638 / 2.759136 | 3.5% faster |
+  | kv_join | 3.289822 / 3.285568 | 2.847635 / 2.954211 | 11.4% faster |
+  | ladder_2s | 3.570874 / 3.586830 | 3.154328 / 3.293060 | 9.5% faster |
+  | ladder_3s | 3.407651 / 3.398028 | 2.976369 / 3.117444 | 10.2% faster |
+  | ladder_4s | 3.252113 / 3.336611 | 2.968927 / 2.979083 | 9.5% faster |
+  | ladder_6s | 3.302142 / 3.266894 | 2.921558 / 2.906913 | 11.5% faster |
+
+  Seven of seven improve, in both cycles. **WORST BOUND: `http_log`, 3.5% faster** — that is the
+  number this row claims.
+- **THE A/A NULL CONTROLS, pipe-free, same-invocation, bootstrap medians with bootstrap median CIs.**
+  Candidate arm, syslog_line: A/A null FL/FL median 0.999557, bootstrap median CI 0.998252 to 1.001577.
+  Candidate arm, http_log: A/A null FL/FL median 0.998955, bootstrap median CI 0.994724 to 1.002357.
+  Candidate arm, kv_join: A/A null FL/FL median 1.000619, bootstrap median CI 0.999377 to 1.002867.
+  Candidate arm, ladder_2s: A/A null FL/FL median 1.000091, bootstrap median CI 0.998992 to 1.001048.
+  Candidate arm, ladder_3s: A/A null FL/FL median 1.000040, bootstrap median CI 0.998592 to 1.001097.
+  Candidate arm, ladder_4s: A/A null FL/FL median 1.000592, bootstrap median CI 0.999149 to 1.001644.
+  Candidate arm, ladder_6s: A/A null FL/FL median 0.999314, bootstrap median CI 0.998071 to 1.001181.
+  Base arm, syslog_line: A/A null FL/FL median 0.999328, bootstrap median CI 0.996686 to 1.000601.
+  Base arm, http_log: A/A null FL/FL median 1.006837, bootstrap median CI 0.999793 to 1.022756.
+  Base arm, kv_join: A/A null FL/FL median 1.000187, bootstrap median CI 0.995091 to 1.003705.
+  Base arm, ladder_2s: A/A null FL/FL median 1.001055, bootstrap median CI 0.996196 to 1.021881.
+  Base arm, ladder_3s: A/A null FL/FL median 1.000283, bootstrap median CI 0.998375 to 1.003558.
+  Base arm, ladder_4s: A/A null FL/FL median 0.999408, bootstrap median CI 0.997041 to 1.002246.
+  Base arm, ladder_6s: A/A null FL/FL median 1.002730, bootstrap median CI 0.998741 to 1.005937.
+  Two base-arm nulls are looser than the rest (http_log to 1.0228, ladder_2s to 1.0219). Both are on
+  the BASE arm and both bracket 1.0; the candidate arm's nulls are tight everywhere, and every effect
+  above is larger than the widest null half-width.
+- **Correctness: `mismatches=0` on both arms**, the conformance arm running before every timed arm.
+- **What it settles for bd-ntb9fq.** The per-conversion term is the right target and it is reachable:
+  the fused family moves from 3.12-3.31x banked to 2.72-3.29x measured here, entirely from
+  per-conversion work. It remains a loss, and the ladder still says fl pays ~3.3x glibc per
+  conversion, so this is progress on the correct term rather than a fix.
