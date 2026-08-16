@@ -32,6 +32,37 @@
 //! other test binaries declare which symbols. When a new differential gate
 //! reaches for glibc through a link-time declaration, add its symbol here.
 //!
+//! ## A fourth disguise: the host arm that is never declared at all
+//!
+//! The three disguises `scripts/audit_oracle_arms.py` was built for are all
+//! spellings of an in-file `unsafe extern "C" { .. }` block. There is a fourth
+//! that block-scanning cannot see, because the declaration is not in the gate:
+//!
+//! ```ignore
+//! assert_eq!(fl_result, unsafe { libc::memcpy(dst, src, n) });
+//! ```
+//!
+//! `libc::memcpy` is an `extern "C"` declaration too — it just lives in the
+//! `libc` crate. The linker treats it identically to one written in the test
+//! file, so it carries exactly the same hazard, while a scan keyed on in-file
+//! extern blocks reports the gate as having no host arm at all. Measured on
+//! 2026-08-16 over the 624 `conformance_diff_*` gates: **146 call `libc::<sym>`
+//! on a symbol fl also exports, 129 of them with no `dlsym` anywhere in the
+//! file** — a class disjoint from the 386 the script reports, and containing
+//! the whole string/mem family (`conformance_diff_memcpy`, `_memset`, `_strlen`,
+//! `_strcmp`, `_strchr`, `_string`, `_string_mut`, the four `_qsort_*`), which is
+//! the most heavily hand-optimised code in the repo and therefore where a hollow
+//! arm would hide the most.
+//!
+//! Those symbols also carry a second-order risk the declared ones do not: the
+//! mem/str family is exactly what a Rust binary may get from a LOCAL provider
+//! other than fl — `compiler_builtins` supplies `memcpy`/`memmove`/`memset`/
+//! `memcmp`/`bcmp`/`strlen` — so "fl exports nothing in this profile" is not by
+//! itself enough to conclude the arm reaches glibc. The probe below settles
+//! that by address, the same way the declared one does, and prints the object
+//! and `dli_sname` for each arm so the run banks which object answered rather
+//! than only that nothing was flagged.
+//!
 //! ## Two separate things, and only one of them is real
 //!
 //! An earlier version of this file claimed the binding was per-symbol and
@@ -323,10 +354,21 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
         ),
     ];
 
+    audit_arms(&probes, "extern-\"C\"");
+}
+
+/// Classify each `(host arm, fl's own definition, name)` triple by ADDRESS and
+/// fail if any arm turns out to be fl itself.
+///
+/// Shared by both probes because the question is identical whether the host arm
+/// was declared in the gate or reached through the `libc` crate — only the way
+/// the declaration is spelled differs, and the linker does not care which.
+fn audit_arms(probes: &[(*const c_void, *const c_void, &str)], class: &str) {
     let mut vacuous = Vec::new();
     let mut classified = 0usize;
     let mut via_plt_stub = Vec::new();
-    for (linked, fl, name) in probes {
+    let mut provenance = Vec::new();
+    for &(linked, fl, name) in probes {
         let (linked_obj, linked_sym) = describe(linked, &format!("link-time {name}"));
         let (fl_obj, _) = describe(fl, &format!("fl {name}"));
 
@@ -360,6 +402,10 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
             continue;
         }
 
+        provenance.push(format!(
+            "  {name}: arm at {linked:p} in {linked_obj} (dli_sname {linked_sym:?})"
+        ));
+
         if in_host_object(&linked_obj) {
             classified += 1;
         } else {
@@ -384,9 +430,18 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
         "only {classified} of {} arms were classified",
         probes.len()
     );
+    // Print the object that answered for every arm, passing or not. A green run
+    // of this gate is otherwise indistinguishable from one where the probe list
+    // was empty, and "which object answered" is the fact the whole differential
+    // suite rests on.
+    println!(
+        "{} {class} arms, provenance as reported by dladdr:\n{}",
+        probes.len(),
+        provenance.join("\n")
+    );
     assert!(
         vacuous.is_empty(),
-        "{} of {} extern-\"C\" oracle arms ARE fl's own definition, so every \
+        "{} of {} {class} oracle arms ARE fl's own definition, so every \
          differential gate built on them is comparing fl against fl and passing \
          vacuously:\n{}\n\nIf ALL of them are flagged, the cause is the build \
          profile, not anything per-symbol — see \
@@ -407,6 +462,146 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
             via_plt_stub.join("\n")
         );
     }
+}
+
+/// The same question for host arms reached through the `libc` crate rather than
+/// through a declaration written in the gate.
+///
+/// 129 gates take their oracle this way with no `dlsym` anywhere in the file,
+/// and `scripts/audit_oracle_arms.py` cannot see any of them: it scans for
+/// in-file `extern "C"` blocks and these gates declare nothing. The symbols
+/// below are the ones that carry weight — the mem/str family that
+/// `conformance_diff_memcpy`, `_memset`, `_strlen`, `_strcmp`, `_strchr`,
+/// `_string` and `_string_mut` compare against, the sort/search pair the four
+/// `_qsort_*` gates use, and the calendar and numeric-parse arms.
+///
+/// The mem/str entries answer a question the declared-arm probe does not: fl is
+/// not the only local provider of those symbols in a Rust binary, since
+/// `compiler_builtins` carries `memcpy`/`memmove`/`memset`/`memcmp`/`strlen`.
+/// Whatever answers, the address decides — and the printed `dli_sname` names it.
+///
+/// MEASURED 2026-08-16, dev profile, worker vmi1153651: all 20 arms land in
+/// `/lib/x86_64-linux-gnu/libc.so.6`. No local provider captures any of them, so
+/// the string/mem gates that take their oracle this way are real. Two shapes in
+/// that output are worth recognising before they are misread:
+///
+/// - **`dli_sname` NULL inside libc.so** is the IFUNC shape, and is NOT the
+///   PLT-stub shape documented above (which is NULL inside the EXECUTABLE). The
+///   mem/str entries resolve to the implementation glibc's ifunc selected —
+///   `__memcpy_avx_unaligned_erms` and friends — which are local symbols, so
+///   dladdr has an object but no name for them. Object plus address still
+///   answer the only question being asked.
+/// - **`memcpy` and `memmove` report the same address**, because that ERMS
+///   implementation serves both. Worth knowing when reading
+///   `conformance_diff_memcpy`: its oracle is the overlap-safe routine.
+/// - **`strtod` reports `strtof64`**, glibc's alias for it, the same way `free`
+///   reports `__libc_free` in the declared-arm probe.
+#[test]
+fn libc_crate_oracle_arms_resolve_to_host_glibc_not_to_fl() {
+    let probes: [(*const c_void, *const c_void, &str); 20] = [
+        (
+            libc::memcpy as *const c_void,
+            frankenlibc_abi::string_abi::memcpy as *const c_void,
+            "memcpy",
+        ),
+        (
+            libc::memmove as *const c_void,
+            frankenlibc_abi::string_abi::memmove as *const c_void,
+            "memmove",
+        ),
+        (
+            libc::memset as *const c_void,
+            frankenlibc_abi::string_abi::memset as *const c_void,
+            "memset",
+        ),
+        (
+            libc::memcmp as *const c_void,
+            frankenlibc_abi::string_abi::memcmp as *const c_void,
+            "memcmp",
+        ),
+        (
+            libc::strlen as *const c_void,
+            frankenlibc_abi::string_abi::strlen as *const c_void,
+            "strlen",
+        ),
+        (
+            libc::strnlen as *const c_void,
+            frankenlibc_abi::string_abi::strnlen as *const c_void,
+            "strnlen",
+        ),
+        (
+            libc::strchr as *const c_void,
+            frankenlibc_abi::string_abi::strchr as *const c_void,
+            "strchr",
+        ),
+        (
+            libc::strrchr as *const c_void,
+            frankenlibc_abi::string_abi::strrchr as *const c_void,
+            "strrchr",
+        ),
+        (
+            libc::strcmp as *const c_void,
+            frankenlibc_abi::string_abi::strcmp as *const c_void,
+            "strcmp",
+        ),
+        (
+            libc::strncmp as *const c_void,
+            frankenlibc_abi::string_abi::strncmp as *const c_void,
+            "strncmp",
+        ),
+        (
+            libc::strcasecmp as *const c_void,
+            frankenlibc_abi::string_abi::strcasecmp as *const c_void,
+            "strcasecmp",
+        ),
+        (
+            libc::strstr as *const c_void,
+            frankenlibc_abi::string_abi::strstr as *const c_void,
+            "strstr",
+        ),
+        (
+            libc::strspn as *const c_void,
+            frankenlibc_abi::string_abi::strspn as *const c_void,
+            "strspn",
+        ),
+        (
+            libc::qsort as *const c_void,
+            frankenlibc_abi::stdlib_abi::qsort as *const c_void,
+            "qsort",
+        ),
+        (
+            libc::bsearch as *const c_void,
+            frankenlibc_abi::stdlib_abi::bsearch as *const c_void,
+            "bsearch",
+        ),
+        (
+            libc::mktime as *const c_void,
+            frankenlibc_abi::time_abi::mktime as *const c_void,
+            "mktime",
+        ),
+        (
+            libc::timegm as *const c_void,
+            frankenlibc_abi::time_abi::timegm as *const c_void,
+            "timegm",
+        ),
+        (
+            libc::strftime as *const c_void,
+            frankenlibc_abi::time_abi::strftime as *const c_void,
+            "strftime",
+        ),
+        (
+            libc::strtod as *const c_void,
+            frankenlibc_abi::stdlib_abi::strtod as *const c_void,
+            "strtod",
+        ),
+        (
+            libc::atoi as *const c_void,
+            frankenlibc_abi::stdlib_abi::atoi as *const c_void,
+            "atoi",
+        ),
+    ];
+
+    audit_arms(&probes, "libc-crate");
 }
 
 /// The precondition the whole `conformance_diff_*` suite rests on.
