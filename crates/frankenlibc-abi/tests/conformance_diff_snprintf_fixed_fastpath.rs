@@ -205,15 +205,19 @@ fn adjacent_float_formats_still_match_glibc() {
 }
 
 // ---------------------------------------------------------------------------
-// bd-5pfs0p: the same probe on sprintf.
+// bd-5pfs0p: the same probe on sprintf and vsnprintf.
 //
-// vsnprintf is DELIBERATELY NOT fast-pathed here. On x86-64 a `double` variadic
-// argument lands in the FP register save area, indexed by `fp_offset` (@4), not
-// by `gp_offset` (@0) -- so it needs a different va_list reader than every
-// existing vsnprintf probe uses. Gating that requires forging a va_list, which
-// needs either a C shim or Rust's unstable `c_variadic`. Rather than ship an
-// ungated fast path in the one place the argument decode can silently return an
-// unrelated value, vsnprintf keeps the general path until it can be gated.
+// vsnprintf is the one that can go wrong in a way snprintf cannot. On x86-64 a
+// `double` variadic argument is passed in an SSE register and recorded in the
+// FP half of the register save area, indexed by `fp_offset` (@4) in 16-byte
+// slots; `gp_offset` (@0) is NOT advanced by it. Every pre-existing vsnprintf
+// probe reads through `va_read_one_gp`, which for a float argument returns an
+// unrelated integer -- silently, with a plausible-looking result. The arm below
+// exists specifically to catch that substitution.
+//
+// It was deferred once for lack of a way to build a real va_list from Rust.
+// `c_variadic` is stable as of 1.100.0-nightly, so `variadic_shim` below forges
+// one the way a C caller would, and the deferral no longer applies.
 
 #[test]
 fn sprintf_fixed_matches_glibc() {
@@ -247,3 +251,56 @@ fn sprintf_fixed_matches_glibc() {
     }
 }
 
+
+/// Forge a real va_list the way a C caller would, and hand it to fl's
+/// `vsnprintf`. `c_variadic` is stable, so this needs no feature gate.
+///
+/// Verified against glibc's own `vsnprintf` before being trusted here: the same
+/// shim shape returns `"1234.56"` for `("%.2f", 1234.56)` and `"7-2.500"` for
+/// `("%d-%.3f", 7, 2.5)`, i.e. it handles a lone double and a mixed
+/// integer-then-double frame, which is the case that separates the FP and GP
+/// register save areas.
+unsafe extern "C" fn fl_vsnprintf_shim(
+    buf: *mut c_char,
+    n: usize,
+    fmt: *const c_char,
+    mut ap: ...
+) -> c_int {
+    // SAFETY: the caller passes exactly the arguments `fmt` names.
+    unsafe {
+        frankenlibc_abi::stdio_abi::vsnprintf(buf, n, fmt, &mut ap as *mut _ as *mut c_void)
+    }
+}
+
+#[test]
+fn vsnprintf_fixed_reads_the_fp_register_save_area() {
+    let host = host_snprintf();
+    let mut compared = 0usize;
+    for (fmt, label) in formats() {
+        for &value in &values() {
+            for &size in &[0usize, 1, 8, 24, CAP] {
+                let mut fbuf = [FILL; CAP];
+                // SAFETY: exactly one f64 is passed, matching `fmt`.
+                let frc = unsafe {
+                    fl_vsnprintf_shim(fbuf.as_mut_ptr().cast::<c_char>(), size, fmt.as_ptr(), value)
+                };
+                let (grc, gbuf) = render_host(host, &fmt, value, size);
+                assert_eq!(
+                    frc, grc,
+                    "vsnprintf {label} of {value:?} [{:#018x}] size {size}: return fl={frc} \
+                     glibc={grc} — a wrong value here usually means the double was read from the \
+                     GP register save area instead of the FP one",
+                    value.to_bits()
+                );
+                assert_eq!(
+                    fbuf, gbuf,
+                    "vsnprintf {label} of {value:?} [{:#018x}] size {size}: destination bytes differ",
+                    value.to_bits()
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared > 50_000, "only {compared} vsnprintf comparisons ran");
+    println!("vsnprintf: compared {compared} triples against host glibc");
+}
