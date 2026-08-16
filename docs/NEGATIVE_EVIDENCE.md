@@ -27725,3 +27725,21 @@ What this changes, and what it does not:
   remove the `http_log` cost. It could not be measured this turn because /data fell to 58G, below the
   59G build floor, and an unverified reorder is exactly the kind of change this ledger exists to
   refuse.
+
+### CORRECTION to the row above, same day: the code it describes did not land with it
+
+- The commit carrying that row (`f740a994b`) contained **only** the 77-line ledger addition. Its
+  `stdio_abi.rs` change was reverted in the shared worktree between my edit and my `git add`, so the
+  staged diff was empty for that file and `git log -S "FAST PATH: plain narrow"` finds nothing. For a
+  short window the ledger described a lever that was not in the tree.
+- The MEASUREMENT is unaffected and stands: the object timed, `faf3aedb2943073c`, was built from that
+  edit, and its numbers, nulls and ELF self-reports are as recorded.
+- The fast path is now re-applied, with one deliberate difference: the predicate tests
+  `spec.conversion == b's'` FIRST, so a non-`%s` segment pays one load and one compare. The earlier
+  ordering led with two loop-invariant bools and measured `http_log` 5.9% slower; that shape is the
+  only fused one whose conversions are mostly not `%s`, so minimising the cost to segments that
+  cannot use the path is the point of the reorder.
+- **NOT yet re-gated or re-measured in this ordering.** The conjunction is the same set of pure
+  short-circuit tests over the same body, so it is semantically identical to the version that gated
+  green on 13 assertions, but the `http_log` question is open until it is measured again. Nothing in
+  this correction claims the regression is fixed.

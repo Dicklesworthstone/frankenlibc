@@ -5018,6 +5018,59 @@ pub(crate) unsafe fn render_segments(
             FormatSegment::Literal(lit) => buf.extend_from_slice(lit),
             FormatSegment::Percent => buf.push(b'%'),
             FormatSegment::Spec(spec) => {
+                // FAST PATH: plain narrow `%s` — no width, no precision, no
+                // flags, no length modifier, non-positional.
+                //
+                // The conversion byte is tested FIRST so a non-`%s` segment
+                // pays one load and one compare before falling through. An
+                // earlier ordering put the two loop-invariant bools first and
+                // measured `http_log` ("%s %s %d %lu", the only fused shape whose
+                // conversions are mostly NOT %s) 5.9% slower, so the cost to
+                // segments that cannot use this path is the thing to minimise.
+                //
+                // WHY THIS SHAPE. The conversion-count ladder (bd-ntb9fq)
+                // regressed the fused penalty as fl 59.83 ns fixed + 62.35
+                // ns/conversion against glibc 7.27 + 18.92, so roughly three
+                // quarters of the gap at the shipped shapes is PER-CONVERSION.
+                // A probe-style lever removes fixed cost only and cannot close
+                // it; this attacks the per-conversion term on the conversion the
+                // fused shapes are mostly made of.
+                //
+                // BYTE-IDENTICAL BY CONSTRUCTION. With `Width::None`,
+                // `Precision::None` and no `left_justify`, `format_str` reduces
+                // to exactly `buf.extend_from_slice(s)`: `max_len` becomes
+                // `s.len()`, `pad_total` becomes 0 and both `pad` calls are
+                // no-ops. The NULL spelling is the same reduction — with
+                // `Precision::None` the general path selects `b"(null)"` and
+                // renders it through that same no-op-padding `format_str`. Out
+                // of arguments emits nothing here and nothing there.
+                if spec.conversion == b's'
+                    && matches!(spec.length, LengthMod::None)
+                    && matches!(spec.width, Width::None)
+                    && matches!(spec.precision, Precision::None)
+                    && !wide_output
+                    && !uses_positional
+                    && !spec.flags.left_justify
+                    && !spec.flags.force_sign
+                    && !spec.flags.space_sign
+                    && !spec.flags.alt_form
+                    && !spec.flags.zero_pad
+                    && !spec.flags.group
+                {
+                    if let Some(raw_ptr) = read_arg(None, &mut arg_idx) {
+                        if raw_ptr == 0 {
+                            buf.extend_from_slice(b"(null)");
+                        } else {
+                            // SAFETY: the caller's `%s` argument is a
+                            // NUL-terminated C string, read through the same
+                            // bounded helper the general path uses.
+                            let s_bytes = unsafe { c_str_bytes(raw_ptr as usize as *const c_char) };
+                            buf.extend_from_slice(s_bytes);
+                        }
+                    }
+                    continue;
+                }
+
                 // Resolve width from args if needed.
                 let mut resolved_spec = *spec;
                 if spec.width.uses_arg() {
