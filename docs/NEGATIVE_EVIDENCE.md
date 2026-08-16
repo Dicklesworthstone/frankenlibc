@@ -29391,3 +29391,43 @@ What this changes, and what it does not:
   costs nothing but scheduling flexibility, whereas the quiet gate is HOST-WIDE and is not helped by a
   narrower pin at all (established earlier today: blocks correlate with a saturated 8-CPU competing
   job, not with the loadavg).
+
+## 2026-08-16 (BlackThrush) — AUDIT CLOSED, AND IT RETRACTS MY OWN CONCERN: pinned threads do not migrate, so the frequency spread cannot reach the square
+
+- **RESULT CLASS: loss/baseline (methodology retraction).** No timing: `uptime` read **21.08,31.36,30.70**.
+  Nothing here is a win or a loss.
+- **WHAT I CLAIMED LAST TURN, and why it was premature.** I recorded that this harness is
+  "structurally susceptible" to cross-core spread, reasoning that with `--pin-quietest 8` the thread
+  could migrate between A and B slots across cores measured at 1429-4001 MHz. The reasoning was sound
+  but I stopped at the mechanism's PRECONDITION instead of testing it. **Migration is a scheduler
+  question, not a timing question, so it was answerable while the host was busy — I did not have to
+  wait for a window at all.**
+- **MEASURED, mirroring the harness exactly** (`sched_setaffinity` over the N quietest CPUs, one
+  thread, tight loop, sampling `sched_getcpu()` 200,000 times):
+
+  | pin width | allowed set | distinct CPUs actually used | migrations |
+  |---|---|---|---|
+  | 1 | [16] | 1 | 0 (by construction) |
+  | 4 | [0,16,18,19] | 2 | **1** |
+  | 8 | [4,22,23,24,25,26,30,57] | **1** | **0** |
+
+  At pin=8 the thread never left `cpu4` across 200,000 samples. At pin=4 it moved **once**, from
+  cpu16 to cpu0, and stayed (occupancy 141,011 / 58,989) — a single transition, not thrashing. Linux
+  keeps a busy single thread on its core for cache affinity, and a wider allowed set does not make it
+  wander.
+- **THE CONCERN IS RETRACTED.** The frequency spread is real and the mechanism is real in principle,
+  but it requires migration between slots and migration does not occur. A 2.8x core-frequency spread
+  is irrelevant to a thread that never changes core. **The multi-CPU rows banked today are not
+  compromised by this**, which is consistent with what their A/A nulls already showed
+  (inside +/-0.02, usually +/-0.005) — the detector was not firing because there was nothing to fire on.
+- **AND THE TIMING TEST I SCHEDULED IS NOW UNNECESSARY.** Last turn I recorded a prediction to check
+  `--pin-quietest 1` against `8` for null widths when a window appeared. That test is superseded:
+  it would have measured a downstream consequence of a precondition that is not met. Recording this
+  so nobody spends a scarce quiet window on it.
+- **WHAT SURVIVES.** `--pin-quietest 1` remains marginally preferable for a two-arm comparison, since
+  it makes the precondition impossible rather than merely unlikely, and it costs nothing. But it is a
+  belt-and-braces choice, not a correction, and no existing row needs re-running for it.
+- **THE TRANSFERABLE LESSON, which cost me a turn: when a mechanism has a precondition, test the
+  precondition first.** It is usually cheaper than the effect, and it is often measurable under
+  conditions that block the effect measurement entirely. I had a real finding available on a loaded
+  host and instead scheduled work for a quiet one.
