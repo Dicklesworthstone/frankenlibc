@@ -28285,3 +28285,49 @@ What this changes, and what it does not:
   targets, and the remaining gap is still ~27 ns over a ~4.6 ns glibc. A ~1% return on deleting an
   uncontended CAS is also a useful calibration: the diffuse-cost finding is holding, and no single
   remaining item should be expected to be large.
+
+## 2026-08-16 (BlackThrush) — ABLATION REFUTES THE SLAB DESIGN'S CENTRAL PREMISE: deleting the fallback-table insert makes malloc+free 34% SLOWER, because the table is what makes `free` fast
+
+- **RESULT CLASS: loss/baseline.** A deliberately-incorrect diagnostic build, measured and reverted.
+  No lever is claimed and nothing was shipped from it.
+- **What the slab design assumed.** bd-e0y02p proposes an address-derived slab that would "delete the
+  per-call arena insert, the size index and the malloc-side global spinlock", on the reasoning that
+  fl wraps a ~4.7 ns host allocation in ~27 ns of bookkeeping. The unexamined step is the word
+  DELETE: it treats the per-call insert as pure overhead.
+- **The ablation.** `fallback_insert_sized_for_slot` made a no-op in the single-threaded path — fl
+  keeps allocating through the host but stops recording the pointer. Built locally, wrapper bypass
+  exported, executable path from `--message-format=json`. Ablation `ELF_SHA256
+  49e881d6333bde7d93b83a27098b70a2f0acde749d0fb640f03f9d887e07bbb2`.
+
+  | sz | correct build | ABLATED (insert removed) |
+  |---|---|---|
+  | 16 | 7.0107 | **9.4402** [9.4047, 9.4703] |
+  | 64 | 7.0172 | **9.3807** [9.2985, 9.4097] |
+  | 256 | 7.0146 | **9.4231** [9.3992, 9.4442] |
+  | 1024 | 7.0210 | **9.3972** [9.3859, 9.4289] |
+
+  Removing the insert costs ~34%. Absolute fl went from ~31 ns to 42-64 ns.
+- **CONTROL, and it is what makes this readable.** The ablation ran at loadavg 47.87, which invites
+  the obvious objection. So the CORRECT build was re-run immediately afterwards at loadavg **57.48**
+  — busier still — and read 7.1615 / 7.0078 / 7.0020 / 7.0427, i.e. unchanged from its quiet-host
+  7.0107-7.0210. `ELF_SHA256 4d4963bf17cca38f15c293998407d5124185a1f4534ea642e5beea0d15ae0257`, all
+  four nulls inside the harness's +/-0.02 bound. The ratio statistic is robust to load here because
+  the arms are interleaved; the ablation's 9.4 is therefore a property of the code, not of the host.
+- **One ablation case is disclosed as inadmissible:** sz=64 reported `null_glibc=1.0265`, outside the
+  bound, and the harness marked it `NULL-FAILED`. Its 9.3807 agrees with its three admissible
+  siblings, but it is not counted.
+- **WHY IT GOES THE WRONG WAY — the table is not overhead, it is a lookup accelerator.** With no
+  insert, `free` cannot find the pointer in the fallback table, so every free falls through to a
+  slower path. The insert is a cost paid on malloc that is more than repaid on free. The
+  2026-07-02 asymmetry observation had already hinted at this from the other side (free's ST fast
+  path is a cached-index hit), but nobody had priced the insert by removing it.
+- **WHAT THIS DOES TO bd-e0y02p.** The design is not dead, but its stated mechanism is wrong and must
+  be rewritten before any code: a slab cannot REMOVE the per-call bookkeeping, it must REPLACE it
+  with something that answers the same two questions — is this pointer ours, and how big is it — more
+  cheaply than a hash insert plus a cached-index lookup. That is a much narrower claim than "delete
+  three per-call costs", and the budget is what remains of ~27 ns after the table has been paid for
+  by the free side it accelerates.
+- **The general lesson, which is why this row exists rather than a quiet revert:** a component's cost
+  measured at its call site is not its net cost to the system. The insert looked like 100% overhead
+  at malloc and is net-negative overall. Any future "delete the bookkeeping" proposal in this
+  allocator should be ablated before it is designed, not after.
