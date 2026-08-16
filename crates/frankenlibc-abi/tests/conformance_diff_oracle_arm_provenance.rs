@@ -172,6 +172,57 @@ unsafe extern "C" {
     fn freelocale(loc: *mut c_void);
 }
 
+/// Where this thread is running right now: logical CPU, the physical core it
+/// belongs to, its SMT siblings, and the core's current clock.
+///
+/// ## Why a provenance gate records core identity
+///
+/// Not for timing — nothing here is timed. For IFUNC selection. glibc resolves
+/// `memcpy` and friends by running a resolver that reads CPUID, and the
+/// implementation it picks is a property of the CORE THAT RAN THE RESOLVER. This
+/// gate banks statements like "the arm resolved into libc.so.6 at an address
+/// whose `dli_sname` is NULL, which is the ifunc shape". On a fleet whose cores
+/// differ — different sockets, an asymmetric or partially-offlined machine, a
+/// cpuset that spans microarchitectures — that statement is only as portable as
+/// the core it was measured on, and a reader deserves to know which one that
+/// was rather than to assume homogeneity.
+///
+/// The clock is recorded for the same reason a hostname is: it costs one file
+/// read and it is the fastest way to notice that a run landed somewhere
+/// unexpected (a throttled core, a shared SMT sibling under load).
+/// The SLOT: which logical CPU, which physical core, which SMT siblings.
+/// Reported separately from the clock because they change for different reasons
+/// and only one of them can invalidate a result — see [`audit_arms`].
+fn cpu_slot() -> String {
+    // SAFETY: sched_getcpu takes no arguments and only reads scheduler state.
+    let cpu = unsafe { libc::sched_getcpu() };
+    if cpu < 0 {
+        return "cpu=? (sched_getcpu failed)".to_string();
+    }
+    let read = |p: String| std::fs::read_to_string(p).ok().map(|s| s.trim().to_string());
+    let base = format!("/sys/devices/system/cpu/cpu{cpu}");
+    let core = read(format!("{base}/topology/core_id")).unwrap_or_else(|| "?".into());
+    let siblings =
+        read(format!("{base}/topology/thread_siblings_list")).unwrap_or_else(|| "?".into());
+    format!("cpu={cpu} core={core} smt_siblings=[{siblings}]")
+}
+
+/// The current clock of the CPU this thread is on, in MHz.
+fn cpu_mhz() -> String {
+    // SAFETY: as in `cpu_slot`.
+    let cpu = unsafe { libc::sched_getcpu() };
+    if cpu < 0 {
+        return "MHz unavailable".into();
+    }
+    std::fs::read_to_string(format!(
+        "/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq"
+    ))
+    .ok()
+    .and_then(|khz| khz.trim().parse::<u64>().ok())
+    .map(|khz| format!("{} MHz", khz / 1000))
+    .unwrap_or_else(|| "MHz unavailable".into())
+}
+
 /// What dladdr reports for a code address: the owning object and the symbol it
 /// attributes the address to (`dli_sname` is NULL for a PLT stub).
 ///
@@ -364,6 +415,7 @@ fn extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl() {
 /// was declared in the gate or reached through the `libc` crate — only the way
 /// the declaration is spelled differs, and the linker does not care which.
 fn audit_arms(probes: &[(*const c_void, *const c_void, &str)], class: &str) {
+    let (slot_at_start, mhz_at_start) = (cpu_slot(), cpu_mhz());
     let mut vacuous = Vec::new();
     let mut classified = 0usize;
     let mut via_plt_stub = Vec::new();
@@ -434,9 +486,32 @@ fn audit_arms(probes: &[(*const c_void, *const c_void, &str)], class: &str) {
     // of this gate is otherwise indistinguishable from one where the probe list
     // was empty, and "which object answered" is the fact the whole differential
     // suite rests on.
+    // Placement is read at BOTH ends, not once. A single reading cannot
+    // distinguish "this whole probe ran on core 17" from "it started on core 17
+    // and the scheduler moved it", and for ifunc-resolved arms the core that ran
+    // the resolver is the one that chose the implementation.
+    //
+    // SLOT and CLOCK are reported apart because only one of them can invalidate
+    // anything here. A MIGRATION means a later arm may have been resolved on a
+    // different core than an earlier one — that is the fact worth flagging. A
+    // RECLOCK is normal boost behaviour on an idle-ish box and means nothing for
+    // a value comparison; it is printed only so a row carries the frequency it
+    // ran at. Conflating the two makes every run on a boosting CPU look
+    // suspicious, which is how a real migration gets ignored.
+    let (slot_at_end, mhz_at_end) = (cpu_slot(), cpu_mhz());
+    let slot_note = if slot_at_start == slot_at_end {
+        String::new()
+    } else {
+        format!("   <-- MIGRATED: {slot_at_start} -> {slot_at_end}")
+    };
     println!(
-        "{} {class} arms, provenance as reported by dladdr:\n{}",
+        "{} {class} arms, provenance as reported by dladdr\n  placement: {} @ {} -> {} \
+         (start -> end){}\n{}",
         probes.len(),
+        slot_at_start,
+        mhz_at_start,
+        mhz_at_end,
+        slot_note,
         provenance.join("\n")
     );
     assert!(
