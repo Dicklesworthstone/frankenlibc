@@ -5021,6 +5021,7 @@ pub(crate) unsafe fn render_segments(
                 // FAST PATH: plain narrow `%s` — no width, no precision, no
                 // flags, no length modifier, non-positional.
                 //
+<<<<<<< Updated upstream
                 // The conversion byte is tested FIRST so a non-`%s` segment
                 // pays one load and one compare before falling through. An
                 // earlier ordering put the two loop-invariant bools first and
@@ -5050,6 +5051,38 @@ pub(crate) unsafe fn render_segments(
                     && matches!(spec.precision, Precision::None)
                     && !wide_output
                     && !uses_positional
+=======
+                // WHY THIS SHAPE. The conversion-count ladder (bd-ntb9fq,
+                // 569dbf921) regressed the fused penalty as
+                //   fl    = 59.83 ns fixed + 62.35 ns/conversion
+                //   glibc =  7.27 ns fixed + 18.92 ns/conversion
+                // so roughly three quarters of the gap at the shipped shapes is
+                // PER-CONVERSION, and a probe-style lever that only removes
+                // fixed cost cannot close it. This attacks the per-conversion
+                // term instead, on the conversion the fused shapes are mostly
+                // made of: `%s[%d]: %s`, `%s %s %d %lu` and `%s=%s %s=%s` are
+                // seven `%s` out of eleven conversions between them.
+                //
+                // BYTE-IDENTICAL BY CONSTRUCTION, which is why the predicate is
+                // this narrow. With `Width::None`, `Precision::None` and no
+                // `left_justify`, `format_str` reduces to exactly
+                // `buf.extend_from_slice(s)` — `max_len` becomes `s.len()`,
+                // `pad_total` becomes 0 and both `pad` calls are no-ops. The
+                // NULL spelling is the same reduction: with `Precision::None`
+                // the general path selects `b"(null)"` and renders it through
+                // that same no-op-padding `format_str`. Out of arguments emits
+                // nothing here and nothing there.
+                //
+                // Anything outside the predicate — any flag, any width or
+                // precision, `%ls`, wide output, or a positional format — falls
+                // through to the general path completely unchanged.
+                if !wide_output
+                    && !uses_positional
+                    && spec.conversion == b's'
+                    && matches!(spec.length, LengthMod::None)
+                    && matches!(spec.width, Width::None)
+                    && matches!(spec.precision, Precision::None)
+>>>>>>> Stashed changes
                     && !spec.flags.left_justify
                     && !spec.flags.force_sign
                     && !spec.flags.space_sign
@@ -5071,6 +5104,7 @@ pub(crate) unsafe fn render_segments(
                     continue;
                 }
 
+<<<<<<< Updated upstream
                 // FAST PATH: a bare integer conversion — `%d %i %u %x %X %o`
                 // with no flags, no width and no precision, narrow output,
                 // non-positional. Any length modifier is fine, because the spec
@@ -5108,6 +5142,8 @@ pub(crate) unsafe fn render_segments(
                     continue;
                 }
 
+=======
+>>>>>>> Stashed changes
                 // Resolve width from args if needed.
                 let mut resolved_spec = *spec;
                 if spec.width.uses_arg() {
@@ -5861,6 +5897,42 @@ unsafe fn strict_direct_stream_d(
     if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
         return printf_result_to_c_int(len);
     }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// `fprintf`/`printf` for an exact `%f` / `%.Nf`: render into a stack buffer and
+/// write it through the same stream primitives the shipped `%d`/`%u`/`%lx`
+/// stream fast paths use, skipping parse + extract + render_segments.
+///
+/// Modelled on `strict_direct_stream_d` deliberately, including its write
+/// ladder: `try_fwrite_fast` for a cached full-buffered stream, then
+/// `try_write_fast_cell`, then the general
+/// `write_bytes_without_runtime_policy`. Reusing that ladder rather than
+/// inventing one is what keeps the stream's buffer accounting correct -- the
+/// failure mode a float fast path would otherwise introduce is producing the
+/// right BYTES while corrupting the FILE, which
+/// `conformance_diff_fprintf_fixed_fastpath` checks by comparing the flushed
+/// file contents AND asserting the return equals the bytes delivered.
+///
+/// 352 bytes covers every finite `%.Nf` for N <= 9 (`%.9f` of `f64::MAX` is 319).
+unsafe fn strict_direct_stream_f(
+    id: usize,
+    stream: *mut c_void,
+    value: f64,
+    precision: usize,
+) -> c_int {
+    let mut buf = [0u8; 352];
+    let len = render_direct_fixed(value, precision, &mut buf);
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    // SAFETY: `id`/`stream` name the caller's stream; `bytes` is initialised.
     let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
     if written == len {
         printf_result_to_c_int(len)
@@ -7117,6 +7189,21 @@ pub unsafe extern "C" fn fprintf(
         let bits = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_stream_long(id, stream, conv, bits, newline) };
     }
+    // Float probe LAST, so it adds no byte-compare to the integer and string
+    // stream paths above. Unlike the buffer entry points this one does NOT skip
+    // the membrane -- fprintf/printf run runtime_policy::decide before any fast
+    // path -- so the win here is the parse + extract + render_segments pipeline
+    // only. Held by conformance_diff_fprintf_fixed_fastpath and
+    // conformance_diff_printf_fixed_fastpath, which compare the flushed stream
+    // bytes and assert the return equals the bytes delivered.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        return unsafe { strict_direct_stream_f(id, stream, arg, precision) };
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -7340,6 +7427,18 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     {
         let bits = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_stream_long(id, stdout_ptr, conv, bits, newline) };
+    }
+    // Float probe LAST, as in fprintf. printf routes through the SAME stdout
+    // stream object and the same write ladder, so buffer coherence with an
+    // interleaved fprintf/fputs is preserved -- which is why this passes
+    // `stdout_ptr` rather than resolving a stream of its own.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        return unsafe { strict_direct_stream_f(id, stdout_ptr, arg, precision) };
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args_of(&segments).min(MAX_VA_ARGS);
@@ -8029,6 +8128,23 @@ pub unsafe extern "C" fn vsprintf(
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
         let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
         return unsafe { strict_direct_sprintf_p(str_buf, arg) };
+    }
+    // Float probe LAST, so it adds no byte-compare to the integer/string paths
+    // that carry the measured campaign win. Reads through `va_read_one_fp`, NOT
+    // `va_read_one_gp`: on SysV AMD64 a `double` is passed in an SSE register and
+    // recorded in the FP half of the register save area (fp_offset @4, 16-byte
+    // slots); gp_offset is not advanced by it, so the GP reader would return an
+    // unrelated integer argument silently. Held by
+    // `vsprintf_fixed_matches_glibc`.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one `double` from `ap`; we return
+        // immediately, so the slow path never re-reads the advanced `ap`.
+        let arg = unsafe { va_read_one_fp(ap) };
+        // SAFETY: vsprintf's contract gives an unbounded destination.
+        return unsafe { strict_direct_sprintf_f(str_buf, arg, precision) };
     }
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, 0, true, false, 0);
