@@ -28673,102 +28673,131 @@ What this changes, and what it does not:
   decision (something may be intended to expose it later), so it is left for an owner to call rather
   than taken unilaterally. Recorded on bd-dcrhgl.
 
-## 2026-08-16 (NobleCreek) — ✅✅ CAMPAIGN WIN: the STREAM half of the printf float lever, measurable for the first time
+## 2026-08-16 (NobleCreek) — ❌ WITHDRAWN ROW: the `fprintf` stream float claim, superseded by the row below
 
-- **RESULT CLASS / LIVE-INCUMBENT ADJUDICATION (headline case `stream_2dp`):**
-  `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
-  `incumbent_provenance=uninterposed-host-link`; `same_invocation=true`;
-  `incumbent_ratio=0.442598`;
-  `incumbent_bootstrap_median_ci=[0.430556,0.466530]`;
-  `null_bootstrap_median_ci=[0.984048,1.037235]`;
-  `bench_elf_sha256=9d7c2089c2824f30aea57958c3a3f07ed6836cd80537049e62ec10f240d6884d`;
-  `cv_used=false`.
-- **MACHINE-READABLE INCUMBENT EVIDENCE.**
-  `INCUMBENT_LINKAGE direct_process_link symbol=fprintf`;
-  `INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6
-  sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`;
-  `FL_OBJECT path=/data/tmp/cargo-target-frankenlibc/release/libfrankenlibc_abi.so
-  sha256=f1c7141e3b0cccc1229c54e5078ab617c0674461595149967e9808cc247e578c`;
-  `FL_LINKAGE explicit_dlopen_local`;
-  `ARM_DISTINCT incumbent_address=0x753979c635c0 fl_address=0x753968af8850`.
-- **WHAT WAS NOT MEASURABLE BEFORE.** `fprintf`/`printf` carried the float probe and were gated for
-  correctness, but no stream float family existed, so the stream half of this lever had NO
-  vs-incumbent ratio at all. This is the first one.
-- **APPARATUS.** Worker `vmi1227854`, `--family fprintf_float --pin-quietest 4`, `samples=36`,
-  `reps_per_arm=200000`, `threads_observed_pre=1`, `threads_observed_post=1`, exclusivity clear both
-  phases. Each arm opens `/dev/null` with ITS OWN `fopen` and drives its own `fprintf`/`fflush`: a
-  `FILE*` is not portable between libcs, so cross-passing would be undefined behaviour rather than a
-  comparison.
+- **RETRACTED IN FULL. The measurements that were here have been REMOVED, not struck through.**
+  This row claimed the `fprintf_float` family as a campaign win. It was wrong. A better-controlled
+  run on a quieter host measured the same family as a LOSS on four cases, with every A/A null inside
+  tolerance, and the cause was a harness defect rather than host noise: the conformance arm
+  validated its own temp files and never touched the `/dev/null` stream the timed batch wrote to, so
+  a timed stream doing no work would still have passed.
+  The per-case nanoseconds, ratios and confidence intervals are deleted deliberately, because a
+  retracted number left in place gets quoted. What was claimed, why it was wrong, and the corrected
+  measurement are all in the row immediately below.
+
+## 2026-08-16 (NobleCreek) — ❌ MEASURED LOSS: `fprintf` stream float is 1.22-1.38x SLOWER (retracts the earlier claim)
+
+- **RESULT CLASS: retraction + loss/baseline, NOT a lever.** This retracts the `fprintf_float`
+  campaign win banked earlier today in a798687f5. That row is wrong and must not be quoted; its
+  heading and bundle above have been struck so it cannot be scraped.
+  I first filed THIS row under the win class as well, and the ledger lint refused it, pointing out
+  that a win requires the whole confidence interval to sit below 1.0. It was right: I had assumed
+  that class was the only timed-row category and was pushing a loss through the win schema. That is
+  the second category error the lint caught on this pair of rows today.
+- **MEASURED.** Worker `hetzner2` (`loadavg=2.83,2.39,2.61`), `--family fprintf_float
+  --pin-quietest 4`, `samples=36`, `reps_per_arm=200000`, exclusivity clear both phases,
+  `same_invocation=true`, `cv_used=false`.
+  `bench_elf_sha256=079451407318872d3efe4e5bff9ca29abf3c8c1581ebf4f681a2dbaa2fc634ee`;
+  `INCUMBENT_OBJECT /usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`;
+  `FL_OBJECT libfrankenlibc_abi.so
+  sha256=b79f3533526edc9e6defe9c2b8a70e8ed429b14d1546efc6d66687cec84d31a4`;
+  `INCUMBENT_LINKAGE direct_process_link symbol=fprintf`; `FL_LINKAGE explicit_dlopen_local`.
+  `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=4 wins=0 losses=4 undecidable=0`.
 
   **Each case: effect and both same-invocation A/A nulls, each with its bootstrap median CI.**
 
-  Case `stream_2dp`: fl 51.201 ns against live glibc 109.817 ns. Effect median 0.442598, bootstrap
-  median CI [0.430556,0.466530]. A/A null FL/FL median 1.011180, bootstrap median CI
-  [1.002230,1.030863]; A/A null glibc/glibc median 1.005628, bootstrap median CI
-  [0.984048,1.037235]. null_half_width 0.037235, clears_2x_null=true, nulls_hold=true,
-  comparison=FL_FASTER.
+  Case `stream_2dp`: fl 124.361 ns against live glibc 91.140 ns. Effect median 1.377493, bootstrap
+  median CI [1.357546,1.396136]. A/A null FL/FL median 1.001560, bootstrap median CI [0.978714,1.017337]; A/A null
+  glibc/glibc median 1.001587, bootstrap median CI [0.977240,1.023705]. null_half_width 0.023705,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER.
 
-  Case `stream_4dp`: fl 62.773 ns against live glibc 131.376 ns. Effect median 0.477576, bootstrap
-  median CI [0.473395,0.481693]. A/A null FL/FL median 0.999381, bootstrap median CI
-  [0.994832,1.005028]; A/A null glibc/glibc median 1.002516, bootstrap median CI
-  [0.992712,1.012001]. null_half_width 0.012001, clears_2x_null=true, nulls_hold=true,
-  comparison=FL_FASTER.
+  Case `stream_2dp_defaultbuf`: fl 120.046 ns against live glibc 87.798 ns. Effect median 1.371012, bootstrap
+  median CI [1.358156,1.381279]. A/A null FL/FL median 0.995551, bootstrap median CI [0.975874,1.001008]; A/A null
+  glibc/glibc median 0.996065, bootstrap median CI [0.992575,1.003086]. null_half_width 0.024126,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER.
 
-  Case `stream_6dp`: fl 70.845 ns against live glibc 142.956 ns. Effect median 0.495101, bootstrap
-  median CI [0.489439,0.502239]. A/A null FL/FL median 1.002675, bootstrap median CI
-  [0.989589,1.009946]; A/A null glibc/glibc median 1.009249, bootstrap median CI
-  [0.998614,1.019491]. null_half_width 0.019491, clears_2x_null=true, nulls_hold=true,
-  comparison=FL_FASTER.
+  Case `stream_4dp`: fl 127.656 ns against live glibc 99.441 ns. Effect median 1.276572, bootstrap
+  median CI [1.249269,1.293819]. A/A null FL/FL median 0.998285, bootstrap median CI [0.993459,1.005787]; A/A null
+  glibc/glibc median 0.992052, bootstrap median CI [0.979595,1.001146]. null_half_width 0.020405,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER.
 
-  All six A/A nulls inside the 0.020 bias tolerance with no CI straddle, every effect clearing twice
-  its null half-width, every effect CI entirely below one.
-  `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=3 wins=3 losses=0 undecidable=0`.
-- **THE FIRST TWO ATTEMPTS WERE INCOMPLETE, AND THE FIX IS THE INTERESTING PART.** Both returned
-  `wins=2 undecidable=1`, the SAME case failing both times: `stream_2dp` `NULL_VIOLATED` with a
-  glibc/glibc A/A null at 0.974688. The control was drifting, not the effect. Effect CVs were
-  11.1-22.4% and null MADs 0.050-0.085, against 1.3-10.2% and 0.003-0.009 for the buffer family on
-  the same fleet — so it was the harness, not the host.
-  I first blamed the end-of-batch `fflush` and wrote that on the bead. **That was wrong**: one
-  syscall in 200_000 formats cannot dominate. The real cause is the DEFAULT 4 KiB stream buffer —
-  ~7 bytes per call over 200_000 calls is ~1.4 MB per batch, so the stream auto-flushes roughly 340
-  times and each of those write syscalls contributes jitter. Giving both arms a 1 MiB fully-buffered
-  sink through their OWN `setvbuf` takes that to ~2 flushes per batch.
-  **Effect CVs fell to 7.6-10.0% and every null came inside tolerance — on a host at loadavg 9.99,
-  BUSIER than either failed attempt.** That is what makes it a variance fix rather than luck.
-- **CORRECTNESS.** `INCUMBENT_COVERAGE_CONFORMANCE symbol=fprintf_float formats=5 values=16
-  comparisons=80 mismatches=0 compared=stream_bytes_and_return_value
-  covers=signed_zero,subnormal,huge_finite,nan,inf verdict=pass`, run BEFORE the timing. Each arm
-  writes through its own `fopen`/`fprintf`/`fclose` and the check compares delivered bytes, the
-  return value, and the stream-specific invariant that the count equals what reached the file.
-  An earlier draft of that check called the linked HOST `snprintf` for BOTH arms — glibc against
-  glibc, green by construction. Caught before commit; recorded because it is the same hollow-oracle
-  failure bd-v0388t exists for, appearing inside the harness built to detect it.
-- **THE PREDICTION HELD.** Before measuring I recorded that the stream win should be SMALLER than the
-  buffer win, because `snprintf`'s probes return before `runtime_policy::entrypoint_scope` and so
-  skip the membrane, whereas `fprintf`/`printf` run `runtime_policy::decide` before any fast path.
-  Buffer: 0.430 / 0.493 / 0.510. Stream: 0.443 / 0.478 / 0.495. Smaller on every case, as stated in
-  advance rather than rationalised afterwards.
+  Case `stream_6dp`: fl 126.366 ns against live glibc 103.144 ns. Effect median 1.224045, bootstrap
+  median CI [1.219991,1.229764]. A/A null FL/FL median 0.996639, bootstrap median CI [0.988331,1.000120]; A/A null
+  glibc/glibc median 0.999895, bootstrap median CI [0.996404,1.004941]. null_half_width 0.011669,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER.
 
-## 2026-08-16 (BlackThrush) — WORST MEASURED RATIO AT HEAD e6959139a: malloc/free 6.6217x, one invocation
+  Every A/A null sits inside the 0.020 bias tolerance with no CI straddle. This run is BETTER
+  controlled than the one it retracts: quieter host, four cases instead of three, same schedule and
+  same null protocol.
+- **WHAT EXPOSED IT — the absolute nanoseconds, not the ratios.** fl read **51.2 ns** on the
+  retracted run and **124.4 ns** here, while glibc barely moved (109.8 then 91.1). fl cannot become
+  2.4x faster on a BUSIER machine (loadavg 9.99 there against 2.83 here). It was doing less work on
+  the loaded host and the ratio measured that, not the formatter. **A ratio alone would never have
+  shown this; only carrying the absolute numbers did.**
+- **THE HARNESS DEFECT THAT ALLOWED IT.** `check_stream_float_conformance` opens its OWN temp files
+  and never touches `arm.stream`, the `/dev/null` stream the timed batch writes to. Conformance
+  proved the RENDERING byte-identical while saying nothing about whether the timed stream did any
+  work. A stream that silently dropped writes would pass conformance and post a spectacular ratio —
+  exactly the shape observed.
+  **This is the hollow-oracle failure one level up.** bd-v0388t is about gates whose glibc arm is not
+  glibc; this is a bench whose TIMED object is not the object it VALIDATED. I wrote that conformance
+  check specifically to avoid comparing glibc against itself, caught that bug before commit, and then
+  shipped a different version of the same mistake in the same function.
+- **STANDING RULE THIS EARNS.** A timed object must be the SAME object the conformance arm
+  validated, or the conformance is decoration. For any stream family: assert the timed stream's
+  delivered byte count after the batch before trusting a ratio from it.
+- **THE BUFFERING QUESTION IS SETTLED AND WAS NOT THE CAUSE.** `stream_2dp_defaultbuf` 1.371012
+  against `stream_2dp` 1.377493 with the 1 MiB `setvbuf` — indistinguishable. The variance control
+  does not bias the ratio; the missing validation did.
+- **WHERE THIS LEAVES THE LEVER.** The BUFFER half stands: `snprintf_float` 0.430 / 0.493 / 0.510,
+  replicated to four decimals across two hosts, and crucially its timed object IS its validated
+  object — a caller array compared in full. The STREAM half is a measured LOSS of 1.22-1.38x and is
+  now the worst measured ratio I own. The probe itself remains correct — all abi gates green, 1440
+  and 80 comparisons at 0 mismatches — it simply does not pay where `fprintf`/`printf` run
+  `runtime_policy::decide` before any fast path and so never skip the membrane.
 
-- **RESULT CLASS: loss/baseline.** The campaign's worst vs-incumbent ratio, re-measured at HEAD after
-  the size-class fold landed. fl is SLOWER; no speedup is claimed here.
-- **Single invocation, `square=ABBAABBA`, n=41 per case, `BENCH_ELF_OBJECT sha256
-  d531bd26da4e81ae3c80c8fe485967bc153a4d47a9d433bfa86c227abe342392`**, built from HEAD `e6959139a`
-  on thinkstation1, governor powersave, isa avx2+sse4.2, loadavg 28.53.
+## 2026-08-16 (BlackThrush) — CORRECTION: the campaign's worst ratio is NOT the allocator. getrandom is 92.17x
 
-  | sz | ratio_p50 | ci95 | same-invocation A/A null_fl | same-invocation A/A null_glibc |
+- **RESULT CLASS: loss/baseline.** fl is slower. No speedup claimed.
+- **I HAD THE FRONTIER WRONG, and it was an assertion rather than a measurement.** Earlier today I
+  banked malloc/free at 6.6217x as "the campaign's worst measured ratio" and designed levers against
+  it. That number is correct, but "worst" was inherited from the campaign's framing rather than
+  established against the other families. Sweeping the small-wrapper families at HEAD found
+  `getrandom` at **92.17x**, roughly fourteen times worse than the allocator. The allocator work
+  stands on its own; the ranking that motivated it did not.
+- **Single invocation, `--family getrandom --pin-quietest 4`, on thinkstation1, loadavg 11.70:**
+
+  | case | fl/glibc ratio_median | ratio_ci95 | same-invocation A/A null_fl_fl | same-invocation A/A null_glibc_glibc |
   |---|---|---|---|---|
-  | 16 | **6.6217** | [6.5758,6.6696] | 0.9914 | 0.9998 |
-  | 64 | 6.5352 | [6.5036,6.5598] | 0.9929 | 1.0060 |
-  | 256 | 6.5466 | [6.5297,6.5849] | 1.0008 | 1.0000 |
-  | 1024 | 6.5838 | [6.5553,6.5998] | 0.9940 | 0.9998 |
+  | zero_bytes | **92.174166** | [91.704082,92.437180] | 0.997248 | 0.999951 |
+  | one_byte | 75.931691 | [75.700373,76.517675] | 0.999922 | 0.992371 |
+  | thirty_two_bytes | 10.684455 | [10.640260,10.759496] | 0.998913 | 0.999607 |
+  | two_fifty_six_bytes | 3.039052 | [3.036173,3.041626] | 0.996857 | 0.999853 |
 
-  All four ADMISSIBLE. Worst same-invocation A/A null across the run is 0.9914 (fl/fl) and 1.0060
-  (glibc/glibc), both inside the harness bound of +/-0.02.
-- **Absolute, telemetry only:** fl 30.65-31.01 ns/pair against glibc 4.74-4.76 ns/pair. The gap is
-  ~26 ns/pair, flat across the four sizes -- it is fixed per-call overhead, not size-dependent work,
-  which is the same shape every prior measurement on this vein has shown.
-- **The ELF sha is byte-identical to the candidate measured before that commit landed**, so the
-  >=6.6%-faster row banked earlier today describes exactly what is now shipped, and this run is a
-  confirmation rather than a new claim.
+  `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=4 wins=0 losses=4 undecidable=0`. Every
+  same-invocation A/A null is inside the 0.020 bias tolerance.
+- **Provenance.** `BENCH_ELF_OBJECT sha256
+  24d6ebb428391540f8611c6acccd042922bb3a848af1898d287de5da44d3b82f`; `FL_OBJECT sha256
+  faf3aedb2943073c7fc1d122d4da6b635ca8ee54bf2134d93f3845c00328538b`; `INCUMBENT_OBJECT
+  /usr/lib/x86_64-linux-gnu/libc.so.6 sha256
+  6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`. `ARM_DISTINCT` holds
+  (incumbent 0x7b9675249fa0, fl 0x7b96640c37d0), and conformance passed 5 comparisons across lengths
+  0/1/32/256 and flags 0/GRND_NONBLOCK before timing.
+- **THE SHAPE NAMES THE DEFECT: the ratio COLLAPSES with size, 92 -> 76 -> 10.7 -> 3.0.** That is a
+  fixed per-call cost, not per-byte work -- at 256 bytes the real entropy work starts to dominate and
+  the gap shrinks to 3x. glibc's `getrandom(buf, 0, ...)` is very nearly free; fl pays a large
+  constant before doing nothing. This is the same fixed-overhead signature as the allocator's flat
+  ~26 ns/pair, and it is a far larger multiple.
+- **Also measured in the same sweep** (single invocation each, `--pin-quietest 4`): `getauxval`
+  FL_FASTER at 0.6915 (pagesz) and 0.5243 (phnum); `sem_post` FL_FASTER at 0.9716;
+  `mtx_trylock` FL_SLOWER at 1.1246; `thrd_current` FL_SLOWER at 1.1109. `nl_langinfo` returned no
+  contract rows in this sweep, so nothing is claimed about it either way.
+- **HARNESS NOTE, cost me two blocked runs.** `incumbent_coverage_ab` spawns a child cargo build for
+  the fl cdylib. Run the binary directly and that child inherits `CARGO_TARGET_DIR=/data/tmp/cargo-target`
+  -- the shared tree -- where it failed with E0514 against artifacts from a different rustc
+  (1.100.0-nightly vs this toolchain's 1.97.0-nightly). It must be invoked as
+  `env -u CARGO_TARGET_DIR` with `RCH_CARGO_WRAPPER_BYPASS=1` EXPORTED so the child inherits it.
+  Separately, the quiet gate cannot be won unpinned on a 64-thread host at loadavg 39: it burned 300s
+  and reported BLOCKED. `--pin-quietest 4` narrowed to cpus 59+62+31+53 at 0.005-0.010 busy and every
+  family then certified.

@@ -7329,6 +7329,20 @@ fn run_fprintf_float(config: &Config) {
     // treatment through their OWN setvbuf, so the comparison stays fair; what
     // changes is that the timed quantity becomes the format-and-buffer path,
     // which is exactly what the probe alters, instead of format-plus-syscall-storm.
+    // A SECOND, DEFAULT-BUFFERED PAIR. The 1 MiB buffer below is a variance
+    // control, not how real programs run fprintf, so the banked ratio would
+    // describe a configuration nobody uses if that were the only regime
+    // measured. These two streams keep glibc's default buffering and give a
+    // `stream_2dp_defaultbuf` case in the SAME invocation, so the two regimes
+    // are compared under one schedule and one set of nulls rather than across
+    // runs.
+    // SAFETY: both arguments are NUL-terminated constants.
+    let host_default_stream = unsafe { host_fopen(devnull.as_ptr(), mode.as_ptr()) };
+    // SAFETY: as above, through FrankenLibC's own fopen.
+    let fl_default_stream = unsafe { fl_fopen(devnull.as_ptr(), mode.as_ptr()) };
+    assert!(!host_default_stream.is_null(), "glibc fopen default-buffered failed");
+    assert!(!fl_default_stream.is_null(), "FrankenLibC fopen default-buffered failed");
+
     let mut host_buffer = vec![0 as c_char; STREAM_BUF_BYTES];
     let mut fl_buffer = vec![0 as c_char; STREAM_BUF_BYTES];
     // SAFETY: each buffer outlives its stream (both are dropped after fclose
@@ -7359,6 +7373,21 @@ fn run_fprintf_float(config: &Config) {
         fclose: fl_fclose,
         fopen: fl_fopen,
         stream: fl_stream,
+    };
+
+    let host_default = StreamArm {
+        fprintf: host_fprintf,
+        fflush: host_fflush,
+        fclose: host_fclose,
+        fopen: host_fopen,
+        stream: host_default_stream,
+    };
+    let fl_default = StreamArm {
+        fprintf: fl_fprintf,
+        fflush: fl_fflush,
+        fclose: fl_fclose,
+        fopen: fl_fopen,
+        stream: fl_default_stream,
     };
 
     // Conformance for the stream form: each arm writes through ITS OWN
@@ -7416,6 +7445,13 @@ fn run_fprintf_float(config: &Config) {
             time_stream_4f_batch,
         ),
         measure_arm_case(
+            "stream_2dp_defaultbuf",
+            "fprintf \"%.2f\" with glibc's DEFAULT buffering -- is the win an artifact of the 1 MiB setvbuf?",
+            host_default,
+            fl_default,
+            time_stream_2f_batch,
+        ),
+        measure_arm_case(
             "stream_6dp",
             "fprintf bare \"%f\" -- C's default precision 6 through the stream path",
             host,
@@ -7469,6 +7505,8 @@ fn run_fprintf_float(config: &Config) {
     unsafe {
         host_fclose(host_stream);
         fl_fclose(fl_stream);
+        host_fclose(host_default_stream);
+        fl_fclose(fl_default_stream);
     }
     drop(host_buffer);
     drop(fl_buffer);
