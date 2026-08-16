@@ -29701,3 +29701,48 @@ What this changes, and what it does not:
 - **HARNESS ERROR WORTH RECORDING.** The first attempt piped the harness through `head -14` per arm,
   which silently dropped every `coshf` row and left only `sinhf` -- truncation that looked like "the
   harness does not measure coshf". The re-run captured full output.
+
+## 2026-08-16 (this session) — RE-BASELINE: the sscanf family's worst case is no longer `long_string`; it is `string_token` at 2.238x, and the named lever was already spent
+
+- **RESULT CLASS: loss/baseline.** No lever is claimed here. This re-measures a family whose standing
+  target had already been fixed, which changes where the next effort should go.
+- **THE STANDING TARGET WAS STALE.** The 2026-08-16 hz1 row put `long_string` worst at 2.387x and
+  reasoned that being "the case with the most bytes to move" pointed at per-byte copy cost in the %s
+  destination write. That lever HAS since been taken: `scan_string` and `scan_scanset` locate the
+  token and copy once, and `ScanBytes` inlines runs up to 32 bytes. `long_string` measures 1.235x
+  today. Anyone planning against the 2.387x row is planning against work already done.
+- **MEASURED**, host `thinkstation1`, pinned cpu8, `incumbent_coverage_ab --family sscanf`,
+  `samples=36`, `reps_per_arm=600000`, fl object
+  sha256=fd2c8e8bcf8385ded7c82dea179839bcd29716315cce6f134f7ed6f8e269368d, loadavg 10.92 17.13 19.92
+  at launch, cpu8 at 4292 MHz. FL/glibc effect medians, all still losses:
+  `string_token` 2.238, `two_strings` 1.944, `dotted_quad` 1.788, `key_value` 1.716,
+  `string_then_int` 1.707, `scanset_only` 1.689, `single_int` 1.584, `two_ints` 1.557,
+  `mixed_record` 1.414, `long_string` 1.235, `long_hex` 1.086, `float_only` 1.080.
+  Loadavg reached 46.54 by the end of the run, so the ORDERING is the finding and the individual
+  magnitudes are provisional; a quiet-window re-run is owed before any of these is quoted as a target.
+- **THE SHAPE HAS INVERTED, and that is the useful part.** `long_string` (a long token) is now among
+  the BEST cases while `string_token` (a SHORT token, inline, no heap copy at all) is the worst. Cost
+  that scales with bytes has been removed; what remains is per-CALL cost. The source agrees rather
+  than only the ranking: every engine-path call allocates a `Vec<ScanDirective>` from
+  `parse_scanf_format`, a `Vec<ScanValue>` from `scan_input` (built with `Vec::new()`, so the first
+  push allocates and it doubles), and, for floats, a scratch `Vec::with_capacity(64)`. glibc allocates
+  nothing on any of these paths.
+- **WHY THE INT CASES ARE LEAST BAD:** `single_int`/`two_ints` never reach the engine.
+  `strict_decimal_int_format_count` plus `strict_scan_decimal_ints` serve pure-decimal-int formats
+  from a fixed-size result struct, skipping both Vecs. The cases that avoid the per-call allocation
+  are the cases that lose least.
+- **ONE ALLOCATION REMOVED THIS SESSION (`7cfb786c0`), deliberately not claimed as a ratio.** The
+  float scratch Vec is gone: the accepted decimal token is contiguous in the input, so it is parsed in
+  place with the sign applied to the magnitude. `float_only` is 1.080x and among the least bad cases,
+  so the gain belongs to the allocation count, not to a headline number. Its gate,
+  `conformance_diff_sscanf_float_inplace`, compares value BITS and CONSUMED COUNT against live glibc
+  over signed zero, leading `+`, signed overflow and underflow, the second-`.` rule, bare exponent
+  markers, width limits and garbage; dropping the sign application makes 5 of its 6 tests fail, which
+  is what makes their passing mean something.
+- **THE NEXT LEVER, named and sized:** remove the two remaining per-call allocations on the engine
+  path. `frankenlibc-core` is `#![deny(unsafe_code)]`, so an inline-capacity buffer must be safe-only
+  (an `Option<ScanValue>` array cannot yield the `&[ScanValue]` the ABI writer consumes, so this wants
+  either a reusable caller-provided buffer threaded through `scan_input` or a `ScanValue: Default`
+  slot array). Sizing: fl's own malloc+free pair costs ~32 ns and the `single_int` gap is ~27 ns even
+  on the fast path, so two allocations are plausibly a majority of the engine-path gap — an inference
+  from the code, not a measurement, and it should be measured before it is built.
