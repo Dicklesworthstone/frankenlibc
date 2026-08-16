@@ -175,14 +175,108 @@ fn scanf_route(conversion: u8) -> Option<ScanfRoute> {
 // Scan value types
 // ---------------------------------------------------------------------------
 
+/// Inline capacity for a scanned byte run, in bytes.
+///
+/// Chosen to cover ordinary scanf tokens — identifiers, numbers, dotted quads,
+/// key=value halves — while keeping [`ScanValue`] small enough that the
+/// per-call `Vec<ScanValue>` stays one modest allocation.
+pub const SCAN_INLINE_CAP: usize = 32;
+
+/// Bytes captured by a `%s`, `%c` or `%[...]` conversion, stored inline when
+/// they fit.
+///
+/// WHY THIS EXISTS, and why the inline case is the one that matters.
+/// `scan_string` and `scan_scanset` already locate the token without copying and
+/// then take it in one shot; what remained was `to_vec()`, i.e. **one heap
+/// allocation per string conversion**. In FrankenLibC that allocation is not
+/// cheap the way it is in glibc: it goes through fl's own allocator, measured
+/// this session at 6.62x glibc on malloc/free and ~31 ns per pair.
+///
+/// The certified sscanf numbers say the cost is fixed per conversion rather than
+/// per byte, which is what makes an inline buffer the right shape:
+///
+///   string_token  2.016x   short token
+///   two_strings   1.923x   two short tokens
+///   long_string   1.054x   ONE LONG token — nearly parity
+///
+/// If the loss were the copying, the long case would be the worst. It is the
+/// best. The gap tracks the NUMBER of conversions, not the number of bytes, so
+/// it is the allocation, and removing it for short tokens targets exactly the
+/// cases that lose. Long tokens keep the heap path, where the copy dominates and
+/// fl already runs at parity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScanBytes {
+    /// Fits in `SCAN_INLINE_CAP`; no allocation.
+    Inline { len: u8, buf: [u8; SCAN_INLINE_CAP] },
+    /// Too long to inline; one allocation, amortised over many bytes.
+    Heap(Vec<u8>),
+}
+
+impl ScanBytes {
+    /// Capture `bytes`, inline when they fit.
+    #[inline]
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        if bytes.len() <= SCAN_INLINE_CAP {
+            let mut buf = [0u8; SCAN_INLINE_CAP];
+            buf[..bytes.len()].copy_from_slice(bytes);
+            ScanBytes::Inline {
+                len: bytes.len() as u8,
+                buf,
+            }
+        } else {
+            ScanBytes::Heap(bytes.to_vec())
+        }
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            ScanBytes::Inline { len, buf } => &buf[..*len as usize],
+            ScanBytes::Heap(v) => v.as_slice(),
+        }
+    }
+}
+
+impl std::ops::Deref for ScanBytes {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl PartialEq<[u8]> for ScanBytes {
+    #[inline]
+    fn eq(&self, other: &[u8]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for ScanBytes {
+    #[inline]
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+// `&scan_bytes == b"ab"` desugars to `ScanBytes: PartialEq<[u8; N]>`, NOT to the
+// reference form above — `&A == &B` requires `A: PartialEq<B>`. Both impls are
+// needed so callers can write either spelling.
+impl<const N: usize> PartialEq<[u8; N]> for ScanBytes {
+    #[inline]
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
 /// A successfully scanned value from input.
 #[derive(Debug, Clone)]
 pub enum ScanValue {
     SignedInt(i64),
     UnsignedInt(u64),
     Float(f64),
-    Char(Vec<u8>),
-    String(Vec<u8>),
+    Char(ScanBytes),
+    String(ScanBytes),
     CharsConsumed(usize),
     Pointer(usize),
 }
@@ -1386,7 +1480,7 @@ fn scan_char(
         if read == 0 {
             return None;
         }
-        return Some((Some(ScanValue::Char(input[pos..end].to_vec())), end));
+        return Some((Some(ScanValue::Char(ScanBytes::from_slice(&input[pos..end]))), end));
     }
     // Guard against pathological widths that overflow pos + n. Under
     // debug_assertions `usize` add panics; in release it wraps and
@@ -1406,7 +1500,7 @@ fn scan_char(
         return None;
     }
     let chars = input[pos..end].to_vec();
-    Some((Some(ScanValue::Char(chars)), end))
+    Some((Some(ScanValue::Char(ScanBytes::from_slice(&chars))), end))
 }
 
 /// Scan a string (%s). Skips whitespace, then reads non-whitespace.
@@ -1456,7 +1550,7 @@ fn scan_string(
         return None;
     }
 
-    Some((Some(ScanValue::String(input[pos..i].to_vec())), i))
+    Some((Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))), i))
 }
 
 /// Scan a scanset (%[...]). No whitespace skip.
@@ -1485,7 +1579,7 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
         return None;
     }
 
-    Some((Some(ScanValue::String(input[pos..i].to_vec())), i))
+    Some((Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))), i))
 }
 
 /// Scan a pointer (%p). Expects 0xHEX or (nil).
@@ -2156,6 +2250,87 @@ mod tests {
         let result = scan_input(b"   ", &dirs);
         assert_eq!(result.count, 0);
         assert!(result.input_failure);
+    }
+
+    // -----------------------------------------------------------------
+    // ScanBytes inline/heap boundary.
+    //
+    // The whole point of `ScanBytes` is that a short token skips the heap. That
+    // makes the boundary the one place a bug can hide: an off-by-one in the
+    // `<=` would either spill 32-byte tokens to the heap (silently losing the
+    // lever, with every test still green) or try to inline 33 bytes into a
+    // 32-byte array (a panic, or a truncated token if the length were clamped).
+    // Both sides are asserted, and the CONTENTS are checked as well as the
+    // storage, so a variant that stores the right bytes in the wrong place and
+    // one that stores the wrong bytes both fail.
+
+    #[test]
+    fn scan_bytes_inlines_up_to_capacity_and_spills_past_it() {
+        for len in [0usize, 1, 2, 31, SCAN_INLINE_CAP] {
+            let src: Vec<u8> = (0..len).map(|i| b'a' + (i % 26) as u8).collect();
+            let got = ScanBytes::from_slice(&src);
+            assert!(
+                matches!(got, ScanBytes::Inline { .. }),
+                "len {len} must inline (capacity is {SCAN_INLINE_CAP})"
+            );
+            assert_eq!(got.as_slice(), &src[..], "len {len} round-trip");
+        }
+        for len in [SCAN_INLINE_CAP + 1, SCAN_INLINE_CAP + 2, 200] {
+            let src: Vec<u8> = (0..len).map(|i| b'a' + (i % 26) as u8).collect();
+            let got = ScanBytes::from_slice(&src);
+            assert!(
+                matches!(got, ScanBytes::Heap(_)),
+                "len {len} must spill to the heap"
+            );
+            assert_eq!(got.as_slice(), &src[..], "len {len} round-trip");
+        }
+    }
+
+    #[test]
+    fn scanned_strings_round_trip_across_the_inline_boundary() {
+        // Through the real engine, not just the constructor: a token one byte
+        // either side of the boundary must scan to exactly the same bytes.
+        for len in [1usize, SCAN_INLINE_CAP - 1, SCAN_INLINE_CAP, SCAN_INLINE_CAP + 1, 100] {
+            let token: Vec<u8> = (0..len).map(|i| b'A' + (i % 26) as u8).collect();
+            let dirs = parse_scanf_format(b"%s");
+            let result = scan_input(&token, &dirs);
+            assert_eq!(result.count, 1, "len {len} should scan one token");
+            match &result.values[0] {
+                ScanValue::String(bytes) => {
+                    assert_eq!(bytes.as_slice(), &token[..], "len {len} token bytes")
+                }
+                other => panic!("len {len}: expected String, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn scanned_scanset_and_char_round_trip_across_the_inline_boundary() {
+        // %[...] and %c share the same storage; both sides of the boundary.
+        for len in [SCAN_INLINE_CAP, SCAN_INLINE_CAP + 1] {
+            let token: Vec<u8> = std::iter::repeat(b'x').take(len).collect();
+
+            let dirs = parse_scanf_format(b"%[x]");
+            let result = scan_input(&token, &dirs);
+            assert_eq!(result.count, 1, "scanset len {len}");
+            match &result.values[0] {
+                ScanValue::String(bytes) => {
+                    assert_eq!(bytes.as_slice(), &token[..], "scanset len {len}")
+                }
+                other => panic!("scanset len {len}: expected String, got {other:?}"),
+            }
+
+            let fmt = format!("%{len}c");
+            let dirs = parse_scanf_format(fmt.as_bytes());
+            let result = scan_input(&token, &dirs);
+            assert_eq!(result.count, 1, "%c len {len}");
+            match &result.values[0] {
+                ScanValue::Char(bytes) => {
+                    assert_eq!(bytes.as_slice(), &token[..], "%c len {len}")
+                }
+                other => panic!("%c len {len}: expected Char, got {other:?}"),
+            }
+        }
     }
 
     #[test]
