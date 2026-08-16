@@ -186,12 +186,7 @@ unsafe extern "C" {
     #[link_name = "gethostbyname"]
     fn linked_host_gethostbyname(name: *const c_char) -> *mut libc::hostent;
     #[link_name = "snprintf"]
-    fn linked_host_snprintf(
-        s: *mut c_char,
-        n: usize,
-        format: *const c_char,
-        ...
-    ) -> c_int;
+    fn linked_host_snprintf(s: *mut c_char, n: usize, format: *const c_char, ...) -> c_int;
     #[link_name = "vsscanf"]
     fn linked_host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
     #[link_name = "wcsnrtombs"]
@@ -709,7 +704,9 @@ fn cpu_busy_fractions(window: std::time::Duration) -> BTreeMap<usize, f64> {
             let Ok(cpu) = index.parse::<usize>() else {
                 continue;
             };
-            let values = fields.filter_map(|v| v.parse::<u64>().ok()).collect::<Vec<_>>();
+            let values = fields
+                .filter_map(|v| v.parse::<u64>().ok())
+                .collect::<Vec<_>>();
             if values.len() >= 4 {
                 counters.insert(cpu, (values.iter().sum::<u64>(), values[3]));
             }
@@ -819,7 +816,9 @@ fn run_families(config: &Config) -> ! {
             command.arg("--fl-deepbind");
         }
         if config.pin_quietest > 0 {
-            command.arg("--pin-quietest").arg(config.pin_quietest.to_string());
+            command
+                .arg("--pin-quietest")
+                .arg(config.pin_quietest.to_string());
         }
         let status = command.status().expect("spawn family child");
         let code = status.code().unwrap_or(-1);
@@ -4991,7 +4990,13 @@ fn check_fused_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize) {
     }
 
     // The canonical syslog shape, the target of this lever.
-    case!("syslog_line", c"%s[%d]: %s".as_ptr(), ident.as_ptr(), 4321i32, msg.as_ptr());
+    case!(
+        "syslog_line",
+        c"%s[%d]: %s".as_ptr(),
+        ident.as_ptr(),
+        4321i32,
+        msg.as_ptr()
+    );
     case!(
         "http_log",
         c"%s %s %d %lu".as_ptr(),
@@ -5026,11 +5031,23 @@ fn check_fused_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize) {
         std::ptr::null::<c_char>(),
         ident.as_ptr()
     );
-    case!("char_pair", c"%c%c%s%d".as_ptr(), 0x5bi32, 0x5di32, ident.as_ptr(), 9i32);
+    case!(
+        "char_pair",
+        c"%c%c%s%d".as_ptr(),
+        0x5bi32,
+        0x5di32,
+        ident.as_ptr(),
+        9i32
+    );
     // MUST be rejected by the fused path (width) and fall through unchanged.
     case!("rejected_width", c"%5d %s".as_ptr(), 42i32, ident.as_ptr());
     // MUST be rejected (precision).
-    case!("rejected_precision", c"%.3s %d".as_ptr(), msg.as_ptr(), 1i32);
+    case!(
+        "rejected_precision",
+        c"%.3s %d".as_ptr(),
+        msg.as_ptr(),
+        1i32
+    );
     // MUST be rejected (floating conversion).
     case!("rejected_float", c"%s %f".as_ptr(), key.as_ptr(), 1.5f64);
     // Single directive: keeps using the tuned leaf, not the fused path.
@@ -5116,6 +5133,98 @@ fn run_fused_kv_batch(function: SnprintfFn) -> u64 {
     }
     black_box(buffer);
     black_box(accumulator)
+}
+
+/// Conversion-count ladder for the fused per-conversion slope (bd-ntb9fq).
+///
+/// The three shipped fused shapes give only TWO distinct conversion counts
+/// (3, 4, 4), so a fit across them is a two-point line and cannot separate the
+/// fixed term from the per-conversion term with any confidence. These four
+/// rungs give n = 2, 3, 4, 6 with the conversion TYPE held constant at `%s`, so
+/// the slope measures conversion COUNT and not a change of conversion kind.
+///
+/// Every rung carries at least two conversions on purpose: a bare `%s` would be
+/// captured by `exact_direct_s_format` and bypass the whole general path, which
+/// is the path under study. The single-space separator keeps the literal run
+/// between conversions identical at every rung, and both arms pay it.
+fn run_fused_ladder_batch(function: SnprintfFn, format: *const c_char, count: usize) -> u64 {
+    let a = c"alpha";
+    let b = c"bravo";
+    let mut buffer = [0u8; FUSED_BUF];
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for _ in 0..SNPRINTF_REPS {
+        let returned = unsafe {
+            match count {
+                2 => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                ),
+                3 => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                ),
+                4 => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                ),
+                _ => black_box(function)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(FUSED_BUF),
+                    black_box(format),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                    black_box(a.as_ptr()),
+                    black_box(b.as_ptr()),
+                ),
+            }
+        };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(buffer);
+    black_box(accumulator)
+}
+
+fn time_fused_ladder2_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_ladder_batch(function, c"%s %s".as_ptr(), 2));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_ladder3_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_ladder_batch(function, c"%s %s %s".as_ptr(), 3));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_ladder4_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_ladder_batch(function, c"%s %s %s %s".as_ptr(), 4));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_fused_ladder6_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_fused_ladder_batch(
+        function,
+        c"%s %s %s %s %s %s".as_ptr(),
+        6,
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
 fn time_fused_syslog_batch(function: SnprintfFn) -> f64 {
@@ -5490,6 +5599,34 @@ fn run_snprintf_fused(config: &Config) {
             fl,
             time_fused_kv_batch,
         ),
+        measure_snprintf_case(
+            "ladder_2s",
+            "conversion ladder n=2: \"%s %s\" -- type held constant (bd-ntb9fq)",
+            host,
+            fl,
+            time_fused_ladder2_batch,
+        ),
+        measure_snprintf_case(
+            "ladder_3s",
+            "conversion ladder n=3: \"%s %s %s\"",
+            host,
+            fl,
+            time_fused_ladder3_batch,
+        ),
+        measure_snprintf_case(
+            "ladder_4s",
+            "conversion ladder n=4: \"%s %s %s %s\"",
+            host,
+            fl,
+            time_fused_ladder4_batch,
+        ),
+        measure_snprintf_case(
+            "ladder_6s",
+            "conversion ladder n=6: \"%s %s %s %s %s %s\"",
+            host,
+            fl,
+            time_fused_ladder6_batch,
+        ),
     ];
 
     let threads_post = observed_threads();
@@ -5547,7 +5684,10 @@ fn snprintf_probe(
     call: impl Fn(*mut c_char, usize) -> c_int,
     size: usize,
 ) -> (c_int, [u8; SNPRINTF_BUF]) {
-    assert!(size <= SNPRINTF_BUF, "probe size {size} exceeds destination");
+    assert!(
+        size <= SNPRINTF_BUF,
+        "probe size {size} exceeds destination"
+    );
     let mut buffer = [SNPRINTF_CANARY; SNPRINTF_BUF];
     let returned = call(buffer.as_mut_ptr().cast(), size);
     (returned, buffer)
@@ -6014,12 +6154,7 @@ const SSCANF_CASES: &[ScanCase] = &[
         note: "\"%[^=]=%s\" -- scanset + string, the config-line shape",
         input: c"loglevel=debug",
         format: c"%[^=]=%s",
-        destinations: |d| {
-            vec![
-                d.text.as_mut_ptr().cast(),
-                d.other.as_mut_ptr().cast(),
-            ]
-        },
+        destinations: |d| vec![d.text.as_mut_ptr().cast(), d.other.as_mut_ptr().cast()],
     },
     // Decomposition of `key_value`, which is the family's one large loss.
     // `scanset_only` has the same destination count and input as
@@ -6048,12 +6183,7 @@ const SSCANF_CASES: &[ScanCase] = &[
         note: "\"%s %s\" -- key_value's shape without the scanset",
         input: c"alpha beta",
         format: c"%s %s",
-        destinations: |d| {
-            vec![
-                d.text.as_mut_ptr().cast(),
-                d.other.as_mut_ptr().cast(),
-            ]
-        },
+        destinations: |d| vec![d.text.as_mut_ptr().cast(), d.other.as_mut_ptr().cast()],
     },
     // Decomposition of `mixed_record`, the family's worst ratio. `%d %d` sits at
     // parity while `%s %d %lf` loses 1.40x, so the cost is in a particular
@@ -6103,7 +6233,11 @@ const SSCANF_CASES: &[ScanCase] = &[
 ];
 
 /// Run one case through one provider, returning the C return value.
-fn sscanf_probe(function: VsscanfFn, case: &ScanCase, destinations: &mut ScanDestinations) -> c_int {
+fn sscanf_probe(
+    function: VsscanfFn,
+    case: &ScanCase,
+    destinations: &mut ScanDestinations,
+) -> c_int {
     destinations.reset();
     let mut slots = (case.destinations)(destinations);
     let mut ap = VaListTag::overflow(&mut slots);
@@ -6503,7 +6637,12 @@ autobase,percent_n,length_modifiers,eof,match_failure verdict={conformance_verdi
     });
     println!("{}", post.contract_line("post_measurement"));
     for result in &results {
-        result.print("sscanf", &incumbent_identity.path, threads_pre, threads_post);
+        result.print(
+            "sscanf",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
     }
 
     let wins = results

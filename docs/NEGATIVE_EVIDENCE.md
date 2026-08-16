@@ -27600,3 +27600,51 @@ What this changes, and what it does not:
   >=1.82x on single integer conversions while LOSING on floats, in the same process, because the
   integer formats short-circuited the pipeline and the float formats did not. Same vein as the `%d`
   probe that took snprintf+sprintf from ~3.3x loss to ~0.42x win.
+
+## 2026-08-16 (BlackThrush) — DIAGNOSIS, regressed on a purpose-built ladder: the fused `snprintf` penalty is PER-CONVERSION, not fixed overhead, so a probe-style lever cannot close it
+
+- **RESULT CLASS: loss/baseline.** No speedup is claimed here. This is the measurement that decides
+  which lever class can work on the campaign's last large banked loss, and it rules one out.
+- **Why it was worth measuring.** The float loss (bd-4vwb9q) was closed by fitting the SLOPE instead
+  of reading the ratio: the gap was an 87.5 ns CONSTANT with a NEGATIVE per-digit term, so a probe
+  that skipped fixed overhead turned it into a win. The obvious question is whether the fused
+  3.12-3.31x loss has the same shape. It does not, and the difference is decision-changing.
+- **The instrument.** The three shipped fused shapes give only TWO distinct conversion counts
+  (`%s[%d]: %s` n=3, `%s %s %d %lu` n=4, `%s=%s %s=%s` n=4), so any fit over them is a two-point
+  line. Added a conversion-count LADDER to the timed set with conversion type held constant at `%s`
+  and a single-space separator, giving n = 2, 3, 4, 6. Every rung carries at least two conversions
+  deliberately: a bare `%s` is captured by `exact_direct_s_format` and would bypass the very path
+  under study.
+- **Measured on hz1, load 0.51 falling to 0.39, fl object d6c802d9c2097651, bench ELF
+  843ae5ea4a2c631658c25639c5706c4a (the ladder build, disclosed as a different binary from the
+  e99c0bc1 used for earlier fused rows).**
+
+  | n | fl ns | glibc ns | gap ns | ratio |
+  |---|---|---|---|---|
+  | 2 | 191.247 | 45.531 | 145.716 | 4.200 |
+  | 3 | 242.213 | 63.971 | 178.242 | 3.786 |
+  | 4 | 302.856 | 82.216 | 220.640 | 3.684 |
+  | 6 | 438.322 | 121.186 | 317.136 | 3.617 |
+
+- **Least squares over the ladder:**
+  fl = 59.832 ns fixed + 62.354 ns/conversion, R^2 0.99629.
+  glibc = 7.270 ns fixed + 18.922 ns/conversion, R^2 0.99972.
+  GAP = 52.563 ns fixed + 43.432 ns/conversion, R^2 0.99346.
+  **fl pays 3.30x glibc PER CONVERSION.**
+- **THE CONCLUSION, and it is a quantitative exclusion rather than an opinion.** The fixed term is
+  only 37.7% of the gap at n=2, 28.7% at n=3, 23.2% at n=4 and 16.8% at n=6. The shipped shapes sit
+  at n=3-4, so roughly three quarters of the fused penalty is per-conversion work. A probe-style
+  lever removes fixed cost ONLY. Even a perfect one that drove fl's entire 59.83 ns fixed term to
+  zero would leave, at n=3, fl at 3 x 62.354 = 187.1 ns against glibc's 63.97 ns — still about 2.9x.
+  So the `exact_direct_*` trick that won the float family cannot close this one, and that is now
+  measured rather than argued.
+- **The lever that remains is the 62.354 ns/conversion term**, which has to come down toward glibc's
+  18.922. That is the work `render_segments` does per segment, not the machinery around it.
+- **An extra finding in the residuals: fl is slightly SUPERLINEAR in conversion count while glibc is
+  flat.** fl's per-step increments are 50.966 ns (n=2 to 3), 60.643 (3 to 4) and 67.733 per
+  conversion (4 to 6); glibc's are 18.440, 18.245 and 19.485. glibc's per-conversion cost does not
+  depend on how many conversions preceded it; fl's does. That points at per-segment work whose cost
+  grows with the number of segments already handled, and it is a second, independent target.
+- **This corroborates bd-5pagbr from an independent direction.** Shrinking `FormatSegment` by 37.5%
+  did not help because the segment REPRESENTATION is not what costs; what happens per conversion is.
+  Two different methods, same conclusion.
