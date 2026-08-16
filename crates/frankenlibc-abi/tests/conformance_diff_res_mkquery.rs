@@ -14,6 +14,11 @@ use std::ffi::{CString, c_char, c_int, c_void};
 mod g {
     use super::*;
     unsafe extern "C" {
+        // glibc exports only __res_init@@GLIBC_2.2.5; plain `res_init` is a header macro
+        // (#define res_init __res_init) and no such symbol exists to link against, so this
+        // target failed to link and never ran once. An unlinkable target is silent, not green.
+        // res_mkquery itself IS exported unprefixed. bd-5wckql.
+        #[link_name = "__res_init"]
         pub fn res_init() -> c_int;
         pub fn res_mkquery(
             op: c_int,
