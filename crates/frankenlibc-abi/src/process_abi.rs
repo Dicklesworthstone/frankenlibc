@@ -1084,6 +1084,24 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     // every other step and yield the same final child state, so reordering them
     // to match glibc verbatim is unnecessary. Do not move SETSID below
     // SETPGROUP or RESETIDS above SETSCHED*.
+    //
+    // The actual order below, for the reader who does not want to re-derive it:
+    //   SETSID -> SETPGROUP -> SETSIGMASK -> SETSIGDEF -> SETSCHED{ULER,PARAM}
+    //   -> RESETIDS
+    // and both load-bearing invariants above are visible in it directly.
+    //
+    // ONE CONSEQUENCE THE "same final child state" CLAIM DOES NOT COVER, and it
+    // is a TRANSIENT rather than a final-state difference. glibc applies
+    // SETSIGMASK last, immediately before exec, so its child performs setsid,
+    // setpgid, the scheduler calls and the uid/gid drop under the ORIGINAL
+    // signal mask. fl applies SETSIGMASK third, so the remainder of fl's setup
+    // runs under the CALLER-SUPPLIED mask. If that mask blocks a signal which
+    // would otherwise have been delivered during those few syscalls, fl defers
+    // it to after exec where glibc would deliver it before. The child ends in
+    // the same state either way, which is why the ordering is not a bug, but a
+    // test that signals a spawning child mid-setup could observe the difference.
+    // Anyone chasing such a divergence should look here first rather than at the
+    // signal code. (bd-kp271z)
 
     // POSIX_SPAWN_SETSID (glibc >= 2.26, value 0x80; not exposed by the libc
     // crate): the child starts a new session. glibc applies it FIRST, before
