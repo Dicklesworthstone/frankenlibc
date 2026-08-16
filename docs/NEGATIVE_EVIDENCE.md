@@ -28914,3 +28914,69 @@ What this changes, and what it does not:
   at loadavg 39 it burned its full 300000 ms on 300 samples with `cpu16=65.7%`. Anyone finishing
   this sweep needs a genuinely quiet host, not merely a pinned cpuset, and must allow more than
   300 s per family.
+
+## 2026-08-16 (NobleCreek) — REPLICATED MEASURED LOSS: `fprintf` stream float 1.24-1.33x SLOWER, now with the timed object PROVEN LIVE
+
+- **RESULT CLASS: loss/baseline, replicated, NOT a lever.** Second independent quiet-window
+  measurement of the row that retracted my earlier stream claim. It reproduces, and this time the
+  defect that made the retracted row possible is closed rather than merely understood.
+- **THE DEFECT IS FIXED, WHICH IS THE POINT OF THIS RUN.** The retracted win was possible because the
+  conformance arm validated its own temp files and never touched `arm.stream`, the sink the timed
+  batch writes to — so on a contended host the timed arm could do less work and still pass every
+  gate. `assert_timed_stream_is_live` now writes a known value through the TIMED stream for BOTH
+  implementations and both stream pairs, checks the reported byte count is exactly 7 for `"%.2f"` of
+  1234.56, and flushes, all BEFORE the guard. The run emits
+  `TIMED_STREAM_LIVE symbol=fprintf_float pairs=2 checked=return_byte_count_on_the_timed_stream
+  verdict=pass`. A row without that line should not be trusted from this family.
+- **MEASURED.** Worker `hetzner2`, **`loadavg=6.09,2.92,2.22`** (recorded per the fleet contention
+  finding), `--family fprintf_float --pin-quietest 4`, `samples=36`, `reps_per_arm=200000`,
+  exclusivity clear both phases, `same_invocation=true`, `cv_used=false`.
+  `bench_elf_sha256=7ecaefeedb483b12fb49c7eaafb793f6d0f2921d61b2614741a02d8ec9b7e03e`;
+  `INCUMBENT_OBJECT /usr/lib/x86_64-linux-gnu/libc.so.6
+  sha256=a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`;
+  `FL_OBJECT libfrankenlibc_abi.so
+  sha256=b79f3533526edc9e6defe9c2b8a70e8ed429b14d1546efc6d66687cec84d31a4`;
+  `INCUMBENT_LINKAGE direct_process_link symbol=fprintf`; `FL_LINKAGE explicit_dlopen_local`.
+  `INCUMBENT_COVERAGE_VERDICT verdict=DECIDABLE cases=4 wins=0 losses=4 undecidable=0`.
+
+  **Each case: effect and both same-invocation A/A nulls, each with its bootstrap median CI.**
+
+  Case `stream_2dp`: fl 119.552 ns against live glibc 90.110 ns. Effect median 1.330069, bootstrap
+  median CI [1.316239,1.339254]. A/A null FL/FL median 1.003865, bootstrap median CI [0.996750,1.021683]; A/A null
+  glibc/glibc median 1.002242, bootstrap median CI [0.989353,1.008250]. null_half_width 0.021683,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER. Prior quiet-host run 1.377493.
+
+  Case `stream_2dp_defaultbuf`: fl 117.634 ns against live glibc 88.370 ns. Effect median 1.325883, bootstrap
+  median CI [1.315942,1.332181]. A/A null FL/FL median 0.997299, bootstrap median CI [0.992072,0.999653]; A/A null
+  glibc/glibc median 1.002351, bootstrap median CI [0.997870,1.006007]. null_half_width 0.007928,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER. Prior quiet-host run 1.371012.
+
+  Case `stream_4dp`: fl 122.645 ns against live glibc 96.348 ns. Effect median 1.270356, bootstrap
+  median CI [1.264720,1.277632]. A/A null FL/FL median 1.000175, bootstrap median CI [0.997210,1.005470]; A/A null
+  glibc/glibc median 0.998495, bootstrap median CI [0.995135,1.001631]. null_half_width 0.005470,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER. Prior quiet-host run 1.276572.
+
+  Case `stream_6dp`: fl 127.852 ns against live glibc 104.378 ns. Effect median 1.235672, bootstrap
+  median CI [1.222496,1.245117]. A/A null FL/FL median 0.998779, bootstrap median CI [0.987580,1.002543]; A/A null
+  glibc/glibc median 0.997618, bootstrap median CI [0.990391,1.004158]. null_half_width 0.012420,
+  clears_2x_null=true, nulls_hold=true, comparison=FL_SLOWER. Prior quiet-host run 1.224045.
+
+  Every A/A null inside the 0.020 bias tolerance with no CI straddle, every effect clearing twice its
+  null half-width.
+- **REPLICATION QUALITY.** Every case reproduces its prior quiet-host value within about 3.5%
+  (1.330 against 1.377, 1.326 against 1.371, 1.270 against 1.277, 1.236 against 1.224), across two
+  runs at loadavg 2.83 and 6.09, with a materially changed binary between them (the liveness check
+  was added). The direction and magnitude are stable; the retracted 0.44 was not a borderline call
+  but a different answer entirely.
+- **THE CONTENTION RULE, APPLIED IN BOTH DIRECTIONS.** The fleet finding says re-run before calling
+  something a loss. This loss has now been measured twice in quiet windows (2.83 and 6.09) and never
+  contradicted at low load. The reverse direction is the one that bit me: the single WIN reading came
+  from loadavg 9.99 and was wrong. Recording the loadavg on every row is what makes that pattern
+  visible at all.
+- **WHERE THE LEVER STANDS.** Buffer half: `snprintf_float` 0.430 / 0.493 / 0.510, a replicated win,
+  timed object identical to the validated object. Stream half: a replicated LOSS of 1.24-1.33x. The
+  probe is correct everywhere — all abi gates green, 1440 and 80 comparisons at 0 mismatches — it
+  simply does not pay on the stream path, where `fprintf`/`printf` run `runtime_policy::decide`
+  before any fast path and never skip the membrane. **The honest read is that the stream probes buy
+  nothing and cost about 30%, and the next move is to consider removing them rather than tuning
+  them.**

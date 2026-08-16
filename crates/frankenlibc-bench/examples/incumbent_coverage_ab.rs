@@ -7204,6 +7204,38 @@ struct StreamArm {
     stream: *mut c_void,
 }
 
+/// Prove the TIMED stream actually does work, before anything is timed through it.
+///
+/// This closes the defect that produced a retracted campaign win. The
+/// conformance arm opens its OWN temp files, so it validated the RENDERING and
+/// said nothing about `arm.stream` -- the /dev/null stream the batch writes to.
+/// On a contended host the timed arm was able to do less work and still pass
+/// every gate, inverting a 1.38x loss into a certified 0.44x "win".
+///
+/// The rule that earned: a timed object must be the SAME object the conformance
+/// arm validated, or the conformance is decoration. Here that means writing a
+/// known value through the TIMED stream and checking the byte count it reports,
+/// then checking both implementations agree on it.
+fn assert_timed_stream_is_live(host: StreamArm, fl: StreamArm) {
+    for (arm, who) in [(host, "glibc"), (fl, "FrankenLibC")] {
+        // SAFETY: `arm.stream` is this arm's own open stream; the format names
+        // exactly one double.
+        let written = unsafe { (arm.fprintf)(arm.stream, c"%.2f".as_ptr(), 1234.56f64) };
+        assert_eq!(
+            written, 7,
+            "{who} fprintf on the TIMED stream reported {written} bytes for \"%.2f\" of 1234.56, \
+             expected 7. The timed stream is not doing the work the conformance arm validated, \
+             which is exactly the defect that produced a retracted win; refusing to time it."
+        );
+        // SAFETY: flush this arm's own stream so the write is not merely buffered.
+        assert_eq!(
+            unsafe { (arm.fflush)(arm.stream) },
+            0,
+            "{who} fflush on the TIMED stream failed; refusing to time it"
+        );
+    }
+}
+
 fn run_stream_float_batch(arm: StreamArm, format: &CStr) -> u64 {
     let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
     for index in 0..SNPRINTF_REPS {
@@ -7416,6 +7448,15 @@ fn run_fprintf_float(config: &Config) {
     assert_eq!(
         mismatches, 0,
         "stream float arms are not observationally equivalent; refusing to time them"
+    );
+
+    // Both stream pairs are proven live before any timing. See
+    // assert_timed_stream_is_live for why this exists.
+    assert_timed_stream_is_live(host, fl);
+    assert_timed_stream_is_live(host_default, fl_default);
+    println!(
+        "TIMED_STREAM_LIVE symbol=fprintf_float pairs=2 \
+         checked=return_byte_count_on_the_timed_stream verdict=pass"
     );
 
     let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
