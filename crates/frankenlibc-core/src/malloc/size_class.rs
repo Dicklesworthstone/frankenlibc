@@ -98,6 +98,53 @@ const SIZE_TABLE: [usize; NUM_SIZE_CLASSES] = [
     2048, 2560, 3072, 4096, 8192, 16384, 24576, 32768, // large small classes
 ];
 
+/// Largest segment-relative offset for which the reciprocals below are exact.
+///
+/// The ABI's segment allocator asserts its own `SEGMENT_SIZE` against this, so a
+/// segment that grows past the range these reciprocals were derived for fails to
+/// compile rather than silently returning a wrong slot index.
+pub const MAX_SLOT_OFFSET: usize = 1 << 22;
+
+/// Granule every size class is a multiple of, as a shift.
+///
+/// Dividing both operands by 16 before the reciprocal is what lets the magic
+/// number fit in a `u32`: the offset drops to `< 2^18` and the divisor to
+/// `<= 2048`, so a shift of 29 suffices and `m <= 2^29`. That matters because a
+/// `u32` fits the segment header's existing reserved word, which keeps the
+/// reciprocal on the SAME CACHE LINE as the `class_size` the free path already
+/// loads. A separate lookup table was measured and REJECTED for exactly this
+/// reason -- see `docs/NEGATIVE_EVIDENCE.md` 2026-08-16.
+const GRANULE_SHIFT: u32 = 4;
+
+/// Shift for the magic reciprocals returned by [`slot_index_reciprocal`].
+pub const SLOT_RECIPROCAL_SHIFT: u32 = 29;
+
+/// The round-up reciprocal for one size class, or `None` for a bad index.
+///
+/// `m = floor(2^S / d) + 1` computes `n / d` exactly for every `n < N` when
+/// `N * d <= 2^S`. Here, after the granule shift, `N = 2^18` and `d <= 2^11`,
+/// so `S = 29` is exactly sufficient. Exactness is not left to that argument:
+/// `slot_index_matches_division_at_every_transition` proves it against real
+/// division at every point where the quotient changes, for every class.
+pub fn slot_index_reciprocal(class_index: usize) -> Option<u32> {
+    let size = *SIZE_TABLE.get(class_index)? as u64;
+    let granules = size >> GRANULE_SHIFT;
+    Some((((1u64 << SLOT_RECIPROCAL_SHIFT) / granules) + 1) as u32)
+}
+
+/// Divide a segment-relative payload offset by a size class, without dividing.
+///
+/// `reciprocal` must come from [`slot_index_reciprocal`] for the class the
+/// offset belongs to, and `payload_offset` must be below [`MAX_SLOT_OFFSET`];
+/// both are guaranteed by the segment allocator's header validation and its
+/// compile-time size assertion.
+#[inline(always)]
+pub fn slot_index_from_reciprocal(reciprocal: u32, payload_offset: usize) -> usize {
+    debug_assert!(payload_offset < MAX_SLOT_OFFSET);
+    let granules = (payload_offset >> GRANULE_SHIFT) as u64;
+    ((granules * reciprocal as u64) >> SLOT_RECIPROCAL_SHIFT) as usize
+}
+
 /// Validates a raw size-class index for the specified caller.
 pub fn size_class_index(
     index: usize,
@@ -199,6 +246,57 @@ pub fn init_size_classes() -> Vec<SizeClass> {
 
 #[cfg(test)]
 mod tests {
+    /// Prove the magic reciprocals equal real division at every point where the
+    /// quotient changes.
+    ///
+    /// Checking transitions rather than sampling is what makes this a proof and
+    /// not a spot check: `n / d` is monotone non-decreasing and steps by one
+    /// exactly at each multiple of `d`, so agreement at every `k*d` and every
+    /// `k*d - 1` forces agreement everywhere between them. A randomised sweep
+    /// could pass while being wrong on precisely the boundary that turns one
+    /// allocation's slot into its neighbour's.
+    #[test]
+    fn slot_index_matches_division_at_every_transition() {
+        let mut checked = 0usize;
+        for class_index in 0..NUM_SIZE_CLASSES {
+            let d = SIZE_TABLE[class_index];
+            let recip = slot_index_reciprocal(class_index).expect("class in range");
+            let mut k = 0usize;
+            while k * d < MAX_SLOT_OFFSET {
+                for n in [k * d, (k * d).saturating_sub(1)] {
+                    if n >= MAX_SLOT_OFFSET {
+                        continue;
+                    }
+                    assert_eq!(
+                        slot_index_from_reciprocal(recip, n),
+                        n / d,
+                        "class {class_index} (size {d}) offset {n}"
+                    );
+                    checked += 1;
+                }
+                k += 1;
+            }
+        }
+        // A zero here would mean the loops never ran and the assertions proved
+        // nothing.
+        assert!(
+            checked > 500_000,
+            "transition sweep only checked {checked} points"
+        );
+    }
+
+    /// A bad class index yields `None`, not a wrong reciprocal.
+    #[test]
+    fn slot_index_reciprocal_rejects_out_of_range_class() {
+        assert_eq!(slot_index_reciprocal(NUM_SIZE_CLASSES), None);
+        assert!(slot_index_reciprocal(NUM_SIZE_CLASSES - 1).is_some());
+        let recip = slot_index_reciprocal(0).expect("class 0");
+        assert_eq!(
+            slot_index_from_reciprocal(recip, MAX_SLOT_OFFSET - 1),
+            (MAX_SLOT_OFFSET - 1) / 16
+        );
+    }
+
     use super::*;
 
     const BOUNDS_AUDIT_JSON: &str = include_str!(env!("FRANKENLIBC_CORE_BOUNDS_AUDIT_PATH"));

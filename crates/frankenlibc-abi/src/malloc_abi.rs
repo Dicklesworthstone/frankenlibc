@@ -18,7 +18,8 @@ use std::sync::atomic::{
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_core::malloc::size_class::{
-    MAX_SMALL_SIZE, NUM_SIZE_CLASSES, bin_size, small_bin_index,
+    MAX_SLOT_OFFSET, MAX_SMALL_SIZE, NUM_SIZE_CLASSES, bin_size, slot_index_from_reciprocal,
+    slot_index_reciprocal, small_bin_index,
 };
 use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
@@ -414,6 +415,15 @@ const SEGMENT_MASK: usize = SEGMENT_SIZE - 1;
 const SEGMENT_COUNT: usize = 64;
 const SEGMENT_ARENA_SIZE: usize = SEGMENT_COUNT * SEGMENT_SIZE;
 const SEGMENT_RESERVE_SIZE: usize = SEGMENT_ARENA_SIZE + SEGMENT_SIZE;
+
+// The magic reciprocals behind `slot_index_in_class` are derived for offsets
+// below `MAX_SLOT_OFFSET`. A segment that outgrew that range would still
+// compile and would return a WRONG slot index for high offsets -- a silent
+// cross-slot free -- so the bound is asserted here rather than trusted.
+const _: () = assert!(
+    SEGMENT_SIZE <= MAX_SLOT_OFFSET,
+    "SEGMENT_SIZE outgrew the range slot_index_in_class reciprocals are exact for"
+);
 // Linux targets supported by this workspace use 4K, 16K, or 64K pages.  A
 // 64K immutable header span therefore never shares a protected kernel page
 // with writable payload slots.
@@ -446,7 +456,17 @@ struct SegmentMemoryHeader {
     class_size: u32,
     slot_count: u32,
     class_index: u32,
-    _reserved: u32,
+    /// Magic reciprocal for `payload_offset / class_size`, from
+    /// `slot_index_reciprocal(class_index)`.
+    ///
+    /// It lives HERE, in the segment's own header, rather than in a table keyed
+    /// by class, because the free path already loads this cache line for
+    /// `class_size` and `slot_count`. A per-class static table was implemented
+    /// and MEASURED FIRST: same instruction count (+0.02%) but 4.6% and 34% MORE
+    /// CYCLES across two runs, because it added a dependent load from a cold
+    /// array to a path that was otherwise hitting one hot line. Occupying the
+    /// former `_reserved` word keeps the header at its existing size.
+    slot_reciprocal: u32,
 }
 
 #[repr(transparent)]
@@ -738,7 +758,19 @@ fn segment_slot_view_in_owned_segment(
     }
     let class_size = header.class_size as usize;
     let payload_relative = relative - SEGMENT_HEADER_BYTES;
-    let slot_index = payload_relative / class_size;
+    // Division-free slot derivation. `payload_relative / class_size` reads its
+    // divisor from a segment header at runtime, so the compiler cannot strength-
+    // reduce it and it survives as a 64-bit `div` on EVERY free of a
+    // segment-owned pointer -- the common case -- as well as on realloc and
+    // malloc_usable_size. `slot_index_in_class` replaces it with the class's
+    // compile-time magic reciprocal (a multiply and a shift), derived from the
+    // same SIZE_TABLE that produced `class_size`.
+    //
+    // Using `class_index` rather than `class_size` as the key is exact, not an
+    // approximation: `segment_header` above has already rejected any header
+    // whose `class_size` disagrees with `bin_size(class_index)`, so the two name
+    // the same class by construction.
+    let slot_index = slot_index_from_reciprocal(header.slot_reciprocal, payload_relative);
     if slot_index >= header.slot_count as usize {
         return None;
     }
@@ -833,6 +865,9 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     }
 
     let base = arena_base + (raw_index << SEGMENT_SHIFT);
+    // Derived once per segment, at initialization, off the same class index the
+    // header records; `segment_header` re-validates that index on every read.
+    let slot_reciprocal = slot_index_reciprocal(class_index)?;
     // SAFETY: this segment is uniquely claimed and not yet published.  Its
     // first page is writable within the arena reservation.
     unsafe {
@@ -841,7 +876,7 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
             class_size: class_size as u32,
             slot_count,
             class_index: class_index as u32,
-            _reserved: 0,
+            slot_reciprocal,
         });
     }
     // Make the address-derived size-class header immutable before publication.
