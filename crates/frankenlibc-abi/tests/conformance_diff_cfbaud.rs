@@ -16,17 +16,64 @@
 #![allow(unsafe_code)]
 use std::os::raw::{c_int, c_uint, c_void};
 
-unsafe extern "C" {
-    #[link_name = "cfsetbaud"]
-    fn h_setbaud(t: *mut c_void, b: c_uint) -> c_int;
-    #[link_name = "cfsetibaud"]
-    fn h_setibaud(t: *mut c_void, b: c_uint) -> c_int;
-    #[link_name = "cfsetobaud"]
-    fn h_setobaud(t: *mut c_void, b: c_uint) -> c_int;
-    #[link_name = "cfgetibaud"]
-    fn h_getibaud(t: *const c_void) -> c_uint;
-    #[link_name = "cfgetobaud"]
-    fn h_getobaud(t: *const c_void) -> c_uint;
+// Host arms resolved with `dlsym`, not `#[link_name]`.
+//
+// The previous form abbreviated the Rust names to `h_setbaud` and friends while
+// `#[link_name]` pointed at the real symbols, which fl also exports. That binds
+// like any plain extern — to whichever definition the linker picks — and the
+// abbreviation hides it: nothing in the name `h_setbaud` tells a reader whether
+// the arm is the host's or fl's. This is the renamed-import variant of
+// bd-v0388t; the `assert_ne!` below is what actually settles it.
+type SetBaudFn = unsafe extern "C" fn(*mut c_void, c_uint) -> c_int;
+type GetBaudFn = unsafe extern "C" fn(*const c_void) -> c_uint;
+
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(
+        !raw.is_null(),
+        "dlsym {name:?} — these are glibc extensions; if the host lacks them the \
+         gate must skip rather than compare against nothing"
+    );
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+fn h_setbaud_fn() -> SetBaudFn {
+    // SAFETY: resolved symbol has glibc's documented cfsetbaud signature.
+    unsafe {
+        std::mem::transmute::<_, SetBaudFn>(host_symbol(c"cfsetbaud", fl::cfsetbaud as usize))
+    }
+}
+fn h_setibaud_fn() -> SetBaudFn {
+    // SAFETY: as above, for cfsetibaud.
+    unsafe {
+        std::mem::transmute::<_, SetBaudFn>(host_symbol(c"cfsetibaud", fl::cfsetibaud as usize))
+    }
+}
+fn h_setobaud_fn() -> SetBaudFn {
+    // SAFETY: as above, for cfsetobaud.
+    unsafe {
+        std::mem::transmute::<_, SetBaudFn>(host_symbol(c"cfsetobaud", fl::cfsetobaud as usize))
+    }
+}
+fn h_getibaud_fn() -> GetBaudFn {
+    // SAFETY: as above, for cfgetibaud.
+    unsafe {
+        std::mem::transmute::<_, GetBaudFn>(host_symbol(c"cfgetibaud", fl::cfgetibaud as usize))
+    }
+}
+fn h_getobaud_fn() -> GetBaudFn {
+    // SAFETY: as above, for cfgetobaud.
+    unsafe {
+        std::mem::transmute::<_, GetBaudFn>(host_symbol(c"cfgetobaud", fl::cfgetobaud as usize))
+    }
 }
 use frankenlibc_abi::glibc_internal_abi as fl;
 
@@ -43,11 +90,11 @@ const BAUDS: &[c_uint] = &[
 fn cfsetbaud_sets_both_like_glibc() {
     for &b in BAUDS {
         let (mut ht, mut ft) = (zt(), zt());
-        let hr = unsafe { h_setbaud((&mut ht) as *mut _ as *mut c_void, b) };
+        let hr = unsafe { h_setbaud_fn()((&mut ht) as *mut _ as *mut c_void, b) };
         let fr = unsafe { fl::cfsetbaud((&mut ft) as *mut _ as *mut c_void, b) };
         assert_eq!(hr, fr, "cfsetbaud({b}) return value");
-        let hi = unsafe { h_getibaud((&ht) as *const _ as *const c_void) };
-        let ho = unsafe { h_getobaud((&ht) as *const _ as *const c_void) };
+        let hi = unsafe { h_getibaud_fn()((&ht) as *const _ as *const c_void) };
+        let ho = unsafe { h_getobaud_fn()((&ht) as *const _ as *const c_void) };
         let fi = unsafe { fl::cfgetibaud((&ft) as *const _ as *const c_void) };
         let fo = unsafe { fl::cfgetobaud((&ft) as *const _ as *const c_void) };
         assert_eq!((fi, fo), (hi, ho), "cfsetbaud({b}) -> (ibaud,obaud)");
@@ -69,7 +116,7 @@ fn cfsetibaud_cfsetobaud_independent_like_glibc() {
             h_setibaud((&mut ht) as *mut _ as *mut c_void, b);
             fl::cfsetibaud((&mut ft) as *mut _ as *mut c_void, b);
         }
-        let hi = unsafe { h_getibaud((&ht) as *const _ as *const c_void) };
+        let hi = unsafe { h_getibaud_fn()((&ht) as *const _ as *const c_void) };
         let fi = unsafe { fl::cfgetibaud((&ft) as *const _ as *const c_void) };
         assert_eq!(fi, hi, "cfsetibaud({b}) -> ibaud");
         assert_eq!(fi, b, "cfsetibaud({b}) round-trips");
@@ -80,7 +127,7 @@ fn cfsetibaud_cfsetobaud_independent_like_glibc() {
             h_setobaud((&mut ht) as *mut _ as *mut c_void, b);
             fl::cfsetobaud((&mut ft) as *mut _ as *mut c_void, b);
         }
-        let ho = unsafe { h_getobaud((&ht) as *const _ as *const c_void) };
+        let ho = unsafe { h_getobaud_fn()((&ht) as *const _ as *const c_void) };
         let fo = unsafe { fl::cfgetobaud((&ft) as *const _ as *const c_void) };
         assert_eq!(fo, ho, "cfsetobaud({b}) -> obaud");
         assert_eq!(fo, b, "cfsetobaud({b}) round-trips");
