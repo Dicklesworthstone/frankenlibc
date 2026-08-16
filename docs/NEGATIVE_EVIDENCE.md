@@ -28451,3 +28451,58 @@ What this changes, and what it does not:
   host and on every rch worker blocks that today, so the honest position is that the allocator's
   ~27 ns is currently UNATTRIBUTED, and further "remove a component and time it" experiments should
   not be run until either that constraint changes or someone builds an instruction-count harness.
+
+## 2026-08-16 (BlackThrush) — FIRST ATTRIBUTION of fl's `malloc`+`free` cost, by instruction count: 690 instructions per pair against glibc's 154, and 7.7% of it is SYMBOL RESOLUTION
+
+- **RESULT CLASS: loss/baseline.** A counted-mechanism diagnostic. No timing, no ratio, no lever
+  claimed. It answers the question two wall-clock ablations could not.
+- **Why a counted mechanism.** Both ablations on this vein came back SLOWER, for two different
+  reasons — the fallback insert is a lookup accelerator `free` depends on, and `decide`/`observe`
+  gates the fast path it sits on. Components here are mutually load-bearing, so ablation can only
+  price something inert with respect to control flow, and most of this allocator is not. Instructions
+  retired is additive and per-function, so it does not have that failure mode. `perf` is unavailable
+  (`perf_event_paranoid=4` here and on every rch worker); **callgrind counts in software and needs no
+  privileges**, which is what unblocked this.
+- **Apparatus.** New `crates/frankenlibc-bench/examples/malloc_icount.rs`: 20,000 malloc/free pairs
+  at each of 16/64/256/1024 bytes, arm chosen by argv so the two runs differ ONLY in which allocator
+  the loop calls. glibc is loaded with `dlmopen(LM_ID_NEWLM)`, as `malloc_st_probe` does, so the
+  incumbent arm is a private glibc untouched by fl's interposition. Both arms return
+  `checksum=0x0`, so neither loop was optimised away or miscompiled.
+- **Totals, 80,000 pairs per arm:** fl **55,223,261** instructions, glibc **12,348,819**. That is
+  **690.3 instructions per pair against 154.4 — a 4.47x instruction ratio**, next to a ~7.0x wall
+  ratio. The gap between those two numbers is itself informative: fl retires 4.5x the instructions
+  and takes 7x the time, so roughly a third of the wall gap is NOT instruction count and must be
+  stalls — cache, branch misprediction or atomics — which no instruction-level lever will remove.
+- **Where fl's instructions go** (callgrind_annotate, self cost):
+
+  | share | function |
+  |---|---|
+  | 18.26% | `malloc_abi::segment_free` |
+  | 13.48% | `malloc_abi::allocate_from_local_class` |
+  | 11.61% | `malloc_abi::enter_allocator_reentry_guard` |
+  | 10.58% | `free` |
+  | 9.00% | `malloc` |
+  | 8.55% | `malloc_abi::record_stats` |
+  | **5.42%** | **`host_resolve::symbol_name_matches`** |
+  | 5.36% | `malloc_abi::segment_allocate` |
+  | 3.91% | `runtime_policy::mode` |
+  | 3.19% | `size_class::bin_index` |
+  | 3.19% | `runtime_policy::entrypoint_scope` |
+  | **2.31%** | **`host_resolve::resolve_symbol_from_data`** |
+
+- **THE FINDING: 7.73% of fl's malloc/free instruction budget is HOST SYMBOL RESOLUTION**, split
+  across `symbol_name_matches` (5.42%) and `resolve_symbol_from_data` (2.31%). That is
+  string-comparison work looking up host symbols, and it is not allocator work at all. At ~37
+  instructions per pair for `symbol_name_matches` alone it is being reached from the hot path rather
+  than only at startup — `bootstrap_host_symbols` is separately visible at 0.21%, so the bulk is NOT
+  one-time initialisation.
+- **Why this is a better lever candidate than anything ablation produced.** Symbol resolution is
+  memoisable by construction: the answer for a given symbol cannot change during a run, so caching it
+  removes work WITHOUT removing a behaviour another path depends on. That is exactly the property the
+  fallback insert and the `decide`/`observe` pair lacked, and it is why both of those came back
+  slower. It should still be measured rather than assumed — the honest expectation is bounded by
+  Amdahl at ~7.7% of instructions, and instructions are only about two thirds of the wall gap.
+- **Caveat on the method, stated because it limits what may be quoted from this row.** Callgrind
+  counts instructions, not cycles; a memory-bound path retires few instructions slowly. This row
+  attributes INSTRUCTIONS and must not be read as attributing TIME. The ~4.47x instruction ratio
+  against a ~7.0x wall ratio is direct evidence that the two differ here.
