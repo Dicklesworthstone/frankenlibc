@@ -29431,3 +29431,51 @@ What this changes, and what it does not:
   precondition first.** It is usually cheaper than the effect, and it is often measurable under
   conditions that block the effect measurement entirely. I had a real finding available on a loaded
   host and instead scheduled work for a quiet one.
+
+## 2026-08-16 (this session) — REFUTED: a per-class static table of magic reciprocals costs MORE than the `div` it removes; the header-resident form ships with NO speedup claimed
+
+- **RESULT CLASS: one refuted mechanism, one structural change with no effect claimed.** The
+  primitive remains a LOSS at ~6.6x fl/glibc. Nothing here is a campaign win.
+- **THE LEVER, chosen off a profile and a ledger preflight.** `segment_slot_view_in_owned_segment`
+  computed `payload_offset / class_size` with `class_size` loaded from a segment header at runtime,
+  so it survived as a 64-bit `div` on every free of a segment-owned pointer. The three larger frames
+  on that path -- `enter_allocator_reentry_guard`, `runtime_policy::mode`, `entrypoint_scope` -- are
+  already recorded in this file as REFUTED, so they were not touched.
+- **REFUTED MECHANISM: a `static [u64; NUM_SIZE_CLASSES]` of round-up reciprocals, keyed by class
+  index.** Correct (proven exhaustively at every quotient transition) but SLOWER:
+
+  | arm | instructions | cycles | IPC |
+  |---|---|---|---|
+  | base | 48,508,568,752 (+-0.00%) | 14,446,362,253 (+-1.50%) | 3.36 |
+  | table | 48,518,828,759 (+-0.01%) | 15,107,182,337 (+-3.96%) | 3.21 |
+  | base | - | 14,024,798,243 (+-0.21%) | 3.46 |
+  | table | - | 18,821,658,516 (+-3.92%) | 2.58 |
+
+  +0.02% instructions and +4.6% / +34% cycles. **MECHANISM: the table adds a DEPENDENT LOAD from a
+  cold array to a path that was otherwise hitting one hot cache line, and that load costs more than
+  the `div` it removes.** Generalisable: a `div` is ONE instruction with long latency, so
+  instruction count cannot see this class of lever in either direction -- measure cycles.
+- **WHAT SHIPPED INSTEAD (`1637ed533`): the reciprocal in the segment header**, occupying the former
+  `_reserved` word, so it arrives on the line the free path already loads for `class_size`. Dividing
+  both operands by the 16-byte granule first shrinks the magic number into a `u32` so the header does
+  not grow.
+
+  | arm | load | cpu8 MHz | instructions | cycles |
+  |---|---|---|---|---|
+  | base | 27.76 | 4056 | 48,509,824,683 | 14,256,859,077 (+-1.56%) |
+  | header | 27.07 | 3359 | 48,412,046,329 | 14,906,148,858 (+-7.72%) |
+  | base | 25.52 | 3530 | 48,507,922,560 | 13,791,896,397 (+-3.83%) |
+  | header | 24.29 | 4017 | 48,411,781,713 | 13,209,100,928 (+-0.34%) |
+
+  **INSTRUCTIONS -0.200% (-96.96M), reproducible to +-0.01%. CYCLES UNRESOLVED** -- worse in one
+  pair, better in the other, noise bands to +-7.72% at load 24-28. **NO SPEEDUP CLAIMED.**
+- **THE WALL-CLOCK APPARATUS COULD NOT HAVE ANSWERED THIS, and that is worth recording.** The same
+  binary produced **29.87 ns and 44.10 ns** per malloc+free pair across invocations while each run's
+  own A/A nulls read 1.0004 and its CI was tight -- i.e. the harness certified both as ADMISSIBLE.
+  Between-invocation variance for `malloc_st_probe` exceeds its within-invocation null bound by more
+  than an order of magnitude, so a few-ns effect is not resolvable with it in a loaded window. Use
+  `perf stat` instruction counts (deterministic to +-0.00%) for instruction-shaped changes and cycles
+  for latency-shaped ones, and quote the loadavg and clock per arm.
+- **Correctness:** exactness proven against real division at every quotient transition for all 32
+  classes (500k+ points); `SEGMENT_SIZE` tied to the derivation range by a compile-time assert;
+  malloc_abi_test 73/1 ignored, hardened_mode_safety_test 15, conformance_diff_malloc_stats_binning 5.
