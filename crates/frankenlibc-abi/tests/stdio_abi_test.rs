@@ -6478,3 +6478,122 @@ fn host_delegation_refuses_a_synthesized_sentinel_but_allows_a_foreign_stream() 
     unsafe { libc::fclose(foreign) };
     let _ = fs::remove_file(&path);
 }
+
+/// bd-f8gdsy companion: the same write / seek / read round trip, but seeking to
+/// a NON-ZERO offset, so a fix that only special-cases `SEEK_SET 0` fails here.
+///
+/// Cookie writes are buffered, so the seek has to flush them to the cookie
+/// before repositioning; otherwise the read observes an empty cookie and
+/// returns 0 while the final contents still look right, because `fclose`
+/// flushes at the end.
+#[test]
+fn funopen_reads_back_from_a_nonzero_offset_after_write() {
+    struct Cookie {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    unsafe extern "C" fn read_fn(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
+        // SAFETY: cookie is the Box we handed to funopen and is live for the call.
+        let state = unsafe { &mut *(cookie as *mut Cookie) };
+        let want = (n as usize).min(state.data.len().saturating_sub(state.pos));
+        // SAFETY: buf has room for at least `n` bytes per the BSD contract.
+        unsafe {
+            std::ptr::copy_nonoverlapping(state.data[state.pos..].as_ptr(), buf.cast::<u8>(), want)
+        };
+        state.pos += want;
+        want as c_int
+    }
+
+    unsafe extern "C" fn write_fn(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+        // SAFETY: as above.
+        let state = unsafe { &mut *(cookie as *mut Cookie) };
+        // SAFETY: buf holds `n` readable bytes per the BSD contract.
+        let bytes = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), n as usize) };
+        if state.pos > state.data.len() {
+            state.data.resize(state.pos, 0);
+        }
+        state.data.truncate(state.pos);
+        state.data.extend_from_slice(bytes);
+        state.pos = state.data.len();
+        n
+    }
+
+    unsafe extern "C" fn seek_fn(
+        cookie: *mut c_void,
+        off: libc::off_t,
+        whence: c_int,
+    ) -> libc::off_t {
+        // SAFETY: as above.
+        let state = unsafe { &mut *(cookie as *mut Cookie) };
+        let base = match whence {
+            libc::SEEK_SET => 0i64,
+            libc::SEEK_CUR => state.pos as i64,
+            libc::SEEK_END => state.data.len() as i64,
+            _ => return -1,
+        };
+        let target = base + off as i64;
+        if target < 0 {
+            return -1;
+        }
+        state.pos = target as usize;
+        target as libc::off_t
+    }
+
+    unsafe extern "C" fn close_fn(_cookie: *mut c_void) -> c_int {
+        0
+    }
+
+    let state = Box::into_raw(Box::new(Cookie {
+        data: Vec::new(),
+        pos: 0,
+    }));
+    // SAFETY: the four callbacks match the BSD funopen signatures and `state`
+    // outlives the stream (reclaimed below).
+    let stream = unsafe {
+        funopen(
+            state.cast::<c_void>(),
+            Some(read_fn),
+            Some(write_fn),
+            Some(seek_fn),
+            Some(close_fn),
+        )
+    };
+    assert!(!stream.is_null(), "funopen should build a stream");
+
+    let payload = b"0123456789";
+    let wrote = unsafe { fwrite(payload.as_ptr() as *const c_void, 1, payload.len(), stream) };
+    assert_eq!(
+        wrote,
+        payload.len(),
+        "the cookie write callback should accept all bytes"
+    );
+
+    // Seek to 4, NOT 0: the flush must happen for any target, not just rewind.
+    assert_eq!(
+        unsafe { fseek(stream, 4, libc::SEEK_SET) },
+        0,
+        "fseek should succeed"
+    );
+
+    let mut out = [0u8; 6];
+    let read = unsafe { fread(out.as_mut_ptr() as *mut c_void, 1, out.len(), stream) };
+    assert_eq!(
+        read,
+        out.len(),
+        "the pending write must have been flushed to the cookie before the seek, \
+         so the read returns the tail of the payload"
+    );
+    assert_eq!(
+        &out, b"456789",
+        "reading from offset 4 should yield the tail"
+    );
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    // SAFETY: the stream is closed, so nothing else references the cookie.
+    let recovered = unsafe { Box::from_raw(state) };
+    assert_eq!(
+        recovered.data, payload,
+        "the cookie should hold the full payload"
+    );
+}

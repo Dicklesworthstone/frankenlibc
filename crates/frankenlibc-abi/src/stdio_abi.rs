@@ -4209,14 +4209,33 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
             return -1;
         }
 
-        let mut cookie_off = offset;
-        let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, whence) };
-
         let Some(cell) = stream_cell(id) else {
             unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return -1;
         };
+
+        // Pending writes MUST reach the cookie before the seek (bd-f8gdsy).
+        // Cookie writes are buffered by `cookie_buffer_write`, so without this
+        // the caller's write callback has not run yet: a write / seek / read
+        // round trip seeks a cookie that is still empty and the read returns 0.
+        // It looked correct at the end only because `fclose` flushes, so the
+        // final contents matched while every intermediate read saw nothing.
+        // glibc flushes a stream's output before repositioning it, and C
+        // requires exactly this seek between a write and a read.
+        {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
+            if !unsafe { flush_cookie_stream(id, s) } {
+                unsafe { set_abi_errno(errno::EIO) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return -1;
+            }
+        }
+
+        let mut cookie_off = offset;
+        let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, whence) };
+
         let mut s_guard = cell.lock();
         let s = &mut *s_guard;
 
