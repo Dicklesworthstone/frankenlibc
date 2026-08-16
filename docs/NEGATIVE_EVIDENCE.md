@@ -28073,3 +28073,58 @@ What this changes, and what it does not:
   `asprintf`/`getline`/`strdup`-shaped APIs allocate by contract. Those are the surfaces where a
   ~133 ns per-pair allocator overhead would be visible, and none of them is currently measured by the
   `snprintf` families. That is a gap in the bench, not a claim about the code.
+
+## 2026-08-16 (BlackThrush) — the fused superlinear residual is very likely the 8-SEGMENT INLINE SPILL, which partially reinstates the allocator link for long formats only
+
+- **RESULT CLASS: loss/baseline.** A hypothesis derived from banked data plus a source constant, with
+  its falsifier written before any measurement. Not measured; `perf_event_paranoid=4` on both the rch
+  workers and this host, so no profile was available to check it directly.
+- **The residual.** The conversion ladder showed fl SUPERLINEAR in conversion count while glibc is
+  flat: fl's per-step increments are 50.966 ns (n=2 to 3), 60.643 (3 to 4) and 67.733 per conversion
+  (4 to 6); glibc's are 18.440, 18.245, 19.485. glibc pays the same for its fifth conversion as its
+  second. fl pays more (bd-mh2ev3).
+- **The constant.** `INLINE_SEGMENTS = 8` (printf.rs:665). `FormatSegments` holds an inline array of
+  eight segments and `push` spills to a heap `Vec` past that.
+- **The ladder's segment counts straddle it exactly.** A rung of n `%s` conversions separated by
+  single spaces parses to n specs plus n-1 literals:
+
+  | rung | segments | storage |
+  |---|---|---|
+  | ladder_2s | 3 | inline |
+  | ladder_3s | 5 | inline |
+  | ladder_4s | 7 | inline |
+  | ladder_6s | **11** | **heap** |
+
+  The 4-to-6 step is the ONLY one that crosses the boundary, and it is the largest increment. That is
+  the signature the spill would produce, and it was not designed for — the ladder was built to
+  measure conversion count, and it happens to bracket the spill.
+- **Magnitude is consistent, on the arithmetic available.** One spill costs an allocation plus its
+  free. fl's own measured `malloc`+`free` is ~142 ns against glibc's ~8.55 ns (2026-07-02). Spread
+  over six conversions that is ~24 ns per conversion of extra fl-side cost; the observed increment
+  rises ~7 ns per conversion across that step. Same order, and the excess would be shared with
+  whatever else the longer format costs. This is an order-of-magnitude check, not a fit.
+- **This REFINES, and does not overturn, the earlier finding that allocator pressure does not explain
+  fl's printf ratios.** The three shipped fused shapes stay INSIDE the inline array —
+  `"%s[%d]: %s"` is 5 segments, `"%s %s %d %lu"` and `"%s=%s %s=%s"` are 7 each — so none of them
+  allocates, and the ladder's own 2/3/4-conversion rungs do not either. The allocator link applies to
+  formats with MORE THAN 8 SEGMENTS, which in practice means roughly five or more conversions. Both
+  statements hold: allocation does not explain the fused family, and it very likely does explain the
+  superlinear tail.
+- **THE LEVER, and the reason it is not being landed blind.** Raising `INLINE_SEGMENTS` (or pooling
+  the spill `Vec` the way the output buffer is already pooled) would remove the allocation. But
+  raising it also enlarges the per-call array that `FormatSegments::new` initialises on EVERY printf
+  call — 8 x 64 bytes today, 16 x 64 bytes at double — and this ledger already records a change of
+  exactly that kind going the wrong way: the `FormatSegment` shrink cut the struct 37.5% and measured
+  7-9% SLOWER. Enlarging it is the same bet in reverse and deserves the same suspicion.
+- **PRE-REGISTERED FALSIFIER, so the result cannot be fitted afterwards.** Raise `INLINE_SEGMENTS`
+  from 8 to 16 and re-run the ladder unchanged:
+  - If the hypothesis is right, `ladder_6s` loses its excess and fl's per-step increments flatten
+    toward glibc's shape, while `ladder_2s`, `ladder_3s` and `ladder_4s` — already inline — move by no
+    more than their A/A nulls.
+  - If `ladder_6s` does not improve, the superlinearity is NOT the spill and this hypothesis is dead
+    regardless of how well the segment counts line up.
+  - If the already-inline rungs get SLOWER, the per-call initialisation cost of the larger array
+    outweighs the saved allocation, which is the `FormatSegment` result repeating, and the change
+    should be reverted rather than tuned.
+  A pooled spill buffer avoids the third risk entirely and is the better first attempt if the second
+  check passes.
