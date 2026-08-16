@@ -7912,7 +7912,22 @@ pub unsafe extern "C" fn vtimes(current: *mut c_void, child: *mut c_void) -> c_i
 // the GNU syntax, e.g. bare `+`/`?` are quantifiers) — NOT POSIX regcomp BRE
 // where `+` is literal — so they match glibc, e.g. re_comp("[0-9]+");
 // re_exec("abc123") == 1. The 256-byte buffer holds a re_pattern_buffer.
-static RE_COMPILED_BUF: std::sync::Mutex<[u8; 256]> = std::sync::Mutex::new([0u8; 256]);
+//
+// ALIGNMENT IS LOAD-BEARING here, not decoration. The bytes below are handed to
+// `re_compile_pattern`, which reinterprets them as a `RegexBufferLayout` — a
+// struct of pointers and longs needing 8-byte alignment — and `re_comp` itself
+// reads the first field as a `usize`. A bare `[u8; 256]` has alignment 1, and
+// `Mutex<T>` is free to place an align-1 payload at ANY offset after its own
+// state word, including an odd one. That is what happened: this gate aborted
+// with `misaligned pointer dereference: address must be a multiple of 0x8 but
+// is 0x…869` — an ODD address, which no 4-aligned static could produce — before
+// its first assertion ran. Wrapping the array in an `align(8)` newtype pins the
+// payload's alignment regardless of how the Mutex lays itself out.
+#[repr(align(8))]
+struct ReCompiledBuf([u8; 256]);
+
+static RE_COMPILED_BUF: std::sync::Mutex<ReCompiledBuf> =
+    std::sync::Mutex::new(ReCompiledBuf([0u8; 256]));
 
 /// Translate a V7/BSD re_comp pattern (default GNU syntax: bare `+`/`?` are
 /// quantifiers) into the equivalent POSIX BRE that fl's engine compiles: a bare
@@ -8019,7 +8034,7 @@ fn v7_pattern_to_bre(pat: &[u8]) -> Vec<u8> {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_comp(pattern: *const c_char) -> *mut c_char {
     let mut buf = RE_COMPILED_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    let buf_ptr = buf.as_mut_ptr() as *mut c_void;
+    let buf_ptr = buf.0.as_mut_ptr() as *mut c_void;
     if pattern.is_null() {
         // GNU: reuse the previous pattern. The re_pattern_buffer's first field
         // is the compiled-handle pointer; a zero means nothing was compiled.
@@ -8046,7 +8061,7 @@ pub unsafe extern "C" fn re_exec(string: *const c_char) -> c_int {
         return -1;
     }
     let buf = RE_COMPILED_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    let buf_ptr = buf.as_ptr() as *const c_void;
+    let buf_ptr = buf.0.as_ptr() as *const c_void;
     let len = unsafe { std::ffi::CStr::from_ptr(string).to_bytes().len() } as c_int;
     // re_search returns the match offset (>=0), -1 (no match) or -2 (error).
     let r =
