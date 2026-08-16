@@ -145,6 +145,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", action="store_true", help="counts only")
     parser.add_argument("--symbols", action="store_true", help="flat symbol list")
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help="only the REVIEW gates: files that resolve SOMETHING at runtime and "
+        "still declare an fl-exported symbol at link time",
+    )
     args = parser.parse_args()
 
     exports = fl_exported_symbols()
@@ -177,6 +183,20 @@ def main() -> int:
           f"— link-time arm on an fl-exported symbol, NO dlsym anywhere in the file")
     print(f"REVIEW   {len(mixed)} gates — link-time arm on an fl-exported symbol, "
           f"but the file does resolve something at runtime; check which arm is which")
+
+    if args.review:
+        # The REVIEW set deserves its own view because it is the easiest to skip.
+        # A file with no dlsym at least LOOKS unconverted. A file with some dlsym
+        # signals diligence and invites the reviewer to stop reading -- while a
+        # different arm in the same file is still link-bound. That is the same
+        # trap as a `host_` prefix, one level up, and it is the category a scan
+        # that skips any file containing "dlsym" cannot see at all.
+        for path, at_risk, _ in mixed:
+            print(f"\n{path.name}")
+            for symbol, rust in at_risk:
+                disguise = "" if symbol == rust else f"   (declared as `{rust}`)"
+                print(f"    {symbol}{disguise}")
+        return 0
 
     if args.summary:
         return 0
