@@ -18,18 +18,53 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-unsafe extern "C" {
-    /// Host glibc `wctomb` — not exposed by the `libc` crate surface, so
-    /// we link it directly against libc.so.6.
-    fn wctomb(s: *mut c_char, wchar: libc::wchar_t) -> c_int;
-    /// Host glibc `mbrtowc` — also absent from the `libc` crate surface.
-    #[link_name = "mbrtowc"]
-    fn host_mbrtowc(
-        pwc: *mut libc::wchar_t,
-        s: *const c_char,
-        n: libc::size_t,
-        ps: *mut libc::mbstate_t,
-    ) -> libc::size_t;
+// Host arms resolved with `dlsym`. The comment these replace said the symbols
+// were "linked directly against libc.so.6" — that is what the declaration
+// intends, but not what it guarantees: fl exports both `wctomb` and `mbrtowc`
+// into this same test binary, so a link-time reference binds to whichever
+// definition the linker picks (bd-v0388t). `mbrtowc` additionally wore the
+// `host_` prefix via `#[link_name]`, which is the variant that reads as
+// host-resolved while behaving like a plain extern.
+type WctombFn = unsafe extern "C" fn(*mut c_char, libc::wchar_t) -> c_int;
+type MbrtowcFn = unsafe extern "C" fn(
+    *mut libc::wchar_t,
+    *const c_char,
+    libc::size_t,
+    *mut libc::mbstate_t,
+) -> libc::size_t;
+
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+fn host_wctomb() -> WctombFn {
+    // SAFETY: the resolved symbol has C's documented wctomb signature.
+    unsafe {
+        std::mem::transmute::<_, WctombFn>(host_symbol(
+            c"wctomb",
+            frankenlibc_abi::wchar_abi::wctomb as usize,
+        ))
+    }
+}
+
+fn host_mbrtowc_fn() -> MbrtowcFn {
+    // SAFETY: the resolved symbol has C's documented mbrtowc signature.
+    unsafe {
+        std::mem::transmute::<_, MbrtowcFn>(host_symbol(
+            c"mbrtowc",
+            frankenlibc_abi::wchar_abi::mbrtowc as usize,
+        ))
+    }
 }
 
 /// One mbrtowc divergence record for human-readable failure output.
@@ -59,7 +94,7 @@ fn diff_mbrtowc(label: &str, bytes: &[u8], n: usize, out: &mut Vec<Div>) {
     let mut g_wc: libc::wchar_t = 0;
     let mut g_state: libc::mbstate_t = unsafe { std::mem::zeroed() };
     let g_ret =
-        unsafe { host_mbrtowc(&mut g_wc, bytes.as_ptr() as *const c_char, n, &mut g_state) };
+        unsafe { host_mbrtowc_fn()(&mut g_wc, bytes.as_ptr() as *const c_char, n, &mut g_state) };
 
     // frankenlibc.
     let mut f_wc: libc::wchar_t = 0;
@@ -151,7 +186,7 @@ fn mbrtowc_matches_glibc_rfc2279() {
 fn diff_wctomb(label: &str, cp: u32) -> Option<String> {
     // Host glibc — provide MB_LEN_MAX scratch.
     let mut g_buf = [0i8; 16];
-    let g_ret = unsafe { wctomb(g_buf.as_mut_ptr() as *mut c_char, cp as libc::wchar_t) };
+    let g_ret = unsafe { host_wctomb()(g_buf.as_mut_ptr() as *mut c_char, cp as libc::wchar_t) };
 
     // frankenlibc.
     let mut f_buf = [0u8; 16];

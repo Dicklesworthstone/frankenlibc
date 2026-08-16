@@ -16,11 +16,43 @@ use std::sync::{Mutex, MutexGuard};
 use frankenlibc_abi::resolv_abi as fl;
 
 #[link(name = "resolv")]
-unsafe extern "C" {
-    #[link_name = "__loc_aton"]
-    fn loc_aton(ascii: *const c_char, binary: *mut u8) -> c_int;
-    #[link_name = "__loc_ntoa"]
-    fn loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *const c_char;
+// Host arms resolved with `dlsym`, not `#[link_name]`.
+//
+// The previous form declared them as `#[link_name = "__loc_aton"] fn loc_aton`,
+// which binds like any other extern declaration — to whichever definition the
+// linker picks — while fl exports `__loc_aton`/`__loc_ntoa` into this same test
+// binary. The renamed-import idiom is the deceptive variant of bd-v0388t: the
+// Rust-side name differs from the symbol, so the file reads as if it were doing
+// something host-specific when it is not.
+type LocAtonFn = unsafe extern "C" fn(*const c_char, *mut u8) -> c_int;
+type LocNtoaFn = unsafe extern "C" fn(*const u8, *mut c_char) -> *const c_char;
+
+fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
+    // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "dlopen libc.so.6");
+    // SAFETY: handle came from dlopen; name is NUL-terminated.
+    let raw = unsafe { libc::dlsym(handle, name.as_ptr()) };
+    assert!(!raw.is_null(), "dlsym {name:?}");
+    assert_ne!(
+        raw as usize, fl_addr,
+        "the resolved oracle IS fl's {name:?} — this gate would compare fl to itself"
+    );
+    raw
+}
+
+fn host_loc_aton() -> LocAtonFn {
+    // SAFETY: the resolved symbol has glibc's documented __loc_aton signature.
+    unsafe {
+        std::mem::transmute::<_, LocAtonFn>(host_symbol(c"__loc_aton", fl::__loc_aton as usize))
+    }
+}
+
+fn host_loc_ntoa() -> LocNtoaFn {
+    // SAFETY: the resolved symbol has glibc's documented __loc_ntoa signature.
+    unsafe {
+        std::mem::transmute::<_, LocNtoaFn>(host_symbol(c"__loc_ntoa", fl::__loc_ntoa as usize))
+    }
 }
 
 fn loc_codec_guard() -> MutexGuard<'static, ()> {
@@ -33,7 +65,7 @@ fn ntoa_both(binary: &[u8; 16]) -> (String, String) {
     let mut fl_buf = [0u8; 96];
     let mut lc_buf = [0u8; 96];
     let fl_p = unsafe { fl::__loc_ntoa(binary.as_ptr(), fl_buf.as_mut_ptr() as *mut c_char) };
-    let lc_p = unsafe { loc_ntoa(binary.as_ptr(), lc_buf.as_mut_ptr() as *mut c_char) };
+    let lc_p = unsafe { host_loc_ntoa()(binary.as_ptr(), lc_buf.as_mut_ptr() as *mut c_char) };
     assert!(!fl_p.is_null(), "fl __loc_ntoa returned NULL");
     assert!(!lc_p.is_null(), "lc loc_ntoa returned NULL");
     let fl_s = unsafe { CStr::from_ptr(fl_p) }
@@ -51,7 +83,7 @@ fn aton_both(text: &str) -> (Option<[u8; 16]>, Option<[u8; 16]>) {
     let mut fl_b = [0u8; 16];
     let mut lc_b = [0u8; 16];
     let fl_r = unsafe { fl::__loc_aton(cs.as_ptr(), fl_b.as_mut_ptr()) };
-    let lc_r = unsafe { loc_aton(cs.as_ptr(), lc_b.as_mut_ptr()) };
+    let lc_r = unsafe { host_loc_aton()(cs.as_ptr(), lc_b.as_mut_ptr()) };
     // glibc returns 16 (RR size) on success; both impls now match.
     let fl_o = if fl_r > 0 { Some(fl_b) } else { None };
     let lc_o = if lc_r > 0 { Some(lc_b) } else { None };
