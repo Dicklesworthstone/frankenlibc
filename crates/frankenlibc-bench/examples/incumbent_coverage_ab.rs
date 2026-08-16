@@ -5580,21 +5580,21 @@ fn run_snprintf_float(config: &Config) {
     let threads_pre = observed_threads();
 
     let results = [
-        measure_snprintf_case(
+        measure_case(
             "fixed_2dp",
             "\"%.2f\" -- money/metric shape, the highest-traffic float format",
             host,
             fl,
             time_float_2f_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "fixed_4dp",
             "\"%.4f\" -- mid precision",
             host,
             fl,
             time_float_4f_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "default_6dp",
             "bare \"%f\" -- C's default precision 6",
             host,
@@ -5731,84 +5731,84 @@ fn run_snprintf_fused(config: &Config) {
     let threads_pre = observed_threads();
 
     let results = [
-        measure_snprintf_case(
+        measure_case(
             "syslog_line",
             "whole-job: \"%s[%d]: %s\" -- the canonical syslog shape",
             host,
             fl,
             time_fused_syslog_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "http_log",
             "whole-job: \"%s %s %d %lu\" -- access-log shape",
             host,
             fl,
             time_fused_http_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "kv_join",
             "whole-job: \"%s=%s %s=%s\" -- structured key/value shape",
             host,
             fl,
             time_fused_kv_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "ladder_2s",
             "conversion ladder n=2: \"%s %s\" -- type held constant (bd-ntb9fq)",
             host,
             fl,
             time_fused_ladder2_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "ladder_3s",
             "conversion ladder n=3: \"%s %s %s\"",
             host,
             fl,
             time_fused_ladder3_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "ladder_4s",
             "conversion ladder n=4: \"%s %s %s %s\"",
             host,
             fl,
             time_fused_ladder4_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "ladder_5s",
             "conversion ladder n=5: 9 segments — first rung PAST the 8-segment inline array (bd-mh2ev3)",
             host,
             fl,
             time_fused_ladder5_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "ladder_6s",
             "conversion ladder n=6: \"%s %s %s %s %s %s\"",
             host,
             fl,
             time_fused_ladder6_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "mix4_s",
             "composition probe, n=4 all %s -- baseline for the mix4 set (bd-ntb9fq)",
             host,
             fl,
             time_fused_mix4_s_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "mix4_d",
             "composition probe, n=4 all %d",
             host,
             fl,
             time_fused_mix4_d_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "mix4_sd",
             "composition probe, n=4 alternating %s/%d",
             host,
             fl,
             time_fused_mix4_sd_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "mix4_slu",
             "composition probe, n=4 http_log's set \"%s %s %d %lu\"",
             host,
@@ -6138,12 +6138,17 @@ fn time_snprintf_c_batch(function: SnprintfFn) -> f64 {
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
-fn measure_snprintf_case(
+/// Generic over the ARM TYPE so the stream families reuse this scaffolding
+/// verbatim. The body touches `host`/`fl` only by handing them to `time_batch`,
+/// so widening the type changes nothing about the schedule, the A/A nulls or the
+/// bootstrap CIs -- which is the point: a second copy of this function would be
+/// a second chance to get the null protocol subtly wrong.
+fn measure_case<A: Copy>(
     label: &'static str,
     note: &'static str,
-    host: SnprintfFn,
-    fl: SnprintfFn,
-    time_batch: fn(SnprintfFn) -> f64,
+    host: A,
+    fl: A,
+    time_batch: fn(A) -> f64,
 ) -> CaseResult {
     let retained = SAMPLES - WARMUPS;
     let mut fl_effect = Vec::with_capacity(retained);
@@ -6951,35 +6956,35 @@ fn run_snprintf(config: &Config) {
     );
 
     let results = [
-        measure_snprintf_case(
+        measure_case(
             "unsigned_decimal_bare",
             "historical bd-gldi10 headline: bare \"%u\" over eight decimal widths",
             host,
             fl,
             time_snprintf_u_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "pointer_bare",
             "historical pointer-formatter claim: bare \"%p\" over eight magnitudes",
             host,
             fl,
             time_snprintf_p_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "character_bare",
             "historical character claim: bare \"%c\" over eight byte values",
             host,
             fl,
             time_snprintf_c_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "signed_decimal_bare",
             "generality probe: bare \"%d\", which has no exact fast path",
             host,
             fl,
             time_snprintf_d_batch,
         ),
-        measure_snprintf_case(
+        measure_case(
             "string_bare",
             "scorecard's \"exact string snprintf\" sentence: bare \"%s\"",
             host,
