@@ -18,9 +18,39 @@ use frankenlibc_abi::unistd_abi::{scalb as fl_scalb, scalbf as fl_scalbf};
 
 const FE_INVALID: i32 = 0x01;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type Scalb64 = unsafe extern "C" fn(f64, f64) -> f64;
+type Scalb32 = unsafe extern "C" fn(f32, f32) -> f32;
+
+/// Host glibc's `scalb`, resolved by `dlsym` rather than declared at link time
+/// (bd-v0388t).
+///
+/// This gate is one of the ones a hollow oracle would hurt most. Its entire
+/// purpose is catching a defect fl ACTUALLY HAD: `x * 2.0.powf(exp)` returned a
+/// bogus finite value for a non-integer exponent (`scalb(3, 2.5)` gave 16.97
+/// instead of NaN) and never raised FE_INVALID. If the "glibc" arm were fl, the
+/// gate would compare the bug against itself and pass — and it is a math symbol,
+/// which is the one family with a confirmed link-time collapse (`fma`).
+///
+/// `host_fn` also asserts the resolved address is not fl's own export, so a
+/// collapse fails loudly instead of silently.
+fn glibc_scalb() -> Scalb64 {
+    // SAFETY: `Scalb64` matches SVID's documented scalb signature.
+    unsafe {
+        dlsym_oracle::host_fn(c"scalb", frankenlibc_abi::unistd_abi::scalb as *const ())
+    }
+}
+
+fn glibc_scalbf() -> Scalb32 {
+    // SAFETY: `Scalb32` matches SVID's documented scalbf signature.
+    unsafe {
+        dlsym_oracle::host_fn(c"scalbf", frankenlibc_abi::unistd_abi::scalbf as *const ())
+    }
+}
+
 unsafe extern "C" {
-    fn scalb(x: f64, fn_: f64) -> f64;
-    fn scalbf(x: f32, fn_: f32) -> f32;
     fn feclearexcept(e: i32) -> i32;
     fn fetestexcept(e: i32) -> i32;
     #[link_name = "__errno_location"]
@@ -53,6 +83,7 @@ fn read_fl_errno() -> i32 {
 
 /// (result bits, INVALID raised, errno) for a host call.
 fn host64(x: f64, e: f64) -> Obs64 {
+    let scalb = glibc_scalb();
     unsafe {
         clear_host_errno();
         feclearexcept(FE_INVALID);
@@ -73,6 +104,7 @@ fn fl64(x: f64, e: f64) -> Obs64 {
     }
 }
 fn host32(x: f32, e: f32) -> Obs32 {
+    let scalbf = glibc_scalbf();
     unsafe {
         clear_host_errno();
         feclearexcept(FE_INVALID);
