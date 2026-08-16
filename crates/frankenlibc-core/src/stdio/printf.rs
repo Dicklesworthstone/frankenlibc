@@ -36,9 +36,16 @@ pub struct FormatFlags {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Width {
     None,
-    Fixed(usize),
+    // 32-bit payloads: C's width, precision and positional argument indices are
+    // all `int`, so `u32` cannot lose a representable value, and it takes
+    // `FormatSpec` from ~64 bytes to ~40 and `FormatSegment` from ~72 to ~48.
+    // That matters because `FormatSegments::push` copies a whole `FormatSegment`
+    // per segment and `FormatSegments::new` initialises an 8-slot inline array
+    // on every printf call — 14.63% of self time on a three-segment format
+    // (bd-5pagbr). Accessors below still hand out `usize`.
+    Fixed(u32),
     FromArg, // '*'
-    FromArgPosition(usize),
+    FromArgPosition(u32),
 }
 
 impl Width {
@@ -48,7 +55,7 @@ impl Width {
 
     pub fn position(self) -> Option<usize> {
         match self {
-            Self::FromArgPosition(position) => Some(position),
+            Self::FromArgPosition(position) => Some(position as usize),
             _ => None,
         }
     }
@@ -58,9 +65,10 @@ impl Width {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Precision {
     None,
-    Fixed(usize),
+    /// 32-bit payload; see [`Width`].
+    Fixed(u32),
     FromArg, // '.*'
-    FromArgPosition(usize),
+    FromArgPosition(u32),
 }
 
 impl Precision {
@@ -70,7 +78,7 @@ impl Precision {
 
     pub fn position(self) -> Option<usize> {
         match self {
-            Self::FromArgPosition(position) => Some(position),
+            Self::FromArgPosition(position) => Some(position as usize),
             _ => None,
         }
     }
@@ -326,7 +334,8 @@ pub struct FormatSpec {
     pub precision: Precision,
     pub length: LengthMod,
     pub conversion: u8,
-    pub value_position: Option<usize>,
+    /// 32-bit for the same size reason as [`Width`] (bd-5pagbr).
+    pub value_position: Option<u32>,
     route: Option<PrintfRoute>,
 }
 
@@ -337,7 +346,7 @@ impl FormatSpec {
         precision: Precision,
         length: LengthMod,
         conversion: u8,
-        value_position: Option<usize>,
+        value_position: Option<u32>,
     ) -> Self {
         let route = if conversion == b'm' {
             None
@@ -401,7 +410,7 @@ impl FormatSpec {
         //
         // Identical result: `a.zip(b)` is `Some((a?, b?))`, only lazier.
         let position = self.value_position?;
-        Some((position, self.value_arg_kind()?))
+        Some((position as usize, self.value_arg_kind()?))
     }
 
     pub fn value_arg_is_float(&self) -> bool {
@@ -915,7 +924,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     let len = fmt.len();
     let value_position = if let Some((position, consumed)) = parse_positional_index(fmt) {
         pos += consumed;
-        Some(position)
+        Some(position as u32)
     } else {
         None
     };
@@ -951,7 +960,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
         pos += 1;
         if let Some((position, consumed)) = parse_positional_index(&fmt[pos..]) {
             pos += consumed;
-            Width::FromArgPosition(position)
+            Width::FromArgPosition(position as u32)
         } else {
             Width::FromArg
         }
@@ -961,7 +970,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
             pos += 1;
         }
         if pos > start {
-            Width::Fixed(parse_decimal(&fmt[start..pos]))
+            Width::Fixed(parse_decimal(&fmt[start..pos]) as u32)
         } else {
             Width::None
         }
@@ -974,7 +983,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
             pos += 1;
             if let Some((position, consumed)) = parse_positional_index(&fmt[pos..]) {
                 pos += consumed;
-                Precision::FromArgPosition(position)
+                Precision::FromArgPosition(position as u32)
             } else {
                 Precision::FromArg
             }
@@ -984,7 +993,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
                 pos += 1;
             }
             Precision::Fixed(if pos > start {
-                parse_decimal(&fmt[start..pos])
+                parse_decimal(&fmt[start..pos]) as u32
             } else {
                 0
             })
@@ -1207,7 +1216,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
     // Precision: minimum digits (pad with zeros).
     let precision = match spec.precision {
-        Precision::Fixed(p) => p,
+        Precision::Fixed(p) => p as usize,
         _ => 1, // default: at least 1 digit
     };
     let zero_prefix_count = precision.saturating_sub(digit_count);
@@ -1273,7 +1282,7 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         .and_then(RawValueRenderKind::unsigned_kind);
 
     let precision = match spec.precision {
-        Precision::Fixed(p) => p,
+        Precision::Fixed(p) => p as usize,
         _ => 1,
     };
     let zero_prefix_count = precision.saturating_sub(digit_count);
@@ -1344,7 +1353,7 @@ impl core::fmt::Write for VecWriter<'_> {
 /// then applies POSIX width/flag rules.
 pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let precision = match spec.precision {
-        Precision::Fixed(p) => p,
+        Precision::Fixed(p) => p as usize,
         Precision::None => 6, // POSIX default
         Precision::FromArg | Precision::FromArgPosition(_) => 6,
     };
@@ -1638,7 +1647,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 /// Precision truncates the string if set.
 pub fn format_str(s: &[u8], spec: &FormatSpec, buf: &mut Vec<u8>) {
     let max_len = match spec.precision {
-        Precision::Fixed(p) => p,
+        Precision::Fixed(p) => p as usize,
         _ => s.len(),
     };
     let effective = &s[..s.len().min(max_len)];
@@ -1710,7 +1719,7 @@ pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
     {
         // Zero-pad: the sign sits at the front, then a zero-filled body whose
         // field width accounts for the sign.
-        hexspec.width = Width::Fixed(width.saturating_sub(sign.len()));
+        hexspec.width = Width::Fixed(width.saturating_sub(sign.len()) as u32);
         buf.extend_from_slice(sign);
         format_unsigned(addr as u64, &hexspec, buf);
     } else {
@@ -1764,7 +1773,7 @@ fn parse_positional_index(fmt: &[u8]) -> Option<(usize, usize)> {
 
 fn hex_float_precision(spec: &FormatSpec) -> Option<usize> {
     match spec.precision {
-        Precision::Fixed(p) => Some(p.min(MAX_FLOAT_PRECISION)),
+        Precision::Fixed(p) => Some((p as usize).min(MAX_FLOAT_PRECISION)),
         Precision::None => None,
         Precision::FromArg | Precision::FromArgPosition(_) => Some(6),
     }
@@ -1772,7 +1781,7 @@ fn hex_float_precision(spec: &FormatSpec) -> Option<usize> {
 
 fn resolve_width(spec: &FormatSpec) -> usize {
     match spec.width {
-        Width::Fixed(w) => w,
+        Width::Fixed(w) => w as usize,
         _ => 0,
     }
 }
@@ -3682,7 +3691,7 @@ mod tests {
                 rounded_scaled_fixed(value, precision).is_some(),
                 "scaled fixed path should cover value={value} precision={precision}"
             );
-            spec.precision = Precision::Fixed(precision);
+            spec.precision = Precision::Fixed(precision as u32);
             buf.clear();
             format_float(value, &spec, &mut buf);
             let expected = alloc::format!("{:.prec$}", value, prec = precision);
@@ -4056,7 +4065,7 @@ mod tests {
                 let spec = FormatSpec::new(
                     FormatFlags::default(),
                     Width::None,
-                    Precision::Fixed(prec),
+                    Precision::Fixed(prec as u32),
                     LengthMod::None,
                     conv,
                     None,
