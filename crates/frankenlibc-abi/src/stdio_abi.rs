@@ -6885,6 +6885,17 @@ pub unsafe extern "C" fn sprintf(
         let arg = unsafe { args.next_arg::<*mut c_void>() };
         return unsafe { strict_direct_sprintf_p(str_buf, arg) };
     }
+    // Float probe LAST, so it adds no byte-compare to the integer/string paths
+    // that carry the measured campaign win. See bd-4vwb9q / bd-5pfs0p.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        // SAFETY: sprintf's contract gives an unbounded destination.
+        return unsafe { strict_direct_sprintf_f(str_buf, arg, precision) };
+    }
 
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, 0, true, false, 0);
@@ -7712,6 +7723,20 @@ unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
     let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
     let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
     unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) }
+}
+
+/// `sprintf` for an exact `%f` / `%.Nf`: same renderer as the snprintf path, but
+/// against sprintf's unbounded destination contract.
+unsafe fn strict_direct_sprintf_f(str_buf: *mut c_char, value: f64, precision: usize) -> c_int {
+    let mut rendered = [0u8; 352];
+    let len = render_direct_fixed(value, precision, &mut rendered);
+    // SAFETY: sprintf's C contract requires the caller's buffer to hold the
+    // whole result plus its terminator.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
 }
 
 /// POSIX `vsnprintf` — format at most `size` bytes from va_list.

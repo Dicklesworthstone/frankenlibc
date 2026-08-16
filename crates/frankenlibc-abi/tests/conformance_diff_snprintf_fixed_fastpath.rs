@@ -203,3 +203,47 @@ fn adjacent_float_formats_still_match_glibc() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// bd-5pfs0p: the same probe on sprintf.
+//
+// vsnprintf is DELIBERATELY NOT fast-pathed here. On x86-64 a `double` variadic
+// argument lands in the FP register save area, indexed by `fp_offset` (@4), not
+// by `gp_offset` (@0) -- so it needs a different va_list reader than every
+// existing vsnprintf probe uses. Gating that requires forging a va_list, which
+// needs either a C shim or Rust's unstable `c_variadic`. Rather than ship an
+// ungated fast path in the one place the argument decode can silently return an
+// unrelated value, vsnprintf keeps the general path until it can be gated.
+
+#[test]
+fn sprintf_fixed_matches_glibc() {
+    let host = host_snprintf();
+    // sprintf's destination is unbounded, so compare against snprintf with a
+    // size large enough that no truncation occurs -- same bytes, same return.
+    for (fmt, label) in formats() {
+        for &value in &values() {
+            let mut fbuf = [FILL; CAP];
+            // SAFETY: CAP exceeds the longest %.Nf rendering for N <= 12.
+            let frc = unsafe {
+                frankenlibc_abi::stdio_abi::sprintf(
+                    fbuf.as_mut_ptr().cast::<c_char>(),
+                    fmt.as_ptr(),
+                    value,
+                )
+            };
+            let (grc, gbuf) = render_host(host, &fmt, value, CAP);
+            assert_eq!(
+                frc, grc,
+                "sprintf {label} of {value:?} [{:#018x}]: return fl={frc} glibc={grc}",
+                value.to_bits()
+            );
+            let n = grc.max(0) as usize;
+            assert_eq!(
+                &fbuf[..=n], &gbuf[..=n],
+                "sprintf {label} of {value:?} [{:#018x}]: bytes differ",
+                value.to_bits()
+            );
+        }
+    }
+}
+
