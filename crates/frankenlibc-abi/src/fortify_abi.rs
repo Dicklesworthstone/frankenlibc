@@ -259,6 +259,8 @@ pub unsafe extern "C" fn __strncpy_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { crate::string_abi::strncpy(dest, src, n) }
 }
 
@@ -321,6 +323,8 @@ pub unsafe extern "C" fn __stpncpy_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { crate::string_abi::strncpy(dest, src, n) };
     let mut i = 0;
     while i < n {
@@ -472,6 +476,81 @@ pub unsafe extern "C" fn __vasprintf_chk(
 
 // ── stdio read operations ──────────────────────────────────────────────────
 
+/// The measured `__fgets*_chk` rule, shared by the locked and unlocked forms.
+///
+/// THE SAME DIVERGENCE AS THE WIDE PAIR, found by running the wide probe against
+/// the narrow entry point instead of assuming this one was right (bd-917hzv).
+/// fl aborted whenever `n > buflen`, statically. glibc does not.
+///
+/// Host glibc 2.42, fork-isolated, `size` in bytes:
+///
+/// ```text
+///   content     n    size   glibc      old fl
+///   short(12)  257    256   ok         ABORT   <-- diverged
+///   short(12)  300    256   ok         ABORT   <-- diverged
+///   short(12) 1024    256   ok         ABORT   <-- diverged
+///   long(300)  257    256   ABORT      ABORT
+///   short(12)   64      8   ABORT      ABORT
+///   both       256    256   ok         ok
+///   both      2000   4096   ok         ok
+///   both        -1 /  0     NULL       NULL
+/// ```
+///
+/// So a caller doing `fgets(buf, 1024, fp)` into a 256-byte buffer is killed by
+/// the old rule and runs fine under glibc whenever the line is short. The rule
+/// that fits every row is two conditions: `n > buflen` AND the content did not
+/// actually fit — glibc only reaches its overflow check once the read fills the
+/// clamped buffer.
+///
+/// # Safety
+/// `buf` must be writable for `buflen` bytes and `stream` a valid `FILE*`.
+unsafe fn fgets_chk_common(
+    buf: *mut c_char,
+    buflen: usize,
+    n: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
+    // A non-positive `n` returns NULL rather than aborting — `n as usize` would
+    // otherwise turn a negative count into a huge one — and an unknown size
+    // cannot bound anything.
+    if n <= 0 || buflen == usize::MAX {
+        // SAFETY: caller's contract.
+        return unsafe { fgets(buf, n, stream) };
+    }
+
+    // Inside glibc's bound: pass through untouched, which is what it does.
+    if (n as usize) <= buflen {
+        // SAFETY: caller's contract.
+        return unsafe { fgets(buf, n, stream) };
+    }
+
+    // `n` exceeds the buffer, so bound the read to what it holds. `fgets` writes
+    // at most `k - 1` bytes plus a terminator for a limit of `k`, so passing
+    // `buflen` can never write past the buffer whatever the content is.
+    let clamped = buflen.min(n as usize) as c_int;
+    // SAFETY: `clamped` is at most the buffer's byte capacity.
+    let result = unsafe { fgets(buf, clamped, stream) };
+    if result.is_null() {
+        return result;
+    }
+
+    // Truncation means the content WOULD have overflowed the caller's buffer,
+    // which is the condition glibc aborts on. A run ending in a newline, or
+    // shorter than the clamp, fitted.
+    let mut len = 0usize;
+    // SAFETY: `fgets` NUL-terminates within `clamped` bytes.
+    while len < clamped as usize && unsafe { *buf.add(len) } != 0 {
+        len += 1;
+    }
+    let filled_to_capacity = len + 1 == clamped as usize;
+    // SAFETY: `len` is in bounds by the loop above.
+    let ended_with_newline = len > 0 && unsafe { *buf.add(len - 1) } == b'\n' as c_char;
+    if filled_to_capacity && !ended_with_newline {
+        unsafe { __chk_fail() }
+    }
+    result
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fgets_chk(
     buf: *mut c_char,
@@ -492,10 +571,8 @@ pub unsafe extern "C" fn __fgets_chk(
     // the stream call's business and it answers NULL. The wide siblings
     // `__fgetws_chk`/`__fgetws_unlocked_chk` already got this right, which is
     // what made the narrow pair's version look deliberate rather than a slip.
-    if n > 0 && buflen != usize::MAX && n as usize > buflen {
-        unsafe { __chk_fail() }
-    }
-    unsafe { fgets(buf, n, stream) }
+    // SAFETY: delegates to the shared rule; `fgets` is fl's own narrow reader.
+    unsafe { fgets_chk_common(buf, buflen, n, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -518,10 +595,8 @@ pub unsafe extern "C" fn __fgets_unlocked_chk(
     // the stream call's business and it answers NULL. The wide siblings
     // `__fgetws_chk`/`__fgetws_unlocked_chk` already got this right, which is
     // what made the narrow pair's version look deliberate rather than a slip.
-    if n > 0 && buflen != usize::MAX && n as usize > buflen {
-        unsafe { __chk_fail() }
-    }
-    unsafe { fgets(buf, n, stream) }
+    // SAFETY: delegates to the shared rule; `fgets` is fl's own narrow reader.
+    unsafe { fgets_chk_common(buf, buflen, n, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -821,13 +896,20 @@ pub unsafe extern "C" fn __wcscpy_chk(
     src: *const WcharT,
     destlen: usize,
 ) -> *mut WcharT {
-    let max_units = (destlen != usize::MAX).then(|| wide_units_from_bytes(destlen));
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    let max_units = (destlen != usize::MAX).then_some(destlen);
     let len = unsafe { checked_wide_len(src, max_units) };
     let copy_units = checked_wide_add(len, 1);
-    let copy_bytes = checked_wide_bytes(copy_units);
-    if destlen != usize::MAX && copy_bytes > destlen {
+    if destlen != usize::MAX && copy_units > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY is in bytes. Both are needed and
+    // conflating them is what made this wrong.
+    let copy_bytes = checked_wide_bytes(copy_units);
     unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), copy_bytes) };
     dest
 }
@@ -839,10 +921,16 @@ pub unsafe extern "C" fn __wcsncpy_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    let copy_bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && copy_bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     let mut i = 0;
     let src_units = known_remaining(src as usize).map(wide_units_from_bytes);
     while i < n {
@@ -921,10 +1009,16 @@ pub unsafe extern "C" fn __wmemcpy_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    let bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), bytes) };
     dest
 }
@@ -936,10 +1030,16 @@ pub unsafe extern "C" fn __wmemmove_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    let bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { crate::string_abi::memmove(dest.cast(), src.cast(), bytes) };
     dest
 }
@@ -951,10 +1051,16 @@ pub unsafe extern "C" fn __wmemset_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    let bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     for i in 0..n {
         unsafe { *dest.add(i) = c };
     }
@@ -1150,10 +1256,16 @@ pub unsafe extern "C" fn __mbstowcs_chk(
     n: usize,
     destlen: usize,
 ) -> usize {
-    let bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     // fl declares `mbstowcs` as `(*mut u32, *const u8)` while this wrapper uses
     // `(*mut WcharT, *const c_char)`. Layout-identical on every target fl builds
     // for — wchar_t is 32-bit and c_char 8-bit — but the SIGNEDNESS differs, so
@@ -1172,6 +1284,8 @@ pub unsafe extern "C" fn __wcstombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     // Same signedness-only mismatch as `__mbstowcs_chk` above.
     unsafe { wcstombs(dest.cast::<u8>(), src.cast::<u32>(), n) }
 }
@@ -1184,10 +1298,16 @@ pub unsafe extern "C" fn __mbsrtowcs_chk(
     ps: *mut c_void,
     destlen: usize,
 ) -> usize {
-    let bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { mbsrtowcs(dest, src, n, ps) }
 }
 
@@ -1202,6 +1322,8 @@ pub unsafe extern "C" fn __wcsrtombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { wcsrtombs(dest, src, n, ps) }
 }
 
@@ -1214,10 +1336,16 @@ pub unsafe extern "C" fn __mbsnrtowcs_chk(
     ps: *mut c_void,
     destlen: usize,
 ) -> usize {
-    let bytes = checked_wide_bytes(n);
-    if destlen != usize::MAX && bytes > destlen {
+    // `destlen` counts WIDE CHARACTERS, not bytes: glibc's fortify headers pass
+    // `__glibc_objsize (dst) / sizeof (wchar_t)`, so the size arrives already
+    // divided. Scaling the request to bytes and comparing against it aborted at a
+    // QUARTER of the real capacity. Probed fork-isolated on host glibc 2.42:
+    // `n=100 destlen=256` runs, `n=300 destlen=256` aborts (bd-917hzv sibling).
+    if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { mbsnrtowcs(dest, src, nms, n, ps) }
 }
 
@@ -1233,6 +1361,8 @@ pub unsafe extern "C" fn __wcsnrtombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
+    // The CHECK is in wide characters; the COPY below is in bytes.
+    let bytes = checked_wide_bytes(n);
     unsafe { wcsnrtombs(dest, src, nwc, n, ps) }
 }
 

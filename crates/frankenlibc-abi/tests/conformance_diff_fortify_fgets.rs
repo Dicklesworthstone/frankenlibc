@@ -139,6 +139,18 @@ fn fortify_fgets_aborts_on_overflow_and_not_on_a_negative_count() {
         ("overflow", 8, 64),
         ("negative", 64, -1),
         ("zero", 64, 0),
+        // ADDED (bd-917hzv): the cases where fl's STATIC `n > buflen` rule and
+        // glibc disagree. The input above is 12 bytes, so it fits comfortably in
+        // a 256-byte buffer no matter how large `n` is — glibc runs all three,
+        // and the old rule aborted all three. Without these the gate passes
+        // against both rules and discriminates nothing, which is exactly how the
+        // wide sibling's divergence survived its own test.
+        ("n just over buflen", 256, 257),
+        ("n well over buflen", 256, 300),
+        ("n far over buflen", 256, 1024),
+        // Boundary: n == buflen must NOT abort, which pins the comparison as
+        // strict rather than inclusive.
+        ("n equals buflen", 256, 256),
     ];
 
     let mut compared = 0usize;

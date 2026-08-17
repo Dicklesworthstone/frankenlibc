@@ -1949,20 +1949,55 @@ fn fgets_unlocked_chk_reads_line() {
 
 #[test]
 fn fgets_chk_n_over_real_buffer_aborts_child_process() {
+    // UPDATED (bd-917hzv): this used to pass a NULL stream, relying on the abort
+    // firing from a STATIC `n > buflen` check before the stream was ever touched.
+    // Host glibc does not do that — probed fork-isolated, it runs `n = 257` into a
+    // 256-byte buffer happily when the line is short, and only aborts once a read
+    // actually overflows. fl now matches, so the NULL shortcut no longer reaches
+    // the check and the arm has to exercise the real overflow.
+    //
+    // The abort is still REQUIRED here and still asserted: 12 bytes of input into
+    // a 4-byte buffer with `n = 16` is a genuine overflow, and glibc aborts on the
+    // same shape (`buflen = 8, n = 64` -> SIGABRT in the probe matrix).
     assert_child_sigabrt("fgets_chk n over real buffer", || {
+        let stream = overflowing_stdin_stream();
         let mut buf = [0u8; 4];
-        unsafe { __fgets_chk(buf.as_mut_ptr().cast(), buf.len(), 16, std::ptr::null_mut()) };
+        unsafe { __fgets_chk(buf.as_mut_ptr().cast(), buf.len(), 16, stream) };
     });
 }
 
 #[test]
 fn fgets_unlocked_chk_n_over_real_buffer_aborts_child_process() {
+    // Same update as the locked form directly above, and for the same reason.
     assert_child_sigabrt("fgets_unlocked_chk n over real buffer", || {
+        let stream = overflowing_stdin_stream();
         let mut buf = [0u8; 4];
-        unsafe {
-            __fgets_unlocked_chk(buf.as_mut_ptr().cast(), buf.len(), 16, std::ptr::null_mut())
-        };
+        unsafe { __fgets_unlocked_chk(buf.as_mut_ptr().cast(), buf.len(), 16, stream) };
     });
+}
+
+/// A `FILE*` on stdin carrying more bytes than a 4-byte buffer can hold.
+///
+/// Used by the two arms above, which need a real readable stream now that the
+/// overflow check is reached by reading rather than by a static comparison.
+fn overflowing_stdin_stream() -> *mut std::ffi::c_void {
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let input = b"hello world\n";
+    assert_eq!(
+        unsafe { libc::write(fds[1], input.as_ptr().cast(), input.len()) },
+        input.len() as isize
+    );
+    unsafe { libc::close(fds[1]) };
+    assert_eq!(
+        unsafe { libc::dup2(fds[0], libc::STDIN_FILENO) },
+        libc::STDIN_FILENO
+    );
+    unsafe { libc::close(fds[0]) };
+    // fl's own `stdin`, matching the fl entry points under test. Other suites
+    // reach it the same way (see `wchar_abi_test`).
+    // SAFETY: reading fl's exported stdin handle.
+    unsafe { frankenlibc_abi::stdio_abi::stdin }
 }
 
 #[test]
