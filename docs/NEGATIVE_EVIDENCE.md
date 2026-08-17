@@ -30539,3 +30539,50 @@ What this changes, and what it does not:
   Duplicating float parsing is where this repo has been bitten before, so the note on bd-hdu66c stands:
   expose a core entry point that reuses `scan_float` rather than reimplementing it. And the +86 on
   `dotted_quad` is worth one attempt at a cheaper probe before anything else.
+
+## 2026-08-17 (BlackThrush) — MAINTENANCE: the stack-output fast path REINSTATED on interleaved evidence — getrandom 4.024x -> 3.626x, and the ±15% band does NOT generalise
+
+- **RESULT CLASS: self-speedup.** fl against fl. fl remains slower than glibc at every size; this
+  shrinks the loss. Supersedes my own withdrawal of these numbers last turn.
+- **WHY THIS RE-RUN EXISTS.** I withdrew this row after another agent showed sscanf moving all twelve
+  cases up to 15% between two runs of the SAME binary while both A/A nulls held. My original evidence
+  was one invocation per arm, so a ~10% effect was unsupportable against a ~15% band. This re-run uses
+  the protocol I adopted in response: **arms INTERLEAVED across two rounds, with the between-run
+  spread reported next to the in-run CI.**
+- **THE BETWEEN-RUN SPREAD IS FAMILY-SPECIFIC, AND ON getrandom IT IS TINY.** That is the finding
+  here, and it qualifies the ±15% result rather than contradicting it:
+
+  | case | base r1 / r2 | cand r1 / r2 | worst between-run spread | effect r1 / r2 |
+  |---|---|---|---|---|
+  | zero_bytes | 4.031384 / 4.016819 | 3.624169 / 3.628176 | **0.36%** | **-10.0% / -9.7%** |
+  | one_byte | 2.773014 / 2.784828 | 2.564554 / 2.565895 | 0.43% | -7.5% / -7.9% |
+  | thirty_two_bytes | 1.231635 / 1.248553 | 1.205858 / 1.196066 | 1.37% | -2.1% / -4.2% |
+  | two_fifty_six_bytes | 1.034636 / 1.038657 | 1.036689 / 1.032857 | 0.39% | +0.2% / -0.6% |
+
+  Between-run spread on getrandom is **0.05%-1.37%**, not 15%. The zero-byte effect is **7x to 25x
+  larger than the spread and reproduces to within 0.3 points across rounds.** A between-run
+  instability measured on one family must not be assumed for another; it has to be measured per
+  family, which is what the second round is for.
+- **REINSTATED with evidence: zero_bytes and one_byte.** ~-10% and ~-7.7%, both an order of magnitude
+  above their own spread and reproducing in direction and magnitude.
+- **STILL NOT ESTABLISHED, and my earlier claims about them are dropped for good:** `thirty_two_bytes`
+  moved -2.1% then -4.2%, a 2x swing between rounds against a 1.37% spread — directionally consistent
+  but not a quotable magnitude. And **`two_fifty_six_bytes` is UNDECIDABLE**: +0.2% then -0.6%, inside
+  its own spread and changing sign. **The "+0.4% regression" I reported and then defended as a real
+  cost is not established either** — I was as wrong to bank that as I was to bank the wins.
+- **Provenance.** base `FL_OBJECT sha256
+  92bcebc732550d486aff9dd9b8e3ab8275a1ccc35a07127628fcebb3559abd39` observed at loadavg
+  24.98,31.10,102.23 / 2642 MHz and 11.61,24.33,91.15 / 2749 MHz; candidate `FL_OBJECT sha256
+  138908b9da907d19ae128559d0e622bc89df9b865f4099282b072e77c2373f77` observed at 13.79,26.03,93.87 /
+  2210 MHz and 10.38,23.03,88.94 / 2576 MHz. All four runs `verdict=DECIDABLE cases=4 wins=0
+  losses=4`. Candidate same-invocation A/A null_fl 1.000039 with bootstrap median CI
+  [3.626627,3.629371] (95%) at zero_bytes; 1.000033 with bootstrap median CI [2.557009,2.578735] at
+  one_byte; 0.999187 with CI [1.194372,1.198289] at 32B; 0.999947 with CI [1.031471,1.035221] at 256B.
+- **THE CODE HAD BEEN SILENTLY REVERTED, which is how the clean base arm arose.** `7fe69e3d8`, a
+  commit titled "test(scanf): the uncompiled key_value lever compiles and is green", deleted exactly
+  my six lines from `tracked_void_output_capacity` — 0 insertions, 6 deletions, unmentioned in its
+  message. Collateral from a stale working copy, not a decision. Its gate
+  `conformance_diff_known_remaining_stack` survived in HEAD and kept passing, because it tests
+  `known_remaining`'s behaviour rather than the fast path's presence. **A gate that pins a
+  precondition does not notice when the code that relies on it disappears** — worth knowing for the
+  shared tree generally.
