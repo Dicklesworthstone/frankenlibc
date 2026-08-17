@@ -2647,6 +2647,37 @@ impl FlatCombiningStats {
         self.combiner_lock.store(false, Ordering::Release);
     }
 
+    /// Copy the per-size-class histogram out under the combiner lock.
+    ///
+    /// WHY THIS EXISTS. `per_size_class` was WRITE-ONLY: incremented on every
+    /// alloc, decremented on every free, merged across threads -- and read by
+    /// nothing. It reached neither `MallocStatsSnapshot` nor `malloc_stats` nor
+    /// `malloc_info`, so the allocator paid for it on every call and no caller
+    /// could ever observe it.
+    ///
+    /// Meanwhile `malloc_info` emitted an EMPTY sizes block, where host glibc
+    /// publishes one size element per occupied bin -- 24 of them on a live probe
+    /// of this host's glibc 2.42. So fl was maintaining exactly the data it was
+    /// failing to report.
+    ///
+    /// Reading it here retires both at once: the dead work becomes live
+    /// functionality and the sizes divergence closes. Taken under the same
+    /// `combiner_lock` as `record_mutation`, so a concurrent alloc cannot tear
+    /// the array mid-copy.
+    fn per_size_class_snapshot(&self) -> [usize; MALLOC_STATS_BIN_COUNT] {
+        while self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        // SAFETY: `combiner_lock` is held exclusively for this read.
+        let copy = unsafe { (*self.state.get()).per_size_class };
+        self.combiner_lock.store(false, Ordering::Release);
+        copy
+    }
+
     fn snapshot(&self) -> MallocStatsSnapshot {
         self.apply_op(FC_OP_SNAPSHOT, 0, 0)
     }
@@ -2843,6 +2874,23 @@ fn record_free_stats_binned(
 }
 
 #[inline]
+/// The live per-size-class counts, or all zeros before the stats exist.
+///
+/// Flushes this thread's single-threaded-era pending first, exactly as
+/// [`snapshot_alloc_stats`] does, so a caller that has been allocating on the
+/// lean slot-local path still sees its own work.
+fn per_size_class_counts() -> [usize; MALLOC_STATS_BIN_COUNT] {
+    if let Some(global) = global_alloc_stats()
+        && let Some(guard) = enter_allocator_reentry_guard()
+    {
+        // SAFETY: the guard grants exclusive access to `guard.slot.segment_local`.
+        unsafe { flush_slot_stats(guard.slot, global) };
+    }
+    global_alloc_stats()
+        .map(FlatCombiningStats::per_size_class_snapshot)
+        .unwrap_or([0; MALLOC_STATS_BIN_COUNT])
+}
+
 fn snapshot_alloc_stats() -> MallocStatsSnapshot {
     // Publish the calling thread's single-threaded-era pending so the snapshot reflects it. The
     // allocator guard grants exclusive access to this thread's slot; skip if unavailable (reentrant).
@@ -5404,8 +5452,43 @@ pub unsafe extern "C" fn malloc_info(options: c_int, stream: *mut c_void) -> c_i
     }
 
     let info = unsafe { mallinfo2() };
+
+    // Populate the sizes block from the per-size-class histogram the allocator
+    // already maintains on every alloc and free.
+    //
+    // It used to be emitted empty. Host glibc publishes one entry per occupied
+    // bin there -- a live probe of this host's glibc 2.42 returned 24 of them --
+    // so an empty block was a real divergence, and fl was already tracking
+    // exactly the data needed to close it (see `per_size_class_snapshot`).
+    //
+    // fl's classes are EXACT sizes rather than glibc's ranges, so `from` and `to`
+    // are equal, which is the same convention glibc itself uses for its
+    // exact-size bins. The counts are live objects per class, so `total` is the
+    // class size times the count. The final bin is the large-allocation
+    // catch-all, which has no single size and is therefore skipped rather than
+    // reported with a misleading one.
+    let counts = per_size_class_counts();
+    let mut sizes_xml = String::new();
+    for (index, &count) in counts
+        .iter()
+        .enumerate()
+        .take(frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES)
+    {
+        if count == 0 {
+            continue;
+        }
+        let class_size = frankenlibc_core::malloc::size_class::bin_size(index);
+        if class_size == 0 {
+            continue;
+        }
+        sizes_xml.push_str(&format!(
+            "<size from=\"{class_size}\" to=\"{class_size}\" total=\"{}\" count=\"{count}\"/>\n",
+            class_size.saturating_mul(count),
+        ));
+    }
+
     let xml = format!(
-        "<malloc version=\"1\">\n<heap nr=\"0\">\n<sizes>\n</sizes>\n<total type=\"fast\" count=\"0\" size=\"0\"/>\n<total type=\"rest\" count=\"{}\" size=\"{}\"/>\n<system type=\"current\" size=\"{}\"/>\n<system type=\"max\" size=\"{}\"/>\n<aspace type=\"total\" size=\"{}\"/>\n<aspace type=\"mprotect\" size=\"{}\"/>\n</heap>\n<total type=\"fast\" count=\"0\" size=\"0\"/>\n<total type=\"rest\" count=\"{}\" size=\"{}\"/>\n<system type=\"current\" size=\"{}\"/>\n<system type=\"max\" size=\"{}\"/>\n<aspace type=\"total\" size=\"{}\"/>\n<aspace type=\"mprotect\" size=\"{}\"/>\n</malloc>\n",
+        "<malloc version=\"1\">\n<heap nr=\"0\">\n<sizes>\n{sizes_xml}</sizes>\n<total type=\"fast\" count=\"0\" size=\"0\"/>\n<total type=\"rest\" count=\"{}\" size=\"{}\"/>\n<system type=\"current\" size=\"{}\"/>\n<system type=\"max\" size=\"{}\"/>\n<aspace type=\"total\" size=\"{}\"/>\n<aspace type=\"mprotect\" size=\"{}\"/>\n</heap>\n<total type=\"fast\" count=\"0\" size=\"0\"/>\n<total type=\"rest\" count=\"{}\" size=\"{}\"/>\n<system type=\"current\" size=\"{}\"/>\n<system type=\"max\" size=\"{}\"/>\n<aspace type=\"total\" size=\"{}\"/>\n<aspace type=\"mprotect\" size=\"{}\"/>\n</malloc>\n",
         info.ordblks,
         info.uordblks,
         info.arena,

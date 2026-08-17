@@ -30708,3 +30708,36 @@ What this changes, and what it does not:
   alone.
 - **WHAT IS NOT OWED:** another assault on `parse_scanf_format`, `push` or the directive vector. Three
   measurements now say that family does not pay.
+
+## 2026-08-17 — the float field, retried under its stated condition: `mixed_record` 1.512x loss becomes 0.476x, and my own ceiling estimate was wrong
+
+- **RESULT CLASS: measured improvement, taken under a retry condition written BEFORE the attempt.**
+  The rejection two rows above named exactly two changes as the price of one more try — build the
+  spec once, stop measuring the input length per field — and predicted the case would land "near 2100
+  per call, 0.94x of glibc, a marginal win", with anything materially above 2100 refuting the concept.
+  Instruction count under `RTLD_DEEPBIND`, 200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=17a2d2b6318592af67747cbc38f22cb6b677ecd45c48eb321a9592161609326e, loadavg
+  20.38/26.12/38.60, cpu MHz 2525-3893. One local build was running, so no wall-clock claim is made.
+- **RESULT: 681,015,521 instructions -> 209,603,388, a 3.25x reduction, -2357 per call.** Against
+  glibc's 445,048,605 that is **0.471x, from 1.512x** — the last certified loss in the family becomes
+  a 2.1x win. Stable across three runs (211,755,368 / 211,706,093 / 211,865,040 before the lazy-length
+  refinement, then 209,603,388), and the order-sensitive checksum matches glibc's on every run.
+- **THE PREDICTION WAS WRONG, IN THE CONSERVATIVE DIRECTION, AND THE REASON IS INSTRUCTIVE.** I put
+  the ceiling at 2100 per call by taking fl's `float_only` measurement, 1427 per call, as the cost of
+  a float conversion. It is not: `float_only` is a LONE `%f`, which the list probe declines by design,
+  so that number is the ENGINE's total for one conversion — parse, directive vector, scan dispatch and
+  all. The conversion itself is roughly 600. Measuring a whole path and calling it the cost of its
+  most expensive part is the same error as reading a flat profile frame as removable work, which this
+  ledger already records twice.
+- **THE COST, on six cases the change does not target.** Each generalisation of the probe adds
+  per-field branches, and this one added two match arms: `single_int` 63,194,325 -> 67,743,781
+  (+23/call), `string_token` +20, `scanset_only` +18, `two_strings` +38, `key_value` +42,
+  `dotted_quad` +69. All six remain wins against glibc. Making the input-length scan LAZY — never for
+  a format without a float, at most once for a format with one — recovered only 4 to 11 per call, so
+  the residual is the branches, not the scan.
+- **NET: one case -2357 per call; six cases +18 to +69.**
+- **A TREND WORTH NAMING BEFORE IT BITES.** The probe has now been generalised five times, and every
+  generalisation taxes every format that declines. The tax is 18-69 per call today against wins of
+  1400-3700, so it is bought many times over — but the next generalisation should be measured against
+  the whole family, not just its target, and if the tax on `single_int` passes roughly 100 the shape
+  needs rethinking rather than extending.

@@ -924,6 +924,52 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
     scan_input_impl(input, directives, false)
 }
 
+/// The engine's `%f` spec, built ONCE.
+///
+/// The previous attempt built this per call — including its 16-byte
+/// `Option<usize>` width — and called `bind_route`, a table lookup plus a length
+/// check, every time. That setup, not the parsing, is what put the float field
+/// 1265 instructions per call above its own ceiling and got the lever rejected.
+fn default_float_spec() -> &'static ScanSpec {
+    static SPEC: std::sync::OnceLock<ScanSpec> = std::sync::OnceLock::new();
+    SPEC.get_or_init(|| {
+        let mut spec = ScanSpec {
+            suppress: false,
+            width: None,
+            length: LengthMod::None,
+            conversion: b'f',
+            scanset: None,
+            simple_set: SimpleScanSet::None,
+            wide_input: false,
+            alloc: false,
+            route: ScanfRoute::invalid(),
+        };
+        // A `%f` route always binds. If it ever stopped, `scan_float` would
+        // decline every input and the differential would go red, rather than
+        // values silently going wrong.
+        let _ = spec.bind_route();
+        spec
+    })
+}
+
+/// Scan ONE default-width float from `input` at `pos`, returning its value and
+/// the position just past it.
+///
+/// Exists so the ABI's strict fast paths can serve a `%f`/`%lf` field WITHOUT
+/// reimplementing the float grammar — hex floats, `inf`/`infinity`/`nan`,
+/// subnormals, the sign rules. It calls the engine's own `scan_float` through
+/// the shared spec above, and a fast path cannot do this itself because
+/// `ScanSpec::route` is private, so the spec cannot be built outside this module.
+///
+/// `None` means the conversion did not match — the caller must distinguish an
+/// exhausted input from a malformed one itself, since both look the same here.
+pub fn scan_default_float(input: &[u8], pos: usize) -> Option<(f64, usize)> {
+    match scan_float(input, pos, default_float_spec()) {
+        Some((Some(ScanValue::Float(value)), next)) => Some((value, next)),
+        _ => None,
+    }
+}
+
 /// Run the parsed directives against a WIDE input stream (swscanf et al.), passed
 /// in here as its UTF-8 multibyte encoding. `%s`/`%c` field widths count WIDE
 /// characters (whole UTF-8 sequences), matching the C wide-scanf semantics, even

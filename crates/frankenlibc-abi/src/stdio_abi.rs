@@ -237,6 +237,19 @@ pub(crate) unsafe fn strict_decimal_int_format_count(
                     kinds[fields] = c;
                     i += 2;
                 }
+                // `%f` writes a `float *`; `%lf` writes a `double *`. Recorded as
+                // DIFFERENT kinds because the destination width differs —
+                // treating them alike would write eight bytes into a four-byte
+                // slot, the shape of a bug that has taken a test binary down
+                // twice in this family.
+                b'f' => {
+                    kinds[fields] = b'f';
+                    i += 2;
+                }
+                b'l' if *f.add(i + 2) == b'f' => {
+                    kinds[fields] = b'F';
+                    i += 3;
+                }
                 b'[' => {
                     // Exactly `%[^X]`, the one scanset shape held inline. The
                     // grammar exclusions match `strict_single_negated_scanset`:
@@ -520,6 +533,14 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
     let mut p = s.cast::<u8>();
     let mut values = [0; STRICT_INT_LIST_MAX];
     let mut count = 0usize;
+
+    // The float scanner needs a SLICE where these paths otherwise walk raw
+    // pointers, so the end of the input is found LAZILY: never for a format
+    // without a float, and at most once for a format with one. Computing it up
+    // front behind an `any()` over the kinds cost every OTHER format 18 to 73
+    // instructions per call for a value it never read.
+    let mut input_end: *const u8 = std::ptr::null();
+
     for index in 0..fields {
         // A LITERAL separator must match exactly, and unlike the conversions it
         // does not skip whitespace first — `sscanf("1 .2", "%d.%d")` matches one
@@ -536,6 +557,54 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
             }
             // SAFETY: the byte just read was the separator, not the terminator.
             p = unsafe { p.add(1) };
+        }
+        if kinds[index] == b'f' || kinds[index] == b'F' {
+            // The engine's own float scanner, so hex floats, inf/nan, subnormals
+            // and the sign rules have exactly one implementation.
+            if input_end.is_null() {
+                let mut tail = p;
+                // SAFETY: the input is NUL-terminated, so this stops.
+                while unsafe { *tail } != 0 {
+                    tail = unsafe { tail.add(1) };
+                }
+                input_end = tail;
+            }
+            let remaining = input_end as usize - p as usize;
+            // SAFETY: `p` points at `remaining` readable bytes before the NUL,
+            // with `input_end` found once above.
+            let slice = unsafe { std::slice::from_raw_parts(p, remaining) };
+
+            match frankenlibc_core::stdio::scanf::scan_default_float(slice, 0) {
+                Some((value, next)) => {
+                    if kinds[index] == b'F' {
+                        // SAFETY: `%lf` was parsed, so the caller passed a `double *`.
+                        unsafe { *destinations[index].cast::<f64>() = value };
+                    } else {
+                        // SAFETY: `%f` was parsed, so the caller passed a `float *`.
+                        unsafe { *destinations[index].cast::<f32>() = value as f32 };
+                    }
+                    // SAFETY: `next` is an offset the engine reached inside `slice`.
+                    p = unsafe { p.add(next) };
+                    count += 1;
+                    continue;
+                }
+                None => {
+                    // The engine returns `None` for BOTH an exhausted input and a
+                    // malformed one, so the difference is decided here: nothing
+                    // but whitespace left is an INPUT failure, anything else a
+                    // MATCH failure. This runs only on the failure path.
+                    let exhausted = slice.iter().all(|&b| scanf_ascii_space(b));
+                    return StrictDecimalIntsScan {
+                        count: if exhausted && count == 0 {
+                            libc::EOF
+                        } else {
+                            count as c_int
+                        },
+                        input_failure: exhausted && count == 0,
+                        values,
+                    };
+                }
+            }
         }
         if kinds[index] == b'[' {
             // SAFETY: the probe accepted a `%[^X]` here, so the caller passed a
