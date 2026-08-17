@@ -2947,8 +2947,30 @@ fn run_nl_langinfo(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    // LOADER MODE IS AN ARM, NOT A DETAIL. A plain `dlopen` leaves host libc
+    // first in the global scope, so fl's internal calls to its OWN exported
+    // symbols resolve to glibc; `RTLD_DEEPBIND` restores the binding
+    // `LD_PRELOAD` deployment gives them (the reasoning in full at `run_sscanf`).
+    // This family hardcoded the plain mode and so could not be asked the
+    // question at all. It is now selectable and PRINTED, because `nl_langinfo`
+    // is the one D1 queue-head symbol whose pre-registered contract named the
+    // plain mode: the registered row is the plain one, and the deepbind row
+    // exists so the caveat is settled by measurement rather than by argument.
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
     assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=nl_langinfo deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen_registered_contract"
+        }
+    );
     let fl_symbol = unsafe { libc::dlsym(handle, c"nl_langinfo".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
