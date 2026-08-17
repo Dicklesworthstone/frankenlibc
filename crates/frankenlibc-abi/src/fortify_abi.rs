@@ -91,13 +91,32 @@ unsafe fn checked_wide_nlen(ptr: *const WcharT, n: usize) -> usize {
     n
 }
 
+// THE NARROW `v*printf` FAMILY IS FL'S OWN, NOT A LINK-TIME EXTERN (bd-8std0q).
+//
+// These used to be declared in the block below, under a comment saying they were
+// "available in glibc". fl EXPORTS every one of them, so the declaration bound to
+// whichever the linker chose: glibc's in a test binary, where fl's `#[no_mangle]`
+// is disabled by cfg, and fl's in a deployed preload where it is not.
+//
+// That meant THE TESTED PATH WAS NOT THE SHIPPED PATH. Every `__*_chk` arm that
+// checks formatted output was validating glibc's formatter in CI and fl's in
+// production, so a divergence in fl's own printf behind `_FORTIFY_SOURCE` was
+// invisible to this suite by construction — the same hollow-arm hazard the
+// differential gates were audited for, here in production code.
+//
+// Importing fl's implementations directly makes the binding a property of the code
+// rather than of link order. The signatures are identical, so every call site is
+// unchanged.
+use crate::stdio_abi::{vasprintf, vdprintf, vfprintf, vprintf, vsnprintf};
+
 // Functions not in the Rust `libc` crate but available in glibc.
+//
+// WHAT REMAINS HERE IS NOT AUDITED. fl also exports several of the symbols still
+// declared below — `fgets`, `fread`, `mbstowcs`, `wcstombs`, the wide `v*wprintf`
+// family — so they carry the same link-order ambiguity and should be moved the
+// same way once each is checked. They are left for a follow-up rather than
+// rewired blind; see bd-8std0q.
 unsafe extern "C" {
-    fn vsnprintf(buf: *mut c_char, size: usize, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    fn vfprintf(stream: *mut c_void, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    fn vprintf(fmt: *const c_char, ap: *mut c_void) -> c_int;
-    fn vdprintf(fd: c_int, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    fn vasprintf(strp: *mut *mut c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
     fn vsyslog(priority: c_int, fmt: *const c_char, ap: *mut c_void);
     fn vswprintf(buf: *mut WcharT, n: usize, fmt: *const WcharT, ap: *mut c_void) -> c_int;
     fn vwprintf(fmt: *const WcharT, ap: *mut c_void) -> c_int;
