@@ -30862,3 +30862,38 @@ What this changes, and what it does not:
   least trustworthy one, and a discard run at the start of a session does not immunise the first case
   of each subsequent run. Compare like-for-like positions, or drop sz=16 and read the other three:
   they separate just as cleanly, 6.5491-6.5896 against 6.8769-6.8859.
+
+## 2026-08-17 (BlackThrush) — PROCESS NOTE: a three-arm bisect where two arms turned out to be the same binary, and the accidental A/A it produced
+
+- **RESULT CLASS: loss/baseline (invalidated attempt).** No conclusion is drawn from it. Recorded
+  because the failure mode is one I have a written rule against and skipped anyway.
+- **WHAT I INTENDED.** Only three commits touched `malloc_abi.rs` between the two binaries in the
+  regression row above, and TWO ARE MINE — `b4204b67e` added a `pub` test hook calling
+  `known_remaining`, which can inhibit its inlining, and `b77d9fa89` added the histogram accessors.
+  So I built a third binary with `malloc_abi.rs` reverted to `486d2c320` and set out to interleave
+  old / no-mine / HEAD.
+- **WHAT ACTUALLY RAN.** I restored `malloc_abi.rs` after building the no-mine probe and **never
+  rebuilt**, so `target/release/examples/malloc_st_probe` was still the no-mine binary. Verified
+  after the fact: `mp_nomine` and the "HEAD" arm are both
+  eede9416a84dbfcd... — **byte-identical**. The third arm was the second arm. **My own
+  arm-distinctness rule, written after this exact class of error twice before, was not run before the
+  measurement.** It is only useful as a precondition.
+- **THE ACCIDENT PRODUCED A USEFUL A/A, so the runs are not wasted.** Two independent measurement
+  sets of ONE binary, in one sequence, in a window that looked quiet at the start:
+  - set A: 6.6706 / 6.6294 / 6.6053 / 6.6361 and 6.6896 / 6.5788 / 6.6152 / 6.6122
+  - set B: 6.6459 / 6.5811 / **6.9744** / **8.4807** and 6.6271 / 6.5248 / 6.5728 / 6.5249
+  **Same code, spanning 6.5248 to 8.4807 — 30%.** Read as an A/A control, this is a same-binary A/A
+  ratio of 8.4807/6.5248 = 1.2997 ACROSS invocations, against the per-invocation A/A nulls the
+  harness itself reported as within 0.9973-1.0077 during the stable comparison above. Observed loadavg drifted 11.96 -> 17.54 across the
+  sequence and reached 19.29 by the end, against 10.26 when I checked before starting. **A window
+  verified quiet at the start is not a window that stays quiet**, and this family degrades fast: the
+  30% here matches the 31% measured at loadavg 90, reached at a nominal loadavg under 18.
+- **THIS DOES NOT UNDERMINE THE REGRESSION ROW ABOVE, and the difference is checkable rather than
+  asserted.** That comparison verified its two ELF shas differed BEFORE running
+  (f8db5310 vs 5865992d), and its observed loadavg held at 8.91-9.00 across all four runs with no
+  drift. Complete separation there was measured under conditions that stayed put; the separation here
+  is between a binary and itself.
+- **STILL OWED: the bisect.** `malloc_abi.rs` reverted to `486d2c320` reads 6.60-6.69 in the unstable
+  sequence, which is suggestively between old and HEAD and is NOT evidence. Redo with three verified
+  distinct shas, a discard run, and a loadavg re-checked AFTER the sequence as well as before —
+  tracked on bd-js47fq.
