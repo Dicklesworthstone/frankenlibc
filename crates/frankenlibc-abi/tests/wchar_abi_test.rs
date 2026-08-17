@@ -2054,3 +2054,94 @@ fn fgetwln_accepts_null_lenp() {
 
     assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
 }
+
+// ---------------------------------------------------------------------------
+// bd-xh08pf burn-down: wchar_abi's two inline `#[cfg(test)]` tests never
+// compiled — lib.rs declares the module `#[cfg(not(test))]`, so the two cfgs are
+// mutually exclusive and they built in neither configuration.
+//
+// They exercised `wide_to_narrow` / `wide_to_narrow_pooled` / `WPRINTF_FORMAT_BUF`
+// directly, all module-private. Reconstructed here through `swprintf`, which is
+// the caller that drives that conversion: the wide FORMAT string is what gets
+// converted to narrow, so a format carrying an invalid codepoint, and a second
+// call reusing the pooled buffer, reach the same code the originals did.
+//
+// The capacity assertion is dropped: buffer retention has no caller-visible
+// consequence beyond producing correct output on the next call, which is exactly
+// what the reuse test below asserts.
+// ---------------------------------------------------------------------------
+
+/// An invalid codepoint in the wide FORMAT renders as U+FFFD.
+///
+/// Was `pooled_wide_format_preserves_invalid_codepoint_replacement`, which
+/// compared the pooled converter against the fresh one on `<U+110000>`.
+#[test]
+fn swprintf_wide_format_replaces_invalid_codepoint() {
+    // 0x110000 is one past the Unicode maximum, so it is not a scalar value and
+    // cannot be written as a Rust char literal — hence the raw array, as the
+    // stranded test also built it.
+    let fmt = [b'<' as u32, 0x11_0000u32, b'>' as u32, 0];
+    let mut buf = [0u32; 32];
+    // SAFETY: `fmt` is NUL-terminated and `buf` has room for the rendering.
+    let n = unsafe {
+        swprintf(
+            buf.as_mut_ptr() as *mut libc::wchar_t,
+            32,
+            fmt.as_ptr() as *const libc::wchar_t,
+        )
+    };
+    assert!(n > 0, "swprintf should render the literal format");
+    let rendered: Vec<u32> = buf[..n as usize].to_vec();
+    assert_eq!(
+        rendered,
+        vec![b'<' as u32, 0xFFFD, b'>' as u32],
+        "an invalid codepoint in the wide format must become U+FFFD, not be dropped \
+         or emitted raw"
+    );
+}
+
+/// The pooled format buffer must not leak content between calls.
+///
+/// Was `pooled_wide_format_matches_fresh_converter_and_reuses_capacity`, whose
+/// caller-visible half is that a second, SHORTER format renders correctly after
+/// a longer one has grown the pool — a stale tail would show up here.
+#[test]
+fn swprintf_reused_format_buffer_does_not_leak_between_calls() {
+    let long_fmt = [
+        b'[' as u32, b'%' as u32, b'd' as u32, b'-' as u32, b'-' as u32, b'-' as u32,
+        b'-' as u32, b'-' as u32, b'-' as u32, b'-' as u32, b']' as u32, 0,
+    ];
+    let mut buf = [0u32; 64];
+    // SAFETY: NUL-terminated format, buffer large enough.
+    let n = unsafe {
+        swprintf(
+            buf.as_mut_ptr() as *mut libc::wchar_t,
+            64,
+            long_fmt.as_ptr() as *const libc::wchar_t,
+            7i32,
+        )
+    };
+    assert!(n > 0);
+    let first: Vec<u8> = buf[..n as usize].iter().map(|&c| c as u8).collect();
+    assert_eq!(first, b"[7-------]");
+
+    // A shorter format immediately after: if the pooled buffer were reused
+    // without being truncated, the tail of the previous format would survive.
+    let short_fmt = [b'%' as u32, b'd' as u32, 0];
+    let mut buf2 = [0u32; 64];
+    // SAFETY: as above.
+    let n2 = unsafe {
+        swprintf(
+            buf2.as_mut_ptr() as *mut libc::wchar_t,
+            64,
+            short_fmt.as_ptr() as *const libc::wchar_t,
+            9i32,
+        )
+    };
+    assert!(n2 > 0);
+    let second: Vec<u8> = buf2[..n2 as usize].iter().map(|&c| c as u8).collect();
+    assert_eq!(
+        second, b"9",
+        "the reused format buffer must not carry a tail from the previous call"
+    );
+}

@@ -4539,50 +4539,20 @@ unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
     PooledWideFormat { buf }
 }
 
-#[cfg(test)]
-mod wide_format_pool_tests {
-    use super::*;
-
-    fn wide(chars: &[u32]) -> Vec<libc::wchar_t> {
-        let mut out: Vec<libc::wchar_t> = chars.iter().map(|&ch| ch as libc::wchar_t).collect();
-        out.push(0);
-        out
-    }
-
-    #[test]
-    fn pooled_wide_format_matches_fresh_converter_and_reuses_capacity() {
-        let fmt = wide(&[
-            b'%' as u32,
-            b'l' as u32,
-            b's' as u32,
-            b' ' as u32,
-            0x03bb,
-            b' ' as u32,
-            b'%' as u32,
-            b'd' as u32,
-        ]);
-
-        let fresh = unsafe { wide_to_narrow(fmt.as_ptr()) };
-        let pooled = unsafe { wide_to_narrow_pooled(fmt.as_ptr()) };
-        let pooled_cap = pooled.buf.capacity();
-        assert_eq!(pooled.as_bytes(), fresh.as_slice());
-        drop(pooled);
-
-        let retained_cap = WPRINTF_FORMAT_BUF.with(|slot| slot.borrow().capacity());
-        assert!(retained_cap >= fresh.len());
-        assert!(retained_cap >= pooled_cap);
-    }
-
-    #[test]
-    fn pooled_wide_format_preserves_invalid_codepoint_replacement() {
-        let fmt = wide(&[b'<' as u32, 0x11_0000, b'>' as u32]);
-        let fresh = unsafe { wide_to_narrow(fmt.as_ptr()) };
-        let pooled = unsafe { wide_to_narrow_pooled(fmt.as_ptr()) };
-
-        assert_eq!(fresh, b"<\xEF\xBF\xBD>");
-        assert_eq!(pooled.as_bytes(), fresh.as_slice());
-    }
-}
+// The inline `#[cfg(test)] mod wide_format_pool_tests` that stood here never
+// compiled: lib.rs declares this module `#[cfg(not(test))]`, so its two tests
+// built in neither configuration (bd-xh08pf). They drove `wide_to_narrow`,
+// `wide_to_narrow_pooled` and `WPRINTF_FORMAT_BUF` directly, all private.
+//
+// Reconstructed in tests/wchar_abi_test.rs through `swprintf`, the caller that
+// drives this conversion — the wide FORMAT string is what gets converted, so a
+// format carrying an invalid codepoint and a shorter format issued right after a
+// longer one reach the same code:
+//   swprintf_wide_format_replaces_invalid_codepoint
+//   swprintf_reused_format_buffer_does_not_leak_between_calls
+// The capacity assertion is dropped: retention has no caller-visible consequence
+// beyond the next call rendering correctly, which the second test covers.
+// Mutation-checked: emitting '?' instead of U+FFFD here fails the first test.
 
 /// Convert narrow (UTF-8) bytes to wide chars, writing into a wchar_t buffer.
 /// Returns the number of wide chars written (not counting NUL).
