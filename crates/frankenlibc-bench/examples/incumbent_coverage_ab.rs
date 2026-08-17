@@ -1761,11 +1761,28 @@ struct MemrchrSpec {
     note: &'static str,
 }
 
+/// Every case's scan starts at this alignment, whichever allocator served it.
+///
+/// WHY THIS IS FORCED. The first attempt let each allocator return whatever it
+/// liked, and the measured result was that fl-provenance buffers landed at
+/// `align_mod_64` 16 and 48 while incumbent-provenance buffers landed at 32 and
+/// 0 — sequential addresses out of one heap, because fl's malloc delegates to
+/// the host allocator and the interleaved request order decides the offsets. A
+/// scan's cost depends on that offset, so the provenance arms were really an
+/// ALIGNMENT comparison wearing a provenance label. The giveaway was that the
+/// glibc arm moved with provenance too, and glibc has no allocation registry to
+/// probe. Over-allocating and aligning the start makes provenance the only
+/// difference left between an arm pair.
+const MEMRCHR_SCAN_ALIGN: usize = 64;
+
 /// One `memrchr` case: a live buffer plus what the arms are asked to find in it.
 struct MemrchrCase {
     label: &'static str,
     note: &'static str,
+    /// The aligned start the arms actually scan from.
     buffer: *mut c_void,
+    /// What the allocator returned, which is what must be freed.
+    allocation: *mut c_void,
     len: usize,
     needle: c_int,
     /// Expected index of the match, or `None` when the needle is absent.
@@ -3977,13 +3994,31 @@ fn run_memrchr(config: &Config) {
     let cases = MEMRCHR_SPECS
         .iter()
         .map(|spec| {
-            let buffer = match spec.provenance {
-                Provenance::FlMalloc => unsafe { fl_malloc(spec.len) },
-                Provenance::IncumbentMalloc => unsafe { host_malloc(spec.len) },
+            // Over-allocate so the scan can start at a fixed alignment no matter
+            // where the allocator chose to put the block.
+            let request = spec.len + MEMRCHR_SCAN_ALIGN;
+            let allocation = match spec.provenance {
+                Provenance::FlMalloc => unsafe { fl_malloc(request) },
+                Provenance::IncumbentMalloc => unsafe { host_malloc(request) },
             };
             assert!(
-                !buffer.is_null(),
+                !allocation.is_null(),
                 "allocation failed for case {}",
+                spec.label
+            );
+            let offset = allocation as usize % MEMRCHR_SCAN_ALIGN;
+            let shift = if offset == 0 {
+                0
+            } else {
+                MEMRCHR_SCAN_ALIGN - offset
+            };
+            // SAFETY: `shift < MEMRCHR_SCAN_ALIGN` and the block holds
+            // `len + MEMRCHR_SCAN_ALIGN` bytes, so `[buffer, buffer+len)` is inside it.
+            let buffer = unsafe { allocation.cast::<u8>().add(shift).cast::<c_void>() };
+            assert_eq!(
+                buffer as usize % MEMRCHR_SCAN_ALIGN,
+                0,
+                "scan start not aligned for case {}",
                 spec.label
             );
             unsafe {
@@ -3997,6 +4032,7 @@ fn run_memrchr(config: &Config) {
                 label: spec.label,
                 note: spec.note,
                 buffer,
+                allocation,
                 len: spec.len,
                 needle: c_int::from(MEMRCHR_NEEDLE),
                 expect: spec.hit_at,
@@ -4151,8 +4187,8 @@ fn run_memrchr(config: &Config) {
     // free, not a cleanup.
     for case in &cases {
         match case.provenance {
-            Provenance::FlMalloc => unsafe { fl_free(case.buffer) },
-            Provenance::IncumbentMalloc => unsafe { host_free(case.buffer) },
+            Provenance::FlMalloc => unsafe { fl_free(case.allocation) },
+            Provenance::IncumbentMalloc => unsafe { host_free(case.allocation) },
         }
     }
 
