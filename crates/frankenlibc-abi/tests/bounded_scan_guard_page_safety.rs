@@ -112,9 +112,60 @@ unsafe fn bounded_wait(pid: libc::pid_t) -> Outcome {
 /// not. `body` returns the arm's outcome code, which must stay below
 /// [`FIXTURE_BASE`].
 fn probe(elem: usize, body: impl FnOnce(*const u8) -> u8) -> Outcome {
+    probe_in_child(|guard_page| {
+        // End the readable elements exactly at the page boundary.
+        // SAFETY: `guard_page` is the boundary of a mapped page and the whole
+        // `AVAIL * elem` region below it is writable.
+        let p = unsafe { guard_page.sub(AVAIL * elem) };
+        // SAFETY: as above.
+        unsafe {
+            std::ptr::write_bytes(p, 0, AVAIL * elem);
+            for i in 0..AVAIL {
+                if i != NUL_AT {
+                    // Little-endian: writing the low byte suffices for both widths.
+                    p.add(i * elem).write(b'a');
+                }
+            }
+        }
+        (p, body)
+    })
+}
+
+/// Place `payload` followed by a NUL so the terminator is the LAST readable byte,
+/// then run `body` on it in a child.
+///
+/// The narrow-only sibling of [`probe`], for the functions whose behaviour
+/// depends on what the string SAYS rather than only on its length. `strtod`
+/// guards its capped scan behind a byte-at-a-time fast path that handles plain
+/// decimals, so a probe that can only place `"a"` cannot reach the capped scan at
+/// all; a payload of `"0x10"` or `"nan"` is rejected by that fast path and falls
+/// through to it.
+fn probe_payload(payload: &[u8], body: impl FnOnce(*const u8) -> u8) -> Outcome {
+    let total = payload.len() + 1;
+    probe_in_child(move |guard_page| {
+        // SAFETY: `total` bytes below the guard page are mapped and writable.
+        let p = unsafe { guard_page.sub(total) };
+        // SAFETY: as above; the NUL lands on the last readable byte.
+        unsafe {
+            std::ptr::copy_nonoverlapping(payload.as_ptr(), p, payload.len());
+            p.add(payload.len()).write(0);
+        }
+        (p, body)
+    })
+}
+
+/// Shared fixture: two pages with the second one `PROT_NONE`, in a fresh child.
+///
+/// `place` receives the address of the guard-page boundary, writes the fixture
+/// below it, and returns the pointer to hand the arm together with the arm
+/// itself. Forked because the failure mode is a SIGSEGV, which would otherwise
+/// take the whole test binary with it.
+fn probe_in_child<F>(place: impl FnOnce(*mut u8) -> (*mut u8, F)) -> Outcome
+where
+    F: FnOnce(*const u8) -> u8,
+{
     // SAFETY: fork; the child only touches the mapping it just made, runs one
-    // arm and `_exit`s. Nothing on the child path allocates, so it cannot block
-    // on an allocator lock this process's other threads may hold across `fork`.
+    // arm and `_exit`s.
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
@@ -136,16 +187,7 @@ fn probe(elem: usize, body: impl FnOnce(*const u8) -> u8) -> Outcome {
                 libc::_exit(FIXTURE_BASE + 1);
             }
 
-            // End the readable elements exactly at the page boundary.
-            let p = base.cast::<u8>().add(PAGE - AVAIL * elem);
-            std::ptr::write_bytes(p, 0, AVAIL * elem);
-            for i in 0..AVAIL {
-                if i != NUL_AT {
-                    // Little-endian: writing the low byte suffices for both widths.
-                    p.add(i * elem).write(b'a');
-                }
-            }
-
+            let (p, body) = place(base.cast::<u8>().add(PAGE));
             let code = body(p);
             libc::_exit(c_int::from(code));
         }
@@ -479,6 +521,227 @@ fn bounded_scans_never_read_into_guard_page() {
     assert!(
         divergences.is_empty(),
         "bounded scans read past the terminator where glibc did not: {divergences:#?}"
+    );
+}
+
+/// POSITIVE CONTROL: prove this fixture can actually observe an over-read.
+///
+/// `capped_parsers_never_read_into_guard_page` came back green on the first run,
+/// and a green guard-page arm is indistinguishable from an arm that never touched
+/// the mapping — the same failure mode as any silently-passing gate. So one arm
+/// is asked to over-read ON PURPOSE.
+///
+/// `memchr(p, c, n)` is the right instrument because `n` really is a promise of
+/// `n` readable bytes, so handing it 4096 over a 5-byte buffer is a deliberate
+/// contract violation rather than a defect being hunted; both implementations are
+/// entitled to read all 4096 and both should die. If EITHER survives, the fixture
+/// is not placing the string where it claims and no green result from this file
+/// means anything.
+#[test]
+fn fixture_can_observe_an_over_read() {
+    use frankenlibc_abi::string_abi as s;
+
+    type MemchrFn = unsafe extern "C" fn(*const std::ffi::c_void, c_int, usize) -> *mut std::ffi::c_void;
+    let fl: MemchrFn = s::memchr;
+    let host: MemchrFn = unsafe { host_fn(c"memchr", s::memchr as *const ()) };
+
+    let arm = |f: MemchrFn| {
+        // SAFETY: intentionally out of contract — see the doc comment. The child
+        // is expected to die here, which is the point.
+        move |p: *const u8| {
+            let found = unsafe { f(p.cast::<std::ffi::c_void>(), 0xFF, 4096) };
+            u8::from(!found.is_null())
+        }
+    };
+    let host_outcome = probe_payload(b"0x10", arm(host));
+    let fl_outcome = probe_payload(b"0x10", arm(fl));
+    println!(
+        "CAPPED_GUARD control      memchr(p,0xFF,4096) over a 5-byte buffer: \
+         host={host_outcome:?} fl={fl_outcome:?}"
+    );
+
+    assert_eq!(
+        host_outcome,
+        Outcome::Signal(libc::SIGSEGV),
+        "the fixture did not make glibc's memchr fault on a deliberate 4096-byte \
+         over-read of a 5-byte buffer, so the string is not flush against the \
+         guard page and every other result in this file is vacuous"
+    );
+    assert_eq!(
+        fl_outcome,
+        Outcome::Signal(libc::SIGSEGV),
+        "fl's memchr survived a deliberate 4096-byte over-read; either the \
+         fixture is wrong or memchr is not reading what it was told to"
+    );
+
+    // WHY THE CAPPED PARSERS SURVIVE, measured rather than argued. Their bound is
+    // `known_remaining(p).unwrap_or(BIG_CAP)`, so everything turns on what the
+    // allocator's bookkeeping says about a pointer it never handed out. If that
+    // is `None` the cap applies and the 128-byte folded tier in `scan_c_string`
+    // would run off the page; if it is `Some(small)` the scan is already bounded
+    // by the real extent and no cap is ever consulted. Asking the allocator
+    // directly settles which, and it is the one fact the timings cannot show.
+    let reported = probe_payload(b"0x10", |p| {
+        match frankenlibc_abi::malloc_abi::known_remaining_for_tests(p as usize) {
+            None => 0,
+            // Bucketed so the exit status can carry it: 1 means "smaller than the
+            // distance to the guard page", 2 means "at least that far", which is
+            // the only distinction that decides whether a scan can fault.
+            Some(remaining) if remaining <= 5 => 1,
+            Some(_) => 2,
+        }
+    });
+    println!("CAPPED_GUARD known_remaining over a foreign mmap: {reported:?} (0=None 1=<=5 2=>5)");
+}
+
+type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
+type StrtofFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f32;
+type InetNetworkFn = unsafe extern "C" fn(*const c_char) -> libc::c_uint;
+
+/// Payloads that reach the CAPPED scan rather than a byte-at-a-time fast path.
+///
+/// `strtod`/`strtof` try `parse_strtod_short_decimal_c_string_fast` first, which
+/// walks byte by byte and is page-safe. It bails on a hex prefix and on `inf`/
+/// `nan`, and only then does the capped scan run — so a plain `"1"` would prove
+/// nothing about the scan. Each payload here is a VALID input that the fast path
+/// refuses, paired with the character count both implementations must consume.
+const PARSER_PAYLOADS: &[(&[u8], u8, &str)] = &[
+    (b"0x10", 4, "hex_integer"),
+    (b"0x1p4", 5, "hex_float_with_exponent"),
+    (b"nan", 3, "nan"),
+    (b"inf", 3, "infinity"),
+    // 20 significant digits, over the fast path's MAX_FIXED_SIGNIFICANT_DIGITS of
+    // 15. Included because the four payloads above all came back GREEN, and a
+    // green arm here is only meaningful if the capped scan was actually reached:
+    // this one cannot be served by a 15-digit fixed-decimal path whatever its
+    // prefix handling does, so if the capped scan is reachable at all, it is
+    // reachable from here.
+    (b"12345678901234567890", 20, "twenty_significant_digits"),
+    // Inputs with NOTHING for a numeric fast path to consume. `strtod("")` and
+    // `strtod("zzz")` are legal calls that must return 0 and leave endptr at the
+    // start, and they are the shapes most likely to fall through every fast path
+    // to the capped scan — which `known_remaining` was measured to leave
+    // unbounded (it reports None for a foreign mmap, so the 131072 cap applies).
+    (b"zzz", 0, "non_numeric"),
+    (b"", 0, "empty_string"),
+    (b"   ", 0, "whitespace_only"),
+    (b"+", 0, "lone_sign"),
+    (b".", 0, "lone_point"),
+    (b"0x", 1, "truncated_hex_prefix"),
+];
+
+/// The functions whose defensive cap is applied to a caller string on the
+/// DEPLOYED path must not read past the terminator either.
+///
+/// Filed as bd-strtod-capped-scan-overread-iyj9oc from code reading alone. Unlike
+/// the bounded family above, these take no `n` at all: the bound is a cap the
+/// implementation invents (131072 for the numeric scan), so every one of them
+/// admits the 128-byte folded window regardless of what the caller passed. glibc
+/// parses these byte by byte and completes.
+#[test]
+fn capped_parsers_never_read_into_guard_page() {
+    use frankenlibc_abi::{glibc_internal_abi as gi, stdlib_abi as s};
+
+    let fl_strtod: StrtodFn = s::strtod;
+    let host_strtod: StrtodFn = unsafe { host_fn(c"strtod", s::strtod as *const ()) };
+    let fl_strtof: StrtofFn = s::strtof;
+    let host_strtof: StrtofFn = unsafe { host_fn(c"strtof", s::strtof as *const ()) };
+    let fl_inet_network: InetNetworkFn = gi::inet_network;
+    let host_inet_network: InetNetworkFn =
+        unsafe { host_fn(c"inet_network", gi::inet_network as *const ()) };
+
+    // Each arm reports how many characters it consumed, which tests behaviour as
+    // well as survival: a scan that dies reports Signal, and one that quietly
+    // stops early reports a different count.
+    let strtod_arm = |f: StrtodFn| {
+        move |p: *const u8| {
+            let mut end: *mut c_char = std::ptr::null_mut();
+            // SAFETY: `p` is a NUL-terminated string flush against a guard page.
+            unsafe { f(p.cast::<c_char>(), &mut end) };
+            (end as usize - p as usize) as u8
+        }
+    };
+    let strtof_arm = |f: StrtofFn| {
+        move |p: *const u8| {
+            let mut end: *mut c_char = std::ptr::null_mut();
+            // SAFETY: as above.
+            unsafe { f(p.cast::<c_char>(), &mut end) };
+            (end as usize - p as usize) as u8
+        }
+    };
+
+    let mut divergences = Vec::new();
+    let mut checked = 0usize;
+
+    for (payload, consumed, name) in PARSER_PAYLOADS {
+        let text = String::from_utf8_lossy(payload).into_owned();
+        for (symbol, host_outcome, fl_outcome) in [
+            (
+                "strtod",
+                probe_payload(payload, strtod_arm(host_strtod)),
+                probe_payload(payload, strtod_arm(fl_strtod)),
+            ),
+            (
+                "strtof",
+                probe_payload(payload, strtof_arm(host_strtof)),
+                probe_payload(payload, strtof_arm(fl_strtof)),
+            ),
+        ] {
+            println!(
+                "CAPPED_GUARD {symbol:<12} payload={text:<6} case={name:<24} \
+                 host={host_outcome:?} fl={fl_outcome:?}"
+            );
+            assert_eq!(
+                host_outcome,
+                Outcome::Code(*consumed),
+                "host glibc must parse {symbol}({text:?}) flush against a guard page \
+                 and consume {consumed}; the fixture is wrong, not fl"
+            );
+            checked += 1;
+            if fl_outcome != host_outcome {
+                divergences.push(format!(
+                    "{symbol} payload={text:?}: fl={fl_outcome:?} host={host_outcome:?}"
+                ));
+            }
+        }
+    }
+
+    // inet_network takes a dotted quad and no bound at all; its cap is
+    // INET_TEXT_SCAN_LIMIT. The outcome code is the low byte of the result, which
+    // both sides must agree on.
+    for payload in [b"1.2.3.4".as_slice(), b"10.0".as_slice()] {
+        let text = String::from_utf8_lossy(payload).into_owned();
+        let arm = |f: InetNetworkFn| {
+            // SAFETY: `p` is a NUL-terminated string flush against a guard page.
+            move |p: *const u8| (unsafe { f(p.cast::<c_char>()) } & 0x3f) as u8
+        };
+        let host_outcome = probe_payload(payload, arm(host_inet_network));
+        let fl_outcome = probe_payload(payload, arm(fl_inet_network));
+        println!(
+            "CAPPED_GUARD {:<12} payload={text:<8} host={host_outcome:?} fl={fl_outcome:?}",
+            "inet_network"
+        );
+        assert!(
+            matches!(host_outcome, Outcome::Code(_)),
+            "host glibc must survive inet_network({text:?}) flush against a guard page; \
+             got {host_outcome:?} — the fixture is wrong, not fl"
+        );
+        checked += 1;
+        if fl_outcome != host_outcome {
+            divergences.push(format!(
+                "inet_network payload={text:?}: fl={fl_outcome:?} host={host_outcome:?}"
+            ));
+        }
+    }
+
+    assert_eq!(
+        checked,
+        PARSER_PAYLOADS.len() * 2 + 2,
+        "not every arm ran"
+    );
+    assert!(
+        divergences.is_empty(),
+        "capped parsers read past the terminator where glibc did not: {divergences:#?}"
     );
 }
 
