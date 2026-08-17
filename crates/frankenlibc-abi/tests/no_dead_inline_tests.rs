@@ -31,7 +31,6 @@ use std::path::{Path, PathBuf};
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("fenv_abi", 11),
     ("glibc_internal_abi", 4),
-    ("grp_abi", 2),
     ("iconv_abi", 6),
     ("io_internal_abi", 5),
     ("pthread_abi", 6),
@@ -40,6 +39,12 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("wchar_abi", 2),
 ];
 // BURNED DOWN (bd-xh08pf):
+//   grp_abi (2)        -> tests/grp_abi_test.rs::getgrent_skips_malformed_and_comment_lines
+//                         and ::getgrent_restarts_when_the_group_file_changes_mid_iteration
+//                         (rewritten against the public ABI, not relocated: the
+//                          originals read GrpStorage internals. The restart test
+//                          was verified by mutation — deleting BOTH iter_idx
+//                          resets makes it fail with the stale entry.)
 //   unistd_abi (1)     -> tests/resolv_abi_test.rs::res_init_reports_success_bd_xh08pf
 //                         (pure relocation; only touched the public `res_init`)
 //   c11threads_abi (5) -> tests/c11threads_abi_test.rs

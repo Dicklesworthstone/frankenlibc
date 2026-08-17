@@ -1230,3 +1230,101 @@ fn group_from_gid_zero_with_nogroup_renders_zero() {
         assert_eq!(bytes, b"0");
     });
 }
+
+// ---------------------------------------------------------------------------
+// bd-xh08pf burn-down: grp_abi's two inline `#[cfg(test)]` tests never compiled.
+//
+// crates/frankenlibc-abi/src/lib.rs declares the module `#[cfg(not(test))]`, so
+// an inline `#[cfg(test)]` block inside it is dead by construction — the two
+// cfgs are mutually exclusive and it built in neither configuration. Both tests
+// are reconstructed here against the PUBLIC entry points rather than relocated,
+// because what they reached for — GrpStorage::new_with_path, cache_metrics(),
+// iter_idx, entries_generation — is module-private, and widening the ABI surface
+// to make internal counters reachable would be a worse trade than asserting the
+// behaviour those counters exist to produce.
+//
+// What is kept is the OBSERVABLE claim of each: a rebuilt cache reflects the new
+// file and restarts iteration, and malformed and comment lines are skipped
+// rather than counted as entries. What is dropped is the internal telemetry
+// (hit/miss/reload/invalidation counts), which has no public surface and no
+// caller-visible consequence beyond the two behaviours asserted here.
+// ---------------------------------------------------------------------------
+
+/// Malformed and comment lines are skipped, not surfaced as entries.
+///
+/// The stranded `grp_rebuild_entries_records_parse_stats_after_invalidation`
+/// asserted this through `last_parse_stats`; the caller-visible form is simply
+/// that iteration yields only the well-formed entries.
+#[test]
+fn getgrent_skips_malformed_and_comment_lines() {
+    with_group_file(b"root:x:0:\nmalformed\n#comment\nusers:x:100:alice,bob\n", || {
+        // SAFETY: single-threaded under GROUP_ENV_LOCK; the iteration is closed
+        // by endgrent below.
+        unsafe { setgrent() };
+        let mut names = Vec::new();
+        loop {
+            // SAFETY: iteration continues until getgrent reports NULL.
+            let entry = unsafe { getgrent() };
+            if entry.is_null() {
+                break;
+            }
+            // SAFETY: a non-NULL entry points at valid thread-local storage.
+            let name = unsafe { CStr::from_ptr((*entry).gr_name) };
+            names.push(name.to_bytes().to_vec());
+        }
+        // SAFETY: closes the iteration opened above.
+        unsafe { endgrent() };
+
+        assert_eq!(
+            names,
+            vec![b"root".to_vec(), b"users".to_vec()],
+            "a malformed line and a comment must be skipped, leaving only the two \
+             well-formed entries"
+        );
+    });
+}
+
+/// A group file rewritten MID-ITERATION restarts the enumeration.
+///
+/// The stranded `grp_cache_refresh_tracks_hits_and_reloads` asserted this
+/// through `iter_idx == 0` after invalidation. The caller-visible form has to
+/// avoid `endgrent`/`setgrent` around the rewrite — those reset the index on
+/// their own, so a test that brackets the rewrite with them passes even when
+/// invalidation does NOT reset iteration, and proves only that the file was
+/// re-read (which `getgrgid_hot_lookup_reuses_tls_result_and_invalidates_on_reload`
+/// already covers). Verified by mutation: deleting the `iter_idx = 0` in the
+/// invalidation path leaves the bracketed form green and fails this one.
+#[test]
+fn getgrent_restarts_when_the_group_file_changes_mid_iteration() {
+    with_group_file(b"root:x:0:\nusers:x:100:alice\n", || {
+        // SAFETY: single-threaded under GROUP_ENV_LOCK.
+        unsafe { setgrent() };
+        // SAFETY: first entry of the original file.
+        let first = unsafe { getgrent() };
+        assert!(!first.is_null(), "iteration should yield the first entry");
+        // SAFETY: non-NULL entry points at valid thread-local storage.
+        let first_name = unsafe { CStr::from_ptr((*first).gr_name) }.to_bytes().to_vec();
+        assert_eq!(first_name, b"root".to_vec());
+
+        // Rewrite WITHOUT closing the enumeration: the next getgrent must see
+        // the invalidation, not resume at the stale index.
+        let path = std::env::var_os("FRANKENLIBC_GROUP_PATH").expect("group path should be set");
+        std::fs::write(&path, b"wheel:x:10:carol\nusers:x:101:alice,bob\n")
+            .expect("rewrite temp group");
+
+        // SAFETY: continues the same enumeration across the rewrite.
+        let after = unsafe { getgrent() };
+        assert!(!after.is_null(), "iteration should continue after the rewrite");
+        // SAFETY: non-NULL entry.
+        let after_name = unsafe { CStr::from_ptr((*after).gr_name) }.to_bytes().to_vec();
+        // SAFETY: closes the enumeration.
+        unsafe { endgrent() };
+
+        assert_eq!(
+            after_name,
+            b"wheel".to_vec(),
+            "a mid-iteration rewrite must restart the enumeration at the new file's \
+             first entry, not resume at the old index (which would yield \"users\")"
+        );
+    });
+}

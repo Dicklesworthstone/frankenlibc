@@ -427,10 +427,11 @@ impl GrpStorage {
         &mut self.gr as *mut libc::group
     }
 
-    #[cfg(test)]
-    fn cache_metrics(&self) -> CacheMetrics {
-        self.cache_metrics
-    }
+    // `cache_metrics()` stood here, gated `#[cfg(test)]` for the inline tests
+    // that never compiled (bd-xh08pf). With those reconstructed against the
+    // public ABI in tests/grp_abi_test.rs, the accessor had no caller in either
+    // configuration. The `cache_metrics` FIELD is kept: it is still updated on
+    // the live paths and is what a future metrics surface would read.
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -913,92 +914,17 @@ pub unsafe extern "C" fn group_from_gid(gid: libc::gid_t, nogroup: c_int) -> *co
     ptr
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
-
-    fn temp_path(prefix: &str) -> PathBuf {
-        let seq = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "frankenlibc-{prefix}-{}-{seq}.txt",
-            std::process::id()
-        ))
-    }
-
-    fn write_file(path: &Path, content: &[u8]) {
-        fs::write(path, content).expect("temporary group file should be writable");
-    }
-
-    #[test]
-    fn grp_cache_refresh_tracks_hits_and_reloads() {
-        let path = temp_path("grp-cache");
-        write_file(&path, b"root:x:0:\nusers:x:100:alice\n");
-
-        let mut storage = GrpStorage::new_with_path(&path);
-        storage.refresh_cache();
-        let metrics = storage.cache_metrics();
-        assert_eq!(metrics.misses, 1);
-        assert_eq!(metrics.hits, 0);
-        assert_eq!(metrics.reloads, 1);
-        assert_eq!(metrics.invalidations, 0);
-
-        storage.refresh_cache();
-        let metrics = storage.cache_metrics();
-        assert_eq!(metrics.hits, 1);
-        assert_eq!(metrics.misses, 1);
-        assert_eq!(metrics.reloads, 1);
-
-        write_file(&path, b"root:x:0:\nusers:x:101:alice,bob\n");
-        storage.refresh_cache();
-        let metrics = storage.cache_metrics();
-        assert_eq!(metrics.misses, 2);
-        assert_eq!(metrics.reloads, 2);
-        assert_eq!(metrics.invalidations, 1);
-        assert_eq!(storage.iter_idx, 0);
-        assert!(
-            frankenlibc_core::grp::lookup_by_gid(storage.current_content(), 101).is_some(),
-            "cache reload should expose updated group content"
-        );
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn grp_rebuild_entries_records_parse_stats_after_invalidation() {
-        let path = temp_path("grp-parse-stats");
-        write_file(&path, b"root:x:0:\nmalformed\n#comment\n");
-
-        let mut storage = GrpStorage::new_with_path(&path);
-        storage.refresh_cache();
-        storage.rebuild_entries();
-
-        assert_eq!(storage.entries.len(), 1);
-        assert_eq!(storage.last_parse_stats.parsed_entries, 1);
-        assert_eq!(storage.last_parse_stats.malformed_lines, 1);
-        assert_eq!(storage.last_parse_stats.skipped_lines, 1);
-        assert_eq!(storage.entries_generation, storage.cache_generation);
-
-        storage.iter_idx = 1;
-        write_file(&path, b"root:x:0:\nusers:x:100:alice,bob\n");
-        storage.refresh_cache();
-
-        assert!(
-            storage.entries.is_empty(),
-            "cache invalidation should clear iteration entries"
-        );
-        assert_eq!(storage.iter_idx, 0);
-        assert_eq!(storage.entries_generation, 0);
-
-        storage.rebuild_entries();
-        assert_eq!(storage.entries.len(), 2);
-        assert_eq!(storage.last_parse_stats.parsed_entries, 2);
-        assert_eq!(storage.last_parse_stats.malformed_lines, 0);
-        assert_eq!(storage.entries_generation, storage.cache_generation);
-
-        let _ = fs::remove_file(&path);
-    }
-}
+// The inline `#[cfg(test)] mod tests` that stood here never compiled: lib.rs
+// declares this module `#[cfg(not(test))]`, so the two cfgs are mutually
+// exclusive and its two tests built in neither configuration (bd-xh08pf).
+//
+// Both are reconstructed in tests/grp_abi_test.rs against the PUBLIC entry
+// points — `getgrent_skips_malformed_and_comment_lines` and
+// `getgrent_restarts_when_the_group_file_changes_mid_iteration` — rather than
+// relocated, because they reached module-private state (`GrpStorage::
+// new_with_path`, `cache_metrics()`, `iter_idx`, `entries_generation`) and
+// widening the ABI surface to expose internal counters would be a worse trade
+// than asserting the behaviour those counters produce. The internal hit/miss/
+// reload tallies are dropped: they have no caller-visible consequence beyond
+// the two behaviours now covered. tests/no_dead_inline_tests.rs enforces that
+// no new dead block appears here.
