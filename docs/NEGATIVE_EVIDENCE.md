@@ -30946,3 +30946,47 @@ What this changes, and what it does not:
   earlier today shows a systematic between-run shift of up to 15% on this instrument. The ten wins are
   0.24x-0.40x, so a 15% shift cannot reach parity; the two losses at 1.17x and 1.25x are close enough
   to that band that they should be treated as directional, not exact.
+
+## 2026-08-17 — CAMPAIGN WIN: the variadic arm re-certified TWICE, 10 wins of 12 both times, and reproducibility is a different animal since the pin fix
+
+- result_class=campaign-win. legacy_incumbent=host-glibc. incumbent_provenance=uninterposed-host-link.
+  same_invocation=true. bench_elf_sha256=08f8dcaa5fc6251d8ab8f3ad1055ffb4f1f6ee7f0ecd6af239d0595ba90c9005
+  (in-process self-report). `FL_LOAD_MODE symbol=__isoc23_sscanf`, deepbind=true, 36 samples per case
+  at 600,000 reps per arm. Raw logs `tests/artifacts/perf/bd-6zt6hf-variadic-recert-2026-08-17-run1.log`
+  and `...-run2.log`. Conformance in BOTH runs: 64 comparisons, 0 mismatches.
+- **HEADLINE:** `single_int` incumbent_ratio=0.275390 incumbent_bootstrap_median_ci=[0.266766,0.277931]
+  null_bootstrap_median_ci=[0.996715,1.001529] (fl-vs-fl A/A; glibc-vs-glibc is [0.989346,1.004217]),
+  same_invocation=true, clears_2x_null=true, nulls_hold=true.
+- Both A/A controls are same-invocation with the effect: fl-vs-fl null_median_ratio 0.999585 with bootstrap median CI [0.996715,1.001529], and glibc-vs-glibc null_median_ratio 0.997738 with bootstrap median CI [0.989346,1.004217], each measured inside the run that produced the ratio above.
+- The effect itself, same paragraph for the same reason: incumbent_ratio 0.275390 with bootstrap median CI [0.266766,0.277931], same-invocation with both nulls.
+- **TWO RUNS, and the between-run spread reported beside the in-run CI as this ledger now requires:**
+
+  | case | run 1 | run 2 | between-run delta |
+  | --- | ---: | ---: | ---: |
+  | `scanset_only` | 0.2375 | 0.2373 | -0.10% |
+  | `long_string` | 0.2450 | 0.2444 | -0.23% |
+  | `key_value` | 0.2521 | 0.2546 | +1.00% |
+  | `dotted_quad` | 0.2567 | 0.2460 | -4.15% |
+  | `string_token` | 0.2724 | 0.2692 | -1.14% |
+  | `single_int` | 0.2754 | 0.2685 | -2.52% |
+  | `string_then_int` | 0.2761 | 0.2742 | -0.66% |
+  | `two_ints` | 0.2847 | 0.2868 | +0.74% |
+  | `two_strings` | 0.2969 | 0.2975 | +0.19% |
+  | `mixed_record` | 0.3747 | 0.3740 | -0.19% |
+  | `float_only` | 1.2455 | 1.2103 | -2.83% |
+  | `long_hex` | 1.3035 | 1.3301 | +2.04% |
+
+- **THIS IS A DIFFERENT REPRODUCIBILITY PICTURE FROM THIS MORNING.** The earlier pair moved ALL TWELVE
+  cases in one direction by up to 15% and flipped two verdicts. This pair spans -4.15% to +2.04% with
+  MIXED signs and no flips — scatter, not a systematic shift. The one recorded difference: both runs
+  here report `selected_distinct_cores=8 sibling_sharing=false`, where the earlier pair had 8 distinct
+  cores in one run and only 6 in the other. That is consistent with the SMT-sharing hypothesis and is
+  still not proof — two pairs is two pairs — but the selector change is the only deliberate difference
+  and the improvement is large.
+- **VERDICT BOTH RUNS: 12 cases, 10 wins, 2 losses, 0 undecidable**, every case clearing twice its
+  null, all 48 A/A controls across the two runs inside 0.993920-1.003625.
+- **THE TWO LOSSES ARE THE DECLINED SHAPES, on BOTH arms and BOTH runs:** a lone `%f` (1.21x-1.25x) and
+  `%lx` (1.30x-1.33x), neither of which any fast path accepts, so they measure the engine. `long_hex`
+  is worse here than on the `vsscanf` arm (1.30x against 1.25x) and worse than its own 0.999 from this
+  morning — a real engine-path regression that predates nothing in this row and is now the top
+  outstanding item in the family.
