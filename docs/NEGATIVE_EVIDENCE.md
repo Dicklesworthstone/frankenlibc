@@ -31316,3 +31316,82 @@ What this changes, and what it does not:
   computing the same thing can diverge silently, and the only symptom would be reading the wrong
   number of varargs. Core printf 57 passed; the render-segments, `%p` and `z`/`t` differential gates
   all green.
+
+## 2026-08-17 (BlackThrush) — bd-5pfs0p: the `%.Nf` fast path parsed ONE digit, so `%.10f` fell off a 2.3x cliff; the cap is now 99 and `fprintf_float` is 7 of 7
+
+- **RESULT CLASS: measured lever, vs-incumbent, with the loss it converted measured first on the same
+  host and harness.** Both arms in one invocation with the incumbent live in that run.
+- **THE INSTRUMENT FOUND IT, and it was already in the tree.** `fprintf_float` carries a deliberate
+  pair — `%.9f` where the probe fires and `%.10f` one digit further — built so a precision the probe
+  takes can be compared against the adjacent one it refuses, in the same run, against the same
+  incumbent. That pair is what separated "fl's stream float path is slow" from "the probe stops too
+  early". BEFORE, `FL_OBJECT sha256=e3fefcc4...`, loadavg 12.04-18.17, cpu 2621 MHz:
+
+  | case | fl ns | glibc ns | fl/glibc |
+  |---|---|---|---|
+  | `%.9f` probe FIRES | 74.224 | 126.500 | **0.583** |
+  | `%.10f` probe DECLINES | 171.922 | 130.906 | **1.275 (loss)** |
+
+  One extra digit of output, 2.3x the time. Rendering does not cost that: the buffer family's own
+  ladder puts a digit at roughly 4 ns.
+- **CAUSE: a PARSER limit, not a renderer limit.** `exact_direct_f_format` read a single byte of
+  precision (`%.` + one digit + `f` + NUL), so every two-digit precision missed the probe entirely and
+  paid the full parse + membrane + segment pipeline. `render_direct_fixed` is total at any precision
+  and always was — nothing about the rendering needed to change.
+- **THE FIX HAD A SECOND HALF THAT WAS NOT OPTIONAL.** The render buffer was 352 bytes, which is
+  EXACTLY `1 + 309 + 1 + 41` — sign, `f64::MAX`'s 309 integer digits, the point, and 41 fractional
+  digits. Zero margin past precision 41. Two of the three write paths in `render_direct_fixed` index
+  the buffer directly and would panic across an `extern "C"` boundary; the third (`write!`) discards
+  its `Err` and truncates SILENTLY. Raising the parser's cap alone would have turned a slow path into
+  a wrong one. `MAX_DIRECT_FIXED_PRECISION = 99` and `DIRECT_FIXED_BUF = 416` now share a derivation
+  and a `const _: () = assert!(..)` that fails the build if they ever drift apart.
+- **AFTER, `FL_OBJECT sha256=2fc0beb3...`, loadavg 15.72-20.71, cpu 2387 MHz, `--pin-quietest 8`,
+  `selected_distinct_cores=8 sibling_sharing=false`, host thinkstation1:**
+
+  | case | fl ns | glibc ns | fl/glibc | null_fl_fl | null_glibc_glibc |
+  |---|---|---|---|---|---|
+  | `%.2f` | 41.151 | 85.737 | 0.480 | 0.999610 | 0.999969 |
+  | `%.4f` | 49.533 | 96.371 | 0.516 | 1.000299 | 1.001203 |
+  | `%.2f` defaultbuf | 42.101 | 88.763 | 0.478 | 1.000089 | 0.999950 |
+  | `%.9f` | 69.704 | 116.437 | 0.599 | 0.999236 | 0.999913 |
+  | **`%.10f`** | **109.702** | **123.923** | **0.887** | 1.000643 | 1.000351 |
+  | `%f` | 57.384 | 103.177 | 0.554 | 1.000017 | 1.001067 |
+
+  `fprintf_float` went **5 wins / 1 loss to 6 / 0**; `snprintf_float` stayed 3 / 0. Every null within
+  0.997-1.004. Conformance 0 mismatches on stream bytes AND return value.
+- **A STALE-ARTIFACT TRAP CAUGHT MID-MEASUREMENT, and it would have produced a clean, wrong row.** My
+  first post-change run reported `FL_OBJECT sha256=e3fefcc4...` — byte-identical to the baseline,
+  same `bytes=21630184`. The harness's `ensure_fl_shared_object` opens with
+  `if config.fl_so.is_file() { return; }`: it is build-if-MISSING, not build-if-STALE, so it happily
+  re-measured the previous binary and would have reported the lever as worth nothing. The sha line is
+  the only thing that catches this. **Rebuild the cdylib explicitly and diff the sha before believing
+  any post-change row from this harness.**
+- **THE DECLINE ARM WAS REPLACED, NOT DELETED, and this is the part worth copying.** `%.10f` was the
+  declining half of the pair; after the cap moved it fires, so the pair had no declining member and
+  the instrument that produced this lever would have been silently destroyed by the lever. A new
+  `stream_100dp_probe_declines` arm (`%.100f`, three digits) restores the boundary. Re-run with it,
+  7 cases, 7 of 7, conformance 128 comparisons 0 mismatches — but taken at loadavg 28.72 rising to
+  32.19, ABOVE the ~30 defer line, so the quieter run above is the headline and this one is
+  corroboration only.
+- **AND THE NEW DECLINE ARM REFUTES THE OBVIOUS GENERALISATION.** `%.100f` on the general path is
+  **0.851x — faster than glibc**, not slower. So "the general path loses" is FALSE; the loss was
+  specific to the mid-precision band the parser was dropping, where fl paid the whole pipeline for a
+  short rendering. A cliff, not a slope.
+- **GATE.** `conformance_diff_snprintf_fixed_fastpath` extended to precisions 0-13, 17, 40, 41, 42,
+  43, 50, 98, 99 plus declines 100 and 127 and the leading-zero forms `%.00f`/`%.05f`/`%.09f`/
+  `%.010f`. 41 and 42 bracket the old buffer's exact limit; `%.99f` of `f64::MAX` is the 410-byte
+  worst case that sizes the buffer. 5 passed / 0 failed on worker vmi1227854 with compilation
+  observed; 321,813 snprintf triples, 178,785 vsnprintf, 35,757 vsprintf compared against a DLSYM'd
+  host glibc on return value AND full destination. The test's own `CAP` had to go 384 -> 512: the
+  `sprintf`/`vsprintf` arms call an UNBOUNDED entry point into a stack buffer, so a too-small CAP
+  there is a stack overflow in the gate rather than a failed assertion.
+- **SEPARATELY VERIFIED THE SAME TICK.** `vsnprintf_fixed_reads_the_fp_register_save_area` was RUN
+  green (worker vmi1153651), which the source comment had been waiting on since 811e6b94b. The
+  `va_read_one_fp` reader is correct and its `#[allow(dead_code)]` — carried TWICE while it was
+  unwired — is removed, so the compiler now reports it if the dispatch is ever unwired again. That is
+  the only local signal that would fire: the fast path is a pure optimisation, so removing it leaves
+  every test green and every byte correct while silently costing the lever.
+- **NEGATIVE, recorded so it is not re-probed.** `__realpath_chk` is NOT the `__getwd_chk`/`__fgets_chk`
+  divergence class. Host glibc 2.42, fork-isolated: it aborts whenever `resolvedlen < PATH_MAX` even
+  when the resolved path is 5 bytes (`/tmp`), which is exactly fl's rule. The dynamic behaviour of the
+  fgets/fgetws pair does not generalise to the path wrappers.

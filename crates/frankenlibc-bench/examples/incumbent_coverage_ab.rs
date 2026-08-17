@@ -7550,28 +7550,44 @@ fn run_stream_float_batch(arm: StreamArm, format: &CStr) -> u64 {
     black_box(accumulator)
 }
 
-/// `%.9f` — the LAST precision `exact_direct_f_format` accepts, so the probe FIRES.
+/// `%.9f` — the last SINGLE-DIGIT precision. The probe fires here and always did.
 fn time_stream_9f_batch(arm: StreamArm) -> f64 {
     let started = Instant::now();
     black_box(run_stream_float_batch(arm, c"%.9f"));
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
-/// `%.10f` — one digit further, which `exact_direct_f_format` DECLINES, so fl
-/// takes the general parse + extract + render path instead.
+/// `%.10f` — the first TWO-DIGIT precision. The probe FIRES here now; it used to
+/// decline, and this arm is what found that.
 ///
-/// These two exist as a PAIR and only mean something together. The stream family
-/// measures fl 1.24-1.33x slower than glibc, but that family was created at the
-/// same time as the probe, so nothing has ever measured fl's stream float path
-/// WITHOUT it. Comparing a precision the probe takes against the adjacent one it
-/// refuses, in the same run and against the same incumbent, is what separates
-/// "fl's stream path is slow" from "my probe made it slow".
+/// THIS PAIR IS THE INSTRUMENT THAT PRODUCED THE LEVER, which is why both halves
+/// are kept. Holding everything else fixed and moving the precision by one digit
+/// isolated the probe's contribution from fl's stream path in general: `%.9f`
+/// measured 0.583x (a win) while `%.10f` measured **1.275x (a loss)** in the same
+/// run against the same incumbent — 74.2 ns against 171.9 ns, a 2.3x cliff for
+/// one digit of output. That is not a rendering cost; the buffer family's ladder
+/// puts a digit at roughly 4 ns. It was the parser reading a single digit and
+/// dropping every two-digit precision onto the general path.
 ///
-/// The confound is one extra digit of output, which is small against a 30% gap;
-/// the buffer family's own ladder puts a digit at roughly 4 ns.
+/// After `MAX_DIRECT_FIXED_PRECISION` was raised to 99, the same arm measures
+/// **0.887x** — 109.7 ns — and the family went 5 wins/1 loss to 6 wins/0 losses.
 fn time_stream_10f_batch(arm: StreamArm) -> f64 {
     let started = Instant::now();
     black_box(run_stream_float_batch(arm, c"%.10f"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+/// `%.100f` — THREE digits, which the probe still declines, so fl takes the
+/// general parse + extract + render path.
+///
+/// This arm replaces the decline half of the pair above, which stopped being a
+/// decline when the cap moved to 99. A fires/declines pair with no declining
+/// member cannot tell you what the probe is worth, and the next agent to widen
+/// this would have had no instrument at all. Keeping the pair intact at its new
+/// boundary is the point.
+fn time_stream_100f_batch(arm: StreamArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_stream_float_batch(arm, c"%.100f"));
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
@@ -7851,17 +7867,24 @@ fn run_fprintf_float(config: &Config) {
         ),
         measure_arm_case(
             "stream_9dp_probe_fires",
-            "fprintf \"%.9f\" -- last precision exact_direct_f_format accepts; the probe FIRES",
+            "fprintf \"%.9f\" -- last single-digit precision; the probe FIRES",
             host,
             fl,
             time_stream_9f_batch,
         ),
         measure_arm_case(
-            "stream_10dp_probe_declines",
-            "fprintf \"%.10f\" -- one digit further; the probe DECLINES and fl takes the general path",
+            "stream_10dp_probe_fires",
+            "fprintf \"%.10f\" -- first two-digit precision; the probe FIRES since the cap moved to 99 (it DECLINED at 1.275x before)",
             host,
             fl,
             time_stream_10f_batch,
+        ),
+        measure_arm_case(
+            "stream_100dp_probe_declines",
+            "fprintf \"%.100f\" -- three digits; the probe DECLINES and fl takes the general path",
+            host,
+            fl,
+            time_stream_100f_batch,
         ),
         measure_arm_case(
             "stream_6dp",
@@ -7937,7 +7960,12 @@ fn run_fprintf_float(config: &Config) {
 /// construction -- the exact hollow-oracle failure bd-v0388t exists to catch.
 /// Writing through each arm is what makes this a differential at all.
 fn check_stream_float_conformance(host: StreamArm, fl: StreamArm) -> (usize, usize) {
-    let formats = [c"%.2f", c"%.4f", c"%f", c"%.0f", c"%.9f"];
+    // `%.10f` and `%.99f` are on the fast path since the cap moved to 99; `%.0f`
+    // and `%.100f` are declines. Both kinds are here so this check covers the
+    // arms it is timing rather than only the ones that predate them.
+    let formats = [
+        c"%.2f", c"%.4f", c"%f", c"%.0f", c"%.9f", c"%.10f", c"%.99f", c"%.100f",
+    ];
     let mut comparisons = 0usize;
     let mut mismatches = 0usize;
 

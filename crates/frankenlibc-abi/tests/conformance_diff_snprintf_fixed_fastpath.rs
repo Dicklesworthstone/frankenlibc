@@ -65,7 +65,16 @@ fn host_snprintf() -> Snprintf {
 
 /// Fill pattern, so a fast path that writes one byte too many is visible.
 const FILL: u8 = 0x5A;
-const CAP: usize = 384;
+
+/// Destination capacity for every arm.
+///
+/// MUST exceed the longest rendering any format in `formats()` can produce,
+/// because the `sprintf`/`vsprintf` arms call an UNBOUNDED entry point into this
+/// buffer — there, a too-small CAP is a stack overflow in the test rather than a
+/// failed assertion. The worst case is `%.99f` of `f64::MAX`: `-` + 309 integer
+/// digits + `.` + 99 fractional digits = 410 bytes, plus the terminator. This
+/// was 384 while the fast path stopped at precision 9 and had to grow with it.
+const CAP: usize = 512;
 
 fn render_fl(fmt: &CStr, value: f64, size: usize) -> (c_int, [u8; CAP]) {
     let mut buf = [FILL; CAP];
@@ -85,14 +94,34 @@ fn render_host(f: Snprintf, fmt: &CStr, value: f64, size: usize) -> (c_int, [u8;
 
 fn formats() -> Vec<(std::ffi::CString, &'static str)> {
     let mut v = vec![(std::ffi::CString::new("%f").unwrap(), "%f")];
-    for p in 0..=12 {
-        // 0 and >9 are outside the fast path and must still agree — that is the
-        // point of including them, since a probe that accepted them would be a
-        // silent divergence rather than a missed optimisation.
+    // 0..=12 predates the two-digit extension and is left exactly as it was.
+    // 10/11/12 were general-path cases when this list was written and are fast
+    // path cases now, so they discriminate the change without having been chosen
+    // for it — a gate written before the code it holds.
+    //
+    // The rest bracket the NEW boundaries. 41 is where the old 352-byte buffer
+    // ran out exactly; 42 is one past it; 99 is the cap, and `%.99f` of
+    // `f64::MAX` is the 410-byte worst case that `DIRECT_FIXED_BUF` is sized
+    // from — the single case that would catch an internal buffer that did not
+    // grow with the parser.
+    for p in [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 40, 41, 42, 43, 50, 98, 99,
+        // DECLINE cases, and they matter as much as the accepted ones: a probe
+        // that widened to swallow these would be a silent divergence rather than
+        // a missed optimisation. 100 is three digits; the general path keeps it.
+        100, 127,
+    ] {
         v.push((
             std::ffi::CString::new(format!("%.{p}f")).unwrap(),
             Box::leak(format!("%.{p}f").into_boxed_str()),
         ));
+    }
+    // Leading-zero precisions are deliberately NOT folded onto their bare
+    // equivalents: `%.05f` is a different format string from `%.5f`, and the
+    // probe declines it. glibc renders them identically, so this arm asserts
+    // that fl's general path still does too.
+    for spec in ["%.00f", "%.05f", "%.09f", "%.010f"] {
+        v.push((std::ffi::CString::new(spec).unwrap(), spec));
     }
     v
 }
@@ -234,7 +263,8 @@ fn sprintf_fixed_matches_glibc() {
     for (fmt, label) in formats() {
         for &value in &values() {
             let mut fbuf = [FILL; CAP];
-            // SAFETY: CAP exceeds the longest %.Nf rendering for N <= 12.
+            // SAFETY: CAP is derived from the longest rendering any format in
+            // `formats()` can produce; see the constant.
             let frc = unsafe {
                 frankenlibc_abi::stdio_abi::sprintf(
                     fbuf.as_mut_ptr().cast::<c_char>(),
@@ -335,7 +365,7 @@ fn vsprintf_fixed_matches_glibc() {
     for (fmt, label) in formats() {
         for &value in &values() {
             let mut fbuf = [FILL; CAP];
-            // SAFETY: CAP exceeds the longest %.Nf rendering for N <= 12, and
+            // SAFETY: CAP bounds every format in `formats()` (see the constant), and
             // vsprintf's contract is an unbounded caller buffer.
             let frc = unsafe {
                 fl_vsprintf_shim(fbuf.as_mut_ptr().cast::<c_char>(), fmt.as_ptr(), value)

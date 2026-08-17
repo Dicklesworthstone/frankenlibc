@@ -5922,9 +5922,44 @@ unsafe fn exact_direct_lx_format(format: *const c_char) -> bool {
     unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'x' && *f.add(3) == 0 }
 }
 
-/// Match exact `"%f"` (precision 6, C's default) or `"%.Nf"` for a single digit
-/// `N` in 1..=9. Returns the precision. `None` for anything carrying a width, a
-/// flag, a length modifier, `%e`/`%g`/`%a`, or `%.0f`.
+/// The largest `%.Nf` precision the direct fixed fast path accepts.
+///
+/// 99 is every two-digit precision, so there is no cliff anywhere inside the
+/// two-digit range — which is the whole point of raising it. The old limit was
+/// 9, and it was a limit of the PARSER (it read one digit) rather than of
+/// `render_direct_fixed`, which is total at any precision. Measured cost of the
+/// cliff before this was lifted, `fprintf_float` on thinkstation1: `%.9f` ran
+/// 74.224 ns against glibc's 126.500 (0.583x, a win) and `%.10f` ran 171.922
+/// against 130.906 (**1.275x, a loss**) — one extra digit, 2.3x the time, purely
+/// because the probe declined and the call fell to the general path.
+const MAX_DIRECT_FIXED_PRECISION: usize = 99;
+
+/// Byte capacity for the direct fixed renderer, derived from the precision cap.
+///
+/// The binding case is the `{abs:.precision$}` fallback, which is the branch
+/// that takes an arbitrary magnitude: `-` + the 309 integer digits of `f64::MAX`
+/// + `.` + `MAX_DIRECT_FIXED_PRECISION` fractional digits = 410 bytes. 416 is
+/// that with a little margin.
+///
+/// THIS IS NOT COSMETIC AND IT IS WHY THE PRECISION CAP AND THE BUFFER SHARE A
+/// DERIVATION. The buffer was 352, which is EXACTLY 1 + 309 + 1 + 41 — it had
+/// zero margin beyond precision 41. Two of the three write paths in
+/// `render_direct_fixed` index the buffer directly and would panic across an
+/// `extern "C"` boundary, and the third (`write!`) silently truncates on
+/// overflow because its `Err` is discarded. So raising the parser's cap without
+/// raising this would have turned a slow path into a wrong one.
+const DIRECT_FIXED_BUF: usize = 416;
+
+const _: () = assert!(
+    DIRECT_FIXED_BUF >= 1 + 309 + 1 + MAX_DIRECT_FIXED_PRECISION,
+    "DIRECT_FIXED_BUF must hold sign + f64::MAX's 309 integer digits + '.' + \
+     MAX_DIRECT_FIXED_PRECISION fractional digits"
+);
+
+/// Match exact `"%f"` (precision 6, C's default) or `"%.Nf"` for `N` in
+/// `1..=MAX_DIRECT_FIXED_PRECISION`, written with no leading zero. Returns the
+/// precision. `None` for anything carrying a width, a flag, a length modifier,
+/// `%e`/`%g`/`%a`, `%.0f`, or a precision written as `%.0N`.
 ///
 /// This probe is why `bd-4vwb9q` exists. Every other conversion in the
 /// `exact_direct_*` chain returns before `runtime_policy::entrypoint_scope`;
@@ -5952,13 +5987,30 @@ unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
         }
         if *f.add(1) == b'.' {
             let digit = *f.add(2);
-            if digit.is_ascii_digit() && *f.add(3) == b'f' && *f.add(4) == 0 {
-                let precision = usize::from(digit - b'0');
-                // Precision 0 is excluded deliberately: the general path
-                // pre-rounds there and emits no radix point, a different shape
-                // from the branch below.
-                if (1..=9).contains(&precision) {
-                    return Some(precision);
+            if digit.is_ascii_digit() {
+                let first = usize::from(digit - b'0');
+                if *f.add(3) == b'f' && *f.add(4) == 0 {
+                    // Precision 0 is excluded deliberately: the general path
+                    // pre-rounds there and emits no radix point, a different
+                    // shape from the branch below.
+                    if first >= 1 {
+                        return Some(first);
+                    }
+                    return None;
+                }
+                // TWO-DIGIT precisions. Reached ONLY after the single-digit test
+                // above has already failed, so this costs nothing on `%.2f` and
+                // nothing at all on formats that do not begin `%.<digit>`.
+                let second = *f.add(3);
+                if second.is_ascii_digit() && *f.add(4) == b'f' && *f.add(5) == 0 {
+                    let precision = first * 10 + usize::from(second - b'0');
+                    // `%.00f`..`%.09f` are NOT folded into the single-digit case:
+                    // a leading zero is a different format string, and treating
+                    // them as equal would be an assumption rather than a
+                    // measurement. They fall to the general path, as before.
+                    if first >= 1 && precision <= MAX_DIRECT_FIXED_PRECISION {
+                        return Some(precision);
+                    }
                 }
             }
         }
@@ -5979,13 +6031,14 @@ unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
 /// overflows the shift) takes the same `{:.prec$}` fallback the general path
 /// ends with.
 ///
-/// 352 bytes is enough for every finite case: `%.9f` of `f64::MAX` is 309
-/// integer digits + `.` + 9 fractional digits = 319.
-fn render_direct_fixed(value: f64, precision: usize, out: &mut [u8; 352]) -> usize {
+/// Sized by `DIRECT_FIXED_BUF`, which is derived from the largest precision
+/// `exact_direct_f_format` accepts — see that constant. The two must move
+/// together, which is why the bound has a name instead of a literal.
+fn render_direct_fixed(value: f64, precision: usize, out: &mut [u8; DIRECT_FIXED_BUF]) -> usize {
     use core::fmt::Write as _;
 
     struct SliceWriter<'a> {
-        buf: &'a mut [u8; 352],
+        buf: &'a mut [u8; DIRECT_FIXED_BUF],
         len: usize,
     }
     impl core::fmt::Write for SliceWriter<'_> {
@@ -6053,7 +6106,7 @@ unsafe fn strict_direct_snprintf_f(
     value: f64,
     precision: usize,
 ) -> c_int {
-    let mut rendered = [0u8; 352];
+    let mut rendered = [0u8; DIRECT_FIXED_BUF];
     let len = render_direct_fixed(value, precision, &mut rendered);
 
     if size > 0 && !str_buf.is_null() {
@@ -6321,14 +6374,14 @@ unsafe fn strict_direct_stream_d(
 /// `conformance_diff_fprintf_fixed_fastpath` checks by comparing the flushed
 /// file contents AND asserting the return equals the bytes delivered.
 ///
-/// 352 bytes covers every finite `%.Nf` for N <= 9 (`%.9f` of `f64::MAX` is 319).
+/// Sized by `DIRECT_FIXED_BUF`, as every direct fixed render path is.
 unsafe fn strict_direct_stream_f(
     id: usize,
     stream: *mut c_void,
     value: f64,
     precision: usize,
 ) -> c_int {
-    let mut buf = [0u8; 352];
+    let mut buf = [0u8; DIRECT_FIXED_BUF];
     let len = render_direct_fixed(value, precision, &mut buf);
     let bytes = &buf[..len];
     if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
@@ -8359,7 +8412,7 @@ unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
 /// `sprintf` for an exact `%f` / `%.Nf`: same renderer as the snprintf path, but
 /// against sprintf's unbounded destination contract.
 unsafe fn strict_direct_sprintf_f(str_buf: *mut c_char, value: f64, precision: usize) -> c_int {
-    let mut rendered = [0u8; 352];
+    let mut rendered = [0u8; DIRECT_FIXED_BUF];
     let len = render_direct_fixed(value, precision, &mut rendered);
     // SAFETY: sprintf's C contract requires the caller's buffer to hold the
     // whole result plus its terminator.
