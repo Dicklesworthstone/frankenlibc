@@ -62,7 +62,22 @@ fn main() {
     let so_c = CString::new(so.as_str()).expect("path has NUL");
     // SAFETY: NUL-terminated path; RTLD_LOCAL keeps the object out of the global
     // namespace so it cannot capture this binary's own libc symbols.
-    let handle = unsafe { libc::dlopen(so_c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    // RTLD_DEEPBIND IS LOAD-BEARING, and its absence silently hollowed this
+    // instrument. Without it the dlopened object's calls to its OWN exported
+    // symbols resolve in the GLOBAL scope first, which is host glibc. fl's
+    // `__isoc23_sscanf` falls through to `vsscanf` for any format its fast paths
+    // decline, and that call bound to GLIBC's vsscanf — so every "fl" row for an
+    // engine format was fl's alias wrapping GLIBC's parser. Two flat profiles
+    // settled it: `string_token`, served entirely inside fl's own body, is 30.95%
+    // `__isoc23_sscanf` + 14.29% `strict_scan_single_string` in
+    // libfrankenlibc_abi.so, while `float_only`, which falls through, was 31.42%
+    // `__vfscanf_internal` + 25.13% `strtof_l` in libc.so.6.
+    let handle = unsafe {
+        libc::dlopen(
+            so_c.as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
+        )
+    };
     assert!(!handle.is_null(), "dlopen {so}");
     // WHICH sscanf. glibc exports BOTH `sscanf@@GLIBC_2.2.5` and
     // `__isoc23_sscanf@@GLIBC_2.38`, and a compiler emits calls to the LATTER —
@@ -166,7 +181,10 @@ fn main() {
             .wrapping_add(int_a as u64);
     }
 
+    // The loader mode is PRINTED because a row measured without it is not a
+    // row about the named object.
     println!(
-        "SSCANF_ICOUNT case={case} iters={n} object={so} symbol={symbol} checksum=0x{checksum:x}"
+        "SSCANF_ICOUNT case={case} iters={n} object={so} symbol={symbol} \
+loader=RTLD_NOW|RTLD_LOCAL|RTLD_DEEPBIND checksum=0x{checksum:x}"
     );
 }
