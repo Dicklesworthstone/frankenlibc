@@ -29865,3 +29865,47 @@ What this changes, and what it does not:
   exclusivity guards reported clear in both attempts. Without cases the change cannot affect, the
   first run would have been published as "the allocation removal made string_token 15% worse".
 - **STILL OWED:** the certified row, from two objects built off one commit.
+
+## 2026-08-16 (this session) — third sscanf A/B: still no certifiable ratio, and the controls exposed a regression introduced earlier today
+
+- **RESULT CLASS: loss/baseline plus a detected regression. No ratio from this run is quotable as an
+  effect.** Third attempt at certifying the scanf allocation removals.
+- **THE DESIGN FAULT FROM VOID #2 WAS FIXED.** Both objects were built from ONE tree state differing
+  only by the change under test: a 768-line patch of exactly the four scanf commits was extracted
+  (`git log` over the three touched files confirms no other agent's commit is inside that range),
+  the candidate was built from HEAD, the patch reverse-applied, the base built, and the patch
+  restored with the tree verified clean. Base
+  sha256=c63749c4875556930c79…, candidate sha256=0499bde6dc0059747f23…. Four arms, interleaved
+  base/cand/base/cand, per-arm launch context recorded: loadavg 16.92/15.62/19.14 at cpu8 3293320 kHz,
+  9.53/13.61/17.43 at 4219559, 15.91/15.09/16.92 at 3983206, 27.71/29.26/24.50 at 3978355.
+- **THE CONTROLS STILL MOVED, so the absolute ratios remain uncertifiable:** `single_int` +12.7%,
+  `two_ints` +16.6%. That is with the codebase variable ELIMINATED, which refutes the explanation
+  offered in void #2 as a complete account — clock and load still varied 3.29-4.22 GHz and 9.5-27.7
+  across arms, and a build-to-build code-layout shift cannot be excluded either. **The median delta
+  across all twelve cases is +12.7%, equal to the controls: that is a uniform bias, not an effect.**
+- **TWO CASES SAT 6-7x OUTSIDE THE BIAS BAND WITH ALMOST NO SCATTER**, which is what makes them
+  signal rather than noise:
+
+  | case | base r1/r2 | cand r1/r2 | delta | within-arm spread |
+  |---|---|---|---|---|
+  | `scanset_only` | 1.474 / 1.490 | 2.883 / 2.888 | **+94.7%** | 1.1% |
+  | `key_value` | 1.463 / 1.487 | 2.589 / 2.605 | **+76.0%** | 1.6% |
+
+  Both are `%[...]` formats. Against the +12.7% global bias that is roughly +73% and +56% relative.
+- **THE CAUSE WAS MINE.** `20ffdde7e` converted `ScanSet` from `[bool; 256]` to a 256-bit map and
+  called it "strictly better: smaller allocation, lookup touches one word instead of four cache
+  lines". It also introduced `ScanSet::from_table`, which packed the parser's scratch table into bits
+  with a **256-iteration loop on every `%[...]` parse**. The lookup got cheaper; the parse got much
+  more expensive; scanset formats parse on every call. Fixed in `5fca65c2c` by setting the bits
+  directly during the parse (`ScanSetBits::insert` — one shift, one OR, the same work as storing a
+  bool), which keeps the cheaper lookup and deletes the materialise-then-pack step.
+- **WHAT THIS SAYS ABOUT "STRICTLY BETTER".** The change was reasoned about at the level of data
+  size and lookup cost, and both halves of that reasoning were right. It still cost 76-95% on the
+  affected cases, because the reasoning never priced the CONSTRUCTION path. A representation change
+  has a build side and a read side, and only the read side was considered.
+- **THE CONTROLS EARNED THEIR KEEP A THIRD TIME.** Without cases the change cannot touch, a uniform
+  +13% bias would have hidden a +95% regression inside "everything looks worse, the box is noisy" —
+  which is exactly how the first two voids read before the controls were in place.
+- **STILL OWED:** a certifiable ratio for the allocation work, which needs a quieter box than this
+  one has been all session; and a re-measure of `scanset_only`/`key_value` against `5fca65c2c` to
+  confirm the regression is gone rather than assumed.
