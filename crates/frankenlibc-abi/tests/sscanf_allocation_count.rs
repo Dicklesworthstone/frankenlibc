@@ -76,8 +76,18 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
+/// Serialises the counting window.
+///
+/// `ARMED` and `ALLOCS` are PROCESS-global — a `GlobalAlloc` sees every thread —
+/// so with libtest running these tests in parallel, one test's armed window
+/// counted its siblings' allocations and the gate failed intermittently
+/// (observed: 2 of 4 red on one run, green on the next two). The lock makes the
+/// window exclusive, which is what a global counter requires.
+static COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Run `f` with the counter armed and return how many allocations it made.
 fn count_allocs(f: impl FnOnce()) -> usize {
+    let _serialised = COUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     ALLOCS.store(0, Ordering::Relaxed);
     ARMED.store(true, Ordering::Relaxed);
     f();

@@ -453,20 +453,28 @@ pub struct ScanSet {
     bits: [u64; 4],
 }
 
+/// Membership bits accumulated while parsing a `%[...]` set.
+///
+/// Exists so the parser never materialises a 256-byte scratch table: `insert`
+/// is one shift and one OR, the same cost as storing a bool, and there is no
+/// packing pass afterwards.
+#[derive(Clone, Copy, Default)]
+pub struct ScanSetBits([u64; 4]);
+
+impl ScanSetBits {
+    #[inline]
+    pub fn insert(&mut self, c: u8) {
+        self.0[(c >> 6) as usize] |= 1u64 << (c & 63);
+    }
+}
+
 impl ScanSet {
-    /// Build from the parser's scratch table.
-    ///
-    /// The parser keeps using a `[bool; 256]` while scanning `%[...]` — it is a
-    /// local that never escapes, the ranges and escapes are far clearer written
-    /// against it, and it costs nothing once packed here.
-    pub fn from_table(negated: bool, table: &[bool; 256]) -> Self {
-        let mut bits = [0u64; 4];
-        for (c, &present) in table.iter().enumerate() {
-            if present {
-                bits[c >> 6] |= 1u64 << (c & 63);
-            }
+    /// Build from bits accumulated during the parse.
+    pub fn from_bits(negated: bool, bits: ScanSetBits) -> Self {
+        Self {
+            negated,
+            bits: bits.0,
         }
-        Self { negated, bits }
     }
 
     /// Whether `c` is in the set, before `negated` is applied.
@@ -595,10 +603,16 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                     negated = true;
                     i += 1;
                 }
-                let mut chars = [false; 256];
+                // Bits are set DIRECTLY here. An earlier version built a
+                // `[bool; 256]` and packed it afterwards, which cost a
+                // 256-iteration pass on EVERY `%[...]` parse — measured as a
+                // large regression on exactly the scanset cases (see the
+                // 2026-08-16 ledger row). Setting a bit is the same work as
+                // setting a bool, so the table bought nothing.
+                let mut set = ScanSetBits::default();
                 // First char after [ or [^ can be ']'.
                 if i < fmt.len() && fmt[i] == b']' {
-                    chars[b']' as usize] = true;
+                    set.insert(b']');
                     i += 1;
                 }
                 while i < fmt.len() && fmt[i] != b']' && fmt[i] != 0 {
@@ -609,19 +623,19 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                         let hi = fmt[i + 2];
                         if lo <= hi {
                             for ch in lo..=hi {
-                                chars[ch as usize] = true;
+                                set.insert(ch);
                             }
                         } else {
                             // Reversed range (lo > hi): glibc does not form an
                             // empty range — it takes the three characters as
                             // literal set members (`lo`, `-`, `hi`).
-                            chars[lo as usize] = true;
-                            chars[b'-' as usize] = true;
-                            chars[hi as usize] = true;
+                            set.insert(lo);
+                            set.insert(b'-');
+                            set.insert(hi);
                         }
                         i += 3;
                     } else {
-                        chars[c as usize] = true;
+                        set.insert(c);
                         i += 1;
                     }
                 }
@@ -645,7 +659,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                 }
                 i += 1;
                 spec.conversion = b'[';
-                spec.scanset = Some(Box::new(ScanSet::from_table(negated, &chars)));
+                spec.scanset = Some(Box::new(ScanSet::from_bits(negated, set)));
             } else {
                 // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
                 // string / wide char): normalise to (s|c, length `L`) so they
@@ -1732,7 +1746,7 @@ fn scan_string(
 
 #[cfg(test)]
 mod scanset_bitmap_tests {
-    use super::ScanSet;
+    use super::{ScanSet, ScanSetBits};
 
     /// The bitmap must answer exactly what the table it replaced answered, for
     /// every one of the 256 byte values — including the high half, where a
@@ -1747,7 +1761,13 @@ mod scanset_bitmap_tests {
         ] {
             table[c as usize] = true;
         }
-        let set = ScanSet::from_table(false, &table);
+        let mut bits = ScanSetBits::default();
+        for (c, &present) in table.iter().enumerate() {
+            if present {
+                bits.insert(c as u8);
+            }
+        }
+        let set = ScanSet::from_bits(false, bits);
         for c in 0..=255u8 {
             assert_eq!(
                 set.contains(c),
@@ -1761,8 +1781,12 @@ mod scanset_bitmap_tests {
     /// are reachable from real formats (`%[]` handling and `%[^]` negation).
     #[test]
     fn empty_and_full_sets_round_trip() {
-        let empty = ScanSet::from_table(false, &[false; 256]);
-        let full = ScanSet::from_table(true, &[true; 256]);
+        let empty = ScanSet::from_bits(false, ScanSetBits::default());
+        let mut all = ScanSetBits::default();
+        for c in 0..=255u8 {
+            all.insert(c);
+        }
+        let full = ScanSet::from_bits(true, all);
         for c in 0..=255u8 {
             assert!(!empty.contains(c), "empty set claimed to contain {c}");
             assert!(full.contains(c), "full set missing {c}");
