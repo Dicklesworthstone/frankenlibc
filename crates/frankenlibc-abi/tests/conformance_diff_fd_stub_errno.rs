@@ -227,6 +227,108 @@ fn iovec_calls_treat_a_zero_count_the_way_glibc_does() {
     println!("compared {compared} iovec zero-count contracts");
 }
 
+/// Boundary arguments across the fd family, compared against the host.
+///
+/// The zero-count iovec bug was found by asking the host what it does rather
+/// than by reading fl, so this table does the same for the neighbouring
+/// boundaries: a negative offset, a negative length, an invalid `whence`, an
+/// `iovcnt` past `IOV_MAX`, and a bad fd on `ftruncate`/`dup2`. It also pins the
+/// zero-length `read`/`write`/`pread`/`pwrite` contract, which fl already gets
+/// right — that is exactly the property the iovec family got wrong, so a
+/// regression there would otherwise be silent.
+#[test]
+fn boundary_arguments_match_the_host_across_the_fd_family() {
+    use std::os::unix::io::AsRawFd;
+
+    let dir = std::env::temp_dir().join("fl_fd_boundary");
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dir.join("probe"))
+        .expect("open probe file");
+    let good = file.as_raw_fd();
+    let mut buf = [0u8; 64];
+    let bufp = buf.as_mut_ptr().cast::<c_void>();
+
+    type Rw = unsafe extern "C" fn(c_int, *mut c_void, usize) -> isize;
+    type PRw = unsafe extern "C" fn(c_int, *mut c_void, usize, libc::off_t) -> isize;
+    type Ftr = unsafe extern "C" fn(c_int, libc::off_t) -> c_int;
+    type Lseek = unsafe extern "C" fn(c_int, libc::off_t, c_int) -> libc::off_t;
+    type Rv = unsafe extern "C" fn(c_int, *const c_void, c_int) -> isize;
+    type Dup2 = unsafe extern "C" fn(c_int, c_int) -> c_int;
+
+    let mut compared = 0usize;
+    macro_rules! compare {
+        ($name:expr, $fl:expr, $ty:ty, $body:expr) => {{
+            let name: &CStr = $name;
+            let label = name.to_str().expect("ASCII symbol name");
+            // SAFETY: NUL-terminated name paired with fl's own definition.
+            if let Some(host) = unsafe { host_addr_optional(name, $fl) } {
+                let run = |addr: usize| -> Outcome {
+                    // SAFETY: the address has the C signature named by `$ty`,
+                    // and every call below uses arguments the host was probed
+                    // with, so neither implementation reads unmapped memory.
+                    let f: $ty = unsafe { std::mem::transmute(addr) };
+                    clear_errno();
+                    let rc = $body(f);
+                    Outcome { rc: rc as i64, errno: errno_now() }
+                };
+                let h = run(host as usize);
+                let m = run($fl as usize);
+                println!("{label}: host {h:?}  fl {m:?}");
+                assert_eq!(m, h, "{label} boundary case: fl {m:?}, host glibc {h:?}");
+                compared += 1;
+            }
+        }};
+    }
+
+    // Zero length is a success on a good fd, for the scalar calls too.
+    compare!(c"read", frankenlibc_abi::unistd_abi::read as *const (), Rw,
+             |f: Rw| unsafe { f(good, bufp, 0) });
+    compare!(c"write", frankenlibc_abi::unistd_abi::write as *const (), Rw,
+             |f: Rw| unsafe { f(good, bufp, 0) });
+    compare!(c"pread", frankenlibc_abi::io_abi::pread as *const (), PRw,
+             |f: PRw| unsafe { f(good, bufp, 0, 0) });
+    compare!(c"pwrite", frankenlibc_abi::io_abi::pwrite as *const (), PRw,
+             |f: PRw| unsafe { f(good, bufp, 0, 0) });
+
+    // A NEGATIVE offset is EINVAL, not a wrapped huge unsigned offset.
+    compare!(c"pread", frankenlibc_abi::io_abi::pread as *const (), PRw,
+             |f: PRw| unsafe { f(good, bufp, 8, -1) });
+    compare!(c"pwrite", frankenlibc_abi::io_abi::pwrite as *const (), PRw,
+             |f: PRw| unsafe { f(good, bufp, 8, -1) });
+
+    // Negative length, and a bad fd, on ftruncate.
+    compare!(c"ftruncate", frankenlibc_abi::unistd_abi::ftruncate as *const (), Ftr,
+             |f: Ftr| unsafe { f(good, -1) });
+    compare!(c"ftruncate", frankenlibc_abi::unistd_abi::ftruncate as *const (), Ftr,
+             |f: Ftr| unsafe { f(-1, 0) });
+
+    // Invalid whence, and a negative resulting offset.
+    compare!(c"lseek", frankenlibc_abi::unistd_abi::lseek as *const (), Lseek,
+             |f: Lseek| unsafe { f(good, 0, 99) });
+    compare!(c"lseek", frankenlibc_abi::unistd_abi::lseek as *const (), Lseek,
+             |f: Lseek| unsafe { f(good, -1, libc::SEEK_SET) });
+
+    // iovcnt past IOV_MAX is EINVAL even though the vector is NULL.
+    compare!(c"readv", frankenlibc_abi::io_abi::readv as *const (), Rv,
+             |f: Rv| unsafe { f(good, std::ptr::null(), 2000) });
+
+    // A bad source fd on dup2.
+    compare!(c"dup2", frankenlibc_abi::io_abi::dup2 as *const (), Dup2,
+             |f: Dup2| unsafe { f(-1, 5) });
+
+    assert!(
+        compared >= 10,
+        "only {compared} boundary comparisons ran; the host arms must resolve for \
+         this gate to mean anything"
+    );
+    println!("compared {compared} boundary contracts against the host");
+}
+
 #[test]
 fn fd_taking_stubs_reject_a_bad_descriptor_the_way_glibc_does() {
     let mut compared = 0usize;

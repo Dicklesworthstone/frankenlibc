@@ -1108,27 +1108,26 @@ fn allocate_from_local_class(
         let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
             continue;
         };
-        // A magazine holds only its own class BY CONSTRUCTION: `segment_free`
-        // pushes into `classes[view.class_index].magazine`, so an entry reached
-        // from `classes[class_index]` can only be `class_index`.
+        // KEEP THIS RELEASE-TIME CHECK. It looks redundant — a magazine holds only
+        // its own class by construction, since `segment_free` pushes into
+        // `classes[view.class_index].magazine` — and converting it to a
+        // `debug_assert_eq!` did save 2.0 instructions per pair, measured. IT WAS
+        // REVERTED ANYWAY, because instructions were the wrong thing to count.
         //
-        // This was a release-time `if ... { continue; }`, which is worse than
-        // either alternative: if the invariant holds it is a load, a compare and a
-        // branch on every magazine pop for nothing, and if it is ever violated it
-        // SILENTLY DROPS the slot — leaking it and hiding the encode/decode bug or
-        // corruption that produced it. A debug assertion catches that loudly where
-        // it can be observed and costs nothing in the shipped build.
+        // Callgrind with `--branch-sim=yes`, three arms built and verified distinct
+        // before measuring: removing this branch took conditional mispredicts from
+        // 50,227 to 90,148 over 20,000 pairs — +78% — while instructions fell by
+        // only 310 and total branches by 20,031. Restoring it alone brings
+        // mispredicts back to 50,227. At roughly 15-20 cycles per mispredict that
+        // is ~2 mispredicts per pair, or 30-40 cycles, traded for 2 instructions.
         //
-        // Verified by instruction counting rather than wall clock, because this
-        // host's malloc/free ratio swings up to 30% with load drift while
-        // callgrind is deterministic (see the malloc_free rows in
-        // docs/NEGATIVE_EVIDENCE.md).
-        debug_assert_eq!(
-            view.class_index, class_index,
-            "magazine for class {class_index} yielded a slot of class {}; the \
-             encoding or the free path is wrong",
-            view.class_index
-        );
+        // The branch itself is perfectly predicted (always not-taken); removing it
+        // shifted the history and alignment of its neighbours so they alias worse
+        // in the predictor. AN INSTRUCTION-COUNT WIN CAN BE A WALL-CLOCK LOSS, and
+        // this is the counterexample: see docs/NEGATIVE_EVIDENCE.md.
+        if view.class_index != class_index {
+            continue;
+        }
         if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
             return Some(ptr);
         }
