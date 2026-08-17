@@ -30595,3 +30595,49 @@ What this changes, and what it does not:
   that commit message is wrong. Recorded here because the commit message cannot be rewritten once
   pushed, and because a shared tree where unrelated commits silently add and remove other agents'
   code makes `git log` an unreliable account of who changed what.
+
+## 2026-08-17 (BlackThrush) — CORRECTION TO MY OWN AUDIT: fl-vs-glibc ratios are NOT load-immune. malloc_free measures 6.65-8.72x on one binary
+
+- **RESULT CLASS: loss/baseline (methodology correction).** It corrects a claim I made yesterday and
+  qualifies the campaign's headline number.
+- **WHAT I ASSERTED, and it was wrong.** In my self-audit I wrote that fl-vs-glibc ratios are "SAFE"
+  because each is "formed between two arms inside a single invocation, which is exactly what the A/A
+  null does cover", and concluded "the frontier ranking is unaffected". The first clause is true and
+  the conclusion does not follow.
+- **FOUR RUNS, ONE BINARY** (`malloc_st_probe` ELF sha256
+  b4d924664b6aea2611467ccafed161bcd6d58dba67258627bbbb48e5d51ea1b2), back to back, `square=ABBAABBA`,
+  n=41, while load climbed 85.57 -> 95.90 and MHz sat at 3779-3881:
+
+  | run | sz=16 | sz=64 | sz=256 | sz=1024 | observed loadavg |
+  |---|---|---|---|---|---|
+  | 1 | 8.3106 | 8.1617 | 8.5063 | 8.4216 | 85.57,36.18,74.25 |
+  | 2 | 8.7211 | 8.4903 | 8.6425 | 8.4999 | 92.13,39.24,74.84 |
+  | 3 | 8.5050 | 7.7820 | 8.6438 | 8.6944 | 93.89,40.48,75.05 |
+  | 4 | **6.6583** | **6.6475** | 8.4520 | 8.5541 | 95.90,41.78,75.28 |
+
+  **Range 6.6475 to 8.7211 — a 31% spread on identical code.** Every same-invocation A/A null held:
+  null_fl spanned 0.9940-1.0121, all inside the +/-0.02 bound, in every run.
+- **WHY THE NULL CANNOT SEE THIS, which is the part I got wrong.** The A/A null compares fl against
+  fl. It certifies the harness is FAIR — that two arms in one invocation saw the same conditions. It
+  cannot certify that an fl-vs-glibc RATIO is a property of the code, because fl's allocator and
+  glibc's need not degrade at the same rate under memory and cache pressure. **A same-implementation
+  null is structurally blind to a differential response between two different implementations.** So
+  "the null held" licenses "the comparison was fair", not "the ratio is reproducible".
+- **THE SMOKING GUN IS INSIDE ONE INVOCATION.** Run 4 at sz=256 reports `ci95=[6.6698,8.5895]` — a
+  bootstrap interval spanning BOTH regimes in a single run, while its own null was 1.0022. The ratio
+  is not merely varying between runs; it shifts DURING one, and the harness's own interval says so.
+  That is why a point estimate with a tight interval from a quiet moment is not a safe summary.
+- **CONSEQUENCE FOR THE FRONTIER.** The banked `malloc_free` 6.5322-6.5704 was measured at loadavg
+  ~15-18. It is not wrong, but it is **a value at a stated load, not a constant**, and at loadavg ~90
+  the same binary reads up to 8.72. The ranking survives — `malloc_free` is the worst family either
+  way, and getrandom's post-vDSO 3.6x is far below both — but **the headline number must be quoted
+  with its load, and any lever measured against it must use the same load or interleave.**
+- **AND THE SPREAD IS FAMILY-SPECIFIC IN BOTH DIRECTIONS.** getrandom reproduced to 0.05-1.37%
+  earlier today at converged load; sscanf moved 15%; malloc_free moves 31% under load. There is no
+  single stability constant for this harness. **Each family's between-run spread has to be measured
+  before any effect smaller than it is claimed for that family** — which is now three families with
+  three different answers.
+- **A note on the window.** The load rose from 13 to 96 while these four runs executed, so this
+  measures the ratio's load-sensitivity rather than its quiet-state value. That is what makes it
+  informative here: the runs were not spoiled, they were informative about exactly the thing the null
+  cannot report.
