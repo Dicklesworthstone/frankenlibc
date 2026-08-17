@@ -30677,3 +30677,34 @@ What this changes, and what it does not:
   should reuse `scan_float` rather than reimplement it. The reuse advice was right and made the
   attempt cheap to make and cheap to withdraw. The implicit hope that bypassing the engine would carry
   the case was wrong, and the reason is now measured rather than assumed.
+
+## 2026-08-17 — profile of `mixed_record`: the float lever's failure looks like MY implementation, not the concept
+
+- **RESULT CLASS: measurement, no code change.** Flat instruction profile under `RTLD_DEEPBIND` of
+  `sscanf("tag 7 3.5", "%s %d %lf")` on the current HEAD, where the float lever is reverted so the
+  case runs the engine. Taken with four local builds in flight, which is fine for attribution inside
+  one process and is why no ratio is claimed here.
+- **THE ENGINE PATH'S DISTRIBUTION IS THE ONE ALREADY REFUTED TWICE:** `scan_input_impl` 20.00%,
+  `InlineVec<ScanDirective,4>::push` 10.82%, `parse_scanf_format` 9.00%, `drop_in_place` of that
+  vector 3.45% — directive machinery totals **23.3%**. Both levers aimed at those frames lost: the
+  per-thread format memo made every engine case WORSE, and literal-run grouping returned 5
+  instructions per call for halving the directive count. **This profile is not a reason to try a
+  third time.**
+- **THE ARITHMETIC THAT MATTERS, and it points somewhere else.** A fast path serving all three fields
+  should cost about `%s` 300 + `%d` 300 + the float. fl's float scan alone is 1427 per call
+  (`float_only` 285,365,230 / 200k), so the ceiling is roughly **2100 against glibc's 2225** — a
+  marginal win. My float-field lever measured **3365**, which is **1265 ABOVE that ceiling** while
+  supposedly doing less work than the engine.
+- **SO THE LEVER DID NOT FAIL BECAUSE THE CONCEPT IS WRONG; it failed because of how I built the
+  float field.** `scan_default_float` constructed a fresh `ScanSpec` — including a 16-byte
+  `Option<usize>` width — and called `bind_route`, which is a table lookup plus a length check, on
+  EVERY call, and my caller measured the remaining input length with its own `strlen` pass first.
+  That is easily a four-figure instruction count per call, and it is all setup rather than parsing.
+- **RETRY CONDITION, which the rejection row above should be read with.** The float field is worth ONE
+  more attempt, and only if the spec is built once and reused rather than per call, and the length
+  pass is removed by giving the scanner the input slice it already has at the entry point. Predicted:
+  `mixed_record` lands near 2100 per call, 0.94x of glibc — a marginal win, not a large one. If it
+  lands materially above 2100 again, the concept is refuted for real and the case should be left
+  alone.
+- **WHAT IS NOT OWED:** another assault on `parse_scanf_format`, `push` or the directive vector. Three
+  measurements now say that family does not pay.
