@@ -34,7 +34,7 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|fpclassify|fpclassifyf|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
@@ -66,6 +66,10 @@ const GETAUXVAL_REPS: usize = 2_000_000;
 // that the null half-width lands below any real difference. Matched to
 // thrd_current, the other sub-nanosecond family here.
 const FPCLASSIFY_REPS: usize = 4_000_000;
+// memrchr walks its whole buffer in the absent cases, so a 4096-byte case is
+// already hundreds of nanoseconds per call; the batch only has to be long
+// enough to swamp the timer, not to resolve a sub-nanosecond call.
+const MEMRCHR_REPS: usize = 200_000;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
 const MALLOC_FREE_REPS: usize = 100_000;
@@ -116,6 +120,7 @@ type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
 type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type FpclassifyFn = unsafe extern "C" fn(f64) -> c_int;
 type FpclassifyfFn = unsafe extern "C" fn(f32) -> c_int;
+type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_void;
 type GethostbyaddrFn =
     unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
 type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
@@ -256,6 +261,8 @@ unsafe extern "C" {
     fn linked_host_fpclassify(value: f64) -> c_int;
     #[link_name = "__fpclassifyf"]
     fn linked_host_fpclassifyf(value: f32) -> c_int;
+    #[link_name = "memrchr"]
+    fn linked_host_memrchr(haystack: *const c_void, needle: c_int, len: usize) -> *mut c_void;
     #[link_name = "gethostbyaddr"]
     fn linked_host_gethostbyaddr(
         address: *const c_void,
@@ -465,6 +472,7 @@ enum Family {
     NlLanginfo,
     Fpclassify,
     Fpclassifyf,
+    Memrchr,
     Getrandom,
     Getauxval,
     SemPost,
@@ -574,6 +582,73 @@ const GETRANDOM_CASES: &[GetrandomCase] = &[
         length: 256,
         flags: 0,
         note: "largest Linux request guaranteed not to short-read once initialized",
+    },
+];
+
+/// Timed `memrchr` cases.
+///
+/// Sizes straddle the 512-byte fold tier the claim under conversion is about
+/// (L16509), and every size is run under BOTH allocator provenances so the
+/// registry-probe cost is measured rather than assumed. The absent-needle cases
+/// force a full walk; `hit_near_start` makes the reverse scan traverse almost
+/// the whole buffer before succeeding, which is the shape that separates scan
+/// throughput from per-call overhead.
+const MEMRCHR_SPECS: &[MemrchrSpec] = &[
+    MemrchrSpec {
+        label: "len64_absent_fl_malloc",
+        len: 64,
+        hit_at: None,
+        provenance: Provenance::FlMalloc,
+        note: "below the fold tier; per-call overhead dominates",
+    },
+    MemrchrSpec {
+        label: "len64_absent_incumbent_malloc",
+        len: 64,
+        hit_at: None,
+        provenance: Provenance::IncumbentMalloc,
+        note: "same scan, allocation registry cannot hit",
+    },
+    MemrchrSpec {
+        label: "len512_absent_fl_malloc",
+        len: 512,
+        hit_at: None,
+        provenance: Provenance::FlMalloc,
+        note: "the claimed 512-byte fold tier, registry hits",
+    },
+    MemrchrSpec {
+        label: "len512_absent_incumbent_malloc",
+        len: 512,
+        hit_at: None,
+        provenance: Provenance::IncumbentMalloc,
+        note: "the claimed 512-byte fold tier, registry misses",
+    },
+    MemrchrSpec {
+        label: "len4096_absent_fl_malloc",
+        len: 4096,
+        hit_at: None,
+        provenance: Provenance::FlMalloc,
+        note: "well above the fold tier; scan throughput dominates",
+    },
+    MemrchrSpec {
+        label: "len4096_absent_incumbent_malloc",
+        len: 4096,
+        hit_at: None,
+        provenance: Provenance::IncumbentMalloc,
+        note: "same scan, allocation registry cannot hit",
+    },
+    MemrchrSpec {
+        label: "len4096_hit_near_start_fl_malloc",
+        len: 4096,
+        hit_at: Some(8),
+        provenance: Provenance::FlMalloc,
+        note: "reverse scan walks almost the whole buffer before succeeding",
+    },
+    MemrchrSpec {
+        label: "len4096_hit_near_start_incumbent_malloc",
+        len: 4096,
+        hit_at: Some(8),
+        provenance: Provenance::IncumbentMalloc,
+        note: "same scan, allocation registry cannot hit",
     },
 ];
 
@@ -874,6 +949,7 @@ fn parse_args() -> Config {
         } else if arg == "--family" {
             family = match args.next().as_deref() {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
+                Some(value) if value == OsStr::new("memrchr") => Family::Memrchr,
                 Some(value) if value == OsStr::new("fpclassify") => Family::Fpclassify,
                 Some(value) if value == OsStr::new("fpclassifyf") => Family::Fpclassifyf,
                 Some(value) if value == OsStr::new("getrandom") => Family::Getrandom,
@@ -893,7 +969,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
-                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, getrandom, getauxval, \
+                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
@@ -904,7 +980,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
@@ -1645,6 +1721,148 @@ fn time_getauxval_batch(function: GetauxvalFn, case: &GetauxvalCase) -> f64 {
     let started = Instant::now();
     black_box(run_getauxval_batch(function, case.type_));
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / GETAUXVAL_REPS as f64
+}
+
+/// Who allocated the haystack a `memrchr` case scans.
+///
+/// This is an ARM, not bookkeeping. fl's string membrane looks the pointer up in
+/// its allocation registry, and that probe costs only when it HITS — which it
+/// can only do for memory fl itself handed out. A harness that allocates every
+/// input with the incumbent's allocator cannot see that cost at all, which is
+/// how the strfloor run missed +2.415 ns. Both provenances are timed so the
+/// difference between them is measured rather than assumed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Provenance {
+    FlMalloc,
+    IncumbentMalloc,
+}
+
+impl Provenance {
+    fn label(self) -> &'static str {
+        match self {
+            Provenance::FlMalloc => "fl_malloc",
+            Provenance::IncumbentMalloc => "incumbent_malloc",
+        }
+    }
+}
+
+/// A `memrchr` case before its buffer exists.
+///
+/// Split from the live case because the label must outlive the run (the shared
+/// summarizer keys on `&'static str`) while the buffer cannot be built until the
+/// allocator named by `provenance` has been resolved out of the loaded object.
+struct MemrchrSpec {
+    label: &'static str,
+    len: usize,
+    /// Index the needle is planted at, or `None` for an absent needle — the
+    /// case that forces the scan to walk the whole buffer.
+    hit_at: Option<usize>,
+    provenance: Provenance,
+    note: &'static str,
+}
+
+/// One `memrchr` case: a live buffer plus what the arms are asked to find in it.
+struct MemrchrCase {
+    label: &'static str,
+    note: &'static str,
+    buffer: *mut c_void,
+    len: usize,
+    needle: c_int,
+    /// Expected index of the match, or `None` when the needle is absent.
+    expect: Option<usize>,
+    provenance: Provenance,
+}
+
+#[inline(never)]
+fn run_memrchr_batch(function: MemrchrFn, case: &MemrchrCase) -> usize {
+    let mut total = 0usize;
+    for _ in 0..MEMRCHR_REPS {
+        let result = unsafe {
+            function(
+                black_box(case.buffer.cast_const()),
+                black_box(case.needle),
+                black_box(case.len),
+            )
+        };
+        total = total.wrapping_add(black_box(result) as usize);
+    }
+    black_box(total)
+}
+
+fn time_memrchr_batch(function: MemrchrFn, case: &MemrchrCase) -> f64 {
+    let started = Instant::now();
+    black_box(run_memrchr_batch(function, case));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / MEMRCHR_REPS as f64
+}
+
+fn measure_memrchr_case(host: MemrchrFn, fl: MemrchrFn, case: &MemrchrCase) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_memrchr_batch(fl, case);
+                    fb = time_memrchr_batch(fl, case);
+                }
+                0 => {
+                    fb = time_memrchr_batch(fl, case);
+                    fa = time_memrchr_batch(fl, case);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_memrchr_batch(host, case);
+                    gb = time_memrchr_batch(host, case);
+                }
+                1 => {
+                    gb = time_memrchr_batch(host, case);
+                    ga = time_memrchr_batch(host, case);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_memrchr_batch(fl, case);
+                    effect_glibc = time_memrchr_batch(host, case);
+                }
+                2 => {
+                    effect_glibc = time_memrchr_batch(host, case);
+                    effect_fl = time_memrchr_batch(fl, case);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        MEMRCHR_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
 }
 
 #[inline(never)]
@@ -3661,6 +3879,266 @@ fn assert_incumbent_is_host_libc(identity: &ObjectIdentity, symbol: &str) {
         "incumbent {symbol} resolved to {}, which is neither host libc nor host libm",
         identity.path.display()
     );
+}
+
+/// The byte planted as the needle, and the byte the buffer is filled with.
+///
+/// Distinct so an absent-needle case really is absent: filling with the needle
+/// would make every case a first-byte hit.
+const MEMRCHR_NEEDLE: u8 = 0xA7;
+const MEMRCHR_FILL: u8 = 0x5C;
+
+fn run_memrchr(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=memrchr deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen"
+        }
+    );
+    let fl_symbol = unsafe { libc::dlsym(handle, c"memrchr".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC memrchr")
+    );
+    // fl's OWN allocator, resolved explicitly rather than inherited from the
+    // loader: the fl-provenance arms exist precisely to give fl's string
+    // membrane a pointer its allocation registry can find.
+    let fl_malloc_symbol = unsafe { libc::dlsym(handle, c"malloc".as_ptr()) };
+    assert!(
+        !fl_malloc_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC malloc")
+    );
+    let fl_free_symbol = unsafe { libc::dlsym(handle, c"free".as_ptr()) };
+    assert!(
+        !fl_free_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC free")
+    );
+
+    let host: MemrchrFn = linked_host_memrchr;
+    let fl: MemrchrFn = unsafe { std::mem::transmute(fl_symbol) };
+    let fl_malloc: MallocFn = unsafe { std::mem::transmute(fl_malloc_symbol) };
+    let fl_free: FreeFn = unsafe { std::mem::transmute(fl_free_symbol) };
+    let host_malloc: MallocFn = linked_host_malloc;
+    let host_free: FreeFn = linked_host_free;
+
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host memrchr object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC memrchr object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=memrchr");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=memrchr");
+    assert_incumbent_is_host_libc(&incumbent_identity, "memrchr");
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    // The allocators must be distinct too, or the fl-provenance arms are a
+    // relabelling of the incumbent ones and prove nothing about the registry.
+    assert_ne!(
+        fl_malloc as usize, host_malloc as usize,
+        "fl malloc and incumbent malloc resolve to the same function; \
+         the provenance arms would be identical"
+    );
+    println!(
+        "ARM_DISTINCT symbol=memrchr incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+    println!(
+        "ALLOCATOR_DISTINCT symbol=memrchr incumbent_malloc={:#x} fl_malloc={:#x}",
+        host_malloc as usize, fl_malloc as usize,
+    );
+
+    // Build one live buffer per spec, each from the allocator its provenance names.
+    let cases = MEMRCHR_SPECS
+        .iter()
+        .map(|spec| {
+            let buffer = match spec.provenance {
+                Provenance::FlMalloc => unsafe { fl_malloc(spec.len) },
+                Provenance::IncumbentMalloc => unsafe { host_malloc(spec.len) },
+            };
+            assert!(
+                !buffer.is_null(),
+                "allocation failed for case {}",
+                spec.label
+            );
+            unsafe {
+                std::ptr::write_bytes(buffer.cast::<u8>(), MEMRCHR_FILL, spec.len);
+                if let Some(index) = spec.hit_at {
+                    assert!(index < spec.len, "planted needle outside the buffer");
+                    buffer.cast::<u8>().add(index).write(MEMRCHR_NEEDLE);
+                }
+            }
+            MemrchrCase {
+                label: spec.label,
+                note: spec.note,
+                buffer,
+                len: spec.len,
+                needle: c_int::from(MEMRCHR_NEEDLE),
+                expect: spec.hit_at,
+                provenance: spec.provenance,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Conformance: both arms must agree on the returned POSITION, not merely on
+    // whether something was found. Each case is checked on its own live buffer,
+    // and the edges (n=0, first byte, last byte) are checked separately.
+    let mut comparisons = 0usize;
+    for case in &cases {
+        let host_result = unsafe { host(case.buffer.cast_const(), case.needle, case.len) };
+        let fl_result = unsafe { fl(case.buffer.cast_const(), case.needle, case.len) };
+        let host_index = (!host_result.is_null())
+            .then(|| host_result as usize - case.buffer as usize);
+        let fl_index =
+            (!fl_result.is_null()).then(|| fl_result as usize - case.buffer as usize);
+        assert_eq!(
+            fl_index, host_index,
+            "memrchr position mismatch for {} ({} provenance)",
+            case.label,
+            case.provenance.label()
+        );
+        assert_eq!(
+            host_index, case.expect,
+            "fixture wrong for {}: glibc found {host_index:?}, expected {:?}",
+            case.label, case.expect
+        );
+        comparisons += 1;
+    }
+    // Edge cases, on the largest fl-provenance buffer.
+    let edge = cases
+        .iter()
+        .find(|case| case.len == 4096 && case.provenance == Provenance::FlMalloc)
+        .expect("missing a 4096-byte fl-provenance case");
+    for (needle, len, what) in [
+        (c_int::from(MEMRCHR_NEEDLE), 0usize, "zero_length"),
+        (c_int::from(MEMRCHR_FILL), 1usize, "first_byte"),
+        (c_int::from(MEMRCHR_FILL), 4096usize, "last_byte"),
+        (0x00, 4096usize, "absent_zero_byte"),
+    ] {
+        let host_result = unsafe { host(edge.buffer.cast_const(), needle, len) };
+        let fl_result = unsafe { fl(edge.buffer.cast_const(), needle, len) };
+        let host_index =
+            (!host_result.is_null()).then(|| host_result as usize - edge.buffer as usize);
+        let fl_index = (!fl_result.is_null()).then(|| fl_result as usize - edge.buffer as usize);
+        assert_eq!(fl_index, host_index, "memrchr edge mismatch for {what}");
+        comparisons += 1;
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=memrchr comparisons={comparisons} \
+         position_verdict=pass provenances=fl_malloc+incumbent_malloc",
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=memrchr verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, 1,
+        "memrchr benchmark requires one actually observed process thread"
+    );
+
+    let results = cases
+        .iter()
+        .map(|case| measure_memrchr_case(host, fl, case))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, 1,
+        "memrchr benchmark requires one actually observed process thread"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+
+    for result in &results {
+        result.print(
+            "memrchr",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "len512_absent_fl_malloc")
+        .expect("missing the fold-tier headline result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=memrchr verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=len512_absent_fl_malloc headline_ratio_median={:.6} \
+         headline_comparison={} registered_expectation=win_plausible \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+        headline.comparison,
+    );
+
+    // Release through the allocator that served each buffer. Freeing an
+    // fl-provenance pointer with the incumbent's `free` would be a cross-heap
+    // free, not a cleanup.
+    for case in &cases {
+        match case.provenance {
+            Provenance::FlMalloc => unsafe { fl_free(case.buffer) },
+            Provenance::IncumbentMalloc => unsafe { host_free(case.buffer) },
+        }
+    }
+
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
 }
 
 fn run_fpclassify(config: &Config) {
@@ -8029,6 +8507,7 @@ fn main() {
 
     match config.family {
         Family::NlLanginfo => run_nl_langinfo(&config),
+        Family::Memrchr => run_memrchr(&config),
         Family::Fpclassify => run_fpclassify(&config),
         Family::Fpclassifyf => run_fpclassifyf(&config),
         Family::Getrandom => run_getrandom(&config),
