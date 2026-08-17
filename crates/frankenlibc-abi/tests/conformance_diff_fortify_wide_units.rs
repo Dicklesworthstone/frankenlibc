@@ -110,6 +110,7 @@ type Cpy = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
 type NCpy = unsafe extern "C" fn(*mut u32, *const u32, usize, usize) -> *mut u32;
 type Set = unsafe extern "C" fn(*mut u32, u32, usize, usize) -> *mut u32;
 type Mbs = unsafe extern "C" fn(*mut u32, *const c_char, usize, usize) -> usize;
+type Mbs2 = unsafe extern "C" fn(*mut c_char, *const u32, usize, usize) -> usize;
 
 #[test]
 fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
@@ -234,6 +235,40 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
             || { let mut d = wide_dst();
                  // SAFETY: as above, against fl.
                  unsafe { mf(d.as_mut_ptr(), c"hello".as_ptr(), 300, 256) }; });
+    }
+
+    // --- The BYTE-destination half of the family, which must NOT be converted.
+    //
+    // `__wcstombs_chk` writes to a `char *`, so glibc's header passes
+    // `__glibc_objsize (dst)` undivided and both `n` and `dstlen` are BYTES.
+    // Confirmed on the host: n=100/dstlen=256 runs, n=257/dstlen=256 aborts.
+    //
+    // Including it here is the point. The fix that made the wide-destination
+    // wrappers count characters must NOT be applied to this half, and the
+    // invariant that unifies both is that `n` already arrives in the SAME units
+    // as `dstlen` — so the comparison is `n > dstlen` either way, and the defect
+    // was scaling one side of it.
+    {
+        let (_, hf, mf, _) = both!(
+            "__wcstombs_chk",
+            Mbs2,
+            frankenlibc_abi::fortify_abi::__wcstombs_chk,
+            ()
+        );
+        check!("__wcstombs_chk n=100 dstlen=256", false,
+            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
+                 // SAFETY: 100 bytes into an 8192-byte destination.
+                 unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 100, 256) }; },
+            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
+                 // SAFETY: as above, against fl.
+                 unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 100, 256) }; });
+        check!("__wcstombs_chk n=257 dstlen=256", true,
+            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
+                 // SAFETY: 257 > 256 claimed bytes; must abort before writing.
+                 unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 257, 256) }; },
+            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
+                 // SAFETY: as above, against fl.
+                 unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 257, 256) }; });
     }
 
     println!("compared {compared} wide-fortify cells, {aborts} host aborts");
