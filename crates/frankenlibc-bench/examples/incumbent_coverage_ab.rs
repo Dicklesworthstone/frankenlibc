@@ -341,6 +341,19 @@ const HYPERBOLIC_SPECIAL_INPUTS: &[f32] = &[
 
 struct Config {
     fl_so: PathBuf,
+    /// SELF-A/B MODE: a SECOND FrankenLibC object to use as the comparison arm
+    /// instead of the host incumbent.
+    ///
+    /// WHY THIS EXISTS. A base-against-candidate comparison run as two separate
+    /// invocations cannot be certified on a shared box: three attempts on the
+    /// sscanf family left a uniform ~13% bias that the untouched control cases
+    /// (`single_int`, `two_ints`) reproduced exactly, so the shift was in the
+    /// environment and the build, not the change. The incumbent comparison does
+    /// not have that problem, because BOTH arms run inside ONE invocation and
+    /// share its clock, its load and its page cache. Pointing the comparison arm
+    /// at a second fl object buys the same property for a self-A/B, and reuses
+    /// the A/A nulls, bootstrap CIs and exclusivity guard unchanged.
+    fl_so_b: Option<PathBuf>,
     target_dir: PathBuf,
     verify_only: bool,
     build_fl_if_missing: bool,
@@ -612,6 +625,7 @@ impl CaseResult {
 fn parse_args() -> Config {
     let mut args = std::env::args_os().skip(1);
     let mut fl_so = None;
+    let mut fl_so_b: Option<PathBuf> = None;
     let mut verify_only = false;
     let mut family = Family::NlLanginfo;
     let mut pin_quietest = 0usize;
@@ -620,6 +634,8 @@ fn parse_args() -> Config {
     while let Some(arg) = args.next() {
         if arg == "--fl-so" {
             fl_so = args.next().map(PathBuf::from);
+        } else if arg == "--fl-so-b" {
+            fl_so_b = args.next().map(PathBuf::from);
         } else if arg == "--verify-only" {
             verify_only = true;
         } else if arg == "--fl-deepbind" {
@@ -678,7 +694,7 @@ fn parse_args() -> Config {
             );
         }
     }
-    let build_fl_if_missing = fl_so.is_none();
+    let build_fl_if_missing = fl_so.is_none() && fl_so_b.is_none();
     let target_dir = std::env::var_os("FRANKENLIBC_BENCH_TARGET_DIR")
         .or_else(|| std::env::var_os("CARGO_TARGET_DIR"))
         .map(PathBuf::from)
@@ -686,6 +702,7 @@ fn parse_args() -> Config {
     let fl_so = fl_so.unwrap_or_else(|| target_dir.join("release/libfrankenlibc_abi.so"));
     Config {
         fl_so,
+        fl_so_b,
         target_dir,
         verify_only,
         build_fl_if_missing,
@@ -826,6 +843,9 @@ fn run_families(config: &Config) -> ! {
         let mut command = Command::new(&executable);
         command.arg("--family").arg(family);
         command.arg("--fl-so").arg(&config.fl_so);
+        if let Some(b) = &config.fl_so_b {
+            command.arg("--fl-so-b").arg(b);
+        }
         if config.verify_only {
             command.arg("--verify-only");
         }
@@ -6774,7 +6794,36 @@ fn run_sscanf(config: &Config) {
         dl_error("dlsym FrankenLibC vsscanf")
     );
 
-    let host: VsscanfFn = linked_host_vsscanf;
+    // SELF-A/B: when a second fl object is supplied it takes the comparison
+    // arm's place, so `host` below is fl-BASE and `fl` is fl-CANDIDATE, both
+    // measured inside this one invocation. Everything downstream — the A/A
+    // nulls, the bootstrap CIs, the exclusivity guard — is unchanged, because
+    // it only ever needed two function pointers.
+    let self_ab = config.fl_so_b.as_ref().map(|path_b| {
+        let supplied_b = sha256_file(path_b).expect("hash second FrankenLibC SO");
+        let path_b_c = CString::new(supplied_b.path.as_os_str().as_bytes())
+            .expect("second FrankenLibC path has NUL");
+        // SAFETY: a NUL-terminated path to a distinct shared object; RTLD_LOCAL
+        // keeps it out of the global namespace so it cannot capture the first
+        // object's symbols.
+        let handle_b = unsafe { libc::dlopen(path_b_c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        assert!(!handle_b.is_null(), "{}", dl_error("dlopen second FrankenLibC SO"));
+        // SAFETY: `handle_b` came from dlopen and the name is NUL-terminated.
+        let sym_b = unsafe { libc::dlsym(handle_b, c"vsscanf".as_ptr()) };
+        assert!(!sym_b.is_null(), "{}", dl_error("dlsym second FrankenLibC vsscanf"));
+        assert_ne!(
+            sym_b, fl_symbol,
+            "both fl objects resolved vsscanf to ONE address — the second dlopen \
+             returned the first object, so this would time a build against itself"
+        );
+        (supplied_b, sym_b)
+    });
+
+    let host: VsscanfFn = match &self_ab {
+        // SAFETY: the resolved symbol has vsscanf's C signature.
+        Some((_, sym_b)) => unsafe { std::mem::transmute(*sym_b) },
+        None => linked_host_vsscanf,
+    };
     let fl: VsscanfFn = unsafe { std::mem::transmute(fl_symbol) };
     let incumbent_identity =
         symbol_object(host as *const () as *const c_void).expect("identify host vsscanf object");
@@ -6782,16 +6831,45 @@ fn run_sscanf(config: &Config) {
         symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC vsscanf object");
     print_identity("INCUMBENT", &incumbent_identity);
     print_identity("FL", &fl_identity);
-    println!("INCUMBENT_LINKAGE direct_process_link symbol=vsscanf");
+    if let Some((supplied_b, _)) = &self_ab {
+        // Loud, and deliberately NOT the INCUMBENT_* vocabulary: this run has no
+        // incumbent in it. A reader who greps for INCUMBENT_COVERAGE rows must
+        // not pick these up as fl-against-glibc.
+        println!(
+            "SELF_AB_MODE comparison_arm=frankenlibc base_sha256={} candidate_sha256={} \
+             note=\"ratio is CANDIDATE/BASE, not fl/glibc; no incumbent was measured\"",
+            supplied_b.sha256, supplied_fl.sha256
+        );
+    } else {
+        println!("INCUMBENT_LINKAGE direct_process_link symbol=vsscanf");
+    }
     println!("FL_LINKAGE explicit_dlopen_local symbol=vsscanf");
-    assert!(
-        incumbent_identity
-            .path
-            .file_name()
-            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
-        "incumbent resolved to {}, not host libc",
-        incumbent_identity.path.display()
-    );
+    // The comparison arm must be host libc — UNLESS this is a self-A/B, where it
+    // is deliberately a second fl object. The check is not dropped in that mode,
+    // it is REPLACED by the one that matters there: the two objects must be
+    // different files, or the run would time a build against itself and report a
+    // flat 1.0 that looks like a clean null.
+    match &self_ab {
+        None => assert!(
+            incumbent_identity
+                .path
+                .file_name()
+                .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+            "incumbent resolved to {}, not host libc",
+            incumbent_identity.path.display()
+        ),
+        Some((supplied_b, _)) => {
+            assert_eq!(
+                incumbent_identity.sha256, supplied_b.sha256,
+                "comparison arm resolved to an object other than the supplied --fl-so-b"
+            );
+            assert_ne!(
+                supplied_b.sha256, supplied_fl.sha256,
+                "--fl-so and --fl-so-b are the SAME object; a self-A/B against an \
+                 identical build measures nothing"
+            );
+        }
+    }
     assert_eq!(
         fl_identity.sha256, supplied_fl.sha256,
         "loaded FrankenLibC object differs from supplied object"
