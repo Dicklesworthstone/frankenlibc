@@ -29833,3 +29833,35 @@ What this changes, and what it does not:
   comparable", and only the second question was ever the one at issue.
 - **STILL OWED:** the certified row. Re-run both arms back-to-back on a genuinely quiet box, with
   `single_int`/`two_ints` read first as controls before any treated case is interpreted.
+
+## 2026-08-16 (this session) — VOID #2, and the cause is the EXPERIMENT DESIGN, not the box: in a shared tree, a "base" built two hours earlier is a different codebase
+
+- **RESULT CLASS: void. No ratio quotable.** Second attempt to certify the scanf allocation
+  removals, this time with the fix the first void prescribed: arms INTERLEAVED (base, cand, base,
+  cand) so drift hits both, and the control cases read before any treated case.
+- **THE CONTROLS STILL MOVED**, though less: `single_int` base 1.459/1.470 (mean 1.464) against
+  candidate 1.738/1.529 (mean 1.633) = **+11.5%**; `two_ints` 1.464/1.507 against 1.663/1.551 =
+  **+8.2%**. Both are served by `strict_scan_decimal_ints`, never reach the parsing engine, and
+  allocate nothing, so the change under test cannot touch them. Per-arm placement: base rep1 launched
+  at loadavg 12.54 17.19 22.25 with cpu8 at 2473645 kHz; the box stayed in that band throughout.
+  Interleaving cut the control drift roughly in half (was +16.9%/+13.4%) without removing it.
+- **WHY, and this is the part worth keeping.** The two fl objects were built ~2 hours apart, and this
+  repository has several agents committing continuously. Between them the tree gained, besides the
+  three scanf commits under test: `486d2c320` (malloc slot-retire REJECT), `f529b3979` (coshf
+  delegation), and `b4204b67e` ("skip the arena lookup for stack outputs"), which touches the shared
+  syscall/membrane path that sscanf's fast path runs through. The "base" object is therefore not the
+  same codebase minus one change — it is a DIFFERENT CODEBASE, and the controls moving is the
+  expected consequence, not an environmental accident.
+- **The first void blamed the environment and was half right.** Clock and load did differ there
+  (4119585 kHz / loadavg 17.29 against 2515185 kHz / 32.46). Fixing only that exposed the deeper
+  fault: interleaving equalises the ENVIRONMENT between arms, and can do nothing about the arms being
+  built from different source.
+- **THE CORRECTED RECIPE, for a repo where other agents commit while you measure:** build BOTH arms
+  from ONE tree state, differing only by the change under test — stash or revert the change, build
+  base, restore, build candidate, and record both object SHA-256s plus the commit they share. A base
+  object kept from earlier in the session is only valid if nothing else landed meanwhile, which in
+  this repo is rarely true and is cheap to check with `git log --since`.
+- **The controls are what made both voids detectable at all.** Every A/A null held and both
+  exclusivity guards reported clear in both attempts. Without cases the change cannot affect, the
+  first run would have been published as "the allocation removal made string_token 15% worse".
+- **STILL OWED:** the certified row, from two objects built off one commit.
