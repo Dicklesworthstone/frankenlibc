@@ -4005,6 +4005,26 @@ fn run_memrchr(config: &Config) {
         })
         .collect::<Vec<_>>();
 
+    // WHERE EACH BUFFER LANDED. Printed because the provenance arms differ by
+    // more than a per-call registry probe could explain, and a scan's cost
+    // depends on the address it starts from: alignment decides how much of the
+    // first vector is wasted, and the offset into the page decides how many
+    // pages the walk touches. Without these an allocator difference and a
+    // placement difference are indistinguishable.
+    for case in &cases {
+        let address = case.buffer as usize;
+        println!(
+            "BUFFER_PROVENANCE symbol=memrchr case={} provenance={} address={address:#x} \
+             align_mod_64={} page_offset={} end_page_offset={} pages_spanned={}",
+            case.label,
+            case.provenance.label(),
+            address % 64,
+            address % 4096,
+            (address + case.len) % 4096,
+            (address + case.len).div_ceil(4096) - address / 4096,
+        );
+    }
+
     // Conformance: both arms must agree on the returned POSITION, not merely on
     // whether something was found. Each case is checked on its own live buffer,
     // and the edges (n=0, first byte, last byte) are checked separately.
