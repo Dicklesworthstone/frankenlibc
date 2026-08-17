@@ -16,7 +16,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::ExitStatusExt;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Serializes all gai_*/getaddrinfo_a tests in this binary.
 ///
@@ -2789,6 +2789,65 @@ fn capture_argp_stream_output(
     Ok(output)
 }
 
+/// Bounded replacement for `waitpid(pid, status, 0)`.
+///
+/// WHY THIS EXISTS. Every fork site in this file used to reap with
+/// `waitpid(pid, &mut status, 0)` — a wait with NO timeout. A child that never
+/// exits therefore wedged the test binary permanently at ZERO CPU, and because
+/// libtest holds the process open, it wedged the whole `cargo test` invocation
+/// with it. One such hang was observed holding a build open for 4.2 hours before
+/// being killed by hand, on a host that was simultaneously running out of disk.
+///
+/// A hung child is not a hypothetical here; there are at least three ways to get
+/// one, and this file contains all three:
+///
+///   1. FORK IN A MULTITHREADED PROCESS. libtest runs arms in parallel threads.
+///      `fork()` gives the child only the calling thread, but all of the parent's
+///      locks in whatever state they were in — so a child that touches fl's
+///      errno or runtime_policy state can deadlock on a lock whose owning thread
+///      does not exist in the child, and never reach `_exit` or `abort`.
+///   2. PIPE-CAPACITY DEADLOCK. These helpers redirect the child's stderr into a
+///      pipe and then call `waitpid` BEFORE draining it. A child writing more
+///      than the pipe buffer blocks in `write()` while the parent blocks in
+///      `waitpid()`, and neither can proceed.
+///   3. A CHILD THAT SIMPLY DOES NOT ABORT when the test expected it to, which is
+///      the defect these arms exist to detect — and which previously presented as
+///      an infinite hang rather than as a failure.
+///
+/// So the timeout is the GATE, not a workaround: it converts all three from an
+/// unbounded hang into a named failure. It cannot mask a real defect, because the
+/// only behaviour it changes is that of a child which was never going to exit.
+///
+/// # Safety
+/// `pid` must be a child of this process, not yet reaped.
+unsafe fn bounded_waitpid(pid: c_int, status: &mut c_int) -> c_int {
+    const LIMIT: Duration = Duration::from_secs(30);
+    let started = Instant::now();
+    loop {
+        // SAFETY: caller guarantees `pid` is an unreaped child of this process.
+        let reaped = unsafe { libc::waitpid(pid, status as *mut c_int, libc::WNOHANG) };
+        if reaped != 0 {
+            return reaped;
+        }
+        if started.elapsed() >= LIMIT {
+            // SAFETY: `pid` is our own child; killing it is what makes the
+            // failure below reportable instead of leaving a stuck process behind.
+            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+            // SAFETY: after SIGKILL the child is reapable promptly.
+            let _ = unsafe { libc::waitpid(pid, status as *mut c_int, 0) };
+            panic!(
+                "child {pid} did not exit within {LIMIT:?}; killed it. A fork-based arm \
+                 in this file hung — see the three mechanisms documented on \
+                 `bounded_waitpid`. This is a FAILURE, not a flake: the old code would \
+                 have blocked here forever at zero CPU and held the whole cargo test \
+                 invocation open."
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+
 fn capture_argp_stdout_child_status(
     expected_status: c_int,
     returned_status: c_int,
@@ -2818,7 +2877,7 @@ fn capture_argp_stdout_child_status(
     }
 
     let mut status: c_int = 0;
-    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
     assert!(
         libc::WIFEXITED(status),
         "child did not exit normally: {status}"
@@ -2860,7 +2919,7 @@ fn capture_argp_child_exit(
     }
 
     let mut status: c_int = 0;
-    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
     assert!(
         libc::WIFEXITED(status),
         "child did not exit normally: {status}"
@@ -9468,7 +9527,7 @@ fn assert_cxa_fail_stop_hook_aborts_with_stderr(
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid, "waitpid failed for {label}");
 
     let mut stderr_bytes = Vec::new();
@@ -9517,7 +9576,7 @@ fn cxa_throw_bad_array_new_length_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
@@ -9536,7 +9595,7 @@ fn cxa_call_unexpected_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
@@ -9554,7 +9613,7 @@ fn cxa_call_terminate_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
@@ -9583,7 +9642,7 @@ fn cxa_bad_cast_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
@@ -9601,7 +9660,7 @@ fn cxa_bad_typeid_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
@@ -9619,7 +9678,7 @@ fn cxa_throw_bad_array_length_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
@@ -14064,7 +14123,7 @@ fn libc_dynarray_at_failure_aborts_child_process() {
     }
 
     let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid);
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
