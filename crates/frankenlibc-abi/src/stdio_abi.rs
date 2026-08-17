@@ -196,91 +196,121 @@ fn scanf_ascii_space(b: u8) -> bool {
 /// time — and bounds the value array that lives on the stack.
 pub(crate) const STRICT_INT_LIST_MAX: usize = 4;
 
-/// A format that is nothing but `%d` and `%s` conversions joined by ONE repeated
-/// separator.
+/// A format that is nothing but `%d`, `%s` and `%[^X]` conversions joined by ONE
+/// repeated separator.
 ///
-/// Returns the field count, the separator, and the conversion of each field.
-/// `sep` is `b' '` for the whitespace form, where the separator matches nothing
-/// itself because both conversions skip leading whitespace. Any other byte is a
-/// LITERAL that must appear exactly once between conversions.
+/// Returns the field count, the separator, the conversion of each field, and for
+/// a `%[^X]` field the delimiter `X`. `sep` is `b' '` for the whitespace form,
+/// where the separator matches nothing itself because every conversion here
+/// skips leading whitespace. Any other byte is a LITERAL that must appear
+/// exactly once between conversions.
 ///
-/// The shape has grown three times, each time under measurement: whitespace-only
-/// `%d` lists of at most three fields, then any single separator and four fields
-/// (which turned `"%d.%d.%d.%d"`, the IPv4 shape, from a 1.795x loss into 0.228x
-/// by instructions), and now mixed `%d`/`%s` — `"%s %s"` and `"%s %d"` are the
-/// last two single-separator shapes still on the engine, certified at 2.012x and
-/// 1.685x host glibc.
+/// The shape has grown four times, each time under measurement: whitespace-only
+/// `%d` lists of at most three fields; then any single separator and four fields
+/// (`"%d.%d.%d.%d"`, the IPv4 shape, 1.795x loss -> 0.228x by instructions);
+/// then mixed `%d`/`%s` (`"%s %s"` and `"%s %d"`, certified 2.012x and 1.685x);
+/// and now a one-character negated scanset, which is what `"%[^=]=%s"` needs.
 #[inline]
 pub(crate) unsafe fn strict_decimal_int_format_count(
     format: *const c_char,
-) -> Option<(usize, u8, [u8; STRICT_INT_LIST_MAX])> {
+) -> Option<(
+    usize,
+    u8,
+    [u8; STRICT_INT_LIST_MAX],
+    [u8; STRICT_INT_LIST_MAX],
+)> {
     let f = format.cast::<u8>();
     let mut kinds = [0u8; STRICT_INT_LIST_MAX];
+    let mut delims = [0u8; STRICT_INT_LIST_MAX];
+    let mut i = 0usize;
+    let mut fields = 0usize;
+    let mut sep = 0u8;
     // SAFETY: `format` is non-null and NUL-terminated under the scanf contract;
     // every read below is guarded by the previous byte not being the terminator.
     unsafe {
-        if *f != b'%' {
-            return None;
-        }
-        let first = *f.add(1);
-        if first != b'd' && first != b's' {
-            return None;
-        }
-        kinds[0] = first;
-        let mut i = 2usize;
-        let mut fields = 1usize;
-        let mut sep = 0u8;
         loop {
-            let c = *f.add(i);
-            if c == 0 {
-                return Some((fields, if sep == 0 { b' ' } else { sep }, kinds));
+            if *f.add(i) != b'%' {
+                return None;
+            }
+            match *f.add(i + 1) {
+                c @ (b'd' | b's') => {
+                    kinds[fields] = c;
+                    i += 2;
+                }
+                b'[' => {
+                    // Exactly `%[^X]`, the one scanset shape held inline. The
+                    // grammar exclusions match `strict_single_negated_scanset`:
+                    // a leading `]` is a literal member and `-` forms a range.
+                    if *f.add(i + 2) != b'^' {
+                        return None;
+                    }
+                    let delimiter = *f.add(i + 3);
+                    if delimiter == 0 || delimiter == b']' || delimiter == b'-' {
+                        return None;
+                    }
+                    if *f.add(i + 4) != b']' {
+                        return None;
+                    }
+                    kinds[fields] = b'[';
+                    delims[fields] = delimiter;
+                    i += 5;
+                }
+                _ => return None,
+            }
+            fields += 1;
+
+            let next = *f.add(i);
+            if next == 0 {
+                // A LONE `%s` or `%[^X]` is left to its own dedicated fast path,
+                // which is leaner than the list machinery: no destination array,
+                // no per-field dispatch. Those two paths measured 0.254x and
+                // 0.186x of host glibc, the best in the family, and this probe
+                // runs FIRST — so without this decline the list path would
+                // silently take their traffic and give some of that back.
+                if fields == 1 && kinds[0] != b'd' {
+                    return None;
+                }
+                return Some((fields, if sep == 0 { b' ' } else { sep }, kinds, delims));
             }
             // A `%` here would be a second conversion with no separator, which
             // this path does not model.
-            if c == b'%' {
+            if next == b'%' {
                 return None;
             }
             // One separator character, and every separator must be the SAME one:
             // mixing them is rare enough not to be worth a second scan shape.
             if sep == 0 {
-                sep = c;
-            } else if c != sep {
+                sep = next;
+            } else if next != sep {
                 return None;
             }
-            if *f.add(i + 1) != b'%' {
-                return None;
-            }
-            let kind = *f.add(i + 2);
-            if kind != b'd' && kind != b's' {
-                return None;
-            }
+            i += 1;
             if fields == STRICT_INT_LIST_MAX {
                 return None;
             }
-            kinds[fields] = kind;
-            fields += 1;
-            i += 3;
         }
     }
 }
 
-/// A `%s` field inside a list must NOT run past a literal separator.
+/// A field that runs to whitespace cannot be followed by a LITERAL separator.
 ///
 /// `sscanf("a,b", "%s,%s")` is a one-field match in glibc, not two: `%s` takes
 /// every non-whitespace byte, so it swallows `"a,b"` whole and the literal `,`
-/// then has nothing to match. Only whitespace ends a `%s`. This is the trap in
-/// mixing the two conversions, and `the_field_list_matches_glibc_on_separators`
-/// pins it.
+/// then has nothing to match. `%d` and `%[^X]` do not have that problem — both
+/// stop at a character the separator can be — which is exactly why `"%d.%d"` and
+/// `"%[^=]=%s"` work while `"%s,%s"` does not. A trailing `%s` is fine, since no
+/// separator follows it.
 #[inline]
-pub(crate) fn strict_field_list_is_scannable(fields: usize, sep: u8, kinds: &[u8; STRICT_INT_LIST_MAX]) -> bool {
+pub(crate) fn strict_field_list_is_scannable(
+    fields: usize,
+    sep: u8,
+    kinds: &[u8; STRICT_INT_LIST_MAX],
+) -> bool {
     if sep == b' ' {
         return true;
     }
-    // A literal separator after a `%s` can never be reached, so decline the
-    // whole format rather than produce a different answer from the engine.
     !kinds[..fields.saturating_sub(1)].contains(&b's')
-}
-/// True when the format is exactly `"%s"` — no width, no suppression, no length
+}/// True when the format is exactly `"%s"` — no width, no suppression, no length
 /// modifier. Tested only AFTER the decimal-int probe declines.
 ///
 /// The two probes are separate on purpose, and it was measured: folding them
@@ -484,6 +514,7 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
     fields: usize,
     sep: u8,
     kinds: &[u8; STRICT_INT_LIST_MAX],
+    delims: &[u8; STRICT_INT_LIST_MAX],
     destinations: &[*mut c_void; STRICT_INT_LIST_MAX],
 ) -> StrictDecimalIntsScan {
     let mut p = s.cast::<u8>();
@@ -505,6 +536,36 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
             }
             // SAFETY: the byte just read was the separator, not the terminator.
             p = unsafe { p.add(1) };
+        }
+        if kinds[index] == b'[' {
+            // SAFETY: the probe accepted a `%[^X]` here, so the caller passed a
+            // `char *` sized for the field plus its NUL.
+            let rc = unsafe {
+                strict_scan_negated_scanset_from(
+                    p,
+                    destinations[index].cast(),
+                    delims[index],
+                    &mut p,
+                )
+            };
+            if rc == libc::EOF {
+                return StrictDecimalIntsScan {
+                    count: if count == 0 { libc::EOF } else { count as c_int },
+                    input_failure: count == 0,
+                    values,
+                };
+            }
+            if rc == 0 {
+                // Matching failure: the very first byte was the delimiter. glibc
+                // writes NOTHING for that field, which the helper honours.
+                return StrictDecimalIntsScan {
+                    count: count as c_int,
+                    input_failure: false,
+                    values,
+                };
+            }
+            count += 1;
+            continue;
         }
         if kinds[index] == b's' {
             // SAFETY: the probe accepted a `%s` at this position, so the caller
@@ -554,6 +615,49 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
         input_failure: false,
         values,
     }
+}
+
+/// `%[^X]` for one field of a list: copy up to the delimiter and report where the
+/// scan stopped, so the next field can continue from there.
+///
+/// Shares its rules with [`strict_scan_negated_scanset`]: no leading-whitespace
+/// skip, `EOF` when the input is already exhausted, and `0` when the very first
+/// byte is the delimiter — in which case NOTHING is written, not even a
+/// terminator, because that is what glibc does on a matching failure.
+unsafe fn strict_scan_negated_scanset_from(
+    start: *const u8,
+    dst: *mut c_char,
+    delim: u8,
+    end: &mut *const u8,
+) -> c_int {
+    let mut p = start;
+    // SAFETY: the input is NUL-terminated.
+    let first = unsafe { *p };
+    if first == 0 {
+        *end = p;
+        return libc::EOF;
+    }
+    if first == delim {
+        *end = p;
+        return 0;
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: the scan stops at the terminator or the delimiter.
+        let b = unsafe { *p };
+        if b == 0 || b == delim {
+            break;
+        }
+        // SAFETY: the caller sized `dst` for the field plus its NUL, which is
+        // C's `%[` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied field.
+    unsafe { *d = 0 };
+    *end = p;
+    1
 }
 
 /// `%s` for one field of a list: copy a whitespace-delimited token and report
@@ -9516,7 +9620,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
     }
 
     if runtime_policy::strict_passthrough_active() {
-        if let Some((fields, sep, kinds)) = unsafe { strict_decimal_int_format_count(format) }
+        if let Some((fields, sep, kinds, delims)) = unsafe { strict_decimal_int_format_count(format) }
             && strict_field_list_is_scannable(fields, sep, &kinds)
         {
             // Every destination is fetched BEFORE the scan. Fetching a variadic
@@ -9528,7 +9632,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
                 *slot = unsafe { args.next_arg::<*mut c_void>() };
             }
             let fast =
-                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &destinations) };
+                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
             return fast.count;
         }
@@ -12352,7 +12456,7 @@ pub unsafe extern "C" fn __isoc99_sscanf(
     // `__isoc23_sscanf`: the fallback delegates to `vsscanf`, which decides for
     // itself, so deciding here too would bill the engine path twice.
     if !s.is_null() && !format.is_null() && runtime_policy::strict_passthrough_active() {
-        if let Some((fields, sep, kinds)) = unsafe { strict_decimal_int_format_count(format) }
+        if let Some((fields, sep, kinds, delims)) = unsafe { strict_decimal_int_format_count(format) }
             && strict_field_list_is_scannable(fields, sep, &kinds)
         {
             let (_, decision) =
@@ -12368,7 +12472,7 @@ pub unsafe extern "C" fn __isoc99_sscanf(
                 *slot = unsafe { args.next_arg::<*mut c_void>() };
             }
             let fast =
-                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &destinations) };
+                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
             return fast.count;
         }

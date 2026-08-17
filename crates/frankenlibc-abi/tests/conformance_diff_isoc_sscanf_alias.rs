@@ -291,6 +291,145 @@ fn the_field_list_matches_glibc_on_separators() {
     println!("compared {compared} field-list arms across {} cases", cases.len());
 }
 
+/// `%[^X]` as a FIELD of a list, which is what `"%[^=]=%s"` needs.
+///
+/// A one-character negated scanset stops exactly at its delimiter, so unlike
+/// `%s` it can be followed by a literal separator — that asymmetry is the whole
+/// reason this shape is reachable and `"%s,%s"` is not.
+#[test]
+fn the_scanset_field_list_agrees_with_host_glibc() {
+    let glibc: SscanfFn = unsafe {
+        host_fn(
+            c"__isoc23_sscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_sscanf as *const (),
+        )
+    };
+
+    let scan = |f: SscanfFn, input: &str, format: &str| -> (c_int, String, String, c_int) {
+        let cin = CString::new(input).expect("input has NUL");
+        let cfmt = CString::new(format).expect("format has NUL");
+        // 0xAA fill plus a comparison of the whole head: on a matching failure
+        // glibc writes NOTHING for the field, not even a terminator, so a fast
+        // path that helpfully terminated would otherwise pass.
+        let mut a = [0xAAu8; 64];
+        let mut b = [0xAAu8; 64];
+        let mut i0: c_int = -777;
+        // SAFETY: each format below takes the destinations supplied for it, in
+        // the order it consumes them.
+        let rc = unsafe {
+            match format {
+                "%[^=]=%s" | "%[^:]:%s" | "%[^,],%[^,]" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    b.as_mut_ptr().cast::<c_char>(),
+                ),
+                "%[^=]=%d" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    &mut i0 as *mut c_int,
+                ),
+                "%[^ ] %s" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    b.as_mut_ptr().cast::<c_char>(),
+                ),
+                other => panic!("unhandled format {other:?}"),
+            }
+        };
+        let text = |buf: &[u8; 64]| {
+            let end = buf.iter().position(|&x| x == 0).unwrap_or(0);
+            String::from_utf8_lossy(&buf[..end]).into_owned()
+        };
+        (rc, text(&a), text(&b), i0)
+    };
+
+    let cases: &[(&str, &str)] = &[
+        ("key=value", "%[^=]=%s"),
+        ("key=", "%[^=]=%s"),
+        ("=value", "%[^=]=%s"),
+        ("novalue", "%[^=]=%s"),
+        ("", "%[^=]=%s"),
+        ("key=42", "%[^=]=%d"),
+        ("key=notanint", "%[^=]=%d"),
+        ("host:port", "%[^:]:%s"),
+        ("a,b", "%[^,],%[^,]"),
+        (",b", "%[^,],%[^,]"),
+        ("word rest", "%[^ ] %s"),
+        // The scanset's delimiter and the separator need not agree: here the
+        // field runs to the end and the separator then has nothing to match.
+        ("nodelim here", "%[^=]=%s"),
+    ];
+
+    let mut compared = 0usize;
+    for (input, format) in cases {
+        let want = scan(glibc, input, format);
+        for (name, arm) in fl_arms() {
+            let got = scan(arm, input, format);
+            assert_eq!(
+                got, want,
+                "{name}({input:?}, {format:?}) produced {got:?}, host glibc produced {want:?}"
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, cases.len() * 3, "the loop skipped cases");
+    println!("compared {compared} scanset-field arms across {} cases", cases.len());
+}
+
+/// A LONE `%s` or `%[^X]` must not be taken by the list path.
+///
+/// The list probe runs first and would accept either as a one-field list. Both
+/// have leaner dedicated paths — measured 0.254x and 0.186x of host glibc, the
+/// two best cases in the family — so the probe declines single non-`%d` fields.
+/// Allocation count is what distinguishes the routes observably: all three are
+/// allocation-free, so this asserts the property that would break if the lone
+/// forms were ever routed through the engine instead.
+#[test]
+fn a_lone_string_or_scanset_still_takes_its_own_fast_path() {
+    for (input, format) in [
+        ("hello world", "%s"),
+        ("key=value", "%[^=]"),
+        ("line\nnext", "%[^\n]"),
+    ] {
+        // Built OUTSIDE the counting window: `CString::new` allocates, and
+        // measuring that instead of the call is how this gate would fool itself.
+        let cin = CString::new(input).expect("input has NUL");
+        let cfmt = CString::new(format).expect("format has NUL");
+        let mut buf = [0u8; 128];
+        let arm = frankenlibc_abi::isoc_abi::__isoc23_sscanf as SscanfFn;
+
+        // Warm any one-time lazy initialisation so it is not billed to the call.
+        // SAFETY: each format takes exactly one `char *`, and `buf` outsizes
+        // every token here.
+        unsafe {
+            arm(
+                cin.as_ptr(),
+                cfmt.as_ptr(),
+                buf.as_mut_ptr().cast::<c_char>(),
+            );
+        }
+        let n = count_allocs(|| {
+            // SAFETY: the same call, now inside the armed window.
+            unsafe {
+                arm(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    buf.as_mut_ptr().cast::<c_char>(),
+                );
+            }
+        });
+        println!("__isoc23_sscanf({input:?}, {format:?}) allocations={n}");
+        assert_eq!(
+            n, 0,
+            "a lone {format:?} allocated {n} times; it should still be served by its \
+             own fast path, not routed through the list machinery or the engine"
+        );
+    }
+}
+
 #[test]
 fn the_string_fast_path_agrees_with_host_glibc() {
     let glibc: SscanfFn = unsafe {

@@ -119,7 +119,7 @@ pub unsafe extern "C" fn __isoc23_sscanf(
         && !format.is_null()
         && crate::runtime_policy::strict_passthrough_active()
     {
-        if let Some((fields, sep, kinds)) =
+        if let Some((fields, sep, kinds, delims)) =
             unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) }
             && crate::stdio_abi::strict_field_list_is_scannable(fields, sep, &kinds)
         {
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn __isoc23_sscanf(
                 *slot = unsafe { args.next_arg::<*mut c_void>() };
             }
             let fast = unsafe {
-                crate::stdio_abi::strict_scan_decimal_ints(s, fields, sep, &kinds, &destinations)
+                crate::stdio_abi::strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations)
             };
             crate::runtime_policy::observe(
                 frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
