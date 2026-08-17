@@ -31158,3 +31158,37 @@ What this changes, and what it does not:
   ratio? That is a single-commit A/B, not a re-measure of the family from scratch, and it wants a
   counted mechanism rather than wall clock given how the last two days have gone. **2.64-3.92x is far
   above any noise floor here, so the family's RANK is not in doubt; only the precise figures are.**
+
+## 2026-08-17 (BlackThrush) — FUSED snprintf CHARACTERISED BY COUNTING: 3.02x the instructions, and 36% of them are re-parsing the format string
+
+- **RESULT CLASS: loss/baseline (characterisation).** No lever landed and no speedup claimed. Measured
+  under load — observed loadavg 14-17 with two foreign builds running — because instruction and
+  branch counts do not care, which is the whole reason the driver exists.
+- **NEW TOOL, and it is the deliverable as much as the numbers:**
+  `crates/frankenlibc-bench/examples/snprintf_icount.rs`, modelled on `malloc_icount`. Same
+  two-point control (`SNPRINTF_ICOUNT_REPS` at 20,000 and 1,000 so startup cancels), same dlmopen'd
+  glibc arm on a fresh link map, and the same assertion that the glibc arm is not fl's own snprintf.
+  Wall-clock certification of this family had been **blocked twice** by the quiet gate at loadavg 20
+  and 33; this answers the question without a quiet host.
+- **THE HEADLINE: fl executes 3.02x glibc's instructions on the fused shapes** —
+  **2876.6 against 953.8 per call**, from (293,154,069 - 19,877,050)/95,000 and
+  (101,265,683 - 10,654,650)/95,000. **That matches the wall ratio of 2.64-3.92x**, which is the
+  important contrast with the allocator: there, wall and counted evidence disagreed and the wall
+  number turned out to be layout. **Here the gap is real work, and it is therefore attackable.**
+- **BRANCH BEHAVIOUR IS WORSE THAN THE INSTRUCTION GAP: 23.4 mispredicts per call against glibc's
+  3.6, and 8.2 INDIRECT against 0.6 — 13.7x.** Indirect mispredicts cost ~20 cycles, so ~164
+  cycles/call sits in indirect misprediction alone.
+- **AND THEY ARE CONCENTRATED IN TWO FUNCTIONS. 87.7% of all indirect mispredicts come from format
+  PARSING:** `parse_format_spec` 380,001 (46.29%) and `parse_format_string` 340,003 (41.42%), against
+  `render_segments` 20,006 (2.44%) and essentially none in `snprintf` itself. `parse_format_spec`
+  mispredicts 380,001 of its 680,000 indirect branches — **a 56% miss rate**, the signature of a jump
+  table over conversion characters that the predictor cannot learn.
+- **36% OF THE INSTRUCTIONS ARE SPENT BEFORE ANY OUTPUT IS PRODUCED.** `parse_format_spec` 18.20% +
+  `parse_format_string` 7.60% + `FormatSegments::push` 6.86% + `count_printf_args_of` 3.48% = **36.1%
+  of 293M**, all of it re-deriving a format string that is a compile-time constant at the call site
+  and byte-identical on every one of the 95,000 calls.
+- **THE OBVIOUS LEVER HAS A WARNING ATTACHED.** Memoising the parse is what these numbers point at,
+  and a format memo was already tried on the SCANF engine and **rejected as slower on every case**
+  (`226e9ad41`). printf's parse is heavier than scanf's and its indirect-mispredict profile is
+  different, so the precedent is a caution rather than a refutation — but anyone taking it should
+  measure with THIS driver first, on instructions and mispredicts, before touching wall clock.
