@@ -29796,3 +29796,40 @@ What this changes, and what it does not:
 - **NOT REACHED BY THIS:** `kexec_load` fails locally with EPERM where the test expects EFAULT. That
   is `euid=1000` versus a test written for root, and `kexec_load` never calls the changed helper —
   it goes straight to `sys_kexec_load`. Pre-existing and environment-dependent, not a regression.
+
+## 2026-08-16 (this session) — VOID: the sscanf base-vs-candidate certification is contaminated, and its own UNTOUCHED CONTROL CASES prove it
+
+- **RESULT CLASS: void. No ratio from this run may be quoted, in either direction.** The attempt was
+  to attach a certified fl-vs-glibc ratio to the scanf allocation removals (`782490a88`,
+  `7cfb786c0`, `e039490d8`). It failed for environmental reasons, and the failure is instructive
+  enough to record rather than silently re-run.
+- **APPARATUS**: `incumbent_coverage_ab --family sscanf`, host `thinkstation1`, pinned cpu8,
+  `samples=36`, `reps_per_arm=600000`. Base fl object
+  sha256=fd2c8e8bcf8385ded7c82dea179839bcd29716315cce6f134f7ed6f8e269368d, candidate
+  sha256=25c65849531f24fa6898... Host-wide exclusivity reported `verdict=clear` pre and post on BOTH
+  arms (observed busy fractions 0.173/0.188 and 0.170/0.020), and EVERY same-invocation A/A null
+  held inside the 0.020 tolerance with its own bootstrap median CI. The guard passed. The run is
+  still void.
+- **WHY IT IS VOID — the controls moved.** `single_int` and `two_ints` are served by
+  `strict_decimal_int_format_count` + `strict_scan_decimal_ints`, which never reach the parsing
+  engine and allocate nothing. The change under test touches only the engine. Those two cases
+  therefore CANNOT be affected by it, which makes them controls. They moved +16.9% and +13.4%.
+  A comparison whose controls move by 15% cannot resolve the effect being sought.
+- **THE MECHANISM IS VISIBLE IN THE LAUNCH CONTEXT**, which is why per-arm loadavg and clock are
+  recorded: base arm launched at loadavg 17.29 21.89 26.24 with cpu8 at 4119585 kHz; candidate arm
+  launched at loadavg 32.46 30.07 28.86 with cpu8 at 2515185 kHz. The candidate ran at 61% of the
+  base's clock under nearly double the load. The fl/glibc ratio does not cancel that: the two arms
+  have different instruction mixes and memory behaviour, so they do not scale identically with
+  frequency.
+- **The scatter is not a signal either.** Ten cases moved up (as far as +101% for `scanset_only`)
+  and two moved down (`mixed_record` -21.7%, `dotted_quad` -16.0%). A real effect on shared engine
+  code would not move two cases the opposite way by 20%.
+- **WHAT THIS ADDS TO THE STANDING RULE.** It was already recorded here that
+  within-invocation A/A nulls do not certify a CROSS-invocation comparison (2026-08-16,
+  `malloc_st_probe` returning 29.87 ns and 44.10 ns for one binary with clean nulls). This run shows
+  the same failure with an exclusivity guard ALSO reporting clear, and it shows the cheap remedy:
+  **include cases the change cannot affect, and void the run if they move.** The A/A null answers
+  "was this invocation internally stable"; a control case answers "are these two invocations
+  comparable", and only the second question was ever the one at issue.
+- **STILL OWED:** the certified row. Re-run both arms back-to-back on a genuinely quiet box, with
+  `single_int`/`two_ints` read first as controls before any treated case is interpreted.
