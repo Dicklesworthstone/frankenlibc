@@ -31192,3 +31192,40 @@ What this changes, and what it does not:
   (`226e9ad41`). printf's parse is heavier than scanf's and its indirect-mispredict profile is
   different, so the precedent is a caution rather than a refutation — but anyone taking it should
   measure with THIS driver first, on instructions and mispredicts, before touching wall clock.
+
+## 2026-08-17 (BlackThrush) — THE FLOAT PROBE COSTS THE FUSED SHAPES 2.2 MISPREDICTS PER CALL AND 5 INSTRUCTIONS: priced by counting, under load
+
+- **RESULT CLASS: loss/baseline (single-commit attribution).** Closes the question the snprintf_fused
+  caveat was reduced to. No lever landed; the probe is a deliberate trade and stays.
+- **MEASURED UNDER LOAD ON PURPOSE.** Observed loadavg 13.60,14.53,15.86 at 2960 MHz with **14 build
+  processes running**. The wall gate had blocked this family twice at loadavg 20 and 33; counting does
+  not care, which is why the driver was built.
+- **A SURGICAL ONE-COMMIT A/B, not a revert.** `ba5111baa`'s diff cannot be reverted cleanly — it
+  contains merge-conflict markers, resolved later, so a `git revert` would reintroduce garbage. The
+  probe was instead disabled with a one-line early `return None` in `exact_direct_f_format`. **Arms
+  verified distinct BEFORE measuring** (6cbeb35b vs 70ed52ca).
+- **Two-point marginals over 95,000 calls** (20,000 reps minus 1,000, so startup cancels):
+
+  | arm | instr/call | mispredicts/call | conditional | indirect |
+  |---|---|---|---|---|
+  | HEAD | 2876.6 | 23.40 | 15.20 | 8.20 |
+  | probe disabled | 2871.6 | 21.20 | 13.20 | 8.00 |
+  | **probe costs** | **+5.0 (0.17%)** | **+2.20 (+10.4%)** | +2.00 | +0.20 |
+
+- **THE INSTRUCTION COST IS TRIVIAL AND THE BRANCH COST IS NOT.** 5 instructions is 0.17%; 2.2 extra
+  mispredicts at ~15-20 cycles is **33-44 cycles per call**. **This is the same shape as the malloc
+  `debug_assert` that cost 30-40 cycles for 2 instructions saved** — the second independent instance
+  today of a change whose instruction footprint is negligible and whose branch footprint is not.
+- **AND IT EXPLAINS A DESIGN NOTE THAT WAS ONLY HALF RIGHT.** The probe was deliberately placed LAST
+  in the entry chain so it "cannot add a byte-compare to the measured campaign win on integers". That
+  reasoning controls for INSTRUCTIONS and is correct on its own terms — 5 per call. It does not
+  control for MISPREDICTS, and the added conditional is data-dependent on a format the fused shapes
+  never satisfy, so it mispredicts. **Ordering a check last bounds its instruction cost, not its
+  branch cost.**
+- **THIS IS A TRADE, NOT A REGRESSION, and both sides should be quoted.** The fused shapes contain no
+  float conversions, so the probe is pure overhead for them. It exists because it turned three float
+  losses into three wins (bd-5pfs0p). What is now priced is the other side of that trade: ~33-44
+  cycles per call on every non-float shape that traverses the entry chain.
+- **THE snprintf_fused CAVEAT IS RESOLVED.** The banked 2.64-3.92x was measured before this commit,
+  and the commit does move the cost, so those figures are stale as claimed — but by a branch effect
+  worth tens of cycles, not by anything that changes the family's rank.
