@@ -1697,7 +1697,54 @@ fn measure(mut f: impl FnMut() -> u64) -> f64 {
     p50(&mut s)
 }
 
+/// One-time identification of the machine that produced the rows below.
+///
+/// A ratio from this harness is only quotable next to the host it ran on. rch
+/// picks a worker per invocation and does not stamp one into the output, and
+/// the fleet is not homogeneous (8-16 cores, 2197-3195 MHz observed on the same
+/// day), so a row without this line cannot be compared against any other row.
+fn print_run_provenance() {
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .unwrap_or_else(|_| "unknown\n".into());
+    let model = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|info| {
+            info.lines()
+                .find(|line| line.starts_with("model name"))
+                .and_then(|line| line.split_once(':'))
+                .map(|(_, value)| value.trim().to_owned())
+        })
+        .unwrap_or_else(|| "unknown".into());
+    println!(
+        "PROVENANCE host={} nproc={} model={model:?}",
+        host.trim(),
+        std::thread::available_parallelism().map_or(0, |n| n.get()),
+    );
+}
+
+/// Load average and current core clock, sampled at the moment of the call.
+///
+/// Appended to each measured row rather than printed once per run: a bench file
+/// this long takes minutes to walk, so a single reading at the top would not
+/// describe the conditions any individual row was taken under. `cpu MHz` is read
+/// per row for the same reason — it moves with boost state and thermals.
+fn conditions_now() -> String {
+    let loadavg = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+    let load1 = loadavg.split_whitespace().next().unwrap_or("?").to_owned();
+    let mhz = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|info| {
+            info.lines()
+                .find(|line| line.starts_with("cpu MHz"))
+                .and_then(|line| line.split_once(':'))
+                .map(|(_, value)| value.trim().to_owned())
+        })
+        .unwrap_or_else(|| "?".into());
+    format!("load1={load1} mhz={mhz}")
+}
+
 fn bench(c: &mut Criterion) {
+    print_run_provenance();
     let g = host_strlen();
     // Page-aligned backing buffer so we can place a string at any alignment offset.
     let backing = vec![b'x'; 16384];
@@ -2161,13 +2208,14 @@ fn bench(c: &mut Criterion) {
         }
         println!(
             "WNLEN_AB lim={limit:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
-             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3} {}",
             old_t / 16.0,
             new_t / 16.0,
             g_t / 16.0,
             new_t / old_t,
             new_t / g_t,
-            old_t / g_t
+            old_t / g_t,
+            conditions_now()
         );
     }
 
