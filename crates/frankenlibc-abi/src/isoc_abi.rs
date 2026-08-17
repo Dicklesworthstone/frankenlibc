@@ -55,6 +55,42 @@ pub unsafe extern "C" fn __isoc23_fscanf(
     unsafe { crate::stdio_abi::vfscanf(stream, format, ap) }
 }
 
+/// The membrane decision a scanf fast path makes just before it serves.
+///
+/// `None` means DENY and the caller returns -1, having already observed. It is
+/// called only after a format probe has ACCEPTED: deciding before that would
+/// bill a second traversal to every call that falls through to `vsscanf`, which
+/// decides for itself (463da8418).
+///
+/// # Safety
+/// `s` is only read as an address for the membrane, never dereferenced here.
+#[inline]
+unsafe fn scanf_fastpath_profile(
+    s: *const c_char,
+) -> Option<frankenlibc_membrane::runtime_math::ValidationProfile> {
+    let (_, decision) = crate::runtime_policy::decide(
+        frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+        s as usize,
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(
+        decision.action,
+        frankenlibc_membrane::runtime_math::MembraneAction::Deny
+    ) {
+        crate::runtime_policy::observe(
+            frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+            decision.profile,
+            15,
+            true,
+        );
+        return None;
+    }
+    Some(decision.profile)
+}
+
 /// `__isoc23_sscanf` — C23 alias for sscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isoc23_sscanf(
@@ -82,59 +118,42 @@ pub unsafe extern "C" fn __isoc23_sscanf(
     if !s.is_null()
         && !format.is_null()
         && crate::runtime_policy::strict_passthrough_active()
-        && let Some(shape) = unsafe { crate::stdio_abi::strict_scanf_shape(format) }
     {
-        let (_, decision) = crate::runtime_policy::decide(
-            frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-            s as usize,
-            0,
-            false,
-            false,
-            0,
-        );
-        if matches!(
-            decision.action,
-            frankenlibc_membrane::runtime_math::MembraneAction::Deny
-        ) {
+        if let Some(fields) = unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) } {
+            let Some(profile) = (unsafe { scanf_fastpath_profile(s) }) else {
+                return -1;
+            };
+            // SAFETY: the format is exactly `fields` decimal-int conversions, so
+            // the caller passed that many `int *`. `count` carries EOF as -1.
+            let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields) };
+            for idx in 0..(fast.count.max(0) as usize).min(fields) {
+                // SAFETY: one `int *` per accepted conversion.
+                let ptr = unsafe { args.next_arg::<*mut core::ffi::c_int>() };
+                unsafe { *ptr = fast.values[idx] };
+            }
             crate::runtime_policy::observe(
                 frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-                decision.profile,
+                profile,
                 15,
-                true,
+                fast.input_failure,
             );
-            return -1;
+            return fast.count;
         }
-        match shape {
-            crate::stdio_abi::StrictScanfShape::Ints(fields) => {
-                // SAFETY: the format is exactly `fields` decimal-int conversions,
-                // so the caller passed that many `int *`. `count` carries EOF.
-                let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields) };
-                for idx in 0..(fast.count.max(0) as usize).min(fields) {
-                    // SAFETY: one `int *` per accepted conversion.
-                    let ptr = unsafe { args.next_arg::<*mut core::ffi::c_int>() };
-                    unsafe { *ptr = fast.values[idx] };
-                }
-                crate::runtime_policy::observe(
-                    frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-                    decision.profile,
-                    15,
-                    fast.input_failure,
-                );
-                return fast.count;
-            }
-            crate::stdio_abi::StrictScanfShape::OneString => {
-                // SAFETY: the format is exactly `"%s"`, so the caller passed one
-                // `char *` sized for the token plus its NUL.
-                let dst = unsafe { args.next_arg::<*mut c_char>() };
-                let rc = unsafe { crate::stdio_abi::strict_scan_single_string(s, dst) };
-                crate::runtime_policy::observe(
-                    frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-                    decision.profile,
-                    15,
-                    rc < 0,
-                );
-                return rc;
-            }
+        if unsafe { crate::stdio_abi::strict_single_string_format(format) } {
+            let Some(profile) = (unsafe { scanf_fastpath_profile(s) }) else {
+                return -1;
+            };
+            // SAFETY: the format is exactly `"%s"`, so the caller passed one
+            // `char *` sized for the token plus its NUL.
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { crate::stdio_abi::strict_scan_single_string(s, dst) };
+            crate::runtime_policy::observe(
+                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                profile,
+                15,
+                rc < 0,
+            );
+            return rc;
         }
     }
     let ap = &mut args as *mut _ as *mut c_void;
