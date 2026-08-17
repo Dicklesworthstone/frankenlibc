@@ -19,20 +19,132 @@
 
 use frankenlibc_abi::math_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// The CAPTURED arms are resolved through `dlsym` rather than declared.
+///
+/// A `dladdr` census of this file's oracle arms (bd-v0388t,
+/// `oracle_arm_provenance_math_screen`) found 92 of 101 reaching `libm.so.6` or
+/// `libc.so.6` and NINE captured by the test binary itself:
+///
+/// ```text
+///   CAPTURED  ceil fabs floor sqrt copysign fdim fmax fmin fmod -> <test binary>
+/// ```
+///
+/// That is what `compiler_builtins` supplies and what LLVM lowers to `roundsd` /
+/// `andpd` / `sqrtsd`, so the linker satisfies them from the local object and
+/// the "glibc" arm was never glibc.
+///
+/// ## One of them produced a FALSE RED, which is worse than a false green
+///
+/// This gate failed at HEAD on `fmaxf(+0,-0)`, reporting fl=-0.0 against
+/// "glibc"=+0.0. A live `ctypes` probe of `libm.so.6` (glibc 2.42) answers
+/// **-0.0** — the SECOND operand — which is exactly what fl returns. fl and
+/// glibc AGREE; the local provider returns the FIRST operand, and the gate was
+/// red against that.
+///
+/// The usual capture hazard is a gate that passes while proving nothing. This is
+/// the inverse and it is more dangerous: acting on the red means "fixing" fl to
+/// match a local provider and breaking real parity. `math_abi.rs`'s `fmax`
+/// records that its tie-break was "shipped as f8ee68c6e, silently deleted by
+/// 517d0a233, restored" — a false red of exactly this shape is a plausible
+/// reason correct code was deleted once already.
+///
+/// The remaining arms below were MEASURED clean — `pow`, `atan2` and every
+/// transcendental reach `libm.so.6` — and stay link-time declarations
+/// deliberately: converting them would be churn against the evidence rather
+/// than because of it.
+type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
+type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
+type F32BinaryFn = unsafe extern "C" fn(f32, f32) -> f32;
+
+fn host_unary(name: &std::ffi::CStr, fl_definition: *const ()) -> F64UnaryFn {
+    // SAFETY: every symbol below is `double f(double)` in C, and fl's own
+    // definition is passed so the oracle refuses to hand back fl itself.
+    unsafe { dlsym_oracle::host_fn(name, fl_definition) }
+}
+
+fn host_binary(name: &std::ffi::CStr, fl_definition: *const ()) -> F64BinaryFn {
+    // SAFETY: `double f(double, double)`, with fl's own definition supplied so
+    // the oracle refuses to resolve to fl.
+    unsafe { dlsym_oracle::host_fn(name, fl_definition) }
+}
+
+fn host_binary_f32(name: &std::ffi::CStr, fl_definition: *const ()) -> F32BinaryFn {
+    // SAFETY: `float f(float, float)`, same guard.
+    unsafe { dlsym_oracle::host_fn(name, fl_definition) }
+}
+
+macro_rules! host_binary_shim {
+    ($($rust:ident = $sym:literal via $flpath:path);* $(;)?) => {
+        $(
+            /// Host oracle through `dlsym`; `unsafe` so the existing call sites'
+            /// `unsafe { .. }` blocks stay meaningful rather than dead syntax.
+            unsafe fn $rust(x: f64, y: f64) -> f64 {
+                // SAFETY: resolved with a matching prototype.
+                unsafe { host_binary($sym, $flpath as *const ())(x, y) }
+            }
+        )*
+    };
+}
+
+macro_rules! host_binary_f32_shim {
+    ($($rust:ident = $sym:literal via $flpath:path);* $(;)?) => {
+        $(
+            /// Host oracle through `dlsym`; `unsafe` for the same reason.
+            unsafe fn $rust(x: f32, y: f32) -> f32 {
+                // SAFETY: resolved with a matching prototype.
+                unsafe { host_binary_f32($sym, $flpath as *const ())(x, y) }
+            }
+        )*
+    };
+}
+
+host_binary_shim! {
+    fmod = c"fmod" via fl::fmod;
+    copysign = c"copysign" via fl::copysign;
+    fmin = c"fmin" via fl::fmin;
+    fmax = c"fmax" via fl::fmax;
+    fdim = c"fdim" via fl::fdim;
+}
+
+host_binary_f32_shim! {
+    copysignf = c"copysignf" via fl::copysignf;
+    fminf = c"fminf" via fl::fminf;
+    fmaxf = c"fmaxf" via fl::fmaxf;
+    fdimf = c"fdimf" via fl::fdimf;
+}
+
+/// Host `sqrt` through `dlsym`, kept `unsafe` so the existing call sites'
+/// `unsafe { .. }` blocks stay meaningful rather than becoming dead syntax.
+unsafe fn sqrt(x: f64) -> f64 {
+    // SAFETY: resolved from libm with a matching prototype.
+    unsafe { host_unary(c"sqrt", fl::sqrt as *const ())(x) }
+}
+
+/// Host `fabs` through `dlsym`, kept `unsafe` so the existing call sites'
+/// `unsafe { .. }` blocks stay meaningful rather than becoming dead syntax.
+unsafe fn fabs(x: f64) -> f64 {
+    // SAFETY: resolved from libm with a matching prototype.
+    unsafe { host_unary(c"fabs", fl::fabs as *const ())(x) }
+}
+
+/// Host `floor` through `dlsym`, kept `unsafe` so the existing call sites'
+/// `unsafe { .. }` blocks stay meaningful rather than becoming dead syntax.
+unsafe fn floor(x: f64) -> f64 {
+    // SAFETY: resolved from libm with a matching prototype.
+    unsafe { host_unary(c"floor", fl::floor as *const ())(x) }
+}
+
+/// Host `ceil` through `dlsym`, kept `unsafe` so the existing call sites'
+/// `unsafe { .. }` blocks stay meaningful rather than becoming dead syntax.
+unsafe fn ceil(x: f64) -> f64 {
+    // SAFETY: resolved from libm with a matching prototype.
+    unsafe { host_unary(c"ceil", fl::ceil as *const ())(x) }
+}
+
 unsafe extern "C" {
-    fn sqrt(x: f64) -> f64;
-    fn fabs(x: f64) -> f64;
-    fn floor(x: f64) -> f64;
-    fn ceil(x: f64) -> f64;
-    fn fmod(x: f64, y: f64) -> f64;
-    fn copysign(x: f64, y: f64) -> f64;
-    fn fmin(x: f64, y: f64) -> f64;
-    fn fmax(x: f64, y: f64) -> f64;
-    fn fdim(x: f64, y: f64) -> f64;
-    fn copysignf(x: f32, y: f32) -> f32;
-    fn fminf(x: f32, y: f32) -> f32;
-    fn fmaxf(x: f32, y: f32) -> f32;
-    fn fdimf(x: f32, y: f32) -> f32;
     fn sin(x: f64) -> f64;
     fn cos(x: f64) -> f64;
     fn tan(x: f64) -> f64;

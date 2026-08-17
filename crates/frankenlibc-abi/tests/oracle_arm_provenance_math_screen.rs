@@ -40,6 +40,20 @@
 
 use std::ffi::{CStr, c_void};
 
+macro_rules! declare_binary_arms {
+    ($($name:ident),* $(,)?) => {
+        unsafe extern "C" {
+            $(fn $name(x: f64, y: f64) -> f64;)*
+        }
+        /// `(symbol name, code address as the linker resolved it)`.
+        fn binary_arm_addresses() -> Vec<(&'static str, *const c_void)> {
+            vec![
+                $((stringify!($name), $name as *const c_void)),*
+            ]
+        }
+    };
+}
+
 macro_rules! declare_more_arms {
     ($($name:ident),* $(,)?) => {
         unsafe extern "C" {
@@ -156,6 +170,16 @@ declare_more_arms!(
     versionsort
 );
 
+// TWO-ARGUMENT math, added after the one-arg census came back clean and a RED
+// in `conformance_diff_math` turned out to point the other way. That gate
+// reports `fmaxf(+0,-0)` as fl=-0.0 vs "glibc"=+0.0 -- but a live ctypes probe
+// of libm.so.6 (glibc 2.42) returns **-0.0**, i.e. the SECOND operand, which is
+// what fl returns. The gate's oracle therefore disagrees with real glibc, so the
+// gate's oracle is not glibc. That is a captured arm producing a FALSE RED
+// rather than the usual false green, and it is far more dangerous: acting on it
+// means "fixing" fl to match a local provider and breaking real parity.
+declare_binary_arms!(copysign, fdim, fmax, fmin, fmod, pow, atan2);
+
 /// Which object does `addr` live in?
 fn owning_object(addr: *const c_void) -> String {
     let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
@@ -174,6 +198,7 @@ fn owning_object(addr: *const c_void) -> String {
 fn math_oracle_arms_report_their_owning_object() {
     let mut arms = math_arm_addresses();
     arms.extend(other_arm_addresses());
+    arms.extend(binary_arm_addresses());
     assert!(!arms.is_empty(), "no arms declared; the macro did not expand");
 
     let mut captured = Vec::new();
