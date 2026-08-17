@@ -31131,3 +31131,30 @@ What this changes, and what it does not:
   opened, because another agent had committed to `fortify_abi.rs` in between (carrying my own
   `__fgets_chk` fix in with it). Rebuilt before measuring. Checking artifact age against the last
   source commit is now the third stale-artifact catch of this campaign.
+
+## 2026-08-17 (BlackThrush) — snprintf_fused: conformance re-verified on a FRESH cdylib, timing still owed, and the stale-build caveat is now justified rather than precautionary
+
+- **RESULT CLASS: loss/baseline (partial).** The ratio is NOT re-certified. Two attempts were BLOCKED
+  by the quiet gate and that is not recorded as a loss.
+- **CONFORMANCE RE-VERIFIED ON THE CURRENT BINARY**, which is the half that does not need a quiet
+  host: `FL_OBJECT sha256 e3fefcc4...`, freshly built rather than the 08:24 artifact that produced
+  the original row. **11 shapes x 9 destination sizes = 99 comparisons, mismatches=0**, compared on
+  `return_value_and_full_destination`, including the rejected width/precision/float/single-directive
+  shapes. So the fused fast paths are byte-correct on today's code, independently of what the ratio
+  turns out to be.
+- **TIMING BLOCKED TWICE.** `--pin-quietest 4` at observed loadavg 20.66,16.40,16.83 / 2854 MHz with
+  cpu16 at 71.3% and cpu22 at 76.0%; then `--pin-quietest 8` at 33.38,22.46,19.03 / 2689 MHz. The
+  window I verified before starting (11.54 -> 12.17 on the 1-min, 5-min 14.73) had closed by the time
+  the two builds finished. **Checking the load before a build does not tell you the load after it.**
+- **THE CAVEAT ON THE OLD ROW IS NOW JUSTIFIED, not merely cautious, and it is narrower than I
+  assumed.** The frontier says "re-measure before using" because printf paths were edited after the
+  08:24 build. Checking that directly: **23 commits touched `stdio_abi.rs`/`printf.rs` since, but
+  almost all are SCANF work** — scanf shares the same file — and **exactly one touched the fused
+  path**, `ba5111baa`, which added the float probe to all six entry points. The fused benchmark shapes
+  are `%s` ladders and mix4 integer/string combinations with no float conversions, and the probe was
+  deliberately placed last in the chain, but it does add a test to the entry sequence the fused
+  shapes traverse.
+- **SO THE OPEN QUESTION IS SMALL AND SPECIFIC:** does one added entry-chain probe move the fused
+  ratio? That is a single-commit A/B, not a re-measure of the family from scratch, and it wants a
+  counted mechanism rather than wall clock given how the last two days have gone. **2.64-3.92x is far
+  above any noise floor here, so the family's RANK is not in doubt; only the precise figures are.**
