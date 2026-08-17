@@ -1,29 +1,36 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // variadic sscanf against the host oracle
 
-//! The memoised scanf format cache must never answer for the wrong format.
+//! A scanf format parsed at a REUSED ADDRESS must not answer for the old format.
 //!
-//! ## What is being guarded
+//! ## Status: the cache this was written for was measured and REVERTED
 //!
-//! `scanf_core_impl` memoises `parse_scanf_format` per thread, because a profile
-//! of the family's worst case spends 24.5% rebuilding directives for a format it
-//! already parsed, plus 6.8% in the allocator for a `Box<ScanSet>` it re-boxes
-//! every call. Formats are almost always string literals scanned in a loop, so
-//! the hit rate is high and the saving is real.
+//! `scanf_core_impl` briefly memoised `parse_scanf_format` per thread. The
+//! motivation was a real profile: the family's worst case, `key_value`, spends
+//! 24.5% rebuilding directives (`parse_scanf_format` 10.00%,
+//! `InlineVec<ScanDirective, 4>::push` 8.66%, dropping it 5.85%) plus 6.8% in
+//! the allocator re-boxing the `ScanSet` that `%[^=]` needs.
 //!
-//! The cache keys on the format BYTES. Keying on the format POINTER would be
-//! cheaper and would be a correctness hole: nothing stops a caller building a
-//! format in a reusable buffer, so one address can hold different text call to
-//! call. A pointer-keyed cache would then scan the input with the PREVIOUS
-//! format and return a plausible, wrong answer — no crash, no diagnostic.
+//! Measured, it made every engine case WORSE: `key_value` 494,717,355 ->
+//! 500,429,919 instructions per 200k calls, `long_literal` 285,576,130 ->
+//! 301,262,279, and `float_only` 281,297,304 -> 323,754,801, which is +212 per
+//! call. Handing out an owned clone of four `ScanDirective` slots, plus the
+//! thread-local access and the byte compare, costs more than parsing a short
+//! format does. The cache was reverted; see `docs/NEGATIVE_EVIDENCE.md`.
 //!
-//! [`the_cache_does_not_confuse_two_formats_at_one_address`] is the test that
-//! would fail if anyone ever "optimises" the comparison away, and it is written
-//! to fail for that reason specifically: it reuses ONE buffer, overwriting it
-//! between calls, so the address is identical and only the bytes differ.
+//! ## Why the file stays
 //!
-//! The rest of the file checks the cache is transparent — same answers as the
-//! host for repeated, alternating and first-call-cold sequences.
+//! The property it pins is not about caching: fl and glibc must agree when a
+//! format is rebuilt at the SAME ADDRESS between calls. That is exactly what any
+//! future memoisation would break, and the cheap way to key such a cache — on
+//! the format pointer — is precisely the wrong one. The gate is already here and
+//! already mutation-proved, so the next attempt starts guarded.
+//!
+//! It was HOLLOW when first written, which is worth recording: with bare `%[^=]`
+//! / `%[^,]` it passed even against a cache deliberately keyed on format LENGTH,
+//! because a bare negated scanset is served by `strict_single_negated_scanset`
+//! and never reaches the engine. The formats below carry a width so every fast
+//! path declines; with that change the same mutation failed, as it should.
 
 use std::ffi::{CString, c_char, c_int};
 

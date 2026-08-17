@@ -30135,3 +30135,41 @@ What this changes, and what it does not:
   `parse_scanf_format` 9.96%, `InlineVec<ScanDirective,4>::push` 6.57%, `drop_in_place::<ScanResult>`
   5.58% — about 22% of the engine path is directive machinery built and torn down per call, which is
   what `key_value` and `long_literal` pay several times over.
+
+## 2026-08-17 — REJECTED: memoising the parsed scanf format made every engine case SLOWER, including the case its profile pointed at
+
+- **RESULT CLASS: rejection, with a counted mechanism.** The lever came from a flat instruction
+  profile rather than a hunch, and it still lost. Instrument is instruction count under
+  `RTLD_DEEPBIND` (see the correction row above), 200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=341e25c21612cb5a1b50ada14f4a98b8f54bbbdd6f383f1840b6b0cdd76bff2d, loadavg
+  59.55/36.36/19.54, cpu MHz 3668-3868, symbol `__isoc23_sscanf` on every arm.
+- **THE PROFILE THAT MOTIVATED IT was correct about where the instructions go.** `key_value`, the
+  family's worst case at 2.429x, spends `parse_scanf_format` 10.00%, `InlineVec<ScanDirective,4>::push`
+  8.66%, dropping that vector 5.85% — **24.5% rebuilding directives for a format it has already
+  parsed** — plus `native_libc_malloc`/`free` 6.8%, which is the `Box<ScanSet>` that `%[^=]` re-boxes
+  every call. Formats are overwhelmingly literals scanned in loops.
+- **THE LEVER: a per-thread single-entry memo keyed on the format BYTES**, handing the caller an owned
+  clone because the wide entry points mutate `wide_input` on every spec.
+- **RESULT, and it is not close: every engine case got WORSE. Counted mechanism, one clause per case:**
+  `key_value` 494,717,355 instructions -> 500,429,919 (+28 per call);
+  `long_literal` 285,576,130 instructions -> 301,262,279 (+78 per call);
+  `float_only` 281,297,304 instructions -> 323,754,801 (+212 per call).
+  The fast-path cases were unaffected as expected — `single_int` 57,435,160 instructions -> 57,413,858
+  and `string_token` 56,469,973 instructions -> 56,168,901 — which is what confirms the regression is
+  the memo and not drift, since those two never reach the memoised path at all.
+- **MECHANISM: the clone costs more than the parse.** Handing out an owned `InlineVec<ScanDirective,4>`
+  runs clone glue over four slots — including the `Option<Box<ScanSet>>` allocation the memo was meant
+  to avoid — and adds a thread-local access plus a byte compare on top. `float_only` shows it most
+  starkly because `"%f"` is two bytes to parse and four slots to clone regardless.
+- **REVERTED**, along with the `Clone` derive it required on `InlineVec`.
+- **RETRY CONDITION.** Do not retry a memo that hands out an owned copy. The only shape worth trying
+  is one that never copies: keep the directives owned by the cache and run the scan AND the argument
+  write while borrowing them, which needs `scanf_core_impl` to stop returning `ScanDirectives` to its
+  caller — it would return a `ScanArgKind` list (already a `Copy` enum in core) so the writer no
+  longer needs the directives at all. That is a real refactor across the narrow and wide entry points,
+  not a tweak, and it should not start until someone is prepared to finish it.
+- **THE GATE STAYS.** `conformance_diff_scanf_format_cache.rs` pins that fl and glibc agree when a
+  format is rebuilt at the same address, which is what any future memo would break, and the cheap way
+  to key one — on the pointer — is the wrong one. It was HOLLOW as first written (bare `%[^=]`/`%[^,]`
+  are served by the scanset fast path and never reach the engine, so it passed against a deliberately
+  length-keyed cache); with a width on the formats the same mutation fails.
