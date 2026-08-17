@@ -2891,6 +2891,208 @@ use frankenlibc_core::stdlib::conversion::ConversionStatus;
 use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
 
 // ---------------------------------------------------------------------------
+// Locale-aware multibyte codec
+// ---------------------------------------------------------------------------
+
+/// The multibyte codec of the ACTIVE locale.
+///
+/// `frankenlibc_core::string::wchar` is deliberately stateless — core does not
+/// and should not know what locale the process selected — so the dispatch has to
+/// live here, at the ABI boundary that owns that state. Every conversion
+/// entrypoint in this file calls through `codec::` rather than `wchar_core::`
+/// for exactly one reason: a `setlocale(LC_ALL,"C")` that changed `MB_CUR_MAX`
+/// and `CODESET` but left the codec decoding UTF-8 would be a worse defect than
+/// the divergence it was meant to fix, and routing at a single chokepoint is
+/// what makes that state unrepresentable.
+///
+/// Under [`Charset::Utf8`] every function forwards to its `wchar_core`
+/// original, unchanged. Under [`Charset::Ascii`] the rules are the ones
+/// measured from host glibc 2.42 under `LC_ALL=C`, recorded on
+/// [`crate::locale_abi::Charset::Ascii`]: `0x00..=0x7F` maps to itself, and
+/// everything else is `EILSEQ` — a UTF-8 lead byte is rejected AT THE LEAD
+/// rather than consumed, and there is no such thing as an incomplete sequence
+/// because every character is one byte.
+mod codec {
+    use super::wchar_core;
+    use crate::locale_abi::{Charset, active_charset};
+    use frankenlibc_core::string::wchar::Utf8Step;
+
+    #[inline]
+    fn ascii() -> bool {
+        matches!(active_charset(), Charset::Ascii)
+    }
+
+    /// Decode one character, as [`wchar_core::utf8_decode_step`].
+    ///
+    /// In ASCII there is no `Incomplete`: a single byte either is a character or
+    /// is not one, so a non-empty window never returns `Incomplete`. That
+    /// distinction is load-bearing for the restartable entrypoints, which treat
+    /// `Incomplete` as "ask me again with more bytes" — in the C locale there is
+    /// never more to ask for.
+    #[inline]
+    pub(super) fn utf8_decode_step(bytes: &[u8]) -> Utf8Step {
+        if !ascii() {
+            return wchar_core::utf8_decode_step(bytes);
+        }
+        match bytes.first() {
+            None => Utf8Step::Incomplete,
+            Some(&b) if b < 0x80 => Utf8Step::Char {
+                wc: u32::from(b),
+                len: 1,
+            },
+            Some(_) => Utf8Step::Invalid,
+        }
+    }
+
+    /// Decode one character, as [`wchar_core::mbtowc`].
+    #[inline]
+    pub(super) fn mbtowc(src: &[u8]) -> Option<(u32, usize)> {
+        if !ascii() {
+            return wchar_core::mbtowc(src);
+        }
+        match src.first() {
+            Some(&b) if b < 0x80 => Some((u32::from(b), 1)),
+            _ => None,
+        }
+    }
+
+    /// Width of the next character, as [`wchar_core::mblen`].
+    #[inline]
+    pub(super) fn mblen(src: &[u8]) -> Option<usize> {
+        if !ascii() {
+            return wchar_core::mblen(src);
+        }
+        match src.first() {
+            Some(&b) if b < 0x80 => Some(1),
+            _ => None,
+        }
+    }
+
+    /// Encode one character, as [`wchar_core::wctomb`].
+    #[inline]
+    pub(super) fn wctomb(wc: u32, dest: &mut [u8]) -> Option<usize> {
+        if !ascii() {
+            return wchar_core::wctomb(wc, dest);
+        }
+        if wc >= 0x80 || dest.is_empty() {
+            return None;
+        }
+        dest[0] = wc as u8;
+        Some(1)
+    }
+
+    /// Convert a NUL-terminated multibyte string, as [`wchar_core::mbstowcs`].
+    #[inline]
+    pub(super) fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
+        if !ascii() {
+            return wchar_core::mbstowcs(dest, src);
+        }
+        let mut count = 0usize;
+        for &b in src {
+            if b >= 0x80 {
+                return None;
+            }
+            if count == dest.len() {
+                return Some(count);
+            }
+            dest[count] = u32::from(b);
+            if b == 0 {
+                // The terminator is written but not counted, matching the
+                // UTF-8 path and POSIX.
+                return Some(count);
+            }
+            count += 1;
+        }
+        Some(count)
+    }
+
+    /// Convert a NUL-terminated wide string, as [`wchar_core::wcstombs`].
+    #[inline]
+    pub(super) fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
+        if !ascii() {
+            return wchar_core::wcstombs(dest, src);
+        }
+        let mut count = 0usize;
+        for &wc in src {
+            if wc >= 0x80 {
+                return None;
+            }
+            if count == dest.len() {
+                return Some(count);
+            }
+            dest[count] = wc as u8;
+            if wc == 0 {
+                return Some(count);
+            }
+            count += 1;
+        }
+        Some(count)
+    }
+
+    /// Count-mode decode, as [`wchar_core::mbs_decoded_len`].
+    #[inline]
+    pub(super) fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
+        if !ascii() {
+            return wchar_core::mbs_decoded_len(src);
+        }
+        let mut count = 0usize;
+        for &b in src {
+            if b == 0 {
+                return Some(count);
+            }
+            if b >= 0x80 {
+                return None;
+            }
+            count += 1;
+        }
+        Some(count)
+    }
+
+    /// Count-mode encode, as [`wchar_core::wcs_encoded_len`].
+    #[inline]
+    pub(super) fn wcs_encoded_len(src: &[u32]) -> Option<usize> {
+        if !ascii() {
+            return wchar_core::wcs_encoded_len(src);
+        }
+        if src.iter().any(|&wc| wc >= 0x80) {
+            return None;
+        }
+        Some(src.len())
+    }
+
+    // The three `*_prefix` helpers below need NO ASCII variant and are
+    // forwarded unchanged on purpose. Each consumes only the leading 7-bit run
+    // and hands everything else to the scalar step above — which is precisely
+    // the ASCII codec's whole domain. Writing separate ASCII versions would
+    // duplicate `wchar_core`'s SIMD for identical output.
+
+    /// See [`wchar_core::mbs_decoded_len_prefix`].
+    #[inline]
+    pub(super) fn mbs_decoded_len_prefix(src: &[u8]) -> (usize, usize) {
+        wchar_core::mbs_decoded_len_prefix(src)
+    }
+
+    /// See [`wchar_core::mbs_decode_prefix`].
+    #[inline]
+    pub(super) fn mbs_decode_prefix(dst: &mut [u32], src: &[u8]) -> (usize, usize) {
+        wchar_core::mbs_decode_prefix(dst, src)
+    }
+
+    /// See [`wchar_core::wcs_simd_prefix`].
+    #[inline]
+    pub(super) fn wcs_simd_prefix(dst: &mut [u8], src: &[u32]) -> (usize, usize) {
+        wchar_core::wcs_simd_prefix(dst, src)
+    }
+
+    /// See [`wchar_core::wcs_ascii_prefix_len`].
+    #[inline]
+    pub(super) fn wcs_ascii_prefix_len(src: &[u32]) -> usize {
+        wchar_core::wcs_ascii_prefix_len(src)
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 // mblen
 // ---------------------------------------------------------------------------
 
@@ -2905,7 +3107,7 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
         return -1;
     }
     let slice = unsafe { std::slice::from_raw_parts(s, n) };
-    match wchar_core::mblen(slice) {
+    match codec::mblen(slice) {
         Some(0) => 0,
         Some(len) => len as c_int,
         None => -1,
@@ -2933,7 +3135,7 @@ pub unsafe extern "C" fn mbtowc(pwc: *mut u32, s: *const u8, n: usize) -> c_int 
         }
         return 0;
     }
-    match wchar_core::mbtowc(slice) {
+    match codec::mbtowc(slice) {
         Some((wc, len)) => {
             if !pwc.is_null() {
                 unsafe { *pwc = wc };
@@ -2963,7 +3165,7 @@ pub unsafe extern "C" fn wctomb(s: *mut u8, wc: u32) -> c_int {
     // never emits more than 4 bytes (verified against glibc in
     // tests/conformance_diff_mbtowc_wctomb.rs).
     let buf = unsafe { std::slice::from_raw_parts_mut(s, 6) };
-    match wchar_core::wctomb(wc, buf) {
+    match codec::wctomb(wc, buf) {
         Some(n) => n as c_int,
         None => {
             unsafe { set_abi_errno(libc::EILSEQ) };
@@ -2996,13 +3198,13 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
         // instead of widening) — was a scalar per-char `mbtowc` loop, 2.4-3.5x
         // LOSS vs glibc. Byte-identical: same validation, same `None` at the first
         // invalid sequence.
-        return match wchar_core::mbs_decoded_len(src_slice) {
+        return match codec::mbs_decoded_len(src_slice) {
             Some(count) => count,
             None => usize::MAX,
         };
     }
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
-    match wchar_core::mbstowcs(dst_slice, src_slice) {
+    match codec::mbstowcs(dst_slice, src_slice) {
         Some(count) => count,
         None => usize::MAX,
     }
@@ -3030,13 +3232,13 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
         // Count mode: SIMD-sum the UTF-8 byte length over the char window (was a
         // scalar per-char `wctomb` length loop). Byte-identical — `wcs_encoded_len`
         // returns the same total and the same `None`-at-first-unrepresentable-char.
-        return match wchar_core::wcs_encoded_len(&src_slice[..wlen]) {
+        return match codec::wcs_encoded_len(&src_slice[..wlen]) {
             Some(count) => count,
             None => usize::MAX,
         };
     }
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
-    match wchar_core::wcstombs(dst_slice, src_slice) {
+    match codec::wcstombs(dst_slice, src_slice) {
         Some(count) => count,
         None => usize::MAX,
     }
@@ -3310,7 +3512,7 @@ pub unsafe extern "C" fn wcrtomb(
         return 1;
     }
 
-    match wchar_core::wctomb(wc as u32, &mut tmp) {
+    match codec::wctomb(wc as u32, &mut tmp) {
         Some(len) => {
             // SAFETY: caller guarantees `s` points to writable storage for the resulting sequence.
             unsafe { std::ptr::copy_nonoverlapping(tmp.as_ptr(), s as *mut u8, len) };
@@ -3397,7 +3599,7 @@ pub unsafe extern "C" fn mbrtowc(
     // RFC 3629-strict decode: `Incomplete` (truncated-but-valid prefix) ->
     // accumulate and return (size_t)-2; `Invalid` -> EILSEQ. The decoder is the
     // single source of truth shared with mbtowc and the conformance harness.
-    match wchar_core::utf8_decode_step(decode_slice) {
+    match codec::utf8_decode_step(decode_slice) {
         wchar_core::Utf8Step::Char { wc, len } => {
             // `len` is the whole char length; bytes consumed FROM THIS CALL are
             // the ones beyond what `ps` already held.
@@ -3472,7 +3674,7 @@ pub unsafe extern "C" fn mbsrtowcs(
     // non-Latin runs lost ~2-3x to glibc. Byte-identical: same validation, same
     // EILSEQ at the first invalid sequence; count mode leaves *src untouched.
     if dst.is_null() {
-        return match wchar_core::mbs_decoded_len(src_bytes) {
+        return match codec::mbs_decoded_len(src_bytes) {
             Some(count) => count,
             None => {
                 // SAFETY: setting thread-local errno through libc ABI helper.
@@ -3497,7 +3699,7 @@ pub unsafe extern "C" fn mbsrtowcs(
         // (`mbs_ascii_prefix`), leaving every contiguous non-Latin run scalar
         // (~3.6-4.9x LOSS vs glibc).
         let (chars, bytes) =
-            wchar_core::mbs_decode_prefix(&mut dst_slice[written..], &src_bytes[i..]);
+            codec::mbs_decode_prefix(&mut dst_slice[written..], &src_bytes[i..]);
         i += bytes;
         written += chars;
         // Destination-full is checked BEFORE the terminating NUL: when exactly
@@ -3518,7 +3720,7 @@ pub unsafe extern "C" fn mbsrtowcs(
             unsafe { *src = std::ptr::null() };
             return written;
         }
-        match wchar_core::mbtowc(&src_bytes[i..]) {
+        match codec::mbtowc(&src_bytes[i..]) {
             Some((wc, used)) => {
                 dst_slice[written] = wc;
                 written += 1;
@@ -3579,7 +3781,7 @@ pub unsafe extern "C" fn wcsrtombs(
     // per-char loop. Byte-identical: `wcs_encoded_len` returns the same total and
     // the same EILSEQ at the first unrepresentable char.
     if dst.is_null() {
-        return match wchar_core::wcs_encoded_len(&src_slice[..src_len]) {
+        return match codec::wcs_encoded_len(&src_slice[..src_len]) {
             Some(bytes) => bytes,
             None => {
                 // SAFETY: setting thread-local errno through libc ABI helper.
@@ -3604,7 +3806,7 @@ pub unsafe extern "C" fn wcsrtombs(
         // `wctomb` loop — the same lever `wcstombs` uses — now vectorising
         // multibyte runs, not just the ASCII prefix.
         let (chars, bytes) =
-            wchar_core::wcs_simd_prefix(&mut dst_slice[written..], &src_slice[idx..src_len]);
+            codec::wcs_simd_prefix(&mut dst_slice[written..], &src_slice[idx..src_len]);
         idx += chars;
         written += bytes;
         if idx >= src_len {
@@ -3621,7 +3823,7 @@ pub unsafe extern "C" fn wcsrtombs(
         }
         let wc = src_slice[idx];
         let mut tmp = [0u8; 6];
-        let n = match wchar_core::wctomb(wc, &mut tmp) {
+        let n = match codec::wctomb(wc, &mut tmp) {
             Some(v) => v,
             None => {
                 // SAFETY: src is non-null and points to caller-owned pointer storage.
@@ -4621,6 +4823,14 @@ unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
 /// Convert narrow (UTF-8) bytes to wide chars, writing into a wchar_t buffer.
 /// Returns the number of wide chars written (not counting NUL).
 /// If n > 0, always NUL-terminates the output.
+///
+/// KNOWN GAP, stated rather than left to be discovered: this path is NOT routed
+/// through `codec` and stays UTF-8 under `LC_ALL=C`. It cannot simply be
+/// switched, because `decode_utf8_lossy` has no failure channel — it answers
+/// U+FFFD where the C locale owes the caller `EILSEQ` — and giving it one means
+/// threading an error return out through wide `printf`'s `%s` conversion. That
+/// is a separate change from selecting a locale, so it is recorded on bd-1kxrmz
+/// instead of being half-done here.
 fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> usize {
     if dst.is_null() || n == 0 {
         // Just count the wide chars that would be produced.
@@ -4845,7 +5055,7 @@ pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
         bytes[idx] = next as u8;
     }
 
-    match wchar_core::mbtowc(&bytes[..expected]) {
+    match codec::mbtowc(&bytes[..expected]) {
         Some((wc, _)) => wc,
         None => {
             for rollback in (0..expected).rev() {
@@ -4866,7 +5076,7 @@ pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
     }
 
     let mut bytes = [0u8; 6];
-    let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
+    let Some(encoded_len) = codec::wctomb(wc, &mut bytes) else {
         // A wide char the C.UTF-8 encoder cannot represent (a surrogate, or a
         // value above U+7FFFFFFF). glibc's wide-stdio gconv substitutes the
         // single byte '?' and reports SUCCESS (returns `wc`, leaves errno) —
@@ -4895,7 +5105,7 @@ pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 
     }
 
     let mut bytes = [0u8; 6];
-    let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
+    let Some(encoded_len) = codec::wctomb(wc, &mut bytes) else {
         // SAFETY: thread-local errno update.
         unsafe { set_abi_errno(libc::EILSEQ) };
         return WEOF_VALUE;
@@ -5046,7 +5256,7 @@ unsafe fn fputws_impl(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -
         let mut buf = [0u8; CAP];
         // SAFETY: `ws` is valid for `wlen` wide chars (NUL found at `wlen`).
         let src = unsafe { std::slice::from_raw_parts(ws as *const u32, wlen) };
-        if let Some(nbytes) = wchar_core::wcstombs(&mut buf, src) {
+        if let Some(nbytes) = codec::wcstombs(&mut buf, src) {
             if nbytes == 0 {
                 return 0;
             }
@@ -5896,7 +6106,7 @@ pub unsafe extern "C" fn wcsftime(
                 continue;
             }
             let mut tmp = [0u8; 6];
-            let Some(n) = wchar_core::wctomb(wc, &mut tmp) else {
+            let Some(n) = codec::wctomb(wc, &mut tmp) else {
                 // SAFETY: thread-local errno update.
                 unsafe { set_abi_errno(libc::EILSEQ) };
                 return 0;
@@ -5968,7 +6178,7 @@ pub unsafe extern "C" fn wcsftime(
             mb_i += 1;
             continue;
         }
-        match wchar_core::mbtowc(&out_mb[mb_i..out_len]) {
+        match codec::mbtowc(&out_mb[mb_i..out_len]) {
             Some((wc, used)) => {
                 // SAFETY: `wide_i < maxsize` is enforced above.
                 unsafe { *s.add(wide_i) = wc as libc::wchar_t };
@@ -6789,7 +6999,7 @@ pub unsafe extern "C" fn mbsnrtowcs(
                 // resolves NUL / MB_INCOMPLETE / EILSEQ and any sequence straddling
                 // the nms boundary — was ASCII-only bulk + a scalar `mbrtowc` per
                 // multibyte char (contiguous non-Latin runs lost ~2-3x to glibc).
-                wchar_core::mbs_decoded_len_prefix(src_window)
+                codec::mbs_decoded_len_prefix(src_window)
             } else {
                 // SAFETY: `dst` has >= `len` wchar_t slots and `written < len` here.
                 let dst_window = unsafe {
@@ -6802,7 +7012,7 @@ pub unsafe extern "C" fn mbsnrtowcs(
                 // leaving contiguous non-Latin runs scalar (~3-5x LOSS vs glibc).
                 // `chars` != `bytes` for multibyte, so advance the two cursors
                 // independently below.
-                wchar_core::mbs_decode_prefix(dst_window, src_window)
+                codec::mbs_decode_prefix(dst_window, src_window)
             };
             if chars > 0 {
                 consumed += bytes;
@@ -6826,7 +7036,7 @@ pub unsafe extern "C" fn mbsnrtowcs(
             if b0 != 0 {
                 // SAFETY: caller guarantees `s` points to at least `remaining` bytes.
                 let win = unsafe { std::slice::from_raw_parts(s as *const u8, remaining.min(6)) };
-                if let Some((wc, used)) = wchar_core::mbtowc(win) {
+                if let Some((wc, used)) = codec::mbtowc(win) {
                     if !dst.is_null() {
                         // SAFETY: the loop guard guarantees `written < len` in write mode.
                         unsafe { *dst.add(written) = wc as libc::wchar_t };
@@ -6924,8 +7134,8 @@ pub unsafe extern "C" fn wcsnrtombs(
         // (`wcs_encoded_len`'s 6 per-window threshold popcounts are ~10x that scan
         // — routing all-ASCII through it regressed the 18x ASCII win to ~1.7x);
         // byte-identical since `a` equals the prefix's exact byte total.
-        let a = wchar_core::wcs_ascii_prefix_len(window);
-        let counted = match wchar_core::wcs_encoded_len(&window[a..]) {
+        let a = codec::wcs_ascii_prefix_len(window);
+        let counted = match codec::wcs_encoded_len(&window[a..]) {
             Some(bytes) => a + bytes,
             None => {
                 // Unrepresentable wchar (surrogate / out-of-range): EILSEQ, exactly
@@ -6968,7 +7178,7 @@ pub unsafe extern "C" fn wcsnrtombs(
         // differ for multibyte; the helper only emits whole validated windows
         // bounded by the source window and `len - written`, so it stays
         // byte-for-byte identical to the scalar `wcrtomb` loop.
-        let (chars, bytes) = wchar_core::wcs_simd_prefix(dst_window, src_window);
+        let (chars, bytes) = codec::wcs_simd_prefix(dst_window, src_window);
         if chars > 0 {
             written += bytes; // one byte per ASCII wchar; 2/3/4 for multibyte
             wchars_consumed += chars;
@@ -7007,7 +7217,7 @@ pub unsafe extern "C" fn wcsnrtombs(
         // locale `wcrtomb` is exactly `wctomb` + an ASCII shortcut that `wctomb`
         // also takes + errno-on-EILSEQ; `ps` carries no shift state. (cf. the
         // mbsnrtowcs decode fast-path, 50fe148ac.)
-        let ret = match wchar_core::wctomb(wc as u32, &mut buf) {
+        let ret = match codec::wctomb(wc as u32, &mut buf) {
             Some(n) => n,
             None => {
                 // un-encodable wide char (EILSEQ): leave *src at the offending char.

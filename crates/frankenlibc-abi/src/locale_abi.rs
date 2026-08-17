@@ -47,13 +47,123 @@ unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
     Some(bytes.to_vec())
 }
 
-/// Canonical name for the bootstrap UTF-8 C locale.
-static C_LOCALE_NAME: &[u8] = b"C.UTF-8\0";
-/// Character encoding string for the bootstrap locale.
+/// Canonical name for the UTF-8 locale.
+static UTF8_LOCALE_NAME: &[u8] = b"C.UTF-8\0";
+/// Character encoding string for the UTF-8 locale.
+static UTF8_LOCALE_CODESET: &[u8] = b"UTF-8\0";
+/// Canonical name for the POSIX C locale.
 ///
-/// The conversion ABI is UTF-8 throughout, so every public locale report must
-/// expose the same encoding as `MB_CUR_MAX` and the multibyte codec.
-static C_LOCALE_CODESET: &[u8] = b"UTF-8\0";
+/// glibc canonicalises both `"C"` and `"POSIX"` to `"C"`, measured against
+/// host glibc 2.42: `setlocale(LC_ALL,"POSIX")` returns `"C"`, not `"POSIX"`.
+static C_LOCALE_NAME: &[u8] = b"C\0";
+/// Character encoding string for the POSIX C locale.
+///
+/// Measured, not assumed: host glibc 2.42 reports `ANSI_X3.4-1968` for
+/// `nl_langinfo(CODESET)` under `LC_ALL=C`, with `MB_CUR_MAX == 1`.
+static C_LOCALE_CODESET: &[u8] = b"ANSI_X3.4-1968\0";
+
+// ---------------------------------------------------------------------------
+// Active locale
+// ---------------------------------------------------------------------------
+
+/// The character encodings FrankenLibC can select.
+///
+/// These are not decoration: the whole point of separating them is that the
+/// reported locale NAME, the reported CODESET, `MB_CUR_MAX` and the multibyte
+/// codec itself must move together. A build where `setlocale(LC_ALL,"C")`
+/// reports `"C"` while the codec keeps decoding UTF-8 matches neither glibc nor
+/// this library's own contract, and would make `MB_CUR_MAX` disagree with what
+/// `wctomb` actually emits. Every accessor below derives from this one value so
+/// that state cannot be constructed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Charset {
+    /// 7-bit ASCII, the POSIX C locale's encoding (`ANSI_X3.4-1968`).
+    ///
+    /// Measured against host glibc 2.42 under `LC_ALL=C`: every byte `>= 0x80`
+    /// is `EILSEQ` on decode — including a well-formed UTF-8 lead byte, which
+    /// is rejected at the lead rather than consumed — and every wide character
+    /// `>= U+0080` is `EILSEQ` on encode. `0x00..=0x7F` maps to itself.
+    Ascii,
+    /// UTF-8, as `C.UTF-8` (`MB_CUR_MAX == 6`, glibc's historical RFC 2279 size).
+    Utf8,
+}
+
+const CHARSET_ASCII: u8 = 0;
+const CHARSET_UTF8: u8 = 1;
+
+/// The process-wide active character set.
+///
+/// DEFAULT IS `Utf8`, WHICH IS A DELIBERATE AND STATED DIVERGENCE FROM glibc.
+/// A C program that never calls `setlocale` runs in the `"C"` locale on glibc,
+/// so the parity default is `Ascii`. That flip is a separate change with a much
+/// wider blast radius — every differential arm whose helper sets `C.UTF-8` on
+/// the HOST only (`libc::setlocale`) and leaves fl's locale alone would begin
+/// comparing an ASCII fl against a UTF-8 glibc. Selecting the C locale
+/// explicitly is complete and consistent as of this change; the startup default
+/// is tracked separately on bd-1kxrmz.
+static ACTIVE_CHARSET: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(CHARSET_UTF8);
+
+/// The character set every conversion entrypoint must honour.
+#[inline]
+pub(crate) fn active_charset() -> Charset {
+    match ACTIVE_CHARSET.load(Ordering::Acquire) {
+        CHARSET_ASCII => Charset::Ascii,
+        _ => Charset::Utf8,
+    }
+}
+
+#[inline]
+fn set_active_charset(charset: Charset) {
+    let encoded = match charset {
+        Charset::Ascii => CHARSET_ASCII,
+        Charset::Utf8 => CHARSET_UTF8,
+    };
+    ACTIVE_CHARSET.store(encoded, Ordering::Release);
+}
+
+/// Test hook: restore the startup locale so a test that selects one cannot
+/// leak it into the arms libtest runs alongside it on other threads.
+#[doc(hidden)]
+pub fn locale_reset_active_charset_for_tests() {
+    set_active_charset(Charset::Utf8);
+}
+
+/// The canonical name `setlocale` reports for `charset`.
+#[inline]
+fn locale_name_for(charset: Charset) -> &'static [u8] {
+    match charset {
+        Charset::Ascii => C_LOCALE_NAME,
+        Charset::Utf8 => UTF8_LOCALE_NAME,
+    }
+}
+
+/// The `nl_langinfo(CODESET)` string for `charset`.
+#[inline]
+fn codeset_for(charset: Charset) -> &'static [u8] {
+    match charset {
+        Charset::Ascii => C_LOCALE_CODESET,
+        Charset::Utf8 => UTF8_LOCALE_CODESET,
+    }
+}
+
+/// Which locale a requested name selects, or `None` if fl does not ship it.
+///
+/// `""` is deliberately NOT folded in with `"C"`, though `locale_core::
+/// is_c_locale` groups them: POSIX gives `""` "derive from the environment"
+/// semantics, and on a host whose `LANG` is a UTF-8 locale glibc answers
+/// `setlocale(LC_ALL,"")` with that UTF-8 locale, not with `"C"`. Mapping `""`
+/// onto the ASCII C locale would therefore be a fresh divergence introduced by
+/// the very change meant to remove one.
+#[inline]
+fn charset_for_request(name: &[u8]) -> Option<Charset> {
+    match name {
+        b"C" | b"POSIX" => Some(Charset::Ascii),
+        b"C.UTF-8" | b"C.utf8" => Some(Charset::Utf8),
+        b"" => Some(Charset::Utf8),
+        _ => None,
+    }
+}
 /// POSIX C-locale radix character.
 static C_LOCALE_RADIX: &[u8] = b".\0";
 /// POSIX C-locale thousands separator (empty string).
@@ -149,10 +259,11 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return std::ptr::null();
     }
 
-    // Query mode: locale is NULL.
+    // Query mode: locale is NULL. Reports whatever is currently selected, not a
+    // fixed string — that is the difference between a locale and a constant.
     if locale.is_null() {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, false);
-        return C_LOCALE_NAME.as_ptr() as *const c_char;
+        return locale_name_for(active_charset()).as_ptr() as *const c_char;
     }
 
     // Parse the locale name with a known-region bound. A non-NUL-terminated
@@ -162,13 +273,18 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return std::ptr::null();
     };
 
-    if locale_core::is_c_locale(&name) || matches!(name.as_slice(), b"C.UTF-8" | b"C.utf8") {
+    if let Some(charset) = charset_for_request(&name) {
+        // The selection and the report are one step: whatever name goes back to
+        // the caller, CODESET, MB_CUR_MAX and the codec already agree with it.
+        set_active_charset(charset);
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
-        C_LOCALE_NAME.as_ptr() as *const c_char
+        locale_name_for(charset).as_ptr() as *const c_char
     } else if mode.heals_enabled() {
-        // Hardened: fall back to the bootstrap UTF-8 locale instead of failing.
+        // Hardened: fall back to the UTF-8 locale instead of failing. The
+        // active charset is left alone — healing an unknown NAME must not
+        // silently re-encode the caller's data underneath it.
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-        C_LOCALE_NAME.as_ptr() as *const c_char
+        locale_name_for(active_charset()).as_ptr() as *const c_char
     } else {
         unsafe { set_abi_errno(libc::ENOENT) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
@@ -176,13 +292,19 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     }
 }
 
-/// The maximum multibyte width accepted by the shipped UTF-8 conversion codec.
+/// The maximum multibyte width of the ACTIVE conversion codec.
 ///
-/// The bootstrap locale uses the codec throughout, so the public locale value
-/// and every conversion entrypoint share this six-byte maximum.
+/// Both values are measured against host glibc 2.42 rather than reasoned from
+/// the encodings: `LC_ALL=C` reports 1, `LC_ALL=C.UTF-8` reports 6. The six is
+/// glibc's historical RFC 2279 size and is deliberately larger than the four
+/// bytes RFC 3629 can actually need, which is why callers size buffers by this
+/// value and not by what `wctomb` emits.
 #[inline]
 pub(crate) fn mb_cur_max() -> libc::size_t {
-    6
+    match active_charset() {
+        Charset::Ascii => 1,
+        Charset::Utf8 => 6,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,10 +336,15 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 // nl_langinfo
 // ---------------------------------------------------------------------------
 
+/// The `nl_langinfo` table for a given character set.
+///
+/// Only `CODESET` varies: every other item in the POSIX C locale is identical
+/// between `C` and `C.UTF-8` (both are the unlocalised English set), which is
+/// why the parameter threads through to exactly one arm.
 #[inline]
-fn c_locale_langinfo_value(item: libc::nl_item) -> &'static [u8] {
+fn langinfo_value_for(charset: Charset, item: libc::nl_item) -> &'static [u8] {
     match item {
-        libc::CODESET => C_LOCALE_CODESET,
+        libc::CODESET => codeset_for(charset),
         libc::RADIXCHAR => C_LOCALE_RADIX,
         libc::THOUSEP => C_LOCALE_THOUSEP,
         // Day names (POSIX C locale, English)
@@ -301,25 +428,23 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
         return std::ptr::null();
     }
 
-    let value = c_locale_langinfo_value(item);
+    let value = langinfo_value_for(active_charset(), item);
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
     value.as_ptr() as *const c_char
 }
 
 /// POSIX `nl_langinfo`.
 ///
-/// Bootstrap supports a minimal UTF-8 C-locale subset:
-/// - `CODESET` -> `"UTF-8"`
-/// - `RADIXCHAR` -> `"."`
-/// - `THOUSEP` -> `""`
-///   Unsupported items return `""`.
+/// `CODESET` follows the active locale (`ANSI_X3.4-1968` under `C`, `UTF-8`
+/// under `C.UTF-8`); `RADIXCHAR` is `"."` and `THOUSEP` is `""` in both, as in
+/// glibc's C locale. Unsupported items return `""`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
     // Strict mode cannot repair or deny this scalar selector, and every result
     // points into the immutable C-locale table above. Hardened mode and tests
     // retain the full policy path.
     if runtime_policy::strict_passthrough_active() {
-        return c_locale_langinfo_value(item).as_ptr() as *const c_char;
+        return langinfo_value_for(active_charset(), item).as_ptr() as *const c_char;
     }
     nl_langinfo_with_policy(item)
 }
@@ -504,8 +629,17 @@ pub unsafe extern "C" fn bindtextdomain(
 /// Opaque locale handle type (matches glibc `locale_t` = `__locale_t`).
 pub type LocaleT = *mut std::ffi::c_void;
 
-/// Sentinel value for the C locale handle.
+/// Sentinel handles, one per shipped locale.
+///
+/// There are two because `nl_langinfo_l(CODESET, loc)` has to be able to answer
+/// differently for `newlocale(LC_ALL_MASK,"C")` and
+/// `newlocale(LC_ALL_MASK,"C.UTF-8")`. A single shared sentinel makes that
+/// impossible by construction: the query would have nothing to distinguish. The
+/// ADDRESS of each static is the handle, so the two must not be merged by the
+/// compiler — each carries a distinct value for that reason.
 static C_LOCALE_HANDLE: u8 = 0;
+/// Sentinel handle for the UTF-8 locale. See [`C_LOCALE_HANDLE`].
+static UTF8_LOCALE_HANDLE: u8 = 1;
 
 const VALID_NEWLOCALE_CATEGORY_MASK: c_int = libc::LC_ALL_MASK;
 
@@ -513,6 +647,31 @@ const VALID_NEWLOCALE_CATEGORY_MASK: c_int = libc::LC_ALL_MASK;
 #[inline]
 fn c_locale_handle() -> LocaleT {
     std::ptr::addr_of!(C_LOCALE_HANDLE) as LocaleT
+}
+
+/// The handle representing `charset`.
+#[inline]
+fn locale_handle_for(charset: Charset) -> LocaleT {
+    match charset {
+        Charset::Ascii => std::ptr::addr_of!(C_LOCALE_HANDLE) as LocaleT,
+        Charset::Utf8 => std::ptr::addr_of!(UTF8_LOCALE_HANDLE) as LocaleT,
+    }
+}
+
+/// The charset a handle stands for.
+///
+/// An unrecognised handle — including `LC_GLOBAL_LOCALE` and anything a caller
+/// invented — reports the active locale rather than guessing, which is what the
+/// `_l` entrypoints did implicitly before there was more than one locale.
+#[inline]
+fn charset_for_handle(handle: LocaleT) -> Charset {
+    if std::ptr::eq(handle.cast::<u8>(), std::ptr::addr_of!(C_LOCALE_HANDLE)) {
+        Charset::Ascii
+    } else if std::ptr::eq(handle.cast::<u8>(), std::ptr::addr_of!(UTF8_LOCALE_HANDLE)) {
+        Charset::Utf8
+    } else {
+        active_charset()
+    }
 }
 
 #[inline]
@@ -556,16 +715,14 @@ pub unsafe extern "C" fn newlocale(
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         return std::ptr::null_mut();
     };
-    let accept = locale_core::is_c_locale(&name);
-
     let _ = base;
 
-    if accept {
+    if let Some(charset) = charset_for_request(&name) {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
-        c_locale_handle()
+        locale_handle_for(charset)
     } else if mode.heals_enabled() {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
-        c_locale_handle()
+        locale_handle_for(active_charset())
     } else {
         unsafe { set_abi_errno(libc::ENOENT) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
@@ -599,12 +756,14 @@ pub unsafe extern "C" fn duplocale(_locale: LocaleT) -> LocaleT {
     c_locale_handle()
 }
 
-/// POSIX `nl_langinfo_l` — locale-aware nl_langinfo.
+/// POSIX `nl_langinfo_l` — locale-aware `nl_langinfo`.
 ///
-/// C-locale only: ignores locale parameter and delegates to nl_langinfo.
+/// Answers for the locale the HANDLE names, which is the entire difference
+/// between this and `nl_langinfo`: `newlocale(LC_ALL_MASK,"C")` reports
+/// `ANSI_X3.4-1968` whether or not the process locale is `C.UTF-8`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nl_langinfo_l(item: libc::nl_item, _locale: *mut c_void) -> *const c_char {
-    unsafe { nl_langinfo(item) }
+pub unsafe extern "C" fn nl_langinfo_l(item: libc::nl_item, locale: *mut c_void) -> *const c_char {
+    langinfo_value_for(charset_for_handle(locale as LocaleT), item).as_ptr() as *const c_char
 }
 
 // ===========================================================================
