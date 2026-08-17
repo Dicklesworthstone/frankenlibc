@@ -31395,3 +31395,73 @@ What this changes, and what it does not:
   divergence class. Host glibc 2.42, fork-isolated: it aborts whenever `resolvedlen < PATH_MAX` even
   when the resolved path is 5 bytes (`/tmp`), which is exactly fl's rule. The dynamic behaviour of the
   fgets/fgetws pair does not generalise to the path wrappers.
+
+## 2026-08-17 — CAMPAIGN WIN: the bounded `wcsnlen` SIMD probes are real, and the FIRST measurement of them was underpowered (bd-9klcvv)
+
+- **RESULT CLASS: `result_class: campaign-win`.** Deployed-vs-incumbent, host glibc 2.42 resolved by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`. `incumbent_ratio: 0.702`,
+  `incumbent_bootstrap_median_ci: [0.563, 0.705]`, `null_bootstrap_median_ci: [0.991, 1.009]`,
+  `bench_elf_sha256=02189d27fee1d14fbd4d074d6985140798066cfd05bab5c1ec32c11f19b4df49`
+  (self-reported in-process from `/proc/self/exe` by the binary that timed the arms).
+  `legacy_incumbent: host-glibc`, `incumbent_provenance: dlmopen-lmid-newlm`,
+  `same_invocation=true`: the A/A witness, both fl arms and the glibc arm are all timed in ONE
+  process, interleaved per alignment offset.
+  Same-invocation A/A null: `null_median_ratio: 1.000`, bootstrap median CI [0.991, 1.009]
+  over 2000 paired resamples — `null_bootstrap_median_ci: [0.991, 1.009]`.
+  Effect bootstrap median CI [0.176, 0.340]. Incumbent bootstrap median CI [0.563, 0.705].
+  `wcsnlen` `limit=31` row. Worker **vmi1227854**, self-reported
+  `load1=3.55`, `mhz=3195.198`, 10-core AMD EPYC (with IBPB); orchestrating host loadavg
+  23.26/25.04/25.73, CPU idle 60% (vmstat) / 68.7% (mpstat), iowait 0, `/` at 212G.
+- **THE LEVER.** 79899b3f0 added three bounded overlapping-probe fast paths to
+  `frankenlibc_core::string::wide::wcsnlen` for `limit` in `[4,8)`, `[8,16)` and `[16,32)`. It shipped
+  with NO ratio attached, which is why this row exists.
+- **PREFLIGHT WAS BLOCKED AND IS ADJUDICATED, NOT IGNORED.**
+  `check_perf_ledger_integrity.py preflight` matched four prior REJECTs. Three are coarse substring
+  hits on unrelated surfaces (qsort `char*` width-8, `MallocState` hot-cycle precheck, large-buffer
+  str/mem). The fourth, **L3608**, genuinely names `wcsnlen` — and its verdict is *"Do NOT re-open
+  'widen the string SIMD via a build flag'"*. That row is a codegen audit proving the shipped build
+  already emits AVX2 (`core::string::wide::wcsnlen`: 36 ymm / 18 xmm) and it closes by naming the
+  residual **"real, different lever"**. This is an algorithmic change over `limit < 32`, a range that
+  row never examined, and it is a keep-or-revert certification of already-shipped code rather than a
+  new lever proposal. The block does not apply.
+- **THE FIRST MEASUREMENT WAS WRONG AND IS RETRACTED HERE.** An earlier run of this same arm reported
+  `new/old` 0.318–0.929 and was recorded on bd-9klcvv as a win. It had no A/A null. Adding one showed
+  the harness could not resolve those effects: timing the SAME function twice gave
+  `null_median_ratio` **0.600** with CI half-widths near **0.4** at five of eight limits, and the p50s
+  landed on multiples of ~0.78 ns — the clock's quantisation step, not the kernel's cost. The sign
+  even flipped between runs at small limits (`lim=16` 0.924 then 1.053; `lim=6` 0.721 then 1.333).
+  Under the ledger's own 2x-null-half-width rule only ONE of the eight original rows would have
+  qualified. **Do not quote the 0.318–0.929 range.**
+- **ROOT CAUSE OF THE BAD NULL, and the fix.** `measure()` amortises `Instant::now()` over 64
+  iterations — ample for a 50 ns kernel, hopeless for a 2 ns one. `measure_precise()` (1024
+  iterations per sample, ~2 us per sample against a ~20 ns clock read) moved the null from
+  `[0.600, 1.000]` to `[0.981, 1.039]` at `lim=4`, and to within ±2% at seven of eight limits.
+- **RE-MEASURED, `measure_precise`, same invocation, 16 alignment offsets per limit, paired
+  percentile bootstrap over 2000 resamples:**
+
+  | limit | old ns | new ns | glibc ns | new/old | effect CI | new/glibc | null CI | clears 2x null? |
+  |---|---|---|---|---|---|---|---|---|
+  | 4 | 1.741 | 1.486 | 1.927 | 0.854 | [0.542,0.875] | 0.771 | [0.981,1.039] | yes |
+  | 6 | 1.995 | 1.516 | 1.976 | 0.760 | [0.750,0.765] | 0.767 | [0.982,1.001] | yes |
+  | 8 | 2.171 | 1.213 | 1.907 | 0.559 | [0.556,0.565] | 0.636 | [0.992,1.008] | yes |
+  | 12 | 2.749 | 1.252 | 1.976 | 0.455 | [0.213,0.708] | 0.634 | [0.658,1.543] | NO — null is wide here |
+  | 15 | 7.052 | 2.063 | 3.276 | 0.293 | [0.290,0.295] | 0.630 | [0.991,1.010] | yes |
+  | 16 | 2.847 | 2.161 | 3.296 | 0.759 | [0.749,1.386] | 0.656 | [0.963,1.028] | yes |
+  | 23 | 5.351 | 2.376 | 3.452 | 0.444 | [0.434,0.445] | 0.688 | [0.996,1.017] | yes |
+  | 31 | 8.450 | 2.239 | 3.188 | 0.265 | [0.176,0.340] | 0.702 | [0.991,1.009] | yes |
+
+  Seven of eight clear. **`lim=12` does NOT** — its A/A null is anomalously wide at [0.658,1.543],
+  one bad offset, and it is reported as not-clearing rather than quietly averaged in.
+- **THE MECHANISM, and it survived the better instrument.** The win tracks the SCALAR iterations the
+  fast path removes and nothing else. Below 16 the old code had no vector step at all (the 256-block
+  fold cannot fire and `chunks_exact(16)` yields nothing), so it walked every element. The two
+  WEAKEST effects are exactly the two places the mechanism predicts: `lim=4` (0.854 — only four
+  scalar steps existed to remove) and `lim=16` (0.759 — the old path already did one full 16-lane
+  chunk with NO scalar tail, visible directly in `old_p50` dropping 7.052 → 2.847 between 15 and 16).
+  A timing artefact does not know where `WIDE_NUL_SIMD_LANES` sits.
+- **AGAINST THE INCUMBENT.** With the noise removed, fl now beats host glibc at EVERY limit
+  (0.771, 0.767, 0.636, 0.634, 0.630, 0.656, 0.688, 0.702). The old path lost to glibc at `lim` 6, 8,
+  12, 15, 23 and 31 (up to 2.650x at 31).
+- **VERDICT: KEEP.** No source change; this certifies what 79899b3f0 already shipped.
+- **Reproducer:** `rch exec --base HEAD --clean-overlay -- cargo bench -p frankenlibc-bench
+  --features abi-bench --bench scan_strlen_ab_bench -- zzz_no_criterion_arm`, `WNLEN_AB` rows.
