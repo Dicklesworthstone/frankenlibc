@@ -31026,3 +31026,43 @@ What this changes, and what it does not:
   distinct shas and a stable load — but its cause is now bounded: **not added work.** A bisect looking
   for a commit that made the allocator *do more* will not find one. If it matters, the question to ask
   is about code layout, and the tool is not this one.
+
+## 2026-08-17 (BlackThrush) — I INTRODUCED A REGRESSION AND CAUGHT IT: fewer instructions, +78% branch mispredicts, reverted
+
+- **RESULT CLASS: loss/baseline (self-inflicted regression, found and reverted).** No speedup is
+  claimed and the change is out.
+- **WHAT I LANDED LAST TURN, and it was measured.** Converting the magazine's `class_index` re-check
+  to a `debug_assert_eq!` cut 583.7 -> 581.7 instructions per pair, with the whole -2.0 landing in
+  `allocate_from_local_class`. That measurement was correct. **The metric was wrong.**
+- **THE SAME TOOL, ONE FLAG FURTHER.** `callgrind --cache-sim=yes --branch-sim=yes`, three arms built
+  and **verified distinct before measuring** (210c7560 / 25504535 / 73d9537e), 20,000 pairs each:
+
+  | arm | I refs | Branches | Mispredicts (cond) |
+  |---|---|---|---|
+  | old (`malloc_abi.rs` @ 486d2c320) | 17,074,306 | 3,362,605 | 50,189 |
+  | HEAD minus only my debug_assert | 17,074,616 | 3,362,693 | 50,227 |
+  | HEAD | 17,034,538 | 3,342,662 | **90,148** |
+
+  **Reverting my change ALONE restores mispredicts.** I-cache, D-cache and LL misses were identical
+  across all arms (I1 ~5.9-6.0k, D1 95,229-95,231, LLd 46,528-46,536), so this is branch prediction
+  and nothing else.
+- **THE TRADE, priced.** -310 instructions and -20,031 branches bought **+39,921 conditional
+  mispredicts** over 20,000 pairs — about **2 extra mispredicts per pair**. At ~15-20 cycles each
+  that is 30-40 cycles per pair against a saving of 2 instructions. **An order of magnitude the wrong
+  way**, and invisible to the instruction count I certified on.
+- **THE MECHANISM.** The removed branch is perfectly predicted — always not-taken, since the invariant
+  it checks holds by construction. Deleting it shifted the history and alignment of its NEIGHBOURS,
+  which then alias worse in the predictor. **Removing a well-predicted branch can make nearby branches
+  less predictable**, so "this branch is always false" is an argument for deleting it only if nothing
+  else depends on the layout it creates.
+- **THE LESSON, and it corrects a rule I wrote yesterday.** After the between-run instability I
+  adopted "prefer a counted mechanism — instructions, syscalls, allocations — which is immune to
+  this entirely". Immune to LOAD, yes. But **instruction count is not a proxy for time**, and this is
+  the counterexample: identical cache behaviour, fewer instructions, fewer branches, and materially
+  slower. **When a counted mechanism is the evidence, count the mechanism that dominates the cost** —
+  for a branchy hot path that is mispredicts, and `--branch-sim` costs one flag.
+- **DOES THIS EXPLAIN THE 6.58x -> 6.88x REGRESSION? NO, and the dates rule it out.** That was measured
+  between binaries built BEFORE this debug_assert existed. **bd-js47fq stays open and unattributed.**
+  What this does supply is a tool that works on it: the same three-arm branch-sim comparison, which is
+  deterministic and needs no quiet window.
+- Green after the revert: `malloc_abi_test` 75, binning gate 5.
