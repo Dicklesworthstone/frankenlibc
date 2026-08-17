@@ -116,41 +116,33 @@ use crate::stdio_abi::{vasprintf, vdprintf, vfprintf, vprintf, vsnprintf};
 // family — so they carry the same link-order ambiguity and should be moved the
 // same way once each is checked. They are left for a follow-up rather than
 // rewired blind; see bd-8std0q.
+// THE REST OF THE BLOCK IS NOW FL'S OWN TOO (bd-8std0q).
+//
+// Every symbol below was declared as a link-time extern, and fl exports all of
+// them, so each bound to whichever the linker chose -- glibc's in a test binary,
+// fl's in a deployed preload. The `__*_chk` wrappers built on them therefore
+// validated one implementation in CI and shipped another.
+//
+// The narrow `v*printf` family was moved first and the fortify suite did not
+// move: 162 passed before and after. These thirteen complete the block. The
+// compiler is the signature check -- an `extern` declaration that disagreed with
+// fl's definition fails at the call site rather than silently binding to
+// something else, which is the whole point of importing rather than declaring.
+use crate::stdio_abi::{fgets, fread};
+use crate::unistd_abi::{vsyslog};
+use crate::wchar_abi::{fgetws, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf, vswprintf, vwprintf, wcsnrtombs, wcsrtombs, wcstombs};
+
+// AND THE LAST FOUR (bd-8std0q). `longjmp` is the one that mattered most: fl's
+// `setjmp` produces the jmp_buf, so resolving `longjmp` to glibc would hand one
+// implementation's environment to the other's unwinder — undefined, and silently
+// dependent on link order. The rest follow the same rule as the block above.
+use crate::setjmp_abi::{longjmp};
+use crate::stdio_abi::{fgetc};
+use crate::unistd_abi::{getlogin_r};
+use crate::wchar_abi::{wctomb};
+
 unsafe extern "C" {
-    fn vsyslog(priority: c_int, fmt: *const c_char, ap: *mut c_void);
-    fn vswprintf(buf: *mut WcharT, n: usize, fmt: *const WcharT, ap: *mut c_void) -> c_int;
-    fn vwprintf(fmt: *const WcharT, ap: *mut c_void) -> c_int;
-    fn vfwprintf(stream: *mut c_void, fmt: *const WcharT, ap: *mut c_void) -> c_int;
-    fn fgets(buf: *mut c_char, n: c_int, stream: *mut c_void) -> *mut c_char;
-    fn fgetws(buf: *mut WcharT, n: c_int, stream: *mut c_void) -> *mut WcharT;
-    fn fread(buf: *mut c_void, size: usize, nmemb: usize, stream: *mut c_void) -> usize;
-    fn mbstowcs(dest: *mut WcharT, src: *const c_char, n: usize) -> usize;
-    fn wcstombs(dest: *mut c_char, src: *const WcharT, n: usize) -> usize;
-    fn mbsrtowcs(dest: *mut WcharT, src: *mut *const c_char, n: usize, ps: *mut c_void) -> usize;
-    fn wcsrtombs(dest: *mut c_char, src: *mut *const WcharT, n: usize, ps: *mut c_void) -> usize;
-    fn mbsnrtowcs(
-        dest: *mut WcharT,
-        src: *mut *const c_char,
-        nms: usize,
-        n: usize,
-        ps: *mut c_void,
-    ) -> usize;
-    fn wcsnrtombs(
-        dest: *mut c_char,
-        src: *mut *const WcharT,
-        nwc: usize,
-        n: usize,
-        ps: *mut c_void,
-    ) -> usize;
-    fn wctomb(s: *mut c_char, wchar: WcharT) -> c_int;
-    #[cfg(all(
-        not(debug_assertions),
-        not(any(target_arch = "x86_64", target_arch = "aarch64"))
-    ))]
-    fn longjmp(env: *mut c_void, val: c_int) -> !;
-    fn getlogin_r(buf: *mut c_char, buflen: usize) -> c_int;
     static stdin: *mut c_void;
-    fn fgetc(stream: *mut c_void) -> c_int;
 }
 
 // ── Core failure functions ─────────────────────────────────────────────────
@@ -487,7 +479,20 @@ pub unsafe extern "C" fn __fgets_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut c_char {
-    if buflen != usize::MAX && n as usize > buflen {
+    // `n` is SIGNED, and `n as usize` turns a negative count into a huge one, so
+    // this used to abort the process for `fgets(buf, -1, fp)` where glibc simply
+    // returns NULL. Probed on host glibc 2.42 with fork isolation:
+    //
+    //   n=8,  buflen=64 -> non-NULL      (reads)
+    //   n=64, buflen=8  -> SIGABRT       ("buffer overflow detected")
+    //   n=-1, buflen=64 -> NULL, NO abort
+    //   n=0,  buflen=64 -> NULL, NO abort
+    //
+    // Only a POSITIVE count can overflow the destination; a non-positive one is
+    // the stream call's business and it answers NULL. The wide siblings
+    // `__fgetws_chk`/`__fgetws_unlocked_chk` already got this right, which is
+    // what made the narrow pair's version look deliberate rather than a slip.
+    if n > 0 && buflen != usize::MAX && n as usize > buflen {
         unsafe { __chk_fail() }
     }
     unsafe { fgets(buf, n, stream) }
@@ -500,7 +505,20 @@ pub unsafe extern "C" fn __fgets_unlocked_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut c_char {
-    if buflen != usize::MAX && n as usize > buflen {
+    // `n` is SIGNED, and `n as usize` turns a negative count into a huge one, so
+    // this used to abort the process for `fgets(buf, -1, fp)` where glibc simply
+    // returns NULL. Probed on host glibc 2.42 with fork isolation:
+    //
+    //   n=8,  buflen=64 -> non-NULL      (reads)
+    //   n=64, buflen=8  -> SIGABRT       ("buffer overflow detected")
+    //   n=-1, buflen=64 -> NULL, NO abort
+    //   n=0,  buflen=64 -> NULL, NO abort
+    //
+    // Only a POSITIVE count can overflow the destination; a non-positive one is
+    // the stream call's business and it answers NULL. The wide siblings
+    // `__fgetws_chk`/`__fgetws_unlocked_chk` already got this right, which is
+    // what made the narrow pair's version look deliberate rather than a slip.
+    if n > 0 && buflen != usize::MAX && n as usize > buflen {
         unsafe { __chk_fail() }
     }
     unsafe { fgets(buf, n, stream) }
@@ -1063,7 +1081,12 @@ pub unsafe extern "C" fn __mbstowcs_chk(
     if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { mbstowcs(dest, src, n) }
+    // fl declares `mbstowcs` as `(*mut u32, *const u8)` while this wrapper uses
+    // `(*mut WcharT, *const c_char)`. Layout-identical on every target fl builds
+    // for — wchar_t is 32-bit and c_char 8-bit — but the SIGNEDNESS differs, so
+    // the cast is explicit. The link-time extern hid this mismatch entirely;
+    // importing surfaced it as a compile error, which is the behaviour wanted.
+    unsafe { mbstowcs(dest.cast::<u32>(), src.cast::<u8>(), n) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1076,7 +1099,8 @@ pub unsafe extern "C" fn __wcstombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { wcstombs(dest, src, n) }
+    // Same signedness-only mismatch as `__mbstowcs_chk` above.
+    unsafe { wcstombs(dest.cast::<u8>(), src.cast::<u32>(), n) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1166,7 +1190,10 @@ pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usi
     if !s.is_null() && buflen != usize::MAX && buflen < mb_cur_max {
         unsafe { __chk_fail() }
     }
-    unsafe { wctomb(s, wchar) }
+    // fl's `wctomb` takes the wide character as `u32` while this wrapper carries
+    // it as `WcharT` (i32) — the same signedness-only mismatch as `mbstowcs`, and
+    // again surfaced by importing rather than hidden by a link-time declaration.
+    unsafe { wctomb(s.cast::<u8>(), wchar as u32) }
 }
 
 // ── longjmp ────────────────────────────────────────────────────────────────
