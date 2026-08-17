@@ -120,6 +120,9 @@ fn main() {
         // wall-clock run at 2.899x host glibc. Four conversions and three
         // literals parse to SEVEN directives, which spills the inline vector.
         "dotted_quad" => ("192.168.1.1", "%d.%d.%d.%d"),
+        // The last two single-separator shapes to leave the engine.
+        "two_strings" => ("hello world", "%s %s"),
+        "string_then_int" => ("hello 42", "%s %d"),
         other => panic!("unknown case {other:?}"),
     };
 
@@ -170,6 +173,18 @@ fn main() {
                     std::hint::black_box(cin.as_ptr()),
                     std::hint::black_box(cfmt.as_ptr()),
                     &mut flt as *mut f32,
+                ),
+                "two_strings" => sscanf(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    buf_a.as_mut_ptr().cast::<c_char>(),
+                    buf_b.as_mut_ptr().cast::<c_char>(),
+                ),
+                "string_then_int" => sscanf(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    buf_a.as_mut_ptr().cast::<c_char>(),
+                    &mut int_a as *mut c_int,
                 ),
                 "key_value" => sscanf(
                     std::hint::black_box(cin.as_ptr()),
