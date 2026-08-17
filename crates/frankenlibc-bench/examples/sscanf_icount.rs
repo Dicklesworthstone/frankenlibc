@@ -199,15 +199,26 @@ fn main() {
                 ),
             }
         };
-        // Order-sensitive mix, and it reads a DESTINATION byte as well as the
-        // return code: a loop that had been optimised away, or a conversion that
-        // silently stopped writing, both change this. An XOR of return codes
-        // would collapse to a constant and prove neither.
+        // Order-sensitive mix over EVERY destination this driver can write: the
+        // return code, both text buffers, both ints and the float. A loop that
+        // had been optimised away, or a conversion that silently stopped
+        // writing, both change it; an XOR of return codes would collapse to a
+        // constant and prove neither.
+        //
+        // Every destination has to be in here, not just the first. When the
+        // `two_strings` case arrived it wrote `buf_b` and nothing read it, so a
+        // fast path that dropped the SECOND field would have produced an
+        // identical checksum and looked like a free speedup. That is the same
+        // hollow-observation shape as an oracle arm that resolves back to fl,
+        // one layer down, and it is worth the four extra adds.
         checksum = checksum
             .wrapping_mul(0x100_0000_01b3)
             .wrapping_add(rc as u64)
             .wrapping_add(buf_a[0] as u64)
-            .wrapping_add(int_a as u64);
+            .wrapping_add(buf_b[0] as u64)
+            .wrapping_add(int_a as u64)
+            .wrapping_add(int_b as u64)
+            .wrapping_add(flt.to_bits() as u64);
     }
 
     // The loader mode is PRINTED because a row measured without it is not a
