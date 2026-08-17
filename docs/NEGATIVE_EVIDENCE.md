@@ -30493,3 +30493,49 @@ What this changes, and what it does not:
   invocations this finding says cannot certify an effect of that size — and the lever's own baseline
   is already unbuildable. Spending the build would have manufactured a number I would have had to
   withdraw later.
+
+## 2026-08-17 — the last three reachable losses become wins: `key_value` 419.7M instructions -> 87.8M, and the generalisation taxes the shapes that were already fast
+
+- **RESULT CLASS: measured improvement with a measured regression, both recorded.** Instruction count
+  under `RTLD_DEEPBIND`, 200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=17a2d2b6318592af67747cbc38f22cb6b677ecd45c48eb321a9592161609326e, loadavg
+  28.48/32.16/104.50 falling, cpu MHz 3840-3944. **No wall-clock row is banked**: the 1-minute was far
+  below the 5-minute all turn, so the window never converged, and the reproduction row above is why
+  that matters.
+- **TWO LEVERS, measured together because they share one probe:** mixed `%d`/`%s` field lists, and a
+  one-character negated scanset as a field. Attributed on ONE tree by mutating the probe to decline
+  every non-`%d` field — the pre-lever shape — and the order-sensitive checksum is IDENTICAL between
+  the mutated and real builds for all three cases, so both computed the same answer.
+
+  | case | engine (pre) | fast path | reduction | vs glibc |
+  | --- | ---: | ---: | ---: | ---: |
+  | `two_strings` `"%s %s"` | 402,788,384 | 90,410,889 | 4.46x, -1562/call | 204,285,737 -> **0.443x** |
+  | `string_then_int` `"%s %d"` | 374,188,843 | 88,200,034 | 4.24x, -1430/call | 234,752,495 -> **0.376x** |
+  | `key_value` `"%[^=]=%s"` | 419,685,303 | 87,831,916 | 4.78x, -1659/call | 204,709,077 -> **0.429x** |
+
+  Re-measured after reverting the mutation: `key_value` 87,800,043 and `two_strings` 90,390,166, so
+  the figures reproduce. All three were certified LOSSES on wall clock — 2.012x, 1.685x and
+  1.679x-1.841x — and every one is now a win by instructions.
+- **THE PREDICTION WAS SLIGHTLY LOW AND IS RECORDED AS SUCH.** bd-hdu66c predicted `key_value` would
+  behave "like the `%s` and `%[` fast paths did (2.8x-3.5x), NOT like dotted_quad (7.9x, which also
+  removed a heap spill)". Measured 4.78x — above the predicted band, below the spill case. The band
+  was the right shape and the number was outside it.
+- **THE COST, on four shapes the change does not target.** The driver's checksum now mixes every
+  destination rather than the first, which costs about **+5 per call on every case** — visible in the
+  unchanged glibc arm (`key_value` glibc 203,656,207 -> 204,709,077). Subtracting that, the probe
+  rewrite costs: `single_int` **+24/call** (57,321,994 -> 63,194,325), `scanset_only` **+22**
+  (52,966,405 -> 58,346,023), `string_token` **+6** (56,197,411 -> 58,382,235), and `dotted_quad`
+  **+86** (107,205,767 -> 125,439,893). The general probe reads one conversion and one separator per
+  field in a loop where the old one hard-coded a two-byte conversion, so the more fields a format has
+  the more it pays — which is why `dotted_quad` at four fields pays the most.
+- **NET: three shapes improved by 1430-1659 instructions per call; four shapes taxed by 6-86.** All
+  four taxed shapes remain wins against glibc.
+- **A HAZARD THE REWRITE CREATED, declined in code rather than left to chance.** The list probe runs
+  FIRST and would accept a lone `%s` or `%[^X]` as a one-field list, silently taking traffic from the
+  two leanest paths in the family (0.254x and 0.186x). Single non-`%d` fields are declined so their
+  dedicated paths keep serving them, and `a_lone_string_or_scanset_still_takes_its_own_fast_path`
+  asserts 0 allocations on all three lone forms.
+- **STILL OWED:** `mixed_record` (`"%s %d %lf"`) is the last certified loss and needs `%lf`.
+  Duplicating float parsing is where this repo has been bitten before, so the note on bd-hdu66c stands:
+  expose a core entry point that reuses `scan_float` rather than reimplementing it. And the +86 on
+  `dotted_quad` is worth one attempt at a cheaper probe before anything else.

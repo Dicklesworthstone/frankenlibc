@@ -133,6 +133,12 @@ fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
 /// from the `clock_getres`/`gettimeofday` path that established it.
 #[inline]
 fn tracked_void_output_capacity(ptr: *mut c_void, requested: usize) -> usize {
+    if requested == 0 {
+        return 0;
+    }
+    if crate::time_abi::likely_current_stack_object(ptr) {
+        return requested;
+    }
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 
