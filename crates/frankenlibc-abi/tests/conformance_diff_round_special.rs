@@ -8,16 +8,57 @@
 //! (floor(-0.0) == -0.0) and NaN. A few finite midpoints are included as
 //! controls. Bit-for-bit NaN-aware vs host glibc. No mocks.
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// Host oracles resolved through `dlsym` because `dladdr` proved the link-time
+/// arm was NOT glibc.
+///
+/// bd-v0388t: a census of 101 oracle arms found nine satisfied from the test
+/// binary itself rather than from `libm.so.6` — `ceil fabs floor sqrt copysign
+/// fdim fmax fmin fmod`, i.e. what `compiler_builtins` supplies and what LLVM
+/// lowers to `roundsd` / `andpd` / `sqrtsd`. An arm that never reaches the
+/// incumbent cannot fail, and in `conformance_diff_math` one of them did worse
+/// than that: it produced a FALSE RED against a correct fl.
+///
+/// Only the measured-captured symbols are converted here. The rest of this
+/// file's arms reach `libm.so.6` and stay link-time declarations, because
+/// converting them would be churn against the evidence rather than because
+/// of it.
+type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
+type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
+type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
+type F32BinaryFn = unsafe extern "C" fn(f32, f32) -> f32;
+
+macro_rules! host_shim {
+    ($($rust:ident : $ty:ty = $sym:literal via $flpath:path => ($($arg:ident : $at:ty),*) -> $rt:ty);* $(;)?) => {
+        $(
+            /// Host oracle via `dlsym`; `unsafe` so existing call sites' blocks
+            /// stay meaningful rather than becoming dead syntax.
+            unsafe fn $rust($($arg: $at),*) -> $rt {
+                // SAFETY: the prototype matches the C declaration, and fl's own
+                // definition is handed to the oracle so it refuses to resolve
+                // back to fl and compare it against itself.
+                let f: $ty = unsafe { dlsym_oracle::host_fn($sym, $flpath as *const ()) };
+                unsafe { f($($arg),*) }
+            }
+        )*
+    };
+}
+
+host_shim! {
+    floor: F64UnaryFn = c"floor" via frankenlibc_abi::math_abi::floor => (x: f64) -> f64;
+    ceil: F64UnaryFn = c"ceil" via frankenlibc_abi::math_abi::ceil => (x: f64) -> f64;
+    floorf: F32UnaryFn = c"floorf" via frankenlibc_abi::math_abi::floorf => (x: f32) -> f32;
+    ceilf: F32UnaryFn = c"ceilf" via frankenlibc_abi::math_abi::ceilf => (x: f32) -> f32;
+}
+
 unsafe extern "C" {
-    fn floor(x: f64) -> f64;
-    fn ceil(x: f64) -> f64;
     fn trunc(x: f64) -> f64;
     fn round(x: f64) -> f64;
     fn roundeven(x: f64) -> f64;
     fn nearbyint(x: f64) -> f64;
     fn rint(x: f64) -> f64;
-    fn floorf(x: f32) -> f32;
-    fn ceilf(x: f32) -> f32;
     fn truncf(x: f32) -> f32;
     fn roundf(x: f32) -> f32;
     fn roundevenf(x: f32) -> f32;
