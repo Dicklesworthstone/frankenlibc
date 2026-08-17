@@ -31270,3 +31270,49 @@ What this changes, and what it does not:
   distrust any absolute figure that a rebuild could move.
 - **NO LEVER LANDED, deliberately.** The jump-table lever was going to be justified by exactly the
   numbers this refutes. Building it now would be aiming at an artifact.
+
+## 2026-08-17 (BlackThrush) — MAINTENANCE: accumulate printf's argument count at parse time — 23 instructions AND 2.4 mispredicts per call
+
+- **RESULT CLASS: self-speedup, counted only.** fl against fl. **No wall-clock claim is made**: two
+  builds were running, and at 0.8% the effect sits far inside this host's layout floor anyway. The
+  counted mechanism is the entire evidence.
+- **THE LEVER, and it is the pattern the struct already documents.** `count_printf_args_of` walked
+  every segment on every call to sum how many arguments a format consumes — a second traversal of a
+  structure the parser had just built. `FormatSegments` already records `any_positional` at push time
+  for exactly this reason, with a comment noting the alternative walk measured 10.63% self time. The
+  argument count is equally determined at push time for non-positional formats, so it is now
+  accumulated there and read as a field.
+- **POSITIONAL FORMATS STILL WALK, deliberately.** Their count is the highest referenced position
+  rather than a running total — `%2$s` alone needs two arguments — so accumulating would UNDERCOUNT
+  and printf would read too few varargs. That is a memory-safety bug, not a wrong number, which is
+  why the second gate pins it.
+- **MEASURED BOTH WAYS, because an instruction saving is not sufficient evidence.** Twice today a
+  change that removed instructions cost more in branch mispredicts than it saved — the malloc
+  `debug_assert` (30-40 cycles for 2 instructions) and the printf float probe (33-44 cycles for 5).
+  Two-point marginals over 95,000 calls, arms verified distinct before measuring (6cbeb35b vs
+  8866a8ba):
+
+  | | instr/call | mispredicts/call | conditional | indirect |
+  |---|---|---|---|---|
+  | HEAD | 2876.60 | 23.40 | 15.20 | 8.20 |
+  | lever | 2853.56 | 21.00 | 12.60 | 8.40 |
+  | **change** | **-23.04 (-0.80%)** | **-2.40 (-10.3%)** | **-2.60** | +0.20 |
+
+  **This one moves BOTH the right way**, which is what the previous two did not. That is expected on
+  reflection: the walk was a data-dependent loop with per-segment conditionals, so deleting it removes
+  branches as well as work. The indirect count rises 0.2, which is noise beside a 2.6 conditional
+  drop.
+- **A PAIRED COMPARISON, which is what makes the branch figures usable at all.** Absolute mispredict
+  counts are build-specific — established today when debug info alone moved them 6.8x — but both arms
+  here were built identically from the same tree and differ only in this change, so layout is
+  controlled.
+- **THE PROFILE OVERSTATED IT, and the gap is worth recording.** `count_printf_args_of` showed as
+  3.48% of instructions; removing the walk saved 0.80%. A function's profile share is not the saving
+  available from deleting it — some of that cost is in callees the field read still needs, and some
+  the optimiser had already hoisted.
+- **GATED AGAINST DRIFT.** `sequential_args_matches_the_walk` compares the accumulated field against
+  `count_printf_args_sequential` over 18 formats — empty, literal-only, `*` width and precision, `%%`,
+  `%n`, and one past the inline/heap boundary — because a field filled at push time and a function
+  computing the same thing can diverge silently, and the only symptom would be reading the wrong
+  number of varargs. Core printf 57 passed; the render-segments, `%p` and `z`/`t` differential gates
+  all green.

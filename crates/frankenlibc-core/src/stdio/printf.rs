@@ -594,7 +594,11 @@ pub fn count_printf_args_of(segments: &FormatSegments<'_>) -> usize {
     if segments.any_positional() {
         return count_printf_args(segments.as_slice());
     }
-    count_printf_args_sequential(segments.as_slice())
+    // Field read, not a walk — the count was accumulated during parsing. The
+    // walk it replaces was 3.48% of the fused shapes' instructions.
+    // `sequential_args_matches_the_walk` pins the two against each other so this
+    // cannot drift from `count_printf_args_sequential`.
+    segments.sequential_args
 }
 
 pub fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
@@ -701,6 +705,20 @@ pub struct FormatSegments<'a> {
     /// A flat perf profile still put that walk at 10.63% self time after the
     /// plan itself was short-circuited. bd-ntb9fq.
     any_positional: bool,
+    /// Sequential argument count, accumulated during `push` for exactly the same
+    /// reason as `any_positional` above.
+    ///
+    /// `count_printf_args_of` walked every segment on every call to sum how many
+    /// arguments the format consumes. That walk measured **3.48% of the fused
+    /// shapes' instructions** on a counted profile — a second traversal of a
+    /// structure the parser had just finished building. For the non-positional
+    /// case, which is nearly all real formats, the answer is fully determined at
+    /// push time.
+    ///
+    /// Positional formats still take the walk: their count is the highest
+    /// referenced position rather than a running total, so it cannot be
+    /// accumulated incrementally.
+    sequential_args: usize,
 }
 
 impl<'a> FormatSegments<'a> {
@@ -710,6 +728,7 @@ impl<'a> FormatSegments<'a> {
             inline_len: 0,
             heap: None,
             any_positional: false,
+            sequential_args: 0,
         }
     }
 
@@ -728,12 +747,24 @@ impl<'a> FormatSegments<'a> {
     }
 
     pub fn push(&mut self, segment: FormatSegment<'a>) {
-        if let FormatSegment::Spec(spec) = &segment
-            && (spec.value_position.is_some()
+        if let FormatSegment::Spec(spec) = &segment {
+            if spec.value_position.is_some()
                 || spec.width.position().is_some()
-                || spec.precision.position().is_some())
-        {
-            self.any_positional = true;
+                || spec.precision.position().is_some()
+            {
+                self.any_positional = true;
+            }
+            // Same accumulation `count_printf_args_sequential` performs, done once
+            // here instead of on every call that asks.
+            if spec.width.uses_arg() {
+                self.sequential_args += 1;
+            }
+            if spec.precision.uses_arg() {
+                self.sequential_args += 1;
+            }
+            if spec.consumes_value_arg() {
+                self.sequential_args += 1;
+            }
         }
         if let Some(heap) = &mut self.heap {
             heap.push(segment);
@@ -2796,6 +2827,81 @@ extern crate alloc;
 
 #[cfg(test)]
 mod tests {
+
+    /// The accumulated `sequential_args` must equal the walk it replaced.
+    ///
+    /// This is the whole risk of the change: a field filled at push time and a
+    /// function that computes the same thing can drift apart silently, and the
+    /// only symptom would be printf reading the wrong number of varargs — which
+    /// is memory-unsafe, not merely wrong. So the two are compared directly over
+    /// a spread of formats rather than trusting one to imply the other.
+    #[test]
+    fn sequential_args_matches_the_walk() {
+        let formats: &[&[u8]] = &[
+            b"",
+            b"no conversions at all",
+            b"%s",
+            b"%s %s",
+            b"%s %s %s %s",
+            b"%d %s %u %x",
+            b"%s %s %d %lu",
+            b"%s=%s %s=%s",
+            // Width and precision that consume their own arguments.
+            b"%*d",
+            b"%.*f",
+            b"%*.*g",
+            b"%*s %d %.*e",
+            // Conversions that consume no value argument at all.
+            b"%%",
+            b"100%% done",
+            b"%n",
+            // Mixed, including a literal run either side.
+            b"prefix %s middle %*d suffix",
+            // Past the inline/heap boundary so the heap path is covered too.
+            b"%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",
+        ];
+
+        for fmt in formats {
+            let segments = parse_format_string(fmt);
+            // The positional path still walks, so the field is only claimed to
+            // match for the sequential case.
+            if segments.any_positional() {
+                continue;
+            }
+            let walked = count_printf_args_sequential(segments.as_slice());
+            let accumulated = count_printf_args_of(&segments);
+            assert_eq!(
+                accumulated,
+                walked,
+                "format {:?}: accumulated {accumulated} but the walk says {walked}",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    /// Positional formats must still take the walk, not the field.
+    ///
+    /// Their count is the highest referenced position rather than a running
+    /// total — `%2$s` alone needs two arguments — so accumulating would
+    /// undercount and printf would read too few varargs.
+    #[test]
+    fn positional_formats_do_not_use_the_accumulated_count() {
+        for fmt in [&b"%2$s"[..], &b"%3$d %1$s"[..], &b"%*2$d"[..]] {
+            let segments = parse_format_string(fmt);
+            assert!(
+                segments.any_positional(),
+                "format {:?} should be flagged positional",
+                String::from_utf8_lossy(fmt)
+            );
+            let expected = count_printf_args(segments.as_slice());
+            assert_eq!(
+                count_printf_args_of(&segments),
+                expected,
+                "positional format {:?} must use the plan, not the running total",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
     use super::*;
 
     // `FormatSegments::new` initialises an eight-slot inline array on every
