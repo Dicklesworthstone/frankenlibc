@@ -237,6 +237,19 @@ pub(crate) unsafe fn strict_decimal_int_format_count(
                     kinds[fields] = c;
                     i += 2;
                 }
+                // `%f` writes a `float *`; `%lf` writes a `double *`. They are
+                // recorded as DIFFERENT kinds because the destination width
+                // differs — treating them alike would write eight bytes into a
+                // four-byte slot, which is the shape of a bug this repo has
+                // taken down a test binary with twice.
+                b'f' => {
+                    kinds[fields] = b'f';
+                    i += 2;
+                }
+                b'l' if *f.add(i + 2) == b'f' => {
+                    kinds[fields] = b'F';
+                    i += 3;
+                }
                 b'[' => {
                     // Exactly `%[^X]`, the one scanset shape held inline. The
                     // grammar exclusions match `strict_single_negated_scanset`:
@@ -536,6 +549,56 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
             }
             // SAFETY: the byte just read was the separator, not the terminator.
             p = unsafe { p.add(1) };
+        }
+        if kinds[index] == b'f' || kinds[index] == b'F' {
+            // The engine's own float scanner, reached through
+            // `scan_default_float`, so the grammar — hex floats, inf/nan,
+            // subnormals, the sign rules — has exactly one implementation.
+            //
+            // It needs a SLICE, and the fast paths otherwise walk raw pointers,
+            // so the remaining length is measured here. That is one pass over a
+            // short tail against a conversion that costs on the order of 1400
+            // instructions, and it is only paid by formats that actually
+            // contain a float.
+            let mut tail = p;
+            // SAFETY: the input is NUL-terminated, so this stops.
+            while unsafe { *tail } != 0 {
+                tail = unsafe { tail.add(1) };
+            }
+            let remaining = tail as usize - p as usize;
+            // SAFETY: `p` points at `remaining` readable bytes before the NUL.
+            let slice = unsafe { std::slice::from_raw_parts(p, remaining) };
+
+            // EOF versus a matching failure has to be decided here: the engine
+            // returns `None` for both. Nothing but whitespace left is an INPUT
+            // failure; anything else is a MATCH failure.
+            let mut probe = 0usize;
+            while probe < remaining && scanf_ascii_space(slice[probe]) {
+                probe += 1;
+            }
+            let Some((value, next)) = frankenlibc_core::stdio::scanf::scan_default_float(slice, 0)
+            else {
+                return StrictDecimalIntsScan {
+                    count: if probe == remaining && count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
+                    input_failure: probe == remaining && count == 0,
+                    values,
+                };
+            };
+            if kinds[index] == b'F' {
+                // SAFETY: `%lf` was parsed, so the caller passed a `double *`.
+                unsafe { *destinations[index].cast::<f64>() = value };
+            } else {
+                // SAFETY: `%f` was parsed, so the caller passed a `float *`.
+                unsafe { *destinations[index].cast::<f32>() = value as f32 };
+            }
+            // SAFETY: `next` is a byte offset the engine reached inside `slice`.
+            p = unsafe { p.add(next) };
+            count += 1;
+            continue;
         }
         if kinds[index] == b'[' {
             // SAFETY: the probe accepted a `%[^X]` here, so the caller passed a

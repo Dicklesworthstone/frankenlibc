@@ -430,6 +430,109 @@ fn a_lone_string_or_scanset_still_takes_its_own_fast_path() {
     }
 }
 
+/// Float FIELDS of a list — `"%s %d %lf"` is the shape of a whole log record.
+///
+/// The float grammar is not reimplemented: the fast path calls the engine's own
+/// `scan_default_float`. What IS new here is the boundary handling — where the
+/// conversion stops, and whether an exhausted input reports EOF or a matching
+/// failure — so the cases below lean on hex floats, infinities, NaN and
+/// exponents to check that the shared scanner is really being reached, and on
+/// empty and non-numeric tails to check the boundary.
+#[test]
+fn float_fields_agree_with_host_glibc() {
+    let glibc: SscanfFn = unsafe {
+        host_fn(
+            c"__isoc23_sscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_sscanf as *const (),
+        )
+    };
+
+    let scan = |f: SscanfFn, input: &str, format: &str| -> (c_int, String, c_int, u64, u32) {
+        let cin = CString::new(input).expect("input has NUL");
+        let cfmt = CString::new(format).expect("format has NUL");
+        let mut text = [0xAAu8; 64];
+        let mut i0: c_int = -777;
+        let mut d0: f64 = -7.0;
+        let mut f0: f32 = -7.0;
+        // SAFETY: each format takes the destinations supplied for it, in order,
+        // and `%lf` gets a `double *` where `%f` gets a `float *`.
+        let rc = unsafe {
+            match format {
+                "%s %d %lf" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    text.as_mut_ptr().cast::<c_char>(),
+                    &mut i0 as *mut c_int,
+                    &mut d0 as *mut f64,
+                ),
+                "%lf" | "%lf %lf" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    &mut d0 as *mut f64,
+                    &mut f0 as *mut f32,
+                ),
+                "%f %f" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    &mut f0 as *mut f32,
+                    &mut f0 as *mut f32,
+                ),
+                "%d %lf" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    &mut i0 as *mut c_int,
+                    &mut d0 as *mut f64,
+                ),
+                other => panic!("unhandled format {other:?}"),
+            }
+        };
+        let end = text.iter().position(|&x| x == 0).unwrap_or(0);
+        (
+            rc,
+            String::from_utf8_lossy(&text[..end]).into_owned(),
+            i0,
+            // Bit patterns, not values: a NaN compares unequal to itself and a
+            // -0.0 compares equal to 0.0, so a value comparison would pass on
+            // divergences that matter.
+            d0.to_bits(),
+            f0.to_bits(),
+        )
+    };
+
+    let cases: &[(&str, &str)] = &[
+        ("tag 7 3.5", "%s %d %lf"),
+        ("tag 7 -0.0", "%s %d %lf"),
+        ("tag 7 1e10", "%s %d %lf"),
+        ("tag 7 0x1p3", "%s %d %lf"),
+        ("tag 7 inf", "%s %d %lf"),
+        ("tag 7 -infinity", "%s %d %lf"),
+        ("tag 7 nan", "%s %d %lf"),
+        ("tag 7 notanumber", "%s %d %lf"),
+        ("tag 7", "%s %d %lf"),
+        ("tag 7 ", "%s %d %lf"),
+        ("1 2.5", "%d %lf"),
+        ("1 .5", "%d %lf"),
+        ("1", "%d %lf"),
+        ("", "%d %lf"),
+        ("   ", "%d %lf"),
+    ];
+
+    let mut compared = 0usize;
+    for (input, format) in cases {
+        let want = scan(glibc, input, format);
+        for (name, arm) in fl_arms() {
+            let got = scan(arm, input, format);
+            assert_eq!(
+                got, want,
+                "{name}({input:?}, {format:?}) produced {got:?}, host glibc produced {want:?}"
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, cases.len() * 3, "the loop skipped cases");
+    println!("compared {compared} float-field arms across {} cases", cases.len());
+}
+
 #[test]
 fn the_string_fast_path_agrees_with_host_glibc() {
     let glibc: SscanfFn = unsafe {
