@@ -85,9 +85,23 @@ static ALLOCATOR: Counting = Counting;
 /// window exclusive, which is what a global counter requires.
 static COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Take the counting lock for the WHOLE test body, warm-up included.
+fn serialised() -> std::sync::MutexGuard<'static, ()> {
+    COUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Run `f` with the counter armed and return how many allocations it made.
+///
+/// The caller must already hold [`COUNT_LOCK`] — see `serialised()`. Locking
+/// HERE is not enough and was tried: each test also allocates OUTSIDE the armed
+/// window (warming lazy initialisation, opening a stream), and those unlocked
+/// allocations landed inside a sibling's armed window, so the gate still failed
+/// intermittently in parallel mode. The lock has to span the whole test body.
 fn count_allocs(f: impl FnOnce()) -> usize {
-    let _serialised = COUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    debug_assert!(
+        COUNT_LOCK.try_lock().is_err(),
+        "count_allocs called without holding COUNT_LOCK"
+    );
     ALLOCS.store(0, Ordering::Relaxed);
     ARMED.store(true, Ordering::Relaxed);
     f();
@@ -139,10 +153,17 @@ const ALLOCS_PER_ENGINE_CALL: usize = 1;
 
 #[test]
 fn engine_path_allocation_count_is_bounded() {
+    let _serialised = serialised();
     for (input, format) in [
         ("hello world", "%s%n"),
         ("key=value", "%[^=]%n"),
         ("3.5", "%f%n"),
+        // A LONGER format: every literal byte is its own directive, so this is
+        // 8 of them. It exists to price the inline-capacity choice — if
+        // SCAN_DIRECTIVES_INLINE is set below what ordinary formats need, this
+        // spills to the heap and the allocation shows up here rather than in a
+        // benchmark nobody re-runs.
+        ("id=42", "id=%d%n"),
     ] {
         let n = allocs_for(input, format);
         println!("sscanf({input:?}, {format:?}) allocations={n}");
@@ -164,6 +185,7 @@ fn engine_path_allocation_count_is_bounded() {
 /// the only symptom would be a slightly worse benchmark nobody re-ran.
 #[test]
 fn decimal_int_fast_path_allocates_nothing() {
+    let _serialised = serialised();
     for (input, format) in [("42", "%d"), ("1 2", "%d %d"), ("7 8 9", "%d %d %d")] {
         let cin = CString::new(input).unwrap();
         let cfmt = CString::new(format).unwrap();
@@ -207,6 +229,7 @@ fn decimal_int_fast_path_allocates_nothing() {
 /// meaningless.
 #[test]
 fn the_counter_observes_a_known_allocation() {
+    let _serialised = serialised();
     let n = count_allocs(|| {
         let v: Vec<u8> = Vec::with_capacity(4096);
         std::hint::black_box(&v);
@@ -223,6 +246,7 @@ fn the_counter_observes_a_known_allocation() {
 /// so a warmed thread allocates nothing, which is what glibc does.
 #[test]
 fn stream_scanf_reuses_its_read_buffer() {
+    let _serialised = serialised();
     use std::io::Write;
 
     let dir = std::env::temp_dir().join("fl_scanf_alloc_count");

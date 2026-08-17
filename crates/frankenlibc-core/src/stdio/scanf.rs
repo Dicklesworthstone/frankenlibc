@@ -812,9 +812,24 @@ pub type ScanValues = InlineVec<ScanValue, SCAN_VALUES_INLINE>;
 
 /// Inline capacity for one format's directives.
 ///
-/// Eight covers ordinary formats: each literal byte, whitespace run and
-/// conversion is one directive, so `"%d %d"` is three and `"key=%s"` is five.
-pub const SCAN_DIRECTIVES_INLINE: usize = 8;
+/// FOUR, measured — not chosen for coverage. Eight was the intuitive pick, since
+/// every literal byte is its own directive and `"key=%s"` is five. But the slots
+/// are initialised on EVERY call, and instruction counts (which, unlike cycles,
+/// are immune to the code-layout differences between two builds) say that cost
+/// dominates the allocation it was meant to avoid:
+///
+///   case          base      inline=8      inline=4
+///   string_token  252.58M   290.18M       224.45M
+///   key_value     373.79M   419.12M       353.53M
+///   long_literal  278.61M   336.25M       270.49M
+///   single_int    49.91M    49.91M        49.86M   (control, engine not reached)
+///
+/// `long_literal` (`"id=%d"`, five directives) is the case that SPILLS to the
+/// heap at four, and it is still cheaper there than at eight — the spilled
+/// allocation costs less than initialising four more slots on every call. At
+/// eight the whole engine path was a 12-21% instruction REGRESSION against the
+/// pre-change baseline; at four it is a 3-11% improvement.
+pub const SCAN_DIRECTIVES_INLINE: usize = 4;
 
 /// One format's parsed directives.
 pub type ScanDirectives = InlineVec<ScanDirective, SCAN_DIRECTIVES_INLINE>;
