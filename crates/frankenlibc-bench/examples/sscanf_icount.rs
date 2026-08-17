@@ -166,6 +166,10 @@ fn main() {
         "string_then_int" => ("hello 42", "%s %d"),
         // A whole log/CSV record, and the last certified loss.
         "mixed_record" => ("tag 7 3.5", "%s %d %lf"),
+        // "%lx" declines every fast path, so it prices what a DECLINING format
+        // pays for probes it cannot use. It read 1.30x of glibc on the certified
+        // wall-clock run against an UNDECIDABLE 0.999 earlier the same day.
+        "long_hex" => ("deadbeefcafe", "%lx"),
         other => panic!("unknown case {other:?}"),
     };
 
@@ -178,6 +182,7 @@ fn main() {
     let mut int_d: c_int = 0;
     let mut flt: f32 = 0.0;
     let mut dbl: f64 = 0.0;
+    let mut long_a: libc::c_long = 0;
     let mut buf_a = [0u8; 128];
     let mut buf_b = [0u8; 128];
 
@@ -194,6 +199,7 @@ fn main() {
                 "single_int" | "long_literal" | "float_only" => {
                     vec![(&mut int_a as *mut c_int).cast()]
                 }
+                "long_hex" => vec![(&mut long_a as *mut libc::c_long).cast()],
                 "two_ints" => vec![
                     (&mut int_a as *mut c_int).cast(),
                     (&mut int_b as *mut c_int).cast(),
@@ -272,6 +278,11 @@ fn main() {
                     buf_a.as_mut_ptr().cast::<c_char>(),
                     &mut int_a as *mut c_int,
                 ),
+                "long_hex" => sscanf(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    &mut long_a as *mut libc::c_long,
+                ),
                 "mixed_record" => sscanf(
                     std::hint::black_box(cin.as_ptr()),
                     std::hint::black_box(cfmt.as_ptr()),
@@ -313,7 +324,8 @@ fn main() {
             .wrapping_add(int_a as u64)
             .wrapping_add(int_b as u64)
             .wrapping_add(flt.to_bits() as u64)
-            .wrapping_add(dbl.to_bits());
+            .wrapping_add(dbl.to_bits())
+            .wrapping_add(long_a as u64);
     }
 
     // The loader mode is PRINTED because a row measured without it is not a
