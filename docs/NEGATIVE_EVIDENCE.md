@@ -31066,3 +31066,41 @@ What this changes, and what it does not:
   What this does supply is a tool that works on it: the same three-arm branch-sim comparison, which is
   deterministic and needs no quiet window.
 - Green after the revert: `malloc_abi_test` 75, binning gate 5.
+
+## 2026-08-17 (BlackThrush) — bd-js47fq RESOLVED: the 6.58x -> 6.88x "regression" is LAYOUT, not code. The allocator is byte-identical in what it executes
+
+- **RESULT CLASS: loss/baseline (resolution).** Closes the most concrete open item I owned, and the
+  answer is that there was no allocator defect to find.
+- **THE ALLOCATOR SOURCE DID NOT CHANGE ACROSS THE WINDOW.** Between the two binaries
+  (`486d2c320`-era f8db5310 and `cf5d8b04a`-era 5865992d): `crates/frankenlibc-core/src/malloc/` has
+  a **completely empty diff**, and `malloc_abi.rs` has 114 insertions / 6 deletions which are ENTIRELY
+  additive off-hot-path functions — `per_size_class_snapshot`, `per_size_class_counts`,
+  `known_remaining_for_tests` — plus the `malloc_info` fputs change. Nothing on the malloc/free path
+  was touched.
+- **AND THE EXECUTION MATCHES THE SOURCE, counted deterministically.** The two arms differing by
+  exactly that delta measured 17,074,306 against 17,074,616 instructions (+0.002%) and 50,189 against
+  50,227 conditional mispredicts (+0.08%) over 20,000 pairs, with I1/D1/LL misses identical. **The
+  allocator executes the same work, in the same shape, in both binaries.**
+- **SO A CLEAN, REPRODUCIBLE 4.6% WALL SEPARATION EXISTS BETWEEN TWO BINARIES WHOSE ALLOCATOR CODE IS
+  IDENTICAL.** That measurement was not wrong — verified distinct shas, stable loadavg 8.91-9.00, 8 of
+  8 paired groups, all 32 nulls in tolerance. It simply was not measuring what it appeared to. The
+  cause is binary layout: unrelated changes elsewhere in the crate shift alignment, and yesterday's
+  branch-sim result showed a **2-instruction** edit moving conditional mispredicts by 78%. A
+  whole-crate delta can obviously do the same.
+- **THE NUMBER THIS GIVES US IS THE USEFUL PART: ~4.6% IS THE LAYOUT-NOISE FLOOR for malloc_free on
+  this host.** Two binaries, identical allocator code, differ by that much in wall ratio under stable
+  conditions. **Therefore no wall-clock allocator lever below roughly 5% is resolvable here**, however
+  clean its nulls, CIs and separation look — those diagnostics are all within-invocation and cannot
+  see a layout difference between two builds any more than they could see the between-run shift or
+  the warm-up.
+- **PRACTICAL CONSEQUENCE, and it is a standing rule now.** Malloc levers must be validated by counted
+  mechanisms — instructions AND branch mispredicts, `callgrind --branch-sim=yes` — unless the effect
+  exceeds the layout floor. That is not a preference: this session produced a 2-instruction "win" that
+  was a 30-40 cycle loss, and a 4.6% "regression" that was no code change at all. **Both were
+  invisible to wall clock done carefully, and both were settled by counting in minutes without a quiet
+  window.**
+- **WHAT I GOT WRONG ALONG THE WAY, recorded because the sequence matters.** I banked this as a
+  regression, then suspected my own commits, then exonerated them on instruction count, then found I
+  had introduced a real one, and only now established that the original was never a code change. The
+  wall measurement that started it was performed correctly at every step. **Careful measurement of the
+  wrong quantity is still the wrong answer.**
