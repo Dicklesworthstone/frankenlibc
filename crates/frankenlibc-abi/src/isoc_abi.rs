@@ -70,31 +70,40 @@ pub unsafe extern "C" fn __isoc23_sscanf(
     // all. Measured by instruction count on `sscanf("42", "%d")`: 250
     // instructions per call through `sscanf`, 864 through this alias.
     //
-    // The prologue is `sscanf`'s VERBATIM, membrane decision included — see the
-    // note on `__isoc99_sscanf`.
-    if s.is_null() || format.is_null() {
-        return -1;
-    }
-    let (_, decision) = crate::runtime_policy::decide(
-        frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-        s as usize,
-        0,
-        false,
-        false,
-        0,
-    );
-    if matches!(decision.action, frankenlibc_membrane::runtime_math::MembraneAction::Deny) {
-        crate::runtime_policy::observe(
-            frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-            decision.profile,
-            15,
-            true,
-        );
-        return -1;
-    }
-    if crate::runtime_policy::strict_passthrough_active()
+    // ORDER MATTERS, and it is not `sscanf`'s. The membrane decision comes
+    // AFTER the format test, not before it, because the fallback below delegates
+    // to `vsscanf` — which runs its own `decide`. Deciding here as well billed
+    // every engine-path call two membrane traversals, and the untouched
+    // `string_token` control caught it: 132.6M instructions per 200k calls
+    // became 147.1M, +72 per call, for a decision that was then made again.
+    // Gating on the format first keeps the fast path's policy check exactly
+    // `sscanf`'s while leaving the delegating path with the single decision it
+    // always had. (The same double-membrane shape cost `reallocarray` 2.05x.)
+    if !s.is_null()
+        && !format.is_null()
+        && crate::runtime_policy::strict_passthrough_active()
         && let Some(fields) = unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) }
     {
+        let (_, decision) = crate::runtime_policy::decide(
+            frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+            s as usize,
+            0,
+            false,
+            false,
+            0,
+        );
+        if matches!(
+            decision.action,
+            frankenlibc_membrane::runtime_math::MembraneAction::Deny
+        ) {
+            crate::runtime_policy::observe(
+                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                decision.profile,
+                15,
+                true,
+            );
+            return -1;
+        }
         // SAFETY: the format is exactly `fields` decimal-int conversions, so the
         // caller passed that many `int *`. `count` already carries EOF as -1.
         let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields) };

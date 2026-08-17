@@ -29,85 +29,19 @@
 //! The fast-path case is asserted at zero, which is the standing property that
 //! makes those cases the least bad in the family.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::ffi::{CString, c_char, c_int};
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 
-/// Allocation counter, armed only around the measured call.
-///
-/// Arming matters: a test binary allocates constantly (formatting, panics,
-/// harness bookkeeping), so an unarmed counter measures the harness rather than
-/// the call under test.
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
-static ARMED: AtomicBool = AtomicBool::new(false);
-
-struct Counting;
-
-// SAFETY: every method forwards to `System` unchanged; the counter is
-// observation only and never changes which pointer is returned.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: forwarding the caller's layout to the system allocator.
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: forwarding the caller's pointer and layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: forwarding the caller's pointer, layout and new size.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: forwarding the caller's layout.
-        unsafe { System.alloc_zeroed(layout) }
-    }
-}
+#[path = "common/alloc_counter.rs"]
+mod alloc_counter;
+use alloc_counter::count_allocs;
 
 #[global_allocator]
-static ALLOCATOR: Counting = Counting;
+static ALLOCATOR: alloc_counter::Counting = alloc_counter::Counting;
 
-/// Serialises the counting window.
-///
-/// `ARMED` and `ALLOCS` are PROCESS-global — a `GlobalAlloc` sees every thread —
-/// so with libtest running these tests in parallel, one test's armed window
-/// counted its siblings' allocations and the gate failed intermittently
-/// (observed: 2 of 4 red on one run, green on the next two). The lock makes the
-/// window exclusive, which is what a global counter requires.
-static COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Take the counting lock for the WHOLE test body, warm-up included.
-fn serialised() -> std::sync::MutexGuard<'static, ()> {
-    COUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Run `f` with the counter armed and return how many allocations it made.
-///
-/// The caller must already hold [`COUNT_LOCK`] — see `serialised()`. Locking
-/// HERE is not enough and was tried: each test also allocates OUTSIDE the armed
-/// window (warming lazy initialisation, opening a stream), and those unlocked
-/// allocations landed inside a sibling's armed window, so the gate still failed
-/// intermittently in parallel mode. The lock has to span the whole test body.
-fn count_allocs(f: impl FnOnce()) -> usize {
-    debug_assert!(
-        COUNT_LOCK.try_lock().is_err(),
-        "count_allocs called without holding COUNT_LOCK"
-    );
-    ALLOCS.store(0, Ordering::Relaxed);
-    ARMED.store(true, Ordering::Relaxed);
-    f();
-    ARMED.store(false, Ordering::Relaxed);
-    ALLOCS.load(Ordering::Relaxed)
-}
+// The counting allocator lives in `common/alloc_counter.rs`: it counts only the
+// ARMING THREAD's allocations. A process-global flag plus a mutex was tried
+// twice here and neither held — see that module for what libtest's own reporting
+// thread does to an armed window.
 
 /// Allocations one `sscanf` performs, with the CString setup left outside the
 /// armed window so only the call itself is counted.
@@ -153,7 +87,6 @@ const ALLOCS_PER_ENGINE_CALL: usize = 1;
 
 #[test]
 fn engine_path_allocation_count_is_bounded() {
-    let _serialised = serialised();
     for (input, format) in [
         ("hello world", "%s%n"),
         ("key=value", "%[^=]%n"),
@@ -185,7 +118,6 @@ fn engine_path_allocation_count_is_bounded() {
 /// the only symptom would be a slightly worse benchmark nobody re-ran.
 #[test]
 fn decimal_int_fast_path_allocates_nothing() {
-    let _serialised = serialised();
     for (input, format) in [("42", "%d"), ("1 2", "%d %d"), ("7 8 9", "%d %d %d")] {
         let cin = CString::new(input).unwrap();
         let cfmt = CString::new(format).unwrap();
@@ -229,7 +161,6 @@ fn decimal_int_fast_path_allocates_nothing() {
 /// meaningless.
 #[test]
 fn the_counter_observes_a_known_allocation() {
-    let _serialised = serialised();
     let n = count_allocs(|| {
         let v: Vec<u8> = Vec::with_capacity(4096);
         std::hint::black_box(&v);
@@ -246,7 +177,6 @@ fn the_counter_observes_a_known_allocation() {
 /// so a warmed thread allocates nothing, which is what glibc does.
 #[test]
 fn stream_scanf_reuses_its_read_buffer() {
-    let _serialised = serialised();
     use std::io::Write;
 
     let dir = std::env::temp_dir().join("fl_scanf_alloc_count");

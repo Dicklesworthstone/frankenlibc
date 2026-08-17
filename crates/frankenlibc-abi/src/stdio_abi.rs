@@ -12039,20 +12039,19 @@ pub unsafe extern "C" fn __isoc99_sscanf(
     // optimisation applied there missed compiled C entirely.
     //
     // SAFETY: `format` is non-null and NUL-terminated under the scanf contract.
-    // The prologue is `sscanf`'s VERBATIM, membrane decision included: taking the
-    // fast path without `decide` would let this entry point serve a request the
-    // policy had denied, and would drop the observation `sscanf` records.
-    if s.is_null() || format.is_null() {
-        return -1;
-    }
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return -1;
-    }
-    if runtime_policy::strict_passthrough_active()
+    // The format test comes BEFORE the membrane decision — see the note on
+    // `__isoc23_sscanf`: the fallback delegates to `vsscanf`, which decides for
+    // itself, so deciding here too would bill the engine path twice.
+    if !s.is_null()
+        && !format.is_null()
+        && runtime_policy::strict_passthrough_active()
         && let Some(fields) = unsafe { strict_decimal_int_format_count(format) }
     {
+        let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        }
         // SAFETY: the format is exactly `fields` decimal-int conversions, so the
         // caller passed that many `int *`. `count` already carries EOF as -1.
         let fast = unsafe { strict_scan_decimal_ints(s, fields) };

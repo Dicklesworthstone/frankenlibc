@@ -37,13 +37,18 @@
 //!    compared against the HOST `__isoc23_sscanf` through `dlsym`, on return
 //!    code and on every value the return code says was written.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::ffi::{CString, c_char, c_int};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 use dlsym_oracle::host_fn;
+
+#[path = "common/alloc_counter.rs"]
+mod alloc_counter;
+use alloc_counter::count_allocs;
+
+#[global_allocator]
+static ALLOCATOR: alloc_counter::Counting = alloc_counter::Counting;
 
 type SscanfFn = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
 
@@ -180,58 +185,6 @@ fn the_aliases_agree_with_host_glibc() {
 // Routing proof
 // ---------------------------------------------------------------------------
 
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
-static ARMED: AtomicBool = AtomicBool::new(false);
-
-struct Counting;
-
-// SAFETY: every method forwards to `System` unchanged; the counter observes and
-// never changes which pointer is returned.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: forwarding the caller's layout.
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: forwarding the caller's pointer and layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: forwarding the caller's pointer, layout and new size.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: forwarding the caller's layout.
-        unsafe { System.alloc_zeroed(layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: Counting = Counting;
-
-/// `ARMED`/`ALLOCS` are process-global — a `GlobalAlloc` sees every thread — so
-/// the counting window has to be exclusive against libtest's parallelism, and
-/// the lock has to span the WHOLE test body: each test also allocates outside
-/// the armed window (warm-up, formatting), and those land in a sibling's window.
-static COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn count_allocs(f: impl FnOnce()) -> usize {
-    ALLOCS.store(0, Ordering::Relaxed);
-    ARMED.store(true, Ordering::Relaxed);
-    f();
-    ARMED.store(false, Ordering::Relaxed);
-    ALLOCS.load(Ordering::Relaxed)
-}
-
 /// Allocations one call makes, with setup left outside the armed window.
 fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
     let cin = CString::new(input).expect("input has NUL");
@@ -267,8 +220,6 @@ fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
 
 #[test]
 fn the_aliases_take_the_decimal_int_fast_path() {
-    let _serialised = COUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
     // POSITIVE CONTROL first. `strict_decimal_int_format_count` accepts at most
     // three `%d` fields, so a four-field format cannot be served by the fast path
     // through ANY arm and must reach the engine — whose directive list spills
