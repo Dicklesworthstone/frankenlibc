@@ -1,0 +1,12 @@
+PIN_QUIETEST requested_width=8 action=narrowed selected_cpus=16+19+23+25+26+27+30+60 selected_busy=0.000+0.000+0.000+0.000+0.000+0.000+0.000+0.005 selected_distinct_cores=8 sibling_sharing=false allowed_before=64 sample_window_ms=2000 busy_ranking=[16:0.000,19:0.000,23:0.000,25:0.000,26:0.000,27:0.000,30:0.000,57:0.000,58:0.000,60:0.005,7:0.005,24:0.005,56:0.005,59:0.005,63:0.005,4:0.005,33:0.005,29:0.010,61:0.010,62:0.010,2:0.010,3:0.010,6:0.010,46:0.010,28:0.015,44:0.015,45:0.015,13:0.020,22:0.020,42:0.020,1:0.020,12:0.020,31:0.025,41:0.025,32:0.025,35:0.030,37:0.030,53:0.030,0:0.032,11:0.035,36:0.035,47:0.040,43:0.040,15:0.040,10:0.045,38:0.045,5:0.045,14:0.050,34:0.055,49:0.060,21:0.080,39:0.090,40:0.091,8:0.095,9:0.116,17:0.116,20:0.204,52:0.373,50:0.395,18:0.580,48:1.000,51:1.000,54:1.000,55:1.000]
+BENCH_ELF_OBJECT path=/data/projects/frankenlibc/target/release-perf/examples/incumbent_coverage_ab bytes=7085856 sha256=08f8dcaa5fc6251d8ab8f3ad1055ffb4f1f6ee7f0ecd6af239d0595ba90c9005
+HOST_IDENTITY hostname=thinkstation1 loadavg=12.05,12.05,9.09 pid=3439920
+FL_LOAD_MODE symbol=vsscanf deepbind=true models=ld_preload_deployment
+INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6 bytes=2326088 sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09
+FL_OBJECT path=/data/projects/frankenlibc/target/release-perf/libfrankenlibc_abi.so bytes=40609312 sha256=ca78b816dbb43a6a9a2e0e556e6eecb248370d8bb39a6bfc05539cf643d321d9
+INCUMBENT_LINKAGE direct_process_link symbol=vsscanf
+FL_LINKAGE explicit_dlopen_local symbol=vsscanf
+ARM_DISTINCT symbol=vsscanf incumbent_address=0x79da4608f620 fl_address=0x79da34f12a60
+INCUMBENT_COVERAGE_CONFORMANCE symbol=sscanf comparisons=64 mismatches=0 compared=return_value_and_full_destination_block covers=int,width,suppression,scanset,string,char,float,hexfloat,octal,autobase,percent_n,length_modifiers,eof,match_failure verdict=pass
+THREADS_OBSERVED symbol=sscanf phase=pre_guard count=1
+INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error=host-wide benchmark did not obtain 5 consecutive clear samples within 300000 ms after 300 samples; last CPUs above 20.0% busy: cpu23=85.0%

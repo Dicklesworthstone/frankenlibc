@@ -30897,3 +30897,52 @@ What this changes, and what it does not:
   sequence, which is suggestively between old and HEAD and is NOT evidence. Redo with three verified
   distinct shas, a discard run, and a loadavg re-checked AFTER the sequence as well as before —
   tracked on bd-js47fq.
+
+## 2026-08-17 — CAMPAIGN WIN: the `vsscanf` arm re-certified on wall clock — 11 losses of 12 becomes 10 WINS of 12
+
+- result_class=campaign-win. legacy_incumbent=host-glibc. incumbent_provenance=uninterposed-host-link.
+  same_invocation=true. bench_elf_sha256=08f8dcaa5fc6251d8ab8f3ad1055ffb4f1f6ee7f0ecd6af239d0595ba90c9005
+  (in-process self-report). Incumbent object sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09
+  (`/usr/lib/x86_64-linux-gnu/libc.so.6`, `INCUMBENT_LINKAGE direct_process_link symbol=vsscanf`); fl
+  object sha256=ca78b816dbb43a6a9a2e0e556e6eecb248370d8bb39a6bfc05539cf643d321d9, deepbind=true,
+  `FL_LOAD_MODE symbol=vsscanf`. Raw log
+  `tests/artifacts/perf/bd-2g7oyh-vsscanf-recert-2026-08-17-run1.log`.
+- **HEADLINE, one clause with what the contract needs:** `single_int` incumbent_ratio=0.357621
+  incumbent_bootstrap_median_ci=[0.352120,0.361706] null_bootstrap_median_ci=[0.994316,1.002112]
+  (fl-vs-fl A/A; the glibc-vs-glibc A/A is [0.993810,1.010825]), same_invocation=true, 36 samples per
+  case at 600,000 reps per arm, clears_2x_null=true, nulls_hold=true.
+- Both A/A controls are same-invocation with the effect: fl-vs-fl null_median_ratio 0.999749 with bootstrap median CI [0.994316,1.002112], and glibc-vs-glibc null_median_ratio 1.002405 with bootstrap median CI [0.993810,1.010825], each measured inside the run that produced the ratio above.
+- The effect itself, same paragraph for the same reason: incumbent_ratio 0.357621 with bootstrap median CI [0.352120,0.361706], same-invocation with both nulls.
+- **THE WHOLE ARM, and the comparison that matters is against this arm's OWN earlier certification**
+  (2026-08-17, 11 losses of 12, same harness, same guard, same pinning): loadavg 11.80/8.96/7.02, the
+  quietest window of the campaign, `selected_distinct_cores=8 sibling_sharing=false`.
+
+  | case | ratio | CI95 | verdict | earlier |
+  | --- | ---: | --- | --- | ---: |
+  | `scanset_only` | 0.243180 | [0.241709,0.244114] | FL_FASTER | 1.599 |
+  | `long_string` | 0.260685 | [0.260052,0.263171] | FL_FASTER | 1.883 |
+  | `dotted_quad` | 0.285884 | [0.275645,0.287529] | FL_FASTER | 2.747 |
+  | `string_token` | 0.311377 | [0.300523,0.313296] | FL_FASTER | 2.032 |
+  | `key_value` | 0.311883 | [0.306770,0.314698] | FL_FASTER | 1.679 |
+  | `string_then_int` | 0.350619 | [0.348945,0.351609] | FL_FASTER | 1.639 |
+  | `two_ints` | 0.351476 | [0.350051,0.352328] | FL_FASTER | 1.453 |
+  | `single_int` | 0.357621 | [0.352120,0.361706] | FL_FASTER | 1.437 |
+  | `two_strings` | 0.366720 | [0.364922,0.373581] | FL_FASTER | 2.021 |
+  | `mixed_record` | 0.401926 | [0.393412,0.407650] | FL_FASTER | 1.541 |
+  | `float_only` | 1.167422 | [1.152673,1.185271] | FL_SLOWER | 1.120 |
+  | `long_hex` | 1.248950 | [1.234270,1.265566] | FL_SLOWER | 0.999 |
+
+- **EVERY case clears 2x its null and every null held; across all 24 A/A controls the extremes were
+  0.995525 and 1.006623.** Conformance in the same run: 64 comparisons, 0 mismatches, return value and
+  full destination block.
+- **THE TWO REMAINING LOSSES ARE THE SHAPES THE FAST PATHS DECLINE BY DESIGN.** A lone `%f` is declined
+  so the dedicated engine path serves it, and `%lx` is not a supported field kind at all — both still
+  run the engine, so this row measures the engine on those two and the fast paths on the other ten.
+  `long_hex` moved from 0.999 (undecidable) to a 1.249x loss, which is a real regression on the engine
+  path and is NOT explained by this change; it is the first thing to look at next.
+- **REPRODUCIBILITY: NOT ESTABLISHED FOR THIS ROW.** A second run was launched immediately and the
+  exclusivity guard BLOCKED it — no 5 consecutive clear samples — because the first run plus another
+  project's `rustc` had raised the machine. The row above stands on ONE run, and the reproduction row
+  earlier today shows a systematic between-run shift of up to 15% on this instrument. The ten wins are
+  0.24x-0.40x, so a 15% shift cannot reach parity; the two losses at 1.17x and 1.25x are close enough
+  to that band that they should be treated as directional, not exact.
