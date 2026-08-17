@@ -1697,6 +1697,102 @@ fn measure(mut f: impl FnMut() -> u64) -> f64 {
     p50(&mut s)
 }
 
+/// Like [`measure`], but with an inner loop long enough to escape the timer.
+///
+/// WHY THIS EXISTS, measured rather than assumed. `measure` amortises
+/// `Instant::now()` over 64 iterations, which is ample for a 50 ns kernel and
+/// hopeless for a 2 ns one. Running the bounded `wcsnlen` arms through it
+/// produced a same-invocation A/A null — the SAME function timed twice — with
+/// ratios of 0.600 and CI half-widths near 0.4 at five of eight limits, and p50s
+/// landing on multiples of ~0.78 ns, i.e. on the timer's quantisation step
+/// rather than on the kernel's cost. A harness whose null cannot reach 1.0
+/// cannot certify anything, and the ledger's rule (an effect must clear 2x the
+/// null CI half-width) correctly refused those rows.
+///
+/// 1024 iterations per sample puts a 2 ns kernel at ~2 us per sample, three
+/// orders of magnitude over the clock read. Sample count drops so total work
+/// stays comparable.
+fn measure_precise(mut f: impl FnMut() -> u64) -> f64 {
+    for _ in 0..2000 {
+        black_box(f());
+    }
+    let mut s = Vec::new();
+    for _ in 0..200 {
+        let t = Instant::now();
+        let mut acc = 0u64;
+        for _ in 0..1024 {
+            acc = acc.wrapping_add(f());
+        }
+        black_box(acc);
+        s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / 1024.0);
+    }
+    p50(&mut s)
+}
+
+/// SHA-256 of the binary that is executing this measurement.
+///
+/// The ledger contract asks for it because a ratio is a statement about one
+/// object: a row citing a source commit says nothing about which build actually
+/// ran, and a rebuild with different codegen flags produces different numbers
+/// from identical source. `/proc/self/exe` is the object, read from inside the
+/// process that timed the arms.
+fn executing_elf_sha256() -> String {
+    use sha2::{Digest, Sha256};
+    let Ok(bytes) = std::fs::read("/proc/self/exe") else {
+        return "unavailable".to_owned();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Percentile bootstrap of the ratio of medians over PAIRED observations.
+///
+/// Paired, not independent, because `num[i]` and `den[i]` were timed at the same
+/// alignment offset back to back: resampling them apart would break the pairing
+/// that makes the two arms comparable and would widen the interval with variance
+/// the design already controls for.
+///
+/// The PRNG is a fixed-seed LCG so a row is reproducible from its inputs. There
+/// is no cryptographic requirement here and a seeded generator means the CI does
+/// not move between two runs over the same samples.
+fn bootstrap_median_ratio_ci(num: &[f64], den: &[f64], seed: u64) -> (f64, f64) {
+    const RESAMPLES: usize = 2000;
+    let n = num.len();
+    assert_eq!(n, den.len(), "paired bootstrap needs equal-length inputs");
+    assert!(n > 0, "paired bootstrap needs at least one observation");
+
+    let mut state = seed | 1;
+    let mut ratios = Vec::with_capacity(RESAMPLES);
+    let mut a = vec![0.0f64; n];
+    let mut b = vec![0.0f64; n];
+    for _ in 0..RESAMPLES {
+        for slot in 0..n {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let idx = (state >> 33) as usize % n;
+            a[slot] = num[idx];
+            b[slot] = den[idx];
+        }
+        let denominator = p50(&mut b);
+        if denominator > 0.0 {
+            ratios.push(p50(&mut a) / denominator);
+        }
+    }
+    if ratios.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
+    ratios.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    let lo = ratios[(RESAMPLES as f64 * 0.025) as usize];
+    let hi = ratios[((RESAMPLES as f64 * 0.975) as usize).min(ratios.len() - 1)];
+    (lo, hi)
+}
+
 /// One-time identification of the machine that produced the rows below.
 ///
 /// A ratio from this harness is only quotable next to the host it ran on. rch
@@ -2172,10 +2268,15 @@ fn bench(c: &mut Criterion) {
     type WNlenFn = unsafe extern "C" fn(*const u32, usize) -> usize;
     let g_wnlen = unsafe { std::mem::transmute::<usize, WNlenFn>(host_sym(b"wcsnlen\0")) };
     let mut wbuf = vec![0x41u32; 4096];
+    let wnlen_elf = executing_elf_sha256();
     for &limit in &[4usize, 6, 8, 12, 15, 16, 23, 31] {
-        let mut old_t = 0.0;
-        let mut new_t = 0.0;
-        let mut g_t = 0.0;
+        // Per-offset samples are kept rather than summed: the bootstrap needs the
+        // individual paired observations, and a sum discards exactly the spread
+        // the confidence interval is meant to report.
+        let mut old_s: Vec<f64> = Vec::with_capacity(16);
+        let mut new_s: Vec<f64> = Vec::with_capacity(16);
+        let mut aa_s: Vec<f64> = Vec::with_capacity(16);
+        let mut g_s: Vec<f64> = Vec::with_capacity(16);
         for off in 0..16usize {
             for k in 0..limit {
                 wbuf[off + k] = 0x41 + (k as u32 % 26);
@@ -2202,19 +2303,33 @@ fn bench(c: &mut Criterion) {
                 assert_eq!(unsafe { g_wnlen(p, limit) }, pos, "glibc wcsnlen first");
                 wbuf[off + pos] = 0x41 + (pos as u32 % 26);
             }
-            old_t += measure(|| unsafe { wnlen_old(black_box(p), limit) } as u64);
-            new_t += measure(|| unsafe { wnlen_new(black_box(p), limit) } as u64);
-            g_t += measure(|| unsafe { g_wnlen(black_box(p), limit) } as u64);
+            old_s.push(measure_precise(|| unsafe { wnlen_old(black_box(p), limit) } as u64));
+            new_s.push(measure_precise(|| unsafe { wnlen_new(black_box(p), limit) } as u64));
+            // A/A WITNESS: the SAME function timed a second time, interleaved
+            // exactly like the real arms. Its ratio against `new_s` is what this
+            // harness can resolve at this sample size — an effect inside that
+            // interval is not distinguishable from re-timing one function.
+            aa_s.push(measure_precise(|| unsafe { wnlen_new(black_box(p), limit) } as u64));
+            g_s.push(measure_precise(|| unsafe { g_wnlen(black_box(p), limit) } as u64));
         }
+        let old_p50 = p50(&mut old_s.clone());
+        let new_p50 = p50(&mut new_s.clone());
+        let g_p50 = p50(&mut g_s.clone());
+        let (eff_lo, eff_hi) = bootstrap_median_ratio_ci(&new_s, &old_s, 0x5EED_0001 ^ limit as u64);
+        let (null_lo, null_hi) = bootstrap_median_ratio_ci(&aa_s, &new_s, 0x5EED_0002 ^ limit as u64);
+        let (gl_lo, gl_hi) = bootstrap_median_ratio_ci(&new_s, &g_s, 0x5EED_0003 ^ limit as u64);
         println!(
-            "WNLEN_AB lim={limit:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
-             new/old={:.3} new/glibc={:.3} old/glibc={:.3} {}",
-            old_t / 16.0,
-            new_t / 16.0,
-            g_t / 16.0,
-            new_t / old_t,
-            new_t / g_t,
-            old_t / g_t,
+            "WNLEN_AB lim={limit:<3} old_p50_ns={old_p50:.3} new_p50_ns={new_p50:.3} \
+             glibc_p50_ns={g_p50:.3} new/old={:.3} new/glibc={:.3} old/glibc={:.3} \
+             same-invocation A/A null_median_ratio={:.3} \
+             null_bootstrap_median_ci=[{null_lo:.3},{null_hi:.3}] \
+             effect_bootstrap_median_ci=[{eff_lo:.3},{eff_hi:.3}] \
+             incumbent_bootstrap_median_ci=[{gl_lo:.3},{gl_hi:.3}] \
+             bench_elf_sha256={wnlen_elf} {}",
+            new_p50 / old_p50,
+            new_p50 / g_p50,
+            old_p50 / g_p50,
+            p50(&mut aa_s.clone()) / new_p50,
             conditions_now()
         );
     }
