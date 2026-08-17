@@ -259,8 +259,6 @@ pub unsafe extern "C" fn __strncpy_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     unsafe { crate::string_abi::strncpy(dest, src, n) }
 }
 
@@ -323,8 +321,6 @@ pub unsafe extern "C" fn __stpncpy_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     unsafe { crate::string_abi::strncpy(dest, src, n) };
     let mut i = 0;
     while i < n {
@@ -784,10 +780,59 @@ pub unsafe extern "C" fn __getcwd_chk(buf: *mut c_char, len: usize, buflen: usiz
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getwd_chk(buf: *mut c_char, buflen: usize) -> *mut c_char {
-    if buflen != usize::MAX && buflen < FORTIFY_PATH_MAX {
+    // THE CHECK IS DYNAMIC, NOT STATIC (bd-917hzv, third instance of the class).
+    //
+    // fl aborted whenever `buflen < PATH_MAX`, so `getwd(buf)` with an ordinary
+    // 256-byte buffer was killed. Host glibc 2.42, fork-isolated, with a cwd of 26
+    // characters:
+    //
+    //     buflen=4096 -> ok        buflen=64 -> ok        buflen=8 -> ABORT
+    //
+    // It does not abort at 64, so the requirement is not `>= PATH_MAX`; it aborts
+    // at 8, so it is not absent either. The rule is the ACTUAL path length against
+    // `buflen` — the same static-versus-dynamic distinction that `__fgets_chk` and
+    // `__fgetws_chk` had wrong.
+    //
+    // `getwd` itself takes no bound, which is why it is deprecated and why the
+    // check cannot simply call it and inspect the result: that would already have
+    // overflowed. So resolve into a PATH_MAX scratch buffer first, compare, and
+    // only then copy — which is what makes the dynamic rule safe to implement, and
+    // is the same shape glibc uses.
+    //
+    // NOTE this deliberately does NOT test `read_chk`-style requests. Probed in the
+    // same sweep, `__read_chk` IS static — it aborts for nbytes=4096 into a claimed
+    // 64-byte buffer even when only 12 bytes are available — because `read` can
+    // genuinely fill the request, so fl's static rule there is correct and was left
+    // alone.
+    // NULL destination keeps `getwd`'s own error contract — EINVAL and NULL —
+    // rather than reaching the copy below. Caught by
+    // `getwd_chk_null_buffer_follows_getwd_error_contract`, which this change
+    // broke on its first version: `copy_nonoverlapping` into a null pointer is UB
+    // and the debug assertion fired, which is exactly what that arm is for.
+    if buf.is_null() {
+        // SAFETY: delegating the null case to the implementation that owns the
+        // contract, unchanged from before this fix.
+        return unsafe { crate::glibc_internal_abi::getwd(buf) };
+    }
+
+    let mut scratch = [0i8; FORTIFY_PATH_MAX];
+    // SAFETY: `scratch` is exactly FORTIFY_PATH_MAX bytes.
+    let got = unsafe { crate::unistd_abi::getcwd(scratch.as_mut_ptr(), FORTIFY_PATH_MAX) };
+    if got.is_null() {
+        return core::ptr::null_mut();
+    }
+    let mut len = 0usize;
+    while len < FORTIFY_PATH_MAX && scratch[len] != 0 {
+        len += 1;
+    }
+    let needed = len + 1; // including the terminator
+    if buflen != usize::MAX && needed > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { crate::glibc_internal_abi::getwd(buf) }
+    // SAFETY: `needed` bytes fit in the caller's buffer by the check above, and in
+    // `scratch` by construction.
+    unsafe { core::ptr::copy_nonoverlapping(scratch.as_ptr(), buf, needed) };
+    buf
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -929,8 +974,6 @@ pub unsafe extern "C" fn __wcsncpy_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     let mut i = 0;
     let src_units = known_remaining(src as usize).map(wide_units_from_bytes);
     while i < n {
@@ -1059,8 +1102,6 @@ pub unsafe extern "C" fn __wmemset_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     for i in 0..n {
         unsafe { *dest.add(i) = c };
     }
@@ -1264,8 +1305,6 @@ pub unsafe extern "C" fn __mbstowcs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     // fl declares `mbstowcs` as `(*mut u32, *const u8)` while this wrapper uses
     // `(*mut WcharT, *const c_char)`. Layout-identical on every target fl builds
     // for — wchar_t is 32-bit and c_char 8-bit — but the SIGNEDNESS differs, so
@@ -1284,8 +1323,6 @@ pub unsafe extern "C" fn __wcstombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     // Same signedness-only mismatch as `__mbstowcs_chk` above.
     unsafe { wcstombs(dest.cast::<u8>(), src.cast::<u32>(), n) }
 }
@@ -1306,8 +1343,6 @@ pub unsafe extern "C" fn __mbsrtowcs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     unsafe { mbsrtowcs(dest, src, n, ps) }
 }
 
@@ -1322,8 +1357,6 @@ pub unsafe extern "C" fn __wcsrtombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     unsafe { wcsrtombs(dest, src, n, ps) }
 }
 
@@ -1344,8 +1377,6 @@ pub unsafe extern "C" fn __mbsnrtowcs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     unsafe { mbsnrtowcs(dest, src, nms, n, ps) }
 }
 
@@ -1361,8 +1392,6 @@ pub unsafe extern "C" fn __wcsnrtombs_chk(
     if destlen != usize::MAX && n > destlen {
         unsafe { __chk_fail() }
     }
-    // The CHECK is in wide characters; the COPY below is in bytes.
-    let bytes = checked_wide_bytes(n);
     unsafe { wcsnrtombs(dest, src, nwc, n, ps) }
 }
 

@@ -110,6 +110,89 @@ fn probe(f: FgetsChk, path: &CStr, buflen: usize, n: c_int) -> Outcome {
     unsafe { bounded_wait(pid) }
 }
 
+/// `__getwd_chk` is the third member of the static-versus-dynamic class.
+///
+/// fl aborted whenever `buflen < PATH_MAX`, so `getwd(buf)` with an ordinary
+/// 256-byte buffer was killed. Host glibc aborts only when the ACTUAL cwd does not
+/// fit: probed fork-isolated with a 26-character cwd, `buflen = 64` runs and
+/// `buflen = 8` aborts.
+///
+/// The cases below straddle that, so a return to the static rule fails here.
+#[test]
+fn getwd_chk_aborts_on_the_actual_path_length_not_on_path_max() {
+    type GetwdChk = unsafe extern "C" fn(*mut c_char, usize) -> *mut c_char;
+
+    // The cwd this test runs in decides the boundary, so read it rather than
+    // assuming a length — a hard-coded 26 would break on any other checkout path.
+    let cwd_len = std::env::current_dir()
+        .expect("cwd")
+        .to_str()
+        .expect("utf-8 cwd")
+        .len();
+    assert!(
+        cwd_len + 1 < 4096,
+        "cwd is longer than PATH_MAX; this gate cannot straddle the boundary"
+    );
+
+    // Comfortably larger than the path, and far smaller than PATH_MAX: the case
+    // the static rule got wrong.
+    let ample = cwd_len + 64;
+    // Smaller than the path: both rules abort, which keeps the gate non-vacuous.
+    let tight = 8usize;
+
+    let host_sym = c"__getwd_chk";
+    // SAFETY: NUL-terminated name paired with fl's own definition.
+    let Some(host) =
+        (unsafe { host_addr_optional(host_sym, frankenlibc_abi::fortify_abi::__getwd_chk as *const ()) })
+    else {
+        println!("__getwd_chk: host does not export it; skipped");
+        return;
+    };
+    // SAFETY: both have __getwd_chk's C signature.
+    let host_f: GetwdChk = unsafe { std::mem::transmute(host) };
+
+    let mut aborts = 0usize;
+    for (label, buflen) in [("ample buffer", ample), ("too small", tight)] {
+        let want = probe_getwd(host_f, buflen);
+        let got = probe_getwd(frankenlibc_abi::fortify_abi::__getwd_chk, buflen);
+        println!("__getwd_chk {label} (buflen={buflen}): host {want:?}  fl {got:?}");
+        assert_ne!(want, Outcome::Hung, "{label}: the HOST child hung");
+        assert_eq!(
+            got, want,
+            "__getwd_chk({label}: buflen={buflen}) gave {got:?}, host glibc gave {want:?}"
+        );
+        if want == Outcome::Signal(libc::SIGABRT) {
+            aborts += 1;
+        }
+    }
+    assert!(
+        aborts >= 1,
+        "no case aborted on the host, so this gate would pass against a wrapper \
+         with the check deleted"
+    );
+}
+
+/// Fork, call `__getwd_chk` with a real PATH_MAX-sized buffer and a CLAIMED size.
+fn probe_getwd(
+    f: unsafe extern "C" fn(*mut c_char, usize) -> *mut c_char,
+    claimed: usize,
+) -> Outcome {
+    // SAFETY: forking; the child only calls the wrapper and _exits.
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork");
+    if pid == 0 {
+        let mut real = [0i8; 8192];
+        // SAFETY: child. `real` is far larger than any claimed size used here, so
+        // only the CHECK's behaviour differs between cases.
+        unsafe {
+            f(real.as_mut_ptr(), claimed);
+            libc::_exit(0);
+        }
+    }
+    // SAFETY: `pid` is our child.
+    unsafe { bounded_wait(pid) }
+}
+
 #[test]
 fn fortify_fgets_aborts_on_overflow_and_not_on_a_negative_count() {
     let dir = std::env::temp_dir().join("fl_fortify_fgets");
