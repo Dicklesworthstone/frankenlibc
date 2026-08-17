@@ -30586,3 +30586,12 @@ What this changes, and what it does not:
   `known_remaining`'s behaviour rather than the fast path's presence. **A gate that pins a
   precondition does not notice when the code that relies on it disappears** — worth knowing for the
   shared tree generally.
+- **PROVENANCE CORRECTION, same turn.** My commit `158af8a17` says it re-lands those six lines. It
+  does not: it carries the ledger row only. The code had already been restored minutes earlier by
+  `6054aed90` ("docs(ledger): the last three reachable losses become wins…"), another commit sweeping
+  my working tree in — the same collateral mechanism as `7fe69e3d8`, this time in my favour. **The
+  end state is correct and the measurement above is of exactly the binary described**, since both
+  arms were built from files I controlled and their ELF shas are recorded; only the attribution in
+  that commit message is wrong. Recorded here because the commit message cannot be rewritten once
+  pushed, and because a shared tree where unrelated commits silently add and remove other agents'
+  code makes `git log` an unreliable account of who changed what.
