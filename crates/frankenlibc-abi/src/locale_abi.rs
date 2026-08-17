@@ -93,16 +93,18 @@ const CHARSET_UTF8: u8 = 1;
 
 /// The process-wide active character set.
 ///
-/// DEFAULT IS `Utf8`, WHICH IS A DELIBERATE AND STATED DIVERGENCE FROM glibc.
-/// A C program that never calls `setlocale` runs in the `"C"` locale on glibc,
-/// so the parity default is `Ascii`. That flip is a separate change with a much
-/// wider blast radius — every differential arm whose helper sets `C.UTF-8` on
-/// the HOST only (`libc::setlocale`) and leaves fl's locale alone would begin
-/// comparing an ASCII fl against a UTF-8 glibc. Selecting the C locale
-/// explicitly is complete and consistent as of this change; the startup default
-/// is tracked separately on bd-1kxrmz.
+/// DEFAULT IS `Ascii`, MATCHING glibc: a C program that never calls `setlocale`
+/// runs in the `"C"` locale, where `MB_CUR_MAX` is 1 and `mbrtowc` refuses every
+/// byte `>= 0x80`. fl previously started in UTF-8, which made
+/// `setlocale(LC_ALL,NULL)` at startup report `C.UTF-8` where glibc reports `C`.
+///
+/// The flip is what makes the never-called-`setlocale` path agree with the
+/// incumbent, and it is why the differential helpers that used to put only the
+/// HOST into `C.UTF-8` (`libc::setlocale`) now put fl there too — otherwise they
+/// would compare an ASCII fl against a UTF-8 glibc and fail for a reason that
+/// has nothing to do with what they test.
 static ACTIVE_CHARSET: std::sync::atomic::AtomicU8 =
-    std::sync::atomic::AtomicU8::new(CHARSET_UTF8);
+    std::sync::atomic::AtomicU8::new(CHARSET_ASCII);
 
 /// The character set every conversion entrypoint must honour.
 #[inline]
@@ -124,9 +126,13 @@ fn set_active_charset(charset: Charset) {
 
 /// Test hook: restore the startup locale so a test that selects one cannot
 /// leak it into the arms libtest runs alongside it on other threads.
+///
+/// Restores `Ascii`, which is the startup default — not `Utf8`. A reset that
+/// put the process somewhere it never starts would hide exactly the
+/// cross-arm leakage it exists to prevent.
 #[doc(hidden)]
 pub fn locale_reset_active_charset_for_tests() {
-    set_active_charset(Charset::Utf8);
+    set_active_charset(Charset::Ascii);
 }
 
 /// The canonical name `setlocale` reports for `charset`.

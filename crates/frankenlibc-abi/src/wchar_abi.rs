@@ -2957,14 +2957,24 @@ mod codec {
     }
 
     /// Width of the next character, as [`wchar_core::mblen`].
+    ///
+    /// The empty and NUL cases answer `Some(0)`, NOT `Some(1)` and not `None`.
+    /// POSIX has `mblen` report 0 for the terminator, and `wchar_core::mblen`
+    /// already special-cases both ahead of its decode. Writing this arm as a
+    /// bare "is it ASCII" test dropped that, and `mblen("\0", 1)` answered 1
+    /// where glibc answers 0 — caught by `conformance_diff_mb_singlechar`'s
+    /// `diff_mblen_nul_returns_zero` the moment the startup default made the
+    /// ASCII path reachable. Keep the two guards ahead of the width test.
     #[inline]
     pub(super) fn mblen(src: &[u8]) -> Option<usize> {
         if !ascii() {
             return wchar_core::mblen(src);
         }
         match src.first() {
+            None => Some(0),
+            Some(&0) => Some(0),
             Some(&b) if b < 0x80 => Some(1),
-            _ => None,
+            Some(_) => None,
         }
     }
 

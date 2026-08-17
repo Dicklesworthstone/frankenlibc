@@ -79,9 +79,16 @@ struct Div {
 fn set_utf8_locale() {
     // Try C.UTF-8 first, then en_US.UTF-8. Either yields the RFC 2279
     // UTF-8 gconv module with MB_CUR_MAX == 6.
+    //
+    // BOTH libraries are moved. fl starts in the C locale exactly as glibc
+    // does, so setting only the host would leave an ASCII fl decoding against a
+    // UTF-8 glibc and every arm here would diverge for a reason that has
+    // nothing to do with RFC 2279. fl ships one UTF-8 locale, named C.UTF-8, so
+    // it takes that name whichever of the two the host accepted.
     for name in [c"C.UTF-8", c"en_US.UTF-8"] {
         let r = unsafe { libc::setlocale(libc::LC_ALL, name.as_ptr()) };
         if !r.is_null() {
+            unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
             return;
         }
     }

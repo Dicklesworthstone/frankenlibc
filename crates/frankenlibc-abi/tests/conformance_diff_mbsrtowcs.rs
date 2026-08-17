@@ -47,6 +47,10 @@ fn with_utf8<F: FnOnce() -> R, R>(f: F) -> R {
         Some(unsafe { std::ffi::CStr::from_ptr(saved) }.to_owned())
     };
     let _ = unsafe { libc::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    // fl starts in the C locale, as glibc does; this arm tests UTF-8
+    // behaviour, so BOTH libraries must be moved. Setting only the host
+    // would compare an ASCII fl against a UTF-8 glibc.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     let result = f();
     if let Some(s) = saved_str {
         unsafe { libc::setlocale(libc::LC_ALL, s.as_ptr()) };

@@ -34,6 +34,10 @@ use frankenlibc_abi::wchar_abi as fl;
 fn set_utf8() {
     let utf8 = c"C.UTF-8";
     unsafe { libc::setlocale(libc::LC_ALL, utf8.as_ptr()) };
+    // fl starts in the C locale, as glibc does; this arm tests UTF-8
+    // behaviour, so BOTH libraries must be moved. Setting only the host
+    // would compare an ASCII fl against a UTF-8 glibc.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
 }
 
 struct Rng(u64);
