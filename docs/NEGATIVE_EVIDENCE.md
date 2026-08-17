@@ -29944,3 +29944,42 @@ What this changes, and what it does not:
   runtime switch and flip it between arms, so the two arms share a single binary layout and the
   measurement varies only the code path. That is the only design left that removes the last variable,
   and it is a change to how the candidate is BUILT, not to how it is timed.
+
+## 2026-08-16 (this session) — the sscanf fast path existed but no C program could reach it: __isoc23_sscanf is the symbol, and it forwarded to vsscanf
+
+- **RESULT CLASS: correction of an earlier measurement, plus the fix it exposed.** Every sscanf row
+  banked in this repo — including the four A/Bs of this campaign — timed `sscanf` resolved by name.
+  No compiled C calls that symbol. `<stdio.h>` redirects it: to `__isoc99_sscanf` since glibc 2.7,
+  and to `__isoc23_sscanf` under a C23 default. The plain name survives only for old objects and for
+  callers that resolve a pointer, which is what every test and benchmark arm here had been doing.
+- **WHAT THE WRONG SYMBOL HID.** `sscanf` carries a decimal-int fast path
+  (`strict_decimal_int_format_count` + `strict_scan_decimal_ints`); both `__isoc` aliases forwarded
+  straight to `vsscanf` and got none of it. Measured on `sscanf("42", "%d")`: **250 instructions per
+  call through `sscanf`, 864 through the alias** — the same call 3.5x apart, and the expensive one is
+  the only one reachable from C.
+- **THE FIX AND ITS COST, attributed on ONE tree with ONE driver binary** (bench_elf_sha256=
+  2121fc56954b6e63d0cbb9c39ddde09d64a97774b36f506260bc9805faf2270b, 200k iterations, `perf stat -r 3`):
+  `single_int` 172,806,461 instructions with the alias reverted to bare `vsscanf` forwarding against
+  48,857,987 with the fast path, **3.54x fewer, -620 per call**. The untouched engine control
+  `string_token` moved 132,513,438 -> 136,742,276, **+21 instructions per call**, which is the price
+  of the null checks, the mode load and the two-byte format probe on calls that do not qualify.
+- **A DOUBLE MEMBRANE TRAVERSAL WAS CAUGHT BY THAT CONTROL AND REMOVED.** Written first with
+  `sscanf`'s prologue verbatim — `decide()` before the format test — `string_token` read 147,091,158,
+  i.e. **+72 instructions per call**: unlike `sscanf` these aliases DELEGATE when the format does not
+  qualify, and `vsscanf` decides for itself, so the same decision was made twice. Moving `decide()`
+  behind the format gate recovered it. Same shape as the `reallocarray` finding.
+- **WHY INSTRUCTION COUNTS AND NOT A RATIO.** The row above this one established that a whole-object
+  A/B on this family cannot resolve below ~15% on this host because code layout alone moves untouched
+  controls that far. Instruction counts are layout-immune and exact, so no quiet window is required —
+  these were taken at loadavg 265.99/100.12/53.50, cpu MHz 3192-4046, which would have voided any
+  wall-clock row and does not affect these.
+- **VS THE INCUMBENT, same instrument, fl against host glibc 2.42's `__isoc23_sscanf`:** `single_int`
+  48.86M against 168.98M (**0.289x**), `two_ints` 61.32M against 249.02M (**0.246x**). The engine
+  cases remain losses: `string_token` 136.74M against 128.77M (1.062x), `float_only` 301.65M against
+  293.52M (1.028x), `scanset_only` 138.20M against 130.23M (1.061x), `key_value` 211.64M against
+  203.65M (1.039x).
+- **WHAT IS STILL OWED.** The +21 per-call probe on the engine path is measured but not minimised, and
+  the engine cases above are the remaining losses. The gate that pins the routing is
+  `conformance_diff_isoc_sscanf_alias.rs`, which proves it by allocation count with a positive control
+  rather than by value comparison — the fast path and the engine agree by construction, so a
+  value-comparing gate would pass whether or not the routing exists.
