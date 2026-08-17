@@ -1,3 +1,18 @@
+> **SUPERSEDED — DO NOT RE-LAND FROM THIS ARTIFACT (added 2026-08-16).**
+>
+> This file records a KEEP with a score of 8.0, and the lever it certified is
+> **not in the tree**: neither `copy_strcpy_terminal_from` nor
+> `copy_strcpy_4096_block` exists anywhere under `crates/` today. Two days after
+> this artifact was written, `docs/NEGATIVE_EVIDENCE.md` recorded the exact-block
+> `strcpy_4096` unroll (`bd-2g7oyh.478`, 2026-06-19) as a **LOSS, reverted**, and
+> set an explicit retry-condition predicate: *"do not retry exact-block unrolling
+> for `strcpy_4096`"*.
+>
+> Nothing here is being deleted — the measurement was real and the reasoning is
+> worth reading. But a certified-looking artifact with no pointer to its own
+> reversal is exactly how an already-rejected lever gets re-landed, which has
+> happened in this repo before. Read the ledger's `strcpy_4096` rows first.
+
 # bd-5rf9xk pass183 strcpy4096 certified scan-copy keep
 
 Date: 2026-06-17
