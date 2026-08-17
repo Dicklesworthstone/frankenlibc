@@ -30021,9 +30021,14 @@ What this changes, and what it does not:
   `getaddrinfo_hosts`, `sinhf_coshf`, `snprintf`, `snprintf_float`, `fprintf_float`, `nl_langinfo`.
   `wcsnrtombs` is excluded on mechanism — it reports `runner_not_yet_implemented` and has no runner,
   so it can never produce a row.
-- **TWO UNCERTIFIED LEVERS ARE IN HEAD** and must not be quoted until measured: the `ScanBytes`
-  inline-token change in scanf (prediction on record: `string_token` and `two_strings` move,
-  `long_string` does not — if `long_string` moves too the fixed-cost story is wrong), and nothing else.
+- **EXACTLY ONE UNCERTIFIED LEVER IS IN HEAD** and must not be quoted until measured: the
+  `ScanBytes` inline-token change in scanf (prediction on record: `string_token` and `two_strings`
+  move, `long_string` does not — if `long_string` moves too the fixed-cost story is wrong).
+  *(Corrected 2026-08-17: this line originally said "TWO" and then listed one, followed by "and
+  nothing else" — a reader would have hunted for a second lever that does not exist. Re-verified
+  against HEAD build-free: `ScanBytes` is present and uncertified; the vDSO routing, the
+  stack-output fast path and `bounded_waitpid` are all present AND certified or green; the
+  slot-retire elision is correctly reverted with its rejection recorded at the call site.)*
 
 ## 2026-08-16 (this session) — a bare `%s` had no fast path either: `string_token` 1.062x against glibc becomes 0.378x, and a merged probe cost the `%d` path 19 instructions
 
