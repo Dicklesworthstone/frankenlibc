@@ -5503,12 +5503,26 @@ pub unsafe extern "C" fn malloc_info(options: c_int, stream: *mut c_void) -> c_i
         info.arena,
     );
 
-    // SAFETY: caller guarantees stream is a valid FILE*.
-    unsafe extern "C" {
-        fn fputs(s: *const std::ffi::c_char, stream: *mut c_void) -> c_int;
-    }
+    // Write through fl's OWN `fputs` rather than a link-time `extern "C" fputs`.
+    //
+    // WHY THIS CHANGED. The declaration that used to sit here bound to whichever
+    // `fputs` the linker chose: fl's in a deployed preload, glibc's in a test
+    // binary where fl's `#[no_mangle]` exports are disabled. So which stdio
+    // received the caller's stream was decided by LINK ORDER rather than by the
+    // caller, and the two are not interchangeable — a `FILE*` from one libc handed
+    // to the other's `fputs` is a foreign pointer. That is not theoretical: the
+    // first version of `conformance_diff_malloc_info_sizes` drove this function
+    // with a `FILE*` from fl's own `fdopen` and SIGSEGV'd, because the link-time
+    // `fputs` had resolved to glibc.
+    //
+    // Calling fl's implementation directly makes the binding deterministic and
+    // makes the tested path the shipped path. The contract is unchanged and is the
+    // ordinary C one: the stream must come from the same libc as the function
+    // writing to it.
     let c_xml = std::ffi::CString::new(xml).unwrap_or_default();
-    let rc = unsafe { fputs(c_xml.as_ptr(), stream) };
+    // SAFETY: `c_xml` is NUL-terminated and the caller guarantees `stream` is a
+    // valid FILE* belonging to this libc.
+    let rc = unsafe { crate::stdio_abi::fputs(c_xml.as_ptr(), stream) };
     if rc < 0 { -1 } else { 0 }
 }
 

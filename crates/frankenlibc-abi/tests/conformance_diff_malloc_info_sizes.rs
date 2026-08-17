@@ -206,10 +206,19 @@ fn fl_populates_sizes_consistently_and_the_counts_are_live() {
     // caller. In this test binary that resolves to glibc, so handing it a FILE*
     // from fl's own fdopen SIGSEGVs — verified, not hypothesised. See the note at
     // the end of this file.
-    let (fo, ff) = host_stdio();
-    // SAFETY: fl's malloc_info with a host FILE*, which is what its internal
-    // link-time fputs expects in this binary.
-    let busy = unsafe { capture(frankenlibc_abi::malloc_abi::malloc_info, fo, ff) };
+    // fl's malloc_info is driven with fl's OWN stdio, which is now the only
+    // correct pairing: it writes through `crate::stdio_abi::fputs` directly rather
+    // than a link-time extern, so the stream must be fl's. The first version of
+    // this gate passed a host FILE* and worked only because the link-time binding
+    // happened to resolve to glibc — the same accident that made a fl FILE*
+    // SIGSEGV. Both halves are now determined by the code rather than the linker.
+    let busy = unsafe {
+        capture(
+            frankenlibc_abi::malloc_abi::malloc_info,
+            frankenlibc_abi::stdio_abi::fdopen,
+            frankenlibc_abi::stdio_abi::fflush,
+        )
+    };
     let busy_entries = size_entries(&busy);
     assert!(
         !busy_entries.is_empty(),
@@ -243,8 +252,14 @@ fn fl_populates_sizes_consistently_and_the_counts_are_live() {
         // SAFETY: each freed exactly once.
         unsafe { frankenlibc_abi::malloc_abi::free(p) };
     }
-    // SAFETY: as above, same host stdio.
-    let idle = unsafe { capture(frankenlibc_abi::malloc_abi::malloc_info, fo, ff) };
+    // SAFETY: as above, fl's stdio throughout.
+    let idle = unsafe {
+        capture(
+            frankenlibc_abi::malloc_abi::malloc_info,
+            frankenlibc_abi::stdio_abi::fdopen,
+            frankenlibc_abi::stdio_abi::fflush,
+        )
+    };
     let idle_population: usize = size_entries(&idle).iter().map(|e| e.3).sum();
     assert!(
         idle_population < busy_population,
