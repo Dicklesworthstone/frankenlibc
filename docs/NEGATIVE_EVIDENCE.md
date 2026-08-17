@@ -30443,3 +30443,53 @@ What this changes, and what it does not:
   baseline: that label remains correct and should stay until a post-lever run certifies. The
   prediction stays on record and is still falsifiable — if `long_string` moves too, the fixed-cost
   story is wrong.
+
+## 2026-08-17 (BlackThrush) — SELF-AUDIT against the ±15% between-run finding: one of my rows is WITHDRAWN, one DOWNGRADED, one stands
+
+- **RESULT CLASS: loss/baseline (correction).** No build and no measurement was run for this. It
+  applies another agent's finding to my own banked rows, which is where it costs me something.
+- **THE FINDING I AM APPLYING** (2026-08-17, reproduction row above): the same binary, same command,
+  twenty minutes apart in a stable window, moved **all twelve sscanf cases in the same direction** by
+  up to 15%, and flipped two verdicts — **while both runs' A/A nulls held**. So the A/A null certifies
+  that two arms saw the same conditions WITHIN one invocation and is structurally blind to a shift
+  BETWEEN invocations. **In-run bootstrap CIs of ±0.3% describe precision, not reproducibility;
+  between-run spread on this host is ~50x wider.**
+- **WHICH OF MY ROWS THIS REACHES, and which it does not.** The distinction is not the effect size
+  alone — it is whether the comparison lived inside one invocation:
+  - **fl-vs-glibc ratios are SAFE.** `malloc_free` 6.62x, `getrandom` 92x, `snprintf_fused`, `sscanf`
+    vs glibc — every one of those is a ratio formed between two arms inside a single invocation, which
+    is exactly what the A/A null does cover. The frontier ranking is unaffected.
+  - **fl-vs-fl LEVER certifications are exposed**, because each arm was a separate invocation.
+- **WITHDRAWN — "skipping the arena lookup for stack outputs takes getrandom 4.03x -> 3.60x".** Base
+  and candidate were **one invocation each, not interleaved**, and the effects were -10.6%, -9.5%,
+  -3.1% and +0.4%. Every one of those sits inside a ±15% between-run band. The disjoint bootstrap
+  intervals I quoted are precisely the within-run precision the finding says must not be read as
+  reproducibility. **I am withdrawing the numbers, not the change**: the code is gated, correct and
+  still in HEAD, and the zero-length short-circuit is exact by construction regardless of timing. What
+  is withdrawn is the claim that it is measurably faster. Re-certify as two interleaved pairs with the
+  between-run spread reported.
+- **DOWNGRADED, NOT WITHDRAWN — "eliding the slot-retire `lock xchg` is 1.53% SLOWER".** The effect is
+  an order of magnitude below the between-run spread, so on its face it is unsupportable. But the runs
+  were **interleaved** — base, cand, base, cand — and both rounds agreed in direction AND magnitude,
+  which a slow between-run drift would have disrupted rather than reproduced. That is genuine
+  protection, and two rounds is still a small sample. **The correct status is NOT ESTABLISHED rather
+  than REFUTED.** The revert stands on the ledger's independent guard-CAS refutation, not on this
+  number; nobody should re-attempt the elision expecting a win, and nobody should cite 1.53% as
+  measured.
+- **STANDS — "the vDSO routing takes getrandom from 94.43x to 4.00x".** 23.6x is three orders of
+  magnitude beyond a 15% band, and it does not rest on wall clock at all: the mechanism was proven by
+  **syscall counting**, exact and load-immune, 103/10,003 before against 4/4 after. This is why a
+  counted mechanism outranks a timed one, and it is the row I would keep if I could keep only one.
+- **THE SIZE-CLASS FOLD row (7.27x -> 6.56x, stated as ">=6.6% faster") is also inside the band** and
+  should be read as not established on wall clock alone. Its instruction-count evidence — 621.7 ->
+  585.7 per pair, a counted mechanism — is unaffected and is what should be quoted.
+- **THE RULE I AM ADOPTING, and it changes what I will bank.** A fl-vs-fl lever claim under ~20%
+  requires either (a) interleaved arms across at least two rounds WITH the between-run spread
+  reported alongside the in-run CI, or (b) a counted mechanism — instructions, syscalls, allocations
+  — which is immune to this entirely. **A single pair of invocations can no longer certify a lever on
+  this host**, however tight its intervals look.
+- **AND I DECLINED A CLEARED BUILD TO WRITE THIS.** I was cleared for one build and the obvious use
+  was certifying the `ScanBytes` lever. That would have produced exactly the single pair of
+  invocations this finding says cannot certify an effect of that size — and the lever's own baseline
+  is already unbuildable. Spending the build would have manufactured a number I would have had to
+  withdraw later.
