@@ -529,3 +529,49 @@ fn fegetenv_repeated_calls_are_deterministic() {
         );
     }
 }
+
+/// `fesetenv(FE_DFL_ENV)` restores the default environment, i.e. round-to-nearest.
+///
+/// bd-xh08pf burn-down: `fenv_abi`'s inline `#[cfg(test)]` block never compiled
+/// (lib.rs declares the module `#[cfg(not(test))]`, so the two cfgs are mutually
+/// exclusive), stranding 11 tests. Ten of them assert conditions this file
+/// already covers under other names — see the map left in `fenv_abi.rs`. This is
+/// the one that did not: the FE_DFL_ENV sentinel path through `fesetenv`.
+///
+/// `conformance_fenv_traps` exercises FE_DFL_MODE through `fesetmode`, which is a
+/// different entry point with a different argument type, so it does not reach
+/// this branch.
+///
+/// The sentinel is `(const fenv_t *) -1`, which C spells FE_DFL_ENV; it is passed
+/// here as the same bit pattern rather than by reaching into the module's private
+/// constant.
+#[test]
+fn fesetenv_with_fe_dfl_env_resets_to_default_rounding() {
+    const FE_TONEAREST: std::ffi::c_int = 0x000;
+    const FE_TOWARDZERO: std::ffi::c_int = 0xC00;
+    let fe_dfl_env = usize::MAX as *const std::ffi::c_void;
+
+    // SAFETY: rounding mode is per-thread architectural state; libtest gives this
+    // test its own thread, and the original mode is restored below.
+    let original = unsafe { fegetround() };
+
+    // SAFETY: a supported mode, so this must succeed.
+    assert_eq!(unsafe { fesetround(FE_TOWARDZERO) }, 0);
+    assert_eq!(unsafe { fegetround() }, FE_TOWARDZERO);
+
+    // SAFETY: FE_DFL_ENV is the documented sentinel, not a dereferenceable pointer.
+    assert_eq!(
+        unsafe { fesetenv(fe_dfl_env) },
+        0,
+        "fesetenv(FE_DFL_ENV) must succeed"
+    );
+    assert_eq!(
+        unsafe { fegetround() },
+        FE_TONEAREST,
+        "FE_DFL_ENV is the DEFAULT environment, so rounding returns to nearest — \
+         if this reads 0xC00 the sentinel was treated as a pointer to a saved env"
+    );
+
+    // SAFETY: restore what this thread started with.
+    unsafe { fesetround(original) };
+}

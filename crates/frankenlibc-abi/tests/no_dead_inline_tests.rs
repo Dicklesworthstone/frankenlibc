@@ -29,7 +29,6 @@ use std::path::{Path, PathBuf};
 /// raw text — the same comment-blindness the support-matrix scanner had in
 /// bd-4habm0 — and the ratchet's own `cleaned` check caught the mistake.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
-    ("fenv_abi", 11),
     ("glibc_internal_abi", 4),
     ("iconv_abi", 6),
     ("io_internal_abi", 5),
@@ -39,6 +38,12 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("wchar_abi", 2),
 ];
 // BURNED DOWN (bd-xh08pf):
+//   fenv_abi (11)      -> 10 retired against existing coverage in
+//                         tests/fenv_abi_test.rs and tests/conformance_fenv_traps.rs
+//                         (per-test map left in fenv_abi.rs); the 11th, the
+//                         FE_DFL_ENV sentinel path, was genuinely uncovered and is
+//                         now tests/fenv_abi_test.rs::
+//                         fesetenv_with_fe_dfl_env_resets_to_default_rounding
 //   grp_abi (2)        -> tests/grp_abi_test.rs::getgrent_skips_malformed_and_comment_lines
 //                         and ::getgrent_restarts_when_the_group_file_changes_mid_iteration
 //                         (rewritten against the public ABI, not relocated: the

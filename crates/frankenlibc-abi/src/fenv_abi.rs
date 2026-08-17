@@ -566,164 +566,36 @@ pub unsafe extern "C" fn feupdateenv(envp: *const c_void) -> c_int {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fegetround_returns_valid_mode() {
-        let mode = unsafe { fegetround() };
-        // Must be one of: 0x000, 0x400, 0x800, 0xC00
-        assert!(
-            mode == 0x000 || mode == 0x400 || mode == 0x800 || mode == 0xC00,
-            "unexpected rounding mode: {:#x}",
-            mode
-        );
-    }
-
-    #[test]
-    fn fesetround_roundtrip() {
-        let original = unsafe { fegetround() };
-
-        // Set to round-toward-zero (0xC00)
-        assert_eq!(unsafe { fesetround(0xC00) }, 0);
-        assert_eq!(unsafe { fegetround() }, 0xC00);
-
-        // Set to round-down (0x400)
-        assert_eq!(unsafe { fesetround(0x400) }, 0);
-        assert_eq!(unsafe { fegetround() }, 0x400);
-
-        // Restore original
-        assert_eq!(unsafe { fesetround(original) }, 0);
-        assert_eq!(unsafe { fegetround() }, original);
-    }
-
-    #[test]
-    fn fesetround_rejects_invalid() {
-        assert_eq!(unsafe { fesetround(0x1234) }, -1);
-        assert_eq!(unsafe { fesetround(0x01) }, -1);
-    }
-
-    #[test]
-    fn feclearexcept_and_fetestexcept() {
-        // Clear all, then test — should be zero
-        unsafe { feclearexcept(0x3F) };
-        let flags = unsafe { fetestexcept(0x3F) };
-        assert_eq!(flags, 0, "flags after clear: {:#x}", flags);
-    }
-
-    #[test]
-    fn feraiseexcept_and_fetestexcept() {
-        unsafe { feclearexcept(0x3F) };
-
-        // Raise inexact (0x20)
-        assert_eq!(unsafe { feraiseexcept(0x20) }, 0);
-        let flags = unsafe { fetestexcept(0x20) };
-        assert_ne!(flags & 0x20, 0, "inexact not raised");
-
-        // Clean up
-        unsafe { feclearexcept(0x3F) };
-    }
-
-    #[test]
-    fn fegetexceptflag_and_fesetexceptflag() {
-        unsafe { feclearexcept(0x3F) };
-        unsafe { feraiseexcept(0x20) }; // raise inexact
-
-        let mut saved: u16 = 0;
-        assert_eq!(unsafe { fegetexceptflag(&mut saved, 0x3F) }, 0);
-        assert_ne!(saved & 0x20, 0);
-
-        // Clear, then restore flags without raising
-        unsafe { feclearexcept(0x3F) };
-        assert_eq!(unsafe { fesetexceptflag(&saved, 0x3F) }, 0);
-        assert_ne!(unsafe { fetestexcept(0x20) } & 0x20, 0);
-
-        unsafe { feclearexcept(0x3F) };
-    }
-
-    // Helper to get a properly-sized buffer for fenv_t (32 bytes)
-    fn fenv_buf() -> [u8; 32] {
-        [0u8; 32]
-    }
-
-    #[test]
-    fn fegetenv_fesetenv_roundtrip() {
-        let mut buf = fenv_buf();
-        let envp = buf.as_mut_ptr().cast::<c_void>();
-        assert_eq!(unsafe { fegetenv(envp) }, 0);
-
-        // Change rounding mode
-        let original_round = unsafe { fegetround() };
-        let new_round = if original_round == 0xC00 {
-            0x400
-        } else {
-            0xC00
-        };
-        unsafe { fesetround(new_round) };
-        assert_eq!(unsafe { fegetround() }, new_round);
-
-        // Restore environment
-        assert_eq!(unsafe { fesetenv(envp.cast_const()) }, 0);
-        assert_eq!(unsafe { fegetround() }, original_round);
-    }
-
-    #[test]
-    fn fesetenv_default_resets() {
-        // Change rounding mode
-        let original = unsafe { fegetround() };
-        unsafe { fesetround(0xC00) };
-
-        // Reset to default via FE_DFL_ENV sentinel
-        assert_eq!(unsafe { fesetenv(FE_DFL_ENV_SENTINEL as *const c_void) }, 0);
-        // Default is FE_TONEAREST = 0x000
-        assert_eq!(unsafe { fegetround() }, 0x000);
-
-        // Restore
-        unsafe { fesetround(original) };
-    }
-
-    #[test]
-    fn feholdexcept_saves_and_clears() {
-        // Raise an exception first
-        unsafe { feraiseexcept(0x20) };
-        assert_ne!(unsafe { fetestexcept(0x20) }, 0);
-
-        let mut buf = fenv_buf();
-        let envp = buf.as_mut_ptr().cast::<c_void>();
-        assert_eq!(unsafe { feholdexcept(envp) }, 0);
-
-        // After feholdexcept, exceptions should be cleared
-        assert_eq!(unsafe { fetestexcept(0x3F) }, 0);
-
-        // Restore
-        unsafe { fesetenv(envp.cast_const()) };
-    }
-
-    #[test]
-    fn feupdateenv_reraises_pending() {
-        unsafe { feclearexcept(0x3F) };
-
-        let mut buf = fenv_buf();
-        let envp = buf.as_mut_ptr().cast::<c_void>();
-        unsafe { fegetenv(envp) };
-
-        // Raise inexact
-        unsafe { feraiseexcept(0x20) };
-
-        // feupdateenv restores env but re-raises pending exceptions
-        assert_eq!(unsafe { feupdateenv(envp.cast_const()) }, 0);
-        assert_ne!(unsafe { fetestexcept(0x20) } & 0x20, 0);
-
-        unsafe { feclearexcept(0x3F) };
-    }
-
-    #[test]
-    fn null_pointer_guards() {
-        assert_eq!(unsafe { fegetexceptflag(std::ptr::null_mut(), 0x3F) }, -1);
-        assert_eq!(unsafe { fesetexceptflag(std::ptr::null(), 0x3F) }, -1);
-        assert_eq!(unsafe { fegetenv(std::ptr::null_mut()) }, -1);
-        assert_eq!(unsafe { fesetenv(std::ptr::null()) }, -1);
-        assert_eq!(unsafe { feholdexcept(std::ptr::null_mut()) }, -1);
-    }
-}
+// The inline `#[cfg(test)] mod tests` that stood here never compiled: lib.rs
+// declares this module `#[cfg(not(test))]`, so the two cfgs are mutually
+// exclusive and its 11 tests built in neither configuration (bd-xh08pf).
+//
+// TEN of the eleven asserted conditions that tests/fenv_abi_test.rs and
+// tests/conformance_fenv_traps.rs already cover, so they are retired rather than
+// duplicated. The map, so the claim is checkable rather than asserted:
+//
+//   fegetround_returns_valid_mode        -> fenv_abi_test::fegetround_returns_valid_mode
+//   fesetround_roundtrip                 -> ::fesetround_all_modes_round_trip,
+//                                           ::fesetround_round_trips_supported_modes
+//   fesetround_rejects_invalid           -> ::fesetround_rejects_invalid_mode,
+//                                           ::fesetround_negative_is_rejected
+//   feclearexcept_and_fetestexcept       -> ::feclearexcept_all_then_test_returns_zero
+//   feraiseexcept_and_fetestexcept       -> ::exception_flags_raise_and_clear,
+//                                           ::feraiseexcept_all_then_test_each_individually
+//   fegetexceptflag_and_fesetexceptflag  -> ::fegetexceptflag_fesetexceptflag_round_trip_multiple,
+//                                           ::exceptflag_round_trip_restores_flag_bits
+//   fegetenv_fesetenv_roundtrip          -> ::fegetenv_and_fesetenv_restore_rounding_state,
+//                                           ::fegetenv_fesetenv_restores_exception_flags
+//   feholdexcept_saves_and_clears        -> ::feholdexcept_clears_all_exceptions
+//   feupdateenv_reraises_pending         -> ::feholdexcept_and_feupdateenv_round_trip_saved_exceptions
+//   null_pointer_guards                  -> ::null_pointer_contracts_are_enforced_for_pointer_outputs,
+//                                           ::fesetenv_null_is_rejected, ::feupdateenv_null_is_rejected
+//
+// The ELEVENTH was genuinely uncovered and is now real:
+// fenv_abi_test::fesetenv_with_fe_dfl_env_resets_to_default_rounding. Nothing
+// else reached the FE_DFL_ENV sentinel branch below — conformance_fenv_traps
+// exercises FE_DFL_MODE through `fesetmode`, a different entry point. Verified by
+// mutation: disabling the sentinel check makes `fesetenv` dereference (fenv_t *)-1
+// and the test SIGSEGVs instead of passing.
+//
+// tests/no_dead_inline_tests.rs enforces that no new dead block appears here.
