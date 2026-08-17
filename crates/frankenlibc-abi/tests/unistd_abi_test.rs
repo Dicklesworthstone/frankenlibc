@@ -11022,7 +11022,36 @@ fn kexec_load_with_null_segments_and_positive_count_returns_efault() {
     let rc = unsafe { kexec_load(0, 1, std::ptr::null(), 0) };
     assert_eq!(rc, -1);
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
-    assert_eq!(errno, libc::EFAULT);
+
+    // THE EXPECTED ERRNO DEPENDS ON PRIVILEGE, and asserting EFAULT unconditionally
+    // made this arm fail for every unprivileged runner. `kexec_load` is gated on
+    // CAP_SYS_BOOT, and the kernel checks the capability BEFORE it looks at the
+    // segments pointer — so an unprivileged caller gets EPERM and never reaches the
+    // EFAULT this arm is named for. It is not a divergence: fl forwarded the call
+    // and reported exactly what the kernel returned.
+    //
+    // The neighbouring syscall arms (`finit_module`, `quotactl_fd`) already use the
+    // errno-set convention for this reason. This one keeps its FULL STRENGTH where
+    // it can actually run rather than merely widening the set: as root the kernel
+    // does reach the pointer check, so EFAULT is still demanded there, and EPERM is
+    // accepted only when the process genuinely lacks the capability.
+    // SAFETY: geteuid is always callable and cannot fail.
+    let privileged = unsafe { libc::geteuid() } == 0;
+    if privileged {
+        assert_eq!(
+            errno,
+            libc::EFAULT,
+            "as root the capability check passes, so kexec_load must reach the \
+             segments pointer and report EFAULT"
+        );
+    } else {
+        assert_eq!(
+            errno,
+            libc::EPERM,
+            "unprivileged, kexec_load must fail the CAP_SYS_BOOT check with EPERM \
+             before examining the segments pointer"
+        );
+    }
 }
 
 #[test]
