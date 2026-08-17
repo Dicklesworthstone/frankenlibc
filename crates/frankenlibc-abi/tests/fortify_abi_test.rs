@@ -1515,6 +1515,10 @@ fn wctomb_chk_safe() {
 
 #[test]
 fn wctomb_chk_short_buffer_aborts_child_process() {
+    // A 1-byte buffer is only SHORT where MB_CUR_MAX exceeds 1. fl now starts in
+    // the C locale, where MB_CUR_MAX is 1 and this call is legal -- as it is on
+    // glibc under LC_ALL=C. Select the locale whose contract this arm is about.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     assert_child_sigabrt("wctomb_chk short buffer", || {
         let mut buf = [0u8; 1];
         unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
@@ -1544,9 +1548,16 @@ unsafe extern "C" {
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
 }
 
+/// The UTF-8 locale's `MB_CUR_MAX` and `wctomb` must agree with each other.
+///
+/// This arm used to ASSERT THE DEFECT bd-1kxrmz is about: it asked for `"C"`
+/// and required the answer to be `"C.UTF-8"`, pinning the alias in place. It now
+/// asks for the locale it actually means. The C-locale side of the same contract
+/// is covered differentially in `conformance_diff_c_locale_codec`.
 #[test]
 fn locale_mb_cur_max_and_wctomb_share_the_utf8_contract() {
-    let selected = unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    let selected =
+        unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     assert!(!selected.is_null());
     assert_eq!(unsafe { CStr::from_ptr(selected) }.to_bytes(), b"C.UTF-8");
 
@@ -1592,6 +1603,11 @@ fn wctomb_chk_abort_boundary_matches_host() {
         eprintln!("SKIPPED wctomb_chk_abort_boundary: C.UTF-8 unavailable here");
         return;
     }
+    // fl starts in the C locale, as glibc does. This arm's whole subject is the
+    // buflen < MB_CUR_MAX boundary, so the two libraries must share a MB_CUR_MAX
+    // -- with fl left in C its boundary would be 1 and the host's 6, and the
+    // table below would diverge for a reason that is not the fortify check.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
 
     let mut compared = 0usize;
     for &n in &[1usize, 5, 6, 7, 15, 16] {

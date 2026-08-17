@@ -134,8 +134,14 @@ fn setlocale_set_posix_locale() {
     assert_eq!(name.to_bytes(), b"C");
 }
 
+/// `MB_CUR_MAX` must cover what the UTF-8 codec actually emits.
+///
+/// Selects `C.UTF-8` explicitly: fl now starts in the C locale like glibc, where
+/// `wctomb` of a non-ASCII character correctly fails and this arm would be
+/// asking the wrong locale a UTF-8 question.
 #[test]
 fn ctype_mb_cur_max_covers_utf8_codec_output() {
+    unsafe { setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     let mut bytes = [0_u8; 6];
     let encoded = unsafe { wctomb(bytes.as_mut_ptr(), '🦀' as u32) };
 
