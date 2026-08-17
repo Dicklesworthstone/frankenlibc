@@ -9871,6 +9871,49 @@ pub unsafe extern "C" fn vsscanf(
         return -1;
     }
 
+    // THE SAME STRICT FAST PATHS `sscanf` HAS, reached through the va_list.
+    //
+    // They were variadic-only, which left this entry point on the engine for
+    // every format — and it is not a rare one: `<stdio.h>` sends compiled
+    // `vsscanf` calls here, every va_list forwarder in a logging or parsing
+    // helper lands here, and the certified wall-clock run of this arm was 11
+    // losses out of 12 while the variadic arm was 5 wins.
+    //
+    // The destinations come from `va_next_pointer`, the same arithmetic
+    // `vscanf_write_values` uses, so there is one implementation of advancing a
+    // va_list rather than two.
+    if runtime_policy::strict_passthrough_active() {
+        if let Some((fields, sep, kinds, delims)) =
+            unsafe { strict_decimal_int_format_count(format) }
+            && strict_field_list_is_scannable(fields, sep, &kinds)
+        {
+            let mut destinations = [std::ptr::null_mut::<c_void>(); STRICT_INT_LIST_MAX];
+            for slot in destinations.iter_mut().take(fields) {
+                // SAFETY: `ap` is a live va_list and the probe accepted `fields`
+                // conversions, so that many pointer arguments follow.
+                *slot = unsafe { va_next_pointer(ap) };
+            }
+            let fast =
+                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+            return fast.count;
+        }
+        if unsafe { strict_single_string_format(format) } {
+            // SAFETY: the format is exactly `"%s"`, so one `char *` follows.
+            let dst = unsafe { va_next_pointer(ap) };
+            let rc = unsafe { strict_scan_single_string(s, dst.cast()) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+        if let Some(delim) = unsafe { strict_single_negated_scanset(format) } {
+            // SAFETY: the format is exactly `"%[^X]"`, so one `char *` follows.
+            let dst = unsafe { va_next_pointer(ap) };
+            let rc = unsafe { strict_scan_negated_scanset(s, dst.cast(), delim) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+    }
+
     // PERF (bd-2g7oyh):
     // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
     // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
@@ -9980,6 +10023,41 @@ pub unsafe extern "C" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int
 /// We manually read pointer arguments from the overflow area, which is used
 /// when all register save slots are exhausted (common in scanf where all
 /// args are pointers passed after the format string).
+/// Take the next POINTER argument from a raw `va_list`, advancing it.
+///
+/// On x86_64 a `va_list` is a `__va_list_tag`: `gp_offset` (u32) at +0,
+/// `fp_offset` at +4, `overflow_arg_area` at +8, `reg_save_area` at +16. Every
+/// scanf destination is a pointer, so only the general-purpose half matters:
+/// `gp_offset < 48` means the argument is still in the register save area,
+/// otherwise it has spilled to the overflow area.
+///
+/// Factored out of `vscanf_write_values` so the va_list entry points can reach
+/// the strict fast paths, which need the destinations BEFORE any scanning. Two
+/// copies of this arithmetic would be two chances to advance the list wrongly,
+/// and a va_list advanced wrongly writes a scanned value through whatever
+/// pointer happens to sit next in the caller's frame.
+///
+/// # Safety
+/// `ap` must be a live `va_list` positioned at a pointer argument.
+pub(crate) unsafe fn va_next_pointer(ap: *mut c_void) -> *mut c_void {
+    let gp_offset_ptr = ap as *mut u32;
+    // SAFETY: the caller guarantees `ap` points at a `__va_list_tag`.
+    unsafe {
+        let overflow_ptr = (ap as *mut u8).add(8) as *mut *mut u8;
+        let reg_save_ptr = (ap as *mut u8).add(16) as *mut *mut u8;
+        let gp_off = *gp_offset_ptr;
+        if gp_off < 48 {
+            let p = (*reg_save_ptr).add(gp_off as usize) as *mut *mut c_void;
+            *gp_offset_ptr = gp_off + 8;
+            *p
+        } else {
+            let p = *overflow_ptr as *mut *mut c_void;
+            *overflow_ptr = (*overflow_ptr).add(8);
+            *p
+        }
+    }
+}
+
 pub(crate) unsafe fn vscanf_write_values(
     values: &[ScanValue],
     directives: &[ScanDirective],
@@ -9993,10 +10071,6 @@ pub(crate) unsafe fn vscanf_write_values(
     //
     // For pointer arguments (all scanf destinations), gp_offset < 48 means
     // the arg is in a register save slot; otherwise it's in overflow_arg_area.
-    let gp_offset_ptr = ap as *mut u32;
-    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
-    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
-
     let mut val_idx = 0usize;
     for dir in directives {
         if let ScanDirective::Spec(spec) = dir {
@@ -10007,21 +10081,9 @@ pub(crate) unsafe fn vscanf_write_values(
                 break;
             }
 
-            // Extract the next pointer argument from va_list.
-            let dest_ptr: *mut c_void = unsafe {
-                let gp_off = *gp_offset_ptr;
-                if gp_off < 48 {
-                    // Read from register save area.
-                    let p = (*reg_save_ptr).add(gp_off as usize) as *mut *mut c_void;
-                    *gp_offset_ptr = gp_off + 8;
-                    *p
-                } else {
-                    // Read from overflow area.
-                    let p = *overflow_ptr as *mut *mut c_void;
-                    *overflow_ptr = (*overflow_ptr).add(8);
-                    *p
-                }
-            };
+            // SAFETY: `ap` is a live va_list positioned at the next pointer
+            // argument; the helper advances it.
+            let dest_ptr: *mut c_void = unsafe { va_next_pointer(ap) };
 
             // Write the value through the pointer.
             unsafe {

@@ -30744,3 +30744,43 @@ What this changes, and what it does not:
   1400-3700, so it is bought many times over — but the next generalisation should be measured against
   the whole family, not just its target, and if the tax on `single_int` passes roughly 100 the shape
   needs rethinking rather than extending.
+
+## 2026-08-17 — the fast paths reach `vsscanf`: all five measured shapes go from losses to wins on the va_list arm
+
+- **RESULT CLASS: measured improvement.** Instruction count under `RTLD_DEEPBIND`, 200k iterations,
+  `perf stat -r 3`, `SSCANF_ICOUNT_VSSCANF=1`,
+  bench_elf_sha256=28bc7a20857e6d6b7ca3dd25ae7acda12468c82a371e6256f42f0aeb88f136f2, loadavg
+  9.13-10.21 / 16.10-17.13 / 28.54-29.47, cpu MHz 2509-3106. **No wall-clock claim**: 23 cargo/rustc
+  processes were running for most of the turn, so this was never a no-build window.
+- **THE GAP.** Every strict fast path in this family was reachable only through the VARIADIC entry
+  points. `vsscanf` had none and ran the engine for every format — and the certified wall-clock run
+  measured that arm at **11 losses out of 12** while the variadic arm was 5 wins. `<stdio.h>` sends
+  compiled `vsscanf` calls there, and every va_list forwarder in a logging or parsing helper lands
+  there too.
+- **RESULT, fl before and after against an unchanged glibc reference:**
+
+  | case | fl engine | fl fast path | reduction | glibc | ratio before -> after |
+  | --- | ---: | ---: | ---: | ---: | --- |
+  | `single_int` | 243,433,999 | 99,339,384 | 2.45x | 189,632,460 | 1.283x -> **0.524x** |
+  | `two_strings` | 401,869,543 | 129,530,215 | 3.10x | 223,928,482 | 1.795x -> **0.579x** |
+  | `key_value` | 413,314,677 | 128,744,813 | 3.21x | 224,115,671 | 1.843x -> **0.574x** |
+  | `dotted_quad` | 841,323,903 | 172,643,968 | 4.87x | 492,043,347 | 1.710x -> **0.351x** |
+  | `mixed_record` | — | 243,798,025 | — | 467,314,857 | **0.522x** |
+
+  The glibc column was re-measured after the fl change and moved by less than 0.05% from the earlier
+  reading, so the reference is stable and the ratios are not an artefact of drift.
+- **HOW THE "BEFORE" COLUMN WAS OBTAINED, stated because it was not planned.** The first measurement
+  ran against a STALE object — I had rebuilt only the driver after wiring `vsscanf` — and the numbers
+  came back engine-shaped, which is how the staleness was caught. That stale build is exactly HEAD
+  minus this change, so it serves as the pre-change arm, taken on the same machine minutes apart with
+  the same driver. This is the third stale-artifact catch of the campaign; the tell each time was a
+  number whose SHAPE was wrong for the code that was supposed to be running.
+- **THE CORRECTNESS RISK HERE IS NOT THE SCAN, IT IS THE VA_LIST.** The destinations come from
+  `va_next_pointer`, factored out of `vscanf_write_values` so one implementation advances the list. A
+  list advanced wrongly does not crash: it writes a scanned value through whatever pointer happens to
+  sit next in the caller's frame, and it can leave the RETURN CODE correct.
+  `vsscanf_consumes_exactly_one_argument_per_conversion` puts a sentinel slot after the ones the
+  format consumes and asserts it comes back untouched; 15 further cases compare fl against the host's
+  `vsscanf` across every fast-path shape plus the declines.
+- **STILL OWED:** a wall-clock re-certification of the `vsscanf` arm, which is what the 11-of-12
+  figure came from. That needs a no-build window and has not had one.

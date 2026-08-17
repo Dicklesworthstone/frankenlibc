@@ -36,6 +36,36 @@
 use std::ffi::{CString, c_char, c_int, c_void};
 
 type SscanfFn = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
+type VsscanfFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> c_int;
+
+/// An x86_64 `__va_list_tag` with every argument in the overflow area.
+///
+/// Set `SSCANF_ICOUNT_VSSCANF=1` to route a case through `vsscanf` instead of
+/// the variadic entry point. The two are DIFFERENT implementations in fl — the
+/// strict fast paths reached only the variadic side until they were wired into
+/// `vsscanf` — and the certified wall-clock run measured this arm at 11 losses
+/// of 12 while the variadic arm was 5 wins. A driver that cannot reach it cannot
+/// measure the fix.
+#[repr(C)]
+struct VaListTag {
+    gp_offset: u32,
+    fp_offset: u32,
+    overflow_arg_area: *mut c_void,
+    reg_save_area: *mut c_void,
+}
+
+impl VaListTag {
+    /// 48 and 304 mean "registers exhausted", so every fetch reads the overflow
+    /// array.
+    fn overflow(slots: &mut [*mut c_void]) -> Self {
+        Self {
+            gp_offset: 48,
+            fp_offset: 304,
+            overflow_arg_area: slots.as_mut_ptr().cast(),
+            reg_save_area: std::ptr::null_mut(),
+        }
+    }
+}
 
 fn dl<T: Copy>(handle: *mut c_void, name: &[u8]) -> T {
     // SAFETY: handle came from dlopen; name is a NUL-terminated byte string.
@@ -102,6 +132,17 @@ fn main() {
         }
     };
 
+    // The va_list arm, selected by SSCANF_ICOUNT_VSSCANF=1.
+    let via_vsscanf = std::env::var("SSCANF_ICOUNT_VSSCANF").is_ok_and(|v| v != "0");
+    let vsscanf: VsscanfFn = if via_vsscanf {
+        // SAFETY: the resolved symbol has vsscanf's C signature.
+        dl(handle, b"vsscanf\0")
+    } else {
+        // Unused in the variadic arm; never called.
+        // SAFETY: same object, same signature; resolution is harmless.
+        dl(handle, b"vsscanf\0")
+    };
+
     // (input, format) per case, mirroring incumbent_coverage_ab's sscanf family
     // so the two instruments can be read against each other.
     let (input, format) = match case.as_str() {
@@ -146,7 +187,49 @@ fn main() {
     for _ in 0..n {
         // SAFETY: each format's arguments match the pointers passed. The
         // destinations are 128-byte buffers and the inputs are far shorter.
-        let rc = unsafe {
+        let rc = if via_vsscanf {
+            // One tag per iteration: a va_list is CONSUMED by the call, so
+            // reusing one would feed the second iteration an exhausted list.
+            let mut slots: Vec<*mut c_void> = match case.as_str() {
+                "single_int" | "long_literal" | "float_only" => {
+                    vec![(&mut int_a as *mut c_int).cast()]
+                }
+                "two_ints" => vec![
+                    (&mut int_a as *mut c_int).cast(),
+                    (&mut int_b as *mut c_int).cast(),
+                ],
+                "dotted_quad" => vec![
+                    (&mut int_a as *mut c_int).cast(),
+                    (&mut int_b as *mut c_int).cast(),
+                    (&mut int_c as *mut c_int).cast(),
+                    (&mut int_d as *mut c_int).cast(),
+                ],
+                "string_token" | "scanset_only" => vec![buf_a.as_mut_ptr().cast()],
+                "two_strings" | "key_value" => {
+                    vec![buf_a.as_mut_ptr().cast(), buf_b.as_mut_ptr().cast()]
+                }
+                "string_then_int" => vec![
+                    buf_a.as_mut_ptr().cast(),
+                    (&mut int_a as *mut c_int).cast(),
+                ],
+                "mixed_record" => vec![
+                    buf_a.as_mut_ptr().cast(),
+                    (&mut int_a as *mut c_int).cast(),
+                    (&mut dbl as *mut f64).cast(),
+                ],
+                other => panic!("no va_list shape for {other:?}"),
+            };
+            let mut tag = VaListTag::overflow(&mut slots);
+            // SAFETY: the tag describes exactly this case's destinations.
+            unsafe {
+                vsscanf(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    std::ptr::addr_of_mut!(tag).cast(),
+                )
+            }
+        } else {
+            unsafe {
             match case.as_str() {
                 "long_literal" => sscanf(
                     std::hint::black_box(cin.as_ptr()),
@@ -207,6 +290,7 @@ fn main() {
                     std::hint::black_box(cfmt.as_ptr()),
                     buf_a.as_mut_ptr().cast::<c_char>(),
                 ),
+            }
             }
         };
         // Order-sensitive mix over EVERY destination this driver can write: the
