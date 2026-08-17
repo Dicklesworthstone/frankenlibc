@@ -204,14 +204,16 @@ fn the_engine_still_matches_glibc_on_string_and_scanset_formats() {
 /// through the engine as through the ABI entry point that does have the probes.
 #[test]
 fn the_engine_and_the_abi_agree_on_a_format_no_fast_path_accepts() {
-    // Four `%d` conversions: `strict_decimal_int_format_count` accepts at most
-    // three, so the ABI entry point cannot fast-path this and both sides run the
-    // engine. If these ever disagree, the two routes have diverged.
-    let (engine_rc, engine_vals) = engine("1 2 3 4", "%d %d %d %d");
+    // FIVE `%d` conversions: `strict_decimal_int_format_count` accepts at most
+    // STRICT_INT_LIST_MAX (four), so the ABI entry point cannot fast-path this
+    // and both sides run the engine. If these ever disagree, the two routes have
+    // diverged. It was four until the fast path grew literal-separated lists,
+    // which is exactly the kind of drift that turns a control into a duplicate.
+    let (engine_rc, engine_vals) = engine("1 2 3 4 5", "%d %d %d %d %d");
 
-    let cin = CString::new("1 2 3 4").expect("input has NUL");
-    let cfmt = CString::new("%d %d %d %d").expect("format has NUL");
-    let mut v: [c_int; 4] = [-777; 4];
+    let cin = CString::new("1 2 3 4 5").expect("input has NUL");
+    let cfmt = CString::new("%d %d %d %d %d").expect("format has NUL");
+    let mut v: [c_int; 5] = [-777; 5];
     // SAFETY: four conversions, four `int *`.
     let abi_rc = unsafe {
         frankenlibc_abi::stdio_abi::sscanf(
@@ -221,14 +223,15 @@ fn the_engine_and_the_abi_agree_on_a_format_no_fast_path_accepts() {
             &mut v[1] as *mut c_int,
             &mut v[2] as *mut c_int,
             &mut v[3] as *mut c_int,
+            &mut v[4] as *mut c_int,
         )
     };
     let abi_vals: Vec<String> = (0..abi_rc.max(0) as usize)
         .map(|i| v[i].to_string())
         .collect();
 
-    assert_eq!(engine_rc, 4, "the engine did not scan the control format");
-    assert_eq!(abi_rc, 4, "the ABI did not scan the control format");
+    assert_eq!(engine_rc, 5, "the engine did not scan the control format");
+    assert_eq!(abi_rc, 5, "the ABI did not scan the control format");
     assert_eq!(
         engine_vals, abi_vals,
         "engine produced {engine_vals:?} and the ABI produced {abi_vals:?} for a \

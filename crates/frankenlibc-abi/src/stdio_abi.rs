@@ -177,7 +177,7 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
 pub(crate) struct StrictDecimalIntsScan {
     pub(crate) count: c_int,
     pub(crate) input_failure: bool,
-    pub(crate) values: [c_int; 3],
+    pub(crate) values: [c_int; STRICT_INT_LIST_MAX],
 }
 
 enum StrictIntScan {
@@ -191,34 +191,60 @@ fn scanf_ascii_space(b: u8) -> bool {
     b == b' ' || (b >= b'\t' && b <= b'\r')
 }
 
+/// The largest int list the fast path serves. Four covers the shapes that
+/// matter — `%d.%d.%d.%d` for IPv4, `%d/%d/%d` for a date, `%d:%d:%d` for a
+/// time — and bounds the value array that lives on the stack.
+pub(crate) const STRICT_INT_LIST_MAX: usize = 4;
+
+/// A format that is nothing but decimal `%d` conversions joined by ONE repeated
+/// separator: `fields` conversions separated by `sep`.
+///
+/// `sep` is `b' '` for the whitespace form, where the separator matches nothing
+/// itself because `%d` already skips leading whitespace. Any other byte is a
+/// LITERAL that must appear exactly once between conversions.
+///
+/// This used to accept only the whitespace form with at most three fields, which
+/// left `"%d.%d.%d.%d"` — the IPv4 shape and the worst case in the family at
+/// 2.899x host glibc — parsing to SEVEN directives and spilling the four-slot
+/// inline vector to the heap.
 #[inline]
-pub(crate) unsafe fn strict_decimal_int_format_count(format: *const c_char) -> Option<usize> {
+pub(crate) unsafe fn strict_decimal_int_format_count(format: *const c_char) -> Option<(usize, u8)> {
     let f = format.cast::<u8>();
-    if unsafe { *f } != b'%' || unsafe { *f.add(1) } != b'd' {
-        return None;
-    }
-    match unsafe { *f.add(2) } {
-        0 => Some(1),
-        b' ' => {
-            if unsafe { *f.add(3) } != b'%' || unsafe { *f.add(4) } != b'd' {
+    // SAFETY: `format` is non-null and NUL-terminated under the scanf contract;
+    // every read below is guarded by the previous byte not being the terminator.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'd' {
+            return None;
+        }
+        let mut i = 2usize;
+        let mut fields = 1usize;
+        let mut sep = 0u8;
+        loop {
+            let c = *f.add(i);
+            if c == 0 {
+                return Some((fields, if sep == 0 { b' ' } else { sep }));
+            }
+            // A `%` here would be a second conversion with no separator, which
+            // this path does not model.
+            if c == b'%' {
                 return None;
             }
-            match unsafe { *f.add(5) } {
-                0 => Some(2),
-                b' ' => {
-                    if unsafe { *f.add(6) } == b'%'
-                        && unsafe { *f.add(7) } == b'd'
-                        && unsafe { *f.add(8) } == 0
-                    {
-                        Some(3)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
+            // One separator character, and every separator must be the SAME one:
+            // mixing them is rare enough not to be worth a second scan shape.
+            if sep == 0 {
+                sep = c;
+            } else if c != sep {
+                return None;
             }
+            if *f.add(i + 1) != b'%' || *f.add(i + 2) != b'd' {
+                return None;
+            }
+            fields += 1;
+            if fields > STRICT_INT_LIST_MAX {
+                return None;
+            }
+            i += 3;
         }
-        _ => None,
     }
 }
 
@@ -421,11 +447,31 @@ unsafe fn strict_scan_decimal_int(mut p: *const u8) -> StrictIntScan {
 }
 
 #[inline]
-pub(crate) unsafe fn strict_scan_decimal_ints(s: *const c_char, fields: usize) -> StrictDecimalIntsScan {
+pub(crate) unsafe fn strict_scan_decimal_ints(
+    s: *const c_char,
+    fields: usize,
+    sep: u8,
+) -> StrictDecimalIntsScan {
     let mut p = s.cast::<u8>();
-    let mut values = [0; 3];
+    let mut values = [0; STRICT_INT_LIST_MAX];
     let mut count = 0usize;
     for slot in values.iter_mut().take(fields) {
+        // A LITERAL separator must match exactly, and unlike `%d` it does not
+        // skip whitespace first — `sscanf("1 .2", "%d.%d")` matches one field in
+        // glibc, not two. The whitespace form needs nothing here because the
+        // conversion below skips leading whitespace itself.
+        if count > 0 && sep != b' ' {
+            // SAFETY: `p` is inside the NUL-terminated input.
+            if unsafe { *p } != sep {
+                return StrictDecimalIntsScan {
+                    count: count as c_int,
+                    input_failure: false,
+                    values,
+                };
+            }
+            // SAFETY: the byte just read was the separator, not the terminator.
+            p = unsafe { p.add(1) };
+        }
         match unsafe { strict_scan_decimal_int(p) } {
             StrictIntScan::Value(value, next) => {
                 *slot = value;
@@ -9376,8 +9422,8 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
     }
 
     if runtime_policy::strict_passthrough_active() {
-        if let Some(fields) = unsafe { strict_decimal_int_format_count(format) } {
-            let fast = unsafe { strict_scan_decimal_ints(s, fields) };
+        if let Some((fields, sep)) = unsafe { strict_decimal_int_format_count(format) } {
+            let fast = unsafe { strict_scan_decimal_ints(s, fields, sep) };
             for idx in 0..(fast.count.max(0) as usize).min(fields) {
                 let ptr = unsafe { args.next_arg::<*mut c_int>() };
                 unsafe { *ptr = fast.values[idx] };
@@ -12205,7 +12251,7 @@ pub unsafe extern "C" fn __isoc99_sscanf(
     // `__isoc23_sscanf`: the fallback delegates to `vsscanf`, which decides for
     // itself, so deciding here too would bill the engine path twice.
     if !s.is_null() && !format.is_null() && runtime_policy::strict_passthrough_active() {
-        if let Some(fields) = unsafe { strict_decimal_int_format_count(format) } {
+        if let Some((fields, sep)) = unsafe { strict_decimal_int_format_count(format) } {
             let (_, decision) =
                 runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
             if matches!(decision.action, MembraneAction::Deny) {
@@ -12214,7 +12260,7 @@ pub unsafe extern "C" fn __isoc99_sscanf(
             }
             // SAFETY: the format is exactly `fields` decimal-int conversions, so
             // the caller passed that many `int *`. `count` carries EOF as -1.
-            let fast = unsafe { strict_scan_decimal_ints(s, fields) };
+            let fast = unsafe { strict_scan_decimal_ints(s, fields, sep) };
             for idx in 0..(fast.count.max(0) as usize).min(fields) {
                 // SAFETY: one `int *` per accepted conversion.
                 let ptr = unsafe { args.next_arg::<*mut c_int>() };

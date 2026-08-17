@@ -119,13 +119,13 @@ pub unsafe extern "C" fn __isoc23_sscanf(
         && !format.is_null()
         && crate::runtime_policy::strict_passthrough_active()
     {
-        if let Some(fields) = unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) } {
+        if let Some((fields, sep)) = unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) } {
             let Some(profile) = (unsafe { scanf_fastpath_profile(s) }) else {
                 return -1;
             };
             // SAFETY: the format is exactly `fields` decimal-int conversions, so
             // the caller passed that many `int *`. `count` carries EOF as -1.
-            let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields) };
+            let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields, sep) };
             for idx in 0..(fast.count.max(0) as usize).min(fields) {
                 // SAFETY: one `int *` per accepted conversion.
                 let ptr = unsafe { args.next_arg::<*mut core::ffi::c_int>() };

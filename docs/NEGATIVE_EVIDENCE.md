@@ -30328,3 +30328,42 @@ What this changes, and what it does not:
   a multi-conversion shape that no fast path accepts, so they run the engine. `dotted_quad`
   (`"%d.%d.%d.%d"`) at 2.899x is now the worst case in the family. The engine's own certified
   numbers, on the `vsscanf` arm, are the row above this one; nothing here supersedes them.
+
+## 2026-08-17 — REPRODUCTION, second run: every case moved the same direction, two verdicts flipped, and the per-run CIs do not describe reproducibility
+
+- **RESULT CLASS: methodological, and it qualifies the row above rather than replacing it.** Same
+  binary, same fl object (sha256=70d42cfe767c3b61dbbee52eda4e854a7c75c6a73024181c6e967fbd26530529),
+  same command, twenty minutes apart, in the most stable window of the session (loadavg
+  12.81/12.04/12.87 at launch, all three within one point). Raw logs:
+  `tests/artifacts/perf/bd-6zt6hf-sscanf-isoc23-wallclock-2026-08-17.log` and `...-run2.log`.
+- **ALL TWELVE CASES MOVED THE SAME WAY, which is not noise:** `dotted_quad` -15.03%, `string_token`
+  -11.61%, `two_strings` -9.89%, `key_value` -9.84%, `string_then_int` -9.74%, `float_only` -9.35%,
+  `single_int` -8.94%, `scanset_only` -8.21%, `two_ints` -6.60%, `long_hex` -5.24%, `long_string`
+  -5.23%, `mixed_record` -1.81%. Twelve of twelve in one direction is a systematic between-run shift,
+  not scatter.
+- **TWO VERDICTS FLIPPED.** `float_only` 1.030971 -> 0.934638 and `long_hex` 1.027760 -> 0.973900,
+  turning 5 wins / 7 losses into 7 wins / 5 losses. Both runs declared themselves DECIDABLE.
+- **AND THE NULLS HELD IN BOTH RUNS.** Run 1's 24 A/A controls spanned 0.997383-1.001862; run 2's
+  spanned 0.997843-1.001852. So the A/A null is doing its job — it certifies that the two arms were
+  measured under the same conditions WITHIN one invocation — and it is structurally incapable of
+  seeing a shift that moves both arms' relationship BETWEEN invocations.
+- **THEREFORE: the per-case bootstrap median CIs, which are about +/-0.3% wide, describe WITHIN-RUN
+  precision and must not be read as reproducibility.** Between-run reproducibility on this host is
+  about +/-15%, which is fifty times wider. A gate that requires only in-run nulls and CIs will
+  certify a 5% effect that a second run reverses.
+- **THE ONE DIFFERENCE I CAN NAME between the runs is the pinned set's core coverage.**
+  `--pin-quietest 8` chose 8 logical CPUs on **8 distinct physical cores** in run 1
+  (`physical_cores=8 logical_threads=8`) and 8 logical CPUs on only **6** in run 2
+  (`physical_cores=6 logical_threads=8`) — two SMT sibling pairs sharing a core. I am not claiming
+  that is the whole mechanism; it is the difference the logs record, and the selector does not
+  currently prefer distinct physical cores.
+- **WHAT THIS DOES AND DOES NOT DO TO THE CAMPAIGN WIN.** The five large wins stand: `scanset_only`
+  0.186/0.171, `two_ints` 0.226/0.211, `single_int` 0.254/0.232, `string_token` 0.254/0.225,
+  `long_string` 0.326/0.309 — margins of 3x to 5.8x, which a 15% between-run shift cannot reach.
+  **WITHDRAWN as undecidable: the `float_only` and `long_hex` verdicts**, in both directions; they sit
+  within the between-run band and no single run can call them. The seven-vs-five and five-vs-seven
+  win counts should not be quoted at all; the correct statement is "five cases win by 3x or more, two
+  are within noise of parity, five lose by 1.5x or more".
+- **OWED, and it is the next lever on the instrument rather than on the library:** `--pin-quietest`
+  should select distinct physical cores before it takes SMT siblings, and a certification should run
+  twice on different pinned sets with the between-run spread reported alongside the in-run CI.

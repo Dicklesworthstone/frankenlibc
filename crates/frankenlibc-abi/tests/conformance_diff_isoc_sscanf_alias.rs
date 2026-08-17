@@ -129,9 +129,24 @@ const CASES: &[(&str, &str)] = &[
     ("   ", "%d"),
     ("-", "%d"),
     ("+", "%d"),
+    // Four fields are now the WIDEST shape the fast path accepts, so this one
+    // exercises the boundary rather than the fallback.
+    ("1 2 3 4", "%d %d %d %d"),
+    // Literal-separated int lists — the shape the fast path gained for IPv4,
+    // dates and times. The declines matter as much as the matches.
+    ("192.168.1.1", "%d.%d.%d.%d"),
+    ("192.168.1", "%d.%d.%d.%d"),
+    ("1/2/3", "%d/%d/%d"),
+    ("11:22:33", "%d:%d:%d"),
+    ("1 .2", "%d.%d"),
+    ("1..2", "%d.%d"),
+    ("1", "%d.%d"),
+    ("", "%d.%d"),
+    ("1.2", "%d,%d"),
+    ("1.2:3", "%d.%d:%d"),
     // Formats the fast path must DECLINE, so these fall to the engine through
     // every arm and check the fallback still works.
-    ("1 2 3 4", "%d %d %d %d"),
+    ("1 2 3 4 5", "%d %d %d %d %d"),
     ("5", "%5d"),
     ("5", " %d"),
     ("x=5", "x=%d"),
@@ -360,12 +375,12 @@ fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
 #[test]
 fn the_aliases_take_the_decimal_int_fast_path() {
     // POSITIVE CONTROL first. `strict_decimal_int_format_count` accepts at most
-    // three `%d` fields, so a four-field format cannot be served by the fast path
-    // through ANY arm and must reach the engine — whose directive list spills
+    // STRICT_INT_LIST_MAX (four) `%d` fields, so a FIVE-field format cannot be
+    // served by the fast path through ANY arm and must reach the engine — whose directive list spills
     // past its inline capacity and allocates. If this reads zero the counter is
     // blind and every zero below is worthless, so it is asserted before them.
-    let control = allocs_for(fl_arms()[0].1, "1 2 3 4", "%d %d %d %d");
-    println!("CONTROL sscanf(\"1 2 3 4\", \"%d %d %d %d\") allocations={control} (engine path)");
+    let control = allocs_for(fl_arms()[0].1, "1 2 3 4 5", "%d %d %d %d %d");
+    println!("CONTROL sscanf(\"1 2 3 4 5\", \"%d %d %d %d %d\") allocations={control} (engine path)");
     assert!(
         control >= 1,
         "the engine path allocated {control} times, so allocation count cannot \
