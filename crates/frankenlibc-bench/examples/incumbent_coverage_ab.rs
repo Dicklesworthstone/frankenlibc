@@ -70,6 +70,10 @@ const FPCLASSIFY_REPS: usize = 4_000_000;
 // already hundreds of nanoseconds per call; the batch only has to be long
 // enough to swamp the timer, not to resolve a sub-nanosecond call.
 const MEMRCHR_REPS: usize = 200_000;
+// Deletions each tdelete batch performs, across however many build-and-empty
+// cycles that takes. Equalizes sample WORK across tree sizes; see
+// `time_tdelete_batch` for why the small trees needed it.
+const TDELETE_DELETIONS_PER_BATCH: usize = 8192;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
 const MALLOC_FREE_REPS: usize = 100_000;
@@ -1874,40 +1878,57 @@ fn time_tdelete_batch(
     count: usize,
 ) -> f64 {
     let keys = tree_keys();
-    let mut root: *mut c_void = std::ptr::null_mut();
-    for key in &keys[..count] {
-        // SAFETY: `key` outlives the tree; `root` is a live local.
-        let inserted = unsafe {
-            tsearch(
-                (key as *const c_int).cast::<c_void>(),
-                &mut root,
-                compare_tree_keys,
-            )
-        };
-        assert!(!inserted.is_null(), "tsearch failed to insert");
+    // EQUAL WORK PER BATCH, WHICHEVER TREE SIZE. One build-and-empty cycle of a
+    // 64-key tree is only ~3.7 us, small enough that timer granularity and
+    // per-cycle overhead dominate: measured at 36 samples, tree64's A/A null CV
+    // was 25.4% against 0.7% at tree8192, and tree1024 came back NULL_VIOLATED on
+    // one run of four. Repeating the cycle until each batch has performed about
+    // `TDELETE_DELETIONS_PER_BATCH` deletions makes every case's sample the same
+    // size in work rather than in trees, which is what the nulls respond to.
+    //
+    // The builds stay OUT of the timed region: each cycle is timed separately and
+    // only the delete phases are accumulated. That is why this cannot simply loop
+    // outside the timer.
+    let cycles = TDELETE_DELETIONS_PER_BATCH.div_ceil(count).max(1);
+    let mut elapsed_ns = 0.0f64;
+
+    for _ in 0..cycles {
+        let mut root: *mut c_void = std::ptr::null_mut();
+        for key in &keys[..count] {
+            // SAFETY: `key` outlives the tree; `root` is a live local.
+            let inserted = unsafe {
+                tsearch(
+                    (key as *const c_int).cast::<c_void>(),
+                    &mut root,
+                    compare_tree_keys,
+                )
+            };
+            assert!(!inserted.is_null(), "tsearch failed to insert");
+        }
+
+        let started = Instant::now();
+        for key in &keys[..count] {
+            // SAFETY: as above; the key is present until this call removes it.
+            let removed = unsafe {
+                tdelete(
+                    (key as *const c_int).cast::<c_void>(),
+                    &mut root,
+                    compare_tree_keys,
+                )
+            };
+            black_box(removed);
+        }
+        elapsed_ns += started.elapsed().as_secs_f64() * 1_000_000_000.0;
+
+        // Assert the positive fact: the cycle really removed every key. A silently
+        // empty or half-emptied tree would still produce a plausible-looking time.
+        assert!(
+            root.is_null(),
+            "tree not empty after deleting all {count} keys"
+        );
     }
 
-    let started = Instant::now();
-    for key in &keys[..count] {
-        // SAFETY: as above; the key is present until this call removes it.
-        let removed = unsafe {
-            tdelete(
-                (key as *const c_int).cast::<c_void>(),
-                &mut root,
-                compare_tree_keys,
-            )
-        };
-        black_box(removed);
-    }
-    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / count as f64;
-
-    // Assert the positive fact: the batch really removed every key. A silently
-    // empty or half-emptied tree would still produce a plausible-looking time.
-    assert!(
-        root.is_null(),
-        "tree not empty after deleting all {count} keys"
-    );
-    elapsed
+    elapsed_ns / (cycles * count) as f64
 }
 
 fn measure_tdelete_case(
@@ -1971,10 +1992,15 @@ fn measure_tdelete_case(
         }
     }
 
+    // Report the deletions a batch actually performed, not the tree size: with
+    // repeated cycles those differ, and `reps_per_arm` is the row's statement about
+    // how much work each timing covers.
+    let deletions_per_batch =
+        TDELETE_DELETIONS_PER_BATCH.div_ceil(case.count).max(1) * case.count;
     summarize_case(
         case.label,
         case.note,
-        case.count,
+        deletions_per_batch,
         fl_effect,
         glibc_effect,
         fl_null_a,
