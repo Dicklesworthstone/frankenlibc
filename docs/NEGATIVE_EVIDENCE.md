@@ -30641,3 +30641,39 @@ What this changes, and what it does not:
   measures the ratio's load-sensitivity rather than its quiet-state value. That is what makes it
   informative here: the runs were not spoiled, they were informative about exactly the thing the null
   cannot report.
+
+## 2026-08-17 — REJECTED: serving `%f`/`%lf` as a fast-path field moved `mixed_record` by 1.2% and left it a loss
+
+- **RESULT CLASS: rejection, with a counted mechanism.** Instruction count under `RTLD_DEEPBIND`,
+  200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=17a2d2b6318592af67747cbc38f22cb6b677ecd45c48eb321a9592161609326e, loadavg
+  22.93/47.55/69.77, cpu MHz 2947-3473. No wall-clock claim: four local builds were in flight.
+- **THE LEVER.** `mixed_record` (`"%s %d %lf"`) is the last certified loss at 1.522x-1.545x. The
+  field-list fast path already served `%d`, `%s` and `%[^X]`; adding `%f`/`%lf` would let it serve a
+  whole log record. The float grammar was NOT reimplemented — core exposed `scan_default_float`, which
+  builds the spec and calls the engine's own `scan_float`, because `ScanSpec::route` is private and a
+  second float implementation is where this repo has been bitten before.
+- **RESULT: 681,015,521 instructions -> 673,018,708, which is -40 per call out of 3405, -1.2%.**
+  Against glibc's 445,057,320 the case stays at **1.512x**, essentially the 1.522x it was certified at
+  on wall clock. Attributed on one tree by mutating the probe to decline float fields; the
+  order-sensitive checksum is identical between the two builds.
+- **MECHANISM, and it is the useful part: the cost is the CONVERSION, not the machinery the fast path
+  bypasses.** fl's float scan is already at parity with glibc's — `float_only` reads fl 285,365,230
+  against glibc 294,933,817, **0.968x** — so there is nothing to win by reaching it faster. Bypassing
+  the engine removes directive construction, which is worth ~40 instructions here, and that is all it
+  was ever going to be worth.
+- **AN UNEXPLAINED GAP, recorded because it is where the next attempt should look.** fl's parts do not
+  add up to its whole: `float_only` 1427 per call, and the `%s` and `%d` fast paths run about 300 each,
+  which totals near 2030 against a measured 3365 for `mixed_record`. glibc does all three conversions
+  in 2225. Roughly 1300 instructions per call are unaccounted for in the combination, and no flat
+  profile of the combined case has been taken yet — that measurement, not another fast-path shape, is
+  what the case needs.
+- **REVERTED**, including the `scan_default_float` helper, which would otherwise be dead public API in
+  core. The 45 float-field differential arms STAY, re-scoped to the engine: hex floats, both
+  infinities, NaN, an exponent, a leading-dot value, `-0.0`, a non-numeric tail, a missing field and
+  an empty input, compared on bit patterns. They cost nothing and they now cover shapes no other gate
+  reached.
+- **PREDICTION ACCOUNTING.** bd-hdu66c said mixed_record "is NOT recommended yet" and that any attempt
+  should reuse `scan_float` rather than reimplement it. The reuse advice was right and made the
+  attempt cheap to make and cheap to withdraw. The implicit hope that bypassing the engine would carry
+  the case was wrong, and the reason is now measured rather than assumed.

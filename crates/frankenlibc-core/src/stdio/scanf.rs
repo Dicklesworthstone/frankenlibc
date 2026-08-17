@@ -924,44 +924,6 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
     scan_input_impl(input, directives, false)
 }
 
-/// Scan ONE default-width float from `input` at `pos`, returning its value and
-/// the position just past it.
-///
-/// Exists so the ABI's strict fast paths can serve a `%f`/`%lf` field WITHOUT
-/// reimplementing the float grammar. It calls the engine's own `scan_float`
-/// through a spec built here, where `bind_route` is reachable — the reason a
-/// fast path could not do this itself is that `ScanSpec::route` is private, so
-/// the spec cannot be constructed outside this module.
-///
-/// That matters more than the convenience: this repo's float scanning covers
-/// hex floats, `inf`/`infinity`/`nan`, subnormals and the sign rules, and it has
-/// been the source of real divergences before. A second implementation in the
-/// ABI would be a second thing to get wrong. Callers get the engine's answer or
-/// nothing.
-///
-/// `None` means the conversion did not match — the caller must distinguish an
-/// exhausted input from a malformed one itself, since both look the same here.
-pub fn scan_default_float(input: &[u8], pos: usize) -> Option<(f64, usize)> {
-    let mut spec = ScanSpec {
-        suppress: false,
-        width: None,
-        length: LengthMod::None,
-        conversion: b'f',
-        scanset: None,
-        simple_set: SimpleScanSet::None,
-        wide_input: false,
-        alloc: false,
-        route: ScanfRoute::invalid(),
-    };
-    if !spec.bind_route() {
-        return None;
-    }
-    match scan_float(input, pos, &spec) {
-        Some((Some(ScanValue::Float(value)), next)) => Some((value, next)),
-        _ => None,
-    }
-}
-
 /// Run the parsed directives against a WIDE input stream (swscanf et al.), passed
 /// in here as its UTF-8 multibyte encoding. `%s`/`%c` field widths count WIDE
 /// characters (whole UTF-8 sequences), matching the C wide-scanf semantics, even

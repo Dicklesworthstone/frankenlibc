@@ -2783,10 +2783,86 @@ fn capture_argp_stream_output(
         std::io::Error::last_os_error()
     );
 
+    // No child here: this helper writes and reads within one process, so the
+    // reap-then-drain deadlock does not apply and the plain read is correct.
+    // (It has its own latent limit — a write larger than the pipe buffer would
+    // block `fclose` against nobody — but that is a separate hazard from the
+    // fork helpers below and is not what bd-akzu9k is about.)
     let mut output = String::new();
     let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
     read_end.read_to_string(&mut output)?;
     Ok(output)
+}
+
+/// `bounded_waitpid` that DRAINS a pipe while it waits.
+///
+/// Closes the last deadlock in these fork helpers (bd-akzu9k). The children here
+/// have stdout or stderr redirected into a 64K pipe, and the callers used to reap
+/// first and read afterwards: a child writing past the buffer blocks in `write()`
+/// while the parent blocks in the wait, and neither proceeds.
+///
+/// THE OBVIOUS FIX — read to EOF first, then reap — IS WRONG HERE, which is why
+/// this helper exists rather than a reordering. `read_to_end` returns at EOF, i.e.
+/// when the last write end closes, i.e. when the child exits. If the child never
+/// exits — a fork-inherited lock deadlock, or an arm whose child fails to abort —
+/// the read blocks forever and the deadline is never reached, because it would now
+/// sit after the read. That trades a bounded failure for an unbounded hang.
+///
+/// So the drain and the wait share ONE deadline: the fd is made non-blocking and
+/// emptied on every poll iteration, so the child can always make progress, and the
+/// same 30s limit still covers a child that simply never exits. A final drain runs
+/// after the child is reaped to collect whatever it wrote last.
+///
+/// # Safety
+/// `pid` must be an unreaped child of this process, and `drain_fd` the read end of
+/// a pipe this process owns.
+unsafe fn bounded_waitpid_draining(
+    pid: c_int,
+    status: &mut c_int,
+    drain_fd: c_int,
+    sink: &mut Vec<u8>,
+) -> c_int {
+    // SAFETY: `drain_fd` is a live fd owned by the caller.
+    let flags = unsafe { libc::fcntl(drain_fd, libc::F_GETFL) };
+    if flags >= 0 {
+        // SAFETY: as above; adding O_NONBLOCK to the existing flags.
+        let _ = unsafe { libc::fcntl(drain_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    }
+
+    let mut buf = [0u8; 4096];
+    let mut pump = |sink: &mut Vec<u8>| loop {
+        // SAFETY: reading into a local buffer from a live non-blocking fd.
+        let n = unsafe { libc::read(drain_fd, buf.as_mut_ptr().cast::<c_void>(), buf.len()) };
+        if n > 0 {
+            sink.extend_from_slice(&buf[..n as usize]);
+        } else {
+            break;
+        }
+    };
+
+    const LIMIT: Duration = Duration::from_secs(30);
+    let started = Instant::now();
+    loop {
+        pump(sink);
+        // SAFETY: caller guarantees `pid` is an unreaped child of this process.
+        let reaped = unsafe { libc::waitpid(pid, status as *mut c_int, libc::WNOHANG) };
+        if reaped != 0 {
+            pump(sink);
+            return reaped;
+        }
+        if started.elapsed() >= LIMIT {
+            // SAFETY: `pid` is our own child.
+            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+            // SAFETY: reapable promptly after SIGKILL.
+            let _ = unsafe { libc::waitpid(pid, status as *mut c_int, 0) };
+            panic!(
+                "child {pid} did not exit within {LIMIT:?} while its pipe was being \
+                 drained; killed it. The drain rules out pipe-capacity deadlock, so the \
+                 child is stuck for another reason — see `bounded_waitpid`."
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// Bounded replacement for `waitpid(pid, status, 0)`.
@@ -2877,17 +2953,21 @@ fn capture_argp_stdout_child_status(
     }
 
     let mut status: c_int = 0;
-    assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
+    let mut captured = Vec::new();
+    // SAFETY: `pid` is our child and `fds[0]` the pipe read end we own.
+    assert_eq!(
+        unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut captured) },
+        pid
+    );
     assert!(
         libc::WIFEXITED(status),
         "child did not exit normally: {status}"
     );
     assert_eq!(libc::WEXITSTATUS(status), expected_status);
 
-    let mut output = String::new();
-    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
-    read_end.read_to_string(&mut output)?;
-    Ok(output)
+    // SAFETY: the drain fd is owned here and closed exactly once.
+    unsafe { libc::close(fds[0]) };
+    Ok(String::from_utf8_lossy(&captured).into_owned())
 }
 
 fn capture_argp_child_exit(
@@ -2919,17 +2999,21 @@ fn capture_argp_child_exit(
     }
 
     let mut status: c_int = 0;
-    assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
+    let mut captured = Vec::new();
+    // SAFETY: `pid` is our child and `fds[0]` the pipe read end we own.
+    assert_eq!(
+        unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut captured) },
+        pid
+    );
     assert!(
         libc::WIFEXITED(status),
         "child did not exit normally: {status}"
     );
     assert_eq!(libc::WEXITSTATUS(status), expected_status);
 
-    let mut output = String::new();
-    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
-    read_end.read_to_string(&mut output)?;
-    Ok(output)
+    // SAFETY: the drain fd is owned here and closed exactly once.
+    unsafe { libc::close(fds[0]) };
+    Ok(String::from_utf8_lossy(&captured).into_owned())
 }
 
 #[test]
@@ -9526,7 +9610,10 @@ fn assert_cxa_fail_stop_hook_aborts_with_stderr(
         let _ = libc::close(fds[1]);
     }
 
-    // DO NOT "FIX" THIS BY MOVING THE READ ABOVE THE WAIT. (bd-akzu9k)
+    // FIXED (bd-akzu9k): the drain now runs INSIDE the wait, sharing its deadline.
+    // The note below is kept because it records why the obvious reordering — read
+    // to EOF first, then reap — is NOT what was done, and must not be substituted
+    // for this.
     //
     // The ordering below — reap, then drain — has a real flaw: the child's stderr
     // is dup2'd into a 64K pipe, so a child that writes past the buffer blocks in
@@ -9549,14 +9636,13 @@ fn assert_cxa_fail_stop_hook_aborts_with_stderr(
     // the wait/drain interleaving in a suite that is currently green, and getting it
     // wrong reproduces exactly the hang it is meant to remove.
     let mut status: c_int = 0;
-    let waited = unsafe { bounded_waitpid(pid, &mut status) };
-    assert_eq!(waited, pid, "waitpid failed for {label}");
-
     let mut stderr_bytes = Vec::new();
-    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
-    read_end
-        .read_to_end(&mut stderr_bytes)
-        .unwrap_or_else(|err| panic!("failed to read {label} stderr: {err}"));
+    // SAFETY: `pid` is our child and `fds[0]` is the pipe read end we own.
+    let waited =
+        unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut stderr_bytes) };
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    // SAFETY: the drain fd is owned here and closed exactly once.
+    unsafe { libc::close(fds[0]) };
     let stderr = String::from_utf8_lossy(&stderr_bytes);
 
     assert!(

@@ -430,14 +430,20 @@ fn a_lone_string_or_scanset_still_takes_its_own_fast_path() {
     }
 }
 
-/// Float FIELDS of a list — `"%s %d %lf"` is the shape of a whole log record.
+/// Float-bearing formats, which run on the ENGINE.
 ///
-/// The float grammar is not reimplemented: the fast path calls the engine's own
-/// `scan_default_float`. What IS new here is the boundary handling — where the
-/// conversion stops, and whether an exhausted input reports EOF or a matching
-/// failure — so the cases below lean on hex floats, infinities, NaN and
-/// exponents to check that the shared scanner is really being reached, and on
-/// empty and non-numeric tails to check the boundary.
+/// These were written for a fast path that served `%f`/`%lf` as list fields by
+/// calling the engine's own scanner. That lever was measured and REVERTED: it
+/// moved `mixed_record` by 40 instructions per call out of 3405 and left it a
+/// 1.512x loss, because the cost is the float conversion itself and not the
+/// directive machinery the fast path bypasses (see `docs/NEGATIVE_EVIDENCE.md`).
+///
+/// The cases stay, now guarding the engine instead. They are worth keeping on
+/// their own: 45 arms over hex floats, both infinities, NaN, an exponent, a
+/// leading-dot value, `-0.0`, a non-numeric tail, a missing field and an empty
+/// input, compared on BIT PATTERNS — a NaN is unequal to itself and `-0.0`
+/// equals `0.0` under a value comparison, so a value check would pass on
+/// divergences that matter.
 #[test]
 fn float_fields_agree_with_host_glibc() {
     let glibc: SscanfFn = unsafe {

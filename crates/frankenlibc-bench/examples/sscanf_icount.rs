@@ -123,6 +123,8 @@ fn main() {
         // The last two single-separator shapes to leave the engine.
         "two_strings" => ("hello world", "%s %s"),
         "string_then_int" => ("hello 42", "%s %d"),
+        // A whole log/CSV record, and the last certified loss.
+        "mixed_record" => ("tag 7 3.5", "%s %d %lf"),
         other => panic!("unknown case {other:?}"),
     };
 
@@ -134,6 +136,7 @@ fn main() {
     let mut int_c: c_int = 0;
     let mut int_d: c_int = 0;
     let mut flt: f32 = 0.0;
+    let mut dbl: f64 = 0.0;
     let mut buf_a = [0u8; 128];
     let mut buf_b = [0u8; 128];
 
@@ -186,6 +189,13 @@ fn main() {
                     buf_a.as_mut_ptr().cast::<c_char>(),
                     &mut int_a as *mut c_int,
                 ),
+                "mixed_record" => sscanf(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    buf_a.as_mut_ptr().cast::<c_char>(),
+                    &mut int_a as *mut c_int,
+                    &mut dbl as *mut f64,
+                ),
                 "key_value" => sscanf(
                     std::hint::black_box(cin.as_ptr()),
                     std::hint::black_box(cfmt.as_ptr()),
@@ -218,7 +228,8 @@ fn main() {
             .wrapping_add(buf_b[0] as u64)
             .wrapping_add(int_a as u64)
             .wrapping_add(int_b as u64)
-            .wrapping_add(flt.to_bits() as u64);
+            .wrapping_add(flt.to_bits() as u64)
+            .wrapping_add(dbl.to_bits());
     }
 
     // The loader mode is PRINTED because a row measured without it is not a
