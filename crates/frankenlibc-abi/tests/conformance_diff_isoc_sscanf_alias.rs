@@ -138,6 +138,71 @@ const CASES: &[(&str, &str)] = &[
     ("5", "%u"),
 ];
 
+/// Inputs for the `"%s"` fast path, which serves the exact format and nothing
+/// else. The engine handled these before and must keep agreeing with the host:
+/// leading whitespace of every ASCII kind, a token that runs to the terminator,
+/// an input that is only whitespace (input failure, EOF) and an empty input.
+const STRING_CASES: &[&str] = &[
+    "hello world",
+    "hello",
+    "   leading",
+    "\t\n\x0b\x0c\r mixed",
+    "trailing   ",
+    "",
+    "   ",
+    "\t",
+    "a",
+    "one_very_long_token_that_exceeds_any_inline_capacity_used_anywhere_here",
+];
+
+#[test]
+fn the_string_fast_path_agrees_with_host_glibc() {
+    let glibc: SscanfFn = unsafe {
+        host_fn(
+            c"__isoc23_sscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_sscanf as *const (),
+        )
+    };
+
+    // A sentinel byte after the destination: `%s` must NUL-terminate exactly at
+    // the token end and write nothing past it. Without this a fast path that
+    // forgot the terminator, or ran on, would still compare equal.
+    let scan_one = |f: SscanfFn, input: &str| -> (c_int, String, u8) {
+        let cin = CString::new(input).expect("input has NUL");
+        let cfmt = CString::new("%s").expect("format has NUL");
+        let mut buf = [0xAAu8; 128];
+        // SAFETY: the format takes one `char *`; the buffer is far longer than
+        // any token in the table.
+        let rc = unsafe { f(cin.as_ptr(), cfmt.as_ptr(), buf.as_mut_ptr().cast::<c_char>()) };
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(0);
+        (
+            rc,
+            String::from_utf8_lossy(&buf[..end]).into_owned(),
+            buf[127],
+        )
+    };
+
+    let mut compared = 0usize;
+    for input in STRING_CASES {
+        let want = scan_one(glibc, input);
+        for (name, arm) in fl_arms() {
+            let got = scan_one(arm, input);
+            assert_eq!(
+                got, want,
+                "{name}(\"%s\") on {input:?} produced {got:?}, host glibc produced {want:?}"
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(
+        compared,
+        STRING_CASES.len() * 3,
+        "compared {compared} arms, expected {}",
+        STRING_CASES.len() * 3
+    );
+    println!("compared {compared} %s arms across {} inputs", STRING_CASES.len());
+}
+
 #[test]
 fn the_aliases_agree_with_host_glibc() {
     // The oracle. `host_fn` asserts the resolved address is NOT fl's own, so a

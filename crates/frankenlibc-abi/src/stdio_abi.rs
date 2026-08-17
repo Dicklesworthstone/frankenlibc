@@ -222,6 +222,79 @@ pub(crate) unsafe fn strict_decimal_int_format_count(format: *const c_char) -> O
     }
 }
 
+/// The shapes the strict scanf fast paths serve, in one probe.
+///
+/// One probe rather than two so an entry point makes ONE membrane decision and
+/// then dispatches — deciding per candidate shape is how the aliases picked up a
+/// double traversal the first time (see `__isoc99_sscanf`).
+#[derive(Clone, Copy)]
+pub(crate) enum StrictScanfShape {
+    /// Exactly `fields` decimal `%d` conversions separated by single spaces.
+    Ints(usize),
+    /// Exactly `"%s"` — no width, no suppression, no length modifier.
+    OneString,
+}
+
+/// Classify a format for the fast paths, or decline.
+///
+/// Declining is the common case and has to stay cheap: both tests bail on the
+/// second byte of the format for anything that is not `%d`/`%s`.
+#[inline]
+pub(crate) unsafe fn strict_scanf_shape(format: *const c_char) -> Option<StrictScanfShape> {
+    if let Some(fields) = unsafe { strict_decimal_int_format_count(format) } {
+        return Some(StrictScanfShape::Ints(fields));
+    }
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and NUL-terminated under the scanf contract,
+    // so reading up to and including the terminator is in bounds.
+    if unsafe { *f } == b'%' && unsafe { *f.add(1) } == b's' && unsafe { *f.add(2) } == 0 {
+        return Some(StrictScanfShape::OneString);
+    }
+    None
+}
+
+/// Copy one whitespace-delimited token out of `s` into `dst`, NUL-terminated.
+///
+/// Returns 1 when a token was written and `EOF` when the input held nothing but
+/// whitespace, which is what the engine's `%s` does for a narrow stream: leading
+/// whitespace is skipped, the token ends at the next ASCII space, and an input
+/// that ends before any non-space byte is an input failure rather than a match
+/// failure.
+///
+/// `dst` is unbounded, exactly as C's `%s` is — the caller owns that contract and
+/// the engine path does not check it either.
+pub(crate) unsafe fn strict_scan_single_string(s: *const c_char, dst: *mut c_char) -> c_int {
+    let mut p = s.cast::<u8>();
+    loop {
+        // SAFETY: `s` is NUL-terminated, and the loop stops at the terminator.
+        let b = unsafe { *p };
+        if b == 0 {
+            return libc::EOF;
+        }
+        if !scanf_ascii_space(b) {
+            break;
+        }
+        // SAFETY: `b` was not the terminator, so `p + 1` is still in bounds.
+        p = unsafe { p.add(1) };
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: as above; the token ends at the terminator or at a space.
+        let b = unsafe { *p };
+        if b == 0 || scanf_ascii_space(b) {
+            break;
+        }
+        // SAFETY: the caller guarantees `dst` holds the token plus a NUL, which
+        // is C's `%s` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied token, still the caller's buffer.
+    unsafe { *d = 0 };
+    1
+}
+
 #[inline]
 fn clamp_scanf_i64_magnitude(val: u64, negative: bool, overflowed: bool) -> i64 {
     if negative {
@@ -9250,15 +9323,25 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return -1;
     }
 
-    if runtime_policy::strict_passthrough_active() {
-        if let Some(fields) = unsafe { strict_decimal_int_format_count(format) } {
-            let fast = unsafe { strict_scan_decimal_ints(s, fields) };
-            for idx in 0..(fast.count.max(0) as usize).min(fields) {
-                let ptr = unsafe { args.next_arg::<*mut c_int>() };
-                unsafe { *ptr = fast.values[idx] };
+    if runtime_policy::strict_passthrough_active()
+        && let Some(shape) = unsafe { strict_scanf_shape(format) }
+    {
+        match shape {
+            StrictScanfShape::Ints(fields) => {
+                let fast = unsafe { strict_scan_decimal_ints(s, fields) };
+                for idx in 0..(fast.count.max(0) as usize).min(fields) {
+                    let ptr = unsafe { args.next_arg::<*mut c_int>() };
+                    unsafe { *ptr = fast.values[idx] };
+                }
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+                return fast.count;
             }
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
-            return fast.count;
+            StrictScanfShape::OneString => {
+                let dst = unsafe { args.next_arg::<*mut c_char>() };
+                let rc = unsafe { strict_scan_single_string(s, dst) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+                return rc;
+            }
         }
     }
 
@@ -12070,23 +12153,35 @@ pub unsafe extern "C" fn __isoc99_sscanf(
     if !s.is_null()
         && !format.is_null()
         && runtime_policy::strict_passthrough_active()
-        && let Some(fields) = unsafe { strict_decimal_int_format_count(format) }
+        && let Some(shape) = unsafe { strict_scanf_shape(format) }
     {
         let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
         if matches!(decision.action, MembraneAction::Deny) {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return -1;
         }
-        // SAFETY: the format is exactly `fields` decimal-int conversions, so the
-        // caller passed that many `int *`. `count` already carries EOF as -1.
-        let fast = unsafe { strict_scan_decimal_ints(s, fields) };
-        for idx in 0..(fast.count.max(0) as usize).min(fields) {
-            // SAFETY: one `int *` per accepted conversion.
-            let ptr = unsafe { args.next_arg::<*mut c_int>() };
-            unsafe { *ptr = fast.values[idx] };
+        match shape {
+            StrictScanfShape::Ints(fields) => {
+                // SAFETY: the format is exactly `fields` decimal-int conversions,
+                // so the caller passed that many `int *`. `count` carries EOF.
+                let fast = unsafe { strict_scan_decimal_ints(s, fields) };
+                for idx in 0..(fast.count.max(0) as usize).min(fields) {
+                    // SAFETY: one `int *` per accepted conversion.
+                    let ptr = unsafe { args.next_arg::<*mut c_int>() };
+                    unsafe { *ptr = fast.values[idx] };
+                }
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+                return fast.count;
+            }
+            StrictScanfShape::OneString => {
+                // SAFETY: the format is exactly `"%s"`, so the caller passed one
+                // `char *` sized for the token plus its NUL.
+                let dst = unsafe { args.next_arg::<*mut c_char>() };
+                let rc = unsafe { strict_scan_single_string(s, dst) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+                return rc;
+            }
         }
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
-        return fast.count;
     }
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
     unsafe { vsscanf(s, format, ap) }
