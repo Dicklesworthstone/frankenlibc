@@ -30241,3 +30241,44 @@ What this changes, and what it does not:
 - **STILL OWED.** `key_value` at 1.996x remains the worst case; `long_literal` 287,571,393 against
   187,332,163 is 1.535x. Both are compound formats, and the remaining engine cost after this is
   `scan_input_impl` itself rather than anything allocated.
+
+## 2026-08-17 — CERTIFIED (wall clock, pinned, nulls holding): fl's `vsscanf` loses on 11 of 12 cases — and this instrument cannot see today's fast paths at all
+
+- **RESULT CLASS: loss/baseline, certified.** First wall-clock certification of this campaign. The
+  window was the quietest of the session — loadavg 16.45/17.01/19.55 falling, cpu MHz 2512 — and it
+  still took `--pin-quietest 8` to get one: unpinned, the harness's own exclusivity guard REFUSED
+  after 299 samples over 300 s with `cpu48`, `cpu51`, `cpu55` at 100.0% busy. Loadavg looked settled;
+  per-CPU it was not. The guard was not overridden. Pinned run selected cpus 28,30,56,27,58,61,63,31
+  at 0.005-0.025 busy. `bench_elf_sha256=9a9b824355ef93f135ce92d648cd0e7d987de8edb6307dea6236fd372029560c`
+  (in-process self-report), fl object sha256=70d42cfe767c3b61dbbee52eda4e854a7c75c6a73024181c6e967fbd26530529,
+  deepbind=true, 36 samples per case at 600,000 reps per arm, raw log at
+  `tests/artifacts/perf/bd-2g7oyh-sscanf-vsscanf-wallclock-2026-08-17.log`.
+- **EVERY case carries both same-invocation A/A nulls (fl-vs-fl and glibc-vs-glibc) with bootstrap
+  median CIs, and every null held within the 0.020 tolerance.** Per case, fl/glibc ratio_median with
+  its bootstrap median CI95: `single_int` 1.436996 [1.434610,1.440903]; `two_ints` 1.452572
+  [1.449951,1.454657]; `dotted_quad` 2.747043 [2.736771,2.751490]; `string_token` 2.032352
+  [2.024812,2.035390]; `key_value` 1.679020 [1.675246,1.680905]; `scanset_only` 1.598886
+  [1.594102,1.603466]; `long_string` 1.882552 [1.870867,1.900559]; `two_strings` 2.021258
+  [2.013748,2.025225]; `string_then_int` 1.639013 [1.635510,1.645191]; `float_only` 1.119541
+  [1.113195,1.122099]; `mixed_record` 1.540554 [1.532716,1.545380]; `long_hex` 0.999381
+  [0.997159,1.002095] (UNDECIDABLE, does not clear 2x the null). Verdict: 12 cases, 0 wins, 11
+  losses, 1 undecidable.
+- **THE SCOPE LIMIT, and it is the whole point of this row: `FL_LOAD_MODE symbol=vsscanf`.** This
+  harness resolves and times **`vsscanf`**, the va_list entry point. Today's three fast paths live in
+  `sscanf` and in `__isoc99_sscanf`/`__isoc23_sscanf`, and `vsscanf` has NONE of them. So this
+  certification measures the ENGINE, and it cannot see the fast-path work at all — `single_int` at
+  1.437x here is the same case the instruction instrument puts at 0.340x through `__isoc23_sscanf`.
+  Both numbers are correct about different entry points.
+- **THAT IS THE THIRD ENTRY-POINT MISMATCH IN THIS CAMPAIGN**, after `sscanf` vs `__isoc23_sscanf`
+  (the fast path no C program could reach) and the missing `RTLD_DEEPBIND` (the fl arm running
+  glibc's parser). The pattern is now explicit: **in this repo, an instrument's arm is a hypothesis
+  about which symbol runs, and it must be printed and checked before any row is banked.** This one
+  prints `FL_LOAD_MODE symbol=`, which is how it was caught.
+- **WHAT IS OWED:** the `sscanf` family in `incumbent_coverage_ab` should gain a VARIADIC arm calling
+  `__isoc23_sscanf` per case, the way `sscanf_icount` does, so the entry point real programs reach
+  can be certified on wall clock rather than only counted. Until then no wall-clock row exists for
+  the fast paths, and none should be claimed.
+- **CONFORMANCE, same run, same build: 64 comparisons, 0 mismatches**, comparing return value and the
+  full destination block across int, width, suppression, scanset, string, char, float, hexfloat,
+  octal, autobase, `%n`, length modifiers, EOF and match failure. That is independent confirmation
+  that the three fast paths and the inline one-member scanset did not move behaviour.
