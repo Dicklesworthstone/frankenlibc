@@ -1685,35 +1685,84 @@ pub unsafe extern "C" fn __res_state() -> *mut c_void {
 // res_*ok: DNS name validation (RFC 1035/952 character checks)
 // ==========================================================================
 
+/// The `res_hnok` label rules, derived from host glibc 2.42 by probe rather than
+/// from RFC 1035 — the two disagree, and the ABI contract is glibc's.
+///
+/// Every clause below is a measured row, and three of them were fl defects:
+///
+/// ```text
+/// ""            -> valid      "."        -> valid   (the root; fl rejected it)
+/// ".host"       -> invalid    "host."    -> valid
+/// ".."          -> invalid    "a..b"     -> invalid
+/// "-lead.com"   -> invalid    "trail-.com" -> valid
+/// "a\b.com"     -> valid     (backslash mid-label; fl rejected it)
+/// 63-char label -> valid      64-char label -> invalid
+/// 253-char name -> valid      254-char name -> invalid  (fl had no total limit)
+/// ```
+///
+/// Character classes by POSITION in the label, probed one character at a time:
+///
+/// ```text
+/// start:  alphanumeric, '_', '\'          (NOT '-')
+/// middle: alphanumeric, '_', '\', '-'
+/// end:    alphanumeric, '_', '-'          (NOT '\')
+/// ```
+///
+/// A hand-written validator gets several of these backwards in the same
+/// direction the old one did: rejecting the empty name, rejecting the backslash,
+/// and rejecting a trailing hyphen are all defensible and all
+/// ABI-incompatible.
 fn hostname_labels_ok(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }
-
-    let mut label_len: usize = 0;
-    let mut at_label_start = true;
-    for &c in bytes {
-        if c == b'.' {
-            if label_len == 0 {
-                return false;
-            }
-            label_len = 0;
-            at_label_start = true;
-        } else if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' {
-            if at_label_start && c == b'-' {
-                return false;
-            }
-            label_len += 1;
-            if label_len > 63 {
-                return false;
-            }
-            at_label_start = false;
-        } else {
-            return false;
-        }
+    // The root name. A lone period is valid where ".." and ".host" are not, so
+    // it cannot fall out of the label walk below and is taken first.
+    if bytes == b"." {
+        return true;
+    }
+    // Total length, measured: 253 accepted, 254 rejected. This is the wire-format
+    // limit showing through, and fl had no equivalent at all.
+    if bytes.len() > 253 {
+        return false;
     }
 
-    label_len != 0 || bytes.last() == Some(&b'.')
+    let is_start = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'\\';
+    let is_middle = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'\\' || c == b'-';
+    let is_end = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'-';
+
+    // Split on '.', allowing ONE empty label at the very end (a trailing dot).
+    let labels: Vec<&[u8]> = bytes.split(|&c| c == b'.').collect();
+    for (index, label) in labels.iter().enumerate() {
+        let last = index + 1 == labels.len();
+        if label.is_empty() {
+            // Only a trailing dot may produce an empty label.
+            if last {
+                continue;
+            }
+            return false;
+        }
+        if label.len() > 63 {
+            return false;
+        }
+        if !is_start(label[0]) {
+            return false;
+        }
+        if !is_end(label[label.len() - 1]) {
+            return false;
+        }
+        // A one-character label has no middle, and `[1..0]` is an invalid range
+        // rather than an empty one — slicing it aborts the process, which is how
+        // this was caught.
+        if label.len() >= 2 {
+            for &c in &label[1..label.len() - 1] {
+                if !is_middle(c) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 // res_hnok: glibc-compatible hostname-label predicate.
