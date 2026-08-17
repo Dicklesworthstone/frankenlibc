@@ -41,12 +41,18 @@
 //! - The file content is fixed and asymmetric ("hello 42\nsecond line\n") so a
 //!   truncated or mis-positioned read cannot coincidentally match.
 //!
-//! ## STATUS: WRITTEN BUT NEVER COMPILED OR RUN
+//! ## RESULT
 //!
-//! Authored while the host was at 100% disk with builds, tests and benchmarks
-//! forbidden. Nothing here has been through a compiler. Run it before trusting
-//! any conclusion from it: a red arm is a finding to be confirmed, and a
-//! compile error is mine, not a defect in fl.
+//! All five arms are GREEN, three consecutive parallel runs. So the retraction
+//! above is now confirmed the way the original claim should have been — by
+//! execution rather than by reading source. `fgetc`, `fgets`, `fread`, `ftell`
+//! and `feof` each treat a host-owned stream exactly as glibc does, and the
+//! `fscanf` defect stands as a singleton.
+//!
+//! This file was authored with the host at 100% disk and builds forbidden, and
+//! committed uncompiled and labelled as such. It compiled without error on its
+//! first run; the one defect was mine and in the fixture, not in the arms — see
+//! [`fixture`].
 
 use std::ffi::{CString, c_char, c_int, c_long, c_void};
 use std::io::Write;
@@ -83,22 +89,31 @@ fn with_host_stream<T>(
     out
 }
 
-fn fixture() -> CString {
-    let dir = std::env::temp_dir().join("fl_host_stream_family");
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let path = dir.join("input.txt");
-    {
+/// The fixture is written ONCE per process and shared read-only afterwards.
+///
+/// It used to be rewritten by every test. libtest runs these in parallel and
+/// `File::create` TRUNCATES, so one test emptied the file while a sibling was
+/// mid-read: green under `--test-threads=1`, red under a plain `cargo test`.
+/// Writing once removes the race rather than making it less likely, and the
+/// arms only ever read.
+fn fixture() -> &'static CString {
+    static FIXTURE: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let dir = std::env::temp_dir().join("fl_host_stream_family");
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("input.txt");
         let mut f = std::fs::File::create(&path).expect("create fixture");
         f.write_all(CONTENT.as_bytes()).expect("write fixture");
-    }
-    CString::new(path.to_str().expect("utf-8 path")).expect("path has NUL")
+        f.sync_all().expect("flush fixture");
+        CString::new(path.to_str().expect("utf-8 path")).expect("path has NUL")
+    })
 }
 
 /// `(fl, host)` pairs, resolved once. `host_fn` asserts each resolved address is
 /// NOT fl's own definition, so a collapsed oracle fails loudly rather than
 /// comparing fl against itself.
 struct Arms {
-    path: CString,
+    path: &'static CString,
     fopen: FopenFn,
     fclose: FcloseFn,
     host_fgetc: FgetcFn,
