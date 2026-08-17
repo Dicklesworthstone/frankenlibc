@@ -8331,18 +8331,23 @@ unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
 /// The caller must return immediately after (no fall-through to the slow path,
 /// which would re-read from the now-advanced `ap`).
 ///
-/// NOT YET WIRED INTO `vsnprintf`. The dispatch that uses it is held back until
-/// `vsnprintf_fixed_reads_the_fp_register_save_area` has been RUN green -- see
-/// bd-5pfs0p. The pointer arithmetic below is byte-identical to the proven
-/// general path (`vprintf_extract_args`), but "identical to working code" is not
-/// a measurement, and a wrong read here prints an unrelated number silently.
-#[allow(dead_code)]
-// Retained with no current caller: the vsnprintf/vsprintf float dispatch that
-// used it was held back in 811e6b94b for being committed unverified, and will
-// need this again when it returns under a build (bd-fpdisp). Deleting it would
-// only mean rewriting the FP-vs-GP register-save-area reasoning from scratch,
-// which is the part that is easy to get silently wrong.
-#[allow(dead_code)]
+/// WIRED AND VERIFIED (bd-5pfs0p). The dispatch in `vsnprintf`/`vsprintf` was
+/// held back in 811e6b94b for having been committed unverified; the gate it was
+/// waiting on has now been RUN green on worker vmi1153651 —
+/// `vsnprintf_fixed_reads_the_fp_register_save_area`, 5 passed / 0 failed,
+/// comparing >50,000 (format, value, size) triples against a DLSYM'd host glibc
+/// on the return value AND every destination byte, through a va_list forged by a
+/// real variadic shim. The pointer arithmetic below is byte-identical to the
+/// proven general path (`vprintf_extract_args`), but "identical to working code"
+/// is not a measurement, which is why that gate had to run before this was
+/// trusted.
+///
+/// DELIBERATELY NOT `#[allow(dead_code)]`, though it carried that twice while it
+/// was unwired. The dispatch has been removed once already, and this function
+/// going quiet is the ONLY local signal that it happened: the fast path is a
+/// pure optimisation, so unwiring it leaves every test green and every byte
+/// correct while silently costing the win. Letting the compiler report this as
+/// dead makes that regression loud at build time instead.
 #[inline]
 unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
     let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
