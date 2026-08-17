@@ -122,6 +122,71 @@ type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -
 /// so both arms are called through one non-variadic signature with no register-
 /// save-area asymmetry to confound the comparison.
 type VsscanfFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> c_int;
+
+/// The VARIADIC scanf entry point, which is the one compiled C actually reaches.
+///
+/// `<stdio.h>` redirects a source-level `sscanf` call to `__isoc99_sscanf`, and
+/// to `__isoc23_sscanf` under a C23 default. Neither is `vsscanf`, and in fl the
+/// difference is not cosmetic: the strict fast paths for `%d`-only formats, a
+/// bare `%s` and a bare `%[^X]` live in `sscanf` and in those two aliases, while
+/// `vsscanf` has none of them. Timing only the va_list entry point therefore
+/// certified the engine and was blind to the fast paths — `single_int` reads
+/// 1.437x fl-slower through `vsscanf` and 0.340x fl-FASTER through
+/// `__isoc23_sscanf` on the instruction instrument (bd-6zt6hf).
+type SscanfVariadicFn = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
+
+/// Which entry point an arm calls. Both are real; they are not interchangeable.
+#[derive(Clone, Copy)]
+enum SscanfArm {
+    /// `vsscanf(s, fmt, va_list)` — reached by callers that already have a
+    /// `va_list`, and by nothing a compiler emits for a literal `sscanf` call.
+    VaList(VsscanfFn),
+    /// `__isoc23_sscanf(s, fmt, ...)` — what compiled C reaches.
+    Variadic(SscanfVariadicFn),
+}
+
+impl SscanfArm {
+    /// The resolved function's address, for the distinctness assertion and the
+    /// `ARM_DISTINCT` provenance line.
+    fn address(self) -> usize {
+        match self {
+            SscanfArm::VaList(f) => f as usize,
+            SscanfArm::Variadic(f) => f as usize,
+        }
+    }
+}
+
+/// Call a variadic scanf with `slots` as its arguments.
+///
+/// One dispatch on ARITY serves every case in the table because every scanf
+/// destination is a pointer, whatever the conversion: `%d` wants an `int *`,
+/// `%lf` a `double *`, `%s` a `char *`. They all pass identically in the
+/// integer-register/stack half of the variadic ABI, and no floating-point
+/// argument is ever passed, so no per-case call shape is needed.
+///
+/// # Safety
+/// `slots` must hold exactly the destinations `format` names, each valid for the
+/// conversion writing to it.
+unsafe fn call_sscanf_variadic(
+    function: SscanfVariadicFn,
+    input: *const c_char,
+    format: *const c_char,
+    slots: &[*mut c_void],
+) -> c_int {
+    // SAFETY: the caller's contract, forwarded unchanged.
+    unsafe {
+        match slots.len() {
+            1 => function(input, format, slots[0]),
+            2 => function(input, format, slots[0], slots[1]),
+            3 => function(input, format, slots[0], slots[1], slots[2]),
+            4 => function(input, format, slots[0], slots[1], slots[2], slots[3]),
+            n => panic!(
+                "sscanf case has {n} destinations; add an arity arm rather than \
+                 passing fewer arguments than the format reads"
+            ),
+        }
+    }
+}
 type WcsnrtombsFn = unsafe extern "C" fn(
     *mut c_char,
     *mut *const libc::wchar_t,
@@ -204,6 +269,9 @@ unsafe extern "C" {
     ) -> c_int;
     #[link_name = "vsscanf"]
     fn linked_host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+    /// The host's C23 variadic scanf — what a compiler emits for `sscanf`.
+    #[link_name = "__isoc23_sscanf"]
+    fn linked_host_isoc23_sscanf(s: *const c_char, format: *const c_char, ...) -> c_int;
     #[link_name = "wcsnrtombs"]
     fn linked_host_wcsnrtombs(
         destination: *mut c_char,
@@ -367,6 +435,15 @@ struct Config {
     /// symbols (notably `malloc`) bind to FrankenLibC the way `LD_PRELOAD`
     /// deployment binds them, instead of to the already-global host libc.
     fl_deepbind: bool,
+    /// Time the VARIADIC scanf entry point (`__isoc23_sscanf`) instead of the
+    /// va_list one (`vsscanf`).
+    ///
+    /// They are different implementations in fl, not two spellings of one: the
+    /// strict fast paths live in `sscanf` and its `__isoc` aliases, and
+    /// `vsscanf` has none of them. Compiled C reaches the aliases, so the
+    /// default arm was certifying an entry point no C program calls directly
+    /// (bd-6zt6hf).
+    sscanf_variadic: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -630,6 +707,7 @@ fn parse_args() -> Config {
     let mut family = Family::NlLanginfo;
     let mut pin_quietest = 0usize;
     let mut fl_deepbind = false;
+    let mut sscanf_variadic = false;
     let mut families = Vec::new();
     while let Some(arg) = args.next() {
         if arg == "--fl-so" {
@@ -638,6 +716,8 @@ fn parse_args() -> Config {
             fl_so_b = args.next().map(PathBuf::from);
         } else if arg == "--verify-only" {
             verify_only = true;
+        } else if arg == "--sscanf-variadic" {
+            sscanf_variadic = true;
         } else if arg == "--fl-deepbind" {
             fl_deepbind = true;
         } else if arg == "--pin-quietest" {
@@ -710,6 +790,7 @@ fn parse_args() -> Config {
         pin_quietest,
         families,
         fl_deepbind,
+        sscanf_variadic,
     }
 }
 
@@ -6470,27 +6551,31 @@ const SSCANF_CASES: &[ScanCase] = &[
 ];
 
 /// Run one case through one provider, returning the C return value.
-fn sscanf_probe(
-    function: VsscanfFn,
-    case: &ScanCase,
-    destinations: &mut ScanDestinations,
-) -> c_int {
+fn sscanf_probe(arm: SscanfArm, case: &ScanCase, destinations: &mut ScanDestinations) -> c_int {
     destinations.reset();
     let mut slots = (case.destinations)(destinations);
-    let mut ap = VaListTag::overflow(&mut slots);
-    unsafe {
-        function(
-            case.input.as_ptr(),
-            case.format.as_ptr(),
-            std::ptr::addr_of_mut!(ap).cast(),
-        )
+    match arm {
+        SscanfArm::VaList(function) => {
+            let mut ap = VaListTag::overflow(&mut slots);
+            unsafe {
+                function(
+                    case.input.as_ptr(),
+                    case.format.as_ptr(),
+                    std::ptr::addr_of_mut!(ap).cast(),
+                )
+            }
+        }
+        // SAFETY: `slots` are the destinations this case's format names.
+        SscanfArm::Variadic(function) => unsafe {
+            call_sscanf_variadic(function, case.input.as_ptr(), case.format.as_ptr(), &slots)
+        },
     }
 }
 
 /// Every case, on both providers, compared on the return value AND the complete
 /// destination block — so a wrong int, a missing NUL, or a stray byte past the
 /// token all fail here before anything is timed.
-fn check_sscanf_conformance(host: VsscanfFn, fl: VsscanfFn) -> (usize, usize) {
+fn check_sscanf_conformance(host: SscanfArm, fl: SscanfArm) -> (usize, usize) {
     let mut comparisons = 0usize;
     let mut mismatches = 0usize;
     // Beyond the timed cases: edge inputs that exercise EOF, matching failure,
@@ -6660,18 +6745,26 @@ fn compare_scan_destinations(
 /// overwrite exactly the fields they assign, and conformance is already settled
 /// before any timing runs.
 #[inline(never)]
-fn run_sscanf_batch(function: VsscanfFn, case: &ScanCase) -> u64 {
+fn run_sscanf_batch(arm: SscanfArm, case: &ScanCase) -> u64 {
     let mut destinations = ScanDestinations::new();
     let mut slots = (case.destinations)(&mut destinations);
     let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
     for _ in 0..SSCANF_REPS {
-        let mut ap = VaListTag::overflow(&mut slots);
-        let returned = unsafe {
-            function(
-                case.input.as_ptr(),
-                case.format.as_ptr(),
-                std::ptr::addr_of_mut!(ap).cast(),
-            )
+        let returned = match arm {
+            SscanfArm::VaList(function) => {
+                let mut ap = VaListTag::overflow(&mut slots);
+                unsafe {
+                    function(
+                        case.input.as_ptr(),
+                        case.format.as_ptr(),
+                        std::ptr::addr_of_mut!(ap).cast(),
+                    )
+                }
+            }
+            // SAFETY: `slots` are the destinations this case's format names.
+            SscanfArm::Variadic(function) => unsafe {
+                call_sscanf_variadic(function, case.input.as_ptr(), case.format.as_ptr(), &slots)
+            },
         };
         accumulator ^= returned as u64;
         accumulator = accumulator.wrapping_mul(0x1_0000_01b3);
@@ -6680,8 +6773,8 @@ fn run_sscanf_batch(function: VsscanfFn, case: &ScanCase) -> u64 {
     accumulator
 }
 
-fn measure_sscanf_case(case: &'static ScanCase, host: VsscanfFn, fl: VsscanfFn) -> CaseResult {
-    let time_batch = |function: VsscanfFn| -> f64 {
+fn measure_sscanf_case(case: &'static ScanCase, host: SscanfArm, fl: SscanfArm) -> CaseResult {
+    let time_batch = |function: SscanfArm| -> f64 {
         let started = Instant::now();
         black_box(run_sscanf_batch(function, case));
         started.elapsed().as_secs_f64() * 1_000_000_000.0 / SSCANF_REPS as f64
@@ -6778,8 +6871,16 @@ fn run_sscanf(config: &Config) {
     }
     let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
     assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    // WHICH SYMBOL. Printed, because an arm is a hypothesis about which code
+    // runs and this family got that wrong once already (bd-6zt6hf).
+    let entry_symbol = if config.sscanf_variadic {
+        c"__isoc23_sscanf"
+    } else {
+        c"vsscanf"
+    };
+    let entry_name = entry_symbol.to_str().expect("symbol name is ASCII");
     println!(
-        "FL_LOAD_MODE symbol=vsscanf deepbind={} models={}",
+        "FL_LOAD_MODE symbol={entry_name} deepbind={} models={}",
         config.fl_deepbind,
         if config.fl_deepbind {
             "ld_preload_deployment"
@@ -6787,11 +6888,11 @@ fn run_sscanf(config: &Config) {
             "plain_dlopen_host_libc_wins_interposition"
         }
     );
-    let fl_symbol = unsafe { libc::dlsym(handle, c"vsscanf".as_ptr()) };
+    let fl_symbol = unsafe { libc::dlsym(handle, entry_symbol.as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
         "{}",
-        dl_error("dlsym FrankenLibC vsscanf")
+        dl_error(&format!("dlsym FrankenLibC {entry_name}"))
     );
 
     // SELF-A/B: when a second fl object is supplied it takes the comparison
@@ -6809,7 +6910,7 @@ fn run_sscanf(config: &Config) {
         let handle_b = unsafe { libc::dlopen(path_b_c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
         assert!(!handle_b.is_null(), "{}", dl_error("dlopen second FrankenLibC SO"));
         // SAFETY: `handle_b` came from dlopen and the name is NUL-terminated.
-        let sym_b = unsafe { libc::dlsym(handle_b, c"vsscanf".as_ptr()) };
+        let sym_b = unsafe { libc::dlsym(handle_b, entry_symbol.as_ptr()) };
         assert!(!sym_b.is_null(), "{}", dl_error("dlsym second FrankenLibC vsscanf"));
         assert_ne!(
             sym_b, fl_symbol,
@@ -6819,16 +6920,24 @@ fn run_sscanf(config: &Config) {
         (supplied_b, sym_b)
     });
 
-    let host: VsscanfFn = match &self_ab {
-        // SAFETY: the resolved symbol has vsscanf's C signature.
-        Some((_, sym_b)) => unsafe { std::mem::transmute(*sym_b) },
-        None => linked_host_vsscanf,
+    let host: SscanfArm = match (&self_ab, config.sscanf_variadic) {
+        // SAFETY: the resolved symbol has the signature named by the arm.
+        (Some((_, sym_b)), false) => SscanfArm::VaList(unsafe { std::mem::transmute(*sym_b) }),
+        (Some((_, sym_b)), true) => SscanfArm::Variadic(unsafe { std::mem::transmute(*sym_b) }),
+        (None, false) => SscanfArm::VaList(linked_host_vsscanf),
+        (None, true) => SscanfArm::Variadic(linked_host_isoc23_sscanf),
     };
-    let fl: VsscanfFn = unsafe { std::mem::transmute(fl_symbol) };
-    let incumbent_identity =
-        symbol_object(host as *const () as *const c_void).expect("identify host vsscanf object");
+    let fl: SscanfArm = if config.sscanf_variadic {
+        // SAFETY: the resolved symbol is __isoc23_sscanf, a C variadic.
+        SscanfArm::Variadic(unsafe { std::mem::transmute(fl_symbol) })
+    } else {
+        // SAFETY: the resolved symbol is vsscanf.
+        SscanfArm::VaList(unsafe { std::mem::transmute(fl_symbol) })
+    };
+    let incumbent_identity = symbol_object(host.address() as *const c_void)
+        .expect("identify host scanf object");
     let fl_identity =
-        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC vsscanf object");
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC scanf object");
     print_identity("INCUMBENT", &incumbent_identity);
     print_identity("FL", &fl_identity);
     if let Some((supplied_b, _)) = &self_ab {
@@ -6841,9 +6950,9 @@ fn run_sscanf(config: &Config) {
             supplied_b.sha256, supplied_fl.sha256
         );
     } else {
-        println!("INCUMBENT_LINKAGE direct_process_link symbol=vsscanf");
+        println!("INCUMBENT_LINKAGE direct_process_link symbol={entry_name}");
     }
-    println!("FL_LINKAGE explicit_dlopen_local symbol=vsscanf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol={entry_name}");
     // The comparison arm must be host libc — UNLESS this is a self-A/B, where it
     // is deliberately a second fl object. The check is not dropped in that mode,
     // it is REPLACED by the one that matters there: the two objects must be
@@ -6879,12 +6988,14 @@ fn run_sscanf(config: &Config) {
         "both providers resolve to byte-identical objects"
     );
     assert_ne!(
-        host as usize, fl as usize,
-        "both vsscanf arms resolve to the same function address"
+        host.address(),
+        fl.address(),
+        "both {entry_name} arms resolve to the same function address"
     );
     println!(
-        "ARM_DISTINCT symbol=sscanf incumbent_address={:#x} fl_address={:#x}",
-        host as usize, fl as usize,
+        "ARM_DISTINCT symbol={entry_name} incumbent_address={:#x} fl_address={:#x}",
+        host.address(),
+        fl.address(),
     );
 
     let (comparisons, mismatches) = check_sscanf_conformance(host, fl);
