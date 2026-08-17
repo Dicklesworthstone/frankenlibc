@@ -34,7 +34,7 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+//!  nl_langinfo|fpclassify|fpclassifyf|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
@@ -61,6 +61,11 @@ const WARMUPS: usize = 4;
 const NLLANGINFO_REPS: usize = 2_000_000;
 const GETRANDOM_REPS: usize = 50_000;
 const GETAUXVAL_REPS: usize = 2_000_000;
+// Classification is a handful of instructions on both sides, so the per-call
+// cost is a small fraction of a nanosecond and the batch must be long enough
+// that the null half-width lands below any real difference. Matched to
+// thrd_current, the other sub-nanosecond family here.
+const FPCLASSIFY_REPS: usize = 4_000_000;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
 const MALLOC_FREE_REPS: usize = 100_000;
@@ -109,6 +114,8 @@ type GetaddrinfoFn = unsafe extern "C" fn(
 ) -> c_int;
 type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
 type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
+type FpclassifyFn = unsafe extern "C" fn(f64) -> c_int;
+type FpclassifyfFn = unsafe extern "C" fn(f32) -> c_int;
 type GethostbyaddrFn =
     unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
 type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
@@ -242,6 +249,13 @@ unsafe extern "C" {
     fn linked_host_sinhf(value: f32) -> f32;
     #[link_name = "coshf"]
     fn linked_host_coshf(value: f32) -> f32;
+    // `fpclassify` is a MACRO in C; the object-code symbol both sides actually
+    // export is `__fpclassify`. On this host it lives in libm.so.6, not
+    // libc.so.6, so the incumbent-object assertion accepts either.
+    #[link_name = "__fpclassify"]
+    fn linked_host_fpclassify(value: f64) -> c_int;
+    #[link_name = "__fpclassifyf"]
+    fn linked_host_fpclassifyf(value: f32) -> c_int;
     #[link_name = "gethostbyaddr"]
     fn linked_host_gethostbyaddr(
         address: *const c_void,
@@ -449,6 +463,8 @@ struct Config {
 #[derive(Clone, Copy)]
 enum Family {
     NlLanginfo,
+    Fpclassify,
+    Fpclassifyf,
     Getrandom,
     Getauxval,
     SemPost,
@@ -559,6 +575,125 @@ const GETRANDOM_CASES: &[GetrandomCase] = &[
         flags: 0,
         note: "largest Linux request guaranteed not to short-read once initialized",
     },
+];
+
+/// One classification case. `value` is what both arms are asked to classify;
+/// `note` records why that input is in the set.
+struct FpclassifyCase {
+    label: &'static str,
+    value: f64,
+    note: &'static str,
+}
+
+struct FpclassifyfCase {
+    label: &'static str,
+    value: f32,
+    note: &'static str,
+}
+
+/// Timed inputs for `__fpclassify`.
+///
+/// One per branch of the classification, because the claim under conversion
+/// (L815, README.md + RELEASE_READINESS_SCORECARD.md) is that the classes are
+/// decided from the exponent and fraction bits — a shape whose cost should NOT
+/// vary by class. Timing every class is what makes that checkable instead of
+/// assumed: a bit-inspection implementation gives a flat profile across these
+/// rows, and a branchy one does not.
+const FPCLASSIFY_CASES: &[FpclassifyCase] = &[
+    FpclassifyCase {
+        label: "normal",
+        value: 1.234_567_890_123_45_f64,
+        note: "the overwhelmingly common input and the headline case",
+    },
+    FpclassifyCase {
+        label: "zero",
+        value: 0.0_f64,
+        note: "exponent and fraction both clear",
+    },
+    FpclassifyCase {
+        label: "subnormal",
+        value: 5e-320_f64,
+        note: "zero exponent with a set fraction — the branch most often missed",
+    },
+    FpclassifyCase {
+        label: "infinity",
+        value: f64::INFINITY,
+        note: "saturated exponent, clear fraction",
+    },
+    FpclassifyCase {
+        label: "nan",
+        value: f64::NAN,
+        note: "saturated exponent, set fraction",
+    },
+];
+
+/// Timed inputs for `__fpclassifyf`, mirroring [`FPCLASSIFY_CASES`] at f32 so
+/// the two rows of the queue head (L815 and L776) are comparable to each other.
+const FPCLASSIFYF_CASES: &[FpclassifyfCase] = &[
+    FpclassifyfCase {
+        label: "normal",
+        value: 1.234_567_9_f32,
+        note: "the overwhelmingly common input and the headline case",
+    },
+    FpclassifyfCase {
+        label: "zero",
+        value: 0.0_f32,
+        note: "exponent and fraction both clear",
+    },
+    FpclassifyfCase {
+        label: "subnormal",
+        value: 7e-44_f32,
+        note: "zero exponent with a set fraction — the branch most often missed",
+    },
+    FpclassifyfCase {
+        label: "infinity",
+        value: f32::INFINITY,
+        note: "saturated exponent, clear fraction",
+    },
+    FpclassifyfCase {
+        label: "nan",
+        value: f32::NAN,
+        note: "saturated exponent, set fraction",
+    },
+];
+
+/// Conformance inputs, deliberately wider than the timed set.
+///
+/// Timing needs one input per branch; agreement needs the edges of each branch
+/// as well, because a bit-field implementation fails at boundaries (largest
+/// subnormal, smallest normal) rather than in the middle of a class.
+const FPCLASSIFY_CONFORMANCE: &[(f64, &str)] = &[
+    (1.0, "one"),
+    (-1.0, "negative_one"),
+    (0.0, "positive_zero"),
+    (-0.0, "negative_zero"),
+    (f64::INFINITY, "positive_infinity"),
+    (f64::NEG_INFINITY, "negative_infinity"),
+    (f64::NAN, "quiet_nan"),
+    (f64::MIN_POSITIVE, "smallest_normal"),
+    (f64::MAX, "largest_finite"),
+    (-f64::MAX, "most_negative_finite"),
+    (5e-324, "smallest_subnormal"),
+    (-5e-324, "negative_smallest_subnormal"),
+    (2.225_073_858_507_201e-308, "largest_subnormal"),
+    (1e-320, "mid_subnormal"),
+];
+
+const FPCLASSIFYF_CONFORMANCE: &[(f32, &str)] = &[
+    (1.0, "one"),
+    (-1.0, "negative_one"),
+    (0.0, "positive_zero"),
+    (-0.0, "negative_zero"),
+    (f32::INFINITY, "positive_infinity"),
+    (f32::NEG_INFINITY, "negative_infinity"),
+    (f32::NAN, "quiet_nan"),
+    (f32::MIN_POSITIVE, "smallest_normal"),
+    (f32::MAX, "largest_finite"),
+    (-f32::MAX, "most_negative_finite"),
+    (1e-45, "smallest_subnormal"),
+    (-1e-45, "negative_smallest_subnormal"),
+    (1.175_494_2e-38, "largest_subnormal"),
+    (1e-40, "mid_subnormal"),
 ];
 
 const GETAUXVAL_CASES: &[GetauxvalCase] = &[
@@ -739,6 +874,8 @@ fn parse_args() -> Config {
         } else if arg == "--family" {
             family = match args.next().as_deref() {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
+                Some(value) if value == OsStr::new("fpclassify") => Family::Fpclassify,
+                Some(value) if value == OsStr::new("fpclassifyf") => Family::Fpclassifyf,
                 Some(value) if value == OsStr::new("getrandom") => Family::Getrandom,
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
@@ -756,7 +893,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
-                    "unknown family {value:?}; expected nl_langinfo, getrandom, getauxval, \
+                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
@@ -767,7 +904,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
@@ -1508,6 +1645,189 @@ fn time_getauxval_batch(function: GetauxvalFn, case: &GetauxvalCase) -> f64 {
     let started = Instant::now();
     black_box(run_getauxval_batch(function, case.type_));
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / GETAUXVAL_REPS as f64
+}
+
+#[inline(never)]
+fn run_fpclassify_batch(function: FpclassifyFn, value: f64) -> i64 {
+    let mut total = 0i64;
+    for _ in 0..FPCLASSIFY_REPS {
+        // `black_box` on the INPUT as well as the result: without it the value is
+        // a compile-time constant and the classification folds away entirely,
+        // which would time an empty loop on both arms and report parity.
+        let result = unsafe { function(black_box(value)) };
+        total = total.wrapping_add(black_box(result) as i64);
+    }
+    black_box(total)
+}
+
+fn time_fpclassify_batch(function: FpclassifyFn, value: f64) -> f64 {
+    let started = Instant::now();
+    black_box(run_fpclassify_batch(function, value));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / FPCLASSIFY_REPS as f64
+}
+
+fn measure_fpclassify_case(
+    host: FpclassifyFn,
+    fl: FpclassifyFn,
+    case: &FpclassifyCase,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_fpclassify_batch(fl, case.value);
+                    fb = time_fpclassify_batch(fl, case.value);
+                }
+                0 => {
+                    fb = time_fpclassify_batch(fl, case.value);
+                    fa = time_fpclassify_batch(fl, case.value);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_fpclassify_batch(host, case.value);
+                    gb = time_fpclassify_batch(host, case.value);
+                }
+                1 => {
+                    gb = time_fpclassify_batch(host, case.value);
+                    ga = time_fpclassify_batch(host, case.value);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_fpclassify_batch(fl, case.value);
+                    effect_glibc = time_fpclassify_batch(host, case.value);
+                }
+                2 => {
+                    effect_glibc = time_fpclassify_batch(host, case.value);
+                    effect_fl = time_fpclassify_batch(fl, case.value);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        FPCLASSIFY_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+#[inline(never)]
+fn run_fpclassifyf_batch(function: FpclassifyfFn, value: f32) -> i64 {
+    let mut total = 0i64;
+    for _ in 0..FPCLASSIFY_REPS {
+        let result = unsafe { function(black_box(value)) };
+        total = total.wrapping_add(black_box(result) as i64);
+    }
+    black_box(total)
+}
+
+fn time_fpclassifyf_batch(function: FpclassifyfFn, value: f32) -> f64 {
+    let started = Instant::now();
+    black_box(run_fpclassifyf_batch(function, value));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / FPCLASSIFY_REPS as f64
+}
+
+fn measure_fpclassifyf_case(
+    host: FpclassifyfFn,
+    fl: FpclassifyfFn,
+    case: &FpclassifyfCase,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_fpclassifyf_batch(fl, case.value);
+                    fb = time_fpclassifyf_batch(fl, case.value);
+                }
+                0 => {
+                    fb = time_fpclassifyf_batch(fl, case.value);
+                    fa = time_fpclassifyf_batch(fl, case.value);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_fpclassifyf_batch(host, case.value);
+                    gb = time_fpclassifyf_batch(host, case.value);
+                }
+                1 => {
+                    gb = time_fpclassifyf_batch(host, case.value);
+                    ga = time_fpclassifyf_batch(host, case.value);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_fpclassifyf_batch(fl, case.value);
+                    effect_glibc = time_fpclassifyf_batch(host, case.value);
+                }
+                2 => {
+                    effect_glibc = time_fpclassifyf_batch(host, case.value);
+                    effect_fl = time_fpclassifyf_batch(fl, case.value);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        FPCLASSIFY_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
 }
 
 fn measure_getauxval_case(host: GetauxvalFn, fl: GetauxvalFn, case: &GetauxvalCase) -> CaseResult {
@@ -3319,6 +3639,300 @@ fn run_getrandom(config: &Config) {
 
     // The loaded libc replacement owns process-global and TLS state. Keep it
     // resident until process exit rather than attempting an unsupported unload.
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
+/// Assert the incumbent arm resolved into the host's own C library.
+///
+/// `__fpclassify` lives in `libm.so.6` on this host even though modern glibc
+/// folds libm's *linking* into libc, so the check accepts either object rather
+/// than pinning the one that happens to answer today. Both are live glibc; which
+/// one serves is provenance, and it is printed either way.
+fn assert_incumbent_is_host_libc(identity: &ObjectIdentity, symbol: &str) {
+    let name = identity
+        .path
+        .file_name()
+        .map(|name| name.as_bytes().to_vec())
+        .unwrap_or_default();
+    assert!(
+        name.starts_with(b"libc.so") || name.starts_with(b"libm.so"),
+        "incumbent {symbol} resolved to {}, which is neither host libc nor host libm",
+        identity.path.display()
+    );
+}
+
+fn run_fpclassify(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=__fpclassify deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen"
+        }
+    );
+    // THE SYMBOL IS `__fpclassify`, NOT `fpclassify`. In C the latter is a macro
+    // that expands to a builtin or to this symbol, so a benchmark that resolved
+    // "fpclassify" would be timing whatever the compiler inlined at the call
+    // site rather than the library function the claim is about.
+    let fl_symbol = unsafe { libc::dlsym(handle, c"__fpclassify".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __fpclassify")
+    );
+
+    let host: FpclassifyFn = linked_host_fpclassify;
+    let fl: FpclassifyFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity = symbol_object(host as *const () as *const c_void)
+        .expect("identify host __fpclassify object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC __fpclassify object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=__fpclassify");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=__fpclassify");
+    assert_incumbent_is_host_libc(&incumbent_identity, "__fpclassify");
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=__fpclassify incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    for (value, name) in FPCLASSIFY_CONFORMANCE {
+        let host_class = unsafe { host(*value) };
+        let fl_class = unsafe { fl(*value) };
+        assert_eq!(
+            fl_class, host_class,
+            "__fpclassify mismatch for {name} ({value:e}): fl={fl_class} glibc={host_class}"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=__fpclassify comparisons={} verdict=pass",
+        FPCLASSIFY_CONFORMANCE.len(),
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=__fpclassify verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, 1,
+        "__fpclassify benchmark requires one actually observed process thread"
+    );
+
+    let results = FPCLASSIFY_CASES
+        .iter()
+        .map(|case| measure_fpclassify_case(host, fl, case))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, 1,
+        "__fpclassify benchmark requires one actually observed process thread"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+
+    for result in &results {
+        result.print(
+            "__fpclassify",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+    print_fpclassify_verdict("__fpclassify", &results, threads_pre, threads_post);
+}
+
+fn run_fpclassifyf(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=__fpclassifyf deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen"
+        }
+    );
+    let fl_symbol = unsafe { libc::dlsym(handle, c"__fpclassifyf".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __fpclassifyf")
+    );
+
+    let host: FpclassifyfFn = linked_host_fpclassifyf;
+    let fl: FpclassifyfFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent_identity = symbol_object(host as *const () as *const c_void)
+        .expect("identify host __fpclassifyf object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC __fpclassifyf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=__fpclassifyf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=__fpclassifyf");
+    assert_incumbent_is_host_libc(&incumbent_identity, "__fpclassifyf");
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=__fpclassifyf incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    for (value, name) in FPCLASSIFYF_CONFORMANCE {
+        let host_class = unsafe { host(*value) };
+        let fl_class = unsafe { fl(*value) };
+        assert_eq!(
+            fl_class, host_class,
+            "__fpclassifyf mismatch for {name} ({value:e}): fl={fl_class} glibc={host_class}"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=__fpclassifyf comparisons={} verdict=pass",
+        FPCLASSIFYF_CONFORMANCE.len(),
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=__fpclassifyf verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, 1,
+        "__fpclassifyf benchmark requires one actually observed process thread"
+    );
+
+    let results = FPCLASSIFYF_CASES
+        .iter()
+        .map(|case| measure_fpclassifyf_case(host, fl, case))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, 1,
+        "__fpclassifyf benchmark requires one actually observed process thread"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+
+    for result in &results {
+        result.print(
+            "__fpclassifyf",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+    print_fpclassify_verdict("__fpclassifyf", &results, threads_pre, threads_post);
+}
+
+/// Shared verdict line for the two classification families.
+///
+/// The headline is the `normal` case: it is the input real programs pass, and
+/// the registered expectation (E1: parity or a LOSS, because both sides are
+/// pure bit inspection) is about that case rather than about the average of
+/// five classes.
+fn print_fpclassify_verdict(
+    symbol: &str,
+    results: &[CaseResult],
+    threads_pre: usize,
+    threads_post: usize,
+) {
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "normal")
+        .expect("missing normal result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol={symbol} verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=normal headline_ratio_median={:.6} \
+         headline_comparison={} registered_expectation=parity_or_loss \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+        headline.comparison,
+    );
     if verdict == "INCOMPLETE" {
         std::process::exit(2);
     }
@@ -7415,6 +8029,8 @@ fn main() {
 
     match config.family {
         Family::NlLanginfo => run_nl_langinfo(&config),
+        Family::Fpclassify => run_fpclassify(&config),
+        Family::Fpclassifyf => run_fpclassifyf(&config),
         Family::Getrandom => run_getrandom(&config),
         Family::Getauxval => run_getauxval(&config),
         Family::SemPost => run_sem_post(&config),
