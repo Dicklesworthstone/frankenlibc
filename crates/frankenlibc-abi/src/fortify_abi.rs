@@ -1032,6 +1032,93 @@ pub unsafe extern "C" fn __vfwprintf_chk(
 
 // ── Wide fgets ─────────────────────────────────────────────────────────────
 
+/// The measured `__fgetws*_chk` rule, shared by the locked and unlocked forms.
+///
+/// SEE THE PROBE MATRIX BEFORE CHANGING THIS. The previous rule was a STATIC
+/// `n * 4 > buflen -> __chk_fail`, which aborts processes glibc runs happily:
+/// `fgetws(buf, 1024, fp)` into a 4096-byte buffer is the ordinary idiom, and fl
+/// killed it whenever `n * 4` crossed the size, regardless of what the file
+/// actually contained (bd-917hzv).
+///
+/// Host glibc 2.42, fork-isolated, one row per (n, size, content):
+///
+/// ```text
+///   content    n     size   glibc          content    n     size   glibc
+///   short(12)  64      8    ABORT          long(300)  64      8    ABORT
+///   short(12) 256    256    ok             long(300) 256    256    ok
+///   short(12) 257    256    ok             long(300) 257    256    ABORT
+///   short(12)  65    256    ok             long(300)  65    256    ok
+///   short(12) 2000  4096    ok             long(300) 2000  4096    ok
+///   short(12)  -1    256    NULL           short(12)   0    256    NULL
+/// ```
+///
+/// NO STATIC RULE FITS. `257/256` aborts for long content and not for short, so
+/// the comparison cannot be on `n` alone — which is exactly why the existing
+/// `fortify_abi_test` case never discriminated. The rule that fits every row has
+/// TWO conditions: `n > buflen` AND the content did not actually fit. glibc only
+/// reaches its overflow check once the read fills the clamped buffer, so a short
+/// line survives a large `n` and a long line does not.
+///
+/// The units look wrong and are not: `n` counts WIDE CHARACTERS while `buflen`
+/// counts BYTES, and glibc compares them directly — the same shape as
+/// `__fgets_chk`'s `n > buflen`. Matching that is deliberate.
+///
+/// # Safety
+/// `buf` must be writable for `buflen` bytes and `stream` a valid `FILE*`.
+unsafe fn fgetws_chk_common(
+    buf: *mut WcharT,
+    buflen: usize,
+    n: c_int,
+    stream: *mut c_void,
+) -> *mut WcharT {
+    // Negative or zero `n` returns NULL rather than aborting, and an unknown size
+    // cannot bound anything.
+    if n <= 0 || buflen == usize::MAX {
+        // SAFETY: caller's contract.
+        return unsafe { fgetws(buf, n, stream) };
+    }
+
+    // Inside glibc's static bound: pass through untouched. This deliberately
+    // inherits glibc's own gap — `n = 65` with `buflen = 256` may write 260 bytes
+    // — because diverging by aborting MORE is the defect being fixed here, and
+    // fl's contract is glibc's behaviour rather than a stricter one.
+    if (n as usize) <= buflen {
+        // SAFETY: caller's contract.
+        return unsafe { fgetws(buf, n, stream) };
+    }
+
+    // `n` exceeds the byte size, so bound the read to what the buffer holds,
+    // INCLUDING the terminator `fgetws` always writes. No overflow is possible
+    // past this point whatever the content is.
+    let cap_wide = buflen / core::mem::size_of::<WcharT>();
+    if cap_wide == 0 {
+        // Not even room for the terminator.
+        unsafe { __chk_fail() }
+    }
+    let clamped = cap_wide.min(n as usize) as c_int;
+    // SAFETY: `clamped` is at most the buffer's wide-character capacity.
+    let result = unsafe { fgetws(buf, clamped, stream) };
+    if result.is_null() {
+        return result;
+    }
+
+    // Truncation means the content WOULD have overflowed the caller's buffer,
+    // which is the condition glibc aborts on. A run ending in a newline, or
+    // shorter than the clamp, fitted.
+    let mut len = 0usize;
+    // SAFETY: `fgetws` NUL-terminates within `clamped` wide characters.
+    while len < clamped as usize && unsafe { *buf.add(len) } != 0 {
+        len += 1;
+    }
+    let filled_to_capacity = len + 1 == clamped as usize;
+    // SAFETY: `len` is in bounds by the loop above.
+    let ended_with_newline = len > 0 && unsafe { *buf.add(len - 1) } == b'\n' as WcharT;
+    if filled_to_capacity && !ended_with_newline {
+        unsafe { __chk_fail() }
+    }
+    result
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fgetws_chk(
     buf: *mut WcharT,
@@ -1039,15 +1126,8 @@ pub unsafe extern "C" fn __fgetws_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
-    let requested = if n <= 0 {
-        0
-    } else {
-        checked_wide_bytes(n as usize)
-    };
-    if buflen != usize::MAX && requested > buflen {
-        unsafe { __chk_fail() }
-    }
-    unsafe { fgetws(buf, n, stream) }
+    // SAFETY: delegates to the shared rule; `fgetws` is fl's own wide reader.
+    unsafe { fgetws_chk_common(buf, buflen, n, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1057,15 +1137,8 @@ pub unsafe extern "C" fn __fgetws_unlocked_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
-    let requested = if n <= 0 {
-        0
-    } else {
-        checked_wide_bytes(n as usize)
-    };
-    if buflen != usize::MAX && requested > buflen {
-        unsafe { __chk_fail() }
-    }
-    unsafe { fgetws(buf, n, stream) }
+    // SAFETY: delegates to the shared rule; `fgetws` is fl's own wide reader.
+    unsafe { fgetws_chk_common(buf, buflen, n, stream) }
 }
 
 // ── Multibyte conversion ───────────────────────────────────────────────────

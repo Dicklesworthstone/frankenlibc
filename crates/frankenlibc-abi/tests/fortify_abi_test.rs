@@ -2504,18 +2504,35 @@ fn fgetws_unlocked_chk_reads_wide_chars() {
     }
 }
 
+/// Opens a file whose single line is far longer than any small buffer here.
+///
+/// A REAL stream is required: the rule these wrappers implement is
+/// content-dependent, so a NULL stream cannot exercise it. The previous version
+/// of this test passed `NULL` and `n = 8` against a 16-byte buffer, which aborted
+/// only because fl's old rule was `n * 4 > buflen` — a rule host glibc does not
+/// have (bd-917hzv). Under the measured contract `8 <= 16` never aborts, and with
+/// a NULL stream glibc would fault rather than `__chk_fail`, so that case
+/// asserted something no oracle agrees with.
+fn open_long_line() -> *mut core::ffi::c_void {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("fl_fortify_fgetws_long.txt");
+    let mut f = std::fs::File::create(&path).expect("create long-line file");
+    writeln!(f, "{}", "x".repeat(300)).expect("write long line");
+    let cpath = std::ffi::CString::new(path.to_str().expect("utf-8 path")).expect("path has NUL");
+    // SAFETY: NUL-terminated path and mode.
+    let fp = unsafe { libc::fopen(cpath.as_ptr(), c"r".as_ptr()) };
+    assert!(!fp.is_null(), "fopen long-line file");
+    fp.cast()
+}
+
 #[test]
 fn fgetws_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("fgetws_chk n over real buffer", || {
         let mut buf = [0 as WcharT; 4];
-        unsafe {
-            __fgetws_chk(
-                buf.as_mut_ptr(),
-                core::mem::size_of_val(&buf),
-                8,
-                std::ptr::null_mut(),
-            )
-        };
+        let fp = open_long_line();
+        // n = 64 EXCEEDS the 16-byte buflen and the 300-character line cannot
+        // fit, which is the two-condition case host glibc aborts on.
+        unsafe { __fgetws_chk(buf.as_mut_ptr(), core::mem::size_of_val(&buf), 64, fp) };
     });
 }
 
@@ -2523,14 +2540,9 @@ fn fgetws_chk_n_over_real_buffer_aborts_child_process() {
 fn fgetws_unlocked_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("fgetws_unlocked_chk n over real buffer", || {
         let mut buf = [0 as WcharT; 4];
-        unsafe {
-            __fgetws_unlocked_chk(
-                buf.as_mut_ptr(),
-                core::mem::size_of_val(&buf),
-                8,
-                std::ptr::null_mut(),
-            )
-        };
+        let fp = open_long_line();
+        // Same two-condition case as the locked form above.
+        unsafe { __fgetws_unlocked_chk(buf.as_mut_ptr(), core::mem::size_of_val(&buf), 64, fp) };
     });
 }
 
