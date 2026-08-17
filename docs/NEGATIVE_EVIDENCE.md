@@ -30408,3 +30408,38 @@ What this changes, and what it does not:
   Four fields are now accepted, so that control had silently become a duplicate of the treatment;
   both moved to five fields. Widening them cost a null-pointer abort first — five conversions handed
   four pointers — which is the same class as the `%ld` SIGSEGV earlier in that file.
+
+## 2026-08-17 (BlackThrush) — AN UNCERTIFIED LEVER HAS A SHELF LIFE: the ScanBytes A/B baseline is no longer reconstructible
+
+- **RESULT CLASS: loss/baseline (methodology).** No ratio is claimed. The certification attempt was
+  BLOCKED by the harness's own quiet gate at **loadavg 426.19,170.67,109.95**, which is the gate doing
+  its job. **A failure to certify under load is not a loss and is not recorded as one.**
+- **WHAT I SET OUT TO DO.** The `ScanBytes` inline-token change has sat in HEAD uncertified with a
+  falsifiable prediction on record — `string_token` and `two_strings` move, `long_string` does not.
+  Certifying it needs a pre-lever arm to compare against.
+- **THE BASELINE COULD NOT BE BUILT, and that is the finding.** Reverting `scanf.rs` to the lever's
+  parent `6a4016812^` fails to compile the ABI crate with 8 errors — `ScanDirectives`,
+  `ScanValue::Unset`, a type mismatch — **none of them mine**. Those are peer changes to the SAME FILE
+  that landed after the lever, and `stdio_abi` now depends on them. A surgical inverse-patch that
+  reverted only the inline-token behaviour (enum fields back to `Vec<u8>`, `ScanBytes::from_slice`
+  back to `to_vec`) also failed, with 6 errors including an arity change. **The pre-lever state is no
+  longer separable from the peer work layered on top of it.**
+- **THE ARM-DISTINCTNESS CHECK CAUGHT A VACUOUS MEASUREMENT, for the second time.** When the baseline
+  build failed, the `cp` copied the artifact that was already there, so both arms came out as
+  `d3b30a4d400c4105abfa6c7e2345d5ac84127d37f86dcaaee99beedfd0aceadf` — **byte-identical**. Asserting
+  the two `FL_OBJECT`/ELF sha256 values DIFFER before believing any numbers is what turned that into a
+  caught error instead of a "measured" no-op reported as a result. The first time this check fired it
+  caught the nine-hour-stale cdylib; this time it caught a failed build masquerading as an arm. **A
+  build that fails leaves the previous binary in place, so "the file exists" is never evidence the
+  arm is what you think it is.**
+- **THE TRANSFERABLE RULE: certify a lever in the window it lands in, or lose the ability to A/B it at
+  all.** An uncertified lever is not merely unmeasured — its baseline decays as other agents refactor
+  the same file, and past some point the only honest comparison left is against an older banked row
+  taken on a different binary. That is weaker evidence, and it is what the `ScanBytes` lever is now
+  reduced to: it can be compared against the pre-lever sscanf row (`string_token` 2.015637,
+  `two_strings` 1.923065, `long_string` 1.054231) measured on the 08:24 cdylib, which genuinely
+  predates it, but not against a purpose-built baseline.
+- **CONSEQUENCE FOR THE FRONTIER ROW**, which still lists `sscanf` at 1.05-2.02x as a PRE-LEVER
+  baseline: that label remains correct and should stay until a post-lever run certifies. The
+  prediction stays on record and is still falsifiable — if `long_string` moves too, the fixed-cost
+  story is wrong.
