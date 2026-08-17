@@ -159,6 +159,7 @@ fn probe(elem: usize, body: impl FnOnce(*const u8) -> u8) -> Outcome {
 // ---------------------------------------------------------------------------
 
 type NarrowLen = unsafe extern "C" fn(*const c_char, usize) -> usize;
+type NarrowDup = unsafe extern "C" fn(*const c_char, usize) -> *mut c_char;
 type NarrowCmp = unsafe extern "C" fn(*const c_char, *const c_char, usize) -> c_int;
 type NarrowCpy = unsafe extern "C" fn(*mut c_char, *const c_char, usize) -> *mut c_char;
 type WideLen = unsafe extern "C" fn(*const u32, usize) -> usize;
@@ -258,6 +259,10 @@ fn arms() -> Vec<Arm> {
     let host_stpncpy: NarrowCpy = unsafe { host_fn(c"stpncpy", s::stpncpy as *const ()) };
     let fl_strncat: NarrowCpy = s::strncat;
     let host_strncat: NarrowCpy = unsafe { host_fn(c"strncat", s::strncat as *const ()) };
+    // Bounded duplicate: `n` is a ceiling on the READ, and the allocation is
+    // sized from whatever the scan found, so an over-read is the whole risk.
+    let fl_strndup: NarrowDup = s::strndup;
+    let host_strndup: NarrowDup = unsafe { host_fn(c"strndup", s::strndup as *const ()) };
     // Wide.
     let fl_wcsnlen: WideLen = wide_len_shim;
     let host_wcsnlen: WideLen = unsafe { host_fn(c"wcsnlen", wide_len_shim as *const ()) };
@@ -302,6 +307,29 @@ fn arms() -> Vec<Arm> {
             // strncpy's zero-fill and strncat's append plus terminator.
             unsafe { f(dst, p.cast::<c_char>(), n) };
             sc.narrow_written()
+        })
+    };
+    // `strndup` is the one arm whose child allocates, which after `fork` is only
+    // safe because these test binaries build in the debug profile, where fl's
+    // `malloc` export is not `no_mangle` and so does not interpose: the child
+    // reaches glibc's allocator, which reinitializes its locks through the
+    // registered atfork handler. The bounded wait is the backstop if that ever
+    // stops holding — a deadlocked child reports `Hung`, not a hang.
+    let dup_arm = |f: NarrowDup| -> Box<dyn Fn(*const u8, usize) -> u8> {
+        Box::new(move |p, n| {
+            // SAFETY: `p` is the guard-flush string; `n` is strndup's ceiling.
+            let got = unsafe { f(p.cast::<c_char>(), n) };
+            if got.is_null() {
+                return FIXTURE_BASE as u8 - 1;
+            }
+            // Walk the result with a plain loop rather than calling fl's `strlen`,
+            // so the arm measures only the function under test.
+            let mut len = 0u8;
+            // SAFETY: strndup guarantees a NUL-terminated result.
+            while unsafe { *got.add(len as usize) } != 0 {
+                len += 1;
+            }
+            len
         })
     };
     let wcpy_arm = |f: WideCpy| -> Box<dyn Fn(*const u8, usize) -> u8> {
@@ -349,6 +377,12 @@ fn arms() -> Vec<Arm> {
             name: "strncat",
             fl: cpy_arm(fl_strncat),
             host: cpy_arm(host_strncat),
+            elem: 1,
+        },
+        Arm {
+            name: "strndup",
+            fl: dup_arm(fl_strndup),
+            host: dup_arm(host_strndup),
             elem: 1,
         },
         Arm {
@@ -441,7 +475,7 @@ fn bounded_scans_never_read_into_guard_page() {
 
     // A silent zero here would be indistinguishable from a pass, so assert the
     // positive fact: every arm times every bound actually ran.
-    assert_eq!(checked, 10 * BOUNDS.len(), "not every arm ran");
+    assert_eq!(checked, 11 * BOUNDS.len(), "not every arm ran");
     assert!(
         divergences.is_empty(),
         "bounded scans read past the terminator where glibc did not: {divergences:#?}"

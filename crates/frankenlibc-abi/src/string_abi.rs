@@ -7565,7 +7565,11 @@ pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
             return std::ptr::null_mut();
         }
         return unsafe {
-            let (s_len, _) = scan_c_string(s, Some(n));
+            // `n` is a ceiling on the READ, not a promise of `n` readable bytes —
+            // `strndup(p, 64)` on a 2-byte string is conforming. `scan_c_string`
+            // would load a whole window under `n` and fault past the terminator
+            // (bounded_scan_guard_page_safety measured SIGSEGV at every n >= 8).
+            let (s_len, _) = scan_c_string_nul_or_bound(s, n);
             let copy_len = s_len.min(n);
             let dst = crate::malloc_abi::malloc(copy_len + 1);
             if dst.is_null() {
@@ -7619,7 +7623,16 @@ pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
     // SAFETY: scan string up to n, allocate via libc::malloc (see strdup
     // comment on bd-zgifl for why not raw_alloc), copy.
     unsafe {
-        let (s_len, _) = scan_c_string(s, bound);
+        // A `Some` bound here is `n` itself whenever `repair` is off, and `n` is a
+        // ceiling rather than a readability promise, so the scan must be page
+        // clamped. The repair branch derives its bound from `known_remaining` and
+        // so IS a guarantee, but it is routed the same way: the clamp costs one
+        // compare and picking per-branch would leave the unsound case one edit
+        // away from returning. `None` already means the page-safe unbounded scan.
+        let (s_len, _) = match bound {
+            Some(b) => scan_c_string_nul_or_bound(s, b),
+            None => scan_c_string(s, None),
+        };
         let copy_len = s_len.min(n);
         let alloc_size = copy_len + 1;
 
