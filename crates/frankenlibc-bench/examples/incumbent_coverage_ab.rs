@@ -877,7 +877,57 @@ fn pin_to_quietest(width: usize) {
         .map(|&cpu| (cpu, busy.get(&cpu).copied().unwrap_or(1.0)))
         .collect::<Vec<_>>();
     ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-    let chosen = &ranked[..width];
+
+    // PREFER DISTINCT PHYSICAL CORES, and do not take an SMT sibling until every
+    // core has been used once.
+    //
+    // Ranking on busy fraction alone is what produced the one difference the
+    // logs recorded between two runs of the same certification twenty minutes
+    // apart: `--pin-quietest 8` chose 8 logical CPUs on EIGHT distinct physical
+    // cores in the first run and on only SIX in the second, two SMT sibling
+    // pairs sharing a core. Every one of the twelve cases then moved the same
+    // direction, -1.8% to -15.0%, and two verdicts flipped — while both runs'
+    // A/A nulls held, because a null certifies the two arms against each other
+    // WITHIN one invocation and cannot see a shift between invocations.
+    //
+    // That does not prove sibling sharing caused the shift. It does mean the
+    // selector was free to vary a variable nobody was recording, which is
+    // reason enough to fix it: two runs that mean to be the same experiment
+    // should not differ in how many cores they own.
+    let topology = cpu_core_identity();
+    let mut used_cores: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut chosen: Vec<(usize, f64)> = Vec::with_capacity(width);
+    // First pass: one logical CPU per physical core, quietest first.
+    for &(cpu, fraction) in &ranked {
+        if chosen.len() == width {
+            break;
+        }
+        match topology.get(&cpu) {
+            Some(&core) if used_cores.insert(core) => chosen.push((cpu, fraction)),
+            // Unknown topology is treated as its own core rather than as a
+            // sibling: guessing "shared" would silently drop quiet CPUs.
+            None => chosen.push((cpu, fraction)),
+            Some(_) => {}
+        }
+    }
+    // Second pass, only if the box does not have `width` distinct cores free:
+    // take siblings, still quietest first, and the count below records it.
+    if chosen.len() < width {
+        for &(cpu, fraction) in &ranked {
+            if chosen.len() == width {
+                break;
+            }
+            if !chosen.iter().any(|&(picked, _)| picked == cpu) {
+                chosen.push((cpu, fraction));
+            }
+        }
+    }
+    let distinct_cores = chosen
+        .iter()
+        .filter_map(|&(cpu, _)| topology.get(&cpu).copied())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let chosen = &chosen[..];
 
     let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
     unsafe { libc::CPU_ZERO(&mut set) };
@@ -893,9 +943,16 @@ fn pin_to_quietest(width: usize) {
         .map(|(cpu, fraction)| format!("{cpu}:{fraction:.3}"))
         .collect::<Vec<_>>()
         .join(",");
+    // `selected_distinct_cores` is printed because it is the field that differed
+    // between two runs of one certification and was invisible until the run's
+    // own BENCH_HOST_WIDE_EXCLUSIVITY line was read afterwards. A row that
+    // cannot be compared with another row is not certified evidence, so the
+    // shape of the pinned set belongs in the pin line itself.
     println!(
         "PIN_QUIETEST requested_width={width} action=narrowed selected_cpus={} \
-         selected_busy={} allowed_before={} sample_window_ms=2000 busy_ranking=[{ranking}]",
+         selected_busy={} selected_distinct_cores={distinct_cores} \
+         sibling_sharing={} allowed_before={} sample_window_ms=2000 \
+         busy_ranking=[{ranking}]",
         chosen
             .iter()
             .map(|(cpu, _)| cpu.to_string())
@@ -906,8 +963,52 @@ fn pin_to_quietest(width: usize) {
             .map(|(_, fraction)| format!("{fraction:.3}"))
             .collect::<Vec<_>>()
             .join("+"),
+        distinct_cores < chosen.len(),
         allowed.len(),
     );
+}
+
+/// Map each logical CPU to the physical core it lives on, as
+/// `(physical_package_id, core_id)`.
+///
+/// Read from sysfs rather than computed from a sibling-numbering convention:
+/// the "cpu N and cpu N+cores are siblings" layout is an x86 habit, not a
+/// guarantee, and a wrong guess here would silently pin two threads to one core
+/// while reporting that it had not.
+///
+/// A CPU whose topology cannot be read is simply absent from the map, and the
+/// caller treats absence as "its own core" — the conservative direction, since
+/// assuming a shared core would drop a quiet CPU from consideration for no
+/// evidence.
+fn cpu_core_identity() -> std::collections::HashMap<usize, (usize, usize)> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/sys/devices/system/cpu") else {
+        return map;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(index) = name.strip_prefix("cpu") else {
+            continue;
+        };
+        let Ok(cpu) = index.parse::<usize>() else {
+            continue;
+        };
+        let base = entry.path().join("topology");
+        let read_id = |file: &str| -> Option<usize> {
+            std::fs::read_to_string(base.join(file))
+                .ok()?
+                .trim()
+                .parse::<usize>()
+                .ok()
+        };
+        if let (Some(package), Some(core)) =
+            (read_id("physical_package_id"), read_id("core_id"))
+        {
+            map.insert(cpu, (package, core));
+        }
+    }
+    map
 }
 
 /// Parent mode: run each family in its own fresh process.
