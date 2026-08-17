@@ -30822,3 +30822,43 @@ What this changes, and what it does not:
 - **FRONTIER, updated headline only:** `malloc_free` **6.87x at loadavg ~9-14** remains the worst
   measured family; `getrandom` 3.60x, `snprintf_fused` 2.64-3.92x (still owed a re-measure off a
   fresh cdylib), `sscanf` 1.05-2.02x pre-lever, `mtx_trylock` 1.1246x, `thrd_current` 1.1109x.
+
+## 2026-08-17 (BlackThrush) — IT IS A REGRESSION, NOT CONDITIONS: malloc_free went 6.58x -> 6.88x, ~4.6% worse, between two binaries built today
+
+- **RESULT CLASS: loss/baseline (regression found).** Settles the question the previous row
+  explicitly declined to answer, and settles it the other way from the comfortable option.
+- **HOW IT WAS SETTLED, with no build at all.** The earlier 6.5322-6.5704 row was measured on
+  `malloc_st_probe` ELF sha256 f8db5310846d14cc88f62ea50c4d7d034c1a0d4962308ecd0ea1b6bc56c80060,
+  and **that binary was still in scratch**. So both it and HEAD's
+  5865992d4c61aa71e19ac260aef340338ee6b6a3568f33b2d8bccd5e548edd71 could be run INTERLEAVED IN ONE
+  WINDOW — which is the only way to separate a code change from a condition change, and it cost
+  nothing but the runs.
+- **The quietest window of the campaign**, `uptime` 9.44,7.91,6.53 at the start, no builds of mine
+  running, and **a discard run first** per the first-run warm-up finding banked an hour ago.
+
+  | arm | round 1 | round 2 | observed |
+  |---|---|---|---|
+  | old f8db5310 | 6.5732 / 6.5850 / 6.5815 / 6.5492 | 6.5946 / 6.5795 / 6.5896 / 6.5491 | loadavg 8.91-9.00, MHz 3023 / 2419 |
+  | new 5865992d | 6.8991 / 6.8769 / 6.8922 / 6.8805 | 7.0350 / 6.8799 / 6.8823 / 6.8859 | loadavg 9.00, MHz 2516 / 3098 |
+
+  **Complete separation: max old 6.5946 < min new 6.8769.** Eight of eight paired groups, sign test
+  p ~ 0.004. Every null_fl in the 32 rows sat within 0.9973-1.0077.
+- **Median 6.5803 against 6.8841 — the allocator is ~4.6% SLOWER at HEAD than it was earlier today.**
+  The 1.3x clock difference between arms does not touch this: each figure is an fl/glibc ratio formed
+  inside one invocation, so the core clock cancels, which is exactly why interleaving two binaries is
+  a valid test where comparing two banked numbers is not.
+- **I AM NOT NAMING A CULPRIT, because I did not bisect.** Between those two binaries the allocator
+  saw work from several agents, including the bd-e0y02p address-derived slab effort, plus my own
+  additions to `malloc_abi.rs` — the `per_size_class_snapshot`/`per_size_class_counts` accessors, a
+  `known_remaining_for_tests` hook and the `malloc_info` fputs change. **My changes are all off the
+  hot path**, which is an argument and not evidence; the honest statement is that a ~4.6% regression
+  exists and its cause is unattributed. Bisecting it is the follow-up.
+- **WHAT THIS VINDICATES: keeping old binaries.** The previous row could only say "different binary,
+  different load, cannot attribute". The difference between that and a settled answer was one
+  preserved artifact. **Keep the ELF of any binary you bank a number against** — the ledger records
+  its sha precisely so the comparison can be re-run, and that is worthless if the file is gone.
+- **AND IT SHARPENS THE WARM-UP RULE.** Even after a discard run, the new arm's round-2 sz=16 read
+  **7.0350 against 6.8823-6.8859 for its siblings** — the first timed case of a run remains the
+  least trustworthy one, and a discard run at the start of a session does not immunise the first case
+  of each subsequent run. Compare like-for-like positions, or drop sz=16 and read the other three:
+  they separate just as cleanly, 6.5491-6.5896 against 6.8769-6.8859.

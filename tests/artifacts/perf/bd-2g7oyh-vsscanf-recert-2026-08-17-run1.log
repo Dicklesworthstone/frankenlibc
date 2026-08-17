@@ -1,0 +1,11 @@
+PIN_QUIETEST requested_width=8 action=narrowed selected_cpus=9+46+31+3+42+45+4+32 selected_busy=0.040+0.050+0.085+0.087+0.136+0.136+0.157+0.161 selected_distinct_cores=8 sibling_sharing=false allowed_before=64 sample_window_ms=2000 busy_ranking=[9:0.040,46:0.050,31:0.085,3:0.087,42:0.136,45:0.136,4:0.157,32:0.161,29:0.162,53:0.165,39:0.171,26:0.176,59:0.181,33:0.182,15:0.186,8:0.193,30:0.201,62:0.232,27:0.241,56:0.247,38:0.251,57:0.270,19:0.271,24:0.275,25:0.281,28:0.281,54:0.293,34:0.320,43:0.328,60:0.328,49:0.342,50:0.382,5:0.390,13:0.390,44:0.412,52:0.423,0:0.454,16:0.460,55:0.460,1:0.495,20:0.500,58:0.522,12:0.523,61:0.530,23:0.548,37:0.561,48:0.565,2:0.569,11:0.595,18:0.610,17:0.650,10:0.678,22:0.680,7:0.697,51:0.745,63:0.745,6:0.775,47:0.835,36:0.849,21:0.855,35:0.935,40:0.950,14:1.000,41:1.000]
+BENCH_ELF_OBJECT path=/data/projects/frankenlibc/target/release-perf/examples/incumbent_coverage_ab bytes=7085856 sha256=08f8dcaa5fc6251d8ab8f3ad1055ffb4f1f6ee7f0ecd6af239d0595ba90c9005
+HOST_IDENTITY hostname=thinkstation1 loadavg=11.80,8.96,7.02 pid=3391789
+FL_LOAD_MODE symbol=vsscanf deepbind=true models=ld_preload_deployment
+INCUMBENT_OBJECT path=/usr/lib/x86_64-linux-gnu/libc.so.6 bytes=2326088 sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09
+FL_OBJECT path=/data/projects/frankenlibc/target/release-perf/libfrankenlibc_abi.so bytes=40609312 sha256=ca78b816dbb43a6a9a2e0e556e6eecb248370d8bb39a6bfc05539cf643d321d9
+INCUMBENT_LINKAGE direct_process_link symbol=vsscanf
+FL_LINKAGE explicit_dlopen_local symbol=vsscanf
+ARM_DISTINCT symbol=vsscanf incumbent_address=0x7c9c31e8f620 fl_address=0x7c9c20d12a60
+INCUMBENT_COVERAGE_CONFORMANCE symbol=sscanf comparisons=64 mismatches=0 compared=return_value_and_full_destination_block covers=int,width,suppression,scanset,string,char,float,hexfloat,octal,autobase,percent_n,length_modifiers,eof,match_failure verdict=pass
+THREADS_OBSERVED symbol=sscanf phase=pre_guard count=1
