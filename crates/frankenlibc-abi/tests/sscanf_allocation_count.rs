@@ -79,11 +79,59 @@ fn allocs_for(input: &str, format: &str) -> usize {
 /// Ceiling for one engine-path call. See the module note: `<=`, so removing an
 /// allocation never fails this gate and adding one does.
 ///
-/// It is 1, not 0, for exactly one reason: `%[...]` boxes its 257-byte `ScanSet`
-/// table, and only a scanset conversion pays that. `%s`, `%f` and the literal
-/// directives around them allocate NOTHING, which is what glibc does. Before
-/// this was measured the same three formats cost four allocations each.
+/// It is 1, not 0, for exactly one reason now: a format with FIVE directives
+/// spills `InlineVec<ScanDirective, 4>` to the heap. `%s`, `%f`, `%[...]` and the
+/// literal directives around them allocate NOTHING, which is what glibc does.
+/// Before any of this was measured the same formats cost four allocations each.
+///
+/// The scanset case USED to be the reason this was 1: `%[...]` boxed a
+/// `ScanSet` on every call. A one-member set — `%[^=]`, `%[^\n]`, `%[^,]`, which
+/// is what real code writes — is now carried inline in the spec, so it allocates
+/// nothing and is pinned at zero by
+/// [`a_one_member_scanset_does_not_allocate`] rather than being allowed to drift
+/// back up to this ceiling.
 const ALLOCS_PER_ENGINE_CALL: usize = 1;
+
+/// A one-member scanset must cost NO allocation.
+///
+/// This is the counted half of a perf claim, and it is asserted at zero rather
+/// than under the ceiling above so that re-boxing the set fails here loudly. The
+/// mechanism it guards is worth 6.8% of `sscanf("key=value", "%[^=]=%s")`, which
+/// is where `native_libc_malloc` and `native_libc_free_with_slot` showed up in
+/// that call's profile.
+///
+/// A MULTI-member set is checked in the same test and must still allocate: it
+/// keeps the boxed table, and asserting that here means the zero above is a
+/// statement about the inline representation rather than about the counter
+/// having stopped working.
+#[test]
+fn a_one_member_scanset_does_not_allocate() {
+    for (input, format) in [
+        ("key=value", "%[^=]%n"),
+        ("line\nnext", "%[^\n]%n"),
+        ("a,b", "%[^,]%n"),
+        ("aaab", "%[a]%n"),
+    ] {
+        let n = allocs_for(input, format);
+        println!("sscanf({input:?}, {format:?}) allocations={n} (one-member set)");
+        assert_eq!(
+            n, 0,
+            "sscanf({input:?}, {format:?}) allocated {n} times; a one-member scanset is \
+             carried inline in the spec precisely so it does not box a ScanSet per call"
+        );
+    }
+
+    // The boxed path must still be reachable, or the zeros above prove nothing
+    // about representation.
+    let multi = allocs_for("abcx", "%[abc]%n");
+    println!("sscanf(\"abcx\", \"%[abc]%n\") allocations={multi} (multi-member set, boxed)");
+    assert_eq!(
+        multi, 1,
+        "a multi-member scanset allocated {multi} times; it should box exactly once, \
+         and if it no longer allocates at all then this test can no longer tell the \
+         inline representation from the boxed one"
+    );
+}
 
 #[test]
 fn engine_path_allocation_count_is_bounded() {
