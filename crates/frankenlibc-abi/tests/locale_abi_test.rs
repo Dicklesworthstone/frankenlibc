@@ -26,6 +26,35 @@ use frankenlibc_abi::wchar_abi::wctomb;
 /// poisoning the guard and taking every later test with it (bd-9ri7g1).
 static GETTEXT_STATE_GUARD: Mutex<()> = Mutex::new(());
 static CATALOG_STATE_GUARD: Mutex<()> = Mutex::new(());
+static LOCALE_STATE_GUARD: Mutex<()> = Mutex::new(());
+
+/// Serialises the arms that MUTATE the process locale and puts the startup
+/// locale back afterwards, on the panic path too.
+///
+/// Without this the file is order-dependent in a way that is easy to miss:
+/// `setlocale` is process-global, libtest runs these arms in one process, and
+/// the two arms that read the STARTUP locale (`setlocale_query_returns_c`,
+/// `nl_langinfo_codeset`) see whatever the last mutating arm left behind. That
+/// is not hypothetical — adding a single `setlocale(LC_ALL,"C.UTF-8")` to the
+/// UTF-8 codec-output arm turned both of them red, under `--test-threads=1`,
+/// purely through ordering.
+struct LocaleStateGuard(std::sync::MutexGuard<'static, ()>);
+
+impl LocaleStateGuard {
+    fn acquire() -> Self {
+        Self(
+            LOCALE_STATE_GUARD
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+}
+
+impl Drop for LocaleStateGuard {
+    fn drop(&mut self) {
+        frankenlibc_abi::locale_abi::locale_reset_active_charset_for_tests();
+    }
+}
 
 fn reset_gettext_state() {
     locale_reset_gettext_state_for_tests();
@@ -110,6 +139,7 @@ fn host_invalid_catalog() -> *mut libc::c_void {
 
 #[test]
 fn setlocale_query_returns_c() {
+    let _guard = LocaleStateGuard::acquire();
     let result = unsafe { setlocale(libc::LC_ALL, ptr::null()) };
     assert!(!result.is_null());
     let name = unsafe { CStr::from_ptr(result) };
@@ -118,6 +148,7 @@ fn setlocale_query_returns_c() {
 
 #[test]
 fn setlocale_set_c_locale() {
+    let _guard = LocaleStateGuard::acquire();
     let c_name = CString::new("C").unwrap();
     let result = unsafe { setlocale(libc::LC_ALL, c_name.as_ptr()) };
     assert!(!result.is_null());
@@ -127,6 +158,7 @@ fn setlocale_set_c_locale() {
 
 #[test]
 fn setlocale_set_posix_locale() {
+    let _guard = LocaleStateGuard::acquire();
     let posix = CString::new("POSIX").unwrap();
     let result = unsafe { setlocale(libc::LC_ALL, posix.as_ptr()) };
     assert!(!result.is_null());
@@ -141,6 +173,7 @@ fn setlocale_set_posix_locale() {
 /// asking the wrong locale a UTF-8 question.
 #[test]
 fn ctype_mb_cur_max_covers_utf8_codec_output() {
+    let _guard = LocaleStateGuard::acquire();
     unsafe { setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     let mut bytes = [0_u8; 6];
     let encoded = unsafe { wctomb(bytes.as_mut_ptr(), '🦀' as u32) };
@@ -151,6 +184,7 @@ fn ctype_mb_cur_max_covers_utf8_codec_output() {
 
 #[test]
 fn setlocale_set_empty_string() {
+    let _guard = LocaleStateGuard::acquire();
     let empty = CString::new("").unwrap();
     let result = unsafe { setlocale(libc::LC_ALL, empty.as_ptr()) };
     assert!(!result.is_null());
@@ -194,6 +228,7 @@ fn localeconv_stable_pointer() {
 
 #[test]
 fn nl_langinfo_codeset() {
+    let _guard = LocaleStateGuard::acquire();
     let result = unsafe { nl_langinfo(libc::CODESET) };
     assert!(!result.is_null());
     let val = unsafe { CStr::from_ptr(result) };
