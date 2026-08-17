@@ -30203,3 +30203,41 @@ What this changes, and what it does not:
   the strength of a flat self-time frame alone.** The next attempt needs a mechanism that removes
   work provably — fewer bytes touched, fewer allocations, fewer branches on a counted path — and the
   counted delta should be predicted BEFORE the build, then compared against the measurement.
+
+## 2026-08-17 — a one-member scanset needed no table: `key_value` 2.429x -> 1.996x, and the prediction undershot by 2.5x
+
+- **RESULT CLASS: measured improvement, predicted before the build.** This is the first engine lever
+  today that was required to name a counted mechanism first, after two profile-directed levers were
+  refuted (the format memo and literal-run grouping, rows above). Instrument is instruction count
+  under `RTLD_DEEPBIND`, 200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=341e25c21612cb5a1b50ada14f4a98b8f54bbbdd6f383f1840b6b0cdd76bff2d, loadavg
+  16.41/22.83/24.59, cpu MHz 2507-3369, symbol `__isoc23_sscanf` on every arm.
+- **THE MECHANISM, stated before building: `%[...]` boxed a `ScanSet` on EVERY call.** A profile of
+  `sscanf("key=value", "%[^=]=%s")` put the pair at 6.8% — `native_libc_malloc` 2.93% plus
+  `native_libc_free_with_slot` 3.90%. A one-member set needs one byte and a flag, not a 256-bit table
+  on the heap, and `%[^=]`, `%[^\n]`, `%[^,]` are what real code writes.
+- **THE PREDICTION, recorded before the build: allocations 1 -> 0 for a one-member set; `key_value`
+  down 25-35M instructions; everything else unchanged.**
+- **COUNTED HALF CONFIRMED EXACTLY:** `%[^=]%n`, `%[^\n]%n`, `%[^,]%n` and `%[a]%n` all measure
+  **0 allocations against 1** before, and a multi-member `%[abc]%n` still measures exactly 1, so the
+  zeros are a statement about representation rather than about a counter that stopped working.
+- **TIMED HALF BEAT THE PREDICTION BY 2.5x:** `key_value` 494,717,355 instructions -> 406,555,475,
+  which is **-441 per call, -17.8%**, against a predicted -25M to -35M. Against glibc's 203,656,207
+  that is **1.996x, from 2.429x**. The prediction was too conservative because the 6.8% counted only
+  the allocator frames; removing the box also removes `ScanSet::from_bits` copying 32 bytes, the
+  `Box` drop, and fl's allocator slot bookkeeping, none of which appeared under the two names I
+  costed.
+- **THE OTHER CASES, and one residual I cannot attribute.** `scanset_only` 53,116,358 -> 52,966,405
+  and `single_int` 57,435,160 -> 57,321,994 are unchanged as predicted (the first is served by the
+  ABI fast path and never reaches the engine). But `float_only` 281,297,304 -> 283,608,982 and
+  `long_literal` 285,576,130 -> 287,571,393 are each **about +11 per call**, on formats containing no
+  scanset at all. It is NOT struct growth: `ScanDirective` is 40 bytes and `ScanSpec` is 40, both
+  unchanged, and `SimpleScanSet` is 2 — pinned by `a_simple_scanset_does_not_grow_the_directive` as
+  equalities so a later drift cannot pass under a generous ceiling. The likeliest cause is codegen
+  drift from the added variant, the same effect that cost `key_value` +46 per call in the
+  literal-run rejection, but I have not isolated it and am not claiming otherwise.
+- **NET: -441 per call on the worst case in the family, +11 on two engine formats that carry no
+  scanset.**
+- **STILL OWED.** `key_value` at 1.996x remains the worst case; `long_literal` 287,571,393 against
+  187,332,163 is 1.535x. Both are compound formats, and the remaining engine cost after this is
+  `scan_input_impl` itself rather than anything allocated.

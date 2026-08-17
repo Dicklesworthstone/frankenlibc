@@ -235,3 +235,41 @@ fn the_engine_and_the_abi_agree_on_a_format_no_fast_path_accepts() {
          format no fast path accepts; the two routes have diverged"
     );
 }
+
+/// Carrying a one-member scanset inline must not make every directive bigger.
+///
+/// `InlineVec<ScanDirective, 4>` is built on the stack for EVERY scanf call, so
+/// `ScanSpec`'s size is a cost paid by formats containing no scanset at all.
+/// `SimpleScanSet` is two bytes and was expected to land in existing padding;
+/// this pins that, because the alternative — a grown `ScanSpec` — would tax the
+/// whole library to speed up one conversion.
+///
+/// The scar behind it: `SCAN_DIRECTIVES_INLINE = 8` measured +12-23% on the
+/// engine path purely from initialising slots.
+#[test]
+fn a_simple_scanset_does_not_grow_the_directive() {
+    use frankenlibc_core::stdio::scanf::{ScanDirective, ScanSpec, SimpleScanSet};
+
+    let directive = std::mem::size_of::<ScanDirective>();
+    let spec = std::mem::size_of::<ScanSpec>();
+    let simple = std::mem::size_of::<SimpleScanSet>();
+    println!("size_of ScanDirective={directive} ScanSpec={spec} SimpleScanSet={simple}");
+
+    assert!(
+        simple <= 2,
+        "SimpleScanSet is {simple} bytes; it is meant to be a tag plus one byte"
+    );
+    // 40 is what both measured before the inline set was added. Held as an
+    // equality rather than a bound so a silent growth cannot pass as "smaller
+    // than some generous ceiling".
+    assert_eq!(
+        spec, 40,
+        "ScanSpec is {spec} bytes, was 40 before SimpleScanSet was added; the \
+         inline set no longer fits in padding and every scanf call now pays for it"
+    );
+    assert_eq!(
+        directive, 40,
+        "ScanDirective is {directive} bytes, was 40; the inline vector built on \
+         the stack for every call just got bigger"
+    );
+}
