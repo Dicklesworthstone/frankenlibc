@@ -31229,3 +31229,44 @@ What this changes, and what it does not:
 - **THE snprintf_fused CAVEAT IS RESOLVED.** The banked 2.64-3.92x was measured before this commit,
   and the commit does move the cost, so those figures are stale as claimed — but by a branch effect
   worth tens of cycles, not by anything that changes the family's rank.
+
+## 2026-08-17 (BlackThrush) — DEBUG INFO CHANGES BRANCH MISPREDICTION BY 6.8x WITHOUT CHANGING THE BRANCHES. Per-line branch attribution is self-defeating
+
+- **RESULT CLASS: loss/baseline (methodology, and it retracts the basis for a lever I was about to
+  build).** Counted, so it holds under the load this was run at (18.0, four foreign builds).
+- **WHAT I WAS DOING.** The fused characterisation said 87.7% of indirect mispredicts came from two
+  format-parsing functions, with `parse_format_spec` missing 56% of its indirect branches — the
+  signature of a jump table worth replacing with a lookup. Before writing that lever I rebuilt with
+  `CARGO_PROFILE_RELEASE_DEBUG=2` to get per-line attribution and find the exact construct.
+- **THE ACT OF ADDING LINE INFO CHANGED THE MEASUREMENT.** Same tree, same optimisation level, one
+  build with debug info and one without:
+
+  | build | Ir | Bc | Bcm (cond mispredicts) | Bi (indirect branches) | Bim (indirect mispredicts) |
+  |---|---|---|---|---|---|
+  | `-C debuginfo=2` | 62,767,482 | 11,294,661 | 439,469 | **810,064** | **24,889** |
+  | no debug info | 63,146,479 | 11,318,647 | 339,401 | **810,057** | **168,879** |
+
+  **The indirect branch COUNT is identical — 810,064 against 810,057, seven apart in 810 thousand —
+  and the MISPREDICTS differ 6.8-fold.** Conditional mispredicts move 1.3x the other way. The same
+  branches, in the same quantity, are dramatically more or less predictable depending only on whether
+  the binary carries line tables.
+- **SO PER-LINE BRANCH ATTRIBUTION CANNOT WORK HERE.** To find out which line generates the
+  mispredicts you must add debug info, and adding it removes 85% of them. The tool that would localise
+  the problem destroys the problem. **Any lever justified by per-line branch data on a debug-info
+  build would be aimed at a target that does not exist in the shipped one.**
+- **AND IT RETRACTS THE ABSOLUTE NUMBERS IN YESTERDAY'S CHARACTERISATION.** The "8.2 indirect
+  mispredicts per call, 87.7% concentrated in parsing" figures are build-specific: on a rebuild of the
+  same source the indirect total moved from 820,860 to 168,879. **The instruction findings stand** —
+  3.02x glibc, 36% of instructions in format parsing, and the Ir profile reproduces to 0.6% — because
+  instructions are a property of the code. **The branch findings were a property of a binary.**
+- **PAIRED COMPARISONS SURVIVE; ABSOLUTE ONES DO NOT.** The float-probe A/B holds, because both arms
+  were built identically and differed only in the probe, so layout is controlled. The malloc
+  `debug_assert` result holds for the same reason. What does not survive is any claim of the form
+  "N% of mispredicts come from function F", measured on one build.
+- **THIS IS THE BRANCH-PREDICTION TWIN OF THE LAYOUT FLOOR.** For wall clock, two binaries with
+  byte-identical allocator code differed 4.6%. For branch prediction, two binaries with identical
+  branch counts differ 6.8x in mispredicts. **Layout dominates both, and neither is visible to the
+  in-run diagnostics.** The rule that follows is the same one: compare arms built identically, and
+  distrust any absolute figure that a rebuild could move.
+- **NO LEVER LANDED, deliberately.** The jump-table lever was going to be justified by exactly the
+  numbers this refutes. Building it now would be aiming at an artifact.
