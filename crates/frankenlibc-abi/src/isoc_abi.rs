@@ -119,18 +119,25 @@ pub unsafe extern "C" fn __isoc23_sscanf(
         && !format.is_null()
         && crate::runtime_policy::strict_passthrough_active()
     {
-        if let Some((fields, sep)) = unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) } {
+        if let Some((fields, sep, kinds)) =
+            unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) }
+            && crate::stdio_abi::strict_field_list_is_scannable(fields, sep, &kinds)
+        {
             let Some(profile) = (unsafe { scanf_fastpath_profile(s) }) else {
                 return -1;
             };
-            // SAFETY: the format is exactly `fields` decimal-int conversions, so
-            // the caller passed that many `int *`. `count` carries EOF as -1.
-            let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields, sep) };
-            for idx in 0..(fast.count.max(0) as usize).min(fields) {
-                // SAFETY: one `int *` per accepted conversion.
-                let ptr = unsafe { args.next_arg::<*mut core::ffi::c_int>() };
-                unsafe { *ptr = fast.values[idx] };
+            // SAFETY: the probe accepted `fields` conversions, so the caller
+            // passed that many pointers of the matching type. Fetching them
+            // before the scan writes nothing, so an unmatched field's
+            // destination stays untouched.
+            let mut destinations =
+                [core::ptr::null_mut::<c_void>(); crate::stdio_abi::STRICT_INT_LIST_MAX];
+            for slot in destinations.iter_mut().take(fields) {
+                *slot = unsafe { args.next_arg::<*mut c_void>() };
             }
+            let fast = unsafe {
+                crate::stdio_abi::strict_scan_decimal_ints(s, fields, sep, &kinds, &destinations)
+            };
             crate::runtime_policy::observe(
                 frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
                 profile,

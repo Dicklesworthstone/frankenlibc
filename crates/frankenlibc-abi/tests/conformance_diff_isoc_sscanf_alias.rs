@@ -174,6 +174,123 @@ const STRING_CASES: &[&str] = &[
     "one_very_long_token_that_exceeds_any_inline_capacity_used_anywhere_here",
 ];
 
+/// Mixed `%d`/`%s` field lists, and the trap in mixing them.
+///
+/// `%s` stops only at WHITESPACE, so in `"%s,%s"` the first conversion swallows
+/// `"a,b"` whole and the literal `,` then has nothing left to match — glibc
+/// reports ONE field, not two. The probe declines any format with a `%s` before
+/// a literal separator for exactly that reason, and the cases below check both
+/// that the declines still agree and that the accepted shapes do.
+#[test]
+fn the_field_list_matches_glibc_on_separators() {
+    let glibc: SscanfFn = unsafe {
+        host_fn(
+            c"__isoc23_sscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_sscanf as *const (),
+        )
+    };
+
+    // Two `char*` destinations and two `int*`, so every shape below has real
+    // storage for whatever it writes, and a sentinel past each buffer catches a
+    // run-on or a missing terminator.
+    let scan = |f: SscanfFn, input: &str, format: &str| -> (c_int, String, String, c_int, c_int) {
+        let cin = CString::new(input).expect("input has NUL");
+        let cfmt = CString::new(format).expect("format has NUL");
+        let mut a = [0xAAu8; 64];
+        let mut b = [0xAAu8; 64];
+        let mut i0: c_int = -777;
+        let mut i1: c_int = -777;
+        // SAFETY: no format below has more than four conversions, and four
+        // destinations are supplied in the order the formats consume them.
+        let rc = unsafe {
+            match format {
+                "%s %s" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    b.as_mut_ptr().cast::<c_char>(),
+                ),
+                "%s %d" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    &mut i0 as *mut c_int,
+                ),
+                "%d %s" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    &mut i0 as *mut c_int,
+                    a.as_mut_ptr().cast::<c_char>(),
+                ),
+                "%s,%s" | "%s.%s" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    b.as_mut_ptr().cast::<c_char>(),
+                ),
+                "%d,%s" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    &mut i0 as *mut c_int,
+                    a.as_mut_ptr().cast::<c_char>(),
+                ),
+                "%s %d %d" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    &mut i0 as *mut c_int,
+                    &mut i1 as *mut c_int,
+                ),
+                "%s %s %s" => f(
+                    cin.as_ptr(),
+                    cfmt.as_ptr(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                    b.as_mut_ptr().cast::<c_char>(),
+                    a.as_mut_ptr().cast::<c_char>(),
+                ),
+                other => panic!("unhandled format {other:?}"),
+            }
+        };
+        let text = |buf: &[u8; 64]| {
+            let end = buf.iter().position(|&x| x == 0).unwrap_or(0);
+            String::from_utf8_lossy(&buf[..end]).into_owned()
+        };
+        (rc, text(&a), text(&b), i0, i1)
+    };
+
+    let cases: &[(&str, &str)] = &[
+        ("hello world", "%s %s"),
+        ("hello 42", "%s %d"),
+        ("42 hello", "%d %s"),
+        ("hello", "%s %s"),
+        ("", "%s %s"),
+        ("   ", "%s %d"),
+        ("hello notanint", "%s %d"),
+        ("hello 1 2", "%s %d %d"),
+        ("a b c", "%s %s %s"),
+        // DECLINED by the probe: a `%s` before a literal separator.
+        ("a,b", "%s,%s"),
+        ("a.b", "%s.%s"),
+        // Accepted: the literal comes after an INT, which stops at the comma.
+        ("42,tail", "%d,%s"),
+    ];
+
+    let mut compared = 0usize;
+    for (input, format) in cases {
+        let want = scan(glibc, input, format);
+        for (name, arm) in fl_arms() {
+            let got = scan(arm, input, format);
+            assert_eq!(
+                got, want,
+                "{name}({input:?}, {format:?}) produced {got:?}, host glibc produced {want:?}"
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, cases.len() * 3, "the loop skipped cases");
+    println!("compared {compared} field-list arms across {} cases", cases.len());
+}
+
 #[test]
 fn the_string_fast_path_agrees_with_host_glibc() {
     let glibc: SscanfFn = unsafe {
