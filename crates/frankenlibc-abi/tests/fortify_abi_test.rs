@@ -555,7 +555,7 @@ fn wcscpy_chk_src_over_real_buffer_aborts_child_process() {
             __wcscpy_chk(
                 dest.as_mut_ptr(),
                 src.as_ptr(),
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
@@ -584,7 +584,7 @@ fn wcsncpy_chk_n_over_real_buffer_aborts_child_process() {
                 dest.as_mut_ptr(),
                 src.as_ptr(),
                 3,
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
@@ -614,7 +614,7 @@ fn wcscat_chk_src_over_real_buffer_aborts_child_process() {
             __wcscat_chk(
                 dest.as_mut_ptr(),
                 src.as_ptr(),
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
@@ -671,7 +671,7 @@ fn wmemcpy_chk_n_over_real_buffer_aborts_child_process() {
                 dest.as_mut_ptr(),
                 src.as_ptr(),
                 3,
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
@@ -702,7 +702,7 @@ fn wmemmove_chk_n_over_real_buffer_aborts_child_process() {
                 dest.as_mut_ptr(),
                 src.as_ptr(),
                 3,
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
@@ -717,10 +717,16 @@ fn wmemset_chk_safe() {
 }
 
 #[test]
+// The wide `*_chk` wrappers take their destination size in WIDE CHARACTERS, not
+// bytes: glibc's fortify headers pass `__glibc_objsize (dst) / sizeof (wchar_t)`.
+// These tests used to pass `size_of_val(&dest)` — bytes — which made the check
+// fire for the wrong reason and locked in a rule that aborted at a QUARTER of the
+// real capacity (bd-917hzv sibling). They now pass `dest.len()`, so the abort
+// they assert is the same one host glibc performs.
 fn wmemset_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wmemset_chk n over real buffer", || {
         let mut dest = [0 as WcharT; 2];
-        unsafe { __wmemset_chk(dest.as_mut_ptr(), 42, 3, std::mem::size_of_val(&dest)) };
+        unsafe { __wmemset_chk(dest.as_mut_ptr(), 42, 3, dest.len()) };
     });
 }
 
@@ -1473,12 +1479,10 @@ fn mbstowcs_chk_n_over_real_buffer_aborts_child_process() {
         let src = CString::new("abcd").unwrap();
         let mut dest = [0 as WcharT; 2];
         unsafe {
-            __mbstowcs_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                4,
-                std::mem::size_of_val(&dest),
-            )
+            // WIDE CHARACTERS, not bytes — see the note above the wmemset case.
+            // 4 requested into a 2-wide-character buffer is the overflow host
+            // glibc aborts on.
+            __mbstowcs_chk(dest.as_mut_ptr(), src.as_ptr(), 4, dest.len())
         };
     });
 }
@@ -1662,7 +1666,7 @@ fn mbsrtowcs_chk_n_over_real_buffer_aborts_child_process() {
                 &mut src_ptr,
                 4,
                 std::ptr::null_mut(),
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
@@ -2325,7 +2329,7 @@ fn mbsnrtowcs_chk_n_over_real_buffer_aborts_child_process() {
                 4,
                 4,
                 std::ptr::null_mut(),
-                std::mem::size_of_val(&dest),
+                dest.len(),
             )
         };
     });
