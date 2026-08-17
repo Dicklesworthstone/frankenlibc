@@ -9298,6 +9298,31 @@ pub unsafe extern "C" fn fscanf(
         return -1;
     }
     let id = canonical_stream_id(stream);
+    // Host delegation, the SAME path `vfscanf` takes — see the note there.
+    //
+    // It has to be here as well, and its absence was a live defect rather than
+    // an inconsistency. <stdio.h> redirects compiled `fscanf` calls to
+    // `__isoc99_fscanf`, which forwards to `vfscanf` and therefore delegated a
+    // foreign stream to the host; anything reaching THIS symbol pointed fl's
+    // engine at a `FILE*` fl never created. On a stream from host `fopen` that
+    // returned -1 having written nothing, where the alias and glibc both
+    // returned 2. fl's own fscanf suite could not see it: it calls `fscanf` by
+    // name, and an fl-created stream IS in the registry, so `may_delegate_to_host`
+    // is false and both paths run the engine (bd-r8hpym).
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn() }
+    {
+        // SAFETY: on x86_64 Linux a Rust `VaListImpl` has C's `va_list` layout,
+        // which is what every v* entry point here relies on.
+        let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+        let rc = unsafe { host_vfscanf(stream, format, ap) };
+        mark_host_io_started(stream);
+        if rc < 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
