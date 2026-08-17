@@ -30367,3 +30367,39 @@ What this changes, and what it does not:
 - **OWED, and it is the next lever on the instrument rather than on the library:** `--pin-quietest`
   should select distinct physical cores before it takes SMT siblings, and a certification should run
   twice on different pinned sets with the between-run spread reported alongside the in-run CI.
+
+## 2026-08-17 — literal-separated int lists: `dotted_quad` 844.9M instructions -> 107.1M, and a 1.795x loss becomes 0.228x
+
+- **RESULT CLASS: measured improvement, counted mechanism named before the build.** Instruction count
+  under `RTLD_DEEPBIND`, 200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=4332404caa11528992bb70c29642b56085b079f3943d0cdf7f9a37977512678b, loadavg
+  41.32-46.37 / 35.37-37.01 / 26.40-27.46, cpu MHz 3087-3914. The window was NOT quiet and did not
+  need to be: these are instruction counts, and the row above this one is why no wall-clock claim is
+  made here.
+- **THE TARGET.** `dotted_quad` (`sscanf("192.168.1.1", "%d.%d.%d.%d")`) was the worst case in the
+  family on the certified wall-clock run. It parsed to SEVEN directives — four conversions and three
+  literals — which spills the four-slot inline vector to the heap. The int fast path accepted only
+  the whitespace form with at most three fields, so the IPv4 shape, one of the most common scanf
+  formats in existence, went to the engine.
+- **RESULT, attributed on ONE tree by capping `STRICT_INT_LIST_MAX` to 3 so the same format declines:**
+  844,922,307 instructions -> 107,094,175, **7.89x fewer, -3689 per call**. Against glibc's
+  470,577,402 that is **0.228x, from 1.795x** — a 4.39x win where there was a 1.8x loss.
+  Re-measured after reverting the cap: 107,205,767, so the figure reproduces.
+- **THE CHECKSUM IS IDENTICAL ACROSS ALL THREE MEASUREMENTS** (0xa86e353fda3fda00, an order-sensitive
+  mix of return codes and destination bytes), so the fast path and the engine computed the same
+  answer and the reduction is not work quietly skipped.
+- **COST TO THE CASES THAT DECLINE, measured rather than assumed:** the probe is now a loop over
+  separators instead of three unrolled comparisons, and `two_ints` pays for it at 69,775,626
+  instructions -> 70,935,940, **+5.8 per call**. `single_int` +0.4, `string_token` -0.5,
+  `scanset_only` -0.4, `key_value` +0.8, `float_only` +1.0, `long_literal` +1.5 — all inside a
+  couple of instructions per call.
+- **NET: -3689 per call on the IPv4 shape, +5.8 on the two-field whitespace form.**
+- **SEMANTICS, pinned in the differential rather than in a comment.** A literal separator must match
+  EXACTLY and does not skip whitespace first, unlike `%d` which skips its own:
+  `sscanf("1 .2", "%d.%d")` matches ONE field, not two. Also covered: a doubled separator, a wrong
+  separator, a missing trailing field, a bare first field, an empty input, and the three-field date
+  and time shapes. 102 fl-vs-glibc arms across 34 cases, all agreeing with the host.
+- **A CONTROL DRIFTED AND WAS MOVED.** Two gates used `"%d %d %d %d"` as their NO-FAST-PATH control.
+  Four fields are now accepted, so that control had silently become a duplicate of the treatment;
+  both moved to five fields. Widening them cost a null-pointer abort first — five conversions handed
+  four pointers — which is the same class as the `%ld` SIGSEGV earlier in that file.

@@ -116,6 +116,10 @@ fn main() {
         // FIVE directives ('i','d','=' literals plus the conversion): sits just
         // above a 4-slot inline capacity, so it prices the spill.
         "long_literal" => ("id=42", "id=%d"),
+        // The IPv4 shape, and the worst case in the family on the certified
+        // wall-clock run at 2.899x host glibc. Four conversions and three
+        // literals parse to SEVEN directives, which spills the inline vector.
+        "dotted_quad" => ("192.168.1.1", "%d.%d.%d.%d"),
         other => panic!("unknown case {other:?}"),
     };
 
@@ -124,6 +128,8 @@ fn main() {
 
     let mut int_a: c_int = 0;
     let mut int_b: c_int = 0;
+    let mut int_c: c_int = 0;
+    let mut int_d: c_int = 0;
     let mut flt: f32 = 0.0;
     let mut buf_a = [0u8; 128];
     let mut buf_b = [0u8; 128];
@@ -151,6 +157,14 @@ fn main() {
                     std::hint::black_box(cfmt.as_ptr()),
                     &mut int_a as *mut c_int,
                     &mut int_b as *mut c_int,
+                ),
+                "dotted_quad" => sscanf(
+                    std::hint::black_box(cin.as_ptr()),
+                    std::hint::black_box(cfmt.as_ptr()),
+                    &mut int_a as *mut c_int,
+                    &mut int_b as *mut c_int,
+                    &mut int_c as *mut c_int,
+                    &mut int_d as *mut c_int,
                 ),
                 "float_only" => sscanf(
                     std::hint::black_box(cin.as_ptr()),
