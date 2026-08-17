@@ -64,7 +64,28 @@ fn main() {
     // namespace so it cannot capture this binary's own libc symbols.
     let handle = unsafe { libc::dlopen(so_c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
     assert!(!handle.is_null(), "dlopen {so}");
-    let sscanf: SscanfFn = dl(handle, b"sscanf\0");
+    // WHICH sscanf. glibc exports BOTH `sscanf@@GLIBC_2.2.5` and
+    // `__isoc23_sscanf@@GLIBC_2.38`, and a compiler emits calls to the LATTER —
+    // <stdio.h> redirects them under gcc 15's default -std=c23, as it did to
+    // __isoc99_sscanf before. Resolving the bare name would measure glibc's
+    // legacy shim rather than the entry point real programs reach, which is the
+    // hollow-arm trap bd-v0388t exists for, one level down. fl exports only the
+    // plain name, so preference plus fallback covers both objects, and the symbol
+    // actually used is PRINTED so a row can never be read without knowing which
+    // implementation answered.
+    let (sscanf, symbol): (SscanfFn, &str) = {
+        // SAFETY: handle came from dlopen; the name is NUL-terminated.
+        let modern = unsafe { libc::dlsym(handle, c"__isoc23_sscanf".as_ptr()) };
+        if modern.is_null() {
+            (dl(handle, b"sscanf\0"), "sscanf")
+        } else {
+            // SAFETY: __isoc23_sscanf has C's sscanf signature.
+            (
+                unsafe { std::mem::transmute_copy::<usize, SscanfFn>(&(modern as usize)) },
+                "__isoc23_sscanf",
+            )
+        }
+    };
 
     // (input, format) per case, mirroring incumbent_coverage_ab's sscanf family
     // so the two instruments can be read against each other.
@@ -146,6 +167,6 @@ fn main() {
     }
 
     println!(
-        "SSCANF_ICOUNT case={case} iters={n} object={so} checksum=0x{checksum:x}"
+        "SSCANF_ICOUNT case={case} iters={n} object={so} symbol={symbol} checksum=0x{checksum:x}"
     );
 }

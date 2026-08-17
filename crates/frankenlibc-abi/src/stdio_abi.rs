@@ -174,10 +174,10 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
 }
 
 #[derive(Clone, Copy)]
-struct StrictDecimalIntsScan {
-    count: c_int,
-    input_failure: bool,
-    values: [c_int; 3],
+pub(crate) struct StrictDecimalIntsScan {
+    pub(crate) count: c_int,
+    pub(crate) input_failure: bool,
+    pub(crate) values: [c_int; 3],
 }
 
 enum StrictIntScan {
@@ -192,7 +192,7 @@ fn scanf_ascii_space(b: u8) -> bool {
 }
 
 #[inline]
-unsafe fn strict_decimal_int_format_count(format: *const c_char) -> Option<usize> {
+pub(crate) unsafe fn strict_decimal_int_format_count(format: *const c_char) -> Option<usize> {
     let f = format.cast::<u8>();
     if unsafe { *f } != b'%' || unsafe { *f.add(1) } != b'd' {
         return None;
@@ -296,7 +296,7 @@ unsafe fn strict_scan_decimal_int(mut p: *const u8) -> StrictIntScan {
 }
 
 #[inline]
-unsafe fn strict_scan_decimal_ints(s: *const c_char, fields: usize) -> StrictDecimalIntsScan {
+pub(crate) unsafe fn strict_scan_decimal_ints(s: *const c_char, fields: usize) -> StrictDecimalIntsScan {
     let mut p = s.cast::<u8>();
     let mut values = [0; 3];
     let mut count = 0usize;
@@ -12033,6 +12033,37 @@ pub unsafe extern "C" fn __isoc99_sscanf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
+    // FAST PATH, same as `sscanf`'s and for the same reason `__isoc23_sscanf`
+    // carries one: <stdio.h> redirects source-level `sscanf` calls to THIS
+    // symbol, so a compiler never emits a call to the plain name and every
+    // optimisation applied there missed compiled C entirely.
+    //
+    // SAFETY: `format` is non-null and NUL-terminated under the scanf contract.
+    // The prologue is `sscanf`'s VERBATIM, membrane decision included: taking the
+    // fast path without `decide` would let this entry point serve a request the
+    // policy had denied, and would drop the observation `sscanf` records.
+    if s.is_null() || format.is_null() {
+        return -1;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(fields) = unsafe { strict_decimal_int_format_count(format) }
+    {
+        // SAFETY: the format is exactly `fields` decimal-int conversions, so the
+        // caller passed that many `int *`. `count` already carries EOF as -1.
+        let fast = unsafe { strict_scan_decimal_ints(s, fields) };
+        for idx in 0..(fast.count.max(0) as usize).min(fields) {
+            // SAFETY: one `int *` per accepted conversion.
+            let ptr = unsafe { args.next_arg::<*mut c_int>() };
+            unsafe { *ptr = fast.values[idx] };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+        return fast.count;
+    }
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
     unsafe { vsscanf(s, format, ap) }
 }

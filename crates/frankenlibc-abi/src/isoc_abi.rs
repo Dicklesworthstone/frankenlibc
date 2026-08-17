@@ -62,6 +62,55 @@ pub unsafe extern "C" fn __isoc23_sscanf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
+    // FAST PATH, same as `sscanf`'s. This alias used to forward straight to
+    // `vsscanf`, and that mattered more than it looks: a compiler emits calls to
+    // THIS symbol, not to `sscanf` — <stdio.h> redirects them under -std=c23, as
+    // it did to `__isoc99_sscanf` before. So every optimisation applied to
+    // `sscanf` reached test code calling `sscanf` by name and no compiled C at
+    // all. Measured by instruction count on `sscanf("42", "%d")`: 250
+    // instructions per call through `sscanf`, 864 through this alias.
+    //
+    // The prologue is `sscanf`'s VERBATIM, membrane decision included — see the
+    // note on `__isoc99_sscanf`.
+    if s.is_null() || format.is_null() {
+        return -1;
+    }
+    let (_, decision) = crate::runtime_policy::decide(
+        frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+        s as usize,
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, frankenlibc_membrane::runtime_math::MembraneAction::Deny) {
+        crate::runtime_policy::observe(
+            frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+            decision.profile,
+            15,
+            true,
+        );
+        return -1;
+    }
+    if crate::runtime_policy::strict_passthrough_active()
+        && let Some(fields) = unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) }
+    {
+        // SAFETY: the format is exactly `fields` decimal-int conversions, so the
+        // caller passed that many `int *`. `count` already carries EOF as -1.
+        let fast = unsafe { crate::stdio_abi::strict_scan_decimal_ints(s, fields) };
+        for idx in 0..(fast.count.max(0) as usize).min(fields) {
+            // SAFETY: one `int *` per accepted conversion.
+            let ptr = unsafe { args.next_arg::<*mut core::ffi::c_int>() };
+            unsafe { *ptr = fast.values[idx] };
+        }
+        crate::runtime_policy::observe(
+            frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+            decision.profile,
+            15,
+            fast.input_failure,
+        );
+        return fast.count;
+    }
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { crate::stdio_abi::vsscanf(s, format, ap) }
 }
