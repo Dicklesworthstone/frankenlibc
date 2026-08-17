@@ -30024,3 +30024,37 @@ What this changes, and what it does not:
 - **TWO UNCERTIFIED LEVERS ARE IN HEAD** and must not be quoted until measured: the `ScanBytes`
   inline-token change in scanf (prediction on record: `string_token` and `two_strings` move,
   `long_string` does not — if `long_string` moves too the fixed-cost story is wrong), and nothing else.
+
+## 2026-08-16 (this session) — a bare `%s` had no fast path either: `string_token` 1.062x against glibc becomes 0.378x, and a merged probe cost the `%d` path 19 instructions
+
+- **RESULT CLASS: measured improvement with a measured cost, both recorded.** The instrument is
+  instruction count, which is layout-immune and load-independent — the row above establishes that a
+  whole-object A/B cannot resolve below ~15% on this host, and these were taken at loadavg
+  41.97/45.36/57.98 and 44.91/45.95/56.82, cpu MHz 3784-3951, which would void any wall-clock row.
+  Driver bench_elf_sha256=2121fc56954b6e63d0cbb9c39ddde09d64a97774b36f506260bc9805faf2270b,
+  200k iterations, `perf stat -r 3`, one fl object per run, symbol printed and confirmed
+  `__isoc23_sscanf` on every arm.
+- **THE LEVER.** After the decimal-int work, `string_token` (`sscanf("hello world", "%s")`) was the
+  worst case left in the family: **136,742,276 instructions against glibc's 128,808,753, a 1.062x
+  loss**. It had no fast path at all, exactly as `%d` had none before. A narrow `%s` is: skip ASCII
+  whitespace, copy to the next ASCII space, NUL-terminate — so it does not need the format parsed
+  into directives, a value list built, or the heap touched.
+- **RESULT: 136,742,276 -> 48,662,374, a 2.81x reduction, and against glibc 0.378x** — a 1.062x loss
+  becomes a 2.65x win. `single_int` 49,873,766 against 169,019,298 (0.295x) and `two_ints`
+  62,289,803 against 249,042,951 (0.250x) are unchanged in character.
+- **THE COST, which a control caught and which I paid down rather than hid.** Written first as ONE
+  probe classifying both shapes and returning an enum, the untouched decimal path moved
+  **48,857,987 -> 52,658,930, +19 instructions per call**, and `two_ints` the same. `#[inline(always)]`
+  on the classifier returned **52,622,504** — it recovered 0.18 of those 19 instructions, so the merge
+  had not introduced a call, and that hypothesis is REFUTED rather than left standing. Splitting back
+  into two sequential probes, decimal first, gave **49,873,766**: residual **+5 per call**, which is
+  the second probe a `%d` format now runs past. `float_only` pays **+4** for the same reason
+  (301,646,780 -> 302,513,143).
+- **NET, per call: `%s` -440, `%d` +5, engine formats +4.**
+- **WHERE IT HAD TO GO.** All three entry points — `sscanf` and both `__isoc` aliases — because
+  `<stdio.h>` redirects compiled calls to the aliases, so a fast path on the plain symbol alone
+  reaches no C program (the correction two rows above). The alias branches share one
+  `scanf_fastpath_profile` that decides only AFTER a probe accepts, which is what keeps a declining
+  call from paying a membrane traversal it does not use.
+- **STILL OWED.** `float_only` 302.51M against 293.59M (1.031x) and `scanset_only` 139.20M against
+  130.20M (1.069x) remain losses, and neither is a fast-path shape — they are engine work.
