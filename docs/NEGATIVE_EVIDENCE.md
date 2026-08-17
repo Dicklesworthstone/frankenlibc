@@ -29909,3 +29909,38 @@ What this changes, and what it does not:
 - **STILL OWED:** a certifiable ratio for the allocation work, which needs a quieter box than this
   one has been all session; and a re-measure of `scanset_only`/`key_value` against `5fca65c2c` to
   confirm the regression is gone rather than assumed.
+
+## 2026-08-16 (this session) — the sscanf A/B bias is the BUILD, not the box: a SAME-INVOCATION self-A/B still moves the untouched controls 15%
+
+- **RESULT CLASS: loss/baseline, methodological.** This retires an explanation that three earlier
+  attempts left standing, and it changes what a whole-object A/B can be used for in this repo.
+- **THE STRONGEST AVAILABLE DESIGN WAS USED.** `incumbent_coverage_ab --fl-so <cand> --fl-so-b <base>`
+  (added in `b9e16cd2f`) dlopens BOTH fl objects into ONE process and times them against each other,
+  so the two arms share one clock, one load, one page cache and one exclusivity window — the property
+  that makes the fl-vs-glibc comparison work. Both objects were built from one tree state differing
+  only by the scanf patch: base sha256=c63749c4875556930c79…, candidate sha256=0499bde6dc0059747f23….
+  Launch loadavg 38.74 28.63 26.68 at cpu8 4016991 kHz; every A/A null held.
+- **THE CONTROLS STILL MOVED, and now nothing environmental is left to blame:**
+  `single_int` candidate/base **1.1577**, bootstrap median CI [1.1476, 1.1625]; `two_ints` **1.1348**,
+  CI [1.1281, 1.1470]. Both are served by `strict_scan_decimal_ints`, never enter the parsing engine,
+  and allocate nothing. The patch cannot touch them, they were measured microseconds apart in the
+  same process, and they differ by 15% with intervals that do not come close to 1.0.
+- **WHAT IS LEFT IS THE OBJECT ITSELF.** The two `.so` files differ by a patch that changes code size
+  and layout across the library — alignment of unrelated hot loops, i-cache and iTLB packing, branch
+  predictor aliasing. A 15% swing on a small hot loop from layout alone is ordinary. Ruled out in
+  order across four runs: cross-invocation drift (interleaving halved it, did not remove it), codebase
+  drift from other agents' commits (isolated patch, bias survived), and now environment entirely
+  (same invocation, bias survived).
+- **THEREFORE: a whole-object A/B on this family cannot resolve anything below ~15% on this host, no
+  matter how quiet the box gets.** Waiting for a quiet window was never going to fix it. That is the
+  correction to three earlier rows that all ended "still owed: a certified row, on a quieter box".
+- **SIGNAL ABOVE THE FLOOR, which the same run does show.** Two cases sit far outside the control
+  band and reproduce the earlier finding: `scanset_only` **1.9444** CI [1.9360, 1.9761] and
+  `key_value` **1.7354** CI [1.7297, 1.7567] — the `%[...]` regression these objects predate the fix
+  for (`5fca65c2c`). Two more sit far below it: `mixed_record` **0.7516** CI [0.7478, 0.7546] and
+  `dotted_quad` **0.8585** CI [0.8020, 0.8665]. Effects of that size ARE resolvable here; effects near
+  the allocation work's predicted scale are not.
+- **WHAT WOULD ACTUALLY CERTIFY THE ALLOCATION WORK:** put both implementations in ONE object behind a
+  runtime switch and flip it between arms, so the two arms share a single binary layout and the
+  measurement varies only the code path. That is the only design left that removes the last variable,
+  and it is a change to how the candidate is BUILT, not to how it is timed.
