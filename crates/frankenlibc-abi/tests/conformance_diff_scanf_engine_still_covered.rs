@@ -235,39 +235,3 @@ fn the_engine_and_the_abi_agree_on_a_format_no_fast_path_accepts() {
          format no fast path accepts; the two routes have diverged"
     );
 }
-
-/// Grouping literals must not make every directive bigger.
-///
-/// `InlineVec<ScanDirective, 4>` is built on the stack for EVERY scanf call, so
-/// the enum's size is per-call cost paid by formats that contain no literal run
-/// at all. `LITERAL_RUN_CAP` is chosen to fit inside the existing largest
-/// variant, `Spec(ScanSpec)`, and this pins that choice: if someone raises the
-/// cap past what `ScanSpec` occupies, the enum grows and the cost lands on every
-/// format in the library.
-///
-/// This repo has the scar for it — `SCAN_DIRECTIVES_INLINE = 8` was measured at
-/// +12-23% instructions on the engine path purely from initialising slots — and
-/// a size-pin test is the cheap way to keep a structural choice from drifting.
-#[test]
-fn a_literal_run_does_not_grow_the_directive() {
-    use frankenlibc_core::stdio::scanf::{LITERAL_RUN_CAP, ScanDirective, ScanSpec};
-
-    let directive = std::mem::size_of::<ScanDirective>();
-    let spec = std::mem::size_of::<ScanSpec>();
-    println!(
-        "size_of ScanDirective={directive} ScanSpec={spec} LITERAL_RUN_CAP={LITERAL_RUN_CAP}"
-    );
-
-    // The run must fit in the space `Spec` already forces the enum to reserve.
-    assert!(
-        LITERAL_RUN_CAP + 1 <= spec,
-        "a {LITERAL_RUN_CAP}-byte run plus its length no longer fits inside \
-         Spec(ScanSpec) at {spec} bytes, so ScanDirective grew for every format"
-    );
-    // And the enum itself must still be bounded by the Spec variant plus a tag.
-    assert!(
-        directive <= spec + 8,
-        "ScanDirective is {directive} bytes against a {spec}-byte ScanSpec; the \
-         literal run has become the largest variant and every call pays for it"
-    );
-}

@@ -299,32 +299,11 @@ impl Default for ScanDirective {
     }
 }
 
-/// Bytes a single [`ScanDirective::LiteralRun`] can hold.
-///
-/// Sized to stay inside the enum's existing largest variant, `Spec(ScanSpec)`,
-/// so grouping literals costs no bytes per directive —
-/// `a_literal_run_does_not_grow_the_directive` pins that.
-pub const LITERAL_RUN_CAP: usize = 16;
-
 /// A parsed scanf format directive.
 #[derive(Debug, Clone)]
 pub enum ScanDirective {
-    /// Literal byte to match. Retained for the single-byte case, including the
-    /// `%%` escape, which parses to exactly one literal.
+    /// Literal byte(s) to match.
     Literal(u8),
-    /// Two or more consecutive literal bytes, matched in order.
-    ///
-    /// The parser used to emit one `Literal` per byte, so `"id=%d"` built FOUR
-    /// directives for a five-byte format. A flat instruction profile of that case
-    /// put `InlineVec<ScanDirective, 4>::push` at **22.41%** of the whole call —
-    /// the single largest frame, ahead of the scan itself at 17.63% — with
-    /// `parse_scanf_format` at 8.24% and dropping the vector at 3.62%. Grouping
-    /// halves the directive count for that format, and formats with longer
-    /// literal text stop spilling the inline vector to the heap entirely.
-    ///
-    /// Matching is byte-by-byte inside the run, so `consumed` on a partial match
-    /// is identical to what the per-byte directives reported.
-    LiteralRun { len: u8, bytes: [u8; LITERAL_RUN_CAP] },
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
     /// A conversion specifier.
@@ -712,28 +691,8 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                 i += 1;
             }
         } else {
-            // Group consecutive literal bytes into ONE directive. The run stops
-            // at `%` (a conversion or an escape) and at whitespace (which has its
-            // own match-any-run semantics and must stay a separate directive).
-            let start = i;
-            while i < fmt.len()
-                && fmt[i] != b'%'
-                && !is_c_space(fmt[i])
-                && i - start < LITERAL_RUN_CAP
-            {
-                i += 1;
-            }
-            let run = &fmt[start..i];
-            if run.len() == 1 {
-                directives.push(ScanDirective::Literal(run[0]));
-            } else {
-                let mut bytes = [0u8; LITERAL_RUN_CAP];
-                bytes[..run.len()].copy_from_slice(run);
-                directives.push(ScanDirective::LiteralRun {
-                    len: run.len() as u8,
-                    bytes,
-                });
-            }
+            directives.push(ScanDirective::Literal(fmt[i]));
+            i += 1;
         }
     }
 
@@ -949,29 +908,6 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                     };
                 }
                 pos += 1;
-            }
-            ScanDirective::LiteralRun { len, bytes } => {
-                // Byte-by-byte, so `consumed` on a partial match is exactly what
-                // the per-byte `Literal` directives this replaces reported.
-                for expected in &bytes[..*len as usize] {
-                    if pos >= input.len() {
-                        return ScanResult {
-                            values,
-                            count,
-                            consumed: pos,
-                            input_failure,
-                        };
-                    }
-                    if input[pos] != *expected {
-                        return ScanResult {
-                            values,
-                            count,
-                            consumed: pos,
-                            input_failure: false,
-                        };
-                    }
-                    pos += 1;
-                }
             }
             ScanDirective::Spec(spec) => {
                 let result = spec.scan_at(input, pos, wide_input);

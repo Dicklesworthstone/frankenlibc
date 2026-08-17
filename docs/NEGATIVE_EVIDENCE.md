@@ -30173,3 +30173,33 @@ What this changes, and what it does not:
   to key one — on the pointer — is the wrong one. It was HOLLOW as first written (bare `%[^=]`/`%[^,]`
   are served by the scanset fast path and never reach the engine, so it passed against a deliberately
   length-keyed cache); with a width on the formats the same mutation fails.
+
+## 2026-08-17 — REJECTED: grouping scanf literal bytes into one directive bought ~nothing and cost the case it did not touch
+
+- **RESULT CLASS: rejection, with a counted mechanism, and it refutes the PROFILE'S OWN reading.**
+  Instruction count under `RTLD_DEEPBIND`, 200k iterations, `perf stat -r 3`,
+  bench_elf_sha256=341e25c21612cb5a1b50ada14f4a98b8f54bbbdd6f383f1840b6b0cdd76bff2d, loadavg
+  22.90/29.07/25.05 then 22.43/28.87/25.01, cpu MHz 1429-4123, symbol `__isoc23_sscanf` on every arm.
+- **THE LEVER, and the profile that motivated it.** `parse_scanf_format` emitted one `Literal`
+  directive PER BYTE, so `"id=%d"` built four directives. The flat profile of `long_literal` put
+  `InlineVec<ScanDirective,4>::push` at **22.41%** of the call — the largest single frame, ahead of
+  `scan_input_impl` at 17.63% — with `parse_scanf_format` 8.24% and its drop 3.62%. Grouping
+  consecutive literal bytes into a `LiteralRun` halves that format's directive count, 4 -> 2.
+- **RESULT: the halving is worth ~0.4%.** `long_literal` 285,576,130 instructions -> 284,556,159,
+  which is **-5 per call out of 1428**. If the 22.41% frame were removable work, halving the pushes
+  should have returned on the order of 160 per call. It returned five.
+- **AND IT COST A CASE IT DOES NOT TOUCH:** `key_value` 494,717,355 instructions -> 503,925,646,
+  **+46 per call**. Its format `"%[^=]=%s"` has a SINGLE literal byte, which still parses to
+  `Literal(u8)` and forms no run — so the regression is the extra enum variant changing codegen in
+  `scan_input_impl`'s dispatch, not the run itself. `float_only` +3 per call, `single_int` -0.6,
+  `string_token` -1.7.
+- **REVERTED** (`git revert` of the whole change, both the core variant and its size-pin test).
+- **THE GENERALISABLE FINDING, which is worth more than the lever was.** This is the SECOND
+  profile-directed engine lever refuted today: the format memo (row above) also targeted named frames
+  — `parse_scanf_format` 10.00%, `push` 8.66% — and also lost. In this engine the flat profile's
+  percentages do NOT translate into removable work: `push` is inlined into `parse_scanf_format`, so
+  its self-time is an attribution artefact of where the samples land inside one fused body, not a
+  separable cost that disappears when the call count halves. **Do not open another engine lever on
+  the strength of a flat self-time frame alone.** The next attempt needs a mechanism that removes
+  work provably — fewer bytes touched, fewer allocations, fewer branches on a counted path — and the
+  counted delta should be predicted BEFORE the build, then compared against the measurement.
