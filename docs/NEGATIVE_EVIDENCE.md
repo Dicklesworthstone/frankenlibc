@@ -30058,3 +30058,37 @@ What this changes, and what it does not:
   call from paying a membrane traversal it does not use.
 - **STILL OWED.** `float_only` 302.51M against 293.59M (1.031x) and `scanset_only` 139.20M against
   130.20M (1.069x) remain losses, and neither is a fast-path shape — they are engine work.
+
+## 2026-08-16 (this session) — a bare `%[^X]` had no fast path either: `scanset_only` 1.069x becomes 0.352x, and each added probe costs the declining paths ~2 instructions
+
+- **RESULT CLASS: measured improvement with a measured cost, both recorded.** Instrument is
+  instruction count — layout-immune and load-independent, taken at loadavg 20.48/21.28/34.96, cpu MHz
+  3193-4124, driver bench_elf_sha256=2121fc56954b6e63d0cbb9c39ddde09d64a97774b36f506260bc9805faf2270b,
+  200k iterations, `perf stat -r 3`, one fl object per run, symbol confirmed `__isoc23_sscanf` on
+  every arm.
+- **THE LEVER.** `scanset_only` (`sscanf("key=value", "%[^=]")`) was the last measured loss with a
+  tractable shape: **139,202,335 instructions against glibc's 130,197,820, 1.069x**. `%[^X]` for one
+  ordinary delimiter is also what real code uses constantly — `%[^\n]`, `%[^,]`, `%[^=]` — and it
+  needs no format parsed into directives and no set bitmap built.
+- **RESULT: 139,202,335 -> 45,896,004, a 3.03x reduction, and against glibc 0.352x** — a 1.069x loss
+  becomes a 2.84x win. It is now the cheapest case in the family, below `single_int`.
+- **THE COST, measured on four untouched cases rather than assumed.** Each probe a format runs PAST
+  costs about 2 instructions per call: `single_int` 49,873,766 -> 50,316,903, `string_token`
+  49,083,329 (from 48,662,374), `float_only` 302,513,143 -> 302,993,356. The cumulative price of the
+  `%s` and `%[` probes together shows up on the compound format `key_value` (`"%[^=]=%s"`, which
+  declines all three): **211,641,055 -> 214,903,950, +16 per call on a path costing ~1074**, or 1.5%.
+- **THE GRAMMAR IS DELIBERATELY NARROW and the declines are gated.** A leading `]` is a literal set
+  member, `-` forms a range, a width or a positive set is engine work — all declined, and all five
+  are in the differential so an over-claiming probe surfaces as a divergence rather than a silent
+  behaviour change. `%[` does NOT skip leading whitespace, which is why it cannot share the `%s`
+  path, and on a matching failure glibc writes NOTHING — not even a terminator — so the gate compares
+  destination BYTES, not the string up to the first NUL, which a helpfully-terminating fast path
+  would otherwise pass.
+- **NOT MERGED INTO ONE CLASSIFIER, on evidence.** The row above records that folding two probes into
+  a single enum-returning classifier cost the decimal path 19 instructions per call and that
+  `#[inline(always)]` recovered 0.18 of them. Three sequential probes at ~2 each is the cheaper shape
+  and is what is shipped.
+- **STILL OWED.** `key_value` 214.90M against 203.70M (1.055x) and `float_only` 302.99M against
+  293.51M (1.032x) remain losses. Neither is a single-conversion shape; both are engine work, and
+  extending the fast-path family to compound formats is where this stops being a fast path and starts
+  being an overfit.
