@@ -726,13 +726,14 @@ pub const SCAN_VALUES_INLINE: usize = 4;
 /// because the ABI writer consumes a contiguous `&[ScanValue]`; an Option array
 /// cannot produce one. That is what `ScanValue: Default` is for, and the default
 /// slots past `len` are never read.
-pub struct InlineVec<T: Default, const N: usize> {
+#[derive(Clone)]
+pub struct InlineVec<T: Default + Clone, const N: usize> {
     inline: [T; N],
     inline_len: usize,
     spill: Vec<T>,
 }
 
-impl<T: Default, const N: usize> Default for InlineVec<T, N> {
+impl<T: Default + Clone, const N: usize> Default for InlineVec<T, N> {
     fn default() -> Self {
         Self {
             inline: core::array::from_fn(|_| T::default()),
@@ -742,7 +743,7 @@ impl<T: Default, const N: usize> Default for InlineVec<T, N> {
     }
 }
 
-impl<T: Default, const N: usize> InlineVec<T, N> {
+impl<T: Default + Clone, const N: usize> InlineVec<T, N> {
     /// Append, moving to the heap only past the inline capacity.
     pub fn push(&mut self, value: T) {
         if !self.spill.is_empty() {
@@ -789,7 +790,7 @@ impl<T: Default, const N: usize> InlineVec<T, N> {
     }
 }
 
-impl<T: Default, const N: usize> core::ops::Deref for InlineVec<T, N> {
+impl<T: Default + Clone, const N: usize> core::ops::Deref for InlineVec<T, N> {
     type Target = [T];
 
     /// Deref to the slice so this drops into every place a `Vec` stood:
@@ -801,7 +802,7 @@ impl<T: Default, const N: usize> core::ops::Deref for InlineVec<T, N> {
     }
 }
 
-impl<T: Default, const N: usize> core::ops::DerefMut for InlineVec<T, N> {
+impl<T: Default + Clone, const N: usize> core::ops::DerefMut for InlineVec<T, N> {
     fn deref_mut(&mut self) -> &mut [T] {
         self.as_mut_slice()
     }

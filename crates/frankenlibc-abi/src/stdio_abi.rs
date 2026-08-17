@@ -9136,7 +9136,7 @@ fn scanf_core_impl(
         return None;
     }
     let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
-    let mut directives = parse_scanf_format(fmt_bytes);
+    let mut directives = cached_parse_scanf_format(fmt_bytes);
     let result = if wide_input {
         // Mark every conversion as reading from a wide stream so leading-
         // whitespace skipping and `%s` token boundaries are Unicode-aware.
@@ -9150,6 +9150,57 @@ fn scanf_core_impl(
         scan_input(input, directives.as_slice())
     };
     Some((result, directives))
+}
+
+/// One parsed format, memoised per thread.
+///
+/// ## Why this exists
+///
+/// A flat instruction profile of `sscanf("key=value", "%[^=]=%s")` under
+/// `RTLD_DEEPBIND` — the worst case in the family at 2.429x glibc — spends
+/// **24.5%** rebuilding directives it already built: `parse_scanf_format` 10.00%,
+/// `InlineVec<ScanDirective, 4>::push` 8.66%, dropping that vector 5.85%. The
+/// allocator adds 6.8% (`native_libc_malloc`/`free`), which is the `Box<ScanSet>`
+/// that `%[^=]` allocates on every call. Formats are overwhelmingly string
+/// literals scanned in loops, so the same bytes are parsed over and over.
+///
+/// ## Why it keys on BYTES and never on the pointer
+///
+/// Keying on the format pointer would be cheaper and wrong: a caller may build a
+/// format in a reusable buffer, so the same address can hold different text on
+/// the next call, and a pointer-keyed cache would silently scan the input with
+/// the previous format. Comparing the bytes costs a short `memcmp` against a
+/// parse, and `the_cache_does_not_confuse_two_formats_at_one_address` pins it.
+struct ScanfFormatCache {
+    fmt: Vec<u8>,
+    directives: ScanDirectives,
+}
+
+thread_local! {
+    /// Per-thread, so no lock and no sharing between threads.
+    static SCANF_FORMAT_CACHE: std::cell::RefCell<Option<ScanfFormatCache>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// [`parse_scanf_format`], memoised on the exact format bytes.
+///
+/// Returns an owned clone so the caller can mutate it — the wide entry points set
+/// `wide_input` on every spec — while the cache keeps its pristine copy.
+fn cached_parse_scanf_format(fmt_bytes: &[u8]) -> ScanDirectives {
+    SCANF_FORMAT_CACHE.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some(entry) = slot.as_ref()
+            && entry.fmt == fmt_bytes
+        {
+            return entry.directives.clone();
+        }
+        let directives = parse_scanf_format(fmt_bytes);
+        *slot = Some(ScanfFormatCache {
+            fmt: fmt_bytes.to_vec(),
+            directives: directives.clone(),
+        });
+        directives
+    })
 }
 
 /// Origin metadata for a bulk scanf read.
