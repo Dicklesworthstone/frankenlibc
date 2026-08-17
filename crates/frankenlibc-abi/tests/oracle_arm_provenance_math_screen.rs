@@ -40,6 +40,20 @@
 
 use std::ffi::{CStr, c_void};
 
+macro_rules! declare_mem_arms {
+    ($($name:ident),* $(,)?) => {
+        unsafe extern "C" {
+            $(fn $name(a: *mut c_void, b: *const c_void, n: usize) -> *mut c_void;)*
+        }
+        /// `(symbol name, code address as the linker resolved it)`.
+        fn mem_arm_addresses() -> Vec<(&'static str, *const c_void)> {
+            vec![
+                $((stringify!($name), $name as *const c_void)),*
+            ]
+        }
+    };
+}
+
 macro_rules! declare_binary_arms {
     ($($name:ident),* $(,)?) => {
         unsafe extern "C" {
@@ -180,6 +194,14 @@ declare_more_arms!(
 // means "fixing" fl to match a local provider and breaking real parity.
 declare_binary_arms!(copysign, fdim, fmax, fmin, fmod, pow, atan2);
 
+// The mem*/str* family. `compiler_builtins` supplies memcpy/memset/memmove/
+// memcmp, and these are the symbols the fourth disguise reaches through
+// `libc::<sym>`. Same rule as every other arm here: never called, only
+// addressed, so one uniform prototype suffices for `dladdr`.
+declare_mem_arms!(
+    memcpy, memmove, memset, memcmp, memchr, strlen, strcmp, strncmp, strcpy, strchr, bcmp,
+);
+
 /// Which object does `addr` live in?
 fn owning_object(addr: *const c_void) -> String {
     let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
@@ -199,6 +221,7 @@ fn math_oracle_arms_report_their_owning_object() {
     let mut arms = math_arm_addresses();
     arms.extend(other_arm_addresses());
     arms.extend(binary_arm_addresses());
+    arms.extend(mem_arm_addresses());
     assert!(!arms.is_empty(), "no arms declared; the macro did not expand");
 
     let mut captured = Vec::new();
