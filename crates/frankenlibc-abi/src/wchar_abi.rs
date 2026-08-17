@@ -3138,6 +3138,69 @@ pub unsafe extern "C" fn mkstemp(template: *mut std::ffi::c_char) -> c_int {
     fd
 }
 
+/// Page granularity, the unit at which readability is decided.
+const WIDE_SCAN_PAGE: usize = 4096;
+
+/// Bounded wide NUL scan whose read footprint stops at the terminator, not at
+/// `bound`. Returns the index of the first NUL, or `bound`.
+///
+/// # Why the slice cannot just be `bound` long
+///
+/// `wcsnlen(s, n)` treats `n` as a CEILING: a caller may pass `wcsnlen(p, 64)`
+/// for a 2-element string placed 8 bytes from the end of its mapping, and glibc
+/// completes that call. Handing `wide_core::wcsnlen` a `bound`-long slice both
+/// asserts a readability the caller never promised and licenses the scan to load
+/// a full panel before testing for the NUL — `bounded_scan_guard_page_safety`
+/// measured the resulting SIGSEGV at every `n >= 4`, including bounds no fast
+/// path from 79899b3f0 covers, so the folded scan has the same footprint.
+///
+/// Readability is page-granular, so the elements from `s` to the end of `s`'s
+/// own page are readable whenever `s` is; each chunk is clamped there and the
+/// scan's slice is then genuinely valid. Advancing past a page boundary requires
+/// having found no NUL in the page just read, which leaves `bound` unspent and so
+/// obliges the caller to have mapped what follows.
+///
+/// # Safety
+///
+/// `s` must be readable up to the first NUL or `bound` wide elements, whichever
+/// comes first.
+unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
+    const ELEM: usize = size_of::<u32>();
+
+    // Fast path: the whole bound lies in one page, which is mapped because `s`
+    // is readable, so the slice below is valid and the scan runs exactly as it
+    // did before this function existed. Compared against the element distance to
+    // the page end rather than multiplying `bound` up, because `bound` is
+    // caller-controlled and `wcsnlen(p, SIZE_MAX)` is a legal call whose byte
+    // count would wrap.
+    if bound <= (WIDE_SCAN_PAGE - (s as usize & (WIDE_SCAN_PAGE - 1))) / ELEM {
+        // SAFETY: as argued above, all `bound` elements are readable.
+        return unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s, bound), bound) };
+    }
+
+    let mut done = 0usize;
+    while done < bound {
+        // SAFETY: `done < bound` keeps this inside the promised region.
+        let here = unsafe { s.add(done) };
+        let to_page_end = WIDE_SCAN_PAGE - (here as usize & (WIDE_SCAN_PAGE - 1));
+        // Whole elements only. A 4-aligned `here` — the only alignment at which
+        // `*const u32` reads are defined — always divides evenly, so the `max`
+        // arm is unreachable for conforming callers; it matters only that a
+        // misaligned pointer cannot make `chunk` zero and spin. Reading the one
+        // element straddling the boundary is legitimate there: no NUL has been
+        // seen and `done < bound`, so that element is obliged to be readable.
+        let chunk = (bound - done).min((to_page_end / ELEM).max(1));
+        // SAFETY: element `done` is readable, hence its whole page is, and
+        // `chunk` stops at that page's end.
+        let idx = unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(here, chunk), chunk) };
+        if idx < chunk {
+            return done + idx;
+        }
+        done += chunk;
+    }
+    bound
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usize {
     if s.is_null() || maxlen == 0 {
@@ -3150,9 +3213,9 @@ pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usiz
     // decide + observe membrane tax. (Wide analog of the strnlen fast path; unlike
     // `wcslen`, wcsnlen does NOT honor `known` ungated.)
     if runtime_policy::strict_passthrough_active() {
-        return unsafe {
-            wide_core::wcsnlen(std::slice::from_raw_parts(s as *const u32, maxlen), maxlen)
-        };
+        // SAFETY: `maxlen` is wcsnlen's ceiling, not a readability promise, which
+        // is exactly `wide_nul_or_bound`'s contract.
+        return unsafe { wide_nul_or_bound(s as *const u32, maxlen) };
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -3179,9 +3242,10 @@ pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usiz
         limit = bounded;
     }
 
-    // SAFETY: `limit` bounds all reads from `s`.
-    let len =
-        unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s as *const u32, limit), limit) };
+    // SAFETY: `limit` is a ceiling on the reads from `s` — the membrane clamp can
+    // only shrink `maxlen`, never certify that many elements are readable — so
+    // this needs the nul-or-bound contract.
+    let len = unsafe { wide_nul_or_bound(s as *const u32, limit) };
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,

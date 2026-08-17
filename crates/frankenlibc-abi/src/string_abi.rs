@@ -2176,6 +2176,80 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
     }
 }
 
+/// Page granularity, the unit at which readability is decided.
+const SCAN_PAGE: usize = 4096;
+
+/// Scan for a NUL that may appear BEFORE `bound`, reading no page the caller was
+/// not obliged to map. Returns `(index_of_nul_or_bound, found_nul)`.
+///
+/// # Why this is not [`scan_c_string`]`(p, Some(bound))`
+///
+/// The two take incompatible contracts, and the difference is observable as a
+/// SIGSEGV rather than as a wrong answer. `scan_c_string`'s bounded arm assumes
+/// `bound` READABLE bytes and says so — "Bounded ⇒ [i, i+128) ⊆ [0, limit) is
+/// in-bounds, no page guard" — which is exactly right for `memchr(p, c, n)`,
+/// where the caller does promise `n` bytes. `strnlen(p, n)` promises no such
+/// thing: `n` is a CEILING, and a caller may legitimately pass `strnlen(p, 64)`
+/// for a 2-byte string sitting 2 bytes from the end of its mapping. Reading the
+/// 8-byte SWAR window that the bounded arm's `i + 8 <= limit` admits then faults
+/// on a call glibc completes. `bounded_scan_guard_page_safety` measured this at
+/// every `n >= 8`.
+///
+/// # How the footprint is bounded
+///
+/// Readability is page-granular: if one byte of a page is mapped, all of it is.
+/// So the bytes from `p` to the end of `p`'s own page are readable whenever `p`
+/// itself is, and a chunk clamped to that boundary can be handed to the fast
+/// bounded scan with its contract genuinely satisfied. Crossing into the next
+/// page happens only after the current one is exhausted with no NUL in it, which
+/// means `bound` still has room and the caller is therefore obliged to have
+/// mapped what comes next.
+///
+/// A whole bound that cannot leave `ptr`'s page needs no clamping at all, which
+/// is the common case and is taken with one add and one branch: the entire scan
+/// then runs as the same call it was before this function existed. Only a bound
+/// that reaches past the page boundary pays the loop, and there the arithmetic is
+/// per PAGE rather than per window, so the steady-state scan speed is unchanged.
+///
+/// # Safety
+///
+/// `ptr` must be readable up to the first NUL or `bound` bytes, whichever comes
+/// first. That is strictly weaker than what [`scan_c_string`] requires.
+pub(crate) unsafe fn scan_c_string_nul_or_bound(
+    ptr: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
+    // Fast path: `[ptr, ptr+bound)` lies in one page, and that page is mapped
+    // because `ptr` is readable — so every byte the scan may load is readable and
+    // `scan_c_string`'s stronger contract already holds. Written as a comparison
+    // against the distance to the page end rather than as `offset + bound <=
+    // SCAN_PAGE`, because `bound` is caller-controlled and `strnlen(p, SIZE_MAX)`
+    // is a legal call: that sum would wrap and take this path with the whole
+    // address space nominally in one page.
+    if bound <= SCAN_PAGE - (ptr as usize & (SCAN_PAGE - 1)) {
+        // SAFETY: as argued above, all `bound` bytes are readable.
+        return unsafe { scan_c_string(ptr, Some(bound)) };
+    }
+
+    let mut done = 0usize;
+    while done < bound {
+        // SAFETY: `done < bound`, so this is within the region the caller
+        // promised, and pointer arithmetic stays inside one allocation.
+        let here = unsafe { ptr.add(done) };
+        let to_page_end = SCAN_PAGE - (here as usize & (SCAN_PAGE - 1));
+        let chunk = (bound - done).min(to_page_end);
+        // SAFETY: byte `done` is readable (no NUL seen yet and `done < bound`),
+        // hence its whole page is, and `chunk` stops at that page's end — so all
+        // `chunk` bytes are readable, which is what `scan_c_string` requires.
+        let (idx, found) = unsafe { scan_c_string(here, Some(chunk)) };
+        if found {
+            return (done + idx, true);
+        }
+        done += chunk;
+    }
+    (bound, false)
+}
+
 /// SWAR scan for the first byte equal to `target` OR a terminating NUL, within
 /// `bound`. Returns `(index, found_target, hit_limit)`:
 ///   - `found_target == true`  → `index` points at a `target` byte;
@@ -4489,14 +4563,18 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
     // clamp (`repair` false → `scan_limit == n`), byte-identical to the strict full
-    // path — the bounded SWAR NUL scan `scan_c_string(s, Some(n))`. Skips the
-    // decide + observe + stage-trace bookkeeping. (Unlike `wcslen`, strnlen gates
-    // its `known_remaining` clamp on `repair`, so strict is plain bounded scan.)
+    // path — the page-clamped bounded NUL scan. Skips the decide + observe +
+    // stage-trace bookkeeping. (Unlike `wcslen`, strnlen gates its
+    // `known_remaining` clamp on `repair`, so strict is plain bounded scan.)
     if runtime_policy::strict_passthrough_active() {
         if s.is_null() {
             return 0;
         }
-        return unsafe { scan_c_string(s, Some(n)).0 };
+        // SAFETY: `n` is strnlen's ceiling, not a readability promise, which is
+        // precisely `scan_c_string_nul_or_bound`'s contract. `scan_c_string`
+        // itself would be wrong here — it may load a whole window under `n` and
+        // fault past the terminator (bounded_scan_guard_page_safety).
+        return unsafe { scan_c_string_nul_or_bound(s, n).0 };
     }
 
     let aligned = (s as usize) & 0x7 == 0;
@@ -4544,10 +4622,12 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
     }
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
-    // SWAR bounded NUL scan (shared scan_c_string): returns the NUL index or
-    // `scan_limit`, identical to the old byte loop. `span` tracked the scanned
-    // extent, which equals `len` in both branches.
-    let len = unsafe { scan_c_string(s, Some(scan_limit)).0 };
+    // Page-clamped bounded NUL scan: returns the NUL index or `scan_limit`,
+    // identical to the old byte loop. `span` tracked the scanned extent, which
+    // equals `len` in both branches. `scan_limit` is a ceiling even after the
+    // membrane clamp — it can only shrink `n`, never certify readability — so
+    // this needs the nul-or-bound contract, not `scan_c_string`'s.
+    let len = unsafe { scan_c_string_nul_or_bound(s, scan_limit).0 };
     let span = len;
 
     if adverse {
