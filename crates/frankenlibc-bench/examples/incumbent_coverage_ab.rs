@@ -34,7 +34,7 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
@@ -121,6 +121,12 @@ type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type FpclassifyFn = unsafe extern "C" fn(f64) -> c_int;
 type FpclassifyfFn = unsafe extern "C" fn(f32) -> c_int;
 type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_void;
+type TreeCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+type TsearchFn =
+    unsafe extern "C" fn(*const c_void, *mut *mut c_void, TreeCompareFn) -> *mut c_void;
+type TfindFn = unsafe extern "C" fn(*const c_void, *const *mut c_void, TreeCompareFn) -> *mut c_void;
+type TdeleteFn =
+    unsafe extern "C" fn(*const c_void, *mut *mut c_void, TreeCompareFn) -> *mut c_void;
 type GethostbyaddrFn =
     unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
 type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
@@ -263,6 +269,24 @@ unsafe extern "C" {
     fn linked_host_fpclassifyf(value: f32) -> c_int;
     #[link_name = "memrchr"]
     fn linked_host_memrchr(haystack: *const c_void, needle: c_int, len: usize) -> *mut c_void;
+    #[link_name = "tsearch"]
+    fn linked_host_tsearch(
+        key: *const c_void,
+        rootp: *mut *mut c_void,
+        compar: TreeCompareFn,
+    ) -> *mut c_void;
+    #[link_name = "tfind"]
+    fn linked_host_tfind(
+        key: *const c_void,
+        rootp: *const *mut c_void,
+        compar: TreeCompareFn,
+    ) -> *mut c_void;
+    #[link_name = "tdelete"]
+    fn linked_host_tdelete(
+        key: *const c_void,
+        rootp: *mut *mut c_void,
+        compar: TreeCompareFn,
+    ) -> *mut c_void;
     #[link_name = "gethostbyaddr"]
     fn linked_host_gethostbyaddr(
         address: *const c_void,
@@ -473,6 +497,7 @@ enum Family {
     Fpclassify,
     Fpclassifyf,
     Memrchr,
+    Tdelete,
     Getrandom,
     Getauxval,
     SemPost,
@@ -950,6 +975,7 @@ fn parse_args() -> Config {
             family = match args.next().as_deref() {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
                 Some(value) if value == OsStr::new("memrchr") => Family::Memrchr,
+                Some(value) if value == OsStr::new("tdelete") => Family::Tdelete,
                 Some(value) if value == OsStr::new("fpclassify") => Family::Fpclassify,
                 Some(value) if value == OsStr::new("fpclassifyf") => Family::Fpclassifyf,
                 Some(value) if value == OsStr::new("getrandom") => Family::Getrandom,
@@ -969,7 +995,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
-                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, getrandom, getauxval, \
+                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, tdelete, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
@@ -980,7 +1006,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|memrchr|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
@@ -1721,6 +1747,196 @@ fn time_getauxval_batch(function: GetauxvalFn, case: &GetauxvalCase) -> f64 {
     let started = Instant::now();
     black_box(run_getauxval_batch(function, case.type_));
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / GETAUXVAL_REPS as f64
+}
+
+/// Keys for the tree families, at stable addresses.
+///
+/// `tsearch` stores the POINTER it is given, not a copy of the key, so these
+/// must outlive every tree built from them — hence a static rather than a local.
+static TREE_KEYS: std::sync::OnceLock<Vec<c_int>> = std::sync::OnceLock::new();
+
+/// The largest tree any case builds, and so the number of keys generated.
+const TREE_MAX_KEYS: usize = 8192;
+
+/// Keys in a fixed pseudo-random order.
+///
+/// Inserting 0..n in order would build a maximally lopsided tree on a naive
+/// implementation and a perfectly rebalanced one on a red-black tree, which
+/// measures the rebalancer rather than the delete. A deterministic shuffle gives
+/// both sides the same ordinary tree. The generator is a fixed LCG so the run is
+/// reproducible without carrying a table.
+fn tree_keys() -> &'static [c_int] {
+    TREE_KEYS.get_or_init(|| {
+        let mut keys: Vec<c_int> = (0..TREE_MAX_KEYS as c_int).collect();
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        for index in (1..keys.len()).rev() {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let pick = (state >> 33) as usize % (index + 1);
+            keys.swap(index, pick);
+        }
+        keys
+    })
+}
+
+/// Compare two `c_int` keys through the pointers `tsearch` hands back.
+unsafe extern "C" fn compare_tree_keys(left: *const c_void, right: *const c_void) -> c_int {
+    // SAFETY: every key pointer in these families points at a live `c_int` from
+    // `tree_keys()`, which is a `OnceLock` and never freed.
+    let left = unsafe { *left.cast::<c_int>() };
+    let right = unsafe { *right.cast::<c_int>() };
+    left.cmp(&right) as c_int
+}
+
+/// One `tdelete` case: how many keys the tree holds when the deletions start.
+struct TdeleteCase {
+    label: &'static str,
+    count: usize,
+    note: &'static str,
+}
+
+const TDELETE_CASES: &[TdeleteCase] = &[
+    TdeleteCase {
+        label: "tree64",
+        count: 64,
+        note: "shallow tree; per-call overhead dominates the walk",
+    },
+    TdeleteCase {
+        label: "tree1024",
+        count: 1024,
+        note: "the shape the redundant-lookup claim is about",
+    },
+    TdeleteCase {
+        label: "tree8192",
+        count: 8192,
+        note: "deep enough that the comparison walk dominates",
+    },
+];
+
+/// Build a tree of `count` keys, then time deleting every one of them.
+///
+/// The BUILD IS NOT TIMED. `tdelete` mutates, so a batch cannot repeat one
+/// deletion the way the scalar families repeat one call: each key can only be
+/// removed once. Deleting the whole tree is therefore the batch, and the tree
+/// must be rebuilt for the next one — with `tsearch` from the SAME
+/// implementation, because fl stores its own `RbTreeBox` behind the root pointer
+/// and glibc stores its own node layout, so a tree built by one cannot be handed
+/// to the other.
+fn time_tdelete_batch(
+    tsearch: TsearchFn,
+    tdelete: TdeleteFn,
+    count: usize,
+) -> f64 {
+    let keys = tree_keys();
+    let mut root: *mut c_void = std::ptr::null_mut();
+    for key in &keys[..count] {
+        // SAFETY: `key` outlives the tree; `root` is a live local.
+        let inserted = unsafe {
+            tsearch(
+                (key as *const c_int).cast::<c_void>(),
+                &mut root,
+                compare_tree_keys,
+            )
+        };
+        assert!(!inserted.is_null(), "tsearch failed to insert");
+    }
+
+    let started = Instant::now();
+    for key in &keys[..count] {
+        // SAFETY: as above; the key is present until this call removes it.
+        let removed = unsafe {
+            tdelete(
+                (key as *const c_int).cast::<c_void>(),
+                &mut root,
+                compare_tree_keys,
+            )
+        };
+        black_box(removed);
+    }
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / count as f64;
+
+    // Assert the positive fact: the batch really removed every key. A silently
+    // empty or half-emptied tree would still produce a plausible-looking time.
+    assert!(
+        root.is_null(),
+        "tree not empty after deleting all {count} keys"
+    );
+    elapsed
+}
+
+fn measure_tdelete_case(
+    host: (TsearchFn, TdeleteFn),
+    fl: (TsearchFn, TdeleteFn),
+    case: &TdeleteCase,
+) -> CaseResult {
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time_tdelete_batch(fl.0, fl.1, case.count);
+                    fb = time_tdelete_batch(fl.0, fl.1, case.count);
+                }
+                0 => {
+                    fb = time_tdelete_batch(fl.0, fl.1, case.count);
+                    fa = time_tdelete_batch(fl.0, fl.1, case.count);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time_tdelete_batch(host.0, host.1, case.count);
+                    gb = time_tdelete_batch(host.0, host.1, case.count);
+                }
+                1 => {
+                    gb = time_tdelete_batch(host.0, host.1, case.count);
+                    ga = time_tdelete_batch(host.0, host.1, case.count);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time_tdelete_batch(fl.0, fl.1, case.count);
+                    effect_glibc = time_tdelete_batch(host.0, host.1, case.count);
+                }
+                2 => {
+                    effect_glibc = time_tdelete_batch(host.0, host.1, case.count);
+                    effect_fl = time_tdelete_batch(fl.0, fl.1, case.count);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        case.label,
+        case.note,
+        case.count,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
 }
 
 /// Who allocated the haystack a `memrchr` case scans.
@@ -3896,6 +4112,250 @@ fn assert_incumbent_is_host_libc(identity: &ObjectIdentity, symbol: &str) {
         "incumbent {symbol} resolved to {}, which is neither host libc nor host libm",
         identity.path.display()
     );
+}
+
+fn run_tdelete(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=tdelete deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen"
+        }
+    );
+
+    // All three entry points come from the SAME object as the tdelete under
+    // test. fl keeps an `RbTreeBox` behind the root pointer and glibc keeps its
+    // own node layout, so a tree built by one implementation cannot be handed to
+    // the other — pairing tsearch with a foreign tdelete would be a type
+    // confusion, not a benchmark.
+    let fl_tdelete_symbol = unsafe { libc::dlsym(handle, c"tdelete".as_ptr()) };
+    assert!(
+        !fl_tdelete_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC tdelete")
+    );
+    let fl_tsearch_symbol = unsafe { libc::dlsym(handle, c"tsearch".as_ptr()) };
+    assert!(
+        !fl_tsearch_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC tsearch")
+    );
+    let fl_tfind_symbol = unsafe { libc::dlsym(handle, c"tfind".as_ptr()) };
+    assert!(
+        !fl_tfind_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC tfind")
+    );
+
+    let host: TdeleteFn = linked_host_tdelete;
+    let host_tsearch: TsearchFn = linked_host_tsearch;
+    let host_tfind: TfindFn = linked_host_tfind;
+    let fl: TdeleteFn = unsafe { std::mem::transmute(fl_tdelete_symbol) };
+    let fl_tsearch: TsearchFn = unsafe { std::mem::transmute(fl_tsearch_symbol) };
+    let fl_tfind: TfindFn = unsafe { std::mem::transmute(fl_tfind_symbol) };
+
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host tdelete object");
+    let fl_identity =
+        symbol_object(fl_tdelete_symbol.cast_const()).expect("identify FrankenLibC tdelete object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=tdelete");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=tdelete");
+    assert_incumbent_is_host_libc(&incumbent_identity, "tdelete");
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    assert_ne!(
+        host_tsearch as usize, fl_tsearch as usize,
+        "both arms build their trees with the same tsearch"
+    );
+    println!(
+        "ARM_DISTINCT symbol=tdelete incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    // CONFORMANCE. The RETURN VALUE of tdelete is a pointer to the parent node,
+    // whose layout is implementation-defined, so the only part of it that is
+    // comparable across implementations is whether it is NULL. What IS
+    // comparable is the resulting membership of the tree, so that is what is
+    // checked, through tfind rather than twalk — twalk would require assuming a
+    // node layout, which is the very thing that differs.
+    let keys = tree_keys();
+    let probe_count = 256usize;
+    let mut comparisons = 0usize;
+    let mut build = |tsearch: TsearchFn| {
+        let mut root: *mut c_void = std::ptr::null_mut();
+        for key in &keys[..probe_count] {
+            let inserted = unsafe {
+                tsearch(
+                    (key as *const c_int).cast::<c_void>(),
+                    &mut root,
+                    compare_tree_keys,
+                )
+            };
+            assert!(!inserted.is_null(), "tsearch failed during conformance");
+        }
+        root
+    };
+    let mut host_root = build(host_tsearch);
+    let mut fl_root = build(fl_tsearch);
+
+    // Deleting a key that is present must report success on both sides; every
+    // other key must remain findable, and the deleted one must not.
+    for (index, key) in keys[..probe_count].iter().enumerate() {
+        if !index.is_multiple_of(2) {
+            continue;
+        }
+        let key_ptr = (key as *const c_int).cast::<c_void>();
+        let host_removed = unsafe { host(key_ptr, &mut host_root, compare_tree_keys) };
+        let fl_removed = unsafe { fl(key_ptr, &mut fl_root, compare_tree_keys) };
+        assert_eq!(
+            fl_removed.is_null(),
+            host_removed.is_null(),
+            "tdelete success mismatch for key {key}"
+        );
+        comparisons += 1;
+    }
+    for key in &keys[..probe_count] {
+        let key_ptr = (key as *const c_int).cast::<c_void>();
+        let host_found = unsafe { host_tfind(key_ptr, &host_root, compare_tree_keys) };
+        let fl_found = unsafe { fl_tfind(key_ptr, &fl_root, compare_tree_keys) };
+        assert_eq!(
+            fl_found.is_null(),
+            host_found.is_null(),
+            "tree membership mismatch for key {key} after deletions"
+        );
+        comparisons += 1;
+    }
+    // An absent key, and a delete against an emptied tree, must both report
+    // failure rather than removing something arbitrary.
+    let absent: c_int = TREE_MAX_KEYS as c_int + 1;
+    let absent_ptr = (&absent as *const c_int).cast::<c_void>();
+    assert_eq!(
+        unsafe { host(absent_ptr, &mut host_root, compare_tree_keys) }.is_null(),
+        unsafe { fl(absent_ptr, &mut fl_root, compare_tree_keys) }.is_null(),
+        "tdelete of an absent key disagreed"
+    );
+    comparisons += 1;
+    for key in &keys[..probe_count] {
+        let key_ptr = (key as *const c_int).cast::<c_void>();
+        unsafe { host(key_ptr, &mut host_root, compare_tree_keys) };
+        unsafe { fl(key_ptr, &mut fl_root, compare_tree_keys) };
+    }
+    assert!(
+        host_root.is_null() && fl_root.is_null(),
+        "emptying the tree left a non-null root: glibc={} fl={}",
+        !host_root.is_null(),
+        !fl_root.is_null()
+    );
+    assert_eq!(
+        unsafe { host(absent_ptr, &mut host_root, compare_tree_keys) }.is_null(),
+        unsafe { fl(absent_ptr, &mut fl_root, compare_tree_keys) }.is_null(),
+        "tdelete against an empty tree disagreed"
+    );
+    comparisons += 1;
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=tdelete comparisons={comparisons} \
+         membership_verdict=pass return_value_compared=null_or_not \
+         return_value_reason=parent_pointer_layout_is_implementation_defined",
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=tdelete verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, 1,
+        "tdelete benchmark requires one actually observed process thread"
+    );
+
+    let results = TDELETE_CASES
+        .iter()
+        .map(|case| measure_tdelete_case((host_tsearch, host), (fl_tsearch, fl), case))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, 1,
+        "tdelete benchmark requires one actually observed process thread"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+
+    for result in &results {
+        result.print(
+            "tdelete",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "tree1024")
+        .expect("missing tree1024 result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=tdelete verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=tree1024 headline_ratio_median={:.6} \
+         headline_comparison={} registered_expectation=win_plausible \
+         build_excluded_from_timing=true \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+        headline.comparison,
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
 }
 
 /// The byte planted as the needle, and the byte the buffer is filled with.
@@ -8564,6 +9024,7 @@ fn main() {
     match config.family {
         Family::NlLanginfo => run_nl_langinfo(&config),
         Family::Memrchr => run_memrchr(&config),
+        Family::Tdelete => run_tdelete(&config),
         Family::Fpclassify => run_fpclassify(&config),
         Family::Fpclassifyf => run_fpclassifyf(&config),
         Family::Getrandom => run_getrandom(&config),
