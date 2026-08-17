@@ -1298,14 +1298,40 @@ fn run_families(config: &Config) -> ! {
 }
 
 fn ensure_fl_shared_object(config: &Config) {
-    if config.fl_so.is_file() {
+    // AN EXISTING FILE IS NOT A CURRENT ONE. This returned early whenever the
+    // path existed, so the harness measured whatever that worker's target dir
+    // last happened to contain: `cargo run --example …` builds the example and
+    // the abi RLIB, but the cdylib is a SEPARATE target nothing in that command
+    // requires, and the directory persists per worker across runs.
+    //
+    // Measured, bd-incumbent-stale-fl-artifact-pph3a1: FL_OBJECT sha256
+    // a18b8c2e653e… was identical across four runs at four different `--base`
+    // commits with 432 lines of library source changed between two of them, and
+    // at one HEAD a --verify-only run passed nl_langinfo conformance while the
+    // timed run panicked on a divergence its object still contained. Running
+    // `cargo build -p frankenlibc-abi` by hand on the same worker at the same
+    // HEAD moved the object to 509c241bfbc7… — so the artifact really was stale,
+    // by an unknown number of commits, and nothing in the output said so.
+    //
+    // Cargo already knows what is stale, so ask it EVERY time rather than
+    // reimplementing freshness from mtimes: a current artifact makes this a fast
+    // no-op, and a stale one is rebuilt instead of measured.
+    if !config.build_fl_if_missing {
+        // An explicitly supplied `--fl-so` is never rebuilt: the caller is
+        // pointing at one specific artifact on purpose — possibly an old one, for
+        // an A/B between two builds — and silently replacing it would defeat that.
+        assert!(
+            config.fl_so.is_file(),
+            "explicit FrankenLibC SO does not exist: {}",
+            config.fl_so.display()
+        );
+        println!(
+            "FL_ARTIFACT source=explicit_fl_so rebuilt=false path={}",
+            config.fl_so.display()
+        );
         return;
     }
-    assert!(
-        config.build_fl_if_missing,
-        "explicit FrankenLibC SO does not exist: {}",
-        config.fl_so.display()
-    );
+    let hash_before = sha256_file(&config.fl_so).ok().map(|file| file.sha256);
 
     let cargo_query = Command::new("rustup")
         .args(["which", "cargo"])
@@ -1351,6 +1377,25 @@ fn ensure_fl_shared_object(config: &Config) {
         config.target_dir.display(),
         config.fl_so.display()
     );
+
+    // Say out loud whether that build CHANGED the object. This is the line whose
+    // absence let the stale artifact run for four conversions: the object hash was
+    // printed on every row all along, and nobody compared it BETWEEN runs, which is
+    // the only comparison that reveals staleness. Printing the transition makes the
+    // check impossible to skip rather than merely possible to perform.
+    let hash_after = sha256_file(&config.fl_so)
+        .map(|file| file.sha256)
+        .expect("hash the FrankenLibC object just built");
+    match hash_before {
+        None => println!("FL_ARTIFACT_FRESHNESS previous=absent rebuilt=true now={hash_after}"),
+        Some(before) if before == hash_after => {
+            println!("FL_ARTIFACT_FRESHNESS previous={before} rebuilt=false now={hash_after}");
+        }
+        Some(before) => println!(
+            "FL_ARTIFACT_FRESHNESS previous={before} rebuilt=true now={hash_after} \
+             note=the_artifact_on_disk_was_stale_and_would_have_been_measured"
+        ),
+    }
 }
 
 fn observed_threads() -> usize {
