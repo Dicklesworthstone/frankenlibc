@@ -239,6 +239,72 @@ pub(crate) unsafe fn strict_single_string_format(format: *const c_char) -> bool 
     unsafe { *f == b'%' && *f.add(1) == b's' && *f.add(2) == 0 }
 }
 
+/// Exactly `%[^X]` for a single ordinary delimiter `X`, which is the shape real
+/// code uses constantly: `%[^\n]` to take a line, `%[^,]` a CSV field, `%[^=]`
+/// a key.
+///
+/// Declines anything whose set grammar is not one plain character: `]` first in
+/// a set is a literal member, `-` forms a range, and a NUL means the format was
+/// truncated. Those go to the engine, which knows the whole grammar.
+#[inline]
+pub(crate) unsafe fn strict_single_negated_scanset(format: *const c_char) -> Option<u8> {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and NUL-terminated; each read is guarded by
+    // the previous byte not being the terminator.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'[' || *f.add(2) != b'^' {
+            return None;
+        }
+        let delim = *f.add(3);
+        if delim == 0 || delim == b']' || delim == b'-' {
+            return None;
+        }
+        if *f.add(4) != b']' || *f.add(5) != 0 {
+            return None;
+        }
+        Some(delim)
+    }
+}
+
+/// Copy bytes up to `delim` into `dst`, NUL-terminated.
+///
+/// `%[` does NOT skip leading whitespace — that is the difference from `%s` and
+/// it is why this cannot share that path. Returns 1 on a non-empty match, 0 on a
+/// matching failure (the very first byte is the delimiter, and glibc writes
+/// nothing at all in that case, not even a terminator), and `EOF` when the input
+/// was already exhausted.
+pub(crate) unsafe fn strict_scan_negated_scanset(
+    s: *const c_char,
+    dst: *mut c_char,
+    delim: u8,
+) -> c_int {
+    let mut p = s.cast::<u8>();
+    // SAFETY: `s` is NUL-terminated.
+    let first = unsafe { *p };
+    if first == 0 {
+        return libc::EOF;
+    }
+    if first == delim {
+        return 0;
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: the scan stops at the terminator or the delimiter.
+        let b = unsafe { *p };
+        if b == 0 || b == delim {
+            break;
+        }
+        // SAFETY: the caller sized `dst` for the field plus its NUL, which is
+        // C's `%[` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied field.
+    unsafe { *d = 0 };
+    1
+}
+
 /// Copy one whitespace-delimited token out of `s` into `dst`, NUL-terminated.
 ///
 /// Returns 1 when a token was written and `EOF` when the input held nothing but
@@ -9325,6 +9391,12 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
             return rc;
         }
+        if let Some(delim) = unsafe { strict_single_negated_scanset(format) } {
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { strict_scan_negated_scanset(s, dst, delim) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
     }
 
     // PERF (bd-2g7oyh):
@@ -12162,6 +12234,20 @@ pub unsafe extern "C" fn __isoc99_sscanf(
             // `char *` sized for the token plus its NUL.
             let dst = unsafe { args.next_arg::<*mut c_char>() };
             let rc = unsafe { strict_scan_single_string(s, dst) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+        if let Some(delim) = unsafe { strict_single_negated_scanset(format) } {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+            if matches!(decision.action, MembraneAction::Deny) {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            // SAFETY: the format is exactly `"%[^X]"`, so the caller passed one
+            // `char *` sized for the field plus its NUL.
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { strict_scan_negated_scanset(s, dst, delim) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
             return rc;
         }

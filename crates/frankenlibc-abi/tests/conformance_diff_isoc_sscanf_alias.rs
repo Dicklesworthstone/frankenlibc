@@ -203,6 +203,80 @@ fn the_string_fast_path_agrees_with_host_glibc() {
     println!("compared {compared} %s arms across {} inputs", STRING_CASES.len());
 }
 
+/// `(input, format)` for the bare negated-scanset fast path.
+///
+/// The delimiter cases matter more than the matching ones. `%[` does NOT skip
+/// leading whitespace, a first byte equal to the delimiter is a MATCHING failure
+/// (0, and glibc writes nothing — not even a terminator), and an exhausted input
+/// is an INPUT failure (EOF). Those three are encoded from the standard and are
+/// exactly what a live oracle is for; the formats the probe must decline are
+/// here too, so a fast path that over-claimed the grammar shows up as a
+/// divergence rather than as a silent behaviour change.
+const SCANSET_CASES: &[(&str, &str)] = &[
+    ("key=value", "%[^=]"),
+    ("=value", "%[^=]"),
+    ("key", "%[^=]"),
+    ("", "%[^=]"),
+    ("  spaced=x", "%[^=]"),
+    ("\tno-skip=x", "%[^=]"),
+    ("line one\nline two", "%[^\n]"),
+    ("\nempty first", "%[^\n]"),
+    ("a,b,c", "%[^,]"),
+    (",lead", "%[^,]"),
+    // Grammar the probe must DECLINE, so these stay on the engine.
+    ("abc]def", "%[^]]"),
+    ("abcXdef", "%[^a-c]"),
+    ("abcdef", "%[abc]"),
+    ("abcdef", "%[^abc]"),
+    ("abcdef", "%5[^x]"),
+];
+
+#[test]
+fn the_scanset_fast_path_agrees_with_host_glibc() {
+    let glibc: SscanfFn = unsafe {
+        host_fn(
+            c"__isoc23_sscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_sscanf as *const (),
+        )
+    };
+
+    // The whole 128-byte destination is compared, not just up to the first NUL:
+    // on a matching failure glibc writes NOTHING, and a fast path that helpfully
+    // wrote a terminator would otherwise pass.
+    let scan_one = |f: SscanfFn, input: &str, format: &str| -> (c_int, [u8; 16]) {
+        let cin = CString::new(input).expect("input has NUL");
+        let cfmt = CString::new(format).expect("format has NUL");
+        let mut buf = [0xAAu8; 128];
+        // SAFETY: every format here takes one `char *`; the buffer is longer
+        // than any field in the table.
+        let rc = unsafe { f(cin.as_ptr(), cfmt.as_ptr(), buf.as_mut_ptr().cast::<c_char>()) };
+        let mut head = [0u8; 16];
+        head.copy_from_slice(&buf[..16]);
+        (rc, head)
+    };
+
+    let mut compared = 0usize;
+    for (input, format) in SCANSET_CASES {
+        let want = scan_one(glibc, input, format);
+        for (name, arm) in fl_arms() {
+            let got = scan_one(arm, input, format);
+            assert_eq!(
+                got, want,
+                "{name}({input:?}, {format:?}) produced rc={} buf={:?}, host glibc produced rc={} buf={:?}",
+                got.0, got.1, want.0, want.1
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(
+        compared,
+        SCANSET_CASES.len() * 3,
+        "compared {compared} arms, expected {}",
+        SCANSET_CASES.len() * 3
+    );
+    println!("compared {compared} scanset arms across {} cases", SCANSET_CASES.len());
+}
+
 #[test]
 fn the_aliases_agree_with_host_glibc() {
     // The oracle. `host_fn` asserts the resolved address is NOT fl's own, so a

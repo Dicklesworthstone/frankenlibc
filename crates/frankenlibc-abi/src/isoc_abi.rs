@@ -155,6 +155,22 @@ pub unsafe extern "C" fn __isoc23_sscanf(
             );
             return rc;
         }
+        if let Some(delim) = unsafe { crate::stdio_abi::strict_single_negated_scanset(format) } {
+            let Some(profile) = (unsafe { scanf_fastpath_profile(s) }) else {
+                return -1;
+            };
+            // SAFETY: the format is exactly `"%[^X]"`, so the caller passed one
+            // `char *` sized for the field plus its NUL.
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { crate::stdio_abi::strict_scan_negated_scanset(s, dst, delim) };
+            crate::runtime_policy::observe(
+                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                profile,
+                15,
+                rc < 0,
+            );
+            return rc;
+        }
     }
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { crate::stdio_abi::vsscanf(s, format, ap) }
