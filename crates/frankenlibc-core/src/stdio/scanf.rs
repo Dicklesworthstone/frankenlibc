@@ -440,7 +440,40 @@ impl ScanOperationKind {
 #[derive(Debug, Clone)]
 pub struct ScanSet {
     pub negated: bool,
-    pub chars: [bool; 256],
+    /// Membership as a 256-BIT map, not a 256-BYTE table.
+    ///
+    /// The table was `[bool; 256]`, which made `ScanSet` 257 bytes and forced a
+    /// heap allocation to keep `ScanSpec` small enough to hold inline. 32 bytes
+    /// of bits carry the same information: the boxed allocation shrinks from 257
+    /// bytes to 40, and the per-character membership test touches one 8-byte
+    /// word instead of walking a table that spans four cache lines.
+    ///
+    /// Kept private so the representation stays an implementation detail;
+    /// `contains` is the only reader.
+    bits: [u64; 4],
+}
+
+impl ScanSet {
+    /// Build from the parser's scratch table.
+    ///
+    /// The parser keeps using a `[bool; 256]` while scanning `%[...]` — it is a
+    /// local that never escapes, the ranges and escapes are far clearer written
+    /// against it, and it costs nothing once packed here.
+    pub fn from_table(negated: bool, table: &[bool; 256]) -> Self {
+        let mut bits = [0u64; 4];
+        for (c, &present) in table.iter().enumerate() {
+            if present {
+                bits[c >> 6] |= 1u64 << (c & 63);
+            }
+        }
+        Self { negated, bits }
+    }
+
+    /// Whether `c` is in the set, before `negated` is applied.
+    #[inline]
+    pub fn contains(&self, c: u8) -> bool {
+        self.bits[(c >> 6) as usize] & (1u64 << (c & 63)) != 0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -612,7 +645,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> ScanDirectives {
                 }
                 i += 1;
                 spec.conversion = b'[';
-                spec.scanset = Some(Box::new(ScanSet { negated, chars }));
+                spec.scanset = Some(Box::new(ScanSet::from_table(negated, &chars)));
             } else {
                 // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
                 // string / wide char): normalise to (s|c, length `L`) so they
@@ -1697,6 +1730,48 @@ fn scan_string(
     Some((Some(ScanValue::String(ScanBytes::from_slice(&input[pos..i]))), i))
 }
 
+#[cfg(test)]
+mod scanset_bitmap_tests {
+    use super::ScanSet;
+
+    /// The bitmap must answer exactly what the table it replaced answered, for
+    /// every one of the 256 byte values — including the high half, where a
+    /// shift-based index is easiest to get wrong.
+    #[test]
+    fn bitmap_matches_the_table_for_every_byte() {
+        // A deliberately awkward set: both ends, both sides of every word
+        // boundary (63/64, 127/128, 191/192), and a scattering between.
+        let mut table = [false; 256];
+        for c in [
+            0u8, 1, 62, 63, 64, 65, 97, 122, 126, 127, 128, 129, 190, 191, 192, 193, 254, 255,
+        ] {
+            table[c as usize] = true;
+        }
+        let set = ScanSet::from_table(false, &table);
+        for c in 0..=255u8 {
+            assert_eq!(
+                set.contains(c),
+                table[c as usize],
+                "byte {c}: bitmap and table disagree"
+            );
+        }
+    }
+
+    /// An empty set contains nothing and a full set contains everything; both
+    /// are reachable from real formats (`%[]` handling and `%[^]` negation).
+    #[test]
+    fn empty_and_full_sets_round_trip() {
+        let empty = ScanSet::from_table(false, &[false; 256]);
+        let full = ScanSet::from_table(true, &[true; 256]);
+        for c in 0..=255u8 {
+            assert!(!empty.contains(c), "empty set claimed to contain {c}");
+            assert!(full.contains(c), "full set missing {c}");
+        }
+        assert!(!empty.negated);
+        assert!(full.negated);
+    }
+}
+
 /// Scan a scanset (%[...]). No whitespace skip.
 fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
@@ -1710,7 +1785,7 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
     // reallocations (`scanset_only` measured 1.651x glibc).
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
-        let in_set = scanset.chars[c as usize];
+        let in_set = scanset.contains(c);
         let accept = if scanset.negated { !in_set } else { in_set };
         if !accept {
             break;
@@ -1823,10 +1898,10 @@ mod tests {
             assert_eq!(s.conversion, b'[');
             let ss = s.scanset.as_ref().unwrap();
             assert!(!ss.negated);
-            assert!(ss.chars[b'a' as usize]);
-            assert!(ss.chars[b'b' as usize]);
-            assert!(ss.chars[b'c' as usize]);
-            assert!(!ss.chars[b'd' as usize]);
+            assert!(ss.contains(b'a'));
+            assert!(ss.contains(b'b'));
+            assert!(ss.contains(b'c'));
+            assert!(!ss.contains(b'd'));
         } else {
             panic!("expected Spec");
         }
@@ -1838,7 +1913,7 @@ mod tests {
         if let ScanDirective::Spec(ref s) = dirs[0] {
             let ss = s.scanset.as_ref().unwrap();
             assert!(ss.negated);
-            assert!(ss.chars[b'a' as usize]);
+            assert!(ss.contains(b'a'));
         } else {
             panic!("expected Spec");
         }
