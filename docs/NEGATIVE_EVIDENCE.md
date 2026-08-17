@@ -30282,3 +30282,49 @@ What this changes, and what it does not:
   full destination block across int, width, suppression, scanset, string, char, float, hexfloat,
   octal, autobase, `%n`, length modifiers, EOF and match failure. That is independent confirmation
   that the three fast paths and the inline one-member scanset did not move behaviour.
+
+## 2026-08-17 — CAMPAIGN WIN: the sscanf fast paths certified on wall clock through the symbol compiled C actually calls — `single_int` 0.254x, five wins of twelve
+
+- result_class=campaign-win. legacy_incumbent=host-glibc. incumbent_provenance=uninterposed-host-link.
+  same_invocation=true. bench_elf_sha256=412ed9e95e848ac13b7d4c220c24edb6e17969d2e93f17bd85c12521864adf05
+  (in-process self-report). incumbent object sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09
+  (`/usr/lib/x86_64-linux-gnu/libc.so.6`, `INCUMBENT_LINKAGE direct_process_link symbol=__isoc23_sscanf`);
+  fl object sha256=70d42cfe767c3b61dbbee52eda4e854a7c75c6a73024181c6e967fbd26530529, deepbind=true.
+- **HEADLINE, one clause with everything the contract needs:** `single_int` incumbent_ratio=0.254248
+  incumbent_bootstrap_median_ci=[0.253958,0.254489] null_bootstrap_median_ci=[0.998619,1.000125]
+  (fl-vs-fl A/A; the glibc-vs-glibc A/A is [0.998425,1.000411]), same_invocation=true, fl 12.216 ns
+  against host glibc 48.087 ns — **3.93x faster**, clears_2x_null=true, nulls_hold=true.
+- Both A/A controls are same-invocation with the effect: fl-vs-fl null_median_ratio 0.999582 with bootstrap median CI [0.998619,1.000125], and glibc-vs-glibc null_median_ratio 0.999514 with bootstrap median CI [0.998425,1.000411], each measured inside the run that produced the ratio above.
+- The effect itself, same paragraph for the same reason: incumbent_ratio 0.254248 with bootstrap median CI [0.253958,0.254489], same-invocation with both nulls.
+- **THE POINT OF THE ROW IS THE SYMBOL.** The previous certification timed `vsscanf` and put this same
+  case at 1.437x fl-SLOWER. `vsscanf` has none of the fast paths; `<stdio.h>` redirects compiled
+  `sscanf` calls to `__isoc23_sscanf`, which has all of them. The harness gained a variadic arm
+  (`--sscanf-variadic`, bd-6zt6hf) and every provenance line now prints the symbol under test:
+  `FL_LOAD_MODE symbol=__isoc23_sscanf`, `ARM_DISTINCT symbol=__isoc23_sscanf`.
+- **ALL TWELVE CASES, pinned to cpus 28,24,55,63,26,1,29,2 at 0.010-0.020 busy, loadavg
+  10.43/11.30/14.19, cpu MHz 3098, 36 samples per case at 600,000 reps per arm. Every case clears 2x
+  its null and every null held; across all 24 A/A nulls the extremes were 0.997383 and 1.001862.**
+
+  | case | fl ns | glibc ns | ratio | CI95 | verdict |
+  | --- | ---: | ---: | ---: | --- | --- |
+  | `scanset_only` | 10.386 | 55.744 | 0.186366 | [0.186116,0.186706] | FL_FASTER |
+  | `two_ints` | 14.798 | 65.334 | 0.226037 | [0.225546,0.226436] | FL_FASTER |
+  | `single_int` | 12.216 | 48.087 | 0.254248 | [0.253958,0.254489] | FL_FASTER |
+  | `string_token` | 10.517 | 41.500 | 0.254322 | [0.253668,0.255088] | FL_FASTER |
+  | `long_string` | 30.300 | 93.277 | 0.325730 | [0.324352,0.326642] | FL_FASTER |
+  | `long_hex` | 74.816 | 73.042 | 1.027760 | [1.024942,1.029655] | FL_SLOWER |
+  | `float_only` | 101.556 | 98.637 | 1.030971 | [1.025953,1.035561] | FL_SLOWER |
+  | `mixed_record` | 247.508 | 163.386 | 1.522226 | [1.518036,1.528223] | FL_SLOWER |
+  | `string_then_int` | 113.662 | 67.638 | 1.685303 | [1.679782,1.689172] | FL_SLOWER |
+  | `key_value` | 141.575 | 77.043 | 1.841374 | [1.834640,1.846091] | FL_SLOWER |
+  | `two_strings` | 122.579 | 61.112 | 2.012191 | [2.004406,2.020739] | FL_SLOWER |
+  | `dotted_quad` | 333.579 | 115.690 | 2.899061 | [2.893234,2.907803] | FL_SLOWER |
+
+- **CONFORMANCE ON THE SAME ARM, same run: 64 comparisons, 0 mismatches**, return value and full
+  destination block, across int, width, suppression, scanset, string, char, float, hexfloat, octal,
+  autobase, `%n`, length modifiers, EOF and match failure. The probe now runs through the arm it
+  times, so a divergence in the entry point under test cannot hide behind the other one.
+- **WHAT IS NOT CLAIMED.** Seven cases remain losses and they are the compound formats — every one is
+  a multi-conversion shape that no fast path accepts, so they run the engine. `dotted_quad`
+  (`"%d.%d.%d.%d"`) at 2.899x is now the worst case in the family. The engine's own certified
+  numbers, on the `vsscanf` arm, are the row above this one; nothing here supersedes them.
