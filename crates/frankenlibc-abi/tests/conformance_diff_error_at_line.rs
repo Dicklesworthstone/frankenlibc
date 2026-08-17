@@ -780,6 +780,62 @@ fn capture_stdout_and_stderr<F: FnOnce()>(f: F) -> Vec<u8> {
 
 const MARKER: &[u8] = b"MARKER";
 
+/// Whether the sentinel arrives BEFORE the diagnostic text.
+fn marker_precedes_message(captured: &[u8]) -> bool {
+    let marker_at = captured.windows(MARKER.len()).position(|w| w == MARKER);
+    let msg_at = captured.windows(3).position(|w| w == b"msg");
+    match (marker_at, msg_at) {
+        (Some(m), Some(t)) => m < t,
+        _ => false,
+    }
+}
+
+/// Whether the sentinel arrives AFTER the diagnostic text.
+///
+/// The unflushed-stdout control asserts ordering; comparing tails cannot,
+/// because foreign bytes (see [`from_marker`]) may follow the marker.
+fn marker_trails_message(captured: &[u8]) -> bool {
+    let marker_at = captured
+        .windows(MARKER.len())
+        .position(|w| w == MARKER);
+    let msg_at = captured.windows(3).position(|w| w == b"msg");
+    match (marker_at, msg_at) {
+        (Some(m), Some(t)) => t < m,
+        _ => false,
+    }
+}
+
+/// Drop anything captured before the test's own sentinel.
+///
+/// These tests redirect the PROCESS's fd 1 and 2, so libtest's own progress
+/// lines ("test foo ... ok\n"), written by other threads while tests run in
+/// parallel, land in the capture too. That is foreign traffic, not the
+/// behaviour under test: it made
+/// `error_flushes_buffered_stdout_before_the_diagnostic` fail with
+/// `fl="ok\nMARKER..."` against `glibc="MARKER..."` while passing under
+/// `--test-threads=1`.
+///
+/// Anchoring at MARKER keeps exactly what the test asserts — that buffered
+/// stdout is flushed BEFORE the diagnostic, so the sentinel precedes the
+/// message — and discards bytes neither arm produced. The file's CAPTURE_LOCK
+/// cannot help here; it serialises these tests against each other, and libtest
+/// does not take it.
+fn from_marker(captured: &[u8]) -> Vec<u8> {
+    let start = captured
+        .windows(MARKER.len())
+        .position(|w| w == MARKER)
+        .unwrap_or(0);
+    let rest = &captured[start..];
+    // Foreign lines arrive at BOTH ends: libtest writes a progress line before
+    // the capture window opens and another when a sibling test finishes inside
+    // it. One diagnostic is exactly one line, so cutting at the first newline
+    // after the sentinel isolates it from both.
+    let end = rest.iter().position(|&b| b == b'\n').map_or(rest.len(), |n| n + 1);
+    rest[..end].to_vec()
+}
+
+
+
 #[test]
 fn error_flushes_buffered_stdout_before_the_diagnostic() {
     let marker = CString::new("MARKER").unwrap();
@@ -787,16 +843,31 @@ fn error_flushes_buffered_stdout_before_the_diagnostic() {
 
     let g = capture_stdout_and_stderr(|| unsafe {
         libc::fputs(marker.as_ptr(), glibc_stdout().cast());
-        error(0, 0, fmt.as_ptr());
+        glibc_error()(0, 0, fmt.as_ptr());
     });
     let f = capture_stdout_and_stderr(|| unsafe {
         frankenlibc_abi::stdio_abi::fputs(marker.as_ptr(), fl_stdout());
         frankenlibc_abi::stdlib_abi::error(0, 0, fmt.as_ptr());
     });
 
+    // ORDERING on each arm, not byte equality between them. Both captures
+    // redirect the PROCESS's fd 1 and 2, and libtest writes its progress lines
+    // to the same fds from other threads — those fragments were observed landing
+    // before, after, and even INSIDE the captured line, so no amount of trimming
+    // makes a byte comparison stable. What this test exists to prove is that
+    // `error()` FLUSHES buffered stdout first, i.e. the marker precedes the
+    // diagnostic; that relation survives foreign bytes anywhere.
+    for (arm, captured) in [("fl", &f), ("glibc", &g)] {
+        assert!(
+            marker_precedes_message(captured),
+            "{arm}'s error() must flush buffered stdout before the diagnostic, so the \
+             marker should precede the message; got {:?}",
+            String::from_utf8_lossy(captured)
+        );
+    }
     assert_eq!(
-        f,
-        g,
+        marker_precedes_message(&f),
+        marker_precedes_message(&g),
         "error() stdout/stderr interleaving: fl={:?} glibc={:?}",
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g)
@@ -823,7 +894,7 @@ fn error_at_line_flushes_buffered_stdout_before_the_diagnostic() {
 
     let g = capture_stdout_and_stderr(|| unsafe {
         libc::fputs(marker.as_ptr(), glibc_stdout().cast());
-        error_at_line(0, 0, file.as_ptr(), 7, fmt.as_ptr());
+        glibc_error_at_line()(0, 0, file.as_ptr(), 7, fmt.as_ptr());
     });
     let f = capture_stdout_and_stderr(|| unsafe {
         frankenlibc_abi::stdio_abi::fputs(marker.as_ptr(), fl_stdout());
@@ -861,21 +932,27 @@ fn warnx_does_not_flush_stdout_so_the_arms_above_can_fail() {
 
     let g = capture_stdout_and_stderr(|| unsafe {
         libc::fputs(marker.as_ptr(), glibc_stdout().cast());
-        warnx(fmt.as_ptr());
+        glibc_warnx()(fmt.as_ptr());
     });
     let f = capture_stdout_and_stderr(|| unsafe {
         frankenlibc_abi::stdio_abi::fputs(marker.as_ptr(), fl_stdout());
         frankenlibc_abi::err_abi::warnx(fmt.as_ptr());
     });
 
+    // ORDERING, not `ends_with`. The capture redirects the process's fds, so
+    // libtest's own progress lines from concurrently finishing tests can land
+    // after the marker and break a tail comparison — which is how this control
+    // failed in the default parallel mode while passing under
+    // `--test-threads=1`. "The marker arrives after the message" is the property
+    // being controlled for, and it survives foreign bytes on either side.
     assert!(
-        g.ends_with(MARKER),
+        marker_trails_message(&g),
         "glibc's warnx must NOT flush stdout, so the marker should trail the \
          message; got {:?}",
         String::from_utf8_lossy(&g)
     );
     assert!(
-        f.ends_with(MARKER),
+        marker_trails_message(&f),
         "fl's warnx must NOT flush stdout either; got {:?}",
         String::from_utf8_lossy(&f)
     );
