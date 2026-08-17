@@ -31104,3 +31104,30 @@ What this changes, and what it does not:
   had introduced a real one, and only now established that the original was never a code change. The
   wall measurement that started it was performed correctly at every step. **Careful measurement of the
   wrong quantity is still the wrong answer.**
+
+## 2026-08-17 — REPRODUCTION, `vsscanf` arm: the ten wins hold across two runs; the two losses are near parity and unstable
+
+- **RESULT CLASS: reproduction, supplying what the campaign-win row for this arm said it lacked.**
+  That row stood on ONE run because its second was blocked by the exclusivity guard. Two runs now,
+  back to back, same object (rebuilt to HEAD after another agent's fortify commit), same harness,
+  `--pin-quietest 8`, both reporting `selected_distinct_cores=8 sibling_sharing=false`. Raw logs
+  `tests/artifacts/perf/bd-2g7oyh-vsscanf-repro-2026-08-17-runA.log` and `...-runB.log`. Conformance
+  0 mismatches in both. loadavg 19.39/16.45/16.84 and 15.29/17.23/17.21, cpu MHz 3193.
+- **THE TEN WINS REPRODUCE, all within 2%:** `dotted_quad` 0.2856/0.2846, `scanset_only`
+  0.2611/0.2616, `key_value` 0.3063/0.3069, `string_token` 0.3216/0.3171, `string_then_int`
+  0.3342/0.3350, `two_ints` 0.3408/0.3341, `long_string` 0.3526/0.3515, `single_int` 0.3543/0.3484,
+  `two_strings` 0.3672/0.3645, `mixed_record` 0.3695/0.3675. Every null held in both runs, spanning
+  0.992924-1.006040 across all 48 A/A controls.
+- **THE TWO LOSSES ARE NOT STABLE AND SHOULD NOT BE QUOTED AS FIGURES.** `float_only` 1.0540 ->
+  1.0184 (-3.38%) and `long_hex` 1.2124 -> 1.1401 (-5.96%), and run B declared `float_only`
+  UNDECIDABLE rather than a loss because it no longer cleared twice its null. Both are engine cases
+  that no fast path accepts, both sit near parity, and both moved more between runs than any win did.
+  The honest statement is "two engine shapes remain at or slightly above parity", not a ratio.
+- **CONSISTENT WITH THE IPC FINDING recorded on bd-2g7oyh.** `long_hex` reads 1.14-1.33x across four
+  runs while its instruction count is 0.979x of glibc — fl executes 2% fewer instructions at IPC 2.83
+  against glibc's 4.01. A case whose cost is stalls rather than work is exactly the case whose
+  wall-clock ratio wanders, which is what these two runs show.
+- **METHOD NOTE THAT COST A REBUILD:** the object was 52 minutes older than HEAD when the window
+  opened, because another agent had committed to `fortify_abi.rs` in between (carrying my own
+  `__fgets_chk` fix in with it). Rebuilt before measuring. Checking artifact age against the last
+  source commit is now the third stale-artifact catch of this campaign.
