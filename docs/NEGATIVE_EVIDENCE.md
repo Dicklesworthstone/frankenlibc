@@ -30092,3 +30092,46 @@ What this changes, and what it does not:
   293.51M (1.032x) remain losses. Neither is a single-conversion shape; both are engine work, and
   extending the fast-path family to compound formats is where this stops being a fast path and starts
   being an overfit.
+
+## 2026-08-17 — CORRECTION: the sscanf instrument's fl arm was running GLIBC's parser for every engine format, and it inverts two conclusions
+
+- **RESULT CLASS: correction of my own rows from earlier in this campaign.** `sscanf_icount` dlopened
+  fl with `RTLD_NOW|RTLD_LOCAL`. Without `RTLD_DEEPBIND` the object's calls to its OWN exported
+  symbols resolve in the global scope first, which is host glibc, so fl's `__isoc23_sscanf` falling
+  through to `vsscanf` reached **glibc's** `vsscanf`. Every "fl" row for a format the fast paths
+  decline was fl's alias overhead wrapping glibc's parser. Same hazard the harness memo records for
+  `incumbent_coverage_ab`, one instrument over.
+- **HOW IT WAS CAUGHT, and why one profile would not have done it.** Two flat instruction profiles.
+  `string_token`, served entirely inside fl's own body, profiles as 30.95% `__isoc23_sscanf` + 14.29%
+  `strict_scan_single_string` in `libfrankenlibc_abi.so`. `float_only`, which falls through, profiled
+  as 31.42% `__vfscanf_internal` + 25.13% `__GI_____strtof_l_internal` in `libc.so.6`. One profile
+  alone reads as "fl is fast"; the contrast is what shows the arm is hollow.
+- **CORRECTED TABLE, `RTLD_DEEPBIND` set, loader mode printed on every row.** 200k iterations,
+  `perf stat -r 3`, bench_elf_sha256=341e25c21612cb5a1b50ada14f4a98b8f54bbbdd6f383f1840b6b0cdd76bff2d,
+  loadavg 24.90/24.40/28.72, cpu MHz 2507-4193, symbol `__isoc23_sscanf` on every arm:
+
+  | case | fl | glibc | ratio | previously recorded |
+  | --- | ---: | ---: | ---: | --- |
+  | `single_int` | 57,435,160 | 168,994,759 | 0.340x | 0.295x |
+  | `two_ints` | 69,775,626 | 249,069,480 | 0.280x | 0.250x |
+  | `string_token` | 56,469,973 | 128,821,947 | 0.438x | 0.378x |
+  | `scanset_only` | 53,116,358 | 130,178,463 | 0.408x | 0.352x |
+  | `float_only` | 281,297,304 | 293,531,429 | **0.958x** | 1.032x LOSS |
+  | `key_value` | 494,717,355 | 203,717,126 | **2.429x** | 1.055x |
+  | `long_literal` | 285,576,130 | 187,546,158 | **1.523x** | not recorded |
+
+- **TWO CONCLUSIONS INVERT.** `float_only` was never a loss — fl's own float scanner is 0.958x of
+  glibc, and the 1.032x "loss" was fl's alias wrapping glibc's `strtof`. And `key_value` is not a
+  1.055x loss but a **2.429x** one, which makes it the worst case in the family by a wide margin
+  rather than a marginal one. `long_literal` at 1.523x was never visible at all.
+- **WHAT SURVIVES.** The three fast paths are real and self-contained, so their vs-glibc wins stand,
+  though at more honest ratios (0.340x/0.438x/0.408x rather than 0.295x/0.378x/0.352x) — under
+  deepbind fl's internal helpers bind to fl's own `memcpy`/`strlen` rather than glibc's AVX2 ones,
+  which is the correct thing to measure and costs a little. **RETRACTED specifically:** the
+  before/after reductions quoted for those rows (`136.74M -> 48.66M` for `%s`, `139.20M -> 45.90M`
+  for `%[`) conflate the fast path with the loader fix, because the "before" figure was fl's alias
+  plus glibc's engine. The correct claim is the vs-glibc ratio, not the reduction.
+- **WHERE THE REAL WORK IS NOW, from the corrected profile of `float_only` under deepbind:**
+  `parse_scanf_format` 9.96%, `InlineVec<ScanDirective,4>::push` 6.57%, `drop_in_place::<ScanResult>`
+  5.58% — about 22% of the engine path is directive machinery built and torn down per call, which is
+  what `key_value` and `long_literal` pay several times over.
