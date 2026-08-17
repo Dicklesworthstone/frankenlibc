@@ -85,6 +85,70 @@ pub struct HostWideQuiescenceEvidence {
     maximum_observed_busy_fraction: f64,
     samples_observed: usize,
     wait_ms: u64,
+    /// Observed clock of the allowed CPUs, in kHz, as (min, median, max).
+    ///
+    /// `None` when the kernel exposes neither `scaling_cur_freq` nor a `cpu MHz`
+    /// line, which is reported as `unavailable` rather than as a zero.
+    clock_khz: Option<(u64, u64, u64)>,
+}
+
+/// Read the current clock of every CPU in `allowed`, as (min, median, max) kHz.
+///
+/// WHY THE CONTRACT NEEDS THIS. The line already records `cpufreq_driver`,
+/// `governor` and `energy_performance_preference`, which describe the POLICY, and
+/// the project's standing certification rule asks for the CPU clock on every row
+/// alongside the loadavg. Policy is not the clock: this fleet runs
+/// `amd-pstate-epp` with `governor=powersave` and `energy_performance_preference=
+/// performance`, under which the frequency moves during a run without any of
+/// those three strings changing. Clocks between 2197 and 3912 MHz have been
+/// observed across workers on a single day, so a row without one cannot tell
+/// "this worker is slower" from "this worker throttled mid-run".
+///
+/// `scaling_cur_freq` is preferred because it is per-CPU and already in kHz;
+/// `/proc/cpuinfo` is the fallback and is per-CPU in MHz.
+fn sample_allowed_cpu_khz(allowed: &BTreeSet<usize>) -> Option<(u64, u64, u64)> {
+    let mut readings: Vec<u64> = allowed
+        .iter()
+        .filter_map(|cpu| {
+            let path =
+                format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq");
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| text.trim().parse::<u64>().ok())
+        })
+        .collect();
+
+    if readings.is_empty() {
+        // Fallback: `/proc/cpuinfo` reports MHz as a float, in processor order.
+        // Only the allowed CPUs are kept, so a pinned run does not average in
+        // cores it never used.
+        let info = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+        let mut processor = None;
+        for line in info.lines() {
+            if let Some(rest) = line.strip_prefix("processor") {
+                processor = rest
+                    .split(':')
+                    .nth(1)
+                    .and_then(|value| value.trim().parse::<usize>().ok());
+            } else if let Some(rest) = line.strip_prefix("cpu MHz")
+                && let Some(cpu) = processor
+                && allowed.contains(&cpu)
+                && let Some(mhz) = rest
+                    .split(':')
+                    .nth(1)
+                    .and_then(|value| value.trim().parse::<f64>().ok())
+            {
+                readings.push((mhz * 1000.0) as u64);
+            }
+        }
+    }
+
+    if readings.is_empty() {
+        return None;
+    }
+    readings.sort_unstable();
+    let median = readings[readings.len() / 2];
+    Some((readings[0], median, readings[readings.len() - 1]))
 }
 
 impl HostWideQuiescenceEvidence {
@@ -98,7 +162,7 @@ impl HostWideQuiescenceEvidence {
              allowed_cpu_count={} allowed_cpus={} affinity_mask={} sample_ms={} \
              required_consecutive_clear_samples={} samples_observed={} wait_ms={} \
              timeout_ms={} maximum_busy_fraction={:.3} observed_maximum_busy_fraction={:.3} \
-             busy_cpu_count_above_limit=0 verdict=clear",
+             busy_cpu_count_above_limit=0 {} verdict=clear",
             self.hostname,
             self.platform.physical_cores,
             self.platform.logical_threads,
@@ -118,6 +182,15 @@ impl HostWideQuiescenceEvidence {
             HOST_WIDE_QUIET_TIMEOUT.as_millis(),
             HOST_WIDE_MAX_BUSY_FRACTION,
             self.maximum_observed_busy_fraction,
+            match self.clock_khz {
+                Some((min, median, max)) => format!(
+                    "cpu_mhz_min={:.1} cpu_mhz_median={:.1} cpu_mhz_max={:.1}",
+                    min as f64 / 1000.0,
+                    median as f64 / 1000.0,
+                    max as f64 / 1000.0
+                ),
+                None => "cpu_mhz=unavailable".to_owned(),
+            },
         )
     }
 }
@@ -198,6 +271,11 @@ impl HostWideBenchmarkGuard {
                         maximum_observed_busy_fraction: clear_window_maximum,
                         samples_observed,
                         wait_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        // Sampled HERE, at the moment quiescence is established,
+                        // so the pre_measurement and post_measurement lines
+                        // bracket the timed phase with two real readings rather
+                        // than one taken whenever the process happened to start.
+                        clock_khz: sample_allowed_cpu_khz(&self.allowed_cpus),
                     });
                 }
             } else {
@@ -1666,6 +1744,10 @@ mod tests {
             maximum_observed_busy_fraction: 0.125,
             samples_observed: 7,
             wait_ms: 7_043,
+            // 2.197 GHz and 3.912 GHz are the extremes actually observed across
+            // this fleet on one day, which is the spread the field exists to make
+            // visible.
+            clock_khz: Some((2_197_000, 2_773_684, 3_912_914)),
         };
         let contract = evidence.contract_line("baseline");
         for required in [
@@ -1683,6 +1765,12 @@ mod tests {
             "samples_observed=7",
             "wait_ms=7043",
             "timeout_ms=300000",
+            // The clock is rendered in MHz to one decimal, and all THREE of
+            // min/median/max are required: a single figure cannot show that a run
+            // straddled a frequency change, which is the case the field exists for.
+            "cpu_mhz_min=2197.0",
+            "cpu_mhz_median=2773.7",
+            "cpu_mhz_max=3912.9",
             "verdict=clear",
         ] {
             assert!(
@@ -1690,6 +1778,66 @@ mod tests {
                 "contract missing {required:?}: {contract}"
             );
         }
+    }
+
+    /// A host that exposes no clock must say so, not report a plausible zero.
+    #[test]
+    fn host_wide_contract_reports_unavailable_clock_explicitly() {
+        let evidence = HostWideQuiescenceEvidence {
+            hostname: "bench-host".to_owned(),
+            allowed_cpus: BTreeSet::from([0]),
+            affinity_mask: "1".to_owned(),
+            platform: HostPlatformProvenance {
+                physical_cores: 1,
+                logical_threads: 1,
+                ram_bytes: 1024,
+                numa_nodes: 1,
+                runtime_isa: "x86_64".to_owned(),
+                cpufreq_driver: "none".to_owned(),
+                governor: "none".to_owned(),
+                energy_performance_preference: "none".to_owned(),
+            },
+            maximum_observed_busy_fraction: 0.0,
+            samples_observed: 5,
+            wait_ms: 5_000,
+            clock_khz: None,
+        };
+        let contract = evidence.contract_line("baseline");
+        assert!(
+            contract.contains("cpu_mhz=unavailable"),
+            "an absent clock must be stated: {contract}"
+        );
+        assert!(
+            !contract.contains("cpu_mhz_min="),
+            "an absent clock must not render as a number: {contract}"
+        );
+    }
+
+    /// The sampler must agree with the CPUs it was given, on this host.
+    ///
+    /// Asserts the POSITIVE fact rather than merely that the call returns: a
+    /// sampler that silently found nothing would otherwise look identical to one
+    /// that worked, and `cpu_mhz=unavailable` would quietly become the norm.
+    #[test]
+    fn allowed_cpu_clock_sampler_reads_this_host() {
+        let allowed = BTreeSet::from([0usize]);
+        let Some((min, median, max)) = sample_allowed_cpu_khz(&allowed) else {
+            // A kernel exposing neither interface is a legitimate environment and
+            // the contract line handles it — but say so out loud. A silent early
+            // return here is indistinguishable from a sampler that stopped working,
+            // which is how `cpu_mhz=unavailable` would quietly become the norm.
+            println!("CLOCK_SAMPLER_SKIPPED reason=no_scaling_cur_freq_and_no_proc_cpuinfo_mhz");
+            return;
+        };
+        println!("CLOCK_SAMPLER_READ min_khz={min} median_khz={median} max_khz={max}");
+        assert!(min <= median && median <= max, "clock triple out of order");
+        // 100 MHz to 10 GHz brackets every plausible x86 operating point; the
+        // bound exists to catch a unit error (Hz or MHz read as kHz), which is the
+        // realistic failure, not an implausible CPU.
+        assert!(
+            (100_000..=10_000_000).contains(&min),
+            "clock {min} kHz is outside any plausible range — check the unit"
+        );
     }
 
     fn sample_records() -> Vec<MetadataBenchRecord> {
