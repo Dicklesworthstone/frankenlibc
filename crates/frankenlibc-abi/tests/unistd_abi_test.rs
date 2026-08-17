@@ -9526,6 +9526,28 @@ fn assert_cxa_fail_stop_hook_aborts_with_stderr(
         let _ = libc::close(fds[1]);
     }
 
+    // DO NOT "FIX" THIS BY MOVING THE READ ABOVE THE WAIT. (bd-akzu9k)
+    //
+    // The ordering below — reap, then drain — has a real flaw: the child's stderr
+    // is dup2'd into a 64K pipe, so a child that writes past the buffer blocks in
+    // `write()` while the parent sits in the wait. `bounded_waitpid` caps that at
+    // 30s, so it fails rather than hanging, but it is a degradation and not a fix.
+    //
+    // The textbook correction is to drain first, since the parent then consumes
+    // continuously and `read_to_end` returns at EOF when the last write end closes.
+    // IT IS WRONG HERE AND STRICTLY WORSE. If the child never exits — a
+    // fork-inherited lock deadlock, or an arm whose child simply fails to abort,
+    // which are the two mechanisms that actually caused a 4.2-hour wedge — then no
+    // write end ever closes, `read_to_end` blocks FOREVER, and `bounded_waitpid`
+    // is never reached because it would now run after the read. The reordering
+    // bypasses the very deadline meant to contain the problem, trading a bounded
+    // failure for an unbounded hang.
+    //
+    // A correct fix needs a deadline on the READ as well as the wait: set the read
+    // end non-blocking and drain it inside `bounded_waitpid`'s existing WNOHANG
+    // poll loop, so one deadline covers both. Not done here because it restructures
+    // the wait/drain interleaving in a suite that is currently green, and getting it
+    // wrong reproduces exactly the hang it is meant to remove.
     let mut status: c_int = 0;
     let waited = unsafe { bounded_waitpid(pid, &mut status) };
     assert_eq!(waited, pid, "waitpid failed for {label}");
