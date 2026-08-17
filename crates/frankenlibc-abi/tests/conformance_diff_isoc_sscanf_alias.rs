@@ -70,9 +70,12 @@ fn fl_arms() -> [(&'static str, SscanfFn); 3] {
 /// Number of `int *` handed to every call. It is the widest conversion count in
 /// [`CASES`], and it must never be less: passing three for the four-conversion
 /// row had the callee read a fourth variadic argument that was never pushed,
-/// which took the binary down with SIGSEGV. Extra pointers a format never reads
-/// cost nothing, so one call shape for the whole table is both safe and simpler.
-const ARGS: usize = 4;
+/// which took the binary down with SIGSEGV. It happened a SECOND time when the
+/// int fast path grew to four fields and the five-field control moved in without
+/// a fifth pointer — a null-pointer abort that time. Extra pointers a format
+/// never reads cost nothing, so one call shape for the whole table is both safe
+/// and simpler.
+const ARGS: usize = 5;
 
 /// Call one entry point with [`ARGS`] `int *` and return `(rc, values)`.
 fn scan_args(f: SscanfFn, input: &str, format: &str) -> (c_int, [c_int; ARGS]) {
@@ -89,6 +92,7 @@ fn scan_args(f: SscanfFn, input: &str, format: &str) -> (c_int, [c_int; ARGS]) {
             &mut v[1] as *mut c_int,
             &mut v[2] as *mut c_int,
             &mut v[3] as *mut c_int,
+            &mut v[4] as *mut c_int,
         )
     };
     (rc, v)
@@ -343,7 +347,7 @@ fn the_aliases_agree_with_host_glibc() {
 fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
     let cin = CString::new(input).expect("input has NUL");
     let cfmt = CString::new(format).expect("format has NUL");
-    let mut v: [c_int; 4] = [0; 4];
+    let mut v: [c_int; 5] = [0; 5];
 
     // Warm one-time lazy initialisation so it is not billed to the measured call.
     // SAFETY: at most four `int *` are read; four are supplied.
@@ -355,6 +359,7 @@ fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
             &mut v[1] as *mut c_int,
             &mut v[2] as *mut c_int,
             &mut v[3] as *mut c_int,
+            &mut v[4] as *mut c_int,
         );
     }
     count_allocs(|| {
@@ -367,6 +372,7 @@ fn allocs_for(f: SscanfFn, input: &str, format: &str) -> usize {
                 &mut v[1] as *mut c_int,
                 &mut v[2] as *mut c_int,
                 &mut v[3] as *mut c_int,
+                &mut v[4] as *mut c_int,
             );
         }
     })
