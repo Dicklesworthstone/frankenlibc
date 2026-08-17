@@ -30716,8 +30716,11 @@ What this changes, and what it does not:
   spec once, stop measuring the input length per field — and predicted the case would land "near 2100
   per call, 0.94x of glibc, a marginal win", with anything materially above 2100 refuting the concept.
   Instruction count under `RTLD_DEEPBIND`, 200k iterations, `perf stat -r 3`,
-  bench_elf_sha256=17a2d2b6318592af67747cbc38f22cb6b677ecd45c48eb321a9592161609326e, loadavg
+  bench_elf_sha256=192ba3a8cb2ac8079a2c00d23455edfc3bc78211b0aa1c51445578a4d432da42, loadavg
   20.38/26.12/38.60, cpu MHz 2525-3893. One local build was running, so no wall-clock claim is made.
+  (That hash is NOT the one on the two rows above: the driver gained a `mixed_record` case, so its
+  ELF changed. A stale hash copied forward would have pointed at a binary that could not have produced
+  these numbers, which is exactly what the field exists to prevent.)
 - **RESULT: 681,015,521 instructions -> 209,603,388, a 3.25x reduction, -2357 per call.** Against
   glibc's 445,048,605 that is **0.471x, from 1.512x** — the last certified loss in the family becomes
   a 2.1x win. Stable across three runs (211,755,368 / 211,706,093 / 211,865,040 before the lazy-length
