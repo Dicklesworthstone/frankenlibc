@@ -1108,9 +1108,27 @@ fn allocate_from_local_class(
         let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
             continue;
         };
-        if view.class_index != class_index {
-            continue;
-        }
+        // A magazine holds only its own class BY CONSTRUCTION: `segment_free`
+        // pushes into `classes[view.class_index].magazine`, so an entry reached
+        // from `classes[class_index]` can only be `class_index`.
+        //
+        // This was a release-time `if ... { continue; }`, which is worse than
+        // either alternative: if the invariant holds it is a load, a compare and a
+        // branch on every magazine pop for nothing, and if it is ever violated it
+        // SILENTLY DROPS the slot — leaking it and hiding the encode/decode bug or
+        // corruption that produced it. A debug assertion catches that loudly where
+        // it can be observed and costs nothing in the shipped build.
+        //
+        // Verified by instruction counting rather than wall clock, because this
+        // host's malloc/free ratio swings up to 30% with load drift while
+        // callgrind is deterministic (see the malloc_free rows in
+        // docs/NEGATIVE_EVIDENCE.md).
+        debug_assert_eq!(
+            view.class_index, class_index,
+            "magazine for class {class_index} yielded a slot of class {}; the \
+             encoding or the free path is wrong",
+            view.class_index
+        );
         if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
             return Some(ptr);
         }

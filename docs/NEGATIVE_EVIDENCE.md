@@ -30990,3 +30990,39 @@ What this changes, and what it does not:
   is worse here than on the `vsscanf` arm (1.30x against 1.25x) and worse than its own 0.999 from this
   morning — a real engine-path regression that predates nothing in this row and is now the top
   outstanding item in the family.
+
+## 2026-08-17 (BlackThrush) — THE 6.58x->6.88x REGRESSION IS NOT WORK-BASED: identical instruction profile, and both my suspect commits are exonerated
+
+- **RESULT CLASS: loss/baseline (attribution, by counted mechanism).** Uses instruction counting
+  rather than wall clock, because this host's malloc/free ratio swings up to 30% with load drift
+  while callgrind is deterministic. `uptime` was 25.96,16.89,13.20 — a window in which no wall-clock
+  answer would have been worth anything.
+- **HEAD marginal: (52,087,597 - 7,726,657)/76,000 = 583.7 instr/pair**, against the 585.7 banked
+  post-fold. **Flat, and two instructions LOWER.** The per-function profile is identical frame for
+  frame — `malloc` 97.9, `allocate_from_local_class` 93.0, `enter_allocator_reentry_guard` 80.0,
+  `free` 74.0, `segment_allocate` 43.0, `mode` 27.0, `entrypoint_scope` 22.0, `small_bin_index` 11.0
+  — with `segment_free` 128.0 -> 126.0 the only movement.
+- **SO THE ~4.6% WALL REGRESSION IS NOT EXTRA WORK.** fl does not execute more instructions per pair
+  at HEAD than it did before. What remains is a microarchitectural or layout effect, or a property of
+  the two binaries other than their allocator work. **A regression that is real in wall clock and
+  absent in instruction count is not a defect anyone can fix by removing work.**
+- **MY OWN TWO COMMITS ARE EXONERATED, and my stated hypothesis was WRONG.** I suspected
+  `b4204b67e`'s `pub known_remaining_for_tests` hook of inhibiting `known_remaining`'s inlining.
+  `known_remaining` **does not appear in the malloc/free profile at all** — it is not on this path, so
+  the hook cannot have touched it. Suspecting my own commits first was right; the hypothesis was
+  simply false, and counting settled it in two runs where wall clock could not have.
+- **A COUNTED LEVER TAKEN WHILE THERE: `allocate_from_local_class` 93.0 -> 91.0 instr/pair.** The
+  magazine pop re-checked `view.class_index != class_index` and `continue`d on mismatch. That check is
+  redundant by construction — `segment_free` pushes into `classes[view.class_index].magazine`, so an
+  entry reached from `classes[class_index]` can only be that class — and the release-time form was
+  the worst of both: a load, compare and branch per pop when the invariant holds, and a SILENT DROP
+  that leaks the slot and hides the bug when it does not. Now a `debug_assert_eq!`, which fails
+  loudly in tests and costs nothing shipped.
+  **Total 583.7 -> 581.7, and the whole -2.0 lands in that one frame** with every other frame
+  unchanged, which is what makes the attribution exact rather than argued. No wall-clock claim is
+  made for 0.34%; on this host that is far inside the noise, and the counted mechanism is the entire
+  evidence. Green: `malloc_abi_test` 75, plus 5 and 2 in the binning and retire gates.
+- **CONSEQUENCE FOR bd-js47fq.** The regression row stays — it was measured cleanly, with verified
+  distinct shas and a stable load — but its cause is now bounded: **not added work.** A bisect looking
+  for a commit that made the allocator *do more* will not find one. If it matters, the question to ask
+  is about code layout, and the tool is not this one.
