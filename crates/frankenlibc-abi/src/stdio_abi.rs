@@ -9038,15 +9038,82 @@ pub(crate) enum ScanfReadState {
     BufferedFd { base: i64 },
 }
 
+thread_local! {
+    /// Reusable scanf read buffer, one per thread.
+    ///
+    /// The stream scanf path used to `vec![0u8; cap]` per call — an 8 KiB
+    /// allocation AND an 8 KiB zeroing to hold bytes that are immediately
+    /// overwritten by `read`. glibc parses out of the stream's own buffer and
+    /// allocates nothing, and an allocation-count gate put fl at one allocation
+    /// per `fscanf` after the engine's own containers were removed. This is that
+    /// last one.
+    static SCANF_READ_POOL: std::cell::RefCell<Option<Vec<u8>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// A scanf input buffer that returns itself to the per-thread pool when dropped.
+///
+/// Dropping is the only way it goes back, which is what makes the early returns
+/// in the readers safe: every path that builds one — EOF, lseek failure, a short
+/// read — releases it without needing its own bookkeeping.
+pub(crate) struct ScanfReadBuf {
+    buf: Vec<u8>,
+}
+
+impl ScanfReadBuf {
+    /// Take the pooled buffer, or a fresh one if this thread's is already out.
+    ///
+    /// "Already out" means a reentrant scanf on this thread (a signal handler,
+    /// say). It gets its own buffer rather than aliasing the outer call's, and
+    /// whichever drops last leaves a buffer in the pool.
+    fn take() -> Self {
+        let buf = SCANF_READ_POOL
+            .try_with(|pool| pool.borrow_mut().take())
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        Self { buf }
+    }
+
+    /// Wrap a buffer produced elsewhere (memory streams, buffered drains) so it
+    /// joins the pool when it drops.
+    fn from_vec(buf: Vec<u8>) -> Self {
+        Self { buf }
+    }
+}
+
+impl std::ops::Deref for ScanfReadBuf {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.buf
+    }
+}
+
+impl Drop for ScanfReadBuf {
+    fn drop(&mut self) {
+        let mut buf = std::mem::take(&mut self.buf);
+        buf.clear();
+        let _ = SCANF_READ_POOL.try_with(|pool| {
+            let mut slot = pool.borrow_mut();
+            // Keep whichever buffer has the larger capacity: a reentrant call
+            // would otherwise leave the pool holding the smaller one.
+            if slot.as_ref().map_or(true, |held| held.capacity() < buf.capacity()) {
+                *slot = Some(buf);
+            }
+        });
+    }
+}
+
 /// Read stream content into a byte buffer for scanf parsing.
 ///
 /// Returns the bytes plus read-state metadata. Seekable fds are read from their
 /// true logical offset so finalization can `lseek` to the parsed prefix. Memory
 /// streams and non-seekable fds over-read into memory and finalize by restoring
 /// the unread suffix to the backing or stream read queue.
-pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfReadState) {
+pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, ScanfReadState) {
     let Some(cell) = stream_cell(id) else {
-        return (Vec::new(), ScanfReadState::Memory);
+        return (ScanfReadBuf::take(), ScanfReadState::Memory);
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
@@ -9054,7 +9121,7 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfR
     // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
     if s.is_mem_backed() {
         sync_and_unregister_fast_fixed_mem_read(id, s);
-        return (s.mem_read(limit), ScanfReadState::Memory);
+        return (ScanfReadBuf::from_vec(s.mem_read(limit)), ScanfReadState::Memory);
     }
 
     let fd = s.fd();
@@ -9069,16 +9136,25 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfR
         // Discard any read-ahead buffer + ungetc and align the fd to `base`.
         let _ = s.prepare_seek();
         if raw_syscall::sys_lseek(fd, base, libc::SEEK_SET).is_ok() {
-            let mut buf = vec![0u8; cap];
-            let rc = unsafe { sys_read_fd(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            // Read into the pooled buffer's SPARE CAPACITY: no allocation when
+            // the pool already holds one, and no zero-fill of bytes `read` is
+            // about to overwrite. `set_len` only ever grows to what read(2)
+            // reported it wrote.
+            let mut held = ScanfReadBuf::take();
+            held.buf.clear();
+            held.buf.reserve(cap);
+            // SAFETY: `cap` bytes of spare capacity were just reserved, and the
+            // length is set only to the count read(2) reports.
+            let rc = unsafe { sys_read_fd(fd, held.buf.as_mut_ptr().cast(), cap) };
             if rc > 0 {
-                buf.truncate(rc as usize);
-                return (buf, ScanfReadState::SeekableFd { base });
+                // SAFETY: read(2) wrote `rc` bytes into the reserved capacity.
+                unsafe { held.buf.set_len(rc as usize) };
+                return (held, ScanfReadState::SeekableFd { base });
             }
             if rc == 0 {
                 s.set_eof();
             }
-            return (Vec::new(), ScanfReadState::SeekableFd { base });
+            return (ScanfReadBuf::take(), ScanfReadState::SeekableFd { base });
         }
         // lseek-back failed unexpectedly; fall through to the raw-read path.
     }
@@ -9089,7 +9165,7 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfR
     let base = s.offset();
     let mut buf = s.buffered_read(cap);
     if buf.len() >= cap || s.is_eof() || s.is_error() {
-        return (buf, ScanfReadState::BufferedFd { base });
+        return (ScanfReadBuf::from_vec(buf), ScanfReadState::BufferedFd { base });
     }
 
     let mut tmp = vec![0u8; cap - buf.len()];
@@ -9097,12 +9173,12 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfR
     if rc > 0 {
         tmp.truncate(rc as usize);
         buf.extend_from_slice(&tmp);
-        (buf, ScanfReadState::BufferedFd { base })
+        (ScanfReadBuf::from_vec(buf), ScanfReadState::BufferedFd { base })
     } else {
         if rc == 0 {
             s.set_eof();
         }
-        (buf, ScanfReadState::BufferedFd { base })
+        (ScanfReadBuf::from_vec(buf), ScanfReadState::BufferedFd { base })
     }
 }
 

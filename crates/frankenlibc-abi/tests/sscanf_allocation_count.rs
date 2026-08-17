@@ -203,3 +203,59 @@ fn the_counter_observes_a_known_allocation() {
     });
     assert!(n >= 1, "counting allocator observed {n} allocations for a 4 KiB Vec");
 }
+
+/// The STREAM family goes through the same engine but reads its input into a
+/// buffer first, so it is counted separately.
+///
+/// `read_stream_for_scanf` used to `vec![0u8; cap]` per call — an 8 KiB
+/// allocation and an 8 KiB zero-fill for bytes `read` immediately overwrote.
+/// It now takes a per-thread pooled buffer and reads into its spare capacity,
+/// so a warmed thread allocates nothing, which is what glibc does.
+#[test]
+fn stream_scanf_reuses_its_read_buffer() {
+    use std::io::Write;
+
+    let dir = std::env::temp_dir().join("fl_scanf_alloc_count");
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("input.txt");
+    {
+        let mut f = std::fs::File::create(&path).expect("create input");
+        writeln!(f, "hello 42").expect("write input");
+    }
+    let cpath = CString::new(path.to_str().unwrap()).unwrap();
+    let mode = CString::new("r").unwrap();
+    let fmt = CString::new("%s %d").unwrap();
+
+    let mut word = [0u8; 64];
+    let mut n: c_int = 0;
+
+    // Warm, then measure a second call on a freshly opened stream so the count
+    // is one call's cost and not first-touch initialisation.
+    for warm in [true, false] {
+        // SAFETY: path and mode are NUL-terminated.
+        let f = unsafe { frankenlibc_abi::stdio_abi::fopen(cpath.as_ptr(), mode.as_ptr()) };
+        assert!(!f.is_null(), "fopen failed");
+        let counted = count_allocs(|| {
+            // SAFETY: the format takes one char* and one int*.
+            unsafe {
+                frankenlibc_abi::stdio_abi::fscanf(
+                    f,
+                    fmt.as_ptr(),
+                    word.as_mut_ptr().cast::<c_char>(),
+                    &mut n as *mut c_int,
+                );
+            }
+        });
+        // SAFETY: `f` came from fopen above.
+        unsafe { frankenlibc_abi::stdio_abi::fclose(f) };
+        if !warm {
+            println!("fscanf(\"%s %d\") allocations={counted} (stream path)");
+            assert_eq!(n, 42, "fscanf did not parse the input");
+            assert_eq!(
+                counted, 0,
+                "stream fscanf allocated {counted} times on a warmed thread; the read \
+                 buffer is pooled precisely so it does not"
+            );
+        }
+    }
+}
