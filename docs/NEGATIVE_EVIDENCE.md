@@ -29983,3 +29983,44 @@ What this changes, and what it does not:
   `conformance_diff_isoc_sscanf_alias.rs`, which proves it by allocation count with a positive control
   rather than by value comparison — the fast path and the engine agree by construction, so a
   value-comparing gate would pass whether or not the routing exists.
+
+## 2026-08-16 (BlackThrush) — FRONTIER RESTATED: getrandom is no longer the worst ratio. `malloc_free` is, at ~6.55x
+
+- **RESULT CLASS: loss/baseline (ranking correction).** No new measurement — **no build, benchmark or
+  timing was run for this row.** Written under an I/O hard stop (loadavg 525, iowait 77%, disk ~109G),
+  entirely from numbers already certified and banked above. It exists because the ranking is what the
+  fleet picks targets from, and mine is now stale in three places.
+- **WHAT WENT STALE, and it was my own claim.** Rows above state "getrandom is the campaign's worst
+  measured ratio at 91.58-92.17x" and one says `FRONTIER UNCHANGED: getrandom 91.58-92.17x,
+  malloc_free 6.62x, ...`. Those were true when written and are **no longer true**: the vDSO routing
+  took getrandom to 4.00x, and the stack-output fast path to **3.602072** at zero bytes. Anyone
+  reading the ledger top-down for the highest-value target would still be sent to getrandom, which is
+  now the FOURTH-largest gap and has had its mechanism closed.
+- **THE FRONTIER AS CERTIFIED, worst first.** Every figure below is from a row above with its own ELF
+  sha, same-invocation A/A nulls and bootstrap intervals; nothing here is re-derived or estimated.
+
+  | rank | family | ratio | provenance / caveat |
+  |---|---|---|---|
+  | 1 | **`malloc_free`** | **6.5322-6.5704** | the baseline arm of the rejected slot-retire elision, ELF f8db5310, two rounds. HEAD equals that arm because the elision was reverted. |
+  | 2 | `getrandom` | 3.602072 (zero_bytes) | ELF 3438a9b6; was 94.427196 this morning |
+  | 3 | `snprintf_fused` | 2.64-3.92 | **RE-MEASURE BEFORE USING**: certified against the 08:24 cdylib, and printf paths were edited that day |
+  | 4 | `sscanf` | 1.05-2.02 | PRE-LEVER baseline; the `ScanBytes` inline-token lever landed after and is UNCERTIFIED |
+  | 5 | `mtx_trylock` | 1.1246 | |
+  | 6 | `thrd_current` | 1.1109 | |
+  | — | faster than glibc | `gethostbyaddr` 0.1991, `gethostbyname` 0.2172, `getauxval` 0.5243-0.6915, `sem_post` 0.9716 | reported as ranking evidence, not banked as wins |
+
+- **`malloc_free` IS THE TARGET NOW, AND IT IS THE HARD ONE.** Its post-fold profile is 585.7
+  instructions per pair against glibc's 77.9 for the whole pair, and **129 of those 585.7 sit in
+  levers this file has already refuted** — the reentry guard at 80.0 ("irreducible", "safety-critical,
+  not removable") and `runtime_policy::mode` plus `entrypoint_scope` at 49.0 ("do not retry per-symbol
+  entrypoint hoists"). Today's slot-retire elision added a third refutation on the same theme: removing
+  a `lock xchg` made free **1.53% SLOWER**. **Atomics and framing are both closed here.** What remains
+  unrefuted is structural — one guard entry serving both halves of a pair, or the address-derived slab
+  under bd-e0y02p — and that is a design change, not a micro-lever.
+- **STILL UNMEASURED AT HEAD**, so the ranking is confirmed-worst-so-far rather than proven-worst:
+  `getaddrinfo_hosts`, `sinhf_coshf`, `snprintf`, `snprintf_float`, `fprintf_float`, `nl_langinfo`.
+  `wcsnrtombs` is excluded on mechanism — it reports `runner_not_yet_implemented` and has no runner,
+  so it can never produce a row.
+- **TWO UNCERTIFIED LEVERS ARE IN HEAD** and must not be quoted until measured: the `ScanBytes`
+  inline-token change in scanf (prediction on record: `string_token` and `two_strings` move,
+  `long_string` does not — if `long_string` moves too the fixed-cost story is wrong), and nothing else.
