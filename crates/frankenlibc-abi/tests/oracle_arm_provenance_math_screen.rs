@@ -34,9 +34,9 @@
 //! which is the question. A captured arm reports the test binary; a real one
 //! reports `libc.so.6` or `libm.so.6`.
 //!
-//! This file asserts nothing about which symbols must be clean — it PRINTS the
-//! census and fails only if it cannot run at all. Turning its findings into
-//! per-gate `dlsym` conversions is the fix, and belongs on the gates.
+//! This file PRINTS the census and PINS the captured set. The pin arrived only
+//! after the set was measured and found stable across four extensions of the
+//! screen; the per-gate `dlsym` conversions are the fix, and belong on the gates.
 
 use std::ffi::{CStr, c_void};
 
@@ -246,11 +246,8 @@ fn math_oracle_arms_report_their_owning_object() {
         println!("  CAPTURED {name:12} -> {object}");
     }
 
-    // Deliberately not an assertion on the capture count. This file is a
-    // measurement instrument for bd-v0388t: a threshold here would have to be
-    // guessed, and a guessed threshold that passes is exactly the kind of gate
-    // that proves nothing. What it DOES assert is that the probe ran and that
-    // dladdr answered for every arm, so a silent zero cannot be read as "clean".
+    // dladdr must have placed every arm. A silent zero must never be readable
+    // as "clean", which is the failure mode this whole bead is about.
     let unresolved: Vec<_> = arms
         .iter()
         .map(|(name, addr)| (*name, owning_object(*addr)))
@@ -259,5 +256,38 @@ fn math_oracle_arms_report_their_owning_object() {
     assert!(
         unresolved.is_empty(),
         "dladdr could not place these arms, so the census is incomplete: {unresolved:?}"
+    );
+
+    // THE RATCHET. Earlier revisions of this file asserted nothing about the
+    // capture count, because a GUESSED threshold that passes is exactly the
+    // hollow gate bd-v0388t exists to stamp out. That held while the set was
+    // unknown. It is now measured and stable across four extensions of this
+    // screen -- 29, 94, 101 and 112 arms, the same nine every time -- so this
+    // pins a measurement rather than a guess.
+    //
+    // The pin is the exact SET, not the count: a new capture displacing an old
+    // one would leave the count at nine while changing what is hollow.
+    //
+    // If this fires, a symbol changed provider. Do NOT widen the list to make it
+    // pass. Find the gates that declare the new symbol and give them a real
+    // oracle -- `dlsym_oracle::host_fn` -- as conformance_diff_math,
+    // conformance_diff_round_special, conformance_diff_copysign_fdim_special and
+    // conformance_diff_fp_exceptions already do.
+    //
+    // All nine below are what LLVM lowers to roundsd / andpd / sqrtsd and what
+    // `compiler_builtins` defines NON-weak, so the local definition wins the
+    // link. memcpy/memset/memmove/memcmp are declared weak there and correctly
+    // lose to libc.so.6 -- measured, not assumed.
+    const KNOWN_CAPTURED: &[&str] = &[
+        "ceil", "copysign", "fabs", "fdim", "floor", "fmax", "fmin", "fmod", "sqrt",
+    ];
+    let mut captured_names: Vec<&str> = captured.iter().map(|(name, _)| *name).collect();
+    captured_names.sort_unstable();
+    assert_eq!(
+        captured_names, KNOWN_CAPTURED,
+        "the set of locally-captured oracle arms changed. New captures are gates \
+         that silently stopped testing glibc; disappearances mean an arm that was \
+         converted no longer needs to be. Either way, investigate before editing \
+         this list (bd-v0388t)."
     );
 }
