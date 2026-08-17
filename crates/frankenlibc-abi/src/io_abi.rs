@@ -408,12 +408,21 @@ pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if iov.is_null() || iovcnt <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
-    }
-    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    if iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -444,12 +453,21 @@ pub unsafe extern "C" fn writev(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if iov.is_null() || iovcnt <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
-    }
-    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    if iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -628,12 +646,21 @@ pub unsafe extern "C" fn preadv(
         return -1;
     }
 
-    if iov.is_null() || iovcnt <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
-    }
-    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    if iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -668,12 +695,21 @@ pub unsafe extern "C" fn pwritev(
         return -1;
     }
 
-    if iov.is_null() || iovcnt <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
-    }
-    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    if iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -715,12 +751,21 @@ pub unsafe extern "C" fn preadv2(
         return -1;
     }
 
-    if iov.is_null() || iovcnt <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
-    }
-    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // A zero count is a SUCCESSFUL no-op and the fd is checked first. Probed on
+    // host glibc 2.42 / Linux for readv, writev, preadv, pwritev, preadv2 and
+    // pwritev2 alike:
+    //
+    //   f(-1,   NULL, 0, ...) -> -1 EBADF
+    //   f(good, NULL, 0, ...) ->  0
+    //
+    // fl answered EINVAL to both. The second is the one that bites: callers loop
+    // over batches that can be empty, and a spurious -1 turns a no-op into an
+    // error. Only the bounds check fl owns stays, and only when there is
+    // something to bound; the rest is the kernel's to answer.
+    if iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -756,12 +801,25 @@ pub unsafe extern "C" fn pwritev2(
         return -1;
     }
 
-    if iov.is_null() || iovcnt <= 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
-    }
-    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // ORDER MATTERS, and a blanket `iovcnt <= 0 -> EINVAL` got two things wrong.
+    // Probed on host glibc 2.42 / Linux:
+    //
+    //   pwritev2(-1,   NULL,  0, ...) -> -1 EBADF   (the fd is checked FIRST)
+    //   pwritev2(good, NULL,  0, ...) ->  0         (a zero count SUCCEEDS)
+    //   pwritev2(good, NULL, -1, ...) -> -1 EINVAL
+    //   pwritev2(-1,   NULL, -1, ...) -> -1 EBADF
+    //
+    // fl answered EINVAL to all four. The second line is the one that matters
+    // beyond errno cosmetics: a zero-count write on a valid descriptor is a
+    // successful no-op in every other iovec call, and callers loop on it.
+    //
+    // So only the bounds check fl actually owns stays here, and it runs solely
+    // when there is something to bound. Everything else — a bad fd, a zero
+    // count, a negative count, a NULL vector — is the kernel's to answer.
+    if iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;

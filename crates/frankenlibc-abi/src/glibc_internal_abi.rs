@@ -6075,7 +6075,22 @@ pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
 // gtty: legacy V7 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gtty(fd: c_int, params: *mut c_void) -> c_int {
-    let _ = (fd, params);
+    let _ = fd;
+    // glibc validates the PARAMS POINTER before reporting the function
+    // unimplemented, and the two answers are different errnos. Probed on host
+    // glibc 2.42, isolated one call per process because a first pass that shared
+    // a process gave an inconsistent reading:
+    //
+    //   gtty(-1, NULL) -> -1 EINVAL      stty(-1, NULL) -> -1 EINVAL
+    //   gtty(-1, &buf) -> -1 ENOSYS      stty(-1, &buf) -> -1 ENOSYS
+    //   gtty( 0, NULL) -> -1 EINVAL      stty( 0, NULL) -> -1 EINVAL
+    //
+    // The fd is not consulted at all — a valid descriptor gives the same answers
+    // — so this is a pointer check, not the negative-fd check `fchflags` needed.
+    if params.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     unsafe {
         crate::errno_abi::set_abi_errno(libc::ENOSYS);
     }
@@ -7594,7 +7609,13 @@ pub unsafe extern "C" fn stime(t: *const c_long) -> c_int {
 // stty: legacy V7 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn stty(fd: c_int, params: *const c_void) -> c_int {
-    let _ = (fd, params);
+    let _ = fd;
+    // Same contract as `gtty` above, probed the same way: a NULL params pointer
+    // is EINVAL and anything else is ENOSYS, with the fd never consulted.
+    if params.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     unsafe {
         crate::errno_abi::set_abi_errno(libc::ENOSYS);
     }
