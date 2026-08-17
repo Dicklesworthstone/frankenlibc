@@ -30784,3 +30784,41 @@ What this changes, and what it does not:
   `vsscanf` across every fast-path shape plus the declines.
 - **STILL OWED:** a wall-clock re-certification of the `vsscanf` arm, which is what the 11-of-12
   figure came from. That needs a no-build window and has not had one.
+
+## 2026-08-17 (BlackThrush) — FRONTIER HEADLINE, LOAD-QUALIFIED AT LAST: malloc_free is 6.87x at converged low load, spread under 2%
+
+- **RESULT CLASS: loss/baseline.** fl is slower. This gives the campaign's worst ratio the
+  reproducibility estimate my own correction row said it was missing.
+- **FOUR RUNS, ONE BINARY** (`malloc_st_probe` ELF sha256
+  5865992d4c61aa71e19ac260aef340338ee6b6a3568f33b2d8bccd5e548edd71), in the tightest window of the
+  session: `uptime` 8.90,9.73,16.40 before starting, per-run observed loadavg 12.05 -> 13.94 and MHz
+  2862-3134, no builds of mine running. All 16 rows ADMISSIBLE; nulls spanned null_fl 0.9953-1.0061
+  and null_glibc 0.9989-1.0006.
+
+  | sz | run1 | run2 | run3 | run4 | spread over runs 2-4 |
+  |---|---|---|---|---|---|
+  | 16 | **7.6385** | 6.8790 | 6.8835 | 6.8808 | **0.07%** |
+  | 64 | 6.8479 | 6.8667 | 6.8943 | 6.8685 | 0.68% |
+  | 256 | 6.8608 | 6.8665 | 6.8775 | 6.8947 | 0.49% |
+  | 1024 | 6.8562 | 6.8565 | 6.9883 | 6.8867 | 1.93% |
+
+- **THE HEADLINE: ~6.87x, with a between-run spread under 2%.** At a quiet converged load this family
+  is reproducible to about a percent — nothing like the 31% it showed at loadavg 90. The instability
+  is a property of the CONDITIONS, not of the measurement, which is why the load has to travel with
+  the number.
+- **A FIRST-RUN WARM-UP EFFECT WORTH MORE THAN THE HEADLINE.** Run 1 at sz=16 reads **7.6385 against
+  ~6.881 for the next three — 11% high** — and it is the first timed case of the first run in the
+  sequence. Runs 2-4 then agree to 0.07%, which is the tightest agreement anywhere in this session.
+  **A single-run certification can be caught by this**, and it would look perfectly healthy: run 1's
+  nulls held (1.0011 / 0.9996) and its own bootstrap interval [7.6130,7.6677] is narrow and excludes
+  the true value. In-run diagnostics cannot see a warm-up any more than they can see a between-run
+  shift. **Discard or repeat the first case; do not certify a lever on it.**
+- **THIS DOES NOT MATCH THE 6.5322-6.5704 BANKED EARLIER, and I am not attributing the difference.**
+  That row used a different binary (f8db5310) at loadavg ~15-18; this one is 5865992d at HEAD after
+  a day of allocator changes by several agents. The gap is ~5%, which is above this window's spread
+  but below the between-binary/between-condition uncertainty I can actually justify. Deciding whether
+  it is a regression needs both binaries run in one window, which is a separate piece of work and is
+  not claimed here.
+- **FRONTIER, updated headline only:** `malloc_free` **6.87x at loadavg ~9-14** remains the worst
+  measured family; `getrandom` 3.60x, `snprintf_fused` 2.64-3.92x (still owed a re-measure off a
+  fresh cdylib), `sscanf` 1.05-2.02x pre-lever, `mtx_trylock` 1.1246x, `thrd_current` 1.1109x.
