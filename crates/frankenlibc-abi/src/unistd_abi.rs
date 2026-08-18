@@ -8705,6 +8705,20 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         crypt_sha256(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
+    } else if salt_bytes.starts_with(b"$2") {
+        // bcrypt: $2a$ / $2b$ / $2y$ / $2x$. Native as of bd-c6ykz1, where it
+        // was one of five schemes fl could not hash at all — it fell through to
+        // the host-delegation arm below, and returned the failure token on any
+        // host where libxcrypt is not dlsym-able. A native path removes that
+        // silent-unverifiable-password failure mode for the bcrypt family.
+        //
+        // The prefix test is `$2` rather than the four exact variants because
+        // rejecting an unknown `$2?$` here would fall through to host
+        // delegation and produce a DIFFERENT answer for the same input
+        // depending on whether libxcrypt happened to load. bcrypt_crypt
+        // returns None for a variant it does not accept, which lands on the
+        // same failure token either way.
+        crypt_bcrypt(&key_bytes, &salt_bytes)
     } else {
         let Some(hash_bytes) = crypt_extended_with_host(key, salt) else {
             return crypt_failure_token(&salt_bytes);
@@ -12295,6 +12309,10 @@ fn crypt_sha256(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 
 fn crypt_md5(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     frankenlibc_core::crypt::md5::md5_crypt(key, salt_bytes)
+}
+
+fn crypt_bcrypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
+    frankenlibc_core::crypt::bcrypt::bcrypt_crypt(key, salt_bytes)
 }
 
 // ---------------------------------------------------------------------------
