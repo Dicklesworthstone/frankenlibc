@@ -67,11 +67,28 @@ FEATURE_GATED = {
 # anything NEW; these are debt, not permission.
 KNOWN_UNEXPORTED = {
     # nexttoward{,f,l} are a DIFFERENT failure from the rest, and the fix is not
-    # an attribute. Note "defined by asm" does NOT by itself explain the absence:
-    # the setjmp family is also declared `.global` in a global_asm! block, is
-    # likewise not annotated, and IS exported (in_dynsym=true). So something
-    # distinguishes these three from their siblings -- plausibly --gc-sections
-    # dropping trampolines nothing references -- and that is unestablished. Their C signature takes an x87 80-bit long double that Rust
+    # a plain attribute on the existing Rust fn -- that collides, because a
+    # global_asm! trampoline in math_abi.rs already defines the symbol
+    # ("symbol 'nexttoward' is already defined").
+    #
+    # Established by a controlled experiment (a ten-line cdylib built with rustc
+    # directly): a `.global` inside global_asm! becomes a LOCAL symbol in a
+    # cdylib -- present in .symtab as lowercase `t`, absent from .dynsym --
+    # whether or not anything references it. Referencing affects only survival;
+    # an entirely unreferenced asm block is dropped from .symtab as well, which
+    # is --gc-sections at section granularity.
+    #
+    # Do NOT cite the setjmp family as a counterexample. On x86_64 setjmp is a
+    # `#[unsafe(naked)] #[unsafe(no_mangle)]` fn (setjmp_abi.rs:260) exported by
+    # ATTRIBUTE; the global_asm! block that declares `.global setjmp` is
+    # cfg(target_arch = "aarch64") and is not compiled here. I made exactly that
+    # mistake and it inverted the conclusion for a full turn.
+    #
+    # The fix is the same pattern setjmp uses: convert each trampoline to a
+    # #[unsafe(naked)] #[unsafe(no_mangle)] extern "C" fn with naked_asm!. It is
+    # not applied yet because these take an x87 80-bit long double, the existing
+    # unexported Rust fns of the same names would collide, and nexttowardl has
+    # no conformance test at all. Their C signature takes an x87 80-bit long double that Rust
     # cannot express, so they are defined by a `global_asm!` trampoline in
     # math_abi.rs that declares `.global nexttoward`. Adding the attribute to the
     # Rust fn collides -- "symbol 'nexttoward' is already defined" -- yet the
