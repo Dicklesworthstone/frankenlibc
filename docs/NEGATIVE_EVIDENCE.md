@@ -32135,3 +32135,45 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   clear (busy 0.147 against a 0.200 ceiling), 8 pinned cores, 36 retained samples, 200000 reps per
   arm. Orchestrating host loadavg 8.11, CPU idle 89% (vmstat), `/` at 125G. Same-invocation A/A
   nulls held on every case.
+
+## 2026-08-18 — CAMPAIGN WIN: `wcsnrtombs` count mode is 16.4x faster than live glibc (D1 rank 14)
+
+- **RESULT CLASS: `result_class: campaign-win`.** Deployed-vs-incumbent, host glibc 2.42 linked
+  directly into the timing process, FrankenLibC loaded beside it by explicit `dlopen`.
+  `incumbent_ratio: 0.060914`, `incumbent_bootstrap_median_ci: [0.060581, 0.061039]`.
+  Same-invocation A/A null `null_median_ratio: 1.000465`, bootstrap median CI [0.998146, 1.004393] — `null_bootstrap_median_ci: [0.998146, 1.004393]`.
+  The glibc-glibc null in the same run was 1.000624, bootstrap median CI [0.999162, 1.001505].
+  `bench_elf_sha256=111faf7b7126bc9eb94a9d3fe4597b5c00d89484c4a00e9bf954603ed7db434d`
+  (self-reported in-process). `legacy_incumbent: host-glibc`,
+  `incumbent_provenance: uninterposed-host-link`, `same_invocation=true`. FL object
+  `sha256=4d482b6dac4171ba0b6596dcf13b1d0744c6573db78446aef138614f7225dcd4`, incumbent `libc.so.6
+  6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`. 36 retained samples, 14814
+  reps per arm, worker `fixmydocuments` at `loadavg=4.36,4.00,4.27`.
+- **THE ROW.** `wcsnrtombs` `ascii` 78.964 ns against 1297.345 = **0.060914**, DECIDABLE, 1 win of
+  1, clearing twice its null half-width (0.004393) with both nulls holding. Conformance ran first:
+  14 comparisons, count mode against a null destination, both arms pinned to `LC_ALL=C` separately
+  because FrankenLibC keeps its own locale state and setting the host's says nothing about fl's.
+- **REPRODUCED ACROSS TWO INDEPENDENT INVOCATIONS.** A first gated run on the same worker gave
+  0.060539 CI [0.060138, 0.060850] with fl 78.743 ns against 1297.741 — the two runs agree to 0.6%.
+  The row above is the SECOND run throughout, because that is the invocation whose
+  `bench_elf_sha256` was captured; mixing a ratio from one run with a binary hash from another would
+  defeat the point of `same_invocation`.
+- **CLOCK CHECK IS QUOTED FROM THE FIRST RUN, and labelled as such.** My output filter truncated the
+  exclusivity line in the second invocation, so its `cpu_mhz` fields were lost. The first run
+  reported min/median/max 1754.3/1754.3/4835.8 pre and 1754.3/1754.3/3845.9 post — **medians
+  identical, so that run did not straddle a clock ramp**, which is the check that matters for an
+  interleaved ratio. Busy fraction was 0.082 pre and 0.090 post against a 0.200 ceiling. Since the
+  two runs agree to 0.6%, the ramp check carries, but it is first-run evidence and not
+  same-invocation.
+- **THE FAMILY HAD NEVER RUN, AND STANDING IT UP FOUND A STALE CONFORMANCE EXPECTATION.**
+  `verify_wcsnrtombs_incomparable_cases` asserted `assert_ne!(fl_observation.result, usize::MAX)` —
+  it REQUIRED FrankenLibC to accept non-ASCII under the C locale where glibc rejects it. That
+  divergence is gone: fl returns `SIZE_MAX` with `errno 84` (EILSEQ) for all three non-ASCII
+  fixtures, exactly like the host. fl became MORE conformant and the check silently inverted,
+  invisible precisely because the runner was a stub that exited before reaching it. Strengthened to
+  require agreement on result AND errno rather than deleted (`0435ea16b`).
+- **WHAT THE RATIO IS AND IS NOT.** This is count mode — `wcsnrtombs(NULL, &src, n, 0, NULL)` —
+  measuring how fast each implementation WALKS the wide input and computes the multibyte length, not
+  how fast it converts into a destination buffer. D1 rank 14's claim is about the SIMD count path
+  specifically, so count mode is the right surface, but the number must not be read as a general
+  conversion speedup.
