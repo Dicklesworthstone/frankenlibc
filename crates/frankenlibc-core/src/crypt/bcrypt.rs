@@ -87,6 +87,28 @@ fn decode(input: &[u8], out: &mut [u8]) -> Option<()> {
     if written == out.len() { Some(()) } else { None }
 }
 
+/// Encode 16 random bytes as the 22-character salt field of a `$2?$` setting.
+///
+/// Exposed for `crypt_gensalt`, which has to build a setting fl can then hash.
+/// It uses bcrypt's MSB-first packing, NOT the running little-endian packing
+/// the `$1$`/`$5$`/`$6$`/`$7$` salts use — measured against libxcrypt for the
+/// same input bytes:
+///
+/// ```text
+///   want          .OGB/.SE/ueHAeqKBO2NC.
+///   MSB-first     .OGB/.SE/ueHAeqKBO2NC.   <- this
+///   running LE    /Gu.CSe/FeOAIq.BL2uBO.
+/// ```
+pub fn encode_salt(entropy: &[u8]) -> String {
+    encode(entropy, SALT_CHARS)
+}
+
+/// The salt length a `$2?$` setting carries, in characters.
+pub const SETTING_SALT_CHARS: usize = SALT_CHARS;
+
+/// Cost bounds a `$2?$` setting admits, exposed for `crypt_gensalt`.
+pub const COST_RANGE: core::ops::RangeInclusive<u32> = MIN_COST..=MAX_COST;
+
 /// Encode `input` as bcrypt base-64, MSB-first, emitting `chars` characters.
 fn encode(input: &[u8], chars: usize) -> String {
     let mut out = String::with_capacity(chars);

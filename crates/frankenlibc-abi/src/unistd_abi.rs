@@ -4530,8 +4530,7 @@ pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
 /// belongs in the change that first turns the path on.
 const VG_STATE_SLOTS: usize = 64;
 
-static VG_STATES_CLAIMED: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static VG_STATES_CLAIMED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 thread_local! {
     /// This thread's state, or null. `const` init and no `Drop`: nothing here
@@ -9044,8 +9043,23 @@ fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
         b"$1$" => Ok(b"$1$"),
         b"$5$" => Ok(b"$5$"),
         b"$6$" => Ok(b"$6$"),
+        // bcrypt and scrypt became hashable natively under bd-c6ykz1. Until
+        // this list grew with them, fl could VERIFY a $2b$ or $7$ password and
+        // not CREATE one — crypt_gensalt returned EINVAL — which is a half-wired
+        // capability: `passwd` can check the old hash and cannot write the new.
+        b"$2a$" => Ok(b"$2a$"),
+        b"$2b$" => Ok(b"$2b$"),
+        b"$2y$" => Ok(b"$2y$"),
+        b"$7$" => Ok(b"$7$"),
         _ => Err(errno::EINVAL),
     }
+}
+
+/// Is `prefix` one of the bcrypt variants, which carry their own cost and salt
+/// shape rather than the SHA-crypt `rounds=` form?
+#[inline]
+fn gensalt_is_bcrypt(prefix: &[u8]) -> bool {
+    matches!(prefix, b"$2a$" | b"$2b$" | b"$2y$")
 }
 
 fn gensalt_nrbytes(nrbytes: c_int) -> Result<usize, c_int> {
@@ -9068,8 +9082,23 @@ fn gensalt_nrbytes(nrbytes: c_int) -> Result<usize, c_int> {
 fn gensalt_salt_chars(prefix: &[u8]) -> usize {
     match prefix {
         b"$1$" => 8,
+        // $7$ emits every random byte it was given rather than a fixed count:
+        // measured on libxcrypt, nrbytes 16/24/32/64 produced 22/32/43/86 salt
+        // characters, i.e. ceil(nrbytes * 8 / 6). The caller supplies the length
+        // through `gensalt_scrypt_salt_chars` instead of this fixed table.
         _ => 16,
     }
+}
+
+/// Salt characters a `$7$` setting carries for `nrbytes` of entropy.
+///
+/// libxcrypt refuses fewer than 16 bytes (measured: nrbytes 8 and 12 both
+/// returned NULL, 16 succeeded), and otherwise emits every byte.
+fn gensalt_scrypt_salt_chars(nrbytes: usize) -> Result<usize, c_int> {
+    if nrbytes < 16 {
+        return Err(errno::EINVAL);
+    }
+    Ok(nrbytes.div_ceil(3) * 4)
 }
 
 fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, want: usize, out: &mut Vec<u8>) {
@@ -9107,6 +9136,28 @@ fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, want: usize, out:
     }
 }
 
+/// The crypt(3) base-64 alphabet, shared by the `$1$`/`$5$`/`$6$`/`$7$` salt
+/// encoders. bcrypt uses a DIFFERENT alphabet and packing and is encoded by
+/// `frankenlibc_core::crypt::bcrypt::encode_salt` instead.
+const CRYPT_B64_ALPHABET: &[u8; 64] =
+    b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+/// Copy `want` bytes of caller entropy out of `rbytes`.
+///
+/// libxcrypt refuses rather than padding when the caller supplies too little,
+/// and so does this: silently stretching short entropy would produce a salt
+/// that looks random and is not, which is the one failure here with security
+/// consequences.
+fn gensalt_entropy(rbytes: *const c_char, nrbytes: usize, want: usize) -> Result<Vec<u8>, c_int> {
+    if rbytes.is_null() || nrbytes < want {
+        return Err(errno::EINVAL);
+    }
+    // SAFETY: the caller's contract is that `rbytes` addresses `nrbytes` bytes,
+    // and `want <= nrbytes` was just checked.
+    let bytes = unsafe { core::slice::from_raw_parts(rbytes as *const u8, want) };
+    Ok(bytes.to_vec())
+}
+
 /// Build the salt string into `out`, in libxcrypt format:
 /// `prefix[rounds=N$]base64salt`. The result is NUL-terminated.
 fn build_gensalt(
@@ -9119,11 +9170,41 @@ fn build_gensalt(
     out.clear();
     let p = gensalt_prefix(prefix)?;
     out.extend_from_slice(p);
-    if (p == b"$5$" || p == b"$6$") && count >= 1000 {
+
+    if gensalt_is_bcrypt(p) {
+        // `$2?$` + two zero-padded cost digits + `$` + 22 salt characters.
+        // Measured against libxcrypt: count 0 selects 05, counts 4..=31 are
+        // taken literally, and 3 and 32 both return NULL rather than clamping.
+        let cost = if count == 0 { 5 } else { count };
+        let cost = u32::try_from(cost).map_err(|_| errno::EINVAL)?;
+        if !frankenlibc_core::crypt::bcrypt::COST_RANGE.contains(&cost) {
+            return Err(errno::EINVAL);
+        }
+        let entropy = gensalt_entropy(rbytes, nrbytes, 16)?;
         use std::io::Write;
-        let _ = write!(out, "rounds={count}$");
+        let _ = write!(out, "{cost:02}$");
+        out.extend_from_slice(frankenlibc_core::crypt::bcrypt::encode_salt(&entropy).as_bytes());
+    } else if p == b"$7$" {
+        // `$7$` + one N_log2 character + five r + five p, then the salt with no
+        // separator. Measured: count 0 selects N_log2 14, and each count step
+        // moves the character one place, i.e. N_log2 = count + 7.
+        let n_log2 = if count == 0 { 14 } else { count + 7 };
+        if n_log2 > 63 {
+            return Err(errno::EINVAL);
+        }
+        let chars = gensalt_scrypt_salt_chars(nrbytes)?;
+        out.push(CRYPT_B64_ALPHABET[n_log2 as usize]);
+        // r = 32, p = 1, little-endian, five characters each — the defaults
+        // libxcrypt emits for every $7$ setting observed.
+        out.extend_from_slice(b"U..../....");
+        gensalt_encode_bytes(rbytes, nrbytes, chars, out);
+    } else {
+        if (p == b"$5$" || p == b"$6$") && count >= 1000 {
+            use std::io::Write;
+            let _ = write!(out, "rounds={count}$");
+        }
+        gensalt_encode_bytes(rbytes, nrbytes, gensalt_salt_chars(p), out);
     }
-    gensalt_encode_bytes(rbytes, nrbytes, gensalt_salt_chars(p), out);
     if out.len() + 1 > CRYPT_GENSALT_OUTPUT_SIZE {
         return Err(errno::ERANGE);
     }
