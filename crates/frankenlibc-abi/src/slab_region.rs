@@ -1,6 +1,44 @@
 //! Address-derived slab ownership: the O(1) test that has to be cheap before the
 //! rest of the design is worth building (bd-e0y02p).
 //!
+//! ## READ THIS FIRST: the design this serves may already be shipped
+//!
+//! After writing the ownership test I read the allocator properly and found that
+//! FrankenLibC ALREADY HAS an address-derived segment allocator, which is
+//! substantially the design bd-e0y02p proposes:
+//!
+//! * `SegmentMemoryHeader` sits at a segment base with `magic`, `class_index`,
+//!   `class_size` and `slot_count`, and its page is mprotected read-only before
+//!   the ownership bit is published;
+//! * `SegmentLocalState` gives each thread `[SegmentLocalClass; NUM_SIZE_CLASSES]`
+//!   with an active segment, a bump pointer and a magazine — a per-thread free
+//!   list;
+//! * `malloc` calls `strict_small_or_host_allocate`, which tries
+//!   `segment_allocate` FIRST and, when it succeeds, records binned stats and
+//!   **does not call `fallback_insert_sized_for_slot` at all** — so the arena
+//!   insert, the size index and the global spinlock are already skipped on that
+//!   path;
+//! * `free` recovers ownership through `segment_owned_index`, an arena-base plus
+//!   bitmap load, and `MAX_SMALL_SIZE` is 32 KiB so all four probe sizes
+//!   (16/64/256/1024) are eligible.
+//!
+//! The bead's proposal is therefore already built, and the measured ~133 ns of
+//! fixed overhead persists **anyway** — which is its own second falsification
+//! criterion: "if removing the arena insert, the size index and the lock leaves
+//! the per-call cost near 142 ns then the cost is elsewhere and this design is
+//! refuted regardless of how elegant it is."
+//!
+//! **So this module is contingent, not needed.** It is worth pursuing only if a
+//! measurement shows `segment_allocate` is NOT actually being hit in the
+//! configuration where 133 ns was measured — in which case the fallback path with
+//! its arena insert really is running and an ownership test matters. If segments
+//! ARE being hit, delete this file: an unwired second ownership mechanism in an
+//! allocator is a liability, and a duplicate that survives on the strength of its
+//! name is exactly how this project lost an f128 engine for six weeks.
+//!
+//! Kept rather than reverted because that fact is unmeasured and the freeze
+//! forbids measuring it. The decision belongs to the first probe run, not to me.
+//!
 //! ## Why this module exists on its own
 //!
 //! The slab design replaces three per-`malloc` costs — an arena hash insert, a
