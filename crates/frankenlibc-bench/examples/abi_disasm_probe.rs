@@ -83,14 +83,20 @@ fn shared_object() -> String {
 /// test and was counted as NOT a call into core. That is the wrong way to be
 /// wrong: an indirect call is precisely the interposable, non-inlinable case
 /// this probe exists to find, so it must be named, not discarded.
-fn resolve_call_target(line: &str, got: &BTreeMap<u64, String>) -> String {
+fn resolve_call_target(
+    line: &str,
+    got: &BTreeMap<u64, String>,
+    sections: &[(String, u64, u64)],
+) -> String {
     if let Some(comment) = line.split('#').nth(1) {
+        // fall through to slot resolution below
         let slot = comment.trim().trim_start_matches("0x");
         let slot = slot.split_whitespace().next().unwrap_or_default();
         if let Ok(address) = u64::from_str_radix(slot, 16) {
+            let section = section_of(sections, address);
             return match got.get(&address) {
-                Some(symbol) => format!("GOT:{symbol}"),
-                None => format!("GOT:unresolved@{address:#x}"),
+                Some(symbol) => format!("[{section}]{symbol}"),
+                None => format!("[{section}]unresolved@{address:#x}"),
             };
         }
     }
@@ -109,6 +115,67 @@ fn resolve_call_target(line: &str, got: &BTreeMap<u64, String>) -> String {
 ///
 /// Used to name an address that no relocation names -- specifically an ifunc
 /// resolver, which `objdump -R` reports only as `*ABS*+0x<addr>`.
+/// The set of symbols in `.dynsym` -- i.e. the ones that are INTERPOSABLE.
+///
+/// This is the discriminating fact for the inlining question. A call to a
+/// symbol another object could replace at load time must stay an indirect call
+/// through the GOT, and LLVM may not inline through it, no matter what
+/// `#[inline]` the callee carries. So "is this core symbol exported?" and "why
+/// did #[inline] change nothing?" are the same question.
+/// Section headers as `(name, address, size)`, for locating a slot address.
+///
+/// Which section a call's target slot lives in names the MECHANISM. `.got` is
+/// the linker's own global offset table -- a codegen/relocation decision.
+/// `.data.rel.ro` is an ordinary initialised static holding a function pointer
+/// -- i.e. a dispatch table the source wrote on purpose. Same instruction, two
+/// different explanations, and only the section tells them apart.
+fn sections(object: &str) -> Vec<(String, u64, u64)> {
+    let Ok(out) = Command::new("objdump").args(["-h", object]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let _index: u32 = fields.next()?.parse().ok()?;
+            let name = fields.next()?.to_owned();
+            let size = u64::from_str_radix(fields.next()?, 16).ok()?;
+            let address = u64::from_str_radix(fields.next()?, 16).ok()?;
+            Some((name, address, size))
+        })
+        .collect()
+}
+
+/// Every section whose address range covers `address`, joined -- NOT the first.
+///
+/// `.tbss` is allocated but occupies no file space, so its address range
+/// OVERLAPS the section that follows it. A first-match scan therefore reports
+/// `.tbss` for slots that cannot possibly live there (a thread-local BSS
+/// section cannot hold a load-time-relocated call slot), which is what the
+/// first version of this did for every slot in every symbol. Joining all
+/// matches keeps the overlap visible instead of resolving it by accident.
+fn section_of(sections: &[(String, u64, u64)], address: u64) -> String {
+    let matches: Vec<&str> = sections
+        .iter()
+        .filter(|(_, start, size)| address >= *start && address < start + size)
+        .map(|(name, _, _)| name.as_str())
+        .collect();
+    if matches.is_empty() {
+        return "?".to_owned();
+    }
+    matches.join("|")
+}
+
+fn dynamic_symbols(object: &str) -> std::collections::BTreeSet<String> {
+    let Ok(out) = Command::new("nm").args(["-D", "--defined-only", object]).output() else {
+        return Default::default();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(2).map(str::to_owned))
+        .collect()
+}
+
 fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
     let Ok(out) = Command::new("nm").args(["-S", "--defined-only", object]).output() else {
         return Vec::new();
@@ -278,10 +345,13 @@ fn main() {
             (slot, resolved.unwrap_or_else(|| format!("{kind}:{target}")))
         })
         .collect();
+    let section_headers = sections(&object);
+    let exported = dynamic_symbols(&object);
     println!(
-        "DISASM_RELOCATIONS slots={} symbols={}",
+        "DISASM_RELOCATIONS slots={} symbols={} dynamic_symbols={}",
         got.len(),
-        table.len()
+        table.len(),
+        exported.len()
     );
 
     for symbol in symbols {
@@ -324,12 +394,21 @@ fn main() {
         let calls: Vec<String> = body
             .iter()
             .filter(|line| line.contains("\tcall"))
-            .map(|line| resolve_call_target(line, &got))
+            .map(|line| resolve_call_target(line, &got, &section_headers))
             .collect();
 
         let core_calls = calls
             .iter()
             .filter(|target| target.contains("frankenlibc_core"))
+            .count();
+
+        // Of the core callees reached indirectly, how many are exported? A
+        // nonzero count here IS the reason the call could not be direct.
+        let interposable_core_calls = calls
+            .iter()
+            .filter(|target| target.starts_with('[') && target.contains("frankenlibc_core"))
+            .filter_map(|target| target.rsplit(':').next())
+            .filter(|name| exported.contains(*name))
             .count();
 
         // Counted separately because an indirect call is a different cost and a
@@ -338,13 +417,14 @@ fn main() {
         // the interposed-symbol recursion class.
         let indirect_calls = calls
             .iter()
-            .filter(|target| target.starts_with("GOT:"))
+            .filter(|target| target.starts_with('['))
             .count();
 
         println!(
             "DISASM_SYMBOL symbol={symbol} addr={address:#x} size={size} \
              instructions={instructions} calls={} calls_into_core={core_calls} \
-             indirect_calls={indirect_calls} targets={:?}",
+             indirect_calls={indirect_calls} interposable_core_calls={interposable_core_calls} \
+             targets={:?}",
             calls.len(),
             calls
         );
