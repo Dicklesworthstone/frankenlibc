@@ -31953,3 +31953,45 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `libc.so.6 6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
 - **VERDICT: NO SOURCE CHANGE.** Three more D1 claims carry an incumbent ratio, and the
   README-exposed one is a loss.
+
+## 2026-08-18 — CERTIFIED LOSSES: `thrd_current` 1.125x, `sinhf` 1.794x, `coshf` 1.765x — and rank 8 was only unconverted because of a harness race (D1 ranks 8, 11)
+
+- **RANK 8 WAS NEVER MEASURED BECAUSE THE HARNESS ABORTED ITSELF.** `thrd_current`'s family came back
+  unconverted in the previous run with `THREADS_OBSERVED phase=pre_guard count=2` and no verdict at
+  all. The cause was in the harness, not in FrankenLibC: that family's conformance MUST spawn a
+  second thread — "each thread gets a distinct stable token" cannot be checked with one — and
+  `JoinHandle::join` guarantees the thread ran to completion, NOT that the kernel removed its
+  `/proc/self/task` entry, which lingers during teardown. It is the only family that reads the task
+  count with a reap in flight, and it read 2 immediately after the join and 1 again at the guard, so
+  the stability assert between them fired. Fixed in 9e5c2b930 by polling until two consecutive reads
+  agree; the assert is not weakened, because a thread that genuinely stays alive is counted on every
+  read and still trips it. This run reports `count=1` and produces a verdict.
+- **`thrd_current`, DECIDABLE, 0 wins of 1.** `current_identity` 1.913 ns against 1.698 =
+  **1.125464**, CI [1.124897, 1.125885], A/A null 1.000014 CI [0.999187, 1.000437]. L666 claims the
+  identity-cache path is force-inlined; what remains is 12.5% slower than glibc's, on a call that
+  costs under two nanoseconds either way.
+- **`sinhf` / `coshf`, DECIDABLE, 0 wins of 2.** `sinhf_mid_sweep` 13.261 / 7.391 = **1.794194**, CI
+  [1.791778, 1.795499], A/A null 1.000675; `coshf_mid_sweep` 12.976 / 7.353 = **1.764712**, CI
+  [1.762116, 1.765965], A/A null 0.999698. L10661 is about codegen coupling between the two; both
+  are close to 1.78x and their ratios sit within 2% of each other, which is consistent with a shared
+  cost rather than two independent ones. That is an observation about the pair, not a mechanism —
+  nothing here identifies what the shared cost IS.
+- **CONTRACT.** Host glibc linked directly and proven uninterposed, FrankenLibC by explicit `dlopen`,
+  arms distinct in address and serving object, conformance before timing for both families. All three
+  rows clear twice their null half-width with both nulls holding. Worker **ovh-a**
+  (`hostname=fixmydocuments`), per-family `loadavg 4.40,5.82,5.83` and `5.29,6.22,6.01`, quiet gate
+  clear (busy 0.040 and 0.010 against a 0.200 ceiling), `cpu_mhz_min=1754.3`, 8 pinned cores, 36
+  retained samples. Bench ELF and FL object self-reported in-process as
+  `sha256=171f87ef9de31ab4c780fe2baefd0d2e3cdee4065dadefb2fe05ef1f05ab77b9` and
+  `sha256=0dd2f2aa89352ebb942aa0532218c4d28198a34dd1df52567492db9cf01f4acd`; incumbents `libc.so.6
+  6791cc9b...` and `libm.so.6 ff06daa4...`. Orchestrating host loadavg 6.58, CPU idle 90% (vmstat),
+  `/` at 127G.
+- **THE QUEUE IS NOW 11 OF 14.** Converted: ranks 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12. Outstanding:
+  rank 10 (byte-level IPv4 hosts validation, L1516), rank 13 (reverse-lookup IPv4 text formatter,
+  L18132), rank 14 (`wcsrtombs` count SIMD, L19789). Of the eleven, exactly ONE is a win on the code
+  as it stood (`getauxval`), one became a win after a lever (`nl_langinfo`), two are parity
+  (`fpclassify`, `fpclassifyf`), and seven are losses. The audit's headline — that ZERO of 246 held
+  claims carried a machine-checkable incumbent ratio — is now false for eleven of them, and the
+  distribution is the answer to the question it asked.
+- **VERDICT: NO SOURCE CHANGE** to FrankenLibC. The only code change is the harness race fix, without
+  which rank 8 could not be measured at all.
