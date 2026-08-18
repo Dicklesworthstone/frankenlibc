@@ -37,6 +37,14 @@ pub struct ParseStats {
 pub fn parse_group_line(line: &[u8]) -> Option<Group> {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     let line = line.strip_suffix(b"\r").unwrap_or(line);
+    // Leading blanks are skipped before anything else, the comment test
+    // included — same rule as /etc/passwd, measured against host fgetgrent:
+    //     "  g:x:7:a" -> name "g";  "   # c" -> skipped;  "  " -> blank.
+    let leading = line
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .unwrap_or(line.len());
+    let line = &line[leading..];
     if line.is_empty() || line.starts_with(b"#") {
         return None;
     }
@@ -53,9 +61,9 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
 
     let gid = parse_u32_decimal(gid_field)?;
 
-    if name.is_empty() {
-        return None;
-    }
+    // An empty group name is accepted: host fgetgrent returns ":x:7:a" with
+    // gr_name "". Rejecting it was fl's own rule and dropped a line glibc
+    // yields. Malformed lines are still caught by the gid parse.
 
     // glibc drops empty member tokens (a member name is never ""), so a trailing
     // / leading / doubled comma never produces an empty entry.
@@ -84,6 +92,14 @@ fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
         } else {
             break;
         }
+    }
+    // A leading '+' is accepted, exactly as strtoul does. glibc's fgetgrent
+    // reads "g:x:+7:a" as gid 7; without this the whole line was dropped. The
+    // /etc/passwd copy of this helper (core::pwd::parse_u32_decimal) already
+    // stripped the sign — the two drifted apart, and only the passwd side was
+    // right.
+    if let [b'+', rest @ ..] = s {
+        s = rest;
     }
     if s.is_empty() {
         return None;

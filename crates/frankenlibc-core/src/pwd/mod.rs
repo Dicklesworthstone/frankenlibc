@@ -58,6 +58,17 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
     // Skip comments and blank lines
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     let line = line.strip_suffix(b"\r").unwrap_or(line);
+    // glibc skips leading blanks BEFORE anything else, including before the
+    // comment test — measured against host fgetpwent over an fmemopen'd line:
+    //     "  u:x:1:1:g:d:s"  -> name "u", not "  u"
+    //     "\tu:x:1:1:g:d:s"  -> name "u"
+    //     "   # comment"     -> skipped, so the '#' test happens after
+    //     "  " and "\t"      -> skipped as blank
+    let leading = line
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .unwrap_or(line.len());
+    let line = &line[leading..];
     if line.is_empty() || line.starts_with(b"#") {
         return None;
     }
@@ -74,10 +85,12 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
     let uid = parse_u32_decimal(fields.next()?)?;
     let gid = parse_u32_decimal(fields.next()?)?;
 
-    // Name must be non-empty
-    if name.is_empty() {
-        return None;
-    }
+    // An EMPTY name is accepted, not rejected. glibc's fgetpwent returns
+    // ":x:1:1:g:d:s" as a valid entry whose pw_name is "" — verified against the
+    // host. The previous "name must be non-empty" rule was fl's own invention
+    // and dropped a line glibc yields. Genuinely malformed lines are still
+    // rejected by the uid/gid parse: ":::0:0::" has an empty uid field and is
+    // refused by both.
 
     let gecos = fields.next().unwrap_or(b"");
     let dir = fields.next().unwrap_or(b"");
