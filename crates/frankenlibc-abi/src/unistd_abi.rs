@@ -9230,7 +9230,7 @@ fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<V
 /// - `$6$salt$` — SHA-512 (default on modern Linux)
 /// - `$5$salt$` — SHA-256
 /// - `$1$salt$` — MD5 (deprecated but supported for compatibility)
-/// - 2-char salt — Traditional DES (returns error; DES is obsolete)
+/// - 2-char salt — Traditional DES (native; the incumbent still hashes these)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
     if key.is_null() || salt.is_null() {
@@ -9276,6 +9276,25 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         // returns None for a variant it does not accept, which lands on the
         // same failure token either way.
         crypt_bcrypt(&key_bytes, &salt_bytes)
+    } else if des_setting(&salt_bytes) {
+        // Traditional DES, the two-character-salt scheme. This arm previously
+        // did not exist: every such setting fell through to host delegation,
+        // and the doc above claimed DES was obsolete and unsupported. The
+        // incumbent still hashes them — libcrypt.so.1 on glibc 2.42 answers
+        // `abJnggxhB/yWI` for ("password", "ab") — so an `/etc/shadow` written
+        // before the MD5 era was verifiable only where libxcrypt happened to be
+        // dlsym-able, and returned the failure token everywhere else. That is
+        // the same silent-unverifiable-password hole the bcrypt and $7$ arms
+        // were added to close.
+        //
+        // The guard claims the setting on the SALT CHARACTERS ALONE, so fl owns
+        // the rejection too: a setting like "ab:" is refused here rather than
+        // asked about, because des_crypt implements the incumbent's full
+        // acceptance rule and delegating a case we fully understand would make
+        // the answer depend on whether libxcrypt loaded. Settings fl does not
+        // claim — `_`-prefixed BSDI extended DES, `$3$` NTHASH — still fall
+        // through to the host arm below.
+        crypt_des(&key_bytes, &salt_bytes)
     } else {
         let Some(hash_bytes) = crypt_extended_with_host(key, salt) else {
             return crypt_failure_token(&salt_bytes);
@@ -12965,6 +12984,24 @@ fn crypt_bcrypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 
 fn crypt_scrypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     frankenlibc_core::crypt::scrypt_crypt::scrypt_crypt(key, salt_bytes)
+}
+
+/// Does this setting belong to traditional DES?
+///
+/// The test is exactly the first two bytes being crypt base-64 digits, which is
+/// what makes the classification total: `$`-prefixed schemes and `_`-prefixed
+/// BSDI extended DES both fail it, and every setting that passes it is one
+/// `des_crypt` can answer completely, accept or reject.
+fn des_setting(salt_bytes: &[u8]) -> bool {
+    salt_bytes.len() >= 2
+        && salt_bytes[..2]
+            .iter()
+            .copied()
+            .all(|byte| matches!(byte, b'.' | b'/' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z'))
+}
+
+fn crypt_des(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
+    frankenlibc_core::crypt::des::des_crypt(key, salt_bytes)
 }
 
 // ---------------------------------------------------------------------------
