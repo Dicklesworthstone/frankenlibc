@@ -5023,6 +5023,7 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
     Some(unsafe { dst.add(copied_len.saturating_sub(1)) })
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
     match unsafe { strcpy_core(dst, src) } {
         Some(_) => dst,
@@ -5218,6 +5219,7 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
     Some(copy_len)
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
     match unsafe { strncpy_core(dst, src, n) } {
         Some(_) => dst,
@@ -5681,6 +5683,7 @@ unsafe fn strchr_locate(s: *const c_char, c: c_int) -> Option<(*mut c_char, bool
     Some((located, found))
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
     match unsafe { strchr_locate(s, c) } {
         Some((located, true)) => located,

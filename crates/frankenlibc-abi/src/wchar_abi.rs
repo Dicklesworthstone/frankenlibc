@@ -1723,6 +1723,7 @@ unsafe fn wcsstr_fused(haystack: *const u32, needle: *const u32, needle_len: usi
     }
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mut u32 {
     if haystack.is_null() {
         return std::ptr::null_mut();
