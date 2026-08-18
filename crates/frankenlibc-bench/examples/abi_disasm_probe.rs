@@ -297,12 +297,25 @@ fn main() {
     let extra_rustflags: Option<&str> = args
         .iter()
         .find_map(|arg| arg.strip_prefix("--rustflags="));
+
+    // `--env=KEY=VALUE` (repeatable) sets an environment variable for the inner
+    // cargo build. Needed because some questions cannot be asked through
+    // RUSTFLAGS at all: `-Clto=thin` there fails every dependency with
+    // "options `-C embed-bitcode=no` and `-C lto` are incompatible", since cargo
+    // passes embed-bitcode=no to deps whenever the PROFILE has LTO off. LTO is a
+    // profile setting, so it has to arrive as CARGO_PROFILE_RELEASE_LTO=thin and
+    // let cargo keep the two flags consistent.
+    let extra_env: Vec<(&str, &str)> = args
+        .iter()
+        .filter_map(|arg| arg.strip_prefix("--env="))
+        .filter_map(|pair| pair.split_once('='))
+        .collect();
     let symbols: Vec<&str> = if args.is_empty() {
         DEFAULT_SYMBOLS.to_vec()
     } else {
         args.iter()
             .map(String::as_str)
-            .filter(|arg| !arg.starts_with("--rustflags="))
+            .filter(|arg| !arg.starts_with("--rustflags=") && !arg.starts_with("--env="))
             .collect()
     };
 
@@ -327,6 +340,10 @@ fn main() {
         let flags = format!("-Z threads=4 -Ctarget-feature=+avx2,+fma {extra}");
         println!("DISASM_RUSTFLAGS value={flags:?}");
         command.env("RUSTFLAGS", flags);
+    }
+    for (key, value) in &extra_env {
+        println!("DISASM_ENV {key}={value}");
+        command.env(key, value);
     }
     let build = command.status().expect("build the FrankenLibC cdylib");
     assert!(build.success(), "cdylib build failed");
