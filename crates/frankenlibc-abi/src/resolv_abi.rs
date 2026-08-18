@@ -5932,11 +5932,70 @@ unsafe fn format_rdata(
             unsafe { format_name_rdata(msg, msglen, rdata.add(2), out) }
         }
         16 => format_txt_rdata(slice, out),
+        _ if rdata_embeds_a_domain_name(ty) => {
+            // A type whose presentation format CONTAINS a domain name, but for
+            // which fl has no specific arm. Refuse rather than fall back to the
+            // generic form — see `rdata_embeds_a_domain_name` for why refusing
+            // is the measured behaviour.
+            Err(())
+        }
         _ => {
             format_generic_rdata(slice, ty, out);
             Ok(())
         }
     }
+}
+
+/// Does this RR type's presentation format embed a domain name?
+///
+/// ## This is the real discriminator, and it is NOT "does glibc know the type"
+///
+/// bd-9kuafg was filed saying the fix needs "glibc's known-type set", on the
+/// theory that a known type with unparseable rdata is refused while an unknown
+/// one renders generically. Probed against live `libresolv.so.2` — feed every
+/// type 1..=299 a valid message and a deliberately malformed 3-byte rdata, and
+/// record which refuse:
+///
+/// ```text
+///   REFUSED: 2 5 6 7 8 9 12 14 15 17 18 21 26 39 249 250
+///   GENERIC: everything else, INCLUDING A(1), AAAA(28) and TXT(16)
+/// ```
+///
+/// A, AAAA and TXT are types glibc plainly knows — it has presentation
+/// formatters for all three — and it still renders them generically when the
+/// rdata does not fit. So knownness is not what decides it. Every one of the
+/// sixteen refusing types is a type whose rdata contains an EMBEDDED DOMAIN
+/// NAME: NS, CNAME, SOA, MB, MG, MR, PTR, MINFO, MX, RP, AFSDB, RT, PX, DNAME,
+/// TKEY, TSIG. The refusal comes from name decompression failing, which is a
+/// hard error rather than a formatting mismatch, because a truncated name may
+/// point anywhere in the message.
+///
+/// That is a sixteen-entry rule rather than the several-hundred-entry table the
+/// bead anticipated, and it is measured rather than transcribed from an RFC.
+///
+/// fl already has specific arms for NS/CNAME/PTR (2/5/12) and MX (15); this
+/// covers the remaining twelve, which previously fell through to the generic
+/// renderer and reported success where glibc reports failure.
+fn rdata_embeds_a_domain_name(ty: u16) -> bool {
+    matches!(
+        ty,
+        2   // NS
+        | 5   // CNAME
+        | 6   // SOA      — the case bd-9kuafg was filed on
+        | 7   // MB
+        | 8   // MG
+        | 9   // MR
+        | 12  // PTR
+        | 14  // MINFO
+        | 15  // MX
+        | 17  // RP
+        | 18  // AFSDB
+        | 21  // RT
+        | 26  // PX
+        | 39  // DNAME
+        | 249 // TKEY
+        | 250 // TSIG
+    )
 }
 
 /// libresolv `ns_sprintrrf(msg, msglen, name, class, type, ttl,
