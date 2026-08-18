@@ -36,6 +36,13 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 mod dlsym_oracle;
 use dlsym_oracle::host_fn;
 
+unsafe extern "C" {
+    /// NOT available as `libc::tzset` on linux targets — the libc crate only
+    /// declares it under `windows/mod.rs` — so it is declared here, the same
+    /// way conformance_diff_strftime_zone.rs and _strptime_tzname.rs do.
+    fn tzset();
+}
+
 type StrftimeLFn =
     unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm, *mut c_void) -> usize;
 type NewlocaleFn = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
@@ -129,7 +136,7 @@ fn pin_utc() {
     // SAFETY: setenv/tzset with NUL-terminated literals.
     unsafe {
         libc::setenv(c"TZ".as_ptr(), c"UTC".as_ptr(), 1);
-        libc::tzset();
+        tzset();
     }
 }
 
@@ -219,4 +226,152 @@ fn the_locale_handle_does_not_change_c_locale_output() {
              ignores its locale_t, which stops being safe the moment this fails"
         );
     }
+}
+
+/// Dates that make the week/year specifiers disagree with each other.
+///
+/// The fixture above is a single Tuesday in August. That is fine for breadth
+/// across SPECIFIERS and useless for the one thing this family gets wrong:
+/// `%G`/`%V`/`%U`/`%W` diverge from `%Y` in OPPOSITE directions at the two ends
+/// of a year, so a week calculation can be wrong in one direction and look
+/// perfect in the other. A mid-August fixture exercises neither.
+///
+/// Each row carries the reason it is here. Values were measured on live glibc
+/// under `TZ=UTC`, `LC_ALL=C`, and the underlying arithmetic was separately
+/// swept against glibc for all 47848 days from 1970-01-01 to 2100-12-31.
+const EDGE_DATES: &[(i32, i32, i32, i32, i32, i32, &str)] = &[
+    (2021, 1, 1, 0, 0, 0, "Fri 1 Jan: ISO year 2020, week 53"),
+    (2023, 1, 1, 12, 0, 0, "Sun 1 Jan: %U=01 %W=00"),
+    (
+        2024,
+        12,
+        30,
+        23,
+        59,
+        59,
+        "Mon 30 Dec: ISO year 2025, week 01",
+    ),
+    (2019, 12, 31, 0, 0, 0, "Tue 31 Dec: ISO year 2020"),
+    (2016, 2, 29, 12, 0, 0, "leap day"),
+    (2000, 1, 1, 0, 0, 0, "century boundary, %C=20 %y=00"),
+    (1970, 1, 1, 0, 0, 0, "the epoch, a Thursday"),
+    (
+        2024,
+        1,
+        1,
+        0,
+        0,
+        0,
+        "Mon 1 Jan: %U=00 %W=01, the mirror of 2023",
+    ),
+    (2025, 12, 31, 13, 5, 9, "afternoon: %I=01 %l=' 1'"),
+    (2026, 1, 4, 0, 30, 0, "midnight: %I=12 %p=AM %k=' 0'"),
+    (
+        2100,
+        3,
+        1,
+        6,
+        0,
+        0,
+        "NOT a leap year (the /100 rule), so %j=060",
+    ),
+];
+
+/// Only the specifiers whose output actually varies with the date.
+const DATE_SENSITIVE: &[&str] = &[
+    "%G-%V",
+    "%g",
+    "%U",
+    "%W",
+    "%j",
+    "%a %A",
+    "%b %B",
+    "%I%p",
+    "%l",
+    "%k",
+    "%C%y",
+    "%e",
+    "%u %w",
+    "%F",
+    "%D",
+    "%c",
+    "%x",
+    "%X",
+    "%r",
+    "%T",
+    "%Y-%m-%d %H:%M:%S",
+];
+
+#[test]
+fn strftime_l_matches_glibc_at_calendar_edges() {
+    pin_utc();
+    let host = host_strftime_l();
+    // SAFETY: LC_ALL_MASK with a NUL-terminated name and no base locale.
+    let loc = unsafe { host_newlocale()(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()) };
+    assert!(!loc.is_null(), "host newlocale(C) must succeed");
+
+    let mut compared = 0usize;
+    let mut divergences = Vec::new();
+    for &(y, mon, d, h, mi, s, why) in EDGE_DATES {
+        // Normalise tm_wday/tm_yday through the host's own timegm, so the
+        // fixture cannot encode a wrong weekday and hide a real difference.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        tm.tm_year = y - 1900;
+        tm.tm_mon = mon - 1;
+        tm.tm_mday = d;
+        tm.tm_hour = h;
+        tm.tm_min = mi;
+        tm.tm_sec = s;
+        tm.tm_gmtoff = 0;
+        tm.tm_zone = c"UTC".as_ptr();
+        // SAFETY: `tm` is fully initialised above.
+        unsafe { libc::timegm(&mut tm) };
+
+        for spec in DATE_SENSITIVE {
+            let fmt = CString::new(*spec).expect("format has no NUL");
+            let host_out = render(host, &fmt, &tm, loc);
+            assert!(
+                !host_out.is_empty(),
+                "oracle produced nothing for {spec} at {y}-{mon:02}-{d:02}; the comparison \
+                 below would be vacuous"
+            );
+
+            // SAFETY: same arguments through fl's entry point.
+            let mut buf = [0 as c_char; 512];
+            let n = unsafe {
+                frankenlibc_abi::unistd_abi::strftime_l(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    (&tm as *const libc::tm).cast(),
+                    loc,
+                )
+            };
+            // SAFETY: `n` bytes written, in bounds.
+            let fl_out: String =
+                unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, n) }
+                    .iter()
+                    .map(|&b| b as char)
+                    .collect();
+
+            compared += 1;
+            if fl_out != host_out {
+                divergences.push(format!(
+                    "  {y}-{mon:02}-{d:02} [{why}] {spec}: fl {fl_out:?} glibc {host_out:?}"
+                ));
+            }
+        }
+    }
+
+    assert_eq!(
+        compared,
+        EDGE_DATES.len() * DATE_SENSITIVE.len(),
+        "the matrix did not run to completion"
+    );
+    assert!(
+        divergences.is_empty(),
+        "strftime_l calendar-edge divergences ({} of {compared}):\n{}",
+        divergences.len(),
+        divergences.join("\n")
+    );
 }
