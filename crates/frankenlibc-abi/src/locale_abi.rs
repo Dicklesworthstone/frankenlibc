@@ -347,8 +347,81 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 /// Only `CODESET` varies: every other item in the POSIX C locale is identical
 /// between `C` and `C.UTF-8` (both are the unlocalised English set), which is
 /// why the parameter threads through to exactly one arm.
+/// The LC_TIME name block, indexed by `item - ABDAY_1`.
+///
+/// WHY A TABLE AND NOT MORE MATCH ARMS. `nl_item` is `(category << 16) | index`,
+/// so these 38 selectors are a DENSE contiguous run and are exactly the shape the
+/// match below lowers to a jump table — one data-dependent indirect branch. A
+/// pre-registered discriminator (bd-nl-langinfo-contiguous-table-8dlrhi) measured
+/// what that costs: cycling seven selectors drawn from this run costs 3.121x
+/// glibc, while cycling seven selectors of the SAME count and cycle length drawn
+/// from three different categories costs 1.317x, and a single selector costs
+/// 1.182x. Depth in the match was refuted as the cause (0.33% between arms
+/// fourteen positions apart) and so was selector count. What is left is this run,
+/// and an index has no data-dependent branch to mispredict — which is what glibc
+/// does, and why glibc measures flat at 2.34 ns across every one of those cases.
+static LC_TIME_NAMES: [&[u8]; 38] = [
+    // ABDAY_1..=ABDAY_7 — offsets 0..=6
+    b"Sun\0", b"Mon\0", b"Tue\0", b"Wed\0", b"Thu\0", b"Fri\0", b"Sat\0",
+    // DAY_1..=DAY_7 — offsets 7..=13
+    b"Sunday\0",
+    b"Monday\0",
+    b"Tuesday\0",
+    b"Wednesday\0",
+    b"Thursday\0",
+    b"Friday\0",
+    b"Saturday\0",
+    // ABMON_1..=ABMON_12 — offsets 14..=25
+    b"Jan\0", b"Feb\0", b"Mar\0", b"Apr\0", b"May\0", b"Jun\0", b"Jul\0", b"Aug\0", b"Sep\0",
+    b"Oct\0", b"Nov\0", b"Dec\0",
+    // MON_1..=MON_12 — offsets 26..=37
+    b"January\0",
+    b"February\0",
+    b"March\0",
+    b"April\0",
+    b"May\0",
+    b"June\0",
+    b"July\0",
+    b"August\0",
+    b"September\0",
+    b"October\0",
+    b"November\0",
+    b"December\0",
+];
+
+// The table above is indexed by arithmetic on `nl_item`, so a platform whose
+// enumerators are ordered differently would silently return "Wednesday" where
+// "Mar" was asked for. These are compile-time, not tests: the `#[cfg(test)]`
+// blocks in most of this crate never compile (bd-0z7a1y), so a unit test would be
+// no protection at all.
+const _: () = assert!(libc::DAY_1 - libc::ABDAY_1 == 7);
+const _: () = assert!(libc::ABMON_1 - libc::ABDAY_1 == 14);
+const _: () = assert!(libc::MON_1 - libc::ABDAY_1 == 26);
+const _: () = assert!(libc::ABDAY_7 - libc::ABDAY_1 == 6);
+const _: () = assert!(libc::DAY_7 - libc::ABDAY_1 == 13);
+const _: () = assert!(libc::ABMON_12 - libc::ABDAY_1 == 25);
+const _: () = assert!(libc::MON_12 - libc::ABDAY_1 == 37);
+
+/// Branch-free lookup for the dense LC_TIME name block.
+///
+/// Returns `None` for anything outside it, which falls through to the match.
+#[inline]
+fn lc_time_name(item: libc::nl_item) -> Option<&'static [u8]> {
+    let offset = item.wrapping_sub(libc::ABDAY_1);
+    usize::try_from(offset)
+        .ok()
+        .and_then(|offset| LC_TIME_NAMES.get(offset).copied())
+}
+
 #[inline]
 fn langinfo_value_for(charset: Charset, item: libc::nl_item) -> &'static [u8] {
+    // Dense-run fast path FIRST: it is one bounds check and one indexed load, and
+    // it covers 38 of this function's 57 arms. The match below is retained
+    // unchanged as the reference for everything else, and the differential gate
+    // against live glibc covers all 63 supported selectors either way.
+    if let Some(value) = lc_time_name(item) {
+        return value;
+    }
     match item {
         libc::CODESET => codeset_for(charset),
         libc::RADIXCHAR => C_LOCALE_RADIX,
