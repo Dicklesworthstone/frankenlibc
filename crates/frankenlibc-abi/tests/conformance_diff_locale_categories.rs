@@ -203,3 +203,100 @@ fn setting_lc_all_makes_the_report_uniform_again() {
     assert_eq!(fl_out, host_out);
     assert_eq!(fl_out.as_deref(), Some("C.UTF-8"), "uniform again");
 }
+
+// ---------------------------------------------------------------------------
+// The widen path: swprintf %s must honour LC_CTYPE and fail with EILSEQ
+// ---------------------------------------------------------------------------
+
+type SwprintfFn =
+    unsafe extern "C" fn(*mut libc::wchar_t, usize, *const libc::wchar_t, ...) -> c_int;
+
+fn host_swprintf() -> SwprintfFn {
+    // SAFETY: `int swprintf(wchar_t *, size_t, const wchar_t *, ...)`, with fl's
+    // own definition supplied so the oracle refuses to resolve back to fl.
+    unsafe {
+        host_fn(
+            c"swprintf",
+            frankenlibc_abi::wchar_abi::swprintf as *const (),
+        )
+    }
+}
+
+fn wide_format_percent_s() -> Vec<libc::wchar_t> {
+    vec![b'%' as libc::wchar_t, b's' as libc::wchar_t, 0]
+}
+
+/// `(rc, errno, contents)` from one library's `swprintf(buf, 64, L"%s", narrow)`.
+fn run_swprintf(which: Option<SwprintfFn>, narrow: &CStr) -> (c_int, c_int, String) {
+    let fmt = wide_format_percent_s();
+    let mut buf = [0 as libc::wchar_t; 64];
+    // SAFETY: 64-element buffer, NUL-terminated wide format, one narrow arg.
+    unsafe {
+        match which {
+            Some(host) => {
+                *libc::__errno_location() = 0;
+                let rc = host(buf.as_mut_ptr(), 64, fmt.as_ptr(), narrow.as_ptr());
+                let err = *libc::__errno_location();
+                (rc, err, wide_to_string(&buf, rc))
+            }
+            None => {
+                *frankenlibc_abi::errno_abi::__errno_location() = 0;
+                let rc = frankenlibc_abi::wchar_abi::swprintf(
+                    buf.as_mut_ptr(),
+                    64,
+                    fmt.as_ptr(),
+                    narrow.as_ptr(),
+                );
+                let err = *frankenlibc_abi::errno_abi::__errno_location();
+                (rc, err, wide_to_string(&buf, rc))
+            }
+        }
+    }
+}
+
+fn wide_to_string(buf: &[libc::wchar_t], rc: c_int) -> String {
+    if rc <= 0 {
+        return String::new();
+    }
+    buf.iter()
+        .take_while(|&&c| c != 0)
+        .filter_map(|&c| char::from_u32(c as u32))
+        .collect()
+}
+
+/// The widen path used to answer U+FFFD for anything it could not convert,
+/// which SUCCEEDED on two inputs glibc rejects.
+#[test]
+fn swprintf_percent_s_honours_lc_ctype() {
+    let _lock = locale_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = Restore;
+
+    let cases: &[(&CStr, &str)] = &[
+        (c"hello", "ascii"),
+        (c"caf\xc3\xa9", "utf-8 e-acute"),
+        (c"a\x80b", "lone continuation byte"),
+    ];
+
+    for locale in [c"C", c"C.UTF-8"] {
+        // SAFETY: NUL-terminated names.
+        unsafe { host()(LC_ALL, locale.as_ptr()) };
+        let _ = unsafe { fl_setlocale(LC_ALL, locale.as_ptr()) };
+
+        for (narrow, label) in cases {
+            let host_out = run_swprintf(Some(host_swprintf()), narrow);
+            let fl_out = run_swprintf(None, narrow);
+            assert_eq!(
+                (fl_out.0, fl_out.2.clone()),
+                (host_out.0, host_out.2.clone()),
+                "swprintf %s of {label} under {locale:?}"
+            );
+            if host_out.0 < 0 {
+                assert_eq!(
+                    fl_out.1, host_out.1,
+                    "errno for {label} under {locale:?} — a conversion failure \
+                     must be EILSEQ, not a silent replacement character"
+                );
+            }
+        }
+    }
+}

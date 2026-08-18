@@ -1451,7 +1451,10 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
         let cm_before = cm & ((1u64 << p) - 1);
         if cm_before != 0 {
             // A `c` before the NUL in THIS block dominates any earlier block.
-            return (Some(i + (63 - cm_before.leading_zeros() as usize)), i + p + 1);
+            return (
+                Some(i + (63 - cm_before.leading_zeros() as usize)),
+                i + p + 1,
+            );
         }
         // No `c` before the NUL here: the answer is the last `c` in the last remembered nul-free
         // block (later than the ramp `last`), else the head/ramp `last`.
@@ -3102,7 +3105,6 @@ mod codec {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // mblen
 // ---------------------------------------------------------------------------
@@ -3709,8 +3711,7 @@ pub unsafe extern "C" fn mbsrtowcs(
         // byte-for-byte identical to a per-char `mbtowc` widen — was ASCII-only
         // (`mbs_ascii_prefix`), leaving every contiguous non-Latin run scalar
         // (~3.6-4.9x LOSS vs glibc).
-        let (chars, bytes) =
-            codec::mbs_decode_prefix(&mut dst_slice[written..], &src_bytes[i..]);
+        let (chars, bytes) = codec::mbs_decode_prefix(&mut dst_slice[written..], &src_bytes[i..]);
         i += bytes;
         written += chars;
         // Destination-full is checked BEFORE the terminating NUL: when exactly
@@ -4831,18 +4832,35 @@ unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
 // beyond the next call rendering correctly, which the second test covers.
 // Mutation-checked: emitting '?' instead of U+FFFD here fails the first test.
 
-/// Convert narrow (UTF-8) bytes to wide chars, writing into a wchar_t buffer.
-/// Returns the number of wide chars written (not counting NUL).
-/// If n > 0, always NUL-terminates the output.
+/// Convert narrow bytes to wide chars, writing into a `wchar_t` buffer.
 ///
-/// KNOWN GAP, stated rather than left to be discovered: this path is NOT routed
-/// through `codec` and stays UTF-8 under `LC_ALL=C`. It cannot simply be
-/// switched, because `decode_utf8_lossy` has no failure channel — it answers
-/// U+FFFD where the C locale owes the caller `EILSEQ` — and giving it one means
-/// threading an error return out through wide `printf`'s `%s` conversion. That
-/// is a separate change from selecting a locale, so it is recorded on bd-1kxrmz
-/// instead of being half-done here.
-fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> usize {
+/// Returns `Some(written)` (not counting the NUL), or `None` when the ACTIVE
+/// LOCALE cannot convert a byte — which the caller must turn into `-1` with
+/// `EILSEQ`.
+///
+/// ## This used to be lossy, and that was a measured divergence
+///
+/// It decoded UTF-8 unconditionally through `decode_utf8_lossy`, answering
+/// U+FFFD for anything unconvertible. That is wrong in two directions at once,
+/// probed against glibc 2.42 with `swprintf(buf, 64, L"%s", narrow)`:
+///
+/// ```text
+///   LC_ALL=C        "hello"      rc= 5  errno=0      "hello"
+///   LC_ALL=C        "caf\xc3\xa9"  rc=-1  errno=EILSEQ  (fl produced "café")
+///   LC_ALL=C        "a\x80b"      rc=-1  errno=EILSEQ  (fl produced "a\u{fffd}b")
+///   LC_ALL=C.UTF-8  "caf\xc3\xa9"  rc= 4  errno=0      "café"
+///   LC_ALL=C.UTF-8  "a\x80b"      rc=-1  errno=EILSEQ  (fl produced "a\u{fffd}b")
+/// ```
+///
+/// So the old behaviour silently SUCCEEDED on two inputs the incumbent
+/// rejects, and in the C locale it also produced characters the locale cannot
+/// represent. Substituting a replacement character for a conversion failure is
+/// the worst option available: the caller gets a plausible string and no
+/// indication that its data was mangled.
+///
+/// Routing through `codec` fixes both, because `codec` already honours
+/// `LC_CTYPE` — ASCII-only under `C`, RFC 3629 UTF-8 under `C.UTF-8`.
+fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> Option<usize> {
     if dst.is_null() || n == 0 {
         // Just count the wide chars that would be produced.
         return narrow_to_wide_count(narrow);
@@ -4850,27 +4868,66 @@ fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> usize
     let max_chars = n.saturating_sub(1); // Reserve space for NUL.
     let mut written = 0usize;
     let mut i = 0usize;
-    let bytes = narrow;
-    while i < bytes.len() && written < max_chars {
-        let (cp, advance) = decode_utf8(&bytes[i..]);
+    while i < narrow.len() && written < max_chars {
+        // `None` here is a genuine EILSEQ, not "ran out of room": the room
+        // check is the loop condition above.
+        let (cp, advance) = codec::mbtowc(&narrow[i..])?;
+        // SAFETY: `written < max_chars <= n - 1`, so this and the terminator
+        // below are both inside the caller's buffer.
         unsafe { *dst.add(written) = cp as libc::wchar_t };
         written += 1;
         i += advance;
     }
+    // Anything left over must still CONVERT even though it will not be stored,
+    // because glibc reports EILSEQ for a bad byte past the truncation point
+    // rather than silently succeeding on a short buffer.
+    while i < narrow.len() {
+        let (_, advance) = codec::mbtowc(&narrow[i..])?;
+        i += advance;
+    }
+    // SAFETY: `written <= n - 1`.
     unsafe { *dst.add(written) = 0 };
-    written
+    Some(written)
 }
 
-/// Count how many wide chars a narrow byte slice would produce.
-fn narrow_to_wide_count(narrow: &[u8]) -> usize {
+/// Count how many wide chars a narrow byte slice would produce, or `None` if
+/// the active locale cannot convert it.
+fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
     let mut count = 0usize;
     let mut i = 0usize;
     while i < narrow.len() {
-        let (_, advance) = decode_utf8(&narrow[i..]);
+        let (_, advance) = codec::mbtowc(&narrow[i..])?;
         count += 1;
         i += advance;
     }
-    count
+    Some(count)
+}
+
+/// Shared tail for the `swprintf` family: widen `rendered` into `s`, honouring
+/// the buffer bound, and report glibc's return value.
+///
+/// Returns `-1` with `EILSEQ` when the locale cannot convert the rendered
+/// bytes, and `-1` WITHOUT touching errno when the output simply did not fit —
+/// two different failures that share a return value, which is why they are
+/// distinguished here rather than at each call site.
+fn finish_swprintf(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> c_int {
+    let Some(wide_count) = narrow_to_wide_count(rendered) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    };
+    if wide_count >= n {
+        // glibc still writes the TRUNCATED prefix plus a NUL rather than
+        // emptying the buffer.
+        if narrow_to_wide_buf(rendered, s, n).is_none() {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+        }
+        return -1;
+    }
+    if narrow_to_wide_buf(rendered, s, n).is_none() {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    }
+    wide_count as c_int
 }
 
 #[inline]
@@ -4973,9 +5030,12 @@ unsafe fn swprintf_direct_wide_string(
     }
 }
 
-// decode_utf8 moved to frankenlibc_core::string::wchar::decode_utf8_lossy.
 // Use the alias below at the two call sites so they read identically.
-use frankenlibc_core::string::wchar::decode_utf8_lossy as decode_utf8;
+// `decode_utf8_lossy` is deliberately NO LONGER imported here. The widen path
+// was its last caller, and it now goes through `codec`, which honours LC_CTYPE
+// and can FAIL. Re-importing it would make it easy to reintroduce the
+// substitute-U+FFFD-for-EILSEQ behaviour that this file measured as a
+// divergence from glibc in both the C and C.UTF-8 locales.
 
 /// Read a NUL-terminated wide string into a Vec of bytes (each wchar treated as byte value).
 /// Used for swscanf input: converts wide input to narrow for the scanf engine.
@@ -5374,14 +5434,7 @@ pub unsafe extern "C" fn swprintf(
     // glibc still writes the TRUNCATED prefix (min(n-1, produced) wide chars)
     // followed by a NUL, exactly like the success path, rather than emptying the
     // buffer. narrow_to_wide_buf does precisely that (and no-ops for null/n==0).
-    let wide_count = narrow_to_wide_count(&rendered);
-    if wide_count >= n {
-        narrow_to_wide_buf(&rendered, s, n);
-        return -1;
-    }
-
-    narrow_to_wide_buf(&rendered, s, n);
-    wide_count as c_int
+    finish_swprintf(&rendered, s, n)
 }
 
 /// Native `wprintf`: format to stdout.
@@ -5400,7 +5453,13 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // C: wprintf returns the number of WIDE CHARACTERS transmitted, not the byte
     // length of the (UTF-8) rendering — they differ for any multibyte output.
-    let wide_count = narrow_to_wide_count(&rendered);
+    // The COUNT is the wide-character count, so an unconvertible byte is an
+    // EILSEQ even on the stdout path, where the bytes themselves are written
+    // narrow. glibc reports the wide count, not the byte count.
+    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    };
 
     if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
         wide_count as c_int
@@ -5428,7 +5487,12 @@ pub unsafe extern "C" fn fwprintf(
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // fwprintf returns the number of WIDE CHARACTERS written, not bytes.
-    let wide_count = narrow_to_wide_count(&rendered);
+    // Convert BEFORE writing: an unconvertible byte must not be emitted and
+    // then reported as an error, which would leave partial output behind.
+    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    };
 
     // Write each byte through the stdio layer to use stream buffering.
     for &byte in rendered.iter() {
@@ -5461,14 +5525,7 @@ pub unsafe extern "C" fn vswprintf(
 
     // On truncation glibc writes the truncated prefix + NUL (not just an empty
     // buffer) and returns -1; mirror swprintf.
-    let wide_count = narrow_to_wide_count(&rendered);
-    if wide_count >= n {
-        narrow_to_wide_buf(&rendered, s, n);
-        return -1;
-    }
-
-    narrow_to_wide_buf(&rendered, s, n);
-    wide_count as c_int
+    finish_swprintf(&rendered, s, n)
 }
 
 /// Native `vwprintf`: format to stdout from va_list.
@@ -5489,7 +5546,13 @@ pub unsafe extern "C" fn vwprintf(
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // vwprintf returns the number of WIDE CHARACTERS written, not bytes.
-    let wide_count = narrow_to_wide_count(&rendered);
+    // The COUNT is the wide-character count, so an unconvertible byte is an
+    // EILSEQ even on the stdout path, where the bytes themselves are written
+    // narrow. glibc reports the wide count, not the byte count.
+    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    };
 
     if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
         wide_count as c_int
@@ -5517,7 +5580,11 @@ pub unsafe extern "C" fn vfwprintf(
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
-    let wide_count = narrow_to_wide_count(&rendered);
+    // Convert BEFORE writing, as in `fwprintf`.
+    let Some(wide_count) = narrow_to_wide_count(&rendered) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return -1;
+    };
 
     for &byte in rendered.iter() {
         if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
@@ -5642,7 +5709,9 @@ pub unsafe extern "C" fn vswscanf(
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    unsafe { super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap) };
+    unsafe {
+        super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap)
+    };
     result.count
 }
 
@@ -5667,7 +5736,9 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    unsafe { super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap) };
+    unsafe {
+        super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap)
+    };
     result.count
 }
 
@@ -5696,7 +5767,9 @@ pub unsafe extern "C" fn vfwscanf(
     if result.input_failure && result.count == 0 {
         return libc::EOF;
     }
-    unsafe { super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap) };
+    unsafe {
+        super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap)
+    };
     result.count
 }
 
