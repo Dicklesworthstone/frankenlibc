@@ -31580,6 +31580,26 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   was quoted while it was red, and narrowing the selector set to dodge the divergence was explicitly
   refused: it would have converted the claim by weakening the test. The numbers above exist because
   that defect was fixed, not because the test was relaxed.
+- **THIS SATISFIES THE RETRY PREDICATE OF L401 AND SUPERSEDES ITS OPEN QUESTION.** Preflight on this
+  surface is BLOCKED by `docs/NEGATIVE_EVIDENCE.md:401`, the 2026-07-16 row "COMPETITIVE REJECTED /
+  SHIPPED MAINTENANCE: strict `nl_langinfo` reads the immutable C-locale table directly
+  (`bd-ak6fvz`)". I did not notice that before writing this row, and it is adjudicated here rather
+  than left implicit. That row kept the change as a FrankenLibC-before/after self-speedup, explicitly
+  declined to call it competitive, reported its weekday and month panels UNDECIDABLE rather than
+  losses, and set the predicate: *"Retry only after a pre-registered harness or booking supplies
+  equal positional-order cells and two consecutive calibration passes whose FL/FL and glibc/glibc
+  medians all satisfy ±2%."*
+  Each clause is met. The harness was pre-registered before any timing
+  (bd-d1-convert-queue-head-pjavyk, including its expectations). Positional-order cells are equal by
+  the balanced square. Two consecutive passes on two different FrankenLibC artifacts both returned
+  DECIDABLE 0-of-4 with headlines agreeing to 0.4% (2.329 then 2.319995), and the second pass's eight
+  null medians are all within **0.2%** of 1.0, an order of magnitude inside the ±2% asked for:
+  codeset 1.000545 / 0.999826, weekday 0.999830 / 1.000168, month 0.998311 / 1.001406, full-table
+  0.998208 / 1.000938 (FL/FL then glibc/glibc). The two panels L401 could not decide — its
+  glibc/glibc nulls were 1.034796 and 1.027497, outside tolerance — are decided here and are LOSSES.
+  So the competitive question L401 deferred now has an answer, and the answer is 2.32x slower.
+  The maintenance self-speedup that row banked is untouched by this; a self-speedup and an incumbent
+  loss are not in conflict.
 - **`memrchr`, DECIDABLE, 0 wins of 8.** Headline `len512_absent` (the claimed 512-byte fold tier)
   6.904ns against 4.648ns = **1.483689**, CI [1.481550, 1.489271], A/A null 1.000305 CI
   [0.999137, 1.001337]. By size: `len64` 2.267534 and 2.270348; `len512` 1.483689 and 1.485962;
