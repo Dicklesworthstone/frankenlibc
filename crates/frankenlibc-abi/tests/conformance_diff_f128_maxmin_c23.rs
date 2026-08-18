@@ -8,13 +8,71 @@
 use frankenlibc_abi::math_abi as ma;
 use std::ffi::c_int;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+// These arms are resolved through dlsym rather than declared at link time.
+// oracle_arm_provenance_math_screen measures each as CAPTURED: compiler_builtins
+// supplies Rust's f128 math non-weak, so a link-time reference binds there and
+// the "glibc" arm would be compiler_builtins. The other arms in this file stay
+// link-time because the same screen measures them CLEAN, and it fails loudly if
+// that changes. (bd-v0388t)
+
+/// Host `fmaximumf128` via `dlsym`; fl's own definition is handed to the oracle so
+/// it refuses to resolve back to fl and compare it against itself.
+///
+/// Declared `extern "C"` because these gates store the arms in tables typed
+/// `unsafe extern "C" fn`; a plain Rust `unsafe fn` has a different type and
+/// will not coerce.
+unsafe extern "C" fn fmaximumf128(x: f128, y: f128) -> f128 {
+    // SAFETY: prototype matches the C declaration this replaces.
+    let f: unsafe extern "C" fn(f128, f128) -> f128 =
+        unsafe { dlsym_oracle::host_fn(c"fmaximumf128", ma::fmaximumf128 as *const ()) };
+    unsafe { f(x, y) }
+}
+
+/// Host `fminimumf128` via `dlsym`; fl's own definition is handed to the oracle so
+/// it refuses to resolve back to fl and compare it against itself.
+///
+/// Declared `extern "C"` because these gates store the arms in tables typed
+/// `unsafe extern "C" fn`; a plain Rust `unsafe fn` has a different type and
+/// will not coerce.
+unsafe extern "C" fn fminimumf128(x: f128, y: f128) -> f128 {
+    // SAFETY: prototype matches the C declaration this replaces.
+    let f: unsafe extern "C" fn(f128, f128) -> f128 =
+        unsafe { dlsym_oracle::host_fn(c"fminimumf128", ma::fminimumf128 as *const ()) };
+    unsafe { f(x, y) }
+}
+
+/// Host `fmaximum_numf128` via `dlsym`; fl's own definition is handed to the oracle so
+/// it refuses to resolve back to fl and compare it against itself.
+///
+/// Declared `extern "C"` because these gates store the arms in tables typed
+/// `unsafe extern "C" fn`; a plain Rust `unsafe fn` has a different type and
+/// will not coerce.
+unsafe extern "C" fn fmaximum_numf128(x: f128, y: f128) -> f128 {
+    // SAFETY: prototype matches the C declaration this replaces.
+    let f: unsafe extern "C" fn(f128, f128) -> f128 =
+        unsafe { dlsym_oracle::host_fn(c"fmaximum_numf128", ma::fmaximum_numf128 as *const ()) };
+    unsafe { f(x, y) }
+}
+
+/// Host `fminimum_numf128` via `dlsym`; fl's own definition is handed to the oracle so
+/// it refuses to resolve back to fl and compare it against itself.
+///
+/// Declared `extern "C"` because these gates store the arms in tables typed
+/// `unsafe extern "C" fn`; a plain Rust `unsafe fn` has a different type and
+/// will not coerce.
+unsafe extern "C" fn fminimum_numf128(x: f128, y: f128) -> f128 {
+    // SAFETY: prototype matches the C declaration this replaces.
+    let f: unsafe extern "C" fn(f128, f128) -> f128 =
+        unsafe { dlsym_oracle::host_fn(c"fminimum_numf128", ma::fminimum_numf128 as *const ()) };
+    unsafe { f(x, y) }
+}
+
 unsafe extern "C" {
     fn nextupf128(x: f128) -> f128;
     fn nextdownf128(x: f128) -> f128;
-    fn fmaximumf128(x: f128, y: f128) -> f128;
-    fn fminimumf128(x: f128, y: f128) -> f128;
-    fn fmaximum_numf128(x: f128, y: f128) -> f128;
-    fn fminimum_numf128(x: f128, y: f128) -> f128;
     fn fmaximum_magf128(x: f128, y: f128) -> f128;
     fn fminimum_magf128(x: f128, y: f128) -> f128;
     fn fmaximum_mag_numf128(x: f128, y: f128) -> f128;
