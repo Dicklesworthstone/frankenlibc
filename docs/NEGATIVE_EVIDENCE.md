@@ -31698,3 +31698,44 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   tdelete,fpclassify,fpclassifyf`. Bench ELF `0a81f92a...` / `537ccd6d...`, FL object
   `099406e8...` / `716c1d64...`, incumbent `libc.so.6 6791cc9b...` and `libm.so.6 ff06daa4...`, all
   self-reported in-process.
+
+## 2026-08-18 — RETRACTION: the `tdelete` single-walk claim at L1455 was reverted for correctness on 2026-08-09 and this ledger never recorded it (`bd-87fps4`, `bd-0v1jdb`)
+
+- **WHAT THE LEDGER STILL ASSERTS.** L1455, 2026-07-14, "WIN / SHIPPED: `tdelete` removes the
+  redundant lookup walk (`bd-87fps4`)", reporting that making `delete_rec` the sole walk cut
+  comparator calls from **60,967 to 43,966 (27.9%)** over 2,000 successful deletions, with a
+  same-binary oracle before timing. Nothing in that row is disputed as of the day it was written.
+- **WHAT THE SOURCE DOES TODAY.** `crates/frankenlibc-core/src/search/rb_tree.rs::delete` opens with
+  `if self.find(needle, cmp).is_none() { return None; }` under a doc comment that reads *"The
+  membership pre-check is REQUIRED, not an optimisation."* The walk the row removed is back, and it
+  is back deliberately.
+- **WHEN AND WHY IT CAME BACK.** Commit **a35732373**, 2026-08-09, "fix(search): tdelete of a missing
+  key was dropping nodes (`bd-0v1jdb`)". Sedgewick's left-leaning red-black deletion has a stated
+  PRECONDITION that the key is present: the descent applies `move_red_left`/`move_red_right`
+  unconditionally to manufacture a red node to delete, and its
+  `if needle == h.key && h.right.is_none()` step discards the whole node. Run against an ABSENT key
+  those steps restructure a tree that had nothing to remove and drop nodes.
+  `conformance_diff_tsearch` caught it as an in-order walk missing a contiguous band of keys — 87,
+  89, 103, 111, 123 in random trial 3 — that glibc's `tdelete` still had. `tdelete` on a missing key
+  is an ordinary documented no-op, so any normal caller reaches that path.
+- **SO THE WALK WAS NOT REDUNDANT.** It was load-bearing for the algorithm underneath it. The 27.9%
+  comparator-call reduction was real and so was the defect it introduced; what is wrong is only the
+  ledger's silence about the second half.
+- **THE LEDGER AND THE CHANGELOG BOTH STILL CARRY THE CLAIM.** No row between L1455 and today
+  retracts it, `bd-0v1jdb` appears nowhere in this file, and the audit tables at L26208 and L26294
+  still cite the claim as live in CHANGELOG.md (as L1144). A reader of either document today would
+  conclude FrankenLibC's `tdelete` performs one walk. It performs two.
+- **WHAT IT COSTS NOW, certified.** The D1 conversion measured deployed `tdelete` against live glibc
+  in the same invocation at **3.068046** (tree64, CI [3.054297, 3.081174]) and **2.999717** (tree8192,
+  CI [2.994357, 3.011444]), nulls holding on both. The ratio is FLAT across a 128x range of tree
+  sizes, which is what a per-node cost looks like: two `O(log n)` comparator walks per successful
+  delete plus LLRB rebalancing, against glibc's single classic-RB descent.
+- **WHAT THIS MEANS FOR THE NEXT LEVER, so the same ground is not retried.** "Remove the redundant
+  walk" has now been tried, shipped, and reverted for a correctness defect; it must not be proposed a
+  third time against this algorithm. The remaining lever is the algorithm itself — a deletion that
+  does not carry LLRB's presence precondition, which is what glibc's classic red-black delete is —
+  and that is a structural change, not a micro-optimisation. Anyone attempting it needs
+  `conformance_diff_tsearch`'s absent-key band as a gate before timing, because that is the exact
+  failure mode this family produces.
+- **VERDICT: NO SOURCE CHANGE.** This row corrects the record. The correctness fix stands; the
+  performance claim above it does not, and CHANGELOG.md needs the same correction.
