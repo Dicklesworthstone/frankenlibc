@@ -183,9 +183,51 @@ fn values() -> Vec<f64> {
     ]
 }
 
+/// The host glibc's own version string, via the dlsym'd `gnu_get_libc_version`.
+///
+/// Printed by the byte-comparison tests because this gate's oracle is whatever
+/// glibc the machine happens to carry. A cross-machine difference in that
+/// oracle is a VERSION difference, not a FrankenLibC defect, and without the
+/// version on the record the two are indistinguishable after the fact. Learned
+/// the hard way: a one-off failure of this test on one build worker could not be
+/// attributed afterwards because nothing recorded which glibc it compared
+/// against, and it never reproduced elsewhere.
+fn host_libc_version() -> String {
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        return "unavailable".to_string();
+    }
+    let symbol = unsafe { libc::dlsym(handle, c"gnu_get_libc_version".as_ptr()) };
+    if symbol.is_null() {
+        return "unavailable".to_string();
+    }
+    let get: unsafe extern "C" fn() -> *const c_char = unsafe { std::mem::transmute(symbol) };
+    let raw = unsafe { get() };
+    if raw.is_null() {
+        return "unavailable".to_string();
+    }
+    unsafe { std::ffi::CStr::from_ptr(raw) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// A divergence rendered on ONE line, in hex.
+///
+/// The assertion message used to span several lines, and a filtered capture kept
+/// `panicked at …` while dropping the bytes that followed — so a failure that
+/// never recurred left no evidence of WHAT differed. One line survives any
+/// line-oriented filter, and hex survives bytes that are not printable.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join("")
+}
+
 #[test]
 fn printf_fixed_matches_glibc_on_stdout() {
     let (gprintf, gflush, gstdout) = host_printf();
+    println!(
+        "PRINTF_FIXED_ORACLE host_glibc={} test=printf_fixed_matches_glibc_on_stdout",
+        host_libc_version()
+    );
     let mut compared = 0usize;
     for (fmt, label) in formats() {
         for &value in &values() {
@@ -207,8 +249,12 @@ fn printf_fixed_matches_glibc_on_stdout() {
             assert_eq!(
                 fbytes,
                 gbytes,
-                "{label} of {value:?} [{:#018x}]: stdout bytes differ\n fl   ={:?}\n glibc={:?}",
+                "PRINTF_FIXED_DIVERGENCE format={label} value={value:?} bits={:#018x} \
+                 host_glibc={} fl_hex={} glibc_hex={} fl_text={:?} glibc_text={:?}",
                 value.to_bits(),
+                host_libc_version(),
+                hex(&fbytes),
+                hex(&gbytes),
                 String::from_utf8_lossy(&fbytes),
                 String::from_utf8_lossy(&gbytes)
             );
