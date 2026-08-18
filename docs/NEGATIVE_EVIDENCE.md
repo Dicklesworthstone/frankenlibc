@@ -31995,3 +31995,48 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   distribution is the answer to the question it asked.
 - **VERDICT: NO SOURCE CHANGE** to FrankenLibC. The only code change is the harness race fix, without
   which rank 8 could not be measured at all.
+
+## 2026-08-18 — CAMPAIGN WIN: hosts-backed resolution beats live glibc by 3.8-5.2x — `gethostbyaddr` 0.194x (D1 rank 13) and `getaddrinfo` 0.266x
+
+- **RESULT CLASS: `result_class: campaign-win`.** Deployed-vs-incumbent, host glibc 2.42 linked
+  directly into the timing process, FrankenLibC loaded beside it by explicit `dlopen`. Headline is
+  `gethostbyaddr`, which is D1 rank 13's own symbol.
+  `incumbent_ratio: 0.193711`, `incumbent_bootstrap_median_ci: [0.193389, 0.194204]`.
+  Same-invocation A/A null: `null_median_ratio: 0.999094`, bootstrap median CI
+  [0.998357, 1.000926] — `null_bootstrap_median_ci: [0.998357, 1.000926]`. Effect bootstrap median
+  CI [0.193389, 0.194204].
+  `bench_elf_sha256=8f7fd1742c2ab6f43e03a2b51a71191b242d221431bb1a785422cac118c41600`
+  (self-reported in-process). `legacy_incumbent: host-glibc`,
+  `incumbent_provenance: uninterposed-host-link`, `same_invocation=true`. FL object
+  `sha256=8399e9874450db4ed816c6d0e5ef5683fb38aa6fccf2f7757d29664a48ac20f9`, incumbent `libc.so.6
+  6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`. 36 retained samples.
+- **THE ROWS.** `gethostbyaddr` `loopback_ipv4_hosts_reverse` 1572.546 ns against 8125.236 =
+  **0.193711**, i.e. 5.2x faster, 5000 reps per arm. `getaddrinfo` `host_identity_ipv4_stream`
+  2279.388 against 8584.474 = **0.265973**, CI [0.265454, 0.266372], A/A null 1.001308 CI
+  [0.999056, 1.002936], 3.8x faster, 2000 reps per arm. Both DECIDABLE, 1 win of 1, clearing twice
+  their null half-width with nulls holding. Conformance first: 16 comparisons for `gethostbyaddr`
+  (`127.0.0.1` -> `localhost`, alias and address counts exact), 5 for `getaddrinfo`.
+- **`getaddrinfo` RAN UNDER `--fl-deepbind`, and its family REFUSES to run without it.** The family
+  asserts the flag with the reason "so FrankenLibC's internal resolver and allocator calls model
+  LD_PRELOAD deployment", and my first invocation omitted it and was rejected outright. That is the
+  right default for this surface: a resolver path allocates, and without `RTLD_DEEPBIND` fl's
+  internal `malloc` binds to glibc's, which would measure fl's resolver wearing glibc's allocator.
+  `FL_LOAD_MODE symbol=getaddrinfo deepbind=true models=ld_preload_deployment` is in the run output.
+- **THIS DOES NOT DISCHARGE D1 RANK 10, and saying so is the point.** Rank 10 (L1516, byte-level
+  IPv4 hosts validation) claims a lever inside the `/etc/hosts` LINE PARSER. `nm -D --defined-only`
+  on `libc.so.6` exports ZERO hosts-line-parser symbols — glibc's hosts parsing is internal to NSS
+  and not callable — so there is no incumbent at that granularity and there never will be. The
+  `getaddrinfo` row above measures the whole call, inside which that validator runs at most once per
+  `/etc/hosts` line (nine on this worker) and is a small share of 2279 ns. Quoting it as though it
+  validated the lever would substitute a symbol ratio for a lever claim. Rank 10's honest
+  disposition remains: retitle it MAINTENANCE under the audit's own rule for claims with nothing to
+  convert them into. What this row converts is the SYMBOL `getaddrinfo`, which deserved a ratio on
+  its own account.
+- **CONDITIONS, AND A NOTE ON WHOSE LOAD MATTERS.** Worker **ovh-a**
+  (`hostname=fixmydocuments`), per-family `loadavg 10.35,9.92,8.48` and `6.08,9.20,8.71`, quiet gate
+  clear (busy 0.190 and 0.051 against a 0.200 ceiling), `cpu_mhz_min=1754.3`, 8 pinned cores.
+  An earlier attempt at the identical command was BLOCKED by that gate — "did not obtain 5
+  consecutive clear samples within 300000 ms; last CPUs above 20.0% busy: cpu1=77.8%, cpu3=51.5%" —
+  while the ORCHESTRATING host was quiet at loadavg 7.11 and 88% idle. The two are independent, and
+  it is the worker's that decides whether a row exists. The gate refusing is the system working.
+- **VERDICT: KEEP.** No source change. D1 rank 13 is converted and is a win.
