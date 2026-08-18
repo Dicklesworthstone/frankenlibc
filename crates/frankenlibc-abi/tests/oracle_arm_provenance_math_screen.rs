@@ -104,6 +104,14 @@ macro_rules! declare_math_arms {
 declare_math_arms!(
     acos, acosh, asin, atanh, ceil, cos, cosh, erfc, exp, exp2, exp10, expm1, fabs, floor, ilogb,
     lgamma, log, log10, log1p, log2, logb, sin, sinh, sqrt, tan, tanh, tgamma, y0, y1,
+    // Added because the captured set is exactly what LLVM lowers to a single
+    // instruction and `compiler_builtins` defines non-weak -- roundsd for
+    // ceil/floor, andpd for fabs, sqrtsd for sqrt. `round`, `trunc`, `rint` and
+    // `nearbyint` are ALSO roundsd lowerings and were not in the census, so the
+    // screen could not have seen them captured. `cbrt`, `atan`, `asinh`, `erf`,
+    // `j0` and `j1` are ordinary libm calls added to widen the clean side, so a
+    // capture result is not read off a list stacked with likely positives.
+    round, trunc, rint, nearbyint, cbrt, atan, asinh, erf, j0, j1,
 );
 
 // `inet_net_ntop` / `inet_net_pton` are deliberately ABSENT: they live in
