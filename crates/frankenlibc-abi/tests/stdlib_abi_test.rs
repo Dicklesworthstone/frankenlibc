@@ -16,8 +16,8 @@ use frankenlibc_abi::stdlib_abi::{
     mkostemps, mkstemps, mrand48, nrand48, on_exit, putenv, qecvt, qfcvt, qgcvt, qsort_r, rand,
     random, random_r, reallocarray, reallocf, recallocarray, seed48, seed48_r, setenv, setstate,
     setstate_r, setusershell, srand, srand48, srand48_r, srandom, srandom_r, strpct, strspct,
-    strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system,
-    unsetenv,
+    strtod, strtof, strtoi, strtold_into, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
+    system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -610,14 +610,28 @@ fn reallocarray_overflow_sets_enomem() {
     assert_eq!(err, libc::ENOMEM);
 }
 
+/// `strtold` itself is now a naked shim that returns in ST(0), which Rust has
+/// no type for — so the value is checked through `strtold_into`, which is the
+/// same code path minus the one `fld` instruction that hands the result to a C
+/// caller. The bytes below are what glibc's own `strtold` produced for this
+/// input, read raw out of a `long double`.
 #[test]
 fn strtold_sets_endptr_to_first_unparsed_byte() {
     let mut endptr = ptr::null_mut();
+    let mut out = [0u8; 10];
 
-    // SAFETY: source is a static NUL-terminated C string and `endptr` is writable.
-    let value = unsafe { strtold(c"12.5x".as_ptr(), &mut endptr) };
-    assert!((value - 12.5).abs() < f64::EPSILON);
+    // SAFETY: source is a static NUL-terminated C string, `endptr` is writable,
+    // and `out` is ten writable bytes.
+    unsafe { strtold_into(c"12.5x".as_ptr(), &mut endptr, out.as_mut_ptr()) };
     assert!(!endptr.is_null());
+
+    // 12.5 == 0x4002_c800000000000000: exponent field 0x4002, significand with
+    // the integer bit set. Memory order is significand first, little-endian.
+    assert_eq!(
+        u64::from_le_bytes(out[..8].try_into().unwrap()),
+        0xc800_0000_0000_0000
+    );
+    assert_eq!(u16::from_le_bytes([out[8], out[9]]), 0x4002);
 
     // SAFETY: returned endptr points into the source buffer by contract.
     let offset = unsafe { endptr.offset_from(c"12.5x".as_ptr()) };

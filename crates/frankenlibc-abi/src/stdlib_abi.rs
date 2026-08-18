@@ -3726,10 +3726,101 @@ pub unsafe extern "C" fn recallocarray(
     out
 }
 
-/// `strtold` — convert string to long double (on x86_64, same as f64).
+/// Parse `nptr` under the `strtod` grammar and write the x87 80-bit extended
+/// result to `out` as ten bytes in memory order.
+///
+/// The value leaves through MEMORY rather than through a return value because
+/// Rust has no type for x87 extended. `strtold`'s C caller reads ST(0), and the
+/// naked shim below is what puts it there; this function does everything else.
+/// It is public so that Rust callers — including tests — can reach the value at
+/// all, which they cannot do through the shim.
+///
+/// # Safety
+///
+/// `nptr` must be NUL-terminated or NULL. `endptr`, when non-NULL, must be
+/// writable. `out` must address ten writable bytes.
+pub unsafe extern "C" fn strtold_into(nptr: *const c_char, endptr: *mut *mut c_char, out: *mut u8) {
+    if nptr.is_null() {
+        // SAFETY: the caller guarantees ten writable bytes.
+        unsafe { core::ptr::write_bytes(out, 0, 10) };
+        if !endptr.is_null() {
+            // SAFETY: non-null by the branch, writable by contract.
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        return;
+    }
+    // SAFETY: bounded scan over a NUL-terminated string.
+    let (len, _) = unsafe { scan_c_string(nptr, None) };
+    // SAFETY: `scan_c_string` reports a length inside the readable region.
+    let bytes = unsafe { core::slice::from_raw_parts(nptr as *const u8, len) };
+    let scan = frankenlibc_core::float128::strtold_scan(bytes);
+    // SAFETY: ten writable bytes by contract; `scan.bytes` is exactly ten.
+    unsafe { core::ptr::copy_nonoverlapping(scan.bytes.as_ptr(), out, 10) };
+    if !endptr.is_null() {
+        // A `consumed` of zero is the no-conversion case, and adding zero
+        // restores the caller's original pointer, which is exactly the contract.
+        // SAFETY: `consumed` never exceeds the scanned length.
+        unsafe { *endptr = nptr.add(scan.consumed) as *mut c_char };
+    }
+    if scan.range_error {
+        // SAFETY: errno slot for the calling thread.
+        unsafe { set_abi_errno(errno::ERANGE) };
+    }
+}
+
+/// `strtold` — convert a string to `long double`.
+///
+/// ## Why this is a naked function
+///
+/// On x86-64 SysV a `long double` return lives in **ST(0)**, the x87 register
+/// stack. Rust has no `f80` type and no way to spell that return convention, so
+/// until now this function returned `f64` from `strtod` and never touched the
+/// x87 stack at all — meaning a C caller did not lose precision, it read
+/// whatever happened to be in ST(0) already.
+///
+/// The shim gives the value the compiler cannot: [`strtold_into`] writes ten
+/// bytes to a stack slot, `fld tbyte` loads them into ST(0), and the caller
+/// finds a real `long double` where the ABI says it should be. The instruction
+/// sequence was validated outside the tree with `gcc` and `objdump` before being
+/// written here.
+///
+/// The declared Rust return type is `()` rather than `f64` deliberately: the
+/// value does not live in any register Rust can name, and claiming otherwise
+/// would invite fl's own code to read a garbage XMM0. Rust callers that need the
+/// value should call [`strtold_into`].
+///
+/// `sub rsp, 24` both reserves the ten-byte slot and fixes the stack alignment:
+/// at entry `rsp % 16 == 8`, and `8 - 24 == 0 (mod 16)`, which is what the ABI
+/// requires at the `call`.
+///
+/// # Safety
+///
+/// Same contract as C's `strtold`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn strtold(_nptr: *const c_char, _endptr: *mut *mut c_char) {
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym strtold_into,
+    )
+}
+
+/// `strtold` on targets where `long double` is not x87.
+///
+/// Only x86-64 keeps `long double` in an 80-bit x87 register. On aarch64 it is
+/// IEEE binary128 in a vector register — a different representation with a
+/// different calling convention, and a separate piece of work. The historical
+/// f64 behaviour stays there rather than pretending to be fixed.
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtold(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
-    // SAFETY: ABI contract mirrors strtod and current ABI model treats long double as f64.
+    // SAFETY: ABI contract mirrors strtod.
     unsafe { strtod(nptr, endptr) }
 }
 
@@ -5733,6 +5824,32 @@ pub unsafe extern "C" fn strtof_l(
 
 /// `strtold_l` — locale-aware string to long double.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn strtold_l(
+    _nptr: *const c_char,
+    _endptr: *mut *mut c_char,
+    _locale: *mut c_void,
+) {
+    // The locale argument arrives in RDX and is deliberately overwritten with
+    // the out-buffer pointer: fl implements the C locale only, so `strtold_l`
+    // has always ignored it (the previous body discarded it too). That lets
+    // this reuse `strtold_into` rather than carry a second helper whose only
+    // difference is an unused parameter.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym strtold_into,
+    )
+}
+
+/// See the note on [`strtold`] for why non-x86-64 keeps the historical shape.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe extern "C" fn strtold_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
