@@ -169,10 +169,8 @@ fn f128_fmod_remainder_match_glibc() {
         "f128 divergence count changed (expected 204 known, see bd-v0388t):\n{}",
         mism.join("\n")
     );
-    assert!(
-        true,
-        "f128 fmod/remainder diverged ({}):\n{}",
-        mism.len(),
-        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
-    );
+    // No emptiness assertion here on purpose: the pinned count above IS the
+    // check. An `assert!(true, ..)` sat here briefly and that is a hollow
+    // assertion -- exactly the defect this whole conversion removed -- so it is
+    // gone rather than left looking like a gate.
 }

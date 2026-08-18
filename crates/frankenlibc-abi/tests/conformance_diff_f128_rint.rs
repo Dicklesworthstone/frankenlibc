@@ -167,26 +167,18 @@ fn f128_rint_lround_iseqsig_match_glibc() {
         }
     }
 
-    // PINNED, NOT PASSING. This gate used to compare FrankenLibC against a
-    // link-time arm that `compiler_builtins` had captured, so it never consulted
-    // glibc and was green regardless. Pointing it at the real glibc surfaces
-    // 47 divergences that were there all along:
+    // FULLY CONVERGED. This gate was hollow -- its "glibc" arm was captured by
+    // compiler_builtins -- and pointing it at a real glibc oracle exposed 47
+    // divergences: fl's rintf128 ignored the dynamic rounding mode and returned
+    // -0.0 where glibc returned -1.0 under FE_DOWNWARD. The cause was a
+    // one-word error, `round_f128_nearest` where `round_f128_current_mode` was
+    // meant, defended by a doc comment claiming glibc ignores the mode "here"
+    // and citing a verification that had been run against the captured arm.
     //
-    // under a non-default rounding mode (FE_DOWNWARD here) fl returns -0 where
-    // glibc returns -1.0, so fl's rintf128 is not honouring the mode.
-    //
-    // The count is pinned so the gate is honest about a KNOWN gap while still
-    // failing on anything new -- the alternative was leaving the suite red or
-    // reverting to a hollow arm, and both are worse. Do not raise this number to
-    // make a change pass; the divergences are tracked and are meant to go DOWN.
-    assert_eq!(
-        mism.len(),
-        47,
-        "f128 divergence count changed (expected 47 known, see bd-v0388t):\n{}",
-        mism.join("\n")
-    );
+    // Fixed in math_abi.rs, count 47 -> 0, so this is a plain emptiness
+    // assertion again rather than a pinned known-divergence count.
     assert!(
-        true,
+        mism.is_empty(),
         "f128 rint/lround/iseqsig diverged ({}):\n{}",
         mism.len(),
         mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")

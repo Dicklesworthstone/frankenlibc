@@ -61,10 +61,17 @@ fn f128_unbiased_exp(bits: u128) -> i32 {
     }
 }
 
-/// Round to integral, nearest-even — for `rintf128`. glibc's `__rintf128` rounds
-/// to nearest-even REGARDLESS of the dynamic FP rounding mode (verified: under
-/// FE_DOWNWARD, rintf128(1.5) is still 2.0), unlike nearbyint/lrint/llrint which
-/// do honor the mode. We match that quirk.
+/// Round to integral, nearest-even, regardless of the dynamic rounding mode.
+///
+/// THIS IS NO LONGER USED BY `rintf128`, and the reason is worth keeping. The
+/// doc here used to claim that glibc's `__rintf128` ignores the FP rounding mode
+/// and cited a verification: "under FE_DOWNWARD, rintf128(1.5) is still 2.0".
+/// A real-glibc oracle says otherwise -- under FE_DOWNWARD glibc's rintf128
+/// takes -0.5 to -1.0, i.e. it honours the mode like every other member of the
+/// family. The original check was almost certainly run against the same captured
+/// `compiler_builtins` arm that made conformance_diff_f128_rint hollow
+/// (bd-v0388t): a verification is only as good as the thing it verified against.
+#[allow(dead_code)]
 fn round_f128_nearest(x: f128) -> f128 {
     x.round_ties_even()
 }
@@ -8010,7 +8017,10 @@ pub unsafe extern "C" fn rintf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rintf128(x: f128) -> f128 {
-    round_f128_nearest(x)
+    // Honours the dynamic rounding mode, like nearbyint/lrint/llrint and like
+    // glibc -- see the note on `round_f128_nearest` for the measurement that
+    // overturned the previous "glibc ignores the mode here" claim.
+    round_f128_current_mode(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundf32(x: f32) -> f32 {
