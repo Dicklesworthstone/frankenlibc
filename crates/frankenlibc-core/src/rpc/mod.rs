@@ -37,8 +37,11 @@ pub fn parse_rpc_line(line: &[u8]) -> Option<RpcEntry> {
         .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
-    let num_str = core::str::from_utf8(fields.next()?).ok()?;
-    let number: i32 = num_str.parse().ok()?;
+    // Rust's `str::parse::<i32>` is the wrong rule in BOTH directions here: it
+    // accepts "-1", which glibc refuses, and refuses "2147483648", which glibc
+    // yields as -2147483648. Shared with /etc/protocols, which has the same
+    // rule and had drifted from it differently.
+    let number = crate::resolv::parse_nss_int32_field(fields.next()?)?;
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(RpcEntry {
         name: name.to_vec(),

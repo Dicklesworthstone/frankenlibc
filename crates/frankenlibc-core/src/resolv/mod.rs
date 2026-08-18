@@ -387,6 +387,46 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
     })
 }
 
+/// Parse an `/etc/protocols` or `/etc/rpc` number field the way glibc does.
+///
+/// SHARED ON PURPOSE. `/etc/protocols` and `/etc/rpc` use the identical rule and
+/// previously had two independent implementations that disagreed with the
+/// incumbent in DIFFERENT ways -- protocols rejected `+7`, rpc accepted `-1`.
+/// The /etc/passwd and /etc/group copies of a uid parser drifted apart exactly
+/// like that (ea6beb9a5), so this one lives in a single place.
+///
+/// glibc's rule, measured by bind-mounting synthetic files over /etc/protocols
+/// and /etc/rpc and walking getprotoent/getrpcent:
+///   * an optional `+` is accepted, a `-` is NOT -- "-1" is refused by both
+///     files, so a negative number is not spellable even though the field is
+///     stored in a signed `int`;
+///   * the digits are read as UNSIGNED and must fit 32 bits: "2147483648" is
+///     accepted and comes back as -2147483648, while "4294967296" and
+///     "99999999999" are refused;
+///   * anything non-decimal fails, including "0x6" and a trailing "8x".
+#[must_use]
+pub fn parse_nss_int32_field(field: &[u8]) -> Option<i32> {
+    let digits = match field {
+        [b'+', rest @ ..] => rest,
+        other => other,
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: u64 = 0;
+    for &b in digits {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add(u64::from(b - b'0'))?;
+        if value > u64::from(u32::MAX) {
+            return None;
+        }
+    }
+    // Storing an unsigned 32-bit value in a signed int keeps the bit pattern.
+    Some(value as u32 as i32)
+}
+
 /// Parse the port half of a `port/proto` field the way glibc does.
 ///
 /// An optional `+` is accepted and a `-` is not; at least one digit is
@@ -447,7 +487,10 @@ pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
         .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
-    let number = i32::try_from(parse_ascii_decimal_u32(fields.next()?)?).ok()?;
+    // glibc casts rather than range-checks, and accepts a leading '+'; see
+    // parse_nss_int32_field. `i32::try_from` refused "2147483648", which glibc
+    // yields as -2147483648, and the all-digits rule refused "+7".
+    let number = parse_nss_int32_field(fields.next()?)?;
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(ProtocolEntry {
         name: name.to_vec(),
