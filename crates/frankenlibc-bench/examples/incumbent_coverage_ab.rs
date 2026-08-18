@@ -362,6 +362,47 @@ const MONTH_CYCLE: &[libc::nl_item] = &[
     libc::MON_3,
     libc::MON_4,
 ];
+/// Seven distinct MONTH selectors in an eight-slot cycle — deliberately the same
+/// shape as `WEEKDAY_CYCLE`, which is what makes the pair a discriminator.
+///
+/// `weekday_cycle` and `month_cycle` differ in TWO ways at once: how deep their
+/// arms sit in `langinfo_value_for`'s match, and how many distinct literals they
+/// touch (7 in 8 slots versus 12 in 16). Measured together they cannot separate
+/// decision-tree depth from cache locality. This cycle holds count, cycle length
+/// and category fixed and varies only depth, so `month7_cycle` against
+/// `weekday_cycle` isolates it: if the two cost the same, depth inside the
+/// LC_TIME cluster is not what the loss is made of.
+const MONTH7_CYCLE: &[libc::nl_item] = &[
+    libc::MON_1,
+    libc::MON_2,
+    libc::MON_3,
+    libc::MON_4,
+    libc::MON_5,
+    libc::MON_6,
+    libc::MON_7,
+    libc::MON_1,
+];
+
+/// Seven distinct selectors drawn from THREE `nl_item` categories, same eight-slot
+/// shape again.
+///
+/// `nl_item` is `(category << 16) | index`, so CODESET (LC_CTYPE), RADIXCHAR and
+/// THOUSEP (LC_NUMERIC) and the day/month names (LC_TIME) live in ranges 64K
+/// apart. A match over that cannot be one dense jump table. Against
+/// `weekday_cycle` and `month7_cycle`, which stay inside one category, this
+/// isolates the cost of dispatching ACROSS clusters from the cost of depth within
+/// one.
+const MIXED7_CYCLE: &[libc::nl_item] = &[
+    libc::CODESET,
+    libc::RADIXCHAR,
+    libc::THOUSEP,
+    libc::DAY_1,
+    libc::ABDAY_1,
+    libc::MON_1,
+    libc::ABMON_1,
+    libc::CODESET,
+];
+
 const FULL_TABLE_CYCLE: &[libc::nl_item] = &[
     libc::CODESET,
     libc::RADIXCHAR,
@@ -579,6 +620,16 @@ const CASES: &[Case] = &[
         label: "month_cycle",
         items: MONTH_CYCLE,
         note: "rotating long C-locale month-name table entries",
+    },
+    Case {
+        label: "month7_cycle",
+        items: MONTH7_CYCLE,
+        note: "7 distinct MONTH selectors in 8 slots — same shape as weekday_cycle, deeper arms",
+    },
+    Case {
+        label: "mixed7_cycle",
+        items: MIXED7_CYCLE,
+        note: "7 distinct selectors across 3 nl_item categories, same 8-slot shape",
     },
     Case {
         label: "full_table_cycle",
