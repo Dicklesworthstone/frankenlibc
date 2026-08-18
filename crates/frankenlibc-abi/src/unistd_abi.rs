@@ -8705,6 +8705,12 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         crypt_sha256(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
+    } else if salt_bytes.starts_with(b"$7$") {
+        // scrypt. Native as of bd-c6ykz1; previously fell through to host
+        // delegation and returned the failure token wherever libxcrypt was not
+        // dlsym-able. The parameter layout was decoded from the live host
+        // rather than guessed — see crypt::scrypt_crypt's module docs.
+        crypt_scrypt(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$2") {
         // bcrypt: $2a$ / $2b$ / $2y$ / $2x$. Native as of bd-c6ykz1, where it
         // was one of five schemes fl could not hash at all — it fell through to
@@ -12313,6 +12319,10 @@ fn crypt_md5(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 
 fn crypt_bcrypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     frankenlibc_core::crypt::bcrypt::bcrypt_crypt(key, salt_bytes)
+}
+
+fn crypt_scrypt(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
+    frankenlibc_core::crypt::scrypt_crypt::scrypt_crypt(key, salt_bytes)
 }
 
 // ---------------------------------------------------------------------------

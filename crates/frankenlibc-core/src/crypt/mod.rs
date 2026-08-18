@@ -16,5 +16,6 @@ pub mod md5;
 pub mod pbkdf2;
 pub mod salt;
 pub mod scrypt;
+pub mod scrypt_crypt;
 pub mod sha256;
 pub mod sha512;
