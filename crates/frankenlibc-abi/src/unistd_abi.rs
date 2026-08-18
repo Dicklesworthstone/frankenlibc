@@ -4404,6 +4404,26 @@ const NO_SYMLINK_FS_MAGICS: [i64; 10] = [
     0x5346544e, // NTFS_SB_MAGIC ("NTFS" little-endian)
 ];
 
+/// `_PC_ASYNC_IO` for a file mode.
+///
+/// NOT the constant -1 this arm used to return. glibc stats the path and
+/// decides from the file TYPE -- read out of libc.so.6 2.42, the
+/// `_PC_ASYNC_IO` jump-table target at pathconf+0x239:
+///     and  $0xf000,%eax     ; S_IFMT
+///     sub  $0x6000,%eax     ; S_IFBLK
+///     and  $0xdf,%ah        ; clears the 0x2000 bit, folding S_IFREG in
+///     neg / sbb / or $1     ; 0 -> 1, anything else -> -1
+/// which is "regular files and block devices support async I/O, nothing else".
+/// Confirmed against live glibc 2.42:
+///     /etc/hostname (S_IFREG) 1    /dev/loop0 (S_IFBLK) 1
+///     /tmp (S_IFDIR)         -1    /dev/null  (S_IFCHR) -1
+fn pc_async_io_for_mode(st_mode: libc::mode_t) -> libc::c_long {
+    match st_mode & libc::S_IFMT {
+        libc::S_IFREG | libc::S_IFBLK => 1,
+        _ => -1,
+    }
+}
+
 fn fs_supports_symlinks(f_type: i64) -> libc::c_long {
     if NO_SYMLINK_FS_MAGICS.contains(&f_type) {
         0
@@ -4459,7 +4479,6 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         // the same family are indeterminate. The family does not split evenly,
         // so each member was measured rather than inferred from its siblings.
         libc::_PC_SYNC_IO
-        | libc::_PC_ASYNC_IO
         | libc::_PC_PRIO_IO
         | libc::_PC_SOCK_MAXBUF
         | libc::_PC_REC_INCR_XFER_SIZE
@@ -4566,6 +4585,17 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         }
     }
 
+    // _PC_ASYNC_IO is decided by the file TYPE, and the stat above already has
+    // it -- glibc stats the path a second time for this selector; fl does not
+    // need to.
+    if name == libc::_PC_ASYNC_IO {
+        // SAFETY: the newfstatat above returned Ok, so `st` is initialised.
+        let mode = unsafe { st.assume_init() }.st_mode;
+        let v = pc_async_io_for_mode(mode);
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
+
     // _PC_LINK_MAX needs the actual filesystem type; query via statfs.
     if name == libc::_PC_LINK_MAX {
         let v = unsafe { pc_link_max_for_path(path) };
@@ -4633,7 +4663,25 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
     ) {
         let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
         let v = match unsafe { syscall::sys_statfs(path as *const u8, fs.as_mut_ptr()) } {
-            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
+            Ok(()) => {
+                let fs = unsafe { fs.assume_init() };
+                // These three are NOT the same field, though they answer alike
+                // on every filesystem mounted here. glibc's jump table sends
+                // _PC_REC_MIN_XFER_SIZE to its own handler, which reads statvfs
+                // offset 0 (f_bsize), while _PC_REC_XFER_ALIGN and
+                // _PC_ALLOC_SIZE_MIN share a handler reading offset 8
+                // (f_frsize) -- pathconf+0x1d0 `cmovns -0xa8(%rbp)` versus
+                // pathconf+0x295 `cmovns -0xb0(%rbp)`. They coincide wherever
+                // f_bsize == f_frsize, which is every mount on this host
+                // (including squashfs at 131072), so this is latent rather than
+                // measured. Reading the field glibc reads is still cheaper than
+                // being wrong on the filesystem that separates them.
+                if name == libc::_PC_REC_MIN_XFER_SIZE {
+                    fs.f_bsize as libc::c_long
+                } else {
+                    fs.f_frsize as libc::c_long
+                }
+            }
             Err(_) => -1,
         };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
@@ -4698,6 +4746,21 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
         return v;
     }
 
+    // Same file-TYPE rule as pathconf's _PC_ASYNC_IO, through the fd's fstat.
+    if name == libc::_PC_ASYNC_IO {
+        let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+        let v = match unsafe { syscall::sys_fstat(fd, st.as_mut_ptr() as *mut u8) } {
+            // SAFETY: sys_fstat returned Ok, so `st` is initialised.
+            Ok(()) => pc_async_io_for_mode(unsafe { st.assume_init() }.st_mode),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
     // Same per-filesystem _PC_2_SYMLINKS as pathconf, through the fd's fstatfs.
     if name == libc::_PC_2_SYMLINKS {
         let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
@@ -4732,7 +4795,15 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
     ) {
         let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
         let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
-            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
+            Ok(()) => {
+                // Same f_bsize / f_frsize split as the per-path branch above.
+                let fs = unsafe { fs.assume_init() };
+                if name == libc::_PC_REC_MIN_XFER_SIZE {
+                    fs.f_bsize as libc::c_long
+                } else {
+                    fs.f_frsize as libc::c_long
+                }
+            }
             Err(_) => -1,
         };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);

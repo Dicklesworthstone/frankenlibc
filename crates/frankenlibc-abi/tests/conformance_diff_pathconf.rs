@@ -108,9 +108,13 @@ const SENTINEL_ERRNO: c_int = 4242;
 /// _PC_REC_MIN_XFER_SIZE / _PC_REC_XFER_ALIGN / _PC_ALLOC_SIZE_MIN are
 /// deliberately NOT here: glibc answers those from the filesystem block size.
 /// The REC_* family splits, so each member is measured, not inferred.
+///
+/// `_PC_ASYNC_IO` WAS IN THIS LIST AND DID NOT BELONG. It is not indeterminate:
+/// glibc decides it from the file type, returning 1 for regular files and block
+/// devices. Every path this test drives is a DIRECTORY, where the answer really
+/// is -1, so the wrong entry passed. See `async_io_depends_on_file_type`.
 const INDETERMINATE_PC: &[(&str, c_int)] = &[
     ("_PC_SYNC_IO", libc::_PC_SYNC_IO),
-    ("_PC_ASYNC_IO", libc::_PC_ASYNC_IO),
     ("_PC_PRIO_IO", libc::_PC_PRIO_IO),
     ("_PC_SOCK_MAXBUF", libc::_PC_SOCK_MAXBUF),
     ("_PC_REC_INCR_XFER_SIZE", libc::_PC_REC_INCR_XFER_SIZE),
@@ -383,5 +387,61 @@ fn link_max_matches_glibc_on_every_mounted_filesystem() {
         "_PC_LINK_MAX divergences vs glibc ({} of {compared}):\n  {}",
         divergences.len(),
         divergences.join("\n  ")
+    );
+}
+
+/// `_PC_ASYNC_IO` is decided by the FILE TYPE, not by the filesystem and not by
+/// a constant.
+///
+/// This test exists because a previous change put `_PC_ASYNC_IO` in this file's
+/// indeterminate list, asserting it is always -1 with errno preserved — and the
+/// assertion PASSED, because every path that list is driven with (`/tmp`, `.`,
+/// `/proc`) is a directory, and directories really are -1. Regular files and
+/// block devices are 1.
+///
+/// glibc's rule, from the jump-table target at pathconf+0x239:
+///     (st_mode & S_IFMT) is S_IFREG or S_IFBLK -> 1, everything else -> -1
+/// The `and $0xdf,%ah` in that sequence is what folds S_IFREG in alongside
+/// S_IFBLK, which is why the two types share an answer.
+///
+/// So the cases are chosen by TYPE, and each type is asserted against the host
+/// before fl, because the point is the discrimination and not the number.
+#[test]
+fn async_io_depends_on_file_type() {
+    // (path, what it should be, why it is here)
+    let cases: &[(&str, &str)] = &[
+        ("/etc/hostname", "regular file"),
+        ("/tmp", "directory"),
+        ("/dev/null", "character device"),
+        ("/dev/loop0", "block device"),
+    ];
+
+    let mut kinds = std::collections::BTreeSet::new();
+    let mut compared = 0usize;
+    for &(path, kind) in cases {
+        let Ok(c) = CString::new(path) else { continue };
+        let g = unsafe { pathconf(c.as_ptr(), libc::_PC_ASYNC_IO) };
+        // A missing /dev/loop0 (containers often lack one) is not a failure;
+        // it just costs the block-device half of the discrimination.
+        if unsafe { libc::access(c.as_ptr(), libc::F_OK) } != 0 {
+            println!("{path} ({kind}) absent -- not exercised");
+            continue;
+        }
+        let f = unsafe { fu::pathconf(c.as_ptr(), libc::_PC_ASYNC_IO) };
+        compared += 1;
+        kinds.insert(g);
+        assert_eq!(f, g, "_PC_ASYNC_IO on {path} ({kind}): fl={f} glibc={g}");
+    }
+
+    assert!(
+        compared >= 3,
+        "only {compared} of the file types were available"
+    );
+    // The whole point is that the answer VARIES. If every available path gave
+    // the same answer, a constant would pass and this test would be theatre.
+    assert!(
+        kinds.len() >= 2,
+        "every path reported the same _PC_ASYNC_IO ({kinds:?}) -- a constant \
+         implementation would pass, so this run proves nothing"
     );
 }
