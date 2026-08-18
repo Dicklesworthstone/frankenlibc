@@ -15424,7 +15424,7 @@
     },
     {
       "symbol": "vsscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
