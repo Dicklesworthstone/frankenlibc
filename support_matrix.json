@@ -2511,7 +2511,7 @@
     },
     {
       "symbol": "crypt_preferred_method",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Returns static preferred crypt method prefix $6$ for SHA-512",
@@ -5438,7 +5438,7 @@
     },
     {
       "symbol": "gethostent",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get next /etc/hosts entry",

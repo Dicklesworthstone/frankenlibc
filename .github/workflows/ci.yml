@@ -78,6 +78,20 @@ jobs:
           mkdir -p artifacts/ci
           python3 scripts/audit_abi_exports.py 2>&1 | tee artifacts/ci/abi-export-audit.log
 
+      # Catches the DANGEROUS direction of support_matrix.json drift: a symbol
+      # marked Implemented ("no host libc dependency") that calls the host.
+      # `Implemented` is not in build.rs's forbidden set, so such a row passes
+      # the standalone gate silently and a standalone artifact would ship
+      # believing the symbol is host-free. The opposite drift (~1252 stale
+      # WrapsHostLibc rows) is over-strict rather than silent, is tracked as
+      # debt on bd-haor6r, and is deliberately NOT failed on -- a gate that is
+      # red forever is a gate nobody reads.
+      - name: Check support-matrix host-dependency drift
+        run: |
+          mkdir -p artifacts/ci
+          python3 scripts/derive_host_dependency.py --check 2>&1 \
+            | tee artifacts/ci/host-dependency-drift.log
+
       - name: Upload core CI artifacts
         if: always()
         uses: actions/upload-artifact@v4

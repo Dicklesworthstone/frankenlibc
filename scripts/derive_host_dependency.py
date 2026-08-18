@@ -105,6 +105,7 @@ def externally_declared(text: str) -> set[str]:
 
 
 def main() -> int:
+    check_only = "--check" in sys.argv
     bodies: dict[str, str] = {}
     exported: set[str] = set()
     declared: set[str] = set()
@@ -189,6 +190,35 @@ def main() -> int:
     print("\ndirect host delegation by module:")
     for module, count in sorted(by_module.items(), key=lambda kv: -kv[1])[:12]:
         print(f"    {module:26s} {count:5d}")
+
+    if not check_only:
+        return 0
+
+    # --check FAILS ON ONE DIRECTION ONLY, deliberately.
+    #
+    # A symbol marked Implemented -- "no host libc dependency" -- that calls the
+    # host is the dangerous error: `Implemented` is NOT in build.rs's forbidden
+    # set, so it passes the standalone gate silently and a standalone artifact
+    # ships believing the symbol is host-free.
+    #
+    # The opposite error (WrapsHostLibc on a symbol that no longer touches the
+    # host) is merely over-strict: it blocks a build that might work, which is
+    # visible and annoying rather than silent. There are ~1252 of those, tracked
+    # as debt on bd-haor6r, and failing on them would just make this check red
+    # forever and therefore ignored.
+    print()
+    for symbol in implemented:
+        print(f"  UNDERSTATED {symbol['symbol']} in {symbol['module']} "
+              f"is marked Implemented but calls the host directly")
+    if implemented:
+        print(
+            f"FAIL: {len(implemented)} symbol(s) claim no host dependency while "
+            "calling the host. Either fix the implementation or correct the "
+            "status in support_matrix.json. See bd-haor6r."
+        )
+        return 1
+    print(f"OK: no symbol marked Implemented calls the host directly "
+          f"({len(own_body)} WrapsHostLibc rows do, as expected).")
     return 0
 
 
