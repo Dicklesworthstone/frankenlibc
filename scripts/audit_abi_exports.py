@@ -65,42 +65,7 @@ FEATURE_GATED = {
 
 # Known unexported implementations, tracked by bd-6xstqa. The gate fails on
 # anything NEW; these are debt, not permission.
-KNOWN_UNEXPORTED = {
-    # nexttoward{,f,l} are a DIFFERENT failure from the rest, and the fix is not
-    # a plain attribute on the existing Rust fn -- that collides, because a
-    # global_asm! trampoline in math_abi.rs already defines the symbol
-    # ("symbol 'nexttoward' is already defined").
-    #
-    # Established by a controlled experiment (a ten-line cdylib built with rustc
-    # directly): a `.global` inside global_asm! becomes a LOCAL symbol in a
-    # cdylib -- present in .symtab as lowercase `t`, absent from .dynsym --
-    # whether or not anything references it. Referencing affects only survival;
-    # an entirely unreferenced asm block is dropped from .symtab as well, which
-    # is --gc-sections at section granularity.
-    #
-    # Do NOT cite the setjmp family as a counterexample. On x86_64 setjmp is a
-    # `#[unsafe(naked)] #[unsafe(no_mangle)]` fn (setjmp_abi.rs:260) exported by
-    # ATTRIBUTE; the global_asm! block that declares `.global setjmp` is
-    # cfg(target_arch = "aarch64") and is not compiled here. I made exactly that
-    # mistake and it inverted the conclusion for a full turn.
-    #
-    # The fix is the same pattern setjmp uses: convert each trampoline to a
-    # #[unsafe(naked)] #[unsafe(no_mangle)] extern "C" fn with naked_asm!. It is
-    # not applied yet because these take an x87 80-bit long double, the existing
-    # unexported Rust fns of the same names would collide, and nexttowardl has
-    # no conformance test at all. Their C signature takes an x87 80-bit long double that Rust
-    # cannot express, so they are defined by a `global_asm!` trampoline in
-    # math_abi.rs that declares `.global nexttoward`. Adding the attribute to the
-    # Rust fn collides -- "symbol 'nexttoward' is already defined" -- yet the
-    # finished cdylib does NOT contain the symbol: probing it finds only the
-    # __frankenlibc_nexttoward*_x86_64 helpers the trampolines jump to. A
-    # cdylib's export list is built from #[no_mangle] items, so an asm `.global`
-    # is not on it and does not survive the link. Fixing these means making the
-    # asm symbols survive (export list / visibility), not annotating the Rust fn.
-    "nexttoward",
-    "nexttowardf",
-    "nexttowardl",
-}
+KNOWN_UNEXPORTED: set[str] = set()
 
 
 def exports(lines: list[str], index: int) -> bool:
@@ -209,7 +174,14 @@ def main() -> int:
             rel = path.split("frankenlibc/")[-1]
             print(f"  UNEXPORTED {name} at {rel}:{line}")
 
-    unexpected_asm = {n: w for n, w in asm_only.items() if n not in KNOWN_UNEXPORTED}
+    # Only a name with NO exporting definition anywhere is a problem. A symbol
+    # declared `.global` in a test-only asm block while a naked #[no_mangle] fn
+    # exports it in release is correct, not asm-only -- that is exactly the shape
+    # the nexttoward* fix produced, and flagging it would make the gate red on
+    # the very change that fixed it.
+    unexpected_asm = {
+        n: w for n, w in asm_only.items() if n in at_risk and n not in KNOWN_UNEXPORTED
+    }
     for name in sorted(unexpected_asm):
         path, line = unexpected_asm[name]
         rel = path.split("frankenlibc/")[-1]

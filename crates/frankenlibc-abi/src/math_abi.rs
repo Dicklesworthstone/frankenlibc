@@ -1698,7 +1698,18 @@ pub unsafe extern "C" fn nexttowardf(x: f32, y: f64) -> f32 {
     out
 }
 
-#[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
+// Kept ONLY for test builds. A `.global` inside global_asm! does not reach a
+// cdylib's .dynsym -- the symbol is localised -- which is why nexttoward,
+// nexttowardf and nexttowardl were missing from the export surface entirely
+// (bd-6xstqa). The exporting definitions are the naked fns in
+// `long_double_entry` below; the two are mutually exclusive by cfg so the symbol
+// is never defined twice.
+//
+// Test builds keep the asm form deliberately: under `naked` + `no_mangle` these
+// symbols would become GLOBAL in a test binary and could shadow glibc's, which
+// is exactly what the differential oracles resolve through dlopen. Localised asm
+// symbols cannot do that.
+#[cfg(all(target_arch = "x86_64", test))]
 core::arch::global_asm!(
     ".global nexttoward",
     ".type nexttoward, @function",
@@ -1725,6 +1736,62 @@ core::arch::global_asm!(
     "  ret",
     ".size nexttowardl, .-nexttowardl",
 );
+
+/// The exported C entry points for the `nexttoward*` family.
+///
+/// They live in their own module because plain `pub unsafe extern "C" fn
+/// nexttoward` items already exist in this file and are called from tests as
+/// `math_abi::nexttoward(..)`; the C symbol names come from `#[unsafe(no_mangle)]`
+/// while the Rust paths stay distinct.
+///
+/// Each body is byte-identical to the `global_asm!` trampoline it replaces. The
+/// change is only in HOW the symbol is declared: a naked fn with `no_mangle` is
+/// exported by attribute, which is the mechanism that demonstrably reaches
+/// `.dynsym` (x86_64 `setjmp` in `setjmp_abi.rs` uses it), whereas an asm
+/// `.global` is localised.
+///
+/// The declared Rust signatures are placeholders: `long double` has no Rust
+/// type, and a naked function generates no prologue, so the signature affects
+/// only the symbol, never argument placement. Placement is entirely the asm's,
+/// and it is unchanged.
+#[cfg(all(target_arch = "x86_64", not(debug_assertions), not(test)))]
+mod long_double_entry {
+    use std::ffi::c_void;
+
+    /// `double nexttoward(double x, long double y)` — x in xmm0, y in the stack
+    /// slot at rsp+8, whose ADDRESS is what the helper takes in rdi.
+    #[unsafe(no_mangle)]
+    #[unsafe(naked)]
+    pub unsafe extern "C" fn nexttoward(_x: f64, _y: *const c_void) -> f64 {
+        std::arch::naked_asm!("lea rdi, [rsp + 8]", "jmp __frankenlibc_nexttoward_x86_64",);
+    }
+
+    /// `float nexttowardf(float x, long double y)`.
+    #[unsafe(no_mangle)]
+    #[unsafe(naked)]
+    pub unsafe extern "C" fn nexttowardf(_x: f32, _y: *const c_void) -> f32 {
+        std::arch::naked_asm!("lea rdi, [rsp + 8]", "jmp __frankenlibc_nexttowardf_x86_64",);
+    }
+
+    /// `long double nexttowardl(long double x, long double y)` — both arguments
+    /// in stack slots (rsp+8 and rsp+24 as the callee sees them), result
+    /// returned in st(0), which is why this one calls rather than tail-jumps and
+    /// reloads the result with `fld`.
+    #[unsafe(no_mangle)]
+    #[unsafe(naked)]
+    pub unsafe extern "C" fn nexttowardl(_x: *const c_void, _y: *const c_void) -> f64 {
+        std::arch::naked_asm!(
+            "sub rsp, 24",
+            "lea rdi, [rsp + 32]",
+            "lea rsi, [rsp + 48]",
+            "mov rdx, rsp",
+            "call __frankenlibc_nexttowardl_x86_64",
+            "fld tbyte ptr [rsp]",
+            "add rsp, 24",
+            "ret",
+        );
+    }
+}
 
 #[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
 unsafe fn read_x87_long_double_arg(slot: *const u8) -> [u8; 16] {

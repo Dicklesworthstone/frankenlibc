@@ -120,6 +120,9 @@ fn main() {
     let fixed = [
         "strchr", "strcpy", "strncpy", "wcsstr", "cospi", "dprintf", "freopen",
         "posix_spawn_file_actions_addclose", "vfprintf",
+        // Converted from global_asm! trampolines to naked #[no_mangle] fns,
+        // which is what actually reaches .dynsym.
+        "nexttoward", "nexttowardf", "nexttowardl",
     ];
     let controls_present = ["memcpy", "strlen"];
     let control_absent = "definitely_not_a_libc_symbol";

@@ -165,6 +165,25 @@ fn call(target: *const c_void, x: &[u8; 16], y: &[u8; 16]) -> [u8; 10] {
     result
 }
 
+/// Build the cdylib before dlopening it.
+///
+/// Omitted on the first version of this driver, and it immediately produced the
+/// exact failure this campaign has now hit three times: the oracle reported
+/// ORACLE_FL_SYMBOL_ABSENT for a symbol that the source had just been changed to
+/// export, because `cargo run --example` builds the example and the abi RLIB but
+/// not the cdylib, and the per-worker target dir still held the previous build.
+/// Reading an artifact you did not just build is reading whatever was left
+/// there (bd-incumbent-stale-fl-artifact-pph3a1).
+fn build_cdylib(target_dir: &str) {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let status = std::process::Command::new(&cargo)
+        .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        .env("CARGO_TARGET_DIR", target_dir)
+        .status()
+        .expect("build the FrankenLibC cdylib");
+    assert!(status.success(), "cdylib build failed");
+}
+
 fn resolve(handle: *mut c_void, symbol: &str) -> Option<*const c_void> {
     let name = CString::new(symbol).expect("symbol name");
     let address = unsafe { dlsym(handle, name.as_ptr()) };
@@ -230,12 +249,11 @@ fn main() {
 
     // Now the differential, if FrankenLibC exports the symbol at all. It does
     // not today (bd-6xstqa) — that is the point of writing this first.
-    let object = format!(
-        "{}/release/libfrankenlibc_abi.so",
-        std::env::var("FRANKENLIBC_BENCH_TARGET_DIR")
-            .or_else(|_| std::env::var("CARGO_TARGET_DIR"))
-            .unwrap_or_else(|_| "target".to_owned())
-    );
+    let target_dir = std::env::var("FRANKENLIBC_BENCH_TARGET_DIR")
+        .or_else(|_| std::env::var("CARGO_TARGET_DIR"))
+        .unwrap_or_else(|_| "target".to_owned());
+    build_cdylib(&target_dir);
+    let object = format!("{target_dir}/release/libfrankenlibc_abi.so");
     let path = CString::new(object.clone()).expect("object path");
     let fl_handle = unsafe { dlopen(path.as_ptr(), RTLD_NOW) };
     if fl_handle.is_null() {
