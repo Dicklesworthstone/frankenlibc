@@ -4360,6 +4360,41 @@ unsafe fn pc_filesizebits_for_fd(fd: c_int) -> libc::c_long {
     }
 }
 
+/// Does a filesystem with this `statfs.f_type` support symbolic links?
+///
+/// `_PC_2_SYMLINKS` is NOT the constant 1 that fl used to return. glibc decides
+/// it from the filesystem type, and the ten magics below were read out of
+/// libc.so.6 2.42's `pathconf` comparison tree (the `_PC_2_SYMLINKS` case at
+/// pathconf+0x60 calls `__statfs` and then tests `f_type` against exactly this
+/// set, returning 0 on a hit and 1 otherwise).
+///
+/// The VALUES are what was measured; the names are identifications, four of
+/// which are not in this host's linux/magic.h and were matched by value.
+///
+/// None of these filesystems was mounted on the machine this was written on,
+/// which is exactly why a sweep across every mounted filesystem still showed a
+/// uniform 1 and could not have found this. Reading the incumbent could.
+const NO_SYMLINK_FS_MAGICS: [i64; 10] = [
+    0x2f,       // QNX4_SUPER_MAGIC
+    0x1cd1,     // DEVPTS_SUPER_MAGIC
+    0x4d44,     // MSDOS_SUPER_MAGIC (FAT)
+    0x7275,     // ROMFS_SUPER_MAGIC
+    0xadf5,     // ADFS_SUPER_MAGIC
+    0x72959,    // EFS_MAGIC
+    0x414a53,   // EFS_SUPER_MAGIC
+    0x1badface, // BFS_MAGIC
+    0x28cd3d45, // CRAMFS_MAGIC
+    0x5346544e, // NTFS_SB_MAGIC ("NTFS" little-endian)
+];
+
+fn fs_supports_symlinks(f_type: i64) -> libc::c_long {
+    if NO_SYMLINK_FS_MAGICS.contains(&f_type) {
+        0
+    } else {
+        1
+    }
+}
+
 fn pathconf_value(name: c_int) -> Option<libc::c_long> {
     match name {
         // _PC_LINK_MAX is resolved via per-path/per-fd statfs in the
@@ -4377,12 +4412,17 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         libc::_PC_CHOWN_RESTRICTED => Some(1),
         libc::_PC_NO_TRUNC => Some(1),
         libc::_PC_VDISABLE => Some(0),
-        // POSIX requires the FS to support symlinks ("/" -> ".." etc.); glibc
-        // returns 1 on Linux (measured live: pathconf(".", 20) -> 1). Without
-        // this arm it falls through to the EINVAL default.
+        // Reached only by a direct caller of pathconf_value: the public
+        // pathconf/fpathconf decide this per filesystem, because it is 0 on
+        // FAT/NTFS/cramfs/romfs and friends. See NO_SYMLINK_FS_MAGICS.
         //
-        // Shipped as e2a577d08, silently deleted by e634aff2a (2026-06-26),
-        // restored here (bd-d3cav6).
+        // The note this replaces said "glibc returns 1 on Linux (measured live:
+        // pathconf(".", 20) -> 1)". That measurement was real and the
+        // conclusion drawn from it was too broad: "." is ext4, and glibc
+        // returns 1 for ext4. It returns 0 for ten other filesystem types.
+        //
+        // Arm shipped as e2a577d08, silently deleted by e634aff2a (2026-06-26),
+        // restored under bd-d3cav6.
         libc::_PC_2_SYMLINKS => Some(1),
 
         // Selectors glibc reports as INDETERMINATE: -1 with errno UNTOUCHED.
@@ -4539,6 +4579,21 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         return v;
     }
 
+    // _PC_2_SYMLINKS is per-FILESYSTEM too: glibc statfs's the path and reports
+    // 0 on the filesystems that cannot hold a symlink. fl returned a constant 1.
+    if name == libc::_PC_2_SYMLINKS {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_statfs(path as *const u8, fs.as_mut_ptr()) } {
+            Ok(()) => fs_supports_symlinks(unsafe { fs.assume_init() }.f_type),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
     // _PC_FILESIZEBITS is filesystem-dependent (glibc __statfs_filesize_max);
     // without this it falls through to the EINVAL default (-1). bd-eqcn80,
     // shipped 4713e10f2, deleted by e634aff2a, restored (bd-d3cav6).
@@ -4617,6 +4672,20 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
         let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
             Ok(()) => unsafe { fs.assume_init() }.f_namelen as libc::c_long,
             Err(e) if e == libc::ENOSYS => 255,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
+    // Same per-filesystem _PC_2_SYMLINKS as pathconf, through the fd's fstatfs.
+    if name == libc::_PC_2_SYMLINKS {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
+            Ok(()) => fs_supports_symlinks(unsafe { fs.assume_init() }.f_type),
             Err(e) => {
                 unsafe { set_abi_errno(e) };
                 -1

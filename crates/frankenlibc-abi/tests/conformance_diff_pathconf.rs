@@ -240,3 +240,68 @@ fn name_max_is_per_filesystem_not_a_constant() {
         divergences.join("\n  ")
     );
 }
+
+/// `_PC_2_SYMLINKS` is per-FILESYSTEM, and — unlike `_PC_NAME_MAX` — this host
+/// has NO filesystem that discriminates.
+///
+/// glibc statfs's the path and returns 0 for ten `f_type` magics
+/// (QNX4, DEVPTS, MSDOS/FAT, ROMFS, ADFS, EFS x2, BFS, CRAMFS, NTFS), 1
+/// otherwise. fl returned a constant 1. None of those ten is mounted on a
+/// typical dev box, so a sweep over the mounted filesystems shows a uniform 1
+/// and CANNOT catch the divergence — the list was read out of libc.so.6's
+/// pathconf comparison tree instead.
+///
+/// So this test does two different things, and the second is the real one:
+///   1. fl must match glibc on every mounted filesystem (weak here, by
+///      construction — everything answers 1);
+///   2. DEVPTS is the one magic in glibc's list that a normal Linux box
+///      actually mounts, at /dev/pts. That makes it the single available
+///      discriminating case, and it is asserted directly.
+#[test]
+fn two_symlinks_is_per_filesystem_not_a_constant() {
+    let mut compared = 0usize;
+    let mut divergences = Vec::new();
+    for dir in [
+        "/", "/tmp", "/proc", "/sys", "/dev", "/dev/shm", "/run", "/dev/pts",
+    ] {
+        let Ok(path) = CString::new(dir) else {
+            continue;
+        };
+        let g = unsafe { pathconf(path.as_ptr(), libc::_PC_2_SYMLINKS) };
+        if g < 0 {
+            continue;
+        }
+        let f = unsafe { fu::pathconf(path.as_ptr(), libc::_PC_2_SYMLINKS) };
+        compared += 1;
+        if f != g {
+            divergences.push(format!("{dir}: fl={f} glibc={g}"));
+        }
+    }
+    assert!(compared >= 4, "only {compared} paths comparable");
+    assert!(
+        divergences.is_empty(),
+        "_PC_2_SYMLINKS divergences vs glibc ({} of {compared}):\n  {}",
+        divergences.len(),
+        divergences.join("\n  ")
+    );
+
+    // The discriminating case, called out so a reader knows which line carries
+    // the weight. /dev/pts is devpts (DEVPTS_SUPER_MAGIC 0x1cd1), one of the ten
+    // magics glibc answers 0 for. A constant-1 implementation fails HERE and
+    // nowhere else on this machine.
+    let devpts = CString::new("/dev/pts").unwrap();
+    let g = unsafe { pathconf(devpts.as_ptr(), libc::_PC_2_SYMLINKS) };
+    if g < 0 {
+        println!("/dev/pts not available -- the discriminating case was not exercised");
+        return;
+    }
+    assert_eq!(
+        g, 0,
+        "host premise: glibc must report _PC_2_SYMLINKS=0 on devpts, got {g}"
+    );
+    let f = unsafe { fu::pathconf(devpts.as_ptr(), libc::_PC_2_SYMLINKS) };
+    assert_eq!(
+        f, 0,
+        "fl must report _PC_2_SYMLINKS=0 on devpts -- a constant 1 fails exactly here"
+    );
+}
