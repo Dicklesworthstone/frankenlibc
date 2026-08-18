@@ -436,6 +436,26 @@ const SEGMENT_ARENA_FAILED: u8 = 3;
 
 static SEGMENT_ARENA_STATE: AtomicU8 = AtomicU8::new(SEGMENT_ARENA_UNINITIALIZED);
 static SEGMENT_ARENA_BASE: AtomicUsize = AtomicUsize::new(0);
+
+// WHICH PATH DID malloc TAKE? bd-e0y02p proposes replacing the arena insert, the
+// size index and the malloc-side spinlock with an address-derived slab -- and the
+// segment allocator below ALREADY does that, skipping
+// `fallback_insert_sized_for_slot` entirely whenever `segment_allocate` succeeds.
+// So the design's premise turns on a fact nobody has measured: does
+// `segment_allocate` actually succeed in the configuration where fl was measured
+// at ~133 ns of fixed overhead over glibc?
+//
+// The existing per-size-class stats CANNOT answer it. Both paths bin by size --
+// `record_stats` uses `StatsBin::for_size(size)` and `record_stats_binned` uses
+// `StatsBin::from_size_class(class_index)` -- so a small allocation lands in the
+// same bin either way. These two counters are the missing discriminator.
+//
+// Relaxed, and deliberately not per-thread: an uncontended relaxed increment is
+// ~1 ns against the 133 ns under investigation, so it cannot move the number it
+// exists to explain, and keeping them global avoids touching the stats combiner's
+// flush path (which would be a larger change than the question deserves).
+static SEGMENT_PATH_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+static FALLBACK_PATH_ALLOCS: AtomicUsize = AtomicUsize::new(0);
 static SEGMENT_OWNED_BITMAP: AtomicU64 = AtomicU64::new(0);
 // Segment ids are claimed only when a thread exhausts its local class segment.
 // This counter is deliberately absent from the warmed allocation/free cycle.
@@ -3000,6 +3020,30 @@ fn export_alloc_stats_snapshot_jsonl_from_snapshot(
 }
 
 #[must_use]
+/// `(segment_path_allocs, fallback_path_allocs, arena_ready)` — which malloc path
+/// served the traffic, and whether the segment arena was ever mapped.
+///
+/// `arena_ready` is free to read and answers the coarse question on its own: a
+/// zero `SEGMENT_ARENA_BASE` means no allocation could EVER have been
+/// segment-backed, so the fallback path with its arena insert and spinlock served
+/// everything, and bd-e0y02p's premise holds. A non-zero base makes the two
+/// counters the deciding evidence.
+///
+/// Read this BEFORE building anything on bd-e0y02p. The two outcomes want
+/// opposite work:
+/// * segments hit and the ~133 ns gap persists -> the design is refuted by
+///   construction; the cost is in framing, the membrane's decide/observe, or the
+///   reentry guard, and a second slab would change nothing.
+/// * segments not hit -> the slab already exists and is not being used, which is
+///   a far cheaper fix than building another one.
+pub fn segment_path_split() -> (usize, usize, bool) {
+    (
+        SEGMENT_PATH_ALLOCS.load(Ordering::Relaxed),
+        FALLBACK_PATH_ALLOCS.load(Ordering::Relaxed),
+        SEGMENT_ARENA_BASE.load(Ordering::Acquire) != 0,
+    )
+}
+
 pub fn export_alloc_stats_snapshot_jsonl(bead_id: &str, run_id: &str, mode: &str) -> String {
     export_alloc_stats_snapshot_jsonl_from_snapshot(snapshot_alloc_stats(), bead_id, run_id, mode)
 }
@@ -4188,9 +4232,11 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             if !out.is_null() {
                 match segment_class {
                     Some(class_index) => {
+                        SEGMENT_PATH_ALLOCS.fetch_add(1, Ordering::Relaxed);
                         record_alloc_stats_binned(Some(reentry_guard.slot), req, class_index)
                     }
                     None => {
+                        FALLBACK_PATH_ALLOCS.fetch_add(1, Ordering::Relaxed);
                         fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                         record_alloc_stats(Some(reentry_guard.slot), req);
                     }
