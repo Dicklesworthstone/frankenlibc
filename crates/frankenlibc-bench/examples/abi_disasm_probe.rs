@@ -176,21 +176,49 @@ fn dynamic_symbols(object: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// Parse one `nm -S --defined-only` line into `(value, size, name)`.
+///
+/// `nm -S` prints `<value> <size> <type> <name>` ONLY for symbols that carry a
+/// size; for the rest it prints `<value> <type> <name>` and the size column is
+/// simply absent. A parser that assumes the four-field form silently fails on
+/// the three-field one -- which is why `strcpy` and `strncpy` were reported as
+/// `not_in_symbol_table`, a clean-looking negative for symbols that are present.
+/// Size 0 here means "unknown", and the caller substitutes the distance to the
+/// next symbol.
+fn parse_nm_line(line: &str) -> Option<(u64, u64, String)> {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    match fields.as_slice() {
+        [value, size, _type, name] => Some((
+            u64::from_str_radix(value, 16).ok()?,
+            u64::from_str_radix(size, 16).ok()?,
+            (*name).to_owned(),
+        )),
+        [value, _type, name] => {
+            Some((u64::from_str_radix(value, 16).ok()?, 0, (*name).to_owned()))
+        }
+        _ => None,
+    }
+}
+
 fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
     let Ok(out) = Command::new("nm").args(["-S", "--defined-only", object]).output() else {
         return Vec::new();
     };
     let mut table: Vec<(u64, u64, String)> = String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let value = u64::from_str_radix(fields.next()?, 16).ok()?;
-            let size = u64::from_str_radix(fields.next()?, 16).ok()?;
-            let _kind = fields.next()?;
-            Some((value, size, fields.next()?.to_owned()))
-        })
+        .filter_map(parse_nm_line)
         .collect();
     table.sort_by_key(|(address, _, _)| *address);
+
+    // Fill in unknown sizes from the distance to the next symbol, so a sizeless
+    // definition still yields a disassemblable range instead of dropping out.
+    for index in 0..table.len() {
+        if table[index].1 == 0 {
+            if let Some((next, _, _)) = table.get(index + 1) {
+                table[index].1 = next.saturating_sub(table[index].0);
+            }
+        }
+    }
     table
 }
 
@@ -233,18 +261,11 @@ fn relocation_map(object: &str) -> BTreeMap<u64, String> {
 /// definitions. The size is the whole point: it turns "disassemble near this
 /// name and guess where it ends" into an exact range, which is what makes two
 /// adjacent wrappers distinguishable from each other.
-fn symbol_bounds(object: &str, symbol: &str) -> Option<(u64, u64)> {
-    let out = Command::new("nm")
-        .args(["-S", "--defined-only", object])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().find_map(|line| {
-        let mut fields = line.split_whitespace();
-        let value = u64::from_str_radix(fields.next()?, 16).ok()?;
-        let size = u64::from_str_radix(fields.next()?, 16).ok()?;
-        let _kind = fields.next()?;
-        (fields.next()? == symbol).then_some((value, size))
-    })
+fn symbol_bounds(table: &[(u64, u64, String)], symbol: &str) -> Option<(u64, u64)> {
+    table
+        .iter()
+        .find(|(_, _, name)| name == symbol)
+        .map(|(address, size, _)| (*address, *size))
 }
 
 fn main() {
@@ -361,8 +382,25 @@ fn main() {
         // than a contract, since `--disassemble=SYM` does not promise exactly one
         // function -- and it reported `memrchr` and `memchr` with byte-identical
         // bodies. `st_value`/`st_size` let the range be stated instead of guessed.
-        let Some((address, size)) = symbol_bounds(&object, symbol) else {
-            println!("DISASM_SYMBOL symbol={symbol} status=not_in_symbol_table");
+        let Some((address, size)) = symbol_bounds(&table, symbol) else {
+            // Name the near-misses. "Not in the symbol table" is a claim about
+            // absence, and absence is the one result that should never be taken
+            // on trust -- the same name may be defined with a prefix, a version
+            // suffix, or not at all, and those are different facts.
+            let near: Vec<&str> = table
+                .iter()
+                .filter(|(_, _, name)| name.contains(symbol))
+                .map(|(_, _, name)| name.as_str())
+                .take(6)
+                .collect();
+            // Whether it is EXPORTED is a separate fact from whether it is
+            // defined in .symtab, and for a libc symbol it is the one that
+            // decides if a program can call it at all.
+            println!(
+                "DISASM_SYMBOL symbol={symbol} status=not_in_symbol_table \
+                 in_dynsym={} near={near:?}",
+                exported.contains(symbol)
+            );
             continue;
         };
         let out = Command::new("objdump")
@@ -419,6 +457,42 @@ fn main() {
             .iter()
             .filter(|target| target.starts_with('['))
             .count();
+
+        // Which ARCHITECTURE this wrapper uses, which is not visible from its
+        // source or its name. `calls_into_core=0` does not mean the kernel was
+        // inlined -- release is lto=false and the core fns carry no #[inline],
+        // so cross-crate inlining was never available. It means the wrapper
+        // reaches its work some other way, and for strlen/memcpy that way is an
+        // abi-local raw lane that never enters frankenlibc_core at all.
+        // Classified by the callee's CRATE, not by name patterns. The first
+        // version matched a hand-written list (`raw_lane`, `simd_dispatch`, ...)
+        // and so reported `class=neither` for strcmp, memset, memcmp, memmove,
+        // wcslen and wcscmp -- every one of which does call an abi-local kernel
+        // (`scan_strcmp`, `raw_memset_bytes`, ...) under a name I had not
+        // guessed. A missing pattern looked exactly like a missing call.
+        let lane_calls = calls
+            .iter()
+            .filter(|target| target.contains("frankenlibc_abi"))
+            .count();
+        let class = match (core_calls, lane_calls) {
+            (0, 0) => "neither",
+            (0, _) => "abi_lane",
+            (_, 0) => "core_delegating",
+            (_, _) => "both",
+        };
+        // in_dynsym is printed for EVERY symbol, not only absent ones, so that
+        // any run carries its own positive control: if the .dynsym reader were
+        // broken it would report false everywhere, and a false on one symbol
+        // would be indistinguishable from a real finding about that symbol.
+        println!(
+            "DISASM_CLASS symbol={symbol} class={class} in_dynsym={} core={core_calls} lane={lane_calls} \
+             ",
+            exported.contains(symbol)
+        );
+        println!(
+            "DISASM_CLASS2 symbol={symbol} class={class} core={core_calls} lane={lane_calls} \
+             indirect={indirect_calls} instructions={instructions} size={size}"
+        );
 
         println!(
             "DISASM_SYMBOL symbol={symbol} addr={address:#x} size={size} \
