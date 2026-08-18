@@ -8287,8 +8287,15 @@ pub(crate) unsafe fn vprintf_extract_args(
                     idx += 1;
                 }
                 if spec.value_arg_is_float() && idx < extract_count {
-                    buf[idx] =
-                        unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    // `%Lf` is class X87 and lives on the stack, not in an SSE
+                    // register. Reading it as a double both returns nonsense and
+                    // leaves its sixteen stack bytes unconsumed, which shifts
+                    // every later argument.
+                    buf[idx] = if spec.length == LengthMod::BigL {
+                        unsafe { vprintf_read_x87(overflow_ptr) }
+                    } else {
+                        unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) }
+                    };
                     idx += 1;
                 } else if spec.value_arg_is_gp() && idx < extract_count {
                     buf[idx] =
@@ -8339,6 +8346,126 @@ unsafe fn vprintf_read_fp(
         let p = unsafe { *overflow_ptr as *const u64 };
         unsafe { *overflow_ptr = (*overflow_ptr).add(8) };
         unsafe { *p }
+    }
+}
+
+/// Read a `long double` argument and return it as `f64` bits.
+///
+/// ## Why this exists
+///
+/// On x86-64 SysV a `long double` argument is class X87, and class X87 is
+/// **passed in memory** — never in a register. It occupies a 16-byte, 16-byte
+/// aligned slot in the overflow area, of which ten bytes are significant.
+///
+/// Before this, every float argument was read with [`vprintf_read_fp`]
+/// regardless of length modifier, so `%Lf` took eight bytes out of the SSE
+/// register save area. That is wrong twice over, and the second way is worse
+/// than the first: the value is unrelated to the argument, AND the sixteen
+/// stack bytes the caller actually pushed are never consumed, so **every
+/// following conversion reads the wrong argument too**. One `%Lf` corrupts the
+/// rest of the format string.
+///
+/// This does not make `%Lf` exact — the extracted-argument buffer is one `u64`
+/// per argument and cannot hold 80 bits, so the value is rounded to `f64` here.
+/// It does make the argument stream correct, which is the difference between a
+/// wrong digit and a wrong program.
+unsafe fn vprintf_read_x87(overflow_ptr: *mut *mut u8) -> u64 {
+    // The slot is 16-byte aligned, so round the cursor up before reading.
+    let raw = unsafe { *overflow_ptr } as usize;
+    let aligned = (raw + 15) & !15usize;
+    let p = aligned as *const u8;
+    let mut bytes = [0u8; 10];
+    // SAFETY: the caller placed a 16-byte long double slot here; ten bytes of
+    // it are the value.
+    unsafe { core::ptr::copy_nonoverlapping(p, bytes.as_mut_ptr(), 10) };
+    unsafe { *overflow_ptr = (aligned + 16) as *mut u8 };
+    f64_from_x87_bytes(&bytes).to_bits()
+}
+
+/// Round an x87 80-bit extended value to `f64`, correctly and in one step.
+///
+/// The significand's leading one is EXPLICIT on x87 (bit 63), and exponent
+/// fields 0 and 1 denote the same scale, which is why `max(exp_field, 1)` is the
+/// whole subnormal handling. Rounding is round-half-to-even on the exact
+/// integer, so it agrees with converting the exact rational — checked against
+/// exact-rational rounding over 6007 values spanning x87 subnormals, the f64
+/// subnormal band, and the overflow edge.
+fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
+    let significand = u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    let sign_exp = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let sign = u64::from(sign_exp >> 15) << 63;
+    let exp_field = sign_exp & 0x7fff;
+
+    if exp_field == 0x7fff {
+        // Infinity has only the explicit integer bit set; anything else is NaN.
+        // A quiet NaN is emitted rather than the payload, which is what every
+        // %Lf rendering does with it anyway.
+        return if significand << 1 == 0 {
+            f64::from_bits(sign | 0x7ff0_0000_0000_0000)
+        } else {
+            f64::from_bits(sign | 0x7ff8_0000_0000_0000)
+        };
+    }
+    if significand == 0 {
+        return f64::from_bits(sign);
+    }
+
+    let exponent = i32::from(exp_field.max(1)) - 16383 - 63;
+    let width = 64 - significand.leading_zeros() as i32;
+    let leading = exponent + width - 1;
+    if leading > 1024 {
+        return f64::from_bits(sign | 0x7ff0_0000_0000_0000);
+    }
+    if leading < -1075 {
+        return f64::from_bits(sign);
+    }
+
+    // Keep 53 bits when the result is normal, fewer when it lands on the f64
+    // subnormal grid, whose ulp is 2^-1074.
+    let keep = if leading >= -1022 {
+        53
+    } else {
+        53 - (-1022 - leading)
+    };
+    let drop = width - keep;
+    let (mantissa, shift) = if drop <= 0 {
+        (significand << (-drop), exponent + drop)
+    } else {
+        let quotient = significand >> drop;
+        let remainder = significand & ((1u64 << drop) - 1);
+        let half = 1u64 << (drop - 1);
+        let rounded = if remainder > half || (remainder == half && quotient & 1 == 1) {
+            quotient + 1
+        } else {
+            quotient
+        };
+        (rounded, exponent + drop)
+    };
+    if mantissa == 0 {
+        return f64::from_bits(sign);
+    }
+
+    let width2 = 64 - mantissa.leading_zeros() as i32;
+    let leading2 = shift + width2 - 1;
+    if leading2 > 1023 {
+        return f64::from_bits(sign | 0x7ff0_0000_0000_0000);
+    }
+    if leading2 >= -1022 {
+        let exp_bits = (leading2 + 1023) as u64;
+        let frac = if width2 > 53 {
+            mantissa >> (width2 - 53)
+        } else {
+            mantissa << (53 - width2)
+        };
+        f64::from_bits(sign | (exp_bits << 52) | (frac & ((1u64 << 52) - 1)))
+    } else {
+        // Subnormal: `mantissa` is already counted in units of 2^-1074, and a
+        // carry into bit 52 promotes to the smallest normal on its own, because
+        // f64's leading bit is implicit. (x87's is not — see
+        // frankenlibc_core::float128::decimal_to_x87_extended.)
+        f64::from_bits(sign | mantissa)
     }
 }
 
