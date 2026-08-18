@@ -2678,7 +2678,14 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
                     let rlim = unsafe { rlim.assume_init() };
                     rlim.rlim_cur as libc::c_long
                 }
-                Err(_) => 1024,
+                // glibc answers this selector through getdtablesize(), whose
+                // getrlimit-failure fallback is 256, not 1024. Read from
+                // libc.so.6 2.42 at getdtablesize+0x22:
+                //     mov    $0x100,%eax        ; 256
+                //     cmovns -0x20(%rbp),%eax   ; on success, rlim_cur
+                // A cold path -- getrlimit does not fail in practice -- but the
+                // constant was wrong and the right one costs nothing.
+                Err(_) => 256,
             }
         }
         libc::_SC_HOST_NAME_MAX => 64,
@@ -2712,7 +2719,10 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
                     let cap = 6_291_456i64 as libc::c_long;
                     stack_based.min(cap).max(131072) // floor 128 KiB, cap 6 MiB
                 }
-                Err(_) => 2097152,
+                // glibc returns the FLOOR when getrlimit fails, not a
+                // typical value: __sysconf+0x6d loads $0x20000 (131072) before
+                // the call and keeps it on the failure branch.
+                Err(_) => 131_072,
             }
         }
         libc::_SC_CHILD_MAX => {
@@ -3019,8 +3029,14 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_SIGQUEUE_MAX => {
             // glibc reports the RLIMIT_SIGPENDING soft limit (the max number of
             // queued realtime signals) — 883225 on this host, i.e. a per-machine
-            // value, not a constant. Read it the same way _SC_OPEN_MAX reads
-            // RLIMIT_NOFILE; fall back to the _POSIX_SIGQUEUE_MAX minimum (32).
+            // value, not a constant.
+            //
+            // The FAILURE path is not a constant either. glibc falls back to
+            // /proc/sys/kernel/rtsig-max and reports -1 if that cannot be read;
+            // the path string is at .rodata 0x1ddd37 and __sysconf+0x15c opens
+            // it with __open64_nocancel immediately after a failed getrlimit.
+            // fl returned the _POSIX_SIGQUEUE_MAX minimum (32), which is a
+            // plausible number and not the incumbent's answer.
             let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
             match unsafe {
                 syscall::sys_getrlimit(libc::RLIMIT_SIGPENDING as i32, rlim.as_mut_ptr() as *mut u8)
@@ -3033,7 +3049,9 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
                         rlim.rlim_cur as libc::c_long
                     }
                 }
-                Err(_) => 32,
+                // Same order glibc uses: the rlimit first, this only when it
+                // fails, and -1 when the file is unreadable too.
+                Err(_) => runtime_procfs_long("/proc/sys/kernel/rtsig-max").unwrap_or(-1),
             }
         }
         _ => {
