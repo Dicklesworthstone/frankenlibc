@@ -71,6 +71,62 @@ unsafe extern "C" {
     );
 }
 
+// The OTHER two signatures in the family place their arguments differently, so
+// they need their own shims: `double nexttoward(double, long double)` and
+// `float nexttowardf(float, long double)` pass the first argument in xmm0 and
+// only the second on the stack, and return in xmm0 rather than st(0). Reusing
+// the ld(ld,ld) shim for these would silently pass garbage.
+//
+// rdi = target, xmm0 = x, rsi = &y[16].
+//
+// Alignment: at entry rsp ≡ 8 (mod 16); `sub rsp,24` makes it ≡ 0, so rsp is
+// aligned immediately before `call`, and the 16-byte long double slot sits at
+// [rsp..rsp+16) — where the callee sees it at rsp+8.
+core::arch::global_asm!(
+    ".global fl_call_double_long_double",
+    ".type fl_call_double_long_double, @function",
+    "fl_call_double_long_double:",
+    "  sub rsp, 24",
+    "  mov rax, [rsi]",
+    "  mov [rsp], rax",
+    "  mov rax, [rsi + 8]",
+    "  mov [rsp + 8], rax",
+    "  call rdi",
+    "  add rsp, 24",
+    "  ret",
+    ".size fl_call_double_long_double, .-fl_call_double_long_double",
+    // Byte-identical body; a separate symbol only so the return type can be
+    // declared as f32 without declaring one symbol at two Rust signatures.
+    ".global fl_call_float_long_double",
+    ".type fl_call_float_long_double, @function",
+    "fl_call_float_long_double:",
+    "  sub rsp, 24",
+    "  mov rax, [rsi]",
+    "  mov [rsp], rax",
+    "  mov rax, [rsi + 8]",
+    "  mov [rsp + 8], rax",
+    "  call rdi",
+    "  add rsp, 24",
+    "  ret",
+    ".size fl_call_float_long_double, .-fl_call_float_long_double",
+);
+
+unsafe extern "C" {
+    fn fl_call_double_long_double(target: *const c_void, x: f64, y: *const u8) -> f64;
+    fn fl_call_float_long_double(target: *const c_void, x: f32, y: *const u8) -> f32;
+}
+
+fn call_double(target: *const c_void, x: f64, y: &[u8; 16]) -> f64 {
+    // SAFETY: `target` is a `double(double, long double)` resolved by dlsym; the
+    // shim places `y` in the stack slot the ABI requires.
+    unsafe { fl_call_double_long_double(target, x, y.as_ptr()) }
+}
+
+fn call_float(target: *const c_void, x: f32, y: &[u8; 16]) -> f32 {
+    // SAFETY: as above, for `float(float, long double)`.
+    unsafe { fl_call_float_long_double(target, x, y.as_ptr()) }
+}
+
 /// An x87 80-bit value built from its parts: sign, 15-bit exponent, 64-bit
 /// significand (explicit integer bit included, unlike IEEE binary64).
 fn x87(sign: u8, exponent: u16, significand: u64) -> [u8; 16] {
@@ -148,6 +204,29 @@ fn main() {
     // Stepping up from 1.0 sets the low significand bit; stepping down does not.
     assert_eq!(up[0], 0x01, "shim is broken: unexpected step-up pattern");
     println!("ORACLE_CONTROL_OK");
+
+    // The sibling signatures, each with its own controls. These are exactly
+    // checkable against IEEE-754 binary64/binary32 neighbours, so they verify
+    // the two new shims independently of any implementation under test.
+    let glibc_nexttoward = resolve(handle, "nexttoward").expect("glibc nexttoward");
+    let glibc_nexttowardf = resolve(handle, "nexttowardf").expect("glibc nexttowardf");
+
+    let d_same = call_double(glibc_nexttoward, 1.0, &one());
+    let d_up = call_double(glibc_nexttoward, 1.0, &two());
+    let d_down = call_double(glibc_nexttoward, 1.0, &zero());
+    println!("ORACLE_CONTROL nexttoward same={d_same} up={d_up:.17} down={d_down:.17}");
+    assert_eq!(d_same, 1.0, "shim broken: nexttoward(1,1) != 1");
+    assert_eq!(d_up, f64::from_bits(1.0f64.to_bits() + 1), "shim broken: nexttoward(1,2)");
+    assert_eq!(d_down, f64::from_bits(1.0f64.to_bits() - 1), "shim broken: nexttoward(1,0)");
+
+    let f_same = call_float(glibc_nexttowardf, 1.0, &one());
+    let f_up = call_float(glibc_nexttowardf, 1.0, &two());
+    let f_down = call_float(glibc_nexttowardf, 1.0, &zero());
+    println!("ORACLE_CONTROL nexttowardf same={f_same} up={f_up:.9} down={f_down:.9}");
+    assert_eq!(f_same, 1.0, "shim broken: nexttowardf(1,1) != 1");
+    assert_eq!(f_up, f32::from_bits(1.0f32.to_bits() + 1), "shim broken: nexttowardf(1,2)");
+    assert_eq!(f_down, f32::from_bits(1.0f32.to_bits() - 1), "shim broken: nexttowardf(1,0)");
+    println!("ORACLE_CONTROL_SIBLINGS_OK");
 
     // Now the differential, if FrankenLibC exports the symbol at all. It does
     // not today (bd-6xstqa) — that is the point of writing this first.
