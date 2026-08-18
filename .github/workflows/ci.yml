@@ -67,6 +67,17 @@ jobs:
             cargo test -p frankenlibc-core prop_ -- --nocapture \
             2>&1 | tee artifacts/ci/proptest-10k.log
 
+      # Catches an implemented C-ABI function that carries no export attribute,
+      # so the cdylib never exports it and a loading program silently gets
+      # glibc's. Thirteen had accumulated before anything checked (bd-6xstqa),
+      # strchr among them -- a function with its own shipped SIMD campaign that
+      # could not reach a program through the deployed object. Source-only and
+      # fast; no build required.
+      - name: Check ABI export surface
+        run: |
+          mkdir -p artifacts/ci
+          python3 scripts/audit_abi_exports.py 2>&1 | tee artifacts/ci/abi-export-audit.log
+
       - name: Upload core CI artifacts
         if: always()
         uses: actions/upload-artifact@v4
