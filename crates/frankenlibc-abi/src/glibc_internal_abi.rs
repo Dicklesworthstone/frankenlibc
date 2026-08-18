@@ -4317,10 +4317,37 @@ pub unsafe extern "C" fn __printf_fp(
 ) -> c_int {
     -1 // internal glibc helper, not called directly by applications
 }
-// __profile_frequency: native — return 100 (default HZ)
+/// `__profile_frequency` — the sampling rate `profil`/`sprofil` report.
+///
+/// DERIVED from `sysconf(_SC_CLK_TCK)`, not hardcoded. glibc's implementation is
+/// exactly that, and the two agree on this host — measured on glibc 2.42:
+///
+/// ```text
+///   __profile_frequency()     = 100
+///   sysconf(_SC_CLK_TCK)      = 100
+///   sprofil period {0, 1000000/f} = {0, 10000}
+/// ```
+///
+/// The previous body was a literal `100` with the comment "default HZ", which
+/// happens to be right on every Linux port that uses the usual `USER_HZ` of 100
+/// and wrong on one that does not (alpha's is 1024). More to the point, it made
+/// this function and `sysconf` two independent sources for one number: changing
+/// `sysconf`'s answer would have left this one behind, and `sprofil`'s reported
+/// period is computed from it, so the two would disagree with no test between
+/// them.
+///
+/// The fallback exists because this returns `c_int` and has no error channel: a
+/// non-positive `sysconf` would otherwise produce a zero or negative frequency
+/// that `1000000 / f` turns into a division fault in the caller.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __profile_frequency() -> c_int {
-    100
+    // SAFETY: `sysconf` takes a scalar selector and touches no caller memory.
+    let ticks = unsafe { crate::unistd_abi::sysconf(libc::_SC_CLK_TCK) };
+    if ticks > 0 && ticks <= c_int::MAX as i64 {
+        ticks as c_int
+    } else {
+        100
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __pwrite64(
