@@ -3861,6 +3861,213 @@ fn measure_wcsnrtombs_case(
     )
 }
 
+fn run_wcsnrtombs(config: &Config) {
+    // Both arms are pinned to the C locale before anything is measured. The
+    // timing fixture is all-ASCII by design, and its note says "under shared C
+    // locale" -- wcsnrtombs' cost depends on the conversion the locale selects,
+    // so an unpinned locale would compare two different operations.
+    let host_locale = unsafe { linked_host_setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    assert!(!host_locale.is_null(), "host setlocale(LC_ALL, C) failed");
+
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol=wcsnrtombs deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen"
+        }
+    );
+
+    let fl_symbol = unsafe { libc::dlsym(handle, c"wcsnrtombs".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC wcsnrtombs")
+    );
+    let fl_errno_symbol = unsafe { libc::dlsym(handle, c"__errno_location".as_ptr()) };
+    assert!(
+        !fl_errno_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __errno_location")
+    );
+    let fl_mbsinit_symbol = unsafe { libc::dlsym(handle, c"mbsinit".as_ptr()) };
+    assert!(
+        !fl_mbsinit_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC mbsinit")
+    );
+    let fl_setlocale_symbol = unsafe { libc::dlsym(handle, c"setlocale".as_ptr()) };
+    assert!(
+        !fl_setlocale_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC setlocale")
+    );
+
+    let host: WcsnrtombsFn = linked_host_wcsnrtombs;
+    let fl: WcsnrtombsFn = unsafe { std::mem::transmute(fl_symbol) };
+    let host_errno: ErrnoLocationFn = linked_host_errno_location;
+    let fl_errno: ErrnoLocationFn = unsafe { std::mem::transmute(fl_errno_symbol) };
+    let host_mbsinit: MbsinitFn = linked_host_mbsinit;
+    let fl_mbsinit: MbsinitFn = unsafe { std::mem::transmute(fl_mbsinit_symbol) };
+    let fl_setlocale: SetlocaleFn = unsafe { std::mem::transmute(fl_setlocale_symbol) };
+    // fl keeps its own locale state, so pinning the host's says nothing about
+    // fl's. Both are set explicitly.
+    let fl_locale = unsafe { fl_setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    assert!(
+        !fl_locale.is_null(),
+        "FrankenLibC setlocale(LC_ALL, C) failed"
+    );
+
+    let incumbent_identity = symbol_object(host as *const () as *const c_void)
+        .expect("identify host wcsnrtombs object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC wcsnrtombs object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=wcsnrtombs");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=wcsnrtombs");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=wcsnrtombs incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    // CONFORMANCE BEFORE TIMING. The count-mode contract is not just a return
+    // value: it also pins the source pointer, errno and the shift state, all of
+    // which the existing verifiers compare against the host.
+    let timing_cases = wcsnrtombs_timing_cases();
+    let (expected_counts, success_comparisons) = verify_wcsnrtombs_conformance(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &timing_cases,
+    );
+    // The non-ASCII fixtures cannot be COMPARED for cost under the C locale --
+    // that is what makes them incomparable -- but both arms must still agree on
+    // what they do, so they are checked for conformance and never timed.
+    let incomparable_cases = wcsnrtombs_incomparable_cases();
+    let incomparable_comparisons = verify_wcsnrtombs_incomparable_cases(
+        host,
+        fl,
+        host_errno,
+        fl_errno,
+        host_mbsinit,
+        fl_mbsinit,
+        &incomparable_cases,
+    );
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=wcsnrtombs comparisons={} \
+         timed_cases={} incomparable_cases_checked={incomparable_comparisons} \
+         locale=C count_mode=null_destination",
+        success_comparisons + incomparable_comparisons,
+        timing_cases.len(),
+    );
+
+    let threads_pre_guard = observed_threads_settled();
+    println!("THREADS_OBSERVED symbol=wcsnrtombs phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=wcsnrtombs verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+
+    let results = timing_cases
+        .iter()
+        .zip(expected_counts.iter())
+        .map(|(case, expected)| measure_wcsnrtombs_case(host, fl, case, *expected))
+        .collect::<Vec<_>>();
+
+    let threads_post = observed_threads();
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+
+    for result in &results {
+        result.print(
+            "wcsnrtombs",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let undecidable = results.len() - wins - losses;
+    let headline = results
+        .iter()
+        .find(|result| result.label == "ascii")
+        .expect("missing the ascii headline result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=wcsnrtombs verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=ascii headline_ratio_median={:.6} \
+         headline_comparison={} registered_expectation=win_plausible \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        headline.effect_median,
+        headline.comparison,
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn run_nl_langinfo(config: &Config) {
     let host_locale = unsafe { linked_host_setlocale(libc::LC_ALL, c"C".as_ptr()) };
     assert!(!host_locale.is_null(), "host setlocale(LC_ALL, C) failed");
@@ -9198,12 +9405,7 @@ fn main() {
         // landed but the top-level runner has not. This arm only keeps the
         // shared example compiling for every other family; replace it with the
         // real runner rather than building on it.
-        Family::Wcsnrtombs => {
-            eprintln!(
-                "INCUMBENT_COVERAGE_BLOCKED family=wcsnrtombs reason=runner_not_yet_implemented"
-            );
-            std::process::exit(2);
-        }
+        Family::Wcsnrtombs => run_wcsnrtombs(&config),
     }
 }
 
