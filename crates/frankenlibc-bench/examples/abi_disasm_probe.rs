@@ -271,10 +271,39 @@ fn symbol_bounds(table: &[(u64, u64, String)], symbol: &str) -> Option<(u64, u64
 fn main() {
     let object = shared_object();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--version-script=PATH` links the cdylib through that script, which is the
+    // ONLY way to observe the deployed export surface from here: build.rs applies
+    // version_scripts/libc.map only under --features standalone,owned-unwind-stub,
+    // and that feature set currently fails its own policy gate (bd-haor6r), so the
+    // deployed configuration cannot be built at all. Passing the script directly
+    // asks the narrower question -- what would this script export? -- without
+    // needing the policy gate to pass.
+    //
+    // Note this forces a full rebuild: RUSTFLAGS is part of cargo's fingerprint.
+    // The flags from .cargo/config.toml are repeated here because setting the
+    // RUSTFLAGS env var REPLACES them rather than appending, and dropping
+    // +avx2,+fma would silently change the codegen under test.
+    // `--rustflags=...` rebuilds the cdylib with extra flags before disassembling
+    // it, which is how a CODEGEN question gets asked directly -- e.g. does
+    // -Zdefault-visibility=protected turn the GOT-indirect abi->core calls into
+    // direct ones (bd-kuevs7).
+    //
+    // A LINK-time flag does NOT work here and the failure is worth recording:
+    // `--version-script=` was tried first and broke the build, because RUSTFLAGS
+    // reaches every crate including build scripts, and serde_core's build script
+    // cannot link against a version script naming symbols it does not define.
+    // Scoping a link arg to just the cdylib needs --target plumbing (which also
+    // moves the artifact path) or build.rs's cargo:rustc-cdylib-link-arg.
+    let extra_rustflags: Option<&str> = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--rustflags="));
     let symbols: Vec<&str> = if args.is_empty() {
         DEFAULT_SYMBOLS.to_vec()
     } else {
-        args.iter().map(String::as_str).collect()
+        args.iter()
+            .map(String::as_str)
+            .filter(|arg| !arg.starts_with("--rustflags="))
+            .collect()
     };
 
     // BUILD THE CDYLIB FIRST. `cargo run --example` builds the example and the abi
@@ -286,12 +315,20 @@ fn main() {
     // mistake on its first outing: two runs of DIFFERENT source trees reported
     // byte-identical results because both read one leftover artifact.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let build = Command::new(&cargo)
+    let mut command = Command::new(&cargo);
+    command
         .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
         // Same directory this probe reads from — see `target_dir`.
-        .env("CARGO_TARGET_DIR", target_dir())
-        .status()
-        .expect("build the FrankenLibC cdylib");
+        .env("CARGO_TARGET_DIR", target_dir());
+    if let Some(extra) = extra_rustflags {
+        // The flags from .cargo/config.toml are repeated because setting the
+        // RUSTFLAGS env var REPLACES them rather than appending, and silently
+        // dropping +avx2,+fma would change the codegen under test.
+        let flags = format!("-Z threads=4 -Ctarget-feature=+avx2,+fma {extra}");
+        println!("DISASM_RUSTFLAGS value={flags:?}");
+        command.env("RUSTFLAGS", flags);
+    }
+    let build = command.status().expect("build the FrankenLibC cdylib");
     assert!(build.success(), "cdylib build failed");
 
     // Identify the object by CONTENT, not by path or size. Two builds of different
