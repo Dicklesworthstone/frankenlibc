@@ -17,11 +17,77 @@ pub const LC_MONETARY: i32 = 4;
 pub const LC_MESSAGES: i32 = 5;
 /// POSIX locale category: all categories.
 pub const LC_ALL: i32 = 6;
+/// GNU locale category: paper size.
+pub const LC_PAPER: i32 = 7;
+/// GNU locale category: personal name formatting.
+pub const LC_NAME: i32 = 8;
+/// GNU locale category: postal address formatting.
+pub const LC_ADDRESS: i32 = 9;
+/// GNU locale category: telephone number formatting.
+pub const LC_TELEPHONE: i32 = 10;
+/// GNU locale category: measurement system.
+pub const LC_MEASUREMENT: i32 = 11;
+/// GNU locale category: locale metadata.
+pub const LC_IDENTIFICATION: i32 = 12;
 
 /// Minimum valid locale category value.
 pub const LC_MIN: i32 = 0;
 /// Maximum valid locale category value.
-pub const LC_MAX: i32 = 6;
+///
+/// TWELVE, not six. glibc defines six GNU categories ABOVE `LC_ALL`, and
+/// accepts every one of them. Measured on glibc 2.42 with `setlocale(cat, NULL)`
+/// swept over -2..=14: categories 0..=12 all answer `"C"` with errno untouched,
+/// while -1, -2, 13 and 14 return NULL with EINVAL. fl previously stopped at
+/// `LC_ALL`, so `setlocale(LC_PAPER, NULL)` — which a conforming program may
+/// call — failed where the incumbent succeeds.
+pub const LC_MAX: i32 = 12;
+
+/// Number of real categories, i.e. everything except `LC_ALL` itself.
+///
+/// `LC_ALL` sits at 6, in the MIDDLE of the range rather than at the end, so
+/// this is not simply `LC_MAX + 1` and indexing a per-category array by the
+/// category number would leave a hole. [`category_slot`] does the mapping.
+pub const CATEGORY_COUNT: usize = 12;
+
+/// The category names glibc uses in the `LC_ALL` composite string, in the exact
+/// order it emits them.
+///
+/// Measured, not guessed: with `LC_CTYPE` alone set to `C.UTF-8`, glibc answers
+/// `setlocale(LC_ALL, NULL)` with
+/// `LC_CTYPE=C.UTF-8;LC_NUMERIC=C;LC_TIME=C;LC_COLLATE=C;LC_MONETARY=C;`
+/// `LC_MESSAGES=C;LC_PAPER=C;LC_NAME=C;LC_ADDRESS=C;LC_TELEPHONE=C;`
+/// `LC_MEASUREMENT=C;LC_IDENTIFICATION=C`. Note the order is NOT the numeric
+/// category order — `LC_ALL` is skipped and the GNU categories follow the
+/// POSIX ones.
+pub const COMPOSITE_ORDER: [(&str, i32); CATEGORY_COUNT] = [
+    ("LC_CTYPE", LC_CTYPE),
+    ("LC_NUMERIC", LC_NUMERIC),
+    ("LC_TIME", LC_TIME),
+    ("LC_COLLATE", LC_COLLATE),
+    ("LC_MONETARY", LC_MONETARY),
+    ("LC_MESSAGES", LC_MESSAGES),
+    ("LC_PAPER", LC_PAPER),
+    ("LC_NAME", LC_NAME),
+    ("LC_ADDRESS", LC_ADDRESS),
+    ("LC_TELEPHONE", LC_TELEPHONE),
+    ("LC_MEASUREMENT", LC_MEASUREMENT),
+    ("LC_IDENTIFICATION", LC_IDENTIFICATION),
+];
+
+/// Map a category number to a dense slot index, skipping `LC_ALL`.
+///
+/// Returns `None` for `LC_ALL` itself and for anything out of range, so a
+/// caller cannot accidentally store per-category state under the "all"
+/// pseudo-category.
+#[inline]
+pub fn category_slot(cat: i32) -> Option<usize> {
+    match cat {
+        LC_ALL => None,
+        c if (LC_MIN..LC_ALL).contains(&c) => Some(c as usize),
+        c if (LC_ALL + 1..=LC_MAX).contains(&c) => Some(c as usize - 1),
+        _ => None,
+    }
+}
 
 /// Value used for unspecified numeric fields in `LocaleConv` (POSIX `CHAR_MAX`).
 const CHAR_MAX: i8 = 127;

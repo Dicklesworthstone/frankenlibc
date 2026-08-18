@@ -103,25 +103,112 @@ const CHARSET_UTF8: u8 = 1;
 /// HOST into `C.UTF-8` (`libc::setlocale`) now put fl there too — otherwise they
 /// would compare an ASCII fl against a UTF-8 glibc and fail for a reason that
 /// has nothing to do with what they test.
-static ACTIVE_CHARSET: std::sync::atomic::AtomicU8 =
-    std::sync::atomic::AtomicU8::new(CHARSET_ASCII);
+/// PER-CATEGORY, not one value for the process. `setlocale(LC_NUMERIC, "C")`
+/// must leave `LC_CTYPE` alone, and `setlocale(LC_ALL, NULL)` must be able to
+/// report that they now differ — neither is expressible with a single slot.
+///
+/// Twelve slots, indexed by `locale_core::category_slot`, which skips `LC_ALL`.
+/// `LC_ALL` sits at 6 in the MIDDLE of the numeric range, so indexing directly
+/// by category number would leave a hole at the pseudo-category.
+static ACTIVE_CHARSET: [std::sync::atomic::AtomicU8; locale_core::CATEGORY_COUNT] =
+    [const { std::sync::atomic::AtomicU8::new(CHARSET_ASCII) }; locale_core::CATEGORY_COUNT];
 
-/// The character set every conversion entrypoint must honour.
 #[inline]
-pub(crate) fn active_charset() -> Charset {
-    match ACTIVE_CHARSET.load(Ordering::Acquire) {
+fn decode_charset(raw: u8) -> Charset {
+    match raw {
         CHARSET_ASCII => Charset::Ascii,
         _ => Charset::Utf8,
     }
 }
 
+/// The character set a single category is set to.
 #[inline]
-fn set_active_charset(charset: Charset) {
-    let encoded = match charset {
+fn category_charset(cat: c_int) -> Charset {
+    match locale_core::category_slot(cat) {
+        Some(slot) => decode_charset(ACTIVE_CHARSET[slot].load(Ordering::Acquire)),
+        // `LC_ALL` has no slot of its own; report LC_CTYPE, which is the
+        // category every conversion entrypoint actually consults.
+        None => {
+            decode_charset(ACTIVE_CHARSET[locale_core::LC_CTYPE as usize].load(Ordering::Acquire))
+        }
+    }
+}
+
+/// The character set every conversion entrypoint must honour.
+///
+/// This is `LC_CTYPE` specifically, not "the locale": POSIX puts character
+/// classification and multibyte conversion under `LC_CTYPE`, so a program that
+/// sets only `LC_NUMERIC` to `C.UTF-8` must NOT get a UTF-8 codec.
+#[inline]
+pub(crate) fn active_charset() -> Charset {
+    decode_charset(ACTIVE_CHARSET[locale_core::LC_CTYPE as usize].load(Ordering::Acquire))
+}
+
+#[inline]
+fn encode_charset(charset: Charset) -> u8 {
+    match charset {
         Charset::Ascii => CHARSET_ASCII,
         Charset::Utf8 => CHARSET_UTF8,
-    };
-    ACTIVE_CHARSET.store(encoded, Ordering::Release);
+    }
+}
+
+/// Set one category, or every category when `cat` is `LC_ALL`.
+fn set_category_charset(cat: c_int, charset: Charset) {
+    let encoded = encode_charset(charset);
+    match locale_core::category_slot(cat) {
+        Some(slot) => ACTIVE_CHARSET[slot].store(encoded, Ordering::Release),
+        None => {
+            for slot in ACTIVE_CHARSET.iter() {
+                slot.store(encoded, Ordering::Release);
+            }
+        }
+    }
+}
+
+#[inline]
+fn set_active_charset(charset: Charset) {
+    set_category_charset(locale_core::LC_ALL, charset);
+}
+
+/// Storage for the `LC_ALL` composite string.
+///
+/// glibc returns a pointer to internal storage that the next `setlocale` may
+/// overwrite, and callers are expected to copy it. This mirrors that contract
+/// rather than leaking a fresh allocation per query.
+static COMPOSITE_BUF: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// Build the `LC_ALL` answer: a single name when every category agrees, and
+/// glibc's `LC_CTYPE=..;LC_NUMERIC=..;..` composite when they do not.
+///
+/// Measured against glibc 2.42. With only `LC_CTYPE` moved to `C.UTF-8` it
+/// answers the full twelve-field composite; with every category on the same
+/// locale it answers the bare name. The field ORDER is glibc's, not the numeric
+/// category order — see `locale_core::COMPOSITE_ORDER`.
+fn lc_all_report() -> *const c_char {
+    let first = decode_charset(ACTIVE_CHARSET[0].load(Ordering::Acquire));
+    let uniform = ACTIVE_CHARSET
+        .iter()
+        .all(|slot| decode_charset(slot.load(Ordering::Acquire)) == first);
+    if uniform {
+        return locale_name_for(first).as_ptr() as *const c_char;
+    }
+
+    let mut buf = COMPOSITE_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    buf.clear();
+    for (index, (name, cat)) in locale_core::COMPOSITE_ORDER.iter().enumerate() {
+        if index > 0 {
+            buf.push(b';');
+        }
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(b'=');
+        let charset = category_charset(*cat);
+        // `locale_name_for` returns a NUL-terminated static; the composite
+        // wants the text only.
+        let text = locale_name_for(charset);
+        buf.extend_from_slice(&text[..text.len() - 1]);
+    }
+    buf.push(0);
+    buf.as_ptr() as *const c_char
 }
 
 /// Test hook: restore the startup locale so a test that selects one cannot
@@ -132,7 +219,10 @@ fn set_active_charset(charset: Charset) {
 /// cross-arm leakage it exists to prevent.
 #[doc(hidden)]
 pub fn locale_reset_active_charset_for_tests() {
-    set_active_charset(Charset::Ascii);
+    // EVERY category, not just LC_CTYPE. A reset that left one category on
+    // C.UTF-8 would make the next arm's `setlocale(LC_ALL, NULL)` return a
+    // composite string, which is exactly the cross-arm leak this exists to stop.
+    set_category_charset(locale_core::LC_ALL, Charset::Ascii);
 }
 
 /// The canonical name `setlocale` reports for `charset`.
@@ -265,11 +355,16 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return std::ptr::null();
     }
 
-    // Query mode: locale is NULL. Reports whatever is currently selected, not a
-    // fixed string — that is the difference between a locale and a constant.
+    // Query mode: locale is NULL. Reports what THIS CATEGORY is set to, and for
+    // `LC_ALL` either the shared name or glibc's composite string when the
+    // categories disagree.
     if locale.is_null() {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, false);
-        return locale_name_for(active_charset()).as_ptr() as *const c_char;
+        return if category == locale_core::LC_ALL {
+            lc_all_report()
+        } else {
+            locale_name_for(category_charset(category)).as_ptr() as *const c_char
+        };
     }
 
     // Parse the locale name with a known-region bound. A non-NUL-terminated
@@ -282,15 +377,18 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     if let Some(charset) = charset_for_request(&name) {
         // The selection and the report are one step: whatever name goes back to
         // the caller, CODESET, MB_CUR_MAX and the codec already agree with it.
-        set_active_charset(charset);
+        // A non-`LC_ALL` category moves ONLY itself, which is the whole point of
+        // per-category state — `setlocale(LC_NUMERIC, "C.UTF-8")` must not hand
+        // the caller a UTF-8 codec.
+        set_category_charset(category, charset);
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
         locale_name_for(charset).as_ptr() as *const c_char
     } else if mode.heals_enabled() {
-        // Hardened: fall back to the UTF-8 locale instead of failing. The
-        // active charset is left alone — healing an unknown NAME must not
-        // silently re-encode the caller's data underneath it.
+        // Hardened: fall back instead of failing. The active charset is left
+        // alone — healing an unknown NAME must not silently re-encode the
+        // caller's data underneath it.
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-        locale_name_for(active_charset()).as_ptr() as *const c_char
+        locale_name_for(category_charset(category)).as_ptr() as *const c_char
     } else {
         unsafe { set_abi_errno(libc::ENOENT) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
@@ -362,7 +460,13 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 /// does, and why glibc measures flat at 2.34 ns across every one of those cases.
 static LC_TIME_NAMES: [&[u8]; 38] = [
     // ABDAY_1..=ABDAY_7 — offsets 0..=6
-    b"Sun\0", b"Mon\0", b"Tue\0", b"Wed\0", b"Thu\0", b"Fri\0", b"Sat\0",
+    b"Sun\0",
+    b"Mon\0",
+    b"Tue\0",
+    b"Wed\0",
+    b"Thu\0",
+    b"Fri\0",
+    b"Sat\0",
     // DAY_1..=DAY_7 — offsets 7..=13
     b"Sunday\0",
     b"Monday\0",
@@ -372,8 +476,18 @@ static LC_TIME_NAMES: [&[u8]; 38] = [
     b"Friday\0",
     b"Saturday\0",
     // ABMON_1..=ABMON_12 — offsets 14..=25
-    b"Jan\0", b"Feb\0", b"Mar\0", b"Apr\0", b"May\0", b"Jun\0", b"Jul\0", b"Aug\0", b"Sep\0",
-    b"Oct\0", b"Nov\0", b"Dec\0",
+    b"Jan\0",
+    b"Feb\0",
+    b"Mar\0",
+    b"Apr\0",
+    b"May\0",
+    b"Jun\0",
+    b"Jul\0",
+    b"Aug\0",
+    b"Sep\0",
+    b"Oct\0",
+    b"Nov\0",
+    b"Dec\0",
     // MON_1..=MON_12 — offsets 26..=37
     b"January\0",
     b"February\0",
