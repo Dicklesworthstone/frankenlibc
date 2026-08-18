@@ -1459,6 +1459,34 @@ fn observed_threads() -> usize {
         .unwrap_or(0)
 }
 
+/// Observed task count, after letting a just-joined thread finish being reaped.
+///
+/// `JoinHandle::join` guarantees the thread ran to completion; it does NOT
+/// guarantee the kernel has removed its `/proc/self/task` entry, which lingers
+/// briefly during teardown. Only one family trips over that: `thrd_current`'s
+/// conformance MUST spawn a second thread, because "each thread gets a distinct
+/// stable token" cannot be checked with one, and it is therefore the only family
+/// that reads the task count with a reap in flight. It read 2 immediately after
+/// the join and 1 again at the guard, the two disagreed, and the stability assert
+/// aborted the family before it timed anything — so D1 rank 8 came back
+/// unconverted for a reason that had nothing to do with FrankenLibC.
+///
+/// Polling until two consecutive reads agree removes the race WITHOUT weakening
+/// the assert it feeds: a thread that genuinely stays alive is counted on every
+/// read, so the count settles at the higher value and still trips it.
+fn observed_threads_settled() -> usize {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut previous = observed_threads();
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let current = observed_threads();
+        if current == previous || std::time::Instant::now() >= deadline {
+            return current;
+        }
+        previous = current;
+    }
+}
+
 fn sha256_file(path: &Path) -> Result<ObjectIdentity, String> {
     let path = std::fs::canonicalize(path)
         .map_err(|error| format!("canonicalize {}: {error}", path.display()))?;
@@ -5563,7 +5591,9 @@ fn run_thrd_current(config: &Config) {
         "INCUMBENT_COVERAGE_CONFORMANCE symbol=thrd_current comparisons=8 \
          stable_nonzero_per_thread_identity_verdict=pass opaque_cross_provider_tokens=true"
     );
-    let threads_pre_guard = observed_threads();
+    // Settled, not instantaneous: the conformance child above was joined a few
+    // instructions ago and its task entry may still be present.
+    let threads_pre_guard = observed_threads_settled();
     println!("THREADS_OBSERVED symbol=thrd_current phase=pre_guard count={threads_pre_guard}");
     if config.verify_only {
         println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=thrd_current verdict=pass");
