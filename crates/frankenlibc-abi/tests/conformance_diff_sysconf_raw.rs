@@ -45,19 +45,17 @@ const MAX_PROBED_CODE: c_int = 260;
 /// "errno set to 0".
 const SENTINEL_ERRNO: c_int = 4242;
 
-/// Selectors this gate deliberately does NOT assert yet, and why (bd-fxu91j).
+/// Selectors this gate deliberately does NOT assert. It is EMPTY, and that is
+/// the point: fl now answers every selector host glibc answers over the probed
+/// range.
 ///
-/// 250 is _SC_SIGSTKSZ, which tracks AT_MINSIGSTKSZ (13504 = 4 x 3376 on the
-/// measured host). One host is one data point, and the observation is equally
-/// consistent with "min + 10128", so the relationship is not pinned.
-///
-/// The CPU cache selectors 185..=199 USED to be here and are now implemented
-/// from the kernel's cache topology; they are asserted by the sweep below and
-/// by `cpu_cache_selectors_match_glibc`.
-///
-/// Listed rather than silently skipped: the sweep counts them and prints what it
-/// declined, so widening the range cannot quietly read as full coverage.
-const KNOWN_UNIMPLEMENTED: &[c_int] = &[250];
+/// It exists rather than being deleted so that a future deferral has to be
+/// written down here, next to the sweep that would otherwise have caught it.
+/// The two entries it used to hold — the CPU cache band 185..=199 and
+/// _SC_SIGSTKSZ (250) — were both closed by reading the incumbent instead of
+/// guessing: the cache rows from the kernel's own topology, and 250 from the
+/// arithmetic in libc.so.6's __sysconf.
+const KNOWN_UNIMPLEMENTED: &[c_int] = &[];
 
 // glibc selectors intentionally represented as raw numbers in the ABI match:
 // the Rust libc crate does not publish this complete set on every target.
@@ -338,4 +336,72 @@ fn cpu_cache_selectors_match_glibc() {
         CACHE_SELECTORS.len(),
         divergences.join("\n  ")
     );
+}
+
+/// `_SC_MINSIGSTKSZ`, `_SC_SIGSTKSZ` and `_SC_THREAD_STACK_MIN` all derive from
+/// the SAME kernel-supplied value, `AT_MINSIGSTKSZ`, and this test pins the
+/// RELATIONSHIP rather than the numbers.
+///
+/// That matters because on the machine this was written against the numbers are
+/// uninformative: AT_MINSIGSTKSZ is 3376, so _SC_THREAD_STACK_MIN's MAX against
+/// PTHREAD_STACK_MIN (16384) never engages and a hardcoded 16384 looks correct.
+/// It stops looking correct on a CPU whose signal frame is larger — the value
+/// grows with the XSAVE state the kernel must preserve — and there fl must
+/// report the larger number, not the constant.
+///
+/// The formulas were read out of libc.so.6 2.42, not inferred from one host:
+///   _SC_MINSIGSTKSZ    = dl_minsigstacksize          (returned directly)
+///   _SC_SIGSTKSZ       = MAX(8192,  dl_minsigstacksize * 4)
+///   _SC_THREAD_STACK_MIN = MAX(16384, dl_minsigstacksize)
+/// and glibc seeds dl_minsigstacksize from AT_MINSIGSTKSZ.
+#[test]
+fn signal_stack_selectors_track_auxv() {
+    const SC_MINSIGSTKSZ: c_int = 249;
+    const SC_SIGSTKSZ: c_int = 250;
+    const SC_THREAD_STACK_MIN: c_int = 75;
+    const AT_MINSIGSTKSZ: usize = 51;
+
+    let auxv = std::fs::read("/proc/self/auxv").expect("read /proc/self/auxv");
+    let word = std::mem::size_of::<usize>();
+    let mut published: Option<usize> = None;
+    for chunk in auxv.chunks_exact(word * 2) {
+        let a_type = usize::from_ne_bytes(chunk[..word].try_into().unwrap());
+        let a_val = usize::from_ne_bytes(chunk[word..word * 2].try_into().unwrap());
+        if a_type == AT_MINSIGSTKSZ {
+            published = Some(a_val);
+            break;
+        }
+        if a_type == 0 {
+            break;
+        }
+    }
+    let Some(minsig) = published.filter(|v| *v != 0) else {
+        // Without the auxv entry there is no relationship to check; the plain
+        // value comparisons in the sweep still apply. Say so rather than
+        // passing silently.
+        println!("kernel published no AT_MINSIGSTKSZ -- relationship not checked");
+        return;
+    };
+    let minsig = minsig as std::ffi::c_long;
+
+    for (code, name, expected) in [
+        (SC_MINSIGSTKSZ, "_SC_MINSIGSTKSZ", minsig),
+        (SC_SIGSTKSZ, "_SC_SIGSTKSZ", (minsig * 4).max(8192)),
+        (
+            SC_THREAD_STACK_MIN,
+            "_SC_THREAD_STACK_MIN",
+            minsig.max(16384),
+        ),
+    ] {
+        // The host is the authority; assert it satisfies the relationship first,
+        // so a glibc change shows up as a failure here rather than being
+        // absorbed into fl's expectations.
+        let g = unsafe { sysconf(code) };
+        assert_eq!(
+            g, expected,
+            "host premise: glibc {name} should be {expected} for AT_MINSIGSTKSZ={minsig}, got {g}"
+        );
+        let f = unsafe { frankenlibc_abi::unistd_abi::sysconf(code) };
+        assert_eq!(f, g, "{name}: fl={f} glibc={g}");
+    }
 }

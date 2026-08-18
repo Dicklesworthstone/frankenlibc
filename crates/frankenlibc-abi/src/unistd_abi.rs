@@ -2762,7 +2762,24 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_THREAD_SAFE_FUNCTIONS => 200809,
         libc::_SC_THREADS => 200809,
         libc::_SC_THREAD_KEYS_MAX => 1024,
-        libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
+        // NOT a constant, despite looking like one. glibc computes
+        // MAX(PTHREAD_STACK_MIN, GLRO(dl_minsigstacksize)) -- read out of
+        // libc.so.6 2.42 at __sysconf+0x474:
+        //     mov  0x20(%rax),%rax      ; GLRO(dl_minsigstacksize)
+        //     mov  $0x4000,%edx         ; PTHREAD_STACK_MIN = 16384
+        //     cmp  %rdx,%rax
+        //     cmovl %rdx,%rax           ; take the larger
+        // On the measured host the two agree only by accident: AT_MINSIGSTKSZ
+        // is 3376, far below 16384, so the MAX is invisible. A CPU with a large
+        // enough signal-frame requirement (the value grows with the XSAVE state
+        // the kernel must preserve) pushes dl_minsigstacksize above 16384, and a
+        // bare PTHREAD_STACK_MIN would then be SMALLER than the minimum glibc
+        // reports -- i.e. fl would tell a caller a stack size that cannot hold a
+        // signal frame. Selector 75 was identified by elimination: it is the only
+        // selector on this host returning exactly 16384.
+        libc::_SC_THREAD_STACK_MIN => {
+            (libc::PTHREAD_STACK_MIN as libc::c_long).max(runtime_min_sigstksz())
+        }
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
         libc::_SC_THREAD_DESTRUCTOR_ITERATIONS => 4,
         libc::_SC_MONOTONIC_CLOCK => 200809,
@@ -2907,6 +2924,20 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
 
         // Per-kernel value from the auxiliary vector, not a constant.
         249 => runtime_min_sigstksz(), // _SC_MINSIGSTKSZ
+        // _SC_SIGSTKSZ. The relationship to _SC_MINSIGSTKSZ was NOT inferred
+        // from this host's numbers -- 13504 = 4 x 3376 is equally consistent
+        // with "min + 10128" -- it was read out of the incumbent. libc.so.6
+        // 2.42, __sysconf+0x240:
+        //     mov  0x20(%rax),%rdx      ; GLRO(dl_minsigstacksize)
+        //     lea  0x0(,%rdx,4),%rax    ; x 4
+        //     cmp  $0x7ff,%rdx          ; 2047
+        //     mov  $0x2000,%edx         ; 8192, the static SIGSTKSZ
+        //     cmovle %rdx,%rax          ; below the threshold, use 8192
+        // The branch form and MAX(8192, min * 4) are the same function: the
+        // threshold is exactly where min * 4 crosses 8192 (2047 * 4 = 8188,
+        // 2048 * 4 = 8192), so no input separates them. Saturating multiply
+        // because the multiplicand comes from the auxiliary vector.
+        250 => runtime_min_sigstksz().saturating_mul(4).max(8192), // _SC_SIGSTKSZ
 
         // CPU cache selectors. Not constants and not a table: served from the
         // kernel's published cache topology (see `cache_topology`), because a
