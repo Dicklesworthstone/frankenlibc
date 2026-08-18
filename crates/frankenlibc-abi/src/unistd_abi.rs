@@ -4571,19 +4571,23 @@ fn vg_state() -> Option<(*mut c_void, usize)> {
     //
     // SAFETY: an anonymous mapping of the size the kernel asked for, with the
     // protection and flags it specified in the params query.
-    let ptr = unsafe {
-        libc::mmap(
+    // Raw syscall rather than `libc::mmap`: the latter is a host call-through
+    // the replacement guard forbids, and in a release build it already bound to
+    // fl's own export. sys_mmap reports failure as Err rather than by returning
+    // MAP_FAILED, so the sentinel comparison goes away with it.
+    let ptr = match unsafe {
+        frankenlibc_core::syscall::sys_mmap(
             core::ptr::null_mut(),
             size,
-            params.mmap_prot as c_int,
-            params.mmap_flags as c_int,
+            params.mmap_prot as i32,
+            params.mmap_flags as i32,
             -1,
             0,
         )
+    } {
+        Ok(ptr) => ptr as *mut c_void,
+        Err(_) => return None,
     };
-    if ptr == libc::MAP_FAILED {
-        return None;
-    }
     VG_STATE.with(|c| c.set(ptr));
     Some((ptr, size))
 }

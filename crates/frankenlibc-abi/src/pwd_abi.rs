@@ -192,7 +192,22 @@ impl PwdStorage {
         let mut statbuf = MaybeUninit::<libc::stat>::uninit();
         // SAFETY: `path` is NUL-terminated and `statbuf` points to valid,
         // writable storage for libc to initialize.
-        let rc = unsafe { libc::stat(path.as_ptr(), statbuf.as_mut_ptr()) };
+        // Raw syscall, not `libc::stat` and not fl's own `stat()`. `libc::stat`
+        // is a host call-through the replacement guard forbids -- and in a
+        // release build it already binds to fl's export anyway, so it bought
+        // nothing. fl's `stat()` would work but adds a decide/observe pair per
+        // call for an internal cache check that no caller can observe.
+        let rc = match unsafe {
+            frankenlibc_core::syscall::sys_newfstatat(
+                libc::AT_FDCWD,
+                path.as_ptr() as *const u8,
+                statbuf.as_mut_ptr() as *mut u8,
+                0,
+            )
+        } {
+            Ok(()) => 0,
+            Err(_) => -1,
+        };
         if rc != 0 {
             return None;
         }
