@@ -8110,6 +8110,11 @@ pub unsafe extern "C" fn sqrtf128(x: f128) -> f128 {
     // reason: conformance_diff_f128_round_sqrt never reached glibc, so nothing
     // reported that glibc sets EDOM for sqrt of a negative. The f64 `sqrt`
     // above has always set it.
+    // Same negative-QNaN parity as fmodf128 above, for the same reason.
+    if x < 0.0 {
+        set_domain_errno();
+        return -f128::NAN;
+    }
     let out = x.sqrt();
     // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error
     // too, and glibc sets EDOM for it. The comparison is already false for NaN
@@ -8323,10 +8328,22 @@ pub unsafe extern "C" fn fminf64x(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminf128(x: f128, y: f128) -> f128 {
-    // glibc: x < y ? x : y (returns the second arg on a ±0 tie).
+    // glibc returns the FIRST argument on a ±0 tie, exactly as `fmaxf128` above
+    // already documents for its own tie. This comment used to claim the second,
+    // and the code implemented that claim: `x < y` sends a tie to `y`. A real
+    // glibc oracle disagrees -- fmin(+0,-0) is +0 and fmin(-0,+0) is -0, i.e.
+    // the first argument both times. The old claim was presumably checked
+    // against the compiler_builtins arm that made conformance_diff_f128_minmax
+    // hollow (bd-v0388t), the same way two other "glibc does X" comments in this
+    // file turned out to be wrong.
+    //
+    // C leaves the choice unspecified for equal operands, so this is parity, not
+    // correctness. Note fl's separate `fminimumf128` implements the IEEE 754-2019
+    // `minimum` semantics and its gate passes -- fmin follows the older minNum
+    // behaviour on purpose, which is what C's fmin maps to.
     if x.is_nan() {
         y
-    } else if y.is_nan() || x < y {
+    } else if y.is_nan() || x <= y {
         x
     } else {
         y
@@ -8359,11 +8376,19 @@ pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
     // "glibc" arm was captured by compiler_builtins and never consulted glibc
     // (bd-v0388t). The f64 `fmod` a few hundred lines above has always handled
     // this via the same helper; the f128 path simply never got it.
-    let out = x % y;
     if remainder_family_domain_error_f128(x, y) {
         set_domain_errno();
+        // The NEGATIVE quiet NaN, not Rust's positive f128::NAN. This is not
+        // over-fitting to glibc: 0xffff8000... is the x86 default QNaN ("real
+        // indefinite"), i.e. what the hardware itself yields for an invalid
+        // operation, and glibc returns it because the FPU produced it. A
+        // caller that formats the result sees "-nan" from glibc and "nan" from
+        // us -- a difference this project has already had to fix once, in
+        // gcvt. C leaves the sign of a returned NaN unspecified, so this is a
+        // deliberate parity choice rather than a correctness fix.
+        return -f128::NAN;
     }
-    out
+    x % y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hypotf32(x: f32, y: f32) -> f32 {

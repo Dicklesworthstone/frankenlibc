@@ -181,26 +181,13 @@ fn f128_minmax_dim_nextafter_match_glibc() {
         }
     }
 
-    // PINNED, NOT PASSING. This gate used to compare FrankenLibC against a
-    // link-time arm that `compiler_builtins` had captured, so it never consulted
-    // glibc and was green regardless. Pointing it at the real glibc surfaces
-    // 2 divergences that were there all along:
-    //
-    // fmin/fmax pick the opposite signed zero from glibc when the arguments
-    // are +0 and -0.
-    //
-    // The count is pinned so the gate is honest about a KNOWN gap while still
-    // failing on anything new -- the alternative was leaving the suite red or
-    // reverting to a hollow arm, and both are worse. Do not raise this number to
-    // make a change pass; the divergences are tracked and are meant to go DOWN.
-    assert_eq!(
+    // FULLY CONVERGED. Hollow gate (compiler_builtins captured the "glibc" arm),
+    // 2 divergences on the ±0 tie in fmin, fixed in math_abi.rs. Plain emptiness
+    // assertion rather than a pinned count.
+    assert!(
+        mism.is_empty(),
+        "f128 minmax/dim/nextafter diverged ({}):\n{}",
         mism.len(),
-        2,
-        "f128 divergence count changed (expected 2 known, see bd-v0388t):\n{}",
-        mism.join("\n")
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
     );
-    // No emptiness assertion here on purpose: the pinned count above IS the
-    // check. An `assert!(true, ..)` sat here briefly and that is a hollow
-    // assertion -- exactly the defect this whole conversion removed -- so it is
-    // gone rather than left looking like a gate.
 }

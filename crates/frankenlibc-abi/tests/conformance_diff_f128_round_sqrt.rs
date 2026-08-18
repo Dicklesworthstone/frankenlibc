@@ -249,26 +249,16 @@ fn f128_round_sqrt_fma_match_glibc() {
         mism.len() - errno_mismatches
     );
 
-    // PINNED, NOT PASSING. This gate used to compare FrankenLibC against a
-    // link-time arm that `compiler_builtins` had captured, so it never consulted
-    // glibc and was green regardless. Pointing it at the real glibc surfaces
-    // 30 divergences that were there all along:
-    //
-    // sqrt of a negative f128 returns a POSITIVE NaN with errno untouched;
-    // glibc returns a negative NaN and sets EDOM. Same class as the fmod gate.
-    //
-    // The count is pinned so the gate is honest about a KNOWN gap while still
-    // failing on anything new -- the alternative was leaving the suite red or
-    // reverting to a hollow arm, and both are worse. Do not raise this number to
-    // make a change pass; the divergences are tracked and are meant to go DOWN.
-    assert_eq!(
+    // FULLY CONVERGED. This gate was hollow -- compiler_builtins had captured
+    // its "glibc" arm -- and a real oracle exposed divergences that had been
+    // there all along: no EDOM on domain errors, and a positive NaN where the
+    // hardware and glibc produce the negative default QNaN. Both fixed in
+    // math_abi.rs, so this is a plain emptiness assertion rather than a pinned
+    // known-divergence count.
+    assert!(
+        mism.is_empty(),
+        "f128 round/sqrt/fma diverged ({}):\n{}",
         mism.len(),
-        30,
-        "f128 divergence count changed (expected 30 known, see bd-v0388t):\n{}",
-        mism.join("\n")
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
     );
-    // No emptiness assertion here on purpose: the pinned count above IS the
-    // check. An `assert!(true, ..)` sat here briefly and that is a hollow
-    // assertion -- exactly the defect this whole conversion removed -- so it is
-    // gone rather than left looking like a gate.
 }
