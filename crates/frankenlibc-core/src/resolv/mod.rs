@@ -360,12 +360,24 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
     let port_proto = fields.next()?;
     let aliases: Vec<Vec<u8>> = fields.map(|field| field.to_vec()).collect();
 
-    let slash_pos = port_proto.iter().position(|&b| b == b'/')?;
-    let port = u16::try_from(parse_ascii_decimal_u32(&port_proto[..slash_pos])?).ok()?;
-    let proto = &port_proto[slash_pos + 1..];
-    if proto.is_empty() || proto.contains(&b'/') {
-        return None;
-    }
+    // MEASURED against live glibc by bind-mounting a synthetic /etc/services
+    // over the real one (bwrap --bind), then walking getservent. Four rules fl
+    // had stricter than the incumbent, each of which dropped an entry glibc
+    // yields:
+    //
+    //   "noproto 84"        -> accepted, protocol "" (a missing '/' is fine)
+    //   "emptyproto 85/"    -> accepted, protocol ""
+    //   "extraslash 87/tcp/x" -> accepted, protocol "tcp/x" (only the FIRST
+    //                          '/' separates; the rest belongs to the protocol)
+    //   "overflow 99999/tcp"-> accepted as port 34463, i.e. the low 16 bits
+    //
+    // and glibc still REJECTS "abc/tcp" (no digits) and "-1/tcp" (a minus
+    // sign), while accepting "+86/tcp" as 86.
+    let (port_field, proto) = match port_proto.iter().position(|&b| b == b'/') {
+        Some(slash) => (&port_proto[..slash], &port_proto[slash + 1..]),
+        None => (port_proto, &b""[..]),
+    };
+    let port = parse_service_port(port_field)?;
 
     Some(ServiceEntry {
         name: name.to_vec(),
@@ -373,6 +385,32 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
         protocol: proto.to_vec(),
         aliases,
     })
+}
+
+/// Parse the port half of a `port/proto` field the way glibc does.
+///
+/// An optional `+` is accepted and a `-` is not; at least one digit is
+/// required; and the value is reduced to its low 16 bits rather than rejected,
+/// because glibc stores it through a `uint16_t`. Measured: `99999/tcp` is port
+/// 34463 (99999 - 65536), `+86/tcp` is 86, `-1/tcp` and `abc/tcp` are refused.
+fn parse_service_port(field: &[u8]) -> Option<u16> {
+    let digits = match field {
+        [b'+', rest @ ..] => rest,
+        other => other,
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for &b in digits {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        // Wrap rather than overflow: only the low 16 bits reach the caller, so
+        // a value beyond u32 must not turn an accepted line into a rejected one.
+        value = value.wrapping_mul(10).wrapping_add(u32::from(b - b'0'));
+    }
+    Some(value as u16)
 }
 
 fn service_name_matches(entry: &ServiceEntry, name: &[u8]) -> bool {
