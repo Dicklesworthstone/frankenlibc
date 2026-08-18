@@ -15485,7 +15485,19 @@ pub unsafe extern "C" fn getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
         );
         return errno::EPERM;
     }
-    if buf.is_null() || bufsize == 0 {
+    // A ZERO-SIZE buffer is ERANGE, not EINVAL. glibc performs the size check
+    // after looking the login name up, so no buffer can ever be large enough and
+    // it reports ERANGE; measured directly against the host
+    // (conformance_diff_getlogin_r_chk): __getlogin_r_chk(NULL, 0, 0) returns 34
+    // from glibc and returned 22 here. bd-hdm1jg.
+    if bufsize == 0 {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return errno::ERANGE;
+    }
+    // A NULL buffer with a NON-ZERO size stays EINVAL, deliberately. glibc would
+    // walk into the copy and fault; refusing is fl's membrane doing its job, and
+    // that divergence is a safety choice rather than an oversight.
+    if buf.is_null() {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return errno::EINVAL;
     }
