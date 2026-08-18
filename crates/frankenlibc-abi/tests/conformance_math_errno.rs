@@ -65,6 +65,12 @@ fn math_errno_matches_glibc() {
     }
 
     // --- Domain errors (EDOM): input-determined ---
+    // sqrt of a negative INFINITY is a domain error too -- C requires it for any
+    // x < 0, and a real-glibc oracle at f128 width was measured setting EDOM
+    // here. fl's predicate had a finiteness guard that excluded exactly this
+    // case at all three widths (bd-buvzii).
+    chk!("sqrt(-inf)", EDOM, fa::sqrt(f64::NEG_INFINITY));
+    chk!("sqrtf(-inf)", EDOM, fa::sqrtf(f32::NEG_INFINITY));
     chk!("acos(2)", EDOM, fa::acos(2.0));
     chk!("asin(2)", EDOM, fa::asin(2.0));
     chk!("acosh(0.5)", EDOM, fa::acosh(0.5));

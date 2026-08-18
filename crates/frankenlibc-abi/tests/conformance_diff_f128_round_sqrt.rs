@@ -224,6 +224,31 @@ fn f128_round_sqrt_fma_match_glibc() {
         }
     }
 
+    // Breakdown printed on every run, not only on failure: the pinned count
+    // alone cannot tell whether a fix landed. A change that repairs errno while
+    // leaving the NaN sign wrong keeps every case divergent and the count
+    // identical, so the count would report "no progress" for real progress.
+    let errno_mismatches = mism.iter().filter(|m| {
+        match (m.find("e="), m.rfind("e=")) {
+            (Some(a), Some(b)) if a != b => m[a..].split(')').next() != m[b..].split(')').next(),
+            _ => false,
+        }
+    }).count();
+    for m in mism.iter().filter(|m| {
+        match (m.find("e="), m.rfind("e=")) {
+            (Some(a), Some(b)) if a != b => m[a..].split(')').next() != m[b..].split(')').next(),
+            _ => false,
+        }
+    }) {
+        println!("F128_ERRNO_STILL_DIFFERS {m}");
+    }
+    println!(
+        "F128_DIVERGENCE_BREAKDOWN total={} errno_half_differs={} bits_only={}",
+        mism.len(),
+        errno_mismatches,
+        mism.len() - errno_mismatches
+    );
+
     // PINNED, NOT PASSING. This gate used to compare FrankenLibC against a
     // link-time arm that `compiler_builtins` had captured, so it never consulted
     // glibc and was green regardless. Pointing it at the real glibc surfaces

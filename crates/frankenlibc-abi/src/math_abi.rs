@@ -533,7 +533,12 @@ pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrt(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::sqrt);
-    if x.is_finite() && x < 0.0 {
+    // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error and
+    // glibc sets EDOM for it. The comparison is already false for NaN and -0.0,
+    // so the finiteness guard only excluded infinity. Found at f128 width by
+    // conformance_diff_f128_round_sqrt once that gate had a real glibc oracle;
+    // the same predicate was copied to all three widths.
+    if x < 0.0 {
         set_domain_errno();
     }
     out
@@ -1307,7 +1312,12 @@ pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrtf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 3, frankenlibc_core::math::sqrtf);
-    if x.is_finite() && x < 0.0 {
+    // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error and
+    // glibc sets EDOM for it. The comparison is already false for NaN and -0.0,
+    // so the finiteness guard only excluded infinity. Found at f128 width by
+    // conformance_diff_f128_round_sqrt once that gate had a real glibc oracle;
+    // the same predicate was copied to all three widths.
+    if x < 0.0 {
         set_domain_errno();
     }
     out
@@ -5923,6 +5933,15 @@ fn remainder_family_domain_error(x: f64, y: f64) -> bool {
     !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0)
 }
 
+/// f128 counterpart of [`remainder_family_domain_error`].
+///
+/// Same predicate as the f64 and f32 forms: a domain error is an infinite `x`
+/// or a zero `y`, with neither argument already NaN.
+#[inline]
+fn remainder_family_domain_error_f128(x: f128, y: f128) -> bool {
+    !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0)
+}
+
 /// f32 counterpart of [`remainder_family_domain_error`].
 #[inline]
 fn remainder_family_domain_error_f32(x: f32, y: f32) -> bool {
@@ -8076,7 +8095,21 @@ pub unsafe extern "C" fn sqrtf64x(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrtf128(x: f128) -> f128 {
     // The f128 sqrt intrinsic is IEEE correctly-rounded (byte-exact vs glibc).
-    x.sqrt()
+    //
+    // The domain error was missing, exactly as in `fmodf128` and for the same
+    // reason: conformance_diff_f128_round_sqrt never reached glibc, so nothing
+    // reported that glibc sets EDOM for sqrt of a negative. The f64 `sqrt`
+    // above has always set it.
+    let out = x.sqrt();
+    // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error
+    // too, and glibc sets EDOM for it. The comparison is already false for NaN
+    // and for -0.0, so the finiteness guard only excluded the infinity case.
+    // Measured: it was the single remaining errno divergence in
+    // conformance_diff_f128_round_sqrt after the rest were fixed.
+    if x < 0.0 {
+        set_domain_errno();
+    }
+    out
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanf32(x: f32) -> f32 {
@@ -8307,9 +8340,20 @@ pub unsafe extern "C" fn fmodf64x(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
-    // The f128 `%` operator is the IEEE fmod (exact remainder); glibc fmod sets
-    // no errno (FE_INVALID only) for the nan-producing cases, matching this.
-    x % y
+    // The f128 `%` operator is the IEEE fmod (exact remainder).
+    //
+    // THE COMMENT HERE USED TO SAY glibc "sets no errno (FE_INVALID only) for
+    // the nan-producing cases, matching this". That was measured false:
+    // conformance_diff_f128_fmod against a REAL glibc oracle shows glibc setting
+    // errno=EDOM on every domain case. The claim survived because the gate's
+    // "glibc" arm was captured by compiler_builtins and never consulted glibc
+    // (bd-v0388t). The f64 `fmod` a few hundred lines above has always handled
+    // this via the same helper; the f128 path simply never got it.
+    let out = x % y;
+    if remainder_family_domain_error_f128(x, y) {
+        set_domain_errno();
+    }
+    out
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hypotf32(x: f32, y: f32) -> f32 {
