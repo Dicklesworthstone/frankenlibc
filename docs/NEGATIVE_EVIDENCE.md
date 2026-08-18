@@ -31795,3 +31795,74 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **VERDICT: NO SOURCE CHANGE.** Two of my own mechanisms are eliminated for the price of a
   case-table edit, before any rewrite of the locale table was attempted. That was the point of
   running the discriminator first.
+
+## 2026-08-18 — CAMPAIGN WIN: indexing `nl_langinfo`'s dense LC_TIME run turns three certified losses into wins — `weekday_cycle` 3.121 to 0.910 (`bd-nl-langinfo-contiguous-table-8dlrhi`)
+
+- **RESULT CLASS: `result_class: campaign-win`.** Deployed-vs-incumbent, host glibc 2.42 linked
+  directly into the timing process (`INCUMBENT_LINKAGE direct_process_link`) with FrankenLibC loaded
+  beside it by explicit `dlopen(RTLD_NOW|RTLD_LOCAL)`.
+  `incumbent_ratio: 0.909990`, `incumbent_bootstrap_median_ci: [0.908327, 0.913469]`,
+  `null_bootstrap_median_ci: [0.999659, 1.001510]`,
+  `bench_elf_sha256=fd11bb63d505779c49aa10dea7157056e4d162bb233ab88a16d7c36fbd18ef50`
+  (self-reported in-process). `legacy_incumbent: host-glibc`,
+  `incumbent_provenance: uninterposed-host-link`, `same_invocation=true`.
+  Headline is `weekday_cycle`, which was named as the judging case BEFORE the lever was written.
+  Same-invocation A/A null: `null_median_ratio: 1.000276`, bootstrap median CI [0.999659, 1.001510]
+  — `null_bootstrap_median_ci: [0.999659, 1.001510]`. Effect bootstrap median CI
+  [0.908327, 0.913469]. 36 retained samples, 2000000 reps per arm.
+  The incumbent arm is proven uninterposed rather than assumed: `dladdr` places it in
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  (`sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`) at
+  `incumbent_address=0x7c342183ae00` against `fl_address=0x7c34107c2590` in a different mapping — a
+  PLT stub would have reported the executable's own image. FL object
+  `sha256=e222fd4dc74fe583a2f2febc7fef0b5500b2a3dc1c5a6aca19f3ae51fa47f2cd`, rebuilt by
+  `FL_ARTIFACT_FRESHNESS` before measuring.
+- **CONDITIONS.** Worker **ovh-a** (`hostname=fixmydocuments`), self-reported
+  `loadavg 6.90,6.22,4.65`; quiet gate clear at both phases (busy 0.030 then 0.010 against a 0.200
+  ceiling), 8 pinned cores, `sibling_sharing=false`; `cpu_mhz_min=1754.3 cpu_mhz_median=1754.3
+  cpu_mhz_max=1754.3` at pre-measurement and `1754.3/1754.3/3778.1` at post. Orchestrating host
+  loadavg 25.19/36.73/24.81 with CPU idle 79% (vmstat), `/` at 130G — irrelevant to the arms, which
+  ran on the worker behind its own gate.
+- **THE RATIOS, before and after the lever, same harness and same cases.**
+  `weekday_cycle` 3.121155 -> **0.909990** CI [0.908327, 0.913469];
+  `month_cycle` 3.367330 -> **0.909444** CI [0.908954, 0.910001];
+  `month7_cycle` 3.131615 -> **0.909591** CI [0.908840, 0.910385];
+  `full_table_cycle` 2.354578 -> **1.090635** CI [1.089994, 1.091422];
+  `mixed7_cycle` 1.316982 -> **1.034119** CI [1.033650, 1.034358];
+  `codeset` 1.181711 -> **1.181065** CI [1.179672, 1.182677].
+  The family verdict goes from DECIDABLE 0 wins of 6 to DECIDABLE **3 wins of 6**, and the worst case
+  in the family falls from 3.367x to 1.181x. All six clear twice their null half-width with both
+  nulls holding; every A/A null median is within 0.03% of 1.0.
+- **THE LEVER.** `ABDAY_1..7`, `DAY_1..7`, `ABMON_1..12` and `MON_1..12` are 38 contiguous `nl_item`
+  values and were 38 of `langinfo_value_for`'s 57 match arms. Dense and same-category is precisely
+  the shape rustc lowers to a jump table — one data-dependent indirect branch cycling through
+  however many targets the caller rotates. They are now a `[&[u8]; 38]` indexed by
+  `item - ABDAY_1`, which has no data-dependent branch at all. The match is retained unchanged for
+  the other 19 arms. This is what glibc does, and it is why glibc measures flat at 2.34-2.38 ns
+  across every case in this family.
+- **THE PREDICTION WAS REGISTERED BEFORE THE LEVER WAS WRITTEN, AND ONE PART OF IT WAS WRONG.**
+  Registered: the dense-run cases move, `codeset` and `mixed7_cycle` do not. `weekday_cycle`,
+  `month_cycle` and `month7_cycle` moved from ~3.1-3.4x losses to 0.91x wins, and `codeset` did not
+  move (1.181711 -> 1.181065, 0.05%). But `mixed7_cycle` DID move, 1.316982 -> 1.034119, and it
+  should have been obvious that it would: FOUR of its seven selectors — `DAY_1`, `ABDAY_1`, `MON_1`,
+  `ABMON_1` — are inside the very block being indexed. I called it "near floor" from its ratio
+  without checking its composition. The mechanism claim survives; my prediction about that case was
+  careless, and the error was mine to catch before the run rather than after.
+- **WHAT THIS SUPERSEDES.** The D1 conversion certified this family at 0 wins of 6 with
+  `full_table_cycle` at 2.319995, and that row stands as a true measurement of the code as it was.
+  It is superseded here for current behaviour. Note also L401, whose retry predicate the D1 run
+  satisfied and whose deferred competitive question it answered as a loss: the loss is now fixed for
+  the dense-run selectors and remains for `codeset`.
+- **WHAT IS STILL A LOSS, and where the next lever is.** `codeset` at 1.181x is untouched because
+  `CODESET` is LC_CTYPE and routes through `codeset_for(charset)`, outside the indexed block. It is
+  now the worst case in the family and the only one that never improved. `full_table_cycle` at
+  1.091x and `mixed7_cycle` at 1.034x are mixtures that still traverse the retained match for their
+  non-LC_TIME selectors. Whether the remaining 19 arms are worth the same treatment is a separate
+  question and is NOT claimed here.
+- **VERDICT: KEEP.** Conformance ran before timing and passed all 63 supported selectors, 64
+  comparisons, against live glibc. The index arithmetic is additionally verified by seven
+  compile-time `const` assertions on the enumerator offsets, because the failure mode is a wrong
+  string rather than a crash and `#[cfg(test)]` blocks in that crate do not compile (bd-0z7a1y).
+- **Reproducer:** `rch exec --base HEAD --clean-overlay --no-overlay -- ... cargo run -j2 --profile
+  release -p frankenlibc-bench --features abi-bench --example incumbent_coverage_ab -- --family
+  nl_langinfo --pin-quietest 8`.
