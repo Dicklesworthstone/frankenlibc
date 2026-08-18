@@ -6271,7 +6271,10 @@ pub unsafe extern "C" fn innetgr(
         // No /etc/netgroup is not an error, just no members.
         return 0;
     };
-    for triple in frankenlibc_core::netgroup::parse_netgroup_triples(&content, &group) {
+    // expand_netgroup, not parse_netgroup_triples: a member reachable only
+    // through a nested group reference is still a member, and glibc follows
+    // those references (see core::netgroup::expand_netgroup for the evidence).
+    for triple in frankenlibc_core::netgroup::expand_netgroup(&content, &group) {
         if netgroup_field_matches(&triple.host, wanted_host.as_deref())
             && netgroup_field_matches(&triple.user, wanted_user.as_deref())
             && netgroup_field_matches(&triple.domain, wanted_domain.as_deref())

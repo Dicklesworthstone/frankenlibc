@@ -24145,7 +24145,9 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
             return 0;
         }
     };
-    let triples = frankenlibc_core::netgroup::parse_netgroup_triples(&content, &group);
+    // Nested group references are followed, as glibc does — getnetgrent must
+    // yield members reachable only through another group.
+    let triples = frankenlibc_core::netgroup::expand_netgroup(&content, &group);
     with_netgroup_iter_state(|state| {
         state.triples = triples;
         state.pos = 0;

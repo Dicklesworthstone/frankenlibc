@@ -8,8 +8,12 @@
 //!
 //! Fields within parentheses can be empty (denoting a wildcard). Group
 //! lines may also include other group names as bare tokens (group
-//! references), which this parser ignores — matching the minimal
-//! glibc files-backend behavior.
+//! references).
+//!
+//! [`parse_netgroup_triples`] returns only the triples written on the group's
+//! own lines and IGNORES those references. It used to claim that matched "the
+//! minimal glibc files-backend behavior"; it does not — see [`expand_netgroup`],
+//! which follows them the way the incumbent does.
 
 /// Parsed netgroup triple.
 ///
@@ -61,6 +65,85 @@ fn first_token_bounds(line: &[u8]) -> Option<(usize, usize)> {
         end += 1;
     }
     Some((start, end))
+}
+
+/// Expand a netgroup, following NESTED GROUP REFERENCES.
+///
+/// A /etc/netgroup line may name other groups as bare tokens beside its
+/// parenthesised triples, and their members belong to this group too.
+/// [`parse_netgroup_triples`] ignores those tokens; this walks them.
+///
+/// glibc DOES follow them, which is measurable without an /etc/netgroup file:
+/// `_nss_netgroup_parseline` tests the token's first byte against `'('`
+/// (libc.so.6 at +0x6a) and, when it is not a paren, scans the bare token and
+/// stores `type = 1` — `group_val` in glibc's `struct __netgrent` — together
+/// with the name pointer, returning success. The caller then expands it, which
+/// is what `innetgr`'s malloc/free worklist is for. fl's doc previously claimed
+/// ignoring these tokens "matches the minimal glibc files-backend behavior";
+/// the incumbent's own code refutes that.
+///
+/// CYCLES ARE THE REASON FOR THE VISITED SET, not defensive habit: netgroup
+/// references may legitimately form a cycle (`a` names `b`, `b` names `a`), and
+/// glibc keeps a "known groups" list for exactly this. Without one this walk
+/// would not terminate.
+///
+/// Group names are matched case-insensitively, the same rule
+/// [`parse_netgroup_triples`] uses for the top-level name.
+#[must_use]
+pub fn expand_netgroup(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
+    let mut out = Vec::new();
+    let mut visited: Vec<Vec<u8>> = Vec::new();
+    let mut pending: Vec<Vec<u8>> = vec![group.to_vec()];
+
+    while let Some(name) = pending.pop() {
+        if visited.iter().any(|seen| eq_ignore_ascii_case(seen, &name)) {
+            continue;
+        }
+        visited.push(name.clone());
+
+        for line in content.split(|&b| b == b'\n') {
+            let Some((name_start, name_end)) = first_token_bounds(line) else {
+                continue;
+            };
+            if !eq_ignore_ascii_case(&line[name_start..name_end], &name) {
+                continue;
+            }
+            let rest = strip_inline_comment(&line[name_end..]);
+            extract_triples_into(rest, &mut out);
+            collect_group_refs_into(rest, &mut pending);
+        }
+    }
+    out
+}
+
+/// Collect the bare tokens on a netgroup line — the nested group references.
+///
+/// Everything that is not part of a `(...)` triple is a group name. The scan
+/// skips parenthesised spans wholesale so a host or user containing spaces
+/// cannot be mistaken for a reference.
+fn collect_group_refs_into(bytes: &[u8], out: &mut Vec<Vec<u8>>) {
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' | b'\t' | b'\r' => i += 1,
+            b'(' => {
+                // Skip the whole triple, closing paren included.
+                match bytes[i..].iter().position(|&b| b == b')') {
+                    Some(close) => i += close + 1,
+                    // Unclosed paren: the rest of the line is not parseable,
+                    // and extract_triples_into gives up here too.
+                    None => return,
+                }
+            }
+            _ => {
+                let start = i;
+                while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'\r' | b'(') {
+                    i += 1;
+                }
+                out.push(bytes[start..i].to_vec());
+            }
+        }
+    }
 }
 
 fn extract_triples_into(bytes: &[u8], out: &mut Vec<NetgroupTriple>) {
