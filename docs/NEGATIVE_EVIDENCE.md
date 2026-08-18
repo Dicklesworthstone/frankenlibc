@@ -31465,3 +31465,80 @@ What this changes, and what it does not:
 - **VERDICT: KEEP.** No source change; this certifies what 79899b3f0 already shipped.
 - **Reproducer:** `rch exec --base HEAD --clean-overlay -- cargo bench -p frankenlibc-bench
   --features abi-bench --bench scan_strlen_ab_bench -- zzz_no_criterion_arm`, `WNLEN_AB` rows.
+
+## 2026-08-17 — CAMPAIGN WIN: the printf-family exact `%f` fast path, measured against live glibc — 10 cases, 10 wins (bd-5pfs0p)
+
+- **RESULT CLASS: `result_class: campaign-win`.** Deployed-vs-incumbent, host glibc 2.42 linked
+  directly into the timing process (`INCUMBENT_LINKAGE direct_process_link`) with FrankenLibC loaded
+  beside it by explicit `dlopen(RTLD_NOW|RTLD_LOCAL)` (`FL_LINKAGE explicit_dlopen_local`); both arms
+  proved to distinct addresses and distinct serving objects before any timing.
+  **THE INCUMBENT ARM IS PROVEN UNINTERPOSED, which this harness's `direct_process_link` does not
+  establish on its own.** A plain `extern "C"` symbol in a binary that also links frankenlibc-abi can
+  resolve to OUR `no_mangle` export and silently measure fl against fl — demonstrated in this very
+  binary shape the same day, where `libc::syscall` resolved to `0x62a57262a360`, byte-equal to fl's
+  own `syscall` export. It did not happen here, and the run says so rather than assuming it:
+  `dladdr` places the incumbent function inside `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  (`sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`), at
+  `incumbent_address=0x7b2f1486a7f0` against `fl_address=0x7b2f03708e60` in a different mapping, with
+  the two serving objects differing in both path and SHA-256. A PLT stub — the usual reason `dladdr`
+  misleads — would have reported the executable's own image, not libc's.
+  `incumbent_ratio: 0.444698`, `incumbent_bootstrap_median_ci: [0.443869, 0.445886]`,
+  `null_bootstrap_median_ci: [0.997167, 1.002915]`,
+  `bench_elf_sha256=12004dfd62d0ec207c9a4bc1d5dd4e7958b55f1a147266f154b65d270dce9010`
+  (self-reported in-process by the binary that timed the arms).
+  `legacy_incumbent: host-glibc`, `incumbent_provenance: uninterposed-host-link`,
+  `same_invocation=true`: the A/A witness, the fl arm and the glibc arm are all timed in ONE process,
+  interleaved per case in a balanced square. Same-invocation A/A null:
+  `null_median_ratio: 0.998948`, bootstrap median CI [0.997167, 1.002915]; the glibc/glibc null on
+  the same case reads 0.999754 with CI [0.998011, 1.001443]. Headline case is `snprintf` `%.2f`.
+  36 retained samples, 200000 reps per arm.
+- **CONDITIONS.** Worker **ovh-a** (`HOST_IDENTITY hostname=fixmydocuments`), 8 physical cores /
+  8 logical, `amd-pstate-epp`, `governor=powersave`, `energy_performance_preference=performance`.
+  Per-family self-reported `loadavg 1.99,1.81,1.40` (snprintf) and `1.50,1.72,1.38` (fprintf);
+  host-wide exclusivity gate clear at both phases, `observed_maximum_busy_fraction` 0.160 then 0.040
+  and 0.030 then 0.040 against a 0.200 ceiling, 5 of 5 consecutive clear samples, 8 pinned cores with
+  `sibling_sharing=false`. Clock **`cpu_mhz_min=1754.3 cpu_mhz_median=1754.3 cpu_mhz_max=1754.3`** at
+  both the pre- and post-measurement phases. Orchestrating host loadavg 23.05/15.40/10.42, CPU idle
+  9% (vmstat), `/` at 123G — irrelevant to the arms, which ran on the worker behind its own gate.
+- **THE RATIOS.** `snprintf` three cases, three wins: `%.2f` 32.205ns against 72.533ns = 0.444698;
+  `%.4f` 38.844 against 81.351 = 0.480732 with CI [0.475387, 0.482341]; `%f` 45.450 against 89.377 =
+  0.508348 with CI [0.507347, 0.508787]. `fprintf` seven cases, seven wins: stream `%.2f` 37.841
+  against 77.165 = 0.491116 with CI [0.490252, 0.491797] and null CI [0.997797, 1.000317]; the same
+  format on a default-buffered stream 0.493608; `%.4f` 0.520471; `%f` 0.560317; `%.9f` 0.588648;
+  `%.10f` 0.867084; `%.100f` 0.866616. Every one of the ten clears twice its own null half-width with
+  both nulls holding.
+- **THE LEVER.** The `exact_direct_*` probe chain in `stdio_abi.rs` covered `%s %c %u %d %x %ld %lu
+  %zu %zd %lx %p` and no float conversion, so a float format fell through roughly eleven failed
+  byte-compares and then paid the full parse plus membrane plus segment pipeline that the integer
+  formats return before. `exact_direct_f_format` plus a per-entry-point `strict_direct_*_f` sibling
+  for each destination contract closes that. The probe is placed LAST in every chain so it adds no
+  byte-compare to the integer paths that carry the earlier campaign wins; verified at HEAD to be last
+  in all six of `snprintf`, `sprintf`, `fprintf`, `printf`, `vsnprintf` and `vsprintf`.
+- **THE DECLINE PATH IS MEASURED, NOT ASSUMED.** `%.100f` exceeds the probe's precision cap, so the
+  fast path declines and the general path serves it — and it still wins at 0.866616. A fast-path win
+  that hides a rotting slow path is the usual failure of this pattern, and this case is in the set to
+  refuse it. `%.10f` at 0.867084 is the first measured ratio behind f4d6302ab, which raised the
+  precision cap after finding the probe parsed a single precision digit and left `%.10f` at a 1.275x
+  LOSS; that commit argued from the parse defect, and this row supplies the resulting number.
+- **WHAT THIS ROW DOES NOT COVER.** `sprintf`, `printf`, `vsnprintf` and `vsprintf` carry the same
+  shipped probe and the same byte-identity gates, but `incumbent_coverage_ab` has no families for
+  them, so they have no incumbent ratio. Four families are the remaining work on bd-5pfs0p; do not
+  read this row as covering them.
+- **THE ABSOLUTE NANOSECONDS ARE AT THE IDLE CLOCK.** `cpu_mhz_median` was 1754.3 at both phases,
+  where an earlier run of another family on this same worker ramped 1754 to 3583 within one family.
+  The arms interleave, so the RATIOS are unaffected; the ns figures above are not comparable to
+  absolute numbers from a boosted run. This is visible only because the clock is recorded per phase
+  (8e75835f5) — `cpufreq_driver`, `governor` and `energy_performance_preference` read identically in
+  both runs.
+- **PREFLIGHT: OK, not adjudicated around.** `check_perf_ledger_integrity.py preflight --lever
+  "printf-family exact %f fast path" --surface "snprintf fprintf exact_direct_f_format
+  strict_direct_snprintf_f" --comparison legacy-incumbent --incumbent host-glibc` matched no prior
+  REJECT.
+- **VERDICT: KEEP.** No source change in this row; it attaches an incumbent ratio to probes already
+  shipped and already gated by byte-identity arms against a dlsym'd glibc oracle (10 arms green at
+  HEAD across `conformance_diff_snprintf_fixed_fastpath`, `_fprintf_`, `_printf_`).
+- **Reproducer:** `rch exec --base HEAD --clean-overlay --no-overlay -- env -u CARGO_TARGET_DIR
+  FRANKENLIBC_BENCH_TARGET_DIR=/data/tmp/cargo-target-frankenlibc cargo --config
+  'build.target-dir="/data/tmp/cargo-target-frankenlibc"' run -j2 --profile release -p
+  frankenlibc-bench --features abi-bench --example incumbent_coverage_ab -- --families
+  snprintf_float,fprintf_float --pin-quietest 8`.
