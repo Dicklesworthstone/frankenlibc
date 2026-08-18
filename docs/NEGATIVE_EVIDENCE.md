@@ -31866,3 +31866,90 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **Reproducer:** `rch exec --base HEAD --clean-overlay --no-overlay -- ... cargo run -j2 --profile
   release -p frankenlibc-bench --features abi-bench --example incumbent_coverage_ab -- --family
   nl_langinfo --pin-quietest 8`.
+
+## 2026-08-18 — CAMPAIGN WIN: `getauxval` beats live glibc on every case, 0.350x to 0.769x, and the profile confirms the claimed mechanism (D1 rank 6, L423)
+
+- **RESULT CLASS: `result_class: campaign-win`.** Deployed-vs-incumbent, host glibc 2.42 linked
+  directly into the timing process (`INCUMBENT_LINKAGE direct_process_link`), FrankenLibC loaded
+  beside it by explicit `dlopen(RTLD_NOW|RTLD_LOCAL)`.
+  `incumbent_ratio: 0.769375`, `incumbent_bootstrap_median_ci: [0.768031, 0.770654]`.
+  Same-invocation A/A null: `null_median_ratio: 1.000534`, bootstrap median CI
+  [0.998829, 1.002329] — `null_bootstrap_median_ci: [0.998829, 1.002329]`. Effect bootstrap median
+  CI [0.768031, 0.770654].
+  `bench_elf_sha256=ce87798eeca0bf527fd31f675067f7cf5db60f6ef7b36f68ec178dc7ec544acf`
+  (self-reported in-process). `legacy_incumbent: host-glibc`,
+  `incumbent_provenance: uninterposed-host-link`, `same_invocation=true`. Headline is `pagesz`, the
+  case the harness has always used as this family's headline. 36 retained samples, 2000000 reps per
+  arm. Incumbent proven uninterposed: `dladdr` places it in `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  (`sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`) at
+  `incumbent_address=0x7c00f312c470` against `fl_address=0x7c00e2020680` in a different mapping; a
+  PLT stub would have reported the executable's own image. FL object
+  `sha256=3e9e9984952118412fc475962db44d36c6aac053235459b7dd2ae4b09415684e`.
+- **CONDITIONS.** Worker **ovh-a** (`hostname=fixmydocuments`), self-reported `loadavg 3.38,4.98,5.12`
+  for this family; quiet gate clear (busy 0.101 against a 0.200 ceiling), 8 pinned cores,
+  `cpu_mhz_min=1754.3`. Orchestrating host loadavg 38.11 with CPU idle 71% (vmstat), `/` at 131G —
+  irrelevant to the arms, which ran on the worker behind its own gate.
+- **EVERY CASE WINS, and the spread is the finding.** `pagesz` 2.126 ns against 2.763 = **0.769375**;
+  `phnum` 2.119 / 3.600 = **0.588109**; `uid_present_zero` 2.131 / 4.478 = **0.475975**;
+  `secure_present_zero` 2.118 / 5.295 = **0.399903**; `random_pointer` 2.116 / 6.112 = **0.349798**;
+  `missing_cached` 5.521 / 8.447 = **0.656668**. DECIDABLE, 6 wins of 6, every case clearing twice
+  its null half-width with both nulls holding.
+- **THE PROFILE CONFIRMS THE CLAIM, which is not what the last three conversions did.** L423 says
+  `getauxval` "publishes one bootstrap-safe auxv snapshot". A published snapshot predicts a cost
+  independent of WHICH auxv entry is asked for; a linear walk of the real auxv predicts a cost that
+  rises with the entry's position. FrankenLibC is flat at 2.116-2.131 ns across five present
+  entries. glibc rises monotonically, 2.763 -> 3.600 -> 4.478 -> 5.295 -> 6.112 ns, in the order
+  those entries appear in the vector. So the ratio improves from 0.769x to 0.350x purely because
+  glibc gets slower, not because FrankenLibC changes at all. The claim's stated mechanism is exactly
+  what the measurement shows.
+- **WORTH SAYING PLAINLY: this one was already true.** Unlike the `nl_langinfo` win in this session,
+  no lever was applied here. The code was already faster and had simply never been measured against
+  the incumbent — which is the entire point of the conversion campaign and the reason the
+  2026-07-31 audit put 246 unconverted claims in a queue.
+- **VERDICT: KEEP.** No source change. Conformance ran before timing: 18 auxv types compared for
+  both value and errno, including two absent types, `AT_HWCAP` excluded for glibc startup masking.
+
+## 2026-08-18 — CERTIFIED LOSSES: `getrandom` 3.640x at zero bytes, `mtx_trylock` 1.134x, `sem_post` 1.014x — and `getrandom` is NOT 92x (D1 ranks 2, 7, 9)
+
+- **WHY THIS MATTERS MOST FOR `getrandom`.** L738, "strict `getrandom` bypasses redundant membrane
+  bookkeeping", is one of only THREE claims in the 2026-07-31 conversion queue named in `README.md`,
+  and the audit singled that trio out because a user reading our own documentation could act on
+  them. It had never been measured against the incumbent. It is a loss at every size.
+- **`getrandom`, DECIDABLE, 0 wins of 4.** `zero_bytes` 18.821 ns against 5.172 = **3.640173**, CI
+  [3.636794, 3.642195]; `one_byte` 22.259 / 8.633 = **2.577872**, CI [2.567703, 2.581311];
+  `thirty_two_bytes` 75.195 / 62.047 = **1.210881**, CI [1.209531, 1.212598], A/A null 0.999943 CI
+  [0.999720, 1.000230]; `two_fifty_six_bytes` 384.590 / 371.275 = **1.033473**, CI
+  [1.032959, 1.033709]. The gap collapses as the request grows — 3.64x at zero bytes down to 1.03x
+  at 256 — which is the signature of a fixed per-call overhead sitting on top of a syscall whose own
+  cost dominates once there is real work to do. The claim is about bookkeeping the strict path
+  skips; what is left still costs 13.6 ns on a zero-byte call that glibc serves in 5.2.
+- **A STANDING FIGURE IS CONTRADICTED, and I am not asserting mine replaces it blind.** bd-ntb9fq
+  records "getrandom is 92x" as the worst ratio on the frontier. This same-invocation measurement
+  puts it between 1.03x and 3.64x. Both cannot describe the same thing. The likeliest reconciliation
+  is that they measure different configurations — this is the DEPLOYED strict path, and a hardened
+  or test-mode arm carries the full membrane — but I have not verified that, so the honest statement
+  is that a 92x figure is not reproducible on the deployed path and whoever owns that bead should
+  say which configuration produced it. It is currently in_progress and cites that number as its
+  premise.
+- **`mtx_trylock`, DECIDABLE, 0 wins of 1.** `already_owned_busy` 3.654 / 3.220 = **1.134448**, CI
+  [1.133111, 1.136028]. L853 claims strict `mtx_trylock` "skips redundant allocation-bounds lookup";
+  what remains is 13% slower than glibc on the contended-probe path.
+- **`sem_post`, DECIDABLE, 0 wins of 1.** `uncontended_cycle` 4.292 / 4.239 = **1.013529**, CI
+  [1.010998, 1.016637]. A 1.4% loss that clears twice its null and is therefore a real direction
+  rather than parity — worth recording precisely because it is small enough to have been reported as
+  parity by a harness without an A/A control.
+- **`thrd_current` DID NOT RUN, and that is the harness refusing rather than failing.** Its family
+  asserts a single observed process thread and reported `THREADS_OBSERVED phase=pre_guard count=2`,
+  so it aborted before timing. A second thread in the process invalidates the identity-cache
+  measurement that family exists to make. D1 rank 8 therefore stays unconverted; it needs a run in a
+  process that has not spawned a helper thread, not a re-run of the same command.
+- **CONTRACT.** Host glibc linked directly, FrankenLibC by explicit `dlopen`, arms proved distinct in
+  address and serving object, conformance before timing for every family. All twelve timed rows
+  clear twice their null half-width with both nulls holding. Worker **ovh-a**
+  (`hostname=fixmydocuments`), per-family `loadavg` 5.40 / 3.38 / 2.10 / 1.85 / 1.78, quiet gate
+  clear at every phase (busy 0.050-0.139 against a 0.200 ceiling), `cpu_mhz_min=1754.3`, 8 pinned
+  cores. `bench_elf_sha256=ce87798eeca0bf527fd31f675067f7cf5db60f6ef7b36f68ec178dc7ec544acf`, FL
+  object `sha256=3e9e9984952118412fc475962db44d36c6aac053235459b7dd2ae4b09415684e`, incumbent
+  `libc.so.6 6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+- **VERDICT: NO SOURCE CHANGE.** Three more D1 claims carry an incumbent ratio, and the
+  README-exposed one is a loss.
