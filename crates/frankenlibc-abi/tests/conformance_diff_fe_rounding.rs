@@ -17,12 +17,36 @@ use std::sync::Mutex;
 use frankenlibc_abi::fenv_abi as fl_fenv;
 use frankenlibc_abi::math_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+// `rint` is resolved through dlsym, NOT declared here, because a link-time
+// reference to it does not reach glibc in this binary. The oracle-arm screen
+// (oracle_arm_provenance_math_screen, bd-v0388t) measures `rint` as CAPTURED by
+// a local provider -- `compiler_builtins` defines it non-weak, so the local
+// definition wins the link and dladdr places the "glibc" arm inside the test
+// executable. Comparing fl against that is comparing fl against not-glibc while
+// calling it glibc, which is what made conformance_diff_fma vacuous over 40,000
+// random triples.
+//
+// Its siblings below stay link-time deliberately: the same screen measures
+// nearbyint, lrint and llrint as CLEAN, resolving to libc.so.6. Converting them
+// too would be unfounded churn, and the screen fails loudly if that ever
+// changes.
 unsafe extern "C" {
-    fn rint(x: f64) -> f64;
     fn nearbyint(x: f64) -> f64;
     fn lrint(x: f64) -> i64;
     fn llrint(x: f64) -> i64;
     fn fesetround(rnd: c_int) -> c_int;
+}
+
+/// Host `rint` via `dlsym`, with fl's own definition handed to the oracle so it
+/// refuses to resolve back to fl and compare it against itself.
+unsafe fn rint(x: f64) -> f64 {
+    // SAFETY: the prototype matches C's `double rint(double)`.
+    let f: unsafe extern "C" fn(f64) -> f64 =
+        unsafe { dlsym_oracle::host_fn(c"rint", fl::rint as *const ()) };
+    unsafe { f(x) }
 }
 
 const FE_TONEAREST: c_int = 0x000;

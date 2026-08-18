@@ -13,6 +13,49 @@ use std::ffi::{c_int, c_long};
 
 use frankenlibc_abi::math_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+// SIX ARMS ARE RESOLVED THROUGH dlsym, NOT DECLARED BELOW. The oracle-arm screen
+// (oracle_arm_provenance_math_screen, bd-v0388t) measures trunc, rint, round and
+// their f32 counterparts truncf, rintf, roundf as CAPTURED by a local provider:
+// `compiler_builtins` defines them non-weak, so a link-time reference resolves
+// inside this test executable and dladdr places the "glibc" arm there rather
+// than in libc.so.6. Comparing fl against that is comparing fl against not-glibc
+// while calling it glibc.
+//
+// The other 27 arms in this file stay link-time because the screen measures them
+// CLEAN. All 27 were censused for this conversion rather than assumed -- the
+// gate declares 33 symbols and converting only the ones already measured would
+// have left the rest hollow for exactly the same reason. Notably lround,
+// llround, lroundf, modf, frexp, remquo and the f32 variants all resolve to
+// libc.so.6, so the capture is specific to the round-to-integer functions that
+// RETURN a float, not to the family as a whole.
+macro_rules! host_round_shim {
+    ($($rust:ident = $sym:literal via $flpath:path => $t:ty);* $(;)?) => {
+        $(
+            /// Host oracle via `dlsym`; fl's own definition is handed to the
+            /// oracle so it refuses to resolve back to fl and compare it
+            /// against itself.
+            unsafe fn $rust(x: $t) -> $t {
+                // SAFETY: prototype matches the C declaration this replaces.
+                let f: unsafe extern "C" fn($t) -> $t =
+                    unsafe { dlsym_oracle::host_fn($sym, $flpath as *const ()) };
+                unsafe { f(x) }
+            }
+        )*
+    };
+}
+
+host_round_shim! {
+    trunc = c"trunc" via fl::trunc => f64;
+    rint = c"rint" via fl::rint => f64;
+    round = c"round" via fl::round => f64;
+    truncf = c"truncf" via fl::truncf => f32;
+    rintf = c"rintf" via fl::rintf => f32;
+    roundf = c"roundf" via fl::roundf => f32;
+}
+
 unsafe extern "C" {
     fn nextafter(x: f64, y: f64) -> f64;
     fn scalbn(x: f64, n: c_int) -> f64;
@@ -23,10 +66,7 @@ unsafe extern "C" {
     fn modf(x: f64, iptr: *mut f64) -> f64;
     fn frexp(x: f64, e: *mut c_int) -> f64;
     fn ldexp(x: f64, n: c_int) -> f64;
-    fn trunc(x: f64) -> f64;
-    fn rint(x: f64) -> f64;
     fn nearbyint(x: f64) -> f64;
-    fn round(x: f64) -> f64;
     fn significand(x: f64) -> f64;
     fn lround(x: f64) -> c_long;
     fn lrint(x: f64) -> c_long;
@@ -35,10 +75,7 @@ unsafe extern "C" {
     fn lroundf(x: f32) -> c_long;
     fn lrintf(x: f32) -> c_long;
     // f32 exact-result variants.
-    fn truncf(x: f32) -> f32;
-    fn rintf(x: f32) -> f32;
     fn nearbyintf(x: f32) -> f32;
-    fn roundf(x: f32) -> f32;
     fn logbf(x: f32) -> f32;
     fn ilogbf(x: f32) -> c_int;
     fn significandf(x: f32) -> f32;

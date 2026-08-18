@@ -9,16 +9,47 @@
 
 use frankenlibc_abi::math_abi as fl;
 use std::ffi::c_int;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+// `rint` and `rintf` are resolved through dlsym rather than declared here: the
+// oracle-arm screen (oracle_arm_provenance_math_screen, bd-v0388t) measures both
+// as CAPTURED by a local provider, so a link-time reference lands inside this
+// test executable instead of libc.so.6. That matters more than usual for THIS
+// gate, whose whole point is that the arms honour the CURRENT fesetround mode:
+// an oracle that is really `compiler_builtins` would be pinning fl against
+// another roundsd lowering rather than against glibc's documented behaviour.
+//
+// The rest stay link-time because the same screen measures them CLEAN --
+// nearbyint, nearbyintf, lrint, llrint, lrintf and llrintf all resolve to
+// libc.so.6, with lrintf/llrintf censused specifically for this file. Converting
+// clean arms would be unfounded churn, and the screen fails loudly if any of
+// them changes provider.
 unsafe extern "C" {
-    fn rint(x: f64) -> f64;
     fn nearbyint(x: f64) -> f64;
     fn lrint(x: f64) -> i64;
     fn llrint(x: f64) -> i64;
-    fn rintf(x: f32) -> f32;
     fn nearbyintf(x: f32) -> f32;
     fn lrintf(x: f32) -> i64;
     fn llrintf(x: f32) -> i64;
     fn fesetround(m: c_int) -> c_int;
+}
+
+/// Host `rint` via `dlsym`; fl's own definition is handed to the oracle so it
+/// refuses to resolve back to fl and compare it against itself.
+unsafe fn rint(x: f64) -> f64 {
+    // SAFETY: prototype matches C's `double rint(double)`.
+    let f: unsafe extern "C" fn(f64) -> f64 =
+        unsafe { dlsym_oracle::host_fn(c"rint", fl::rint as *const ()) };
+    unsafe { f(x) }
+}
+
+/// Host `rintf` via `dlsym`, same contract as `rint` above.
+unsafe fn rintf(x: f32) -> f32 {
+    // SAFETY: prototype matches C's `float rintf(float)`.
+    let f: unsafe extern "C" fn(f32) -> f32 =
+        unsafe { dlsym_oracle::host_fn(c"rintf", fl::rintf as *const ()) };
+    unsafe { f(x) }
 }
 const MODES: &[(&str, c_int)] = &[
     ("TONEAREST", 0x000),

@@ -136,7 +136,33 @@ declare_more_arms!(
     // siblings unmeasured would fix the symbol I happened to census and leave
     // the rest hollow for exactly the same reason.
     llrint,
+    llrintf,
     lrint,
+    lrintf,
+    // The remaining arms of conformance_diff_math_exact's extern block. Censused
+    // as a set rather than one at a time, because that gate declares 33 symbols
+    // and converting only the ones already measured would leave the rest hollow
+    // for the same reason -- which is the mistake this bead exists to stop.
+    frexp,
+    frexpf,
+    ilogbf,
+    ldexp,
+    ldexpf,
+    llround,
+    logbf,
+    lround,
+    lroundf,
+    modf,
+    modff,
+    nextafter,
+    nextafterf,
+    remainder,
+    remainderf,
+    remquo,
+    scalbn,
+    scalbnf,
+    significand,
+    significandf,
     nearbyintf,
     rintf,
     roundf,
