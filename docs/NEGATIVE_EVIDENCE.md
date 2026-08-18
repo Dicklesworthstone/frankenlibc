@@ -32088,3 +32088,50 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **CONDITIONS.** Worker **ovh-a** (`hostname=fixmydocuments`), `loadavg 9.29,7.06,7.47`, quiet gate
   clear (busy 0.040 against a 0.200 ceiling), `cpu_mhz_min=1754.3`, 8 pinned cores, 36 retained
   samples, 200000 reps per arm. Orchestrating host loadavg 8.65, CPU idle 88% (vmstat), `/` at 125G.
+
+## 2026-08-18 — REJECT (SHIPPED THEN REVERTED, 9afab23b1 then 4563b12dc): `#[inline]` on `memrchr` bought nothing — and this does NOT refute the cross-crate-call hypothesis (`bd-abi-core-inline-boundary-nmjdud`)
+
+- **THE REMEDY UNDER TEST.** The shipped artifact is built by `cargo build -p frankenlibc-abi
+  --release` (DEPLOYMENT.md), the workspace declares no `[profile.release]`, so release runs at
+  cargo's default `lto = false`, and without LTO rustc exports MIR for downstream codegen only for
+  `#[inline]` and generic functions. `core::string::mem::memrchr` is a plain `pub fn`, so the ABI
+  reaches it through a symbol. Adding `#[inline]` to that ONE function was the one-line test, with
+  the prediction registered first: `len64_absent` moves, `len4096_absent` barely, because a call is
+  paid once regardless of buffer size.
+- **NOTHING MOVED.** Against the pre-lever baseline: `len64_absent_fl_malloc` 2.267534 ->
+  **2.278864**, CI [2.267637, 2.279773]; `len512_absent_fl_malloc` 1.483689 -> **1.498934**, CI
+  [1.496398, 1.500329]; `len4096_absent_fl_malloc` 1.380053 -> **1.359306**, CI
+  [1.358091, 1.365049]; `len4096_hit_near_start_fl_malloc` 1.526644 -> **1.513353**. Every case is
+  within about 1.5% of where it started and the signs are mixed, which is between-build variation on
+  this family. DECIDABLE, 0 wins of 8, nulls holding, conformance's 12 position comparisons against
+  live glibc passing before timing. Same-invocation A/A null on the case the prediction named:
+  `null_median_ratio: 1.000052`, bootstrap median CI [0.999939, 1.000894] —
+  `null_bootstrap_median_ci: [0.999939, 1.000894]`, with glibc/glibc 1.000115 CI
+  [0.993964, 1.006126] on the same case. The FL/FL null is inside 0.1% of 1.0, so the movement the
+  prediction called for could not have been swallowed by it. Reverted per the rule stated before the
+  run.
+- **WHAT THIS DOES AND DOES NOT SETTLE, and the distinction is the whole value of the row.**
+  `#[inline]` is a HINT. On a four-tier function with a folded 128-byte block loop, LLVM is entitled
+  to decline it, and nothing in a wall-clock ratio can tell the difference between "the call was
+  never the cost" and "the attribute did not change the emitted code". So what is refuted is the
+  REMEDY — adding `#[inline]` to `memrchr` does not close its gap — and NOT the hypothesis that the
+  ABI-to-core call boundary is a real fixed cost in the shipped build. Those three facts are
+  independently checked and still stand: no `#[inline]`, no LTO in the profile that ships, 67
+  hot-path `pub fn` across mem/str/wide with the attribute on none of them.
+- **THE DECISIVE CHECK IS DISASSEMBLY AND IT WAS NOT DONE.** Whether a call survives is a fact about
+  the emitted code: `objdump -d` the shipped `libfrankenlibc_abi.so`, find the `memrchr` export, and
+  look for a `call` into core — before and after the attribute. It needs no quiet window, no
+  privileges and no fleet, and it would have told me in one command what a build and a measurement
+  left ambiguous. That is now a precondition on any further attempt at this vein rather than a
+  nice-to-have.
+- **TWO REVERTED LEVERS ON THIS FUNCTION IN ONE SESSION.** The dead-tier guard (9bbc62f69) and this.
+  Both were plausible readings of the source, both were registered with falsifiable predictions, and
+  both bought nothing. The honest reading is that `memrchr`'s ~5-cycle entry cost at 64 bytes is not
+  reachable by the two cheapest structural edits, and the next attempt should be gated on counted or
+  disassembled evidence about WHERE those cycles go, not on a third guess. `memrchr` may simply be
+  at its floor for entry cost; that possibility was flagged when the vein was opened and it has not
+  been excluded.
+- **CONDITIONS.** Worker **ovh-a** (`hostname=fixmydocuments`), `loadavg 4.68,4.86,5.61`, quiet gate
+  clear (busy 0.147 against a 0.200 ceiling), 8 pinned cores, 36 retained samples, 200000 reps per
+  arm. Orchestrating host loadavg 8.11, CPU idle 89% (vmstat), `/` at 125G. Same-invocation A/A
+  nulls held on every case.
