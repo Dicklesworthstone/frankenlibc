@@ -665,7 +665,14 @@ unsafe fn parse_vdso(
             getrandom = Some(unsafe { core::mem::transmute::<usize, VdsoGetrandomFn>(addr) });
         }
     }
-    (clock_gettime, clock_getres, gettimeofday, time, getcpu, getrandom)
+    (
+        clock_gettime,
+        clock_getres,
+        gettimeofday,
+        time,
+        getcpu,
+        getrandom,
+    )
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
@@ -1824,12 +1831,30 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
 // strptime — native implementation
 // ---------------------------------------------------------------------------
 
-/// Parse at most `max_digits` decimal digits from `input[pos..]`, returning (value, new_pos).
-/// Returns `None` if no digit is found at `pos`.
+/// Skip leading whitespace, then parse at most `max_digits` decimal digits,
+/// returning `(value, new_pos)`.
+///
+/// Returns `None` if no digit follows the whitespace — a run of spaces with no
+/// digit is a PARSE FAILURE, not a zero. Measured: `strptime("   ", "%H", &tm)`
+/// returns NULL on glibc and leaves `tm_hour` untouched.
+///
+/// A sign is NOT accepted either: `strptime("  +7", "%H", &tm)` and `"  -7"`
+/// both fail on glibc. An implementation that skipped whitespace and then
+/// handed off to a general integer parser would accept them and diverge.
 fn parse_digits(input: &[u8], pos: usize, max_digits: usize) -> Option<(i32, usize)> {
     let mut val: i32 = 0;
     let mut count = 0usize;
-    let mut p = pos;
+    // LEADING WHITESPACE IS SKIPPED HERE, not at the call sites. glibc's
+    // strptime does it inside its `get_number` macro, so EVERY numeric
+    // conversion accepts it. fl skipped it only for `%d`/`%e`, so
+    // `strptime("  7", "%H", &tm)` returned NULL where glibc succeeds with
+    // tm_hour=7 — measured on glibc 2.42 across %H %d %m %S %M %Y, all of
+    // which accept leading spaces and tabs (bd-smhq4c).
+    //
+    // Doing it in the parser rather than per-arm is deliberate: there are 17
+    // numeric call sites and the old arrangement had already missed sixteen
+    // of them.
+    let mut p = skip_ws(input, pos);
     while count < max_digits && p < input.len() {
         let ch = input[p];
         if ch.is_ascii_digit() {
@@ -1858,7 +1883,8 @@ fn parse_digits_bounded(
 ) -> Option<(i32, usize)> {
     let mut val: i32 = 0;
     let mut count = 0usize;
-    let mut p = pos;
+    // Same whitespace skip as `parse_digits`, and for the same reason.
+    let mut p = skip_ws(input, pos);
     while count < max_digits && p < input.len() {
         let ch = input[p];
         if !ch.is_ascii_digit() {
@@ -2352,9 +2378,10 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'd' | b'e' => {
-                    // Day of month [01,31] (%e allows leading space).
-                    // glibc rejects out-of-range numeric values.
-                    si = skip_ws(input, si);
+                    // Day of month [01,31]. `%e`'s blank padding needs no
+                    // special case here any more: `parse_digits_bounded` skips
+                    // leading whitespace for every numeric field, which is what
+                    // glibc's get_number does. glibc rejects out-of-range values.
                     if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 31) {
                         if !(1..=31).contains(&val) {
                             return std::ptr::null_mut();
