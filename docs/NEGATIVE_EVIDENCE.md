@@ -32228,6 +32228,14 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   at. It is deliberately conservative: a file mentioning `dlsym` anywhere is
   trusted wholesale, because pinpointing which arm a shim resolves would mean
   parsing Rust. Tightening that needs runtime `dladdr` inside each gate.
+- **THE CENSUS IS ALSO AN AUDIT TOOL FOR THIS LEDGER.** Any row claiming a gate is
+  "differential vs host glibc" can now be spot-checked in two reads: is the
+  symbol in the 876-arm census, and is it among the 35 captured? Worked example —
+  L16624 claims `conformance_diff_f128_exp10m1` GREEN as a differential. Its arm
+  is a link-time declaration with no `dlsym`, which is the at-risk shape; but
+  `exp10m1f128` IS exported by libm (glibc 2.42 ships the C23 set), IS censused,
+  and is NOT captured. **That claim is accurate and is hereby cleared.** A row
+  whose symbol came back captured would need re-reading instead.
 - **A GREEN TEST STOPS TESTING IN AT LEAST THREE WAYS**, and all three turned up
   in one day: a **fake arm** (above); a **stale expectation** — `__getlogin_r_chk`
   compared against a recorded constant, fl had drifted to EINVAL where glibc
