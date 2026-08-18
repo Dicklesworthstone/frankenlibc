@@ -9186,8 +9186,17 @@ fn build_gensalt(
         out.extend_from_slice(frankenlibc_core::crypt::bcrypt::encode_salt(&entropy).as_bytes());
     } else if p == b"$7$" {
         // `$7$` + one N_log2 character + five r + five p, then the salt with no
-        // separator. Measured: count 0 selects N_log2 14, and each count step
-        // moves the character one place, i.e. N_log2 = count + 7.
+        // separator. Measured: count 0 selects N_log2 14, and from count 6
+        // upward each step moves the character one place, i.e. N_log2 = count+7.
+        //
+        // COUNTS 1..=5 ARE REFUSED, and that is measured, not inferred. My first
+        // version applied `count + 7` uniformly and would have accepted them,
+        // producing N_log2 8..12 where libxcrypt returns NULL. Probing the host
+        // across counts 0..11 is what caught it — there was no build available
+        // to catch it later.
+        if (1..=5).contains(&count) {
+            return Err(errno::EINVAL);
+        }
         let n_log2 = if count == 0 { 14 } else { count + 7 };
         if n_log2 > 63 {
             return Err(errno::EINVAL);

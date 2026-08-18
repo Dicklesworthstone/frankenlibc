@@ -1,7 +1,8 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // live libxcrypt oracle via dlopen/dlsym
 
-//! bcrypt (`$2a$`/`$2b$`/`$2y$`) against live libxcrypt.
+//! The crypt(3) schemes fl gained under bd-c6ykz1, against live libxcrypt:
+//! bcrypt (`$2a$`/`$2b$`/`$2y$`), scrypt (`$7$`), and `crypt_gensalt` for both.
 //!
 //! fl could not hash the bcrypt family at all before bd-c6ykz1: `crypt()` fell
 //! through to the host-delegation arm, and on any host where `libcrypt.so.1` is
@@ -212,5 +213,177 @@ fn bcrypt_rejects_bad_settings_like_libxcrypt() {
             .into_owned();
         let fl_str = fl_crypt(&key, &salt);
         assert_eq!(fl_str, host_str, "rejected setting {setting}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// crypt_gensalt
+// ---------------------------------------------------------------------------
+
+type GensaltFn = unsafe extern "C" fn(*const c_char, u64, *const c_char, i32) -> *mut c_char;
+
+fn host_gensalt() -> Option<GensaltFn> {
+    static H: OnceLock<Option<usize>> = OnceLock::new();
+    *H.get_or_init(|| {
+        // SAFETY: dlopen/dlsym with NUL-terminated names.
+        unsafe {
+            let mut handle = std::ptr::null_mut::<c_void>();
+            for name in [c"libcrypt.so.1", c"libcrypt.so.2", c"libcrypt.so"] {
+                handle = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+                if !handle.is_null() {
+                    break;
+                }
+            }
+            if handle.is_null() {
+                return None;
+            }
+            let sym = libc::dlsym(handle, c"crypt_gensalt".as_ptr());
+            if sym.is_null() {
+                return None;
+            }
+            let fl = frankenlibc_abi::unistd_abi::crypt_gensalt as *const () as usize;
+            assert_ne!(sym as usize, fl, "resolved gensalt IS fl's own (bd-v0388t)");
+            Some(sym as usize)
+        }
+    })
+    .map(|addr| {
+        // SAFETY: `char *crypt_gensalt(const char *, unsigned long, const char *, int)`.
+        unsafe { std::mem::transmute::<usize, GensaltFn>(addr) }
+    })
+}
+
+/// 64 bytes of fixed "entropy" — the probes that produced the expectations
+/// below used exactly these, so the comparison is deterministic.
+fn entropy() -> Vec<c_char> {
+    (1..=64u8).map(|b| b as c_char).collect()
+}
+
+/// `(prefix, count, nrbytes, expected)`. `None` means libxcrypt REFUSES the
+/// request; fl must refuse it too rather than inventing a weaker setting.
+const GENSALT_VECTORS: &[(&str, u64, i32, Option<&str>)] = &[
+    ("$2b$", 0, 16, Some("$2b$05$.OGB/.SE/ueHAeqKBO2NC.")),
+    ("$2b$", 4, 16, Some("$2b$04$.OGB/.SE/ueHAeqKBO2NC.")),
+    ("$2b$", 31, 16, Some("$2b$31$.OGB/.SE/ueHAeqKBO2NC.")),
+    ("$2b$", 3, 16, None),
+    ("$2b$", 32, 16, None),
+    ("$2a$", 0, 16, Some("$2a$05$.OGB/.SE/ueHAeqKBO2NC.")),
+    ("$2y$", 0, 16, Some("$2y$05$.OGB/.SE/ueHAeqKBO2NC.")),
+    ("$7$", 0, 16, Some("$7$CU..../..../6k.2IU/5UE08g.1Bsk1E.")),
+    (
+        "$7$",
+        0,
+        32,
+        Some("$7$CU..../..../6k.2IU/5UE08g.1Bsk1E2V2HEF3KQ/4Ncl4QoV5T.0"),
+    ),
+    // count 1..=5 are REFUSED for $7$ even though 0 and 6+ are accepted. My
+    // first implementation applied N_log2 = count + 7 uniformly and would have
+    // produced a setting here; probing the host is what caught it.
+    ("$7$", 1, 16, None),
+    // Below 16 bytes of entropy libxcrypt refuses rather than padding.
+    ("$7$", 0, 8, None),
+    // The pre-existing schemes must not have moved.
+    ("$6$", 0, 16, Some("$6$/6k.2IU/5UE08g.1")),
+    ("$1$", 0, 16, Some("$1$/6k.2IU/")),
+];
+
+#[test]
+fn gensalt_matches_live_libxcrypt() {
+    let Some(host) = host_gensalt() else {
+        panic!("libxcrypt unavailable; this gate cannot run without its oracle");
+    };
+    let bytes = entropy();
+
+    let mut divergences = Vec::new();
+    for (prefix, count, nrbytes, expected) in GENSALT_VECTORS {
+        let pfx = CString::new(*prefix).expect("prefix has no NUL");
+
+        // SAFETY: `pfx` is NUL-terminated; `bytes` holds at least `nrbytes`.
+        let host_ptr = unsafe { host(pfx.as_ptr(), *count, bytes.as_ptr(), *nrbytes) };
+        let host_out = if host_ptr.is_null() {
+            None
+        } else {
+            // SAFETY: non-null and NUL-terminated.
+            Some(
+                unsafe { CStr::from_ptr(host_ptr) }
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        };
+        assert_eq!(
+            host_out.as_deref(),
+            *expected,
+            "host libxcrypt no longer produces the recorded setting for              {prefix} count={count} nrbytes={nrbytes}"
+        );
+
+        // SAFETY: same arguments, fl's entry point.
+        let fl_ptr = unsafe {
+            frankenlibc_abi::unistd_abi::crypt_gensalt(
+                pfx.as_ptr(),
+                *count,
+                bytes.as_ptr(),
+                *nrbytes,
+            )
+        };
+        let fl_out = if fl_ptr.is_null() {
+            None
+        } else {
+            // SAFETY: non-null and NUL-terminated.
+            Some(
+                unsafe { CStr::from_ptr(fl_ptr) }
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        };
+
+        if fl_out != host_out {
+            divergences.push(format!(
+                "  {prefix} count={count} nrbytes={nrbytes}\n    fl    = {fl_out:?}\n    glibc = {host_out:?}"
+            ));
+        }
+    }
+    assert!(
+        divergences.is_empty(),
+        "crypt_gensalt divergences from live libxcrypt:\n{}",
+        divergences.join("\n")
+    );
+}
+
+/// A generated setting must be one fl can then HASH. This is the property that
+/// makes the capability usable rather than merely present: `passwd` calls
+/// gensalt and feeds the result straight to crypt.
+#[test]
+fn generated_settings_round_trip_through_crypt() {
+    let Some(host) = host_crypt() else {
+        panic!("libxcrypt unavailable; this gate cannot run without its oracle");
+    };
+    let bytes = entropy();
+
+    // $7$ at its default cost is deliberately expensive (N=2^14, r=32), so the
+    // round trip uses bcrypt at the minimum cost. The $7$ hash path is covered
+    // by the core vectors, which use cheap parameters.
+    for prefix in ["$2b$", "$2a$", "$2y$"] {
+        let pfx = CString::new(prefix).unwrap();
+        // SAFETY: NUL-terminated prefix, 64 bytes of entropy.
+        let setting_ptr = unsafe {
+            frankenlibc_abi::unistd_abi::crypt_gensalt(pfx.as_ptr(), 4, bytes.as_ptr(), 16)
+        };
+        assert!(!setting_ptr.is_null(), "fl gensalt refused {prefix}");
+        // SAFETY: non-null and NUL-terminated.
+        let setting = unsafe { CStr::from_ptr(setting_ptr) }.to_owned();
+
+        let key = CString::new("password").unwrap();
+        let fl_hash = fl_crypt(&key, &setting);
+        // SAFETY: both NUL-terminated and live for the call.
+        let host_ptr = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        // SAFETY: libxcrypt never returns NULL here.
+        let host_hash = unsafe { CStr::from_ptr(host_ptr) }
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(fl_hash, host_hash, "round trip for {prefix}");
+        assert!(
+            fl_hash.starts_with(prefix),
+            "the hash must carry the setting it was made from: {fl_hash}"
+        );
     }
 }
