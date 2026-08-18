@@ -32040,3 +32040,51 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   while the ORCHESTRATING host was quiet at loadavg 7.11 and 88% idle. The two are independent, and
   it is the worker's that decides whether a row exists. The gate refusing is the system working.
 - **VERDICT: KEEP.** No source change. D1 rank 13 is converted and is a win.
+
+## 2026-08-18 — REJECT (SHIPPED THEN REVERTED, 896145e5c then 175c5af0b): `memrchr` dead-tier setup is NOT its fixed per-call cost (`bd-memrchr-small-n-tier-dispatch-df0zx5`)
+
+- **THE HYPOTHESIS, registered before the edit was written.** `memrchr`'s certified loss NARROWS with
+  size — 2.267534x at 64 bytes against 1.380053x at 4096 — which is the signature of a fixed
+  per-call cost rather than a slow scan. Reading the source against that: at 64 bytes three of
+  `core::string::mem::memrchr`'s four tiers are dead. The 128-byte fold yields no chunks, the 8-byte
+  SWAR tier gets nothing because the 32-lane tier consumed the whole slice, and the scalar remainder
+  is empty — yet each still constructs an iterator, calls `next()` once for a `None`, and calls
+  `remainder()`. The prediction recorded on the bead was: **`len64` moves, `len4096` does not**, with
+  the explicit rule that if both moved equally the mechanism was wrong and the change should be
+  reverted rather than kept for its number.
+- **THE EDIT.** Guard each tier on `len >= K`. This is exactly equivalent, not a reordering:
+  `rchunks_exact(K)` on a shorter slice yields no chunks and returns the whole slice as its
+  remainder. Core tests stayed green — 54 passed, including
+  `prop_memrchr_matches_scalar_rposition` and the folded-SIMD-block resolution cases — and the
+  harness's own 12-comparison position conformance against live glibc passed before timing.
+- **THE RESULT: NO MOVEMENT, so the hypothesis is REFUTED.** `len64_absent_fl_malloc` 2.267534 ->
+  **2.365640**, CI [2.358492, 2.372861]; `len512_absent_fl_malloc` 1.483689 -> **1.542655**, CI
+  [1.541078, 1.546138]; `len4096_absent_fl_malloc` 1.380053 -> **1.362022**, CI
+  [1.360806, 1.365369]; `len4096_hit_near_start_fl_malloc` 1.526644 -> **1.531684**. In absolute
+  terms FrankenLibC moved 5.349 -> 5.563 ns at 64 bytes and 25.504 -> 25.681 at 4096 — nothing
+  improved, and the small upward drift is within between-build variation on this family. DECIDABLE,
+  0 wins of 8, every case clearing twice its null half-width with nulls holding, so the absence of
+  movement is measured rather than merely unobserved. Same-invocation A/A null on the headline small
+  case: `null_median_ratio: 0.999932`, bootstrap median CI [0.998348, 1.001423] —
+  `null_bootstrap_median_ci: [0.998348, 1.001423]`, with the glibc/glibc null on the same case
+  1.004695 CI [0.994367, 1.006309]. At `len4096_absent_fl_malloc` the FL/FL null is 1.000597, CI
+  [0.999134, 1.001384]. Both nulls sit inside 0.5% of 1.0, so a real improvement of the size
+  predicted — `len64` moving from 2.27x toward 1.4x — could not have hidden inside them.
+- **REVERTED, per the rule stated before the run.** 175c5af0b restores the original. The edit was
+  semantically equivalent and arguably tidier, and keeping it would still have been keeping a
+  performance change that delivered no performance — which is the habit this ledger exists to break.
+- **WHAT THIS ELIMINATES, and it is the useful part.** The ~5-cycle fixed cost at 64 bytes (fl 9.4
+  cycles against glibc's 4.1, at the 1754.3 MHz these rows were taken at) is NOT iterator setup for
+  tiers that cannot run. Three candidates remain and none is tested: the cross-crate call into
+  `frankenlibc_core` if it is not inlined through the ABI wrapper; the `Option<usize>` to raw-pointer
+  conversion at the ABI boundary; and the redundant `n.min(haystack.len())`, which is provably `n` at
+  both call sites because the wrapper builds the slice as `from_raw_parts(s, n)` and then passes `n`
+  again. That last one is the cheapest thing left to try.
+- **AND THE INSTRUMENT THIS NEEDED WAS NOT WALL CLOCK.** A five-cycle mechanism is exactly what an
+  instruction count settles in one run and what a timer cannot separate from between-build drift; I
+  said so when proposing the lever and the result demonstrates it. Blocked by
+  bd-counted-instruments-blocked-ql5i1h — worker `perf_event_paranoid=4`, rch refuses valgrind.
+  Third lever in three days whose mechanism is decidable by counting.
+- **CONDITIONS.** Worker **ovh-a** (`hostname=fixmydocuments`), `loadavg 9.29,7.06,7.47`, quiet gate
+  clear (busy 0.040 against a 0.200 ceiling), `cpu_mhz_min=1754.3`, 8 pinned cores, 36 retained
+  samples, 200000 reps per arm. Orchestrating host loadavg 8.65, CPU idle 88% (vmstat), `/` at 125G.
