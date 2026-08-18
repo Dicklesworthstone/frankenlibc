@@ -352,6 +352,25 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 /// Reverse counterpart of [`memchr`]: scans 8 bytes per step from the end with
 /// the SWAR probe, resolving the exact index within the last matching word
 /// high-to-low. Behaviour is identical to a byte-at-a-time `rposition` scan.
+/// `#[inline]` is load-bearing here, not decoration. The shipped artifact is built
+/// by `cargo build -p frankenlibc-abi --release` (DEPLOYMENT.md) and the workspace
+/// declares no `[profile.release]`, so release runs at cargo's default `lto =
+/// false`. Without LTO rustc exports MIR for downstream codegen only for
+/// `#[inline]` and generic functions, so a plain `pub fn` here is reached from
+/// `frankenlibc-abi` through a symbol — a real call, with argument marshalling and
+/// no specialisation on the caller's constants — on every `memrchr()` in the
+/// shipped libc.
+///
+/// That matters because this function's certified loss NARROWS with size
+/// (2.267534x at 64 bytes, 1.380053x at 4096), which is the signature of a fixed
+/// per-call cost, and at 64 bytes the entire gap is about five cycles. glibc's
+/// `memrchr` is a leaf with no cross-module call to make.
+///
+/// Applied to THIS function alone, deliberately: 67 hot-path `pub fn` across
+/// mem/str/wide carry no `#[inline]`, and sweeping them on the strength of one
+/// result is how the struct-shrink lever in docs/NEGATIVE_EVIDENCE.md ended up
+/// 7-9% slower than its byte-count argument predicted. bd-abi-core-inline-boundary-nmjdud.
+#[inline]
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
