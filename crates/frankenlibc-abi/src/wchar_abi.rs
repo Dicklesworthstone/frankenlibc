@@ -8122,6 +8122,30 @@ pub unsafe extern "C" fn __wcstof_l(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __wcstold_l(
+    _nptr: *const libc::wchar_t,
+    _endptr: *mut *mut libc::wchar_t,
+    _l: *mut c_void,
+) {
+    // The third argument (the locale) arrives in RDX and is discarded, which
+    // is what lets the out-buffer pointer take its place. Every previous body
+    // ignored it too.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym wcstold_into,
+    )
+}
+
+/// See [`crate::stdlib_abi::strtold`] for why non-x86-64 keeps the old shape.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe extern "C" fn __wcstold_l(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
@@ -8189,6 +8213,30 @@ pub unsafe extern "C" fn __wcstof_internal(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __wcstold_internal(
+    _nptr: *const libc::wchar_t,
+    _endptr: *mut *mut libc::wchar_t,
+    _group: c_int,
+) {
+    // The third argument (group) arrives in RDX and is discarded, which
+    // is what lets the out-buffer pointer take its place. Every previous body
+    // ignored it too.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym wcstold_into,
+    )
+}
+
+/// See [`crate::stdlib_abi::strtold`] for why non-x86-64 keeps the old shape.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
 pub unsafe extern "C" fn __wcstold_internal(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
