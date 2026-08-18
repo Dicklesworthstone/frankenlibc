@@ -18688,12 +18688,84 @@ pub unsafe extern "C" fn fstatfs(fd: c_int, buf: *mut c_void) -> c_int {
     }
 }
 
+/// The kernel's `ST_VALID` bit in `statfs.f_flags`: "the mount flags in this
+/// field are meaningful".
+const ST_VALID: u64 = 0x0020;
+
+/// Derive the public `ST_*` flags for `path` by parsing /proc/mounts.
+///
+/// glibc needs this because `statfs.f_flags` is only meaningful when `ST_VALID`
+/// is set; without it, `internal_statvfs` falls back to the mount table (the
+/// "/proc/mounts" string is in libc.so.6). Every Linux kernel that matters sets
+/// `ST_VALID` — it is set on all 10 mounts of the machine this was written on —
+/// so this is a fallback for old or unusual kernels, not the normal path.
+///
+/// Exposed so the differential gate can check it WITHOUT needing a kernel that
+/// clears `ST_VALID`: on a kernel that sets it, the two sources must agree, and
+/// that agreement is the test. Measured across 11 mounts (ext4, tmpfs, proc,
+/// sysfs, cgroup2, devtmpfs, devpts, squashfs): the derivation reproduces the
+/// kernel's own `f_flags` on every one.
+///
+/// Returns `None` if /proc/mounts is unreadable or names no matching mount.
+#[must_use]
+pub fn statvfs_flags_from_mounts(path: &str) -> Option<u64> {
+    let table = std::fs::read_to_string("/proc/mounts").ok()?;
+    let mut best: Option<(&str, &str)> = None;
+    for line in table.lines() {
+        // device mountpoint fstype options dump pass
+        let mut fields = line.split_whitespace();
+        let (_dev, mount_point, _fstype, options) =
+            match (fields.next(), fields.next(), fields.next(), fields.next()) {
+                (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
+                _ => continue,
+            };
+        // Longest matching prefix wins, so /dev/pts beats /dev and / never
+        // shadows a more specific mount.
+        //
+        // `>=`, not `>`: a mount point can appear TWICE and the LAST entry is
+        // the visible one, because mounting over a path stacks. /proc/mounts on
+        // the machine this was written on has exactly one such pair --
+        //   systemd-1     /proc/sys/fs/binfmt_misc autofs       rw,relatime,...
+        //   binfmt_misc   /proc/sys/fs/binfmt_misc binfmt_misc  rw,nosuid,nodev,noexec,relatime
+        // -- and with `>` this function returned 0x1000 where the kernel says
+        // 0x100e. That was a real defect in this function, caught by sweeping
+        // all 49 mounts instead of a hand-picked handful.
+        let covers = path == mount_point
+            || mount_point == "/"
+            || path.starts_with(&format!("{}/", mount_point.trim_end_matches('/')));
+        if covers && best.is_none_or(|(bmp, _)| mount_point.len() >= bmp.len()) {
+            best = Some((mount_point, options));
+        }
+    }
+    let (_mount_point, options) = best?;
+    let mut flags = 0u64;
+    for option in options.split(',') {
+        flags |= match option {
+            "ro" => 0x1,           // ST_RDONLY
+            "nosuid" => 0x2,       // ST_NOSUID
+            "nodev" => 0x4,        // ST_NODEV
+            "noexec" => 0x8,       // ST_NOEXEC
+            "sync" => 0x10,        // ST_SYNCHRONOUS
+            "mand" => 0x40,        // ST_MANDLOCK
+            "noatime" => 0x400,    // ST_NOATIME
+            "nodiratime" => 0x800, // ST_NODIRATIME
+            "relatime" => 0x1000,  // ST_RELATIME
+            _ => 0,
+        };
+    }
+    Some(flags)
+}
+
 /// Convert kernel statfs result to statvfs layout.
 /// On x86_64 Linux, struct statfs fields (all long):
 ///   type, bsize, blocks, bfree, bavail, files, ffree, fsid(2xi32), namelen, frsize, flags, spare[4]
 /// struct statvfs fields (all unsigned long):
 ///   bsize, frsize, blocks, bfree, bavail, files, ffree, favail, fsid, flag, namemax, spare[6]
-unsafe fn statfs_to_statvfs(sfs: *const syscall::StatFs, vfs: *mut libc::statvfs) {
+unsafe fn statfs_to_statvfs(
+    sfs: *const syscall::StatFs,
+    vfs: *mut libc::statvfs,
+    mount_path: Option<&str>,
+) {
     let s = unsafe { &*sfs };
     let v = unsafe { &mut *vfs };
     v.f_bsize = s.f_bsize as u64;
@@ -18719,7 +18791,18 @@ unsafe fn statfs_to_statvfs(sfs: *const syscall::StatFs, vfs: *mut libc::statvfs
     // that filter avoids spurious f_flag divergence (bd-2b63f4).
     const PUBLIC_ST_MASK: u64 =
         0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000;
-    v.f_flag = (s.f_flags as u64) & PUBLIC_ST_MASK;
+    let raw = s.f_flags as u64;
+    // f_flags is only meaningful when the kernel says so. glibc consults the
+    // mount table when ST_VALID is clear rather than trusting the field; doing
+    // the same here keeps old kernels from reporting a flag word of zero as
+    // "no flags set" instead of "not known".
+    v.f_flag = if raw & ST_VALID != 0 {
+        raw & PUBLIC_ST_MASK
+    } else {
+        mount_path
+            .and_then(statvfs_flags_from_mounts)
+            .unwrap_or(raw & PUBLIC_ST_MASK)
+    };
     v.f_namemax = s.f_namelen as u64;
 }
 
@@ -18730,7 +18813,17 @@ pub unsafe extern "C" fn statvfs(path: *const c_char, buf: *mut libc::statvfs) -
     let mut sfs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
     match unsafe { syscall::sys_statfs(path as *const u8, sfs.as_mut_ptr()) } {
         Ok(()) => {
-            unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
+            // Only needed if the kernel leaves ST_VALID clear, so the string is
+            // read lazily rather than on every call.
+            let owned;
+            let mount_path = if unsafe { sfs.assume_init_ref() }.f_flags as u64 & ST_VALID == 0 {
+                owned = unsafe { read_c_string_bytes(path) }
+                    .and_then(|bytes| String::from_utf8(bytes).ok());
+                owned.as_deref()
+            } else {
+                None
+            };
+            unsafe { statfs_to_statvfs(sfs.as_ptr(), buf, mount_path) };
             0
         }
         Err(e) => {
@@ -18747,7 +18840,19 @@ pub unsafe extern "C" fn fstatvfs(fd: c_int, buf: *mut libc::statvfs) -> c_int {
     let mut sfs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
     match unsafe { syscall::sys_fstatfs(fd, sfs.as_mut_ptr()) } {
         Ok(()) => {
-            unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
+            // An fd has no path, so recover one the way freopen(NULL, ..) does:
+            // through the descriptor's own /proc/self/fd link. Only attempted
+            // when ST_VALID is clear, i.e. essentially never.
+            let owned;
+            let mount_path = if unsafe { sfs.assume_init_ref() }.f_flags as u64 & ST_VALID == 0 {
+                owned = std::fs::read_link(format!("/proc/self/fd/{fd}"))
+                    .ok()
+                    .and_then(|p| p.to_str().map(str::to_owned));
+                owned.as_deref()
+            } else {
+                None
+            };
+            unsafe { statfs_to_statvfs(sfs.as_ptr(), buf, mount_path) };
             0
         }
         Err(e) => {
