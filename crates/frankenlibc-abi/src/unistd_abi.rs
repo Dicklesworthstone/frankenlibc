@@ -2684,8 +2684,24 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_HOST_NAME_MAX => 64,
         libc::_SC_LINE_MAX => 2048,
         libc::_SC_ARG_MAX => {
-            // glibc calculates ARG_MAX as min(rlimit_stack / 4, 3/4 * 128KiB pages).
-            // The common result is 2097152 (for 8MB stack) or 3200000 (for >= 12.8MB stack).
+            // glibc: clamp(RLIMIT_STACK soft / 4, 131072, 6291456).
+            //
+            // MEASURED against live glibc 2.42 by varying `ulimit -s`, because
+            // the default 8 MiB stack sits in the linear middle of that range
+            // and hides both ends:
+            //     stack   128 KiB -> 131072   (floor, stack/4 would be 32768)
+            //     stack   512 KiB -> 131072   (floor and stack/4 coincide)
+            //     stack  8192 KiB -> 2097152  (linear, the common case)
+            //     stack 16384 KiB -> 4194304  (linear)
+            //     stack 24576 KiB -> 6291456  (cap and stack/4 coincide)
+            //     stack 32768 KiB -> 6291456  (cap)
+            //     unlimited       -> 6291456  (cap)
+            //
+            // The cap was 3200000 here, which is right for no stack size at
+            // all: it is below the true cap AND below stack/4 for every stack
+            // above 12.8 MiB, so fl answered 3200000 where glibc answered
+            // anything from 3276800 to 6291456. Correct only for stacks at or
+            // under 12.8 MiB, which is why the default hid it.
             let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
             match unsafe {
                 syscall::sys_getrlimit(libc::RLIMIT_STACK as i32, rlim.as_mut_ptr() as *mut u8)
@@ -2693,8 +2709,8 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
                 Ok(()) => {
                     let rlim = unsafe { rlim.assume_init() };
                     let stack_based = (rlim.rlim_cur / 4) as libc::c_long;
-                    let cap = 3200000i64 as libc::c_long;
-                    stack_based.min(cap).max(131072) // at least 128K
+                    let cap = 6_291_456i64 as libc::c_long;
+                    stack_based.min(cap).max(131072) // floor 128 KiB, cap 6 MiB
                 }
                 Err(_) => 2097152,
             }
