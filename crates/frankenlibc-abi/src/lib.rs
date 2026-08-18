@@ -56,6 +56,14 @@ mod membrane_state;
 #[cfg(feature = "owned-tls-cache")]
 mod owned_tls_cache;
 mod runtime_policy;
+/// Address-derived slab ownership test (bd-e0y02p).
+///
+/// `pub` rather than `pub(crate)` because the design's first measurement has to
+/// come from an integration test or bench: this crate gates its inline
+/// `#[cfg(test)]` modules behind `cfg(not(test))`, so a unit test written here
+/// would never compile (bd-0z7a1y). Not yet reachable from `malloc`/`free` --
+/// the ownership test is measured before the allocator is rewired.
+pub mod slab_region;
 
 #[cfg(feature = "conformance-testing")]
 pub use runtime_policy::conformance_testing;
