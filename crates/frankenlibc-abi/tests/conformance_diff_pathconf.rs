@@ -152,3 +152,91 @@ fn indeterminate_pathconf_keys_preserve_errno() {
         }
     }
 }
+
+/// `_PC_NAME_MAX` is per-FILESYSTEM, and the value that proves it is rare.
+///
+/// fl used to answer 255 from a constant table. That is correct on ext4, tmpfs,
+/// proc, sysfs, cgroup2 and devtmpfs — every filesystem the other tests in this
+/// file touch — and WRONG on squashfs, which reports 256. glibc returns statfs's
+/// `f_namelen`; measured on the machine this was written against,
+/// `pathconf(_PC_NAME_MAX)` equalled `statvfs.f_namemax` on all 12 paths tried
+/// across 7 filesystem types.
+///
+/// So this test does not assert a number. It sweeps whatever filesystems the
+/// host actually has, requires fl to match glibc on each, and reports whether a
+/// DISCRIMINATING mount (one whose NAME_MAX is not 255) was present at all — a
+/// pass without one does not prove the constant was removed.
+#[test]
+fn name_max_is_per_filesystem_not_a_constant() {
+    let mut candidates: Vec<String> = ["/", "/tmp", "/proc", "/sys", "/dev/shm", "/dev", "/run"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+    // squashfs is the discriminating case on this host and it lives under
+    // /snap/<name>/<rev>. Discover rather than hardcode: the revisions change.
+    if let Ok(entries) = std::fs::read_dir("/snap") {
+        for entry in entries.flatten().take(32) {
+            if let Ok(revs) = std::fs::read_dir(entry.path()) {
+                for rev in revs.flatten().take(4) {
+                    let p = rev.path();
+                    // Skip the "current" symlink; take numbered revisions.
+                    if p.is_dir()
+                        && p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
+                    {
+                        candidates.push(p.to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut compared = 0usize;
+    let mut discriminating = 0usize;
+    let mut divergences = Vec::new();
+    for dir in &candidates {
+        let Ok(path) = CString::new(dir.as_str()) else {
+            continue;
+        };
+        let g = unsafe { pathconf(path.as_ptr(), libc::_PC_NAME_MAX) };
+        if g < 0 {
+            continue; // path vanished or is not statfs-able; not this test's subject
+        }
+        let f = unsafe { fu::pathconf(path.as_ptr(), libc::_PC_NAME_MAX) };
+        compared += 1;
+        if g != 255 {
+            discriminating += 1;
+        }
+        if f != g {
+            divergences.push(format!("{dir}: fl={f} glibc={g}"));
+        }
+    }
+
+    assert!(
+        compared >= 4,
+        "only {compared} paths were comparable -- this host cannot exercise the sweep"
+    );
+    // Not an assertion: a host with no squashfs (containers, minimal images)
+    // legitimately has nothing that distinguishes 255-the-constant from
+    // 255-the-measurement. Say so instead of implying coverage.
+    if discriminating == 0 {
+        println!(
+            "pathconf _PC_NAME_MAX: {compared} paths compared, NONE with a NAME_MAX other than \
+             255 -- a constant would also pass here, so this run does not prove the per-filesystem \
+             lookup"
+        );
+    } else {
+        println!(
+            "pathconf _PC_NAME_MAX: {compared} paths compared, {discriminating} with a NAME_MAX \
+             other than 255 -- the per-filesystem lookup is genuinely exercised"
+        );
+    }
+    assert!(
+        divergences.is_empty(),
+        "_PC_NAME_MAX divergences vs glibc ({} of {compared}):\n  {}",
+        divergences.len(),
+        divergences.join("\n  ")
+    );
+}

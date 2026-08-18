@@ -4368,6 +4368,9 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         libc::_PC_LINK_MAX => Some(127),
         libc::_PC_MAX_CANON => Some(255),
         libc::_PC_MAX_INPUT => Some(255),
+        // Only reached when a caller routes through pathconf_value directly:
+        // the public pathconf/fpathconf resolve _PC_NAME_MAX per filesystem via
+        // statfs f_namelen, because it is 256 on squashfs and 255 elsewhere.
         libc::_PC_NAME_MAX => Some(255),
         libc::_PC_PATH_MAX => Some(4096),
         libc::_PC_PIPE_BUF => Some(4096),
@@ -4513,6 +4516,29 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         return v;
     }
 
+    // _PC_NAME_MAX is per-FILESYSTEM, not a constant: glibc returns statfs's
+    // f_namelen. fl answered 255 from the table, which is right on ext4, tmpfs,
+    // proc, sysfs, cgroup2 and devtmpfs -- and WRONG on squashfs, which reports
+    // 256. Measured on this host: pathconf(_PC_NAME_MAX) equals statvfs
+    // f_namemax on all 12 paths tried across 7 filesystem types, including the
+    // /snap/* squashfs mounts where both say 256 and the old constant says 255.
+    if name == libc::_PC_NAME_MAX {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_statfs(path as *const u8, fs.as_mut_ptr()) } {
+            Ok(()) => unsafe { fs.assume_init() }.f_namelen as libc::c_long,
+            // A kernel without statfs at all: fall back to the POSIX NAME_MAX
+            // rather than failing, which is what glibc does. Any other error is
+            // reported.
+            Err(e) if e == libc::ENOSYS => 255,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
     // _PC_FILESIZEBITS is filesystem-dependent (glibc __statfs_filesize_max);
     // without this it falls through to the EINVAL default (-1). bd-eqcn80,
     // shipped 4713e10f2, deleted by e634aff2a, restored (bd-d3cav6).
@@ -4581,6 +4607,22 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
     if name == libc::_PC_LINK_MAX {
         let v = unsafe { pc_link_max_for_fd(fd) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
+
+    // Same per-filesystem _PC_NAME_MAX as the per-path branch in pathconf,
+    // through the fd's fstatfs. See there for the squashfs measurement.
+    if name == libc::_PC_NAME_MAX {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
+            Ok(()) => unsafe { fs.assume_init() }.f_namelen as libc::c_long,
+            Err(e) if e == libc::ENOSYS => 255,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
         return v;
     }
 
