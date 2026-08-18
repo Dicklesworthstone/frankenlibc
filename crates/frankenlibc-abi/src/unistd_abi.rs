@@ -9230,6 +9230,7 @@ fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<V
 /// - `$6$salt$` — SHA-512 (default on modern Linux)
 /// - `$5$salt$` — SHA-256
 /// - `$1$salt$` — MD5 (deprecated but supported for compatibility)
+/// - `$3$` — NTHASH (MD4 of the byte-widened password; salt ignored)
 /// - 2-char salt — Traditional DES (native; the incumbent still hashes these)
 /// - `_CCCCSSSS` — BSDI extended DES (native; same cipher, tunable count,
 ///   24-bit salt, and the whole password rather than the first eight bytes)
@@ -9258,6 +9259,13 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         crypt_sha256(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
+    } else if salt_bytes.starts_with(b"$3$") {
+        // NTHASH. Unsalted, uniterated MD4 — a compatibility scheme for Samba
+        // and MS-CHAP credential stores, not a password hash anyone should
+        // choose. `crypt_gensalt` has no `$3$` prefix, here or in libxcrypt,
+        // which is the library making that distinction: fl will VERIFY one and
+        // will not CREATE one.
+        crypt_nthash(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$7$") {
         // scrypt. Native as of bd-c6ykz1; previously fell through to host
         // delegation and returned the failure token wherever libxcrypt was not
@@ -13019,6 +13027,10 @@ fn crypt_des(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 
 fn crypt_bsdi(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     frankenlibc_core::crypt::des::bsdi_crypt(key, salt_bytes)
+}
+
+fn crypt_nthash(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
+    frankenlibc_core::crypt::md4::nthash_crypt(key, salt_bytes)
 }
 
 // ---------------------------------------------------------------------------

@@ -138,16 +138,6 @@ const S: [[u8; 64]; 8] = [
 /// run `.` `/` `0`..`9` `A`..`Z` `a`..`z`.
 const A64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// Whether `ch` may appear in a setting AFTER the two salt characters.
-///
-/// Printable ASCII minus the five characters that would corrupt or forge a
-/// shadow-file record; see the acceptance rule in the module docs. Measured
-/// against libcrypt.so.1 over all 256 byte values at positions 2, 3, 5 and 9,
-/// which agreed exactly.
-fn valid_trailing_byte(ch: u8) -> bool {
-    matches!(ch, 0x21..=0x7e) && !matches!(ch, b'!' | b'*' | b':' | b';' | b'\\')
-}
-
 /// Alphabet position of `ch`, or `None` if it is not a crypt base-64 digit.
 /// This is a lookup rather than a range test because the alphabet is not
 /// contiguous in ASCII.
@@ -289,7 +279,11 @@ pub fn des_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
     // trailing bytes need only be storable in a shadow record. Both are checked
     // even though only the salt reaches the cipher.
     let salt = decode_le_base64(setting, 0, 2)?;
-    if !setting[2..].iter().copied().all(valid_trailing_byte) {
+    if !setting[2..]
+        .iter()
+        .copied()
+        .all(crate::crypt::valid_hash_string_byte)
+    {
         return None;
     }
 
@@ -367,7 +361,11 @@ pub fn bsdi_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
     }
     let count = decode_le_base64(setting, 1, 4)?;
     let salt = decode_le_base64(setting, 5, 4)?;
-    if !setting[9..].iter().copied().all(valid_trailing_byte) {
+    if !setting[9..]
+        .iter()
+        .copied()
+        .all(crate::crypt::valid_hash_string_byte)
+    {
         return None;
     }
 

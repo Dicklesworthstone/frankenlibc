@@ -387,3 +387,122 @@ fn generated_settings_round_trip_through_crypt() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// NTHASH ($3$)
+// ---------------------------------------------------------------------------
+//
+// Lives here rather than in conformance_diff_crypt_des.rs because it shares
+// nothing with DES but the dispatcher: it is unsalted, uniterated MD4 over the
+// byte-widened password. It joins this file because the libxcrypt oracle is
+// already open here.
+
+/// `(password, expected)` — probed from live libxcrypt with the setting `$3$`.
+const NTHASH_VECTORS: &[(&[u8], &str)] = &[
+    (b"", "$3$$31d6cfe0d16ae931b73c59d7e0c089c0"),
+    (b"a", "$3$$186cb09181e2c2ecaac768c47c729904"),
+    (b"password", "$3$$8846f7eaee8fb117ad06bdd830b7586c"),
+    (b"The quick brown fox", "$3$$b9894503d51bf4dfc6f4192d1666800a"),
+    // NOT UTF-8 decoded: these two bytes widen to c3 00 a9 00.
+    (b"\xc3\xa9", "$3$$08eb94a3771213775172fc988504a4c1"),
+    // Long enough that the widened message spans several MD4 blocks.
+    (
+        b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "$3$$c16e1f599bba2bab447a15fa2ca8aabb",
+    ),
+];
+
+#[test]
+fn nthash_matches_live_libxcrypt() {
+    let Some(host) = host_crypt() else {
+        panic!("libcrypt.so.1 did not resolve `crypt`; this gate cannot run vacuously");
+    };
+    for (password, expected) in NTHASH_VECTORS {
+        let key = CString::new(*password).expect("no interior NUL");
+        let setting = CString::new("$3$").expect("no interior NUL");
+        // SAFETY: resolved libxcrypt `crypt`, two NUL-terminated pointers.
+        let host_out = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        assert!(!host_out.is_null(), "host crypt returned NULL");
+        // SAFETY: NUL-terminated static storage.
+        let host_hash = unsafe { CStr::from_ptr(host_out) }
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            host_hash, *expected,
+            "the pinned vector for {password:?} no longer matches live libxcrypt"
+        );
+        assert_eq!(
+            fl_crypt(&key, &setting),
+            *expected,
+            "fl NTHASH diverges for {password:?}"
+        );
+    }
+}
+
+/// The salt is parsed and thrown away, and the output must carry an EMPTY salt
+/// whatever was supplied. This is not cosmetic: `strcmp(crypt(pw, stored),
+/// stored)` is the standard authentication test, so echoing the salt back would
+/// fail a correct password against an existing `$3$abc$…` record.
+#[test]
+fn nthash_ignores_the_salt_and_never_echoes_it() {
+    let Some(host) = host_crypt() else {
+        panic!("no libxcrypt oracle");
+    };
+    let key = CString::new("password").expect("no interior NUL");
+    let reference = "$3$$8846f7eaee8fb117ad06bdd830b7586c";
+    for setting in ["$3$", "$3$$", "$3$abc$", "$3$xyzzy$more", "$3$$$$"] {
+        let setting = CString::new(setting).expect("no interior NUL");
+        // SAFETY: as above.
+        let host_out = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        // SAFETY: as above.
+        let host_hash = unsafe { CStr::from_ptr(host_out) }
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            host_hash, reference,
+            "host no longer ignores the salt for {setting:?}"
+        );
+        assert_eq!(
+            fl_crypt(&key, &setting),
+            reference,
+            "fl must ignore the salt and emit an empty one for {setting:?}"
+        );
+    }
+}
+
+#[test]
+fn nthash_rejects_bad_settings_like_libxcrypt() {
+    let Some(host) = host_crypt() else {
+        panic!("no libxcrypt oracle");
+    };
+    let key = CString::new("password").expect("no interior NUL");
+    for setting in [
+        &b"$3"[..],
+        b"$3$!",
+        b"$3$*",
+        b"$3$:",
+        b"$3$;",
+        b"$3$\\",
+        b"$3$ ",
+        b"$3$\x01",
+        b"$3$\x7f",
+        b"$3$\xff",
+    ] {
+        let setting = CString::new(setting).expect("no interior NUL");
+        // SAFETY: as above.
+        let host_out = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        // SAFETY: as above.
+        let host_hash = unsafe { CStr::from_ptr(host_out) }
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            host_hash, "*0",
+            "host no longer rejects {setting:?}; the pinned expectation is stale"
+        );
+        assert_eq!(
+            fl_crypt(&key, &setting),
+            "*0",
+            "fl must refuse {setting:?} rather than hash it"
+        );
+    }
+}
