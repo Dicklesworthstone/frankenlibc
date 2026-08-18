@@ -27255,20 +27255,36 @@ fn fortify_checked_wrapper_wave01_actual(
         ) => fortify_fgets_actual(function),
         ("__fgetws_chk", "wide_request_exceeds_destlen_abort_without_stream_capture") => {
             Ok(fortify_classify_abort_signal(|| unsafe {
+                // (buf, buflen, n, stream): the DESTINATION is second and the
+                // REQUEST is third, in both fl's signature and glibc's. These
+                // arguments were (buflen=4, n=2) -- a request SMALLER than the
+                // destination -- under a case named
+                // wide_request_exceeds_destlen, so the case asserted an abort
+                // that correctly never came. Measured: fl aborts for
+                // (buflen=2, n=8) and passes through for (buflen=4, n=2), so
+                // the check works and the arguments were transposed. bd-ud2wq0.
                 frankenlibc_abi::fortify_abi::__fgetws_chk(
                     std::ptr::null_mut::<c_int>(),
-                    4,
                     2,
+                    4,
                     std::ptr::null_mut(),
                 );
             }))
         }
         ("__fgetws_unlocked_chk", "wide_request_exceeds_destlen_abort_without_stream_capture") => {
             Ok(fortify_classify_abort_signal(|| unsafe {
+                // (buf, buflen, n, stream): the DESTINATION is second and the
+                // REQUEST is third, in both fl's signature and glibc's. These
+                // arguments were (buflen=4, n=2) -- a request SMALLER than the
+                // destination -- under a case named
+                // wide_request_exceeds_destlen, so the case asserted an abort
+                // that correctly never came. Measured: fl aborts for
+                // (buflen=2, n=8) and passes through for (buflen=4, n=2), so
+                // the check works and the arguments were transposed. bd-ud2wq0.
                 frankenlibc_abi::fortify_abi::__fgetws_unlocked_chk(
                     std::ptr::null_mut::<c_int>(),
-                    4,
                     2,
+                    4,
                     std::ptr::null_mut(),
                 );
             }))
