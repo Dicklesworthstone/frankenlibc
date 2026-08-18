@@ -3723,15 +3723,28 @@ fn verify_wcsnrtombs_incomparable_cases(
             "host C locale unexpectedly represented non-ASCII case {}",
             case.label
         );
-        assert_ne!(
-            fl_observation.result,
-            usize::MAX,
-            "FrankenLibC C locale unexpectedly rejected non-ASCII case {}",
+        // These cases were written when FrankenLibC ACCEPTED non-ASCII under the
+        // C locale while glibc rejected it -- the assertion here used to be
+        // `assert_ne!(fl_observation.result, usize::MAX)`, i.e. it required that
+        // divergence. Running the family for the first time showed fl now
+        // returns SIZE_MAX exactly like the host, so fl became MORE conformant
+        // and the old expectation had quietly inverted. The check is therefore
+        // strengthened to agreement rather than deleted: both arms must reject,
+        // and must set the same errno.
+        assert_eq!(
+            fl_observation.result, host_observation.result,
+            "wcsnrtombs C-locale rejection differs from host for case {}",
+            case.label
+        );
+        assert_eq!(
+            fl_observation.errno, host_observation.errno,
+            "wcsnrtombs C-locale errno differs from host for case {}",
             case.label
         );
         println!(
             "WCSNRTOMBS_INCOMPARABLE symbol=wcsnrtombs case={} \
-             reason=no_common_utf8_locale host_locale=C host_result=size_t_max \
+             reason=untimed_under_c_locale outcome=arms_agree_reject \
+             host_locale=C host_result=size_t_max \
              host_errno={} fl_locale=C fl_result={} fl_errno={} note={:?}",
             case.label,
             host_observation.errno,
