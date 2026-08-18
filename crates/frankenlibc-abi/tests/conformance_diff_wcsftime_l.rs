@@ -1,107 +1,225 @@
 #![cfg(target_os = "linux")]
-#![allow(unsafe_code)] // live host-glibc wcsftime_l oracle
+#![allow(unsafe_code)] // live glibc oracle
 
-//! Differential gate for wcsftime_l (bd-jksmc2) — previously fl-internal only
-//! (wcsftime has conformance_diff_wcsftime + a fuzz; the _l variant did not).
-//! With a "C" locale_t and a UTC-normalized tm, fl's wide-string time format
-//! must match glibc's wcsftime_l byte-for-byte (wchar_t array AND return
-//! length) across numeric date/time, English locale names, week numbers, %j,
-//! combined %c/%x/%X, and literals. %s/%Z/%z omitted (architectural timezone
-//! axis). No mocks.
+//! `wcsftime_l` against live glibc: wide output, and the size contract.
+//!
+//! bd-jksmc2: only fl-internal coverage. Like `strftime_l`, fl's `wcsftime_l`
+//! ignores its `locale_t` and delegates — defensible while every locale fl ships
+//! renders these fields identically, and asserted here rather than assumed.
+//!
+//! ## `maxsize` counts WIDE CHARACTERS and includes the terminator
+//!
+//! Measured on glibc 2.42 with `"%Y-%m-%d"`, which produces ten characters:
+//!
+//! ```text
+//!   size 11 -> returns 10, "2026-08-18"
+//!   size 10 -> returns 0        <-- ten characters do NOT fit in ten
+//!   size  9 -> returns 0
+//!   size  1 -> returns 0
+//!   size  0 -> returns 0
+//! ```
+//!
+//! The `size 10 -> 0` row is the one worth having: an implementation that
+//! treats `maxsize` as "characters available for output" rather than "including
+//! the NUL" is off by exactly one and passes every test that does not sit on
+//! the boundary.
+//!
+//! ## Overflow buffer contents are deliberately NOT asserted
+//!
+//! glibc partially fills the destination before discovering the result does not
+//! fit — at sizes 5..=10 the first cell already held `'2'`, while at sizes 0 and
+//! 1 the buffer was untouched. POSIX leaves the contents indeterminate on
+//! overflow, so pinning those bytes would encode an implementation detail as a
+//! contract and produce a gate that breaks on a legal glibc change. Only the
+//! RETURN VALUE and the boundary are asserted.
 
-use libc::wchar_t;
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{c_int, c_void};
 
-unsafe extern "C" {
-    fn wcsftime_l(
-        s: *mut wchar_t,
-        max: usize,
-        fmt: *const wchar_t,
-        tm: *const libc::tm,
-        loc: *mut c_void,
-    ) -> usize;
-    fn newlocale(mask: c_int, name: *const c_char, base: *mut c_void) -> *mut c_void;
-    fn freelocale(loc: *mut c_void);
-    fn timegm(tm: *mut libc::tm) -> libc::time_t;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use dlsym_oracle::host_fn;
+
+type WcsftimeLFn = unsafe extern "C" fn(
+    *mut libc::wchar_t,
+    usize,
+    *const libc::wchar_t,
+    *const libc::tm,
+    *mut c_void,
+) -> usize;
+type NewlocaleFn = unsafe extern "C" fn(c_int, *const std::ffi::c_char, *mut c_void) -> *mut c_void;
+
+fn host_wcsftime_l() -> WcsftimeLFn {
+    // SAFETY: matches `size_t wcsftime_l(wchar_t *, size_t, const wchar_t *,
+    // const struct tm *, locale_t)`; fl's own export is the oracle guard.
+    unsafe {
+        host_fn(
+            c"wcsftime_l",
+            frankenlibc_abi::wchar_abi::wcsftime_l as *const (),
+        )
+    }
 }
 
-fn wide(s: &str) -> Vec<wchar_t> {
+fn host_newlocale() -> NewlocaleFn {
+    // SAFETY: `locale_t newlocale(int, const char *, locale_t)`.
+    unsafe {
+        host_fn(
+            c"newlocale",
+            frankenlibc_abi::locale_abi::newlocale as *const (),
+        )
+    }
+}
+
+/// 2026-08-18 14:52:17, a Tuesday.
+fn fixture() -> libc::tm {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_sec = 17;
+    tm.tm_min = 52;
+    tm.tm_hour = 14;
+    tm.tm_mday = 18;
+    tm.tm_mon = 7;
+    tm.tm_year = 126;
+    tm.tm_wday = 2;
+    tm.tm_yday = 229;
+    tm.tm_gmtoff = 0;
+    tm.tm_zone = c"UTC".as_ptr();
+    tm
+}
+
+fn wide(s: &str) -> Vec<libc::wchar_t> {
     s.chars()
-        .map(|c| c as wchar_t)
+        .map(|c| c as libc::wchar_t)
         .chain(std::iter::once(0))
         .collect()
 }
 
-fn base_tm() -> libc::tm {
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    tm.tm_year = 2024 - 1900;
-    tm.tm_mon = 2;
-    tm.tm_mday = 15;
-    tm.tm_hour = 14;
-    tm.tm_min = 30;
-    tm.tm_sec = 45;
-    unsafe { timegm(&mut tm) };
-    tm
+fn pin_utc() {
+    // SAFETY: setenv/tzset with NUL-terminated literals. `%Z` reads the process
+    // zone and fl is UTC-only, so the zone must be fixed for the comparison.
+    unsafe {
+        libc::setenv(c"TZ".as_ptr(), c"UTC".as_ptr(), 1);
+        libc::tzset();
+    }
 }
 
-const FORMATS: &[&str] = &[
-    "%Y-%m-%d",
-    "%H:%M:%S",
-    "%A",
-    "%a",
-    "%B",
-    "%b",
-    "%p",
-    "%I:%M %p",
-    "%j",
-    "%U",
-    "%W",
-    "%V",
-    "%w",
-    "%u",
-    "%C",
-    "%y",
-    "%e",
-    "%D",
-    "%F",
-    "%R",
-    "%T",
-    "%c",
-    "%x",
-    "%X",
-    "lit %% %Y end",
+/// `(returned, rendered)` for one library.
+fn render(
+    f: WcsftimeLFn,
+    fmt: &[libc::wchar_t],
+    tm: &libc::tm,
+    size: usize,
+    loc: *mut c_void,
+) -> (usize, String) {
+    let mut buf = vec![0 as libc::wchar_t; 256];
+    // SAFETY: `size <= buf.len()`, format is NUL-terminated, `tm` is live.
+    let n = unsafe { f(buf.as_mut_ptr(), size, fmt.as_ptr(), tm, loc) };
+    let text = buf[..n]
+        .iter()
+        .filter_map(|&c| char::from_u32(c as u32))
+        .collect();
+    (n, text)
+}
+
+const FORMATS: &[(&str, &str)] = &[
+    ("%Y-%m-%d", "2026-08-18"),
+    ("%A %B", "Tuesday August"),
+    ("%c", "Tue Aug 18 14:52:17 2026"),
+    ("%H:%M:%S", "14:52:17"),
+    ("%j", "230"),
+    ("%z", "+0000"),
+    ("%Z", "UTC"),
+    ("%%", "%"),
 ];
 
 #[test]
 fn wcsftime_l_matches_glibc() {
-    let cloc = CString::new("C").unwrap();
-    let loc = unsafe { newlocale(libc::LC_ALL_MASK, cloc.as_ptr(), std::ptr::null_mut()) };
-    assert!(!loc.is_null());
-    let tm = base_tm();
+    pin_utc();
+    let tm = fixture();
+    let host = host_wcsftime_l();
+    // SAFETY: NUL-terminated name, no base locale.
+    let loc = unsafe { host_newlocale()(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()) };
+    assert!(!loc.is_null(), "host newlocale(C) must succeed");
 
-    for &f in FORMATS {
-        let wf = wide(f);
-        let mut gbuf = vec![0 as wchar_t; 256];
-        let mut fbuf = vec![0 as wchar_t; 256];
-        let gn = unsafe { wcsftime_l(gbuf.as_mut_ptr(), gbuf.len(), wf.as_ptr(), &tm, loc) };
-        let fln = unsafe {
-            frankenlibc_abi::wchar_abi::wcsftime_l(
-                fbuf.as_mut_ptr(),
-                fbuf.len(),
-                wf.as_ptr(),
-                &tm as *const libc::tm as *const c_void,
-                loc as *mut c_void,
-            )
-        };
+    let mut divergences = Vec::new();
+    for (fmt, expected) in FORMATS {
+        let wfmt = wide(fmt);
+        let (host_n, host_text) = render(host, &wfmt, &tm, 256, loc);
         assert_eq!(
-            fln, gn,
-            "wcsftime_l({f:?}) return length: fl={fln} glibc={gn}"
+            host_text, *expected,
+            "host glibc no longer produces the recorded output for {fmt}"
+        );
+
+        let (fl_n, fl_text) = render(frankenlibc_abi::wchar_abi::wcsftime_l, &wfmt, &tm, 256, loc);
+        if (fl_n, &fl_text) != (host_n, &host_text) {
+            divergences.push(format!(
+                "  {fmt}: fl ({fl_n}, {fl_text:?}) glibc ({host_n}, {host_text:?})"
+            ));
+        }
+    }
+    assert!(
+        divergences.is_empty(),
+        "wcsftime_l divergences:\n{}",
+        divergences.join("\n")
+    );
+}
+
+/// The off-by-one that matters: ten characters do not fit in `maxsize` ten.
+#[test]
+fn maxsize_counts_wide_chars_including_the_terminator() {
+    pin_utc();
+    let tm = fixture();
+    let host = host_wcsftime_l();
+    let wfmt = wide("%Y-%m-%d"); // ten characters of output
+    // SAFETY: NUL-terminated name.
+    let loc = unsafe { host_newlocale()(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()) };
+
+    for (size, expected) in [(11usize, 10usize), (10, 0), (9, 0), (5, 0), (1, 0), (0, 0)] {
+        let (host_n, _) = render(host, &wfmt, &tm, size, loc);
+        assert_eq!(
+            host_n, expected,
+            "host glibc no longer returns {expected} at maxsize {size}"
+        );
+        let (fl_n, _) = render(
+            frankenlibc_abi::wchar_abi::wcsftime_l,
+            &wfmt,
+            &tm,
+            size,
+            loc,
         );
         assert_eq!(
-            &fbuf[..fln],
-            &gbuf[..gn],
-            "wcsftime_l({f:?}) wide bytes differ"
+            fl_n, host_n,
+            "maxsize {size}: fl returned {fl_n}, glibc {host_n} — maxsize counts \
+             wide characters INCLUDING the terminator, so ten output characters \
+             need eleven"
         );
     }
-    unsafe { freelocale(loc) };
+}
+
+/// fl ignores the `locale_t`; assert the premise on the HOST, so the day a
+/// locale makes these differ, this fails rather than fl's output silently does.
+#[test]
+fn the_locale_handle_does_not_change_c_locale_output() {
+    pin_utc();
+    let tm = fixture();
+    let host = host_wcsftime_l();
+    // SAFETY: NUL-terminated names, no base locale.
+    let (c_loc, utf8_loc) = unsafe {
+        (
+            host_newlocale()(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()),
+            host_newlocale()(libc::LC_ALL_MASK, c"C.UTF-8".as_ptr(), std::ptr::null_mut()),
+        )
+    };
+    assert!(
+        !c_loc.is_null() && !utf8_loc.is_null(),
+        "both handles must resolve"
+    );
+
+    for (fmt, _) in FORMATS {
+        let wfmt = wide(fmt);
+        assert_eq!(
+            render(host, &wfmt, &tm, 256, c_loc),
+            render(host, &wfmt, &tm, 256, utf8_loc),
+            "{fmt} differs between C and C.UTF-8 on the HOST — fl's wcsftime_l \
+             ignores its locale_t, which stops being safe the moment this fails"
+        );
+    }
 }
