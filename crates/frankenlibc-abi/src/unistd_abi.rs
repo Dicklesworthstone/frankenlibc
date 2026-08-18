@@ -218,6 +218,49 @@ fn runtime_page_size() -> usize {
     page_sz
 }
 
+/// Query the kernel's minimum signal-stack size via AT_MINSIGSTKSZ from
+/// /proc/self/auxv, cached.
+///
+/// glibc answers `sysconf(_SC_MINSIGSTKSZ)` out of `GLRO(dl_minsigstacksize)`,
+/// which the loader seeds from the auxiliary vector. It is therefore a
+/// per-kernel value, NOT a constant, and hardcoding either candidate would be
+/// wrong somewhere: measured on this host, `getauxval(AT_MINSIGSTKSZ)` and
+/// `sysconf(_SC_MINSIGSTKSZ)` both report 3376, while the compile-time
+/// `MINSIGSTKSZ` for x86_64 is 2048 (and 5120 for aarch64). So read auxv and
+/// fall back to the architecture's constant only when the kernel does not
+/// publish the entry at all.
+///
+/// Same /proc/self/auxv walk as `runtime_page_size` above; the two are kept
+/// separate because each caches a different entry.
+fn runtime_min_sigstksz() -> libc::c_long {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CACHED: AtomicUsize = AtomicUsize::new(0);
+    let cached = CACHED.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached as libc::c_long;
+    }
+    let value = (|| -> Option<usize> {
+        let data = std::fs::read("/proc/self/auxv").ok()?;
+        let word = std::mem::size_of::<usize>();
+        for chunk in data.chunks_exact(word * 2) {
+            let a_type = usize::from_ne_bytes(chunk[..word].try_into().ok()?);
+            let a_val = usize::from_ne_bytes(chunk[word..word * 2].try_into().ok()?);
+            if a_type == libc::AT_MINSIGSTKSZ as usize {
+                // A published-but-zero entry is not a usable answer; treat it
+                // as absent so the architecture constant is used instead.
+                return (a_val != 0).then_some(a_val);
+            }
+            if a_type == 0 {
+                break; // AT_NULL
+            }
+        }
+        None
+    })()
+    .unwrap_or(libc::MINSIGSTKSZ);
+    CACHED.store(value, Ordering::Relaxed);
+    value as libc::c_long
+}
+
 #[inline]
 fn runtime_procfs_long(path: &str) -> Option<libc::c_long> {
     std::fs::read_to_string(path)
@@ -2687,9 +2730,14 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         95 | 96 => 200809, // _SC_2_{CHAR_TERM,C_VERSION}
         98..=100 => 1,     // _SC_XOPEN_XPG{2,3,4}
         // C implementation limits reported by glibc's sysconf(3).
-        101 => 8,                        // _SC_CHAR_BIT
-        102 => i8::MAX as libc::c_long,  // _SC_CHAR_MAX
-        104 => i32::MAX as libc::c_long, // _SC_INT_MAX
+        101 => 8, // _SC_CHAR_BIT
+        // C's plain `char` is signed on x86_64 but UNSIGNED on aarch64, so
+        // CHAR_MAX/CHAR_MIN are 127/-128 here and 255/0 there. `c_char`
+        // tracks the platform char type, so this is correct wherever it
+        // compiles and is bit-identical to the previous `i8::MAX` on x86_64.
+        102 => libc::c_char::MAX as libc::c_long, // _SC_CHAR_MAX
+        103 => libc::c_char::MIN as libc::c_long, // _SC_CHAR_MIN
+        104 => i32::MAX as libc::c_long,          // _SC_INT_MAX
         106 => (std::mem::size_of::<libc::c_long>() * 8) as libc::c_long,
         107 => 32,                       // _SC_WORD_BIT
         108 => 16,                       // _SC_MB_LEN_MAX
@@ -2706,6 +2754,85 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         121..=124 => i32::MAX as libc::c_long,
         // _SC_NL_{MSGMAX,NMAX,SETMAX,TEXTMAX}
         127 | 129 | 130 => 1, // _SC_XBS5_LP64_OFF64, _SC_XOPEN_{LEGACY,REALTIME}
+        // The signed lower bounds. Their _MAX counterparts are all present
+        // above, but the four _MIN selectors were never added, so they fell
+        // through to the unknown-selector arm and reported -1 with EINVAL
+        // where glibc has a value. Measured against live glibc 2.42:
+        //   _SC_INT_MIN -2147483648   _SC_SCHAR_MIN -128   _SC_SHRT_MIN -32768
+        // (_SC_CHAR_MIN is with _SC_CHAR_MAX above, where the char-signedness
+        // comment applies to both.)
+        105 => i32::MIN as libc::c_long, // _SC_INT_MIN
+        112 => i8::MIN as libc::c_long,  // _SC_SCHAR_MIN
+        114 => i16::MIN as libc::c_long, // _SC_SHRT_MIN
+
+        // Selectors glibc reports as INDETERMINATE: it returns -1 and leaves
+        // errno UNTOUCHED. That is a different answer from the unknown-selector
+        // -1 + EINVAL in the default arm below, and callers distinguish the two
+        // exactly that way -- errno == 0 means "no limit is defined", EINVAL
+        // means "I do not know this selector". Falling through was therefore an
+        // observable divergence for every selector here, not a cosmetic one.
+        // Same reasoning already documented for _SC_SYMLOOP_MAX above.
+        //
+        // All measured on live glibc 2.42 on this host, each returning -1 with
+        // errno preserved across the call:
+        //   6 TZNAME_MAX -- and it is genuinely static: still -1 after tzset()
+        //     with TZ unset, UTC, America/New_York and Pacific/Kiritimati, so
+        //     glibc does not derive it from tzname at runtime.
+        //   23 AIO_LISTIO_MAX  24 AIO_MAX  27 MQ_OPEN_MAX  32 SEM_NSEMS_MAX
+        //   35 TIMER_MAX  49 2_FORT_DEV  50 2_FORT_RUN  92 XOPEN_CRYPT  97 2_UPE
+        //   117 ULONG_MAX -- ULONG_MAX does not fit a signed long, and glibc
+        //     returns it cast, which is -1. The VALUE already matched by
+        //     accident; only the errno was wrong.
+        //   125, 126, 128 XBS5_ILP32_OFF32 / ILP32_OFFBIG / LPBIG_OFFBIG: this
+        //     is an LP64 host, so only the LP64_OFF64 arm above is supported.
+        6 | 23 | 24 | 27 | 32 | 35 | 49 | 50 | 92 | 97 | 117 | 125 | 126 | 128 => -1,
+        // The withdrawn pre-POSIX networking option selectors (PII/POLL/SELECT
+        // and T_IOV_MAX) that glibc still accepts and reports indeterminate.
+        // Written as two ranges rather than 53..=66 on purpose: 60 is
+        // _SC_UIO_MAXIOV, which glibc aliases to _SC_IOV_MAX and answers with
+        // 1024 -- it is served by the _SC_IOV_MAX arm above and must not be
+        // swallowed here.
+        53..=59 | 61..=66 => -1,
+
+        // Per-kernel value from the auxiliary vector, not a constant.
+        249 => runtime_min_sigstksz(), // _SC_MINSIGSTKSZ
+
+        // POSIX option selectors above the old table's ceiling. Measured on
+        // live glibc 2.42 on this host:
+        //   132 _SC_ADVISORY_INFO 200809   235 _SC_IPV6         200809
+        //   178 _SC_V6_LP64_OFF64      1   236 _SC_RAW_SOCKETS  200809
+        //                                  239 _SC_V7_LP64_OFF64     1
+        // The LP64 pair is 1 because this is an LP64 host; the ILP32 and
+        // LPBIG variants are reported indeterminate below, from the same run.
+        132 | 235 | 236 => 200809,
+        178 | 239 => 1,
+
+        // The remaining selectors glibc accepts and reports INDETERMINATE
+        // (-1, errno untouched) -- the POSIX options Linux does not implement:
+        // the TRACE family, the PBS batch family, STREAMS, typed memory
+        // objects, the sporadic-server scheduling options, and the V6/V7
+        // ILP32/LPBIG programming environments this LP64 host cannot offer.
+        // Same errno contract as the group above.
+        //
+        // 173 is absent on purpose: it is _SC_SYMLOOP_MAX, which has its own
+        // documented arm earlier in this match. 185..=199 are also absent:
+        // those are the CPU cache selectors, which glibc derives from CPUID
+        // rather than reporting as constants, so they need a real
+        // implementation rather than a table row (bd filed separately).
+        134..=136
+        | 140..=148
+        | 150..=152
+        | 156
+        | 158
+        | 160..=163
+        | 165..=172
+        | 174..=177
+        | 179
+        | 181..=184
+        | 237..=238
+        | 240
+        | 242..=246 => -1,
+
         libc::_SC_SIGQUEUE_MAX => {
             // glibc reports the RLIMIT_SIGPENDING soft limit (the max number of
             // queued realtime signals) — 883225 on this host, i.e. a per-machine
