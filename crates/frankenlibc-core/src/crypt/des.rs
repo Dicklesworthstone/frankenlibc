@@ -563,4 +563,146 @@ mod tests {
         }
         assert_eq!(seen.len(), 64);
     }
+
+    /// Probed from live libcrypt.so.1. The settings are written out rather than
+    /// built from a count/salt helper so the encoding itself is pinned: `_N...`
+    /// is count 25, little-endian base-64, and `..../` is not.
+    #[test]
+    fn bsdi_known_vectors() {
+        for (key, setting, expected) in [
+            (&b""[..], "_........", "_........X8NBuQ4l6uQ"),
+            (b"a", "_/.......", "_/.......PRz1ci0M3y6"),
+            (b"password", "_/.......", "_/.......zqM49hRzxko"),
+            (b"password", "_N.......", "_N.......UZoIyj/Hy/c"),
+            (b"password", "_N...zz..", "_N...zz..XUHfURnGg8I"),
+            (b"password", "_0.../...", "_0.../...1p8C52NiFEw"),
+            (b"password", "_3...KFX2", "_3...KFX29tEKhP61Ln6"),
+            (b"password", "_Y/..zzzz", "_Y/..zzzzLcER1hJEFj."),
+            (
+                b"The quick brown fox jumps over",
+                "_8...Dwk1",
+                "_8...Dwk1DEAUtG5UGSU",
+            ),
+            (b"\x7f\x01\xff", "_5...e...", "_5...e...9LQKOKoP70I"),
+        ] {
+            assert_eq!(
+                bsdi_crypt(key, setting.as_bytes()).as_deref(),
+                Some(expected),
+                "bsdi_crypt({key:?}, {setting:?})"
+            );
+        }
+    }
+
+    /// BSDI exists to remove traditional DES's eight-byte cap. These four
+    /// passwords share their first eight bytes and MUST all differ — the exact
+    /// opposite of [`key_is_capped_at_eight_bytes`], and the property that
+    /// proves key crunching runs at all.
+    #[test]
+    fn bsdi_consumes_the_whole_password() {
+        let hashes: Vec<String> = [
+            &b"12345678"[..],
+            b"123456789",
+            b"1234567890123456",
+            b"12345678901234567",
+        ]
+        .iter()
+        .map(|key| bsdi_crypt(key, b"_N.......").expect("valid setting"))
+        .collect();
+        assert_eq!(hashes[0], "_N.......EXlUiP8mHCU");
+        assert_eq!(hashes[1], "_N.......eVPTtb4Te06");
+        assert_eq!(hashes[2], "_N.......aylbIVkCLSo");
+        assert_eq!(hashes[3], "_N.......S6X8Q6YmCew");
+        let distinct: std::collections::HashSet<&String> = hashes.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            4,
+            "key crunching did not run: passwords sharing eight bytes collided"
+        );
+    }
+
+    /// The two schemes share one cipher, and this pins that they really do.
+    /// BSDI at count 25 with a salt whose upper twelve bits are zero must
+    /// produce the same eleven-character body as traditional DES with the
+    /// corresponding two-character salt. Needs no oracle: if the count default,
+    /// the salt widening or the expansion indexing were wrong in either path,
+    /// the two bodies would part company.
+    #[test]
+    fn bsdi_at_count_25_equals_traditional_des() {
+        for salt in [b"..", b"zz", b"ab", b"Z9"] {
+            let low = a64_value(salt[0]).unwrap() | (a64_value(salt[1]).unwrap() << 6);
+            let mut setting = Vec::from(&b"_"[..]);
+            for index in 0..4 {
+                setting.push(A64[((25u32 >> (6 * index)) & 0x3f) as usize]);
+            }
+            for index in 0..4 {
+                setting.push(A64[((low >> (6 * index)) & 0x3f) as usize]);
+            }
+            let bsdi = bsdi_crypt(b"password", &setting).expect("valid BSDI setting");
+            let des = des_crypt(b"password", salt).expect("valid DES setting");
+            assert_eq!(
+                &bsdi[9..],
+                &des[2..],
+                "the two schemes disagree at salt {:?} despite sharing the cipher",
+                core::str::from_utf8(salt).unwrap()
+            );
+        }
+    }
+
+    /// A count of zero means one round, not zero rounds. Measured: the
+    /// incumbent gives byte-identical bodies for counts 0 and 1 at every salt
+    /// probed. Zero rounds would leave the all-zero block untouched and emit a
+    /// body of eleven `.` characters, which is what this rules out.
+    #[test]
+    fn bsdi_count_zero_means_one_round() {
+        let zero = bsdi_crypt(b"password", b"_........").expect("valid");
+        let one = bsdi_crypt(b"password", b"_/.......").expect("valid");
+        assert_eq!(zero[9..], one[9..], "counts 0 and 1 must share a body");
+        assert_ne!(&zero[9..], "...........", "a zero-round hash is not a hash");
+        // And the count must actually matter.
+        let two = bsdi_crypt(b"password", b"_0.......").expect("valid");
+        assert_ne!(
+            one[9..],
+            two[9..],
+            "the iteration count did not reach the cipher"
+        );
+    }
+
+    #[test]
+    fn bsdi_acceptance_rule() {
+        // Too short, wrong prefix, and a non-base-64 parameter character.
+        for setting in [
+            &b""[..],
+            b"_",
+            b"_/......",
+            b"a/.......",
+            b"__/.......",
+            b"_:.......",
+            b"_/......:",
+        ] {
+            assert!(
+                bsdi_crypt(b"password", setting).is_none(),
+                "{setting:?} must be refused"
+            );
+        }
+        // Trailing bytes obey the same rule as traditional DES: validated,
+        // then discarded.
+        let nine = bsdi_crypt(b"password", b"_/.......").expect("valid");
+        for extra in [&b"x"[..], b"$", b"~", b"xxxxxxxx"] {
+            let mut setting = Vec::from(&b"_/......."[..]);
+            setting.extend_from_slice(extra);
+            assert_eq!(
+                bsdi_crypt(b"password", &setting).as_deref(),
+                Some(nine.as_str()),
+                "trailing {extra:?} must be accepted and discarded"
+            );
+        }
+        for bad in [b'!', b'*', b':', b';', b'\\', 0x01, 0x7f, 0xff, b' '] {
+            let mut setting = Vec::from(&b"_/......."[..]);
+            setting.push(bad);
+            assert!(
+                bsdi_crypt(b"password", &setting).is_none(),
+                "trailing {bad:#04x} must be refused"
+            );
+        }
+    }
 }

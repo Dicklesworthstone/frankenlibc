@@ -51,9 +51,16 @@
 //!     or forge a shadow-file record, and a "base-64 throughout" check — the
 //!     natural first guess — gets `ab$` wrong in the unsafe direction.
 //!
-//! Deliberately NOT covered: `_`-prefixed BSDI extended DES and `$3$` NTHASH,
-//! which the same libxcrypt also hashes and fl still delegates for. Asserting
-//! them here would make this gate red for a gap it is not about.
+//! BSDI extended DES (`_CCCCSSSS`) is covered too, as of the same work. It is
+//! the same cipher with three widenings — a tunable iteration count in place of
+//! the fixed 25, a 24-bit salt instead of 12, and the WHOLE password instead of
+//! its first eight bytes — so the two schemes are gated together, and one arm
+//! pins the relationship directly: at count 25 with a 12-bit salt, a BSDI hash
+//! body must equal the traditional body for the matching two-character salt.
+//!
+//! Deliberately NOT covered: `$3$` NTHASH, which the same libxcrypt also hashes
+//! and fl still delegates for. Asserting it here would make this gate red for a
+//! gap it is not about.
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::OnceLock;
@@ -293,4 +300,188 @@ fn every_salt_pair_matches_the_host() {
     }
     // A zero here would mean the loop never ran and the test passed vacuously.
     assert_eq!(checked, 4096, "the salt sweep did not cover the alphabet");
+}
+
+// ---------------------------------------------------------------------------
+// BSDI extended DES
+// ---------------------------------------------------------------------------
+
+/// `(password, setting, expected)` — probed from live libxcrypt. Settings are
+/// written literally rather than built from a helper so the little-endian
+/// base-64 parameter encoding is pinned by the table itself: `_N...` is count
+/// 25, `_0...` is count 2.
+const BSDI_VECTORS: &[(&[u8], &[u8], &str)] = &[
+    (b"", b"_........", "_........X8NBuQ4l6uQ"),
+    (b"a", b"_/.......", "_/.......PRz1ci0M3y6"),
+    (b"password", b"_/.......", "_/.......zqM49hRzxko"),
+    (b"password", b"_N.......", "_N.......UZoIyj/Hy/c"),
+    (b"password", b"_N...zz..", "_N...zz..XUHfURnGg8I"),
+    (b"password", b"_0.../...", "_0.../...1p8C52NiFEw"),
+    (b"password", b"_3...KFX2", "_3...KFX29tEKhP61Ln6"),
+    (b"password", b"_Y/..zzzz", "_Y/..zzzzLcER1hJEFj."),
+    (b"12345678", b"_N.......", "_N.......EXlUiP8mHCU"),
+    (b"123456789", b"_N.......", "_N.......eVPTtb4Te06"),
+    (b"1234567890123456", b"_N.......", "_N.......aylbIVkCLSo"),
+    (b"12345678901234567", b"_N.......", "_N.......S6X8Q6YmCew"),
+    (
+        b"The quick brown fox jumps over",
+        b"_8...Dwk1",
+        "_8...Dwk1DEAUtG5UGSU",
+    ),
+    (b"\x7f\x01\xff", b"_5...e...", "_5...e...9LQKOKoP70I"),
+];
+
+/// Settings libxcrypt refuses. Note `a/.......` is absent on purpose — it is a
+/// perfectly valid TRADITIONAL setting, not a malformed BSDI one, and belongs
+/// to the other half of this file.
+const BSDI_REJECTED: &[&[u8]] = &[
+    b"_",
+    b"_/",
+    b"_/......",
+    b"__/.......",
+    b"_:.......",
+    b"_/......:",
+    b"_/.......!",
+    b"_/.......*",
+    b"_/.......;",
+    b"_/.......\\",
+    b"_/....... ",
+    b"_/.......\x01",
+    b"_/.......\x7f",
+    b"_/.......\xff",
+];
+
+#[test]
+fn bsdi_pinned_vectors_still_match_the_live_host() {
+    assert!(host_crypt().is_some(), "no libxcrypt oracle");
+    for (key, setting, expected) in BSDI_VECTORS {
+        assert_eq!(
+            host_hash(key, setting).as_deref(),
+            Some(*expected),
+            "the pinned BSDI vector for key={key:?} setting={setting:?} no longer matches live \
+             libxcrypt — re-probe before trusting any other BSDI arm"
+        );
+    }
+}
+
+#[test]
+fn bsdi_hashes_match_the_host() {
+    assert!(host_crypt().is_some(), "no libxcrypt oracle");
+    for (key, setting, expected) in BSDI_VECTORS {
+        assert_eq!(
+            fl_crypt(key, setting),
+            *expected,
+            "fl BSDI hash diverges for key={key:?} setting={setting:?}"
+        );
+    }
+}
+
+/// The property BSDI exists for. Traditional DES cannot tell these four apart;
+/// BSDI must. A key-crunching bug that silently truncated would collapse them
+/// and every fixed vector above would still pass on the first two.
+#[test]
+fn bsdi_consumes_the_whole_password() {
+    assert!(host_crypt().is_some(), "no libxcrypt oracle");
+    let keys: [&[u8]; 4] = [
+        b"12345678",
+        b"123456789",
+        b"1234567890123456",
+        b"12345678901234567",
+    ];
+    let mut hashes = Vec::new();
+    for key in keys {
+        let fl = fl_crypt(key, b"_N.......");
+        assert_eq!(
+            host_hash(key, b"_N.......").as_deref(),
+            Some(fl.as_str()),
+            "fl and host disagree for {key:?}"
+        );
+        hashes.push(fl);
+    }
+    let distinct: std::collections::HashSet<&String> = hashes.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        4,
+        "key crunching did not run: passwords sharing their first eight bytes collided"
+    );
+    // Traditional DES, on the same four, must do the opposite.
+    let truncated: std::collections::HashSet<String> =
+        keys.iter().map(|key| fl_crypt(key, b"aB")).collect();
+    assert_eq!(
+        truncated.len(),
+        1,
+        "traditional DES must still cap the key at eight bytes"
+    );
+}
+
+/// The two schemes are one cipher. At count 25 with the upper twelve salt bits
+/// clear, the BSDI body must equal the traditional body for the matching
+/// two-character salt — checked on fl AND on the host, so it pins a real
+/// property rather than an internal coincidence.
+#[test]
+fn bsdi_at_count_25_equals_traditional_des() {
+    assert!(host_crypt().is_some(), "no libxcrypt oracle");
+    const A64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let value = |ch: u8| A64.iter().position(|&c| c == ch).expect("alphabet") as u32;
+    for salt in [&b".."[..], b"zz", b"ab", b"Z9"] {
+        let low = value(salt[0]) | (value(salt[1]) << 6);
+        let mut setting = Vec::from(&b"_"[..]);
+        for index in 0..4 {
+            setting.push(A64[((25u32 >> (6 * index)) & 0x3f) as usize]);
+        }
+        for index in 0..4 {
+            setting.push(A64[((low >> (6 * index)) & 0x3f) as usize]);
+        }
+        let bsdi = fl_crypt(b"password", &setting);
+        let des = fl_crypt(b"password", salt);
+        assert_eq!(
+            &bsdi[9..],
+            &des[2..],
+            "fl's two DES paths disagree at salt {salt:?}"
+        );
+        assert_eq!(
+            host_hash(b"password", &setting).as_deref(),
+            Some(bsdi.as_str()),
+            "host disagrees with fl on the BSDI side of the equivalence"
+        );
+    }
+}
+
+/// A count of zero means ONE round, not zero. Zero rounds would leave the
+/// all-zero block untouched and emit eleven `.` characters — a hash that is the
+/// same for every password, which is why this is worth its own arm.
+#[test]
+fn bsdi_count_zero_means_one_round() {
+    assert!(host_crypt().is_some(), "no libxcrypt oracle");
+    let zero = fl_crypt(b"password", b"_........");
+    let one = fl_crypt(b"password", b"_/.......");
+    assert_eq!(
+        host_hash(b"password", b"_........").as_deref(),
+        Some(zero.as_str())
+    );
+    assert_eq!(zero[9..], one[9..], "counts 0 and 1 must share a body");
+    assert_ne!(&zero[9..], "...........", "a zero-round hash is not a hash");
+    let two = fl_crypt(b"password", b"_0.......");
+    assert_ne!(
+        one[9..],
+        two[9..],
+        "the iteration count did not reach the cipher"
+    );
+}
+
+#[test]
+fn bsdi_invalid_settings_produce_the_failure_token() {
+    assert!(host_crypt().is_some(), "no libxcrypt oracle");
+    for setting in BSDI_REJECTED {
+        assert_eq!(
+            host_hash(b"password", setting).as_deref(),
+            Some("*0"),
+            "host no longer rejects {setting:?}; the pinned expectation is stale"
+        );
+        assert_eq!(
+            fl_crypt(b"password", setting),
+            "*0",
+            "fl must refuse {setting:?} rather than hash it"
+        );
+    }
 }

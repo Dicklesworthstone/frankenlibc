@@ -9231,6 +9231,8 @@ fn crypt_extended_with_host(key: *const c_char, salt: *const c_char) -> Option<V
 /// - `$5$salt$` — SHA-256
 /// - `$1$salt$` — MD5 (deprecated but supported for compatibility)
 /// - 2-char salt — Traditional DES (native; the incumbent still hashes these)
+/// - `_CCCCSSSS` — BSDI extended DES (native; same cipher, tunable count,
+///   24-bit salt, and the whole password rather than the first eight bytes)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
     if key.is_null() || salt.is_null() {
@@ -9295,6 +9297,17 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         // claim — `_`-prefixed BSDI extended DES, `$3$` NTHASH — still fall
         // through to the host arm below.
         crypt_des(&key_bytes, &salt_bytes)
+    } else if salt_bytes.starts_with(b"_") {
+        // BSDI extended DES. Same reasoning as the traditional arm above: the
+        // incumbent hashes these, so delegating meant a `_`-prefixed shadow
+        // entry was verifiable only where libxcrypt happened to be dlsym-able.
+        //
+        // Claimed on the `_` prefix alone, which is total — bsdi_crypt answers
+        // every such setting, accept or reject — so fl never asks the host about
+        // a scheme it implements. A malformed one (short, or a non-base-64
+        // parameter character) yields None and lands on the failure token, which
+        // is what the incumbent returns for it.
+        crypt_bsdi(&key_bytes, &salt_bytes)
     } else {
         let Some(hash_bytes) = crypt_extended_with_host(key, salt) else {
             return crypt_failure_token(&salt_bytes);
@@ -13002,6 +13015,10 @@ fn des_setting(salt_bytes: &[u8]) -> bool {
 
 fn crypt_des(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     frankenlibc_core::crypt::des::des_crypt(key, salt_bytes)
+}
+
+fn crypt_bsdi(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
+    frankenlibc_core::crypt::des::bsdi_crypt(key, salt_bytes)
 }
 
 // ---------------------------------------------------------------------------
