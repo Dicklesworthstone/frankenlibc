@@ -420,6 +420,130 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
     rational_to_binary128(sign, &num, &den)
 }
 
+/// Correctly-rounded x87 80-bit extended ("long double" on x86-64 SysV) for the
+/// value `(-1)^negative · S · 10^dexp`, returned as the ten bytes as they sit in
+/// memory: significand first, little-endian, then the sign/exponent halfword.
+///
+/// ## Why this is not "parse to binary128, then narrow"
+///
+/// That would DOUBLE ROUND. binary128 carries 113 mantissa bits and x87 carries
+/// 64; a two-step rounding is only guaranteed to agree with a single one when
+/// the wider format has at least `2p + 2` bits, i.e. 130 here. It has 113, so
+/// there are decimal inputs where narrowing a correctly-rounded binary128 gives
+/// a different answer than rounding the exact value once. Sharing the exact
+/// rational instead makes the question moot.
+///
+/// ## The layout differs from IEEE in a way that matters twice
+///
+/// x87 stores the leading one EXPLICITLY, in bit 63 of the significand, where
+/// binary64/binary128 leave it implicit. Two consequences:
+///
+///  * the exponent offset changes. A 64-bit significand puts the binary point
+///    63 places up, so `exp_field = k + 63 + 16383`, against binary128's
+///    `k + 112 + 16383`.
+///  * subnormal promotion must be done BY HAND. [`rational_to_binary128`] can
+///    let a carry out of the fraction field land in the exponent field and
+///    promote itself to the smallest normal; here bit 63 belongs to the
+///    significand, so a subnormal that rounds up to `2^63` has to have its
+///    exponent field set to 1 explicitly. The numeric scale of exponent fields
+///    0 and 1 is identical — both mean `2^-16445` per unit — which is precisely
+///    what makes that rewrite value-preserving.
+pub fn decimal_to_x87_extended(negative: bool, digits: &[u8], dexp: i32) -> [u8; 10] {
+    // Drop leading zeros; an all-zero significand is a signed zero.
+    let lead = match digits.iter().position(|&d| d != b'0') {
+        Some(s) => s,
+        None => return encode_x87(negative, 0, 0),
+    };
+    let mut digits = &digits[lead..];
+    // Drop trailing zeros into the exponent to keep S small.
+    let mut dexp = dexp;
+    let mut end = digits.len();
+    while end > 1 && digits[end - 1] == b'0' {
+        end -= 1;
+        dexp += 1;
+    }
+    digits = &digits[..end];
+
+    // Reject absurd exponents before building the bignum rather than after.
+    // Without this, `strtold("1e999999999")` would try to materialise a
+    // 400-megabyte integer to answer "infinity". The thresholds are far outside
+    // the representable range (max finite is ~1.19e4932, min subnormal
+    // ~3.65e-4951, and anything below half of that rounds to zero), so no
+    // in-range input can reach them.
+    let decimal_exponent = i64::from(dexp) + digits.len() as i64;
+    if decimal_exponent > 5000 {
+        return encode_x87(negative, 1 << 63, 0x7fff);
+    }
+    if decimal_exponent < -5000 {
+        return encode_x87(negative, 0, 0);
+    }
+
+    let s = BigUint::from_decimal(digits);
+    // value = num/den, exact.
+    let (num, den) = if dexp >= 0 {
+        (s.mul_pow10(dexp as u32), BigUint::one())
+    } else {
+        (s, BigUint::one().mul_pow10((-dexp) as u32))
+    };
+    rational_to_x87(negative, &num, &den)
+}
+
+/// Pack a sign, a 64-bit significand and a 15-bit exponent field into the ten
+/// bytes of an x87 extended value, in memory order.
+fn encode_x87(negative: bool, significand: u64, exp_field: u16) -> [u8; 10] {
+    let mut out = [0u8; 10];
+    out[..8].copy_from_slice(&significand.to_le_bytes());
+    let high = (u16::from(negative) << 15) | (exp_field & 0x7fff);
+    out[8..].copy_from_slice(&high.to_le_bytes());
+    out
+}
+
+/// Correctly-rounded x87 extended for the positive rational `num/den`.
+fn rational_to_x87(negative: bool, num: &BigUint, den: &BigUint) -> [u8; 10] {
+    if num.is_zero() {
+        return encode_x87(negative, 0, 0);
+    }
+    // Find k so that m = round(value / 2^k) is a 64-bit significand. The search
+    // mirrors rational_to_binary128's: the first estimate is off by at most a
+    // bit or two, and rounding can carry into a new bit, so it iterates.
+    let mut k = num.bit_len() as i64 - den.bit_len() as i64 - 64;
+    let mut m = BigUint { limbs: Vec::new() };
+    for _ in 0..6 {
+        m = if k >= 0 {
+            num.round_div(&den.clone().shl_bits(k as u32))
+        } else {
+            num.clone().shl_bits((-k) as u32).round_div(den)
+        };
+        match m.bit_len().cmp(&64) {
+            core::cmp::Ordering::Less => k -= 1,
+            core::cmp::Ordering::Greater => k += 1,
+            core::cmp::Ordering::Equal => break,
+        }
+    }
+
+    let exp_field = k + 16446;
+    if exp_field >= 0x7fff {
+        // Overflow to infinity. Note the integer bit is SET: on x87 an infinity
+        // with a clear bit 63 is a "pseudo-infinity", which no processor since
+        // the 80287 produces and which later ones treat as invalid.
+        return encode_x87(negative, 1 << 63, 0x7fff);
+    }
+    if exp_field >= 1 {
+        return encode_x87(negative, low128(&m) as u64, exp_field as u16);
+    }
+
+    // Subnormal: round onto the subnormal grid, whose ulp is 2^-16445.
+    let m_sub = low128(&num.clone().shl_bits(16445).round_div(den)) as u64;
+    if m_sub >> 63 == 1 {
+        // Rounded all the way up to the smallest normal. Exponent fields 0 and 1
+        // denote the same scale, so this is a relabelling, not a rescale — but
+        // it must be done, because an exponent field of 0 with bit 63 set is a
+        // "pseudo-denormal" rather than the normal number meant here.
+        return encode_x87(negative, m_sub, 1);
+    }
+    encode_x87(negative, m_sub, 0)
+}
+
 /// Low 128 bits of a (<=128-bit) BigUint.
 fn low128(b: &BigUint) -> u128 {
     let g = |i: usize| b.limbs.get(i).map_or(0u128, |&l| l as u128);
@@ -1034,5 +1158,141 @@ mod tests {
             }
             o => panic!("expected signaling NaN, got {o:?}"),
         }
+    }
+
+    /// Every expectation here is the raw ten bytes glibc's `strtold` produced on
+    /// this host, read straight out of a `long double` with `memcpy` -- not a
+    /// rendering, so nothing is lost on the way to the table. Written MSB-first
+    /// as sign|exponent|significand, which is the readable order and the reverse
+    /// of the in-memory order this function returns.
+    fn x87(negative: bool, digits: &[u8], dexp: i32) -> u128 {
+        let bytes = decimal_to_x87_extended(negative, digits, dexp);
+        let mut value = 0u128;
+        for &byte in bytes.iter().rev() {
+            value = (value << 8) | u128::from(byte);
+        }
+        value
+    }
+
+    #[test]
+    fn x87_matches_glibc_strtold() {
+        for (digits, dexp, expected) in [
+            (&b"1"[..], 0, 0x3fff_8000_0000_0000_0000u128),
+            (b"2", 0, 0x4000_8000_0000_0000_0000),
+            (b"5", -1, 0x3ffe_8000_0000_0000_0000),
+            (b"15", -1, 0x3fff_c000_0000_0000_0000),
+            (b"1", -1, 0x3ffb_cccc_cccc_cccc_cccd),
+            (b"1", 1, 0x4002_a000_0000_0000_0000),
+            (b"314159265358979323846", -20, 0x4000_c90f_daa2_2168_c235),
+            (b"1", 100, 0x414b_924d_692c_a61b_e758),
+            (b"1", -100, 0x3eb2_dff9_7724_7029_7ebd),
+        ] {
+            assert_eq!(
+                x87(false, digits, dexp),
+                expected,
+                "digits={digits:?} dexp={dexp}"
+            );
+        }
+    }
+
+    /// The tie rule is round-half-to-EVEN, and 2^64+1 is the cleanest witness:
+    /// it sits exactly between 2^64 and 2^64+2, and the even neighbour wins.
+    #[test]
+    fn x87_ties_round_to_even() {
+        // 18446744073709551617 == 2^64 + 1 -> 2^64, significand 0x8000..
+        assert_eq!(
+            x87(false, b"18446744073709551617", 0),
+            0x403f_8000_0000_0000_0000
+        );
+        // 36893488147419103233 == 2^65 + 1 -> 2^65
+        assert_eq!(
+            x87(false, b"36893488147419103233", 0),
+            0x4040_8000_0000_0000_0000
+        );
+    }
+
+    #[test]
+    fn x87_sign_and_zero() {
+        assert_eq!(x87(false, b"0", 0), 0);
+        assert_eq!(x87(true, b"0", 0), 1u128 << 79);
+        assert_eq!(
+            x87(true, b"1", 0),
+            (1u128 << 79) | 0x3fff_8000_0000_0000_0000
+        );
+        assert_eq!(x87(false, b"000", 5), 0, "an all-zero significand is zero");
+    }
+
+    /// Overflow produces an infinity with the integer bit SET. A clear bit 63
+    /// with a full exponent is a "pseudo-infinity", which no x87 since the 80287
+    /// generates and which later parts treat as invalid, so emitting one would
+    /// be worse than wrong -- it would fault on use.
+    #[test]
+    fn x87_overflows_to_infinity() {
+        assert_eq!(x87(false, b"1", 4933), 0x7fff_8000_0000_0000_0000);
+        assert_eq!(
+            x87(true, b"1", 4933),
+            (1u128 << 79) | 0x7fff_8000_0000_0000_0000
+        );
+        // Largest finite still normal.
+        assert_eq!(x87(false, b"1", 4932), 0x7ffe_d72c_b2a9_5c7e_f6cd);
+        // The absurd-exponent guard must take the same path, not a different one.
+        assert_eq!(x87(false, b"1", 999_999_999), 0x7fff_8000_0000_0000_0000);
+        assert_eq!(
+            x87(true, b"1", 999_999_999),
+            (1u128 << 79) | 0x7fff_8000_0000_0000_0000,
+            "the guard must preserve the sign, as glibc does"
+        );
+    }
+
+    #[test]
+    fn x87_subnormals() {
+        // 1e-4950 lands on 3 ulps of the subnormal grid.
+        assert_eq!(x87(false, b"1", -4950), 3);
+        assert_eq!(x87(false, b"1", -4951), 0);
+        // Exactly the smallest subnormal, 2^-16445.
+        assert_eq!(x87(false, b"36451995318824746025", -4970), 1);
+        // Half of it straddles the tie: below rounds to zero (even), above to 1.
+        assert_eq!(x87(false, b"18225997659412373012", -4970), 0);
+        assert_eq!(x87(false, b"18225997659412373013", -4970), 1);
+        assert_eq!(x87(false, b"1", -999_999_999), 0);
+    }
+
+    /// The branch that has no counterpart in binary128. A value strictly BELOW
+    /// the smallest normal can round up onto it, and because x87 keeps the
+    /// leading one in bit 63 of the significand rather than implying it, the
+    /// exponent field has to be raised to 1 by hand -- binary128 gets that for
+    /// free from a carry out of its fraction field. Getting this wrong yields a
+    /// "pseudo-denormal": exponent field 0 with bit 63 set, which is not the
+    /// number meant.
+    #[test]
+    fn x87_subnormal_rounds_up_onto_the_smallest_normal() {
+        let digits = b"336210314311209350617154782902469073753486919650598574469885";
+        assert_eq!(
+            x87(false, digits, -4991),
+            0x0001_8000_0000_0000_0000,
+            "must promote to exponent field 1 with the integer bit set"
+        );
+        // And the smallest normal itself, reached through the normal path.
+        assert_eq!(
+            x87(false, b"33621031431120935063", -4951),
+            0x0001_8000_0000_0000_0000
+        );
+    }
+
+    /// The ten bytes come back in MEMORY order: significand first, little-endian,
+    /// then the sign/exponent halfword. `fld tbyte` reads exactly this.
+    #[test]
+    fn x87_byte_order_is_memory_order() {
+        let one = decimal_to_x87_extended(false, b"1", 0);
+        assert_eq!(
+            one,
+            [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xff, 0x3f],
+            "1.0 is significand 0x8000000000000000, exponent 0x3fff"
+        );
+        let minus_one = decimal_to_x87_extended(true, b"1", 0);
+        assert_eq!(
+            minus_one[9], 0xbf,
+            "the sign is the top bit of the last byte"
+        );
     }
 }
