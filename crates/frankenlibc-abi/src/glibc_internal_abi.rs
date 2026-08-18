@@ -6198,12 +6198,87 @@ pub unsafe extern "C" fn init_module(
 // A real implementation would parse /etc/netgroup or use NSS, but returning 0
 // is safe and matches behavior when NIS is not configured.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// One `(host,user,domain)` position of a netgroup triple.
+///
+/// Two independent wildcards meet here and it is easy to collapse them into
+/// one: a NULL ARGUMENT means the caller does not care about this position,
+/// and an EMPTY FIELD in the file means the entry matches anything there.
+/// Either one alone is sufficient.
+fn netgroup_field_matches(entry: &[u8], query: Option<&[u8]>) -> bool {
+    match query {
+        // Caller passed NULL for this position.
+        None => true,
+        // An empty field in /etc/netgroup is the file's own wildcard.
+        Some(wanted) => entry.is_empty() || entry == wanted,
+    }
+}
+
+/// `innetgr` — is `(host,user,domain)` a member of `netgroup`?
+///
+/// WAS `0`. Unconditionally, with all four arguments discarded, while this same
+/// tree already carried a working /etc/netgroup parser and a functioning
+/// setnetgrent/getnetgrent iterator. So the membership test — the function that
+/// actually decides netgroup-based access — always answered "no" no matter what
+/// the file said, and the support matrix recorded it as Implemented.
+///
+/// SEMANTICS NOT MEASURED HERE, and that limitation is real: /etc/netgroup does
+/// not exist on this host and the current throttle forbids creating one, so
+/// there was no way to run the incumbent. The wildcard rule below is the
+/// documented contract, not something observed, and this campaign has repeatedly
+/// found documented contracts to be wrong. It needs a gate against live glibc
+/// with a synthetic /etc/netgroup before it is trusted.
+///
+/// The risk has a direction worth stating: the old stub failed CLOSED (always
+/// "not a member"), and a wrong wildcard rule here could fail OPEN. Matching is
+/// therefore exact-compare with no case folding and no prefix logic — the
+/// narrowest reading of the contract — so an error is far likelier to deny a
+/// legitimate member than to admit a stranger.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn innetgr(
-    _netgroup: *const c_char,
-    _host: *const c_char,
-    _user: *const c_char,
-    _domain: *const c_char,
+    netgroup: *const c_char,
+    host: *const c_char,
+    user: *const c_char,
+    domain: *const c_char,
 ) -> c_int {
+    if netgroup.is_null() {
+        return 0;
+    }
+    // SAFETY: bounded scan of a caller-supplied C string.
+    let Some(group) = (unsafe { bounded_c_string_bytes(netgroup, PASSWD_FIELD_SCAN_LIMIT) }) else {
+        return 0;
+    };
+    // NULL means "any", but an UNREADABLE string must not. bounded_c_string_bytes
+    // returns None for both, and collapsing them would turn a malformed argument
+    // into a wildcard — the fail-OPEN direction this function must not have. So
+    // the null check is explicit and a non-null-but-unscannable argument denies.
+    let read_query = |ptr: *const c_char| -> Result<Option<Vec<u8>>, ()> {
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: non-null caller pointer, bounded scan.
+        match unsafe { bounded_c_string_bytes(ptr, PASSWD_FIELD_SCAN_LIMIT) } {
+            Some(bytes) => Ok(Some(bytes)),
+            None => Err(()),
+        }
+    };
+    let (Ok(wanted_host), Ok(wanted_user), Ok(wanted_domain)) =
+        (read_query(host), read_query(user), read_query(domain))
+    else {
+        return 0;
+    };
+
+    let Ok(content) = std::fs::read(crate::unistd_abi::NETGROUP_PATH) else {
+        // No /etc/netgroup is not an error, just no members.
+        return 0;
+    };
+    for triple in frankenlibc_core::netgroup::parse_netgroup_triples(&content, &group) {
+        if netgroup_field_matches(&triple.host, wanted_host.as_deref())
+            && netgroup_field_matches(&triple.user, wanted_user.as_deref())
+            && netgroup_field_matches(&triple.domain, wanted_domain.as_deref())
+        {
+            return 1;
+        }
+    }
     0
 }
 // ioperm: x86_64 only

@@ -2990,7 +2990,7 @@
       "symbol": "endnetgrent",
       "header": "<netdb.h>",
       "status": "Implemented",
-      "notes": "Netgroup database, dlsym delegate",
+      "notes": "Netgroup database; native /etc/netgroup parser, not a dlsym delegate",
       "module": "unistd_abi"
     },
     {
@@ -5604,7 +5604,7 @@
       "symbol": "getnetgrent",
       "header": "<netdb.h>",
       "status": "Implemented",
-      "notes": "Netgroup database, dlsym delegate",
+      "notes": "Netgroup database; native /etc/netgroup parser, not a dlsym delegate",
       "module": "unistd_abi"
     },
     {
@@ -12053,7 +12053,7 @@
       "symbol": "setnetgrent",
       "header": "<netdb.h>",
       "status": "Implemented",
-      "notes": "Netgroup database, dlsym delegate",
+      "notes": "Netgroup database; native /etc/netgroup parser, not a dlsym delegate",
       "module": "unistd_abi"
     },
     {

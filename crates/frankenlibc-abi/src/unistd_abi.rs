@@ -24054,7 +24054,7 @@ pub unsafe extern "C" fn endfsent() {
 // other groups by name (non-paren tokens), but we don't expand those
 // recursively (matching minimal glibc files-backend behavior).
 
-const NETGROUP_PATH: &str = "/etc/netgroup";
+pub(crate) const NETGROUP_PATH: &str = "/etc/netgroup";
 
 use frankenlibc_core::netgroup::NetgroupTriple;
 
