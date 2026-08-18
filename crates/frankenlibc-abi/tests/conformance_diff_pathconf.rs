@@ -91,3 +91,64 @@ fn fpathconf_matches_glibc() {
         div.join("\n  ")
     );
 }
+
+/// Seeded so "errno untouched" is distinguishable from "errno set to 0".
+const SENTINEL_ERRNO: c_int = 4242;
+
+/// Selectors glibc answers as INDETERMINATE: -1 with errno UNTOUCHED, as opposed
+/// to an unknown selector, which is -1 with EINVAL.
+///
+/// `_PC_SYNC_IO` is in the value list above and has been since this gate was
+/// written -- and that did not help, because both sides return -1 and the gate
+/// compared only values. fl was reaching these through the EINVAL default, so it
+/// told every caller "unknown selector" where glibc says "no limit defined".
+/// Measured on live glibc 2.42 against ".", /tmp, /proc and /dev/shm: identical
+/// on all four, so this is a per-selector fact, not a per-filesystem one.
+///
+/// _PC_REC_MIN_XFER_SIZE / _PC_REC_XFER_ALIGN / _PC_ALLOC_SIZE_MIN are
+/// deliberately NOT here: glibc answers those from the filesystem block size.
+/// The REC_* family splits, so each member is measured, not inferred.
+const INDETERMINATE_PC: &[(&str, c_int)] = &[
+    ("_PC_SYNC_IO", libc::_PC_SYNC_IO),
+    ("_PC_ASYNC_IO", libc::_PC_ASYNC_IO),
+    ("_PC_PRIO_IO", libc::_PC_PRIO_IO),
+    ("_PC_SOCK_MAXBUF", libc::_PC_SOCK_MAXBUF),
+    ("_PC_REC_INCR_XFER_SIZE", libc::_PC_REC_INCR_XFER_SIZE),
+    ("_PC_REC_MAX_XFER_SIZE", libc::_PC_REC_MAX_XFER_SIZE),
+    ("_PC_SYMLINK_MAX", libc::_PC_SYMLINK_MAX),
+];
+
+#[test]
+fn indeterminate_pathconf_keys_preserve_errno() {
+    // Several paths, because "indeterminate" must not turn out to be
+    // "this filesystem happens to say -1".
+    for dir in ["/tmp", ".", "/proc"] {
+        let path = CString::new(dir).unwrap();
+        for &(name, key) in INDETERMINATE_PC {
+            let (g, g_errno) = unsafe {
+                *libc::__errno_location() = SENTINEL_ERRNO;
+                let r = pathconf(path.as_ptr(), key);
+                (r, *libc::__errno_location())
+            };
+            // Host premise first: if glibc ever starts answering one of these,
+            // this gate must fail loudly rather than keep asserting fl's -1.
+            assert_eq!(g, -1, "host premise: glibc {name} on {dir} must be -1");
+            assert_eq!(
+                g_errno, SENTINEL_ERRNO,
+                "host premise: glibc must leave errno untouched for {name} on {dir}"
+            );
+
+            let (f, f_errno) = unsafe {
+                *libc::__errno_location() = SENTINEL_ERRNO;
+                let r = fu::pathconf(path.as_ptr(), key);
+                (r, *libc::__errno_location())
+            };
+            assert_eq!(f, g, "{name} on {dir}: fl={f} glibc={g}");
+            assert_eq!(
+                f_errno, SENTINEL_ERRNO,
+                "fl must leave errno untouched for indeterminate {name} on {dir}: setting \
+                 EINVAL reports an unknown selector, which is a different answer"
+            );
+        }
+    }
+}

@@ -4214,6 +4214,31 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         // Shipped as e2a577d08, silently deleted by e634aff2a (2026-06-26),
         // restored here (bd-d3cav6).
         libc::_PC_2_SYMLINKS => Some(1),
+
+        // Selectors glibc reports as INDETERMINATE: -1 with errno UNTOUCHED.
+        // Returning None here instead sends the caller down the EINVAL default,
+        // which is a DIFFERENT answer -- errno == 0 means "no limit is defined
+        // for this path", EINVAL means "I do not know this selector". The
+        // return values are identical, so only errno distinguishes them.
+        //
+        // Measured on live glibc 2.42 against four filesystems (".", /tmp,
+        // /proc, /dev/shm): all seven are -1 with errno preserved on every one,
+        // so this is a per-selector answer and not a per-filesystem one.
+        //
+        // Note the neighbours that are NOT here: _PC_REC_MIN_XFER_SIZE (16),
+        // _PC_REC_XFER_ALIGN (17) and _PC_ALLOC_SIZE_MIN (18) answer with the
+        // filesystem block size and are handled per-path in `pathconf` itself,
+        // while _PC_REC_INCR_XFER_SIZE (14) and _PC_REC_MAX_XFER_SIZE (15) from
+        // the same family are indeterminate. The family does not split evenly,
+        // so each member was measured rather than inferred from its siblings.
+        libc::_PC_SYNC_IO
+        | libc::_PC_ASYNC_IO
+        | libc::_PC_PRIO_IO
+        | libc::_PC_SOCK_MAXBUF
+        | libc::_PC_REC_INCR_XFER_SIZE
+        | libc::_PC_REC_MAX_XFER_SIZE
+        | libc::_PC_SYMLINK_MAX => Some(-1),
+
         _ => None,
     }
 }
