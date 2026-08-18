@@ -38,7 +38,7 @@
 //! after the set was measured and found stable across four extensions of the
 //! screen; the per-gate `dlsym` conversions are the fix, and belong on the gates.
 
-use std::ffi::{CStr, c_void};
+use std::ffi::{CStr, c_char, c_int, c_uint, c_ulong, c_void};
 
 macro_rules! declare_mem_arms {
     ($($name:ident),* $(,)?) => {
@@ -164,6 +164,12 @@ declare_more_arms!(
     // siblings unmeasured would fix the symbol I happened to census and leave
     // the rest hollow for exactly the same reason.
     cbrtf,
+    // Reached through `#[link_name]` aliases in their gates (host_setfsuid,
+    // host_setfsgid), so a scan that reads the RUST name misses them. The
+    // census derivation now resolves link_name and these are the only two
+    // libc symbols it turned up that were previously invisible.
+    setfsgid,
+    setfsuid,
     // EVERY remaining symbol that a conformance_diff_* gate with no dlsym
     // anywhere declares at link time, and that libc.so.6 or libm.so.6 provides.
     // 702 names, derived rather than hand-picked: the check below can only
@@ -1006,12 +1012,77 @@ fn owning_object(addr: *const c_void) -> String {
 }
 
 /// Census the math oracle arms and print where each one actually resolves.
+/// Arms that live in libresolv/libcrypt rather than libc, declared in their own
+/// linked block.
+///
+/// These were the last known residual on bd-v0388t: 21 symbols that
+/// conformance_diff_* gates declare and the census could not cover, because
+/// naming them in the ordinary block is an undefined symbol on this binary's
+/// link line. `#[link(name = ..)]` pulls the library in, which is the whole fix
+/// -- the exclusion was never about these symbols being uninteresting.
+#[link(name = "resolv")]
+unsafe extern "C" {
+    fn __b64_ntop(a: *const c_void, b: usize, c: *mut c_char, d: usize) -> c_int;
+    fn __b64_pton(a: *const c_char, b: *mut c_void, c: usize) -> c_int;
+    fn __dn_count_labels(a: *const c_char) -> c_int;
+    fn __hostalias(a: *const c_char) -> *mut c_char;
+    fn __p_class(a: c_int) -> *mut c_char;
+    fn __p_option(a: c_ulong) -> *mut c_char;
+    fn __p_rcode(a: c_int) -> *mut c_char;
+    fn __p_time(a: c_uint) -> *mut c_char;
+    fn __p_type(a: c_int) -> *mut c_char;
+    fn __res_hostalias(a: *mut c_void, b: *const c_char, c: *mut c_char, d: usize) -> *mut c_char;
+    fn __sym_ntop(a: *const c_void, b: c_int, c: *mut c_int) -> *mut c_char;
+    fn __sym_ntos(a: *const c_void, b: c_int, c: *mut c_int) -> *mut c_char;
+    fn __sym_ston(a: *const c_void, b: *const c_char, c: *mut c_int) -> c_int;
+    fn inet_neta(a: c_uint, b: *mut c_char, c: usize) -> *mut c_char;
+    fn ns_datetosecs(a: *const c_char, b: *mut c_int) -> c_ulong;
+    fn ns_format_ttl(a: c_ulong, b: *mut c_char, c: usize) -> c_int;
+    fn ns_get16(a: *const c_void) -> c_uint;
+    fn ns_get32(a: *const c_void) -> c_ulong;
+    fn ns_makecanon(a: *const c_char, b: *mut c_char, c: usize) -> c_int;
+    fn ns_name_ntol(a: *const c_void, b: *mut c_void, c: usize) -> c_int;
+}
+
+#[link(name = "crypt")]
+unsafe extern "C" {
+    fn crypt_gensalt(a: *const c_char, b: c_ulong, c: *const c_char, d: c_int) -> *mut c_char;
+}
+
+/// `(symbol name, code address as the linker resolved it)` for the above.
+fn foreign_lib_arm_addresses() -> Vec<(&'static str, *const c_void)> {
+    vec![
+        ("__b64_ntop", __b64_ntop as *const c_void),
+        ("__b64_pton", __b64_pton as *const c_void),
+        ("__dn_count_labels", __dn_count_labels as *const c_void),
+        ("__hostalias", __hostalias as *const c_void),
+        ("__p_class", __p_class as *const c_void),
+        ("__p_option", __p_option as *const c_void),
+        ("__p_rcode", __p_rcode as *const c_void),
+        ("__p_time", __p_time as *const c_void),
+        ("__p_type", __p_type as *const c_void),
+        ("__res_hostalias", __res_hostalias as *const c_void),
+        ("__sym_ntop", __sym_ntop as *const c_void),
+        ("__sym_ntos", __sym_ntos as *const c_void),
+        ("__sym_ston", __sym_ston as *const c_void),
+        ("inet_neta", inet_neta as *const c_void),
+        ("ns_datetosecs", ns_datetosecs as *const c_void),
+        ("ns_format_ttl", ns_format_ttl as *const c_void),
+        ("ns_get16", ns_get16 as *const c_void),
+        ("ns_get32", ns_get32 as *const c_void),
+        ("ns_makecanon", ns_makecanon as *const c_void),
+        ("ns_name_ntol", ns_name_ntol as *const c_void),
+        ("crypt_gensalt", crypt_gensalt as *const c_void),
+    ]
+}
+
 #[test]
 fn math_oracle_arms_report_their_owning_object() {
     let mut arms = math_arm_addresses();
     arms.extend(other_arm_addresses());
     arms.extend(binary_arm_addresses());
     arms.extend(mem_arm_addresses());
+    arms.extend(foreign_lib_arm_addresses());
     assert!(!arms.is_empty(), "no arms declared; the macro did not expand");
 
     let mut captured = Vec::new();
