@@ -129,7 +129,11 @@ pub fn parse_shadow_line(line: &[u8]) -> Option<ShadowEntry> {
         return None;
     }
 
-    let mut fields = line.split(|&b| b == b':');
+    // Split the TRIMMED line. `trimmed` was already computed above for the
+    // blank/comment test and then not used, so leading blanks ended up inside
+    // the name: "  u:x:1:..." parsed as name "  u", which no lookup can match.
+    // glibc skips them -- host fgetspent reads that line as name "u".
+    let mut fields = trimmed.split(|&b| b == b':');
     let name = fields.next()?;
     let passwd = fields.next()?;
     let lstchg = fields.next()?;
@@ -150,7 +154,15 @@ pub fn parse_shadow_line(line: &[u8]) -> Option<ShadowEntry> {
         expire: parse_shadow_numeric(expire)?,
         flag: if let Some(flag) = fields.next() {
             // A non-empty, non-numeric flag field rejects the entry too.
-            parse_shadow_flag(flag)?
+            let parsed = parse_shadow_flag(flag)?;
+            // A TENTH field rejects the whole entry. /etc/shadow has exactly
+            // nine, and glibc refuses anything longer -- host fgetspent returns
+            // NULL for "u:x:1:2:3:4:5:6:7:extra". fl used to stop reading after
+            // the flag and silently accept the line.
+            if fields.next().is_some() {
+                return None;
+            }
+            parsed
         } else {
             // Glibc convention: missing reserved field decodes to ~0UL
             // ("field unset"), and format_shadow_line renders that as
