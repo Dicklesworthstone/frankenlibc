@@ -577,10 +577,16 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
 ///
 /// * Each `.`-separated component is parsed in base-16 (`0x` prefix),
 ///   base-8 (leading `0`), or base-10, and must be `<= 0xff`.
-/// * The result is right-aligned: components are folded
-///   `result = (result << 8) | component` in order, so a single token
-///   `127` yields `0x0000_007f` (not `0x7f00_0000`) and `127.0` yields
-///   `0x0000_7f00`.
+/// * The result is LEFT-aligned: components are folded
+///   `result = (result << 8) | component` in order and then shifted up by one
+///   byte per absent component, so a single token `127` yields `0x7f00_0000`
+///   (NOT `0x0000_007f`) and `127.0` also yields `0x7f00_0000`.
+///
+///   This doc previously stated the opposite, and the code implemented what it
+///   said. `inet_network("127")` really is `0x0000_007f` — but the netent
+///   parser is not `inet_network`, and getnetent reports `0x7f00_0000`. The
+///   right-aligned rule was true of the function this one is named after and
+///   false of the file format it parses.
 /// * At most four components are allowed; empty components (e.g. a
 ///   trailing `.`) and out-of-range values reject the whole field.
 pub fn parse_network_number(s: &str) -> Option<u32> {
@@ -592,14 +598,30 @@ fn parse_network_number_bytes(bytes: &[u8]) -> Option<u32> {
         return None;
     }
     let mut result: u32 = 0;
-    for (count, part) in bytes.split(|&b| b == b'.').enumerate() {
-        if count >= 4 {
+    let mut components = 0u32;
+    for part in bytes.split(|&b| b == b'.') {
+        if components >= 4 {
             return None;
         }
         let v = parse_network_component_bytes(part)?;
         result = (result << 8) | v;
+        components += 1;
     }
-    Some(result)
+    // LEFT-ALIGN. This is the whole defect that was here: the fold above
+    // right-aligns, which is what `inet_network` returns, and the netent parser
+    // does NOT return that. Measured on live glibc by bind-mounting a synthetic
+    // /etc/networks and walking getnetent, against inet_network on the same
+    // tokens:
+    //     token       inet_network   getnetent n_net
+    //     "127"        0x0000007f     0x7f000000
+    //     "192.168"    0x0000c0a8     0xc0a80000
+    //     "10.0.0"     0x000a0000     0x0a000000
+    //     "10.0.0.1"   0x0a000001     0x0a000001
+    // so the number is shifted up by one byte per ABSENT component, and only
+    // the full dotted-quad form agrees with inet_network. /etc/networks is
+    // conventionally written in the short forms, so fl was returning a value
+    // 8, 16 or 24 bits off for essentially every real entry.
+    Some(result << (8 * (4 - components)))
 }
 
 /// Parse one `inet_network` component: base-16/8/10 with a `<= 0xff` cap.
