@@ -123,6 +123,51 @@ def exports(lines: list[str], index: int) -> bool:
     return False
 
 
+# A `.global NAME` inside a global_asm! block does NOT export NAME from a
+# cdylib. Established by controlled experiment: build a cdylib whose only
+# definitions are a #[no_mangle] Rust fn and a global_asm! block declaring
+# `.global`, and the asm symbol lands in .symtab as lowercase `t` -- local --
+# and never in .dynsym, whether or not anything references it. Referencing only
+# decides survival; an unreferenced block is dropped entirely (--gc-sections at
+# section granularity).
+#
+# The working pattern for an asm-implemented C entry point is the one x86_64
+# setjmp uses (setjmp_abi.rs:260): a #[unsafe(naked)] #[unsafe(no_mangle)]
+# extern "C" fn whose body is naked_asm!. That exports by attribute.
+#
+# Blocks gated to another target_arch are skipped -- they are not compiled here,
+# so their symbols are not expected in this object.
+ASM_GLOBAL = re.compile(r'"\.global\s+([A-Za-z_][A-Za-z0-9_]*)"')
+OTHER_ARCH = re.compile(r'target_arch\s*=\s*"(?!x86_64)')
+
+
+def asm_declared_globals(path: pathlib.Path) -> list[tuple[str, int]]:
+    """Names declared `.global` in a global_asm! block compiled for x86_64."""
+    lines = path.read_text().splitlines()
+    found: list[tuple[str, int]] = []
+    inside = False
+    gated_elsewhere = False
+    for index, line in enumerate(lines):
+        if "global_asm!(" in line:
+            inside = True
+            # Look back over the attribute block for a foreign target_arch gate.
+            gated_elsewhere = any(
+                OTHER_ARCH.search(lines[back])
+                for back in range(max(0, index - 4), index)
+                if lines[back].strip().startswith("#[")
+            )
+            continue
+        if inside:
+            if line.strip() == ");":
+                inside = False
+                continue
+            if not gated_elsewhere:
+                match = ASM_GLOBAL.search(line)
+                if match:
+                    found.append((match.group(1), index + 1))
+    return found
+
+
 def scan() -> dict[str, list[tuple[str, int]]]:
     definitions: dict[str, list[tuple[str, int, bool]]] = defaultdict(list)
     for path in sorted(SRC.rglob("*.rs")):
@@ -142,22 +187,43 @@ def scan() -> dict[str, list[tuple[str, int]]]:
 
 def main() -> int:
     at_risk = scan()
+
+    # Names that exist ONLY as an asm `.global` are unexported for a different
+    # reason and need a different fix, so they are reported separately rather
+    # than folded into the same list.
+    asm_only: dict[str, tuple[str, int]] = {}
+    for path in sorted(SRC.rglob("*.rs")):
+        for name, line in asm_declared_globals(path):
+            if name not in FEATURE_GATED:
+                asm_only.setdefault(name, (str(path), line))
     unexpected = {n: s for n, s in at_risk.items() if n not in INTERNAL | KNOWN_UNEXPORTED | FEATURE_GATED}
     healed = sorted(KNOWN_UNEXPORTED - at_risk.keys())
 
-    print(f"ABI_EXPORT_AUDIT names_at_risk={len(at_risk)} unexpected={len(unexpected)}")
+    print(
+        f"ABI_EXPORT_AUDIT names_at_risk={len(at_risk)} unexpected={len(unexpected)} "
+        f"asm_only={len(asm_only)}"
+    )
 
     for name in sorted(unexpected):
         for path, line in unexpected[name]:
             rel = path.split("frankenlibc/")[-1]
             print(f"  UNEXPORTED {name} at {rel}:{line}")
 
+    unexpected_asm = {n: w for n, w in asm_only.items() if n not in KNOWN_UNEXPORTED}
+    for name in sorted(unexpected_asm):
+        path, line = unexpected_asm[name]
+        rel = path.split("frankenlibc/")[-1]
+        print(
+            f"  ASM_ONLY {name} at {rel}:{line} -- a global_asm! `.global` is "
+            f"LOCAL in a cdylib; use #[unsafe(naked)] #[unsafe(no_mangle)] instead"
+        )
+
     if healed:
         # Not a failure, but it must be said: a name that left the debt set
         # should leave the list too, or the set rots into a lie.
         print(f"  FIXED (drop from KNOWN_UNEXPORTED): {', '.join(healed)}")
 
-    if unexpected:
+    if unexpected or unexpected_asm:
         print(
             "FAIL: implemented C-ABI functions with no exporting definition. "
             "Add #[cfg_attr(not(debug_assertions), unsafe(no_mangle))], or add "
