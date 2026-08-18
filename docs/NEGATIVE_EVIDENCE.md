@@ -31542,3 +31542,139 @@ What this changes, and what it does not:
   'build.target-dir="/data/tmp/cargo-target-frankenlibc"' run -j2 --profile release -p
   frankenlibc-bench --features abi-bench --example incumbent_coverage_ab -- --families
   snprintf_float,fprintf_float --pin-quietest 8`.
+
+## 2026-08-17 — CERTIFIED LOSSES: the D1 queue head measured against live glibc — `nl_langinfo` 2.32x, `memrchr` 1.48x, `tdelete` 3.05x (bd-d1-convert-queue-head-pjavyk)
+
+This row records GAPS, not wins. It is the output of a pre-registered conversion whose stated purpose
+was to attach a same-invocation incumbent ratio to five claims that had only ever been measured
+against FrankenLibC's own previous code. Four of the five had no incumbent number at all before this;
+the fifth could not be measured until a locale defect was fixed. Every ratio below is
+FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of these are.
+
+- **THE ARMS.** Host glibc 2.42 linked directly into the timing process and FrankenLibC loaded beside
+  it by explicit `dlopen(RTLD_NOW|RTLD_LOCAL)`, both timed in ONE process, interleaved per case in a
+  balanced square, with a same-invocation A/A null for each arm on every case. The incumbent arm is
+  proven uninterposed rather than assumed: `dladdr` places it inside
+  `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  (`sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`) at an address in a
+  different mapping from FrankenLibC's, with the two serving objects differing in path and SHA-256.
+  That check matters in this repo: a plain `extern "C"` symbol in a binary that also links
+  frankenlibc-abi can bind to OUR `no_mangle` export and silently measure fl against fl, which was
+  demonstrated the same day when `libc::syscall` resolved byte-equal to fl's own `syscall` export.
+- **`nl_langinfo`, DECIDABLE, 0 wins of 4.** `full_table_cycle` 5.455ns against 2.350ns =
+  **2.319995**, bootstrap median CI [2.314911, 2.323316], A/A null 0.998208 with CI
+  [0.996679, 1.000439] and glibc/glibc null 1.000938; `codeset` 1.181976 CI [1.181415, 1.182340];
+  `weekday_cycle` 3.040762 CI [3.036064, 3.043060]; `month_cycle` 3.281164 CI [3.269732, 3.285395].
+  All four clear twice their own null half-width with both nulls holding.
+  Worker **ovh-a** (`hostname=fixmydocuments`), self-reported `loadavg 1.62,1.45,1.35`,
+  `cpu_mhz_min=1754.3 cpu_mhz_median=1754.3 cpu_mhz_max=1754.3` at pre-measurement and
+  `1754.3/1754.3/4160.9` at post, quiet gate clear at both phases (busy 0.020 then 0.030 against a
+  0.200 ceiling), 8 pinned cores, `sibling_sharing=false`, 36 retained samples, 2000000 reps/arm.
+  `bench_elf_sha256=0a81f92aa53382f067a70999ff11bd325...` and FL object
+  `sha256=099406e8d7e94ac95efd83548becc569277188d199469713...`, both self-reported in-process.
+- **`nl_langinfo` WAS UNMEASURABLE UNTIL A DEFECT WAS FIXED, which is half the value of this row.**
+  The first attempt did not produce a ratio: it failed the harness's pre-timing conformance contract
+  on selector 14, where fl returned `"UTF-8"` for the C locale's `CODESET` against glibc's
+  `"ANSI_X3.4-1968"`. That is bd-1kxrmz — fl aliasing the C locale onto C.UTF-8 — and it blocked a
+  performance claim published in README.md, a wider blast radius than that bead recorded. No ratio
+  was quoted while it was red, and narrowing the selector set to dodge the divergence was explicitly
+  refused: it would have converted the claim by weakening the test. The numbers above exist because
+  that defect was fixed, not because the test was relaxed.
+- **`memrchr`, DECIDABLE, 0 wins of 8.** Headline `len512_absent` (the claimed 512-byte fold tier)
+  6.904ns against 4.648ns = **1.483689**, CI [1.481550, 1.489271], A/A null 1.000305 CI
+  [0.999137, 1.001337]. By size: `len64` 2.267534 and 2.270348; `len512` 1.483689 and 1.485962;
+  `len4096_absent` 1.380053 and 1.360816; `len4096_hit_near_start` 1.526644 and 1.526923 — each pair
+  being the fl-allocator and incumbent-allocator buffer provenances.
+  `loadavg 1.37,1.41,1.34`, `cpu_mhz` 1754.3/1754.3/1754.3 at pre and 1754.3/1754.3/3598.3 at post,
+  busy 0.029 then 0.010, 36 retained samples, 200000 reps/arm, same ELF and FL object as above.
+- **THE GAP NARROWS WITH SIZE, which locates the cost.** 2.27x at 64 bytes falling to 1.36-1.38x at
+  4096 is the signature of a fixed per-call overhead rather than a slow scan: at 4096 bytes fl is
+  within 38% on throughput, at 64 bytes it is more than double. The 512-byte fold tier the original
+  claim is about does not close it. Contrast `tdelete` below, whose ratio is FLAT across a 128x range
+  of tree sizes — that is a per-unit-work cost, and the two shapes call for different levers.
+- **`tdelete`, INCOMPLETE by the gate's own rule, 0 wins of 3.** `tree64` 3.068046 CI
+  [3.054297, 3.081174] with A/A null 1.000851 and null half-width 0.004192; `tree8192` 2.999717 CI
+  [2.994357, 3.011444], null half-width 0.003732; both clear twice their null with nulls holding.
+  `tree1024` reads 3.181985 but its CI is [3.159008, 3.452449] against a null half-width of
+  **0.071031** — seventeen times the other two — and its A/A null median is 0.991454 with CI
+  [0.980470, 0.998894], which does not contain 1.0. The gate refuses it, so the family verdict is
+  INCOMPLETE even though every case agrees on ~3x. Worker `loadavg 2.28,1.66,1.43`, `cpu_mhz`
+  1754.3/1754.3/3586.2 at pre and 1754.3/1754.3/1754.3 at post, busy 0.040 both phases.
+- **THE `tree1024` FAILURE IS REPRODUCIBLE AND IS NOT NOISE TO BE RE-RUN AWAY.** Three independent
+  runs, two different artifacts, and the same case is the only one whose null misbehaves each time,
+  while `tree64` and `tree8192` bracket it and agree. Its working set — about 1024 red-black nodes —
+  is the one that sits near this part's L1 boundary, with `tree64` (~3 KB) comfortably inside and
+  `tree8192` (~400 KB) comfortably outside; a working set straddling that boundary is sensitive to
+  whatever ran between the A and B halves of the null. That is a hypothesis about the MECHANISM and
+  is not established here. What IS established is that re-running does not fix it, so the fix is a
+  larger sample at that size or a working-set-aware case set, not another attempt.
+- **THE `tdelete` GAP IS FLAT IN TREE SIZE, and that is the finding.** 3.068 at 64 keys, ~3.18 at
+  1024, 3.000 at 8192 — a constant multiplier across a 128x range, i.e. across roughly seven extra
+  levels of depth. A fixed per-call overhead would shrink as a share of the work as trees deepen,
+  which is exactly what `memrchr` does above. A constant ratio instead means the per-NODE cost is
+  ~3x glibc's: the comparison and rebalance work at each level is uniformly more expensive. The
+  claim this converts (L1144, "tdelete removes the redundant lookup walk") was optimising the right
+  shape of thing and still leaves that gap; removing further walks cannot close it, because the cost
+  is inside the per-node step.
+- **`__fpclassify`, INCOMPLETE, and the INCOMPLETE is the answer rather than a failure.** `normal`
+  0.999297 CI [0.997866, 0.999717] against a null half-width of 0.001853: the effect is -0.07% and
+  the gate needs twice the null to call a direction, so it declines. Read as an equivalence bound,
+  that is a tighter and more useful statement than a direction — on the input real programs pass, fl
+  and glibc are the same speed to within about +/-0.37%. The other four cases are decisive:
+  `zero` 0.901780 CI [0.900979, 0.902510], `subnormal` 0.900442 CI [0.899777, 0.901311],
+  `infinity` 1.109440 CI [1.108038, 1.111096], `nan` 1.108475 CI [1.107731, 1.110298].
+  `loadavg 1.86,1.91,1.56`, `cpu_mhz` 1754.3/1754.3/3591.2 at pre and 1754.3/3585.6/4159.4 at post.
+- **THE CLASSIFICATION PROFILE IS NOT FLAT, WHICH REFUTES THE CLAIM'S STATED MECHANISM.** L815 and
+  L776 say the class is decided from the exponent and fraction bits, which predicts a uniform cost.
+  There is no input at which that holds: fl is ~10% faster on `zero` and `subnormal`, at parity on
+  `normal`, and ~11% slower on `infinity` and `nan` — a spread of 21 percentage points. Both
+  implementations are branch-ORDERED and ordered oppositely, fl reaching finite answers sooner and
+  saturated-exponent answers later. That is a defensible reason to KEEP fl's ordering, since finite
+  inputs are what real programs pass, and it is not a vindication of the mechanism as written. The
+  claim text should say the ordering favours finite inputs.
+- **`__fpclassifyf`, INCOMPLETE, and its nulls are the interesting part.** `normal` 1.000362 CI
+  [0.997446, 1.003559]; `zero` 1.003466 CI [1.001003, 1.004821] — both fail to clear twice their
+  null and are reported UNDECIDABLE, i.e. parity. `subnormal` 0.910382 CI [0.908214, 0.915905] is a
+  win; `infinity` 1.099115 and `nan` 1.110138 CI [1.095324, 1.124655] are losses. Note the f32 and
+  f64 widths DIFFER on `zero`: f64 wins it at 0.901780 while f32 is at parity, so these are not one
+  algorithm at two widths.
+  `loadavg 1.71,1.87,1.55`, `cpu_mhz` 3719.7/3821.3/4739.9 at pre and 1754.3/1754.3/3588.5 at post.
+- **THIS FAMILY'S NULLS ARE THREE TO TEN TIMES WIDER THAN THE SAME FAMILY'S IN THE PREVIOUS RUN, and
+  it is the family that ran BOOSTED.** Null half-widths here are 0.0044 to 0.0177 against 0.0003 to
+  0.0017 for the identical cases measured a run earlier at the idle clock, and its ratios moved by up
+  to 1% (`subnormal` 0.900157 -> 0.910382) where `__fpclassify`'s moved by 0.07%. The two runs differ
+  in the clock they were measured at — 3821 MHz median here, 1754.3 there — which is recorded only
+  because the clock is now in the contract line. Whether boosting widens the null or the two merely
+  coincide is NOT established by two runs; it is flagged because a wider null is exactly what turns a
+  decidable case undecidable, and `zero` did flip from decidable-parity to undecidable between them.
+- **WHAT THE FIVE SURFACES SAY TOGETHER.** Four of five carry a real gap against the incumbent, and
+  the shapes differ: `memrchr` narrows with size (2.27x at 64 bytes to 1.36x at 4096), a fixed
+  per-call overhead; `tdelete` is flat across a 128x size range at ~3x, a per-node cost;
+  `nl_langinfo` is 1.18x on a single selector and 2.3-3.3x when cycling the table, so its cost scales
+  with lookups rather than with the call; the classifiers are at parity on the common input with a
+  21-point spread across branches. None of these is a win, and the row exists to say so with numbers.
+- **AGAINST THE PRE-REGISTERED EXPECTATIONS, which is why they were registered.** E1 predicted parity
+  or a LOSS for the classifiers and was CORRECT. E2 predicted parity or a small loss for
+  `nl_langinfo`, correct in direction and understated in size. E3 predicted a win was plausible for
+  `tdelete` and `memrchr` and was WRONG both times. Two of three. An earlier version of this
+  scorecard reported all four opposite their expectation; that reading was an artifact of a stale
+  FrankenLibC object and is withdrawn.
+- **THE ARTIFACT WAS STALE FOR FOUR EARLIER CONVERSIONS AND IT CHANGED CONCLUSIONS.**
+  `incumbent_coverage_ab` treated the existence of `libfrankenlibc_abi.so` as freshness and never
+  rebuilt it, so it measured whatever the worker's target dir last held; `--base` did not control it.
+  The same object SHA appeared across four runs at four different bases while 432 lines of library
+  source changed between two of them. Fixed in 945e327b4, which now asks Cargo every run and prints
+  `FL_ARTIFACT_FRESHNESS` with before/after hashes. On its first run it rebuilt, and the classifier
+  headlines moved from 0.9086 and 0.9001 FL_FASTER to parity — the stale object had manufactured two
+  ~10% wins, each of which had reproduced to 0.05% across four runs of the wrong binary.
+  Reproducibility is not provenance.
+- **VERDICT: NO SOURCE CHANGE.** This row certifies gaps in already-shipped code and hands four of
+  them to the no-gaps campaign with a ratio, a CI, a null and a clock attached. `tdelete` and both
+  classifiers are INCOMPLETE by the gate's own rule and must not be quoted as decided; `nl_langinfo`
+  and `memrchr` are DECIDABLE losses.
+- **Reproducer:** `rch exec --base HEAD --clean-overlay --no-overlay -- ... cargo run -j2 --profile
+  release -p frankenlibc-bench --features abi-bench --example incumbent_coverage_ab -- --families
+  nl_langinfo,memrchr --pin-quietest 8`, and the same with `--families
+  tdelete,fpclassify,fpclassifyf`. Bench ELF `0a81f92a...` / `537ccd6d...`, FL object
+  `099406e8...` / `716c1d64...`, incumbent `libc.so.6 6791cc9b...` and `libm.so.6 ff06daa4...`, all
+  self-reported in-process.
