@@ -125,6 +125,22 @@ declare_math_arms!(
 // errno-only divergence hides rather than crashes. Same rule as above: these are
 // never called, only addressed, so one uniform prototype is enough for `dladdr`.
 declare_more_arms!(
+    // The f32 and integer-returning members of the round-to-integer family.
+    // These belong here rather than in a typed macro because arms are never
+    // CALLED, only addressed for `dladdr`, so one uniform prototype suffices --
+    // the same reasoning this block already uses for the errno surface.
+    //
+    // Added because three differentials (conformance_diff_fe_rounding,
+    // conformance_diff_round_mode, conformance_diff_math_exact) declare these
+    // alongside `rint`, which IS captured. Converting `rint` while leaving its
+    // siblings unmeasured would fix the symbol I happened to census and leave
+    // the rest hollow for exactly the same reason.
+    llrint,
+    lrint,
+    nearbyintf,
+    rintf,
+    roundf,
+    truncf,
     __errno_location,
     __sched_get_priority_max,
     __sched_get_priority_min,
@@ -297,9 +313,15 @@ fn math_oracle_arms_report_their_owning_object() {
     //
     // memcpy/memset/memmove/memcmp are declared weak there and correctly lose to
     // libc.so.6 -- measured, not assumed.
+    //
+    // The f32 round-family members behave like their f64 counterparts (rintf,
+    // roundf, truncf captured) while the INTEGER-returning ones do not
+    // (lrint, llrint clean), and neither nearbyint nor nearbyintf is captured.
+    // Another reason not to predict from the lowering: the same operation is
+    // captured at one return type and clean at another.
     const KNOWN_CAPTURED: &[&str] = &[
         "cbrt", "ceil", "copysign", "fabs", "fdim", "floor", "fmax", "fmin", "fmod", "rint",
-        "round", "sqrt", "trunc",
+        "rintf", "round", "roundf", "sqrt", "trunc", "truncf",
     ];
     let mut captured_names: Vec<&str> = captured.iter().map(|(name, _)| *name).collect();
     captured_names.sort_unstable();
