@@ -3961,6 +3961,7 @@ fn pi_fn_raise_invalid_f32() {
 // half-integer arguments (sinpi(1)=+0, cospi(0.5)=+0, tanpi(0.5)=+inf) and
 // stays correct for huge arguments where the naive sin(x*PI) loses all
 // precision. |x|>=2^53 is always an even integer: sinpi=±0, cospi=1, tanpi=±0.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospi(x: f64) -> f64 {
     if x.is_nan() {
         return x;

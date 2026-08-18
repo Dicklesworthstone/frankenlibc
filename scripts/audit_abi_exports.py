@@ -55,18 +55,22 @@ INTERNAL = {
 # anything NEW; these are debt, not permission. Two of them are plausibly
 # deliberate and want a decision rather than a patch:
 #   _Unwind_RaiseException / _Unwind_Resume -- exporting hijacks unwinding
-#   vfprintf                                -- risks recursion through fl printf
 KNOWN_UNEXPORTED = {
     "_Unwind_RaiseException",
     "_Unwind_Resume",
-    "cospi",
-    "dprintf",
-    "freopen",
+    # nexttoward{,f,l} are a DIFFERENT failure from the rest, and the fix is not
+    # an attribute. Their C signature takes an x87 80-bit long double that Rust
+    # cannot express, so they are defined by a `global_asm!` trampoline in
+    # math_abi.rs that declares `.global nexttoward`. Adding the attribute to the
+    # Rust fn collides -- "symbol 'nexttoward' is already defined" -- yet the
+    # finished cdylib does NOT contain the symbol: probing it finds only the
+    # __frankenlibc_nexttoward*_x86_64 helpers the trampolines jump to. A
+    # cdylib's export list is built from #[no_mangle] items, so an asm `.global`
+    # is not on it and does not survive the link. Fixing these means making the
+    # asm symbols survive (export list / visibility), not annotating the Rust fn.
     "nexttoward",
     "nexttowardf",
     "nexttowardl",
-    "posix_spawn_file_actions_addclose",
-    "vfprintf",
 }
 
 

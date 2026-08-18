@@ -8101,6 +8101,7 @@ unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) 
     }
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
@@ -8718,6 +8719,7 @@ unsafe fn try_vprintf_exact_stream(
     None
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vfprintf(
     stream: *mut c_void,
     format: *const c_char,
@@ -10449,6 +10451,7 @@ fn fd_decimal_into(n: u32, buf: &mut [u8]) -> usize {
     len
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn freopen(
     pathname: *const c_char,
     mode: *const c_char,

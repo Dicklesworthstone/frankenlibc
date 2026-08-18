@@ -1643,6 +1643,7 @@ fn spawn_valid_fd(fd: c_int) -> bool {
     open_max < 0 || (fd as i64) < open_max as i64
 }
 
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
     file_actions: *mut c_void,
     fd: c_int,
