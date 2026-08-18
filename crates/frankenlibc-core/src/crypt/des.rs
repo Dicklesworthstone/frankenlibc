@@ -1,4 +1,5 @@
-//! Traditional DES `crypt(3)` — the original two-character-salt scheme.
+//! DES-based `crypt(3)`: the original two-character-salt scheme, and BSDI's
+//! `_`-prefixed extended form built on the same cipher.
 //!
 //! WHY THIS EXISTS AT ALL. `unistd_abi`'s dispatch documented this scheme as
 //! "returns error; DES is obsolete", and every two-char setting fell through to
@@ -220,51 +221,27 @@ fn encrypt_block(block: u64, subkeys: &[u64; 16], expansion: &[u8; 48]) -> u64 {
 /// Returns `None` for any setting the incumbent rejects, which the caller turns
 /// into libxcrypt's failure token: shorter than two bytes, or containing any
 /// byte outside the crypt base-64 alphabet at ANY position.
-pub fn des_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
-    if setting.len() < 2 {
-        return None;
-    }
-    // The two halves of the acceptance rule are genuinely different tests, not
-    // one test applied twice: the salt characters must be base-64 digits, the
-    // trailing bytes need only be storable in a shadow record. Both are checked
-    // even though only the salt reaches the cipher.
-    let salt = [a64_value(setting[0])?, a64_value(setting[1])?];
-    if !setting[2..].iter().copied().all(valid_trailing_byte) {
-        return None;
-    }
-
-    // The first eight password bytes, low 7 bits each, shifted up into the
-    // high 7 bits of a key byte. A short password is zero-padded; a longer one
-    // is truncated, which is why `crypt` cannot distinguish two passwords that
-    // share their first eight bytes.
-    let mut key_block = 0u64;
-    for index in 0..8 {
-        let byte = key.get(index).copied().unwrap_or(0);
-        key_block = (key_block << 8) | u64::from((byte & 0x7f) << 1);
-    }
-    let subkeys = key_schedule(key_block);
-
-    // The salt swaps expansion entries in place. This is the whole reason a
-    // salted DES hash defeats a precomputed table: it is a different cipher,
-    // not merely a different input.
+/// Perturb the expansion with `salt_bits` bits of `salt`.
+///
+/// Bit `b` swaps `E[b]` with `E[b+24]`. Traditional DES supplies 12 bits, BSDI
+/// extended DES supplies 24 — the same construction, twice as wide, which is
+/// why a BSDI hash whose upper twelve salt bits are zero has the same body as
+/// the traditional hash with the matching two-character salt. This is the whole
+/// reason a salted DES hash defeats a precomputed table: it is a different
+/// cipher, not merely a different input.
+fn expansion_for_salt(salt: u32, salt_bits: u32) -> [u8; 48] {
     let mut expansion = E;
-    for (index, &value) in salt.iter().enumerate() {
-        for offset in 0..6usize {
-            if (value >> offset) & 1 == 1 {
-                expansion.swap(6 * index + offset, 6 * index + offset + 24);
-            }
+    for bit_index in 0..salt_bits as usize {
+        if (salt >> bit_index) & 1 == 1 {
+            expansion.swap(bit_index, bit_index + 24);
         }
     }
+    expansion
+}
 
-    let mut block = 0u64;
-    for _ in 0..25 {
-        block = encrypt_block(block, &subkeys, &expansion);
-    }
-
-    // Eleven six-bit groups, MSB first, over the 64 result bits padded to 66.
-    let mut out = String::with_capacity(13);
-    out.push(char::from(setting[0]));
-    out.push(char::from(setting[1]));
+/// Append the 64-bit result as eleven six-bit groups, MSB first, over the bits
+/// padded to 66.
+fn push_hash_body(out: &mut String, block: u64) {
     for group in 0..11 {
         let mut value = 0u64;
         for offset in 0..6 {
@@ -278,6 +255,135 @@ pub fn des_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
         }
         out.push(char::from(A64[value as usize]));
     }
+}
+
+/// Decode `count` little-endian crypt base-64 digits starting at `offset`.
+fn decode_le_base64(setting: &[u8], offset: usize, count: usize) -> Option<u32> {
+    let mut value = 0u32;
+    for index in 0..count {
+        value |= a64_value(setting[offset + index])? << (6 * index as u32);
+    }
+    Some(value)
+}
+
+/// The first eight key bytes, each shifted up one bit, zero-padded.
+fn eight_byte_key(key: &[u8]) -> u64 {
+    let mut key_block = 0u64;
+    for index in 0..8 {
+        let byte = key.get(index).copied().unwrap_or(0);
+        key_block = (key_block << 8) | u64::from((byte & 0x7f) << 1);
+    }
+    key_block
+}
+
+/// Hash `key` under a traditional DES `setting`, returning the 13-byte result.
+///
+/// Returns `None` for any setting the incumbent rejects, which the caller turns
+/// into libxcrypt's failure token.
+pub fn des_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
+    if setting.len() < 2 {
+        return None;
+    }
+    // The two halves of the acceptance rule are genuinely different tests, not
+    // one test applied twice: the salt characters must be base-64 digits, the
+    // trailing bytes need only be storable in a shadow record. Both are checked
+    // even though only the salt reaches the cipher.
+    let salt = decode_le_base64(setting, 0, 2)?;
+    if !setting[2..].iter().copied().all(valid_trailing_byte) {
+        return None;
+    }
+
+    // A short password is zero-padded; a longer one is TRUNCATED, which is why
+    // traditional `crypt` cannot distinguish two passwords sharing their first
+    // eight bytes. BSDI extended DES exists precisely to remove that cap.
+    let subkeys = key_schedule(eight_byte_key(key));
+    let expansion = expansion_for_salt(salt, 12);
+
+    let mut block = 0u64;
+    for _ in 0..25 {
+        block = encrypt_block(block, &subkeys, &expansion);
+    }
+
+    let mut out = String::with_capacity(13);
+    out.push(char::from(setting[0]));
+    out.push(char::from(setting[1]));
+    push_hash_body(&mut out, block);
+    Some(out)
+}
+
+/// BSDI's key schedule, which consumes the WHOLE password rather than the first
+/// eight bytes.
+///
+/// The first eight bytes set the key as usual. While bytes remain, the current
+/// key block is encrypted under its own schedule — unsalted, one round — and the
+/// next eight bytes are XORed into the result, which becomes the new key. So a
+/// 40-byte passphrase contributes all 40 bytes, and two passphrases agreeing in
+/// their first eight no longer collide.
+fn crunched_key_schedule(key: &[u8]) -> [u64; 16] {
+    // The advance rule is subtle and is what makes a short key zero-pad rather
+    // than run off the end: the cursor moves only while the byte read was
+    // non-zero, so it parks at the terminator.
+    let mut position = 0usize;
+    let mut key_block = 0u64;
+    for _ in 0..8 {
+        let byte = key.get(position).copied().unwrap_or(0);
+        key_block = (key_block << 8) | u64::from((byte & 0x7f) << 1);
+        if byte != 0 {
+            position += 1;
+        }
+    }
+    let mut subkeys = key_schedule(key_block);
+
+    while position < key.len() {
+        key_block = encrypt_block(key_block, &subkeys, &E);
+        for byte_index in 0..8 {
+            if position >= key.len() {
+                break;
+            }
+            let byte = u64::from((key[position] & 0x7f) << 1);
+            key_block ^= byte << (56 - 8 * byte_index);
+            position += 1;
+        }
+        subkeys = key_schedule(key_block);
+    }
+    subkeys
+}
+
+/// Hash `key` under a BSDI extended DES `setting` (`_CCCCSSSS`), returning the
+/// 20-byte result.
+///
+/// The format is an underscore, four base-64 digits of iteration count and four
+/// of salt, all little-endian. Both widen traditional DES: the count replaces
+/// its fixed 25, and the salt is 24 bits rather than 12. A count of zero is
+/// treated as one — measured, not assumed; the incumbent gives byte-identical
+/// answers for counts 0 and 1 across every salt probed.
+///
+/// The acceptance rule mirrors [`des_crypt`] exactly: all eight parameter
+/// characters must be base-64 digits, and anything after them is held to the
+/// same printable-minus-five standard and then discarded.
+pub fn bsdi_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
+    if setting.len() < 9 || setting[0] != b'_' {
+        return None;
+    }
+    let count = decode_le_base64(setting, 1, 4)?;
+    let salt = decode_le_base64(setting, 5, 4)?;
+    if !setting[9..].iter().copied().all(valid_trailing_byte) {
+        return None;
+    }
+
+    let subkeys = crunched_key_schedule(key);
+    let expansion = expansion_for_salt(salt, 24);
+
+    let mut block = 0u64;
+    for _ in 0..count.max(1) {
+        block = encrypt_block(block, &subkeys, &expansion);
+    }
+
+    let mut out = String::with_capacity(20);
+    for &byte in &setting[..9] {
+        out.push(char::from(byte));
+    }
+    push_hash_body(&mut out, block);
     Some(out)
 }
 
