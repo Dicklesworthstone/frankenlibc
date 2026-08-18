@@ -51,15 +51,27 @@ INTERNAL = {
     "__frankenlibc_set_startup_host_delegate_for_tests",
 }
 
-# Known unexported implementations, tracked by bd-6xstqa. The gate fails on
-# anything NEW; these are debt, not permission. Two of them are plausibly
-# deliberate and want a decision rather than a patch:
-#   _Unwind_RaiseException / _Unwind_Resume -- exporting hijacks unwinding
-KNOWN_UNEXPORTED = {
+# Defined by a global_asm! trampoline AND compiled only under
+# `standalone,owned-unwind-stub` (lib.rs gates the whole owned_unwind_abi
+# module). Their absence from a default-feature object is the module not being
+# compiled, NOT a missing export -- the module doc says they are "intentionally
+# gated". I first recorded these as debt with the reasoning "exporting them
+# hijacks unwinding", which was wrong: nothing is being withheld, the code is
+# simply not in the build.
+FEATURE_GATED = {
     "_Unwind_RaiseException",
     "_Unwind_Resume",
+}
+
+# Known unexported implementations, tracked by bd-6xstqa. The gate fails on
+# anything NEW; these are debt, not permission.
+KNOWN_UNEXPORTED = {
     # nexttoward{,f,l} are a DIFFERENT failure from the rest, and the fix is not
-    # an attribute. Their C signature takes an x87 80-bit long double that Rust
+    # an attribute. Note "defined by asm" does NOT by itself explain the absence:
+    # the setjmp family is also declared `.global` in a global_asm! block, is
+    # likewise not annotated, and IS exported (in_dynsym=true). So something
+    # distinguishes these three from their siblings -- plausibly --gc-sections
+    # dropping trampolines nothing references -- and that is unestablished. Their C signature takes an x87 80-bit long double that Rust
     # cannot express, so they are defined by a `global_asm!` trampoline in
     # math_abi.rs that declares `.global nexttoward`. Adding the attribute to the
     # Rust fn collides -- "symbol 'nexttoward' is already defined" -- yet the
@@ -113,7 +125,7 @@ def scan() -> dict[str, list[tuple[str, int]]]:
 
 def main() -> int:
     at_risk = scan()
-    unexpected = {n: s for n, s in at_risk.items() if n not in INTERNAL | KNOWN_UNEXPORTED}
+    unexpected = {n: s for n, s in at_risk.items() if n not in INTERNAL | KNOWN_UNEXPORTED | FEATURE_GATED}
     healed = sorted(KNOWN_UNEXPORTED - at_risk.keys())
 
     print(f"ABI_EXPORT_AUDIT names_at_risk={len(at_risk)} unexpected={len(unexpected)}")
