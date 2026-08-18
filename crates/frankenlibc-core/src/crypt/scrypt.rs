@@ -289,14 +289,42 @@ mod tests {
         assert_eq!(mixed, expected);
     }
 
-    /// Salsa20/8 must be a permutation-plus-feedforward, not the identity, and
-    /// must depend on every input byte.
+    /// Salsa20/8 must depend on every input byte, and must not be the identity
+    /// on inputs that carry any information.
+    ///
+    /// NOTE THE ZERO BLOCK IS A FIXED POINT, and that is correct rather than a
+    /// bug. An earlier version of this test asserted the opposite -- "all-zero
+    /// input must not pass through" -- which is a property of the full Salsa20
+    /// STREAM CIPHER, whose state mixes the constants "expand 32-byte k" into
+    /// words 0/5/10/15. The salsa20/8 CORE scrypt uses (RFC 7914 section 3) has
+    /// no constants at all: it is pure add/rotate/xor over the caller's block
+    /// followed by a feedforward add, so an all-zero block stays zero through
+    /// every round. Confusing the two is easy and the assertion looked
+    /// reasonable; it failed on this test's first ever compile.
+    ///
+    /// What actually pins the primitive is `scrypt_matches_rfc7914_vectors`.
+    /// This test covers what those vectors cannot see individually: that no
+    /// single input byte is ignored.
     #[test]
     fn salsa20_8_diffuses_every_input_byte() {
-        let base = [0u8; BLOCK];
-        let mut mixed_base = base;
+        let mut mixed_base = [0u8; BLOCK];
         salsa20_8(&mut mixed_base);
-        assert_ne!(mixed_base, base, "all-zero input must not pass through");
+        assert_eq!(
+            mixed_base, [0u8; BLOCK],
+            "the constant-free salsa20/8 core must fix the zero block; if this \
+             fails the round function grew a constant it should not have"
+        );
+
+        // A block with one bit set must not be the identity -- that IS a real
+        // property, and it is the one the zero block cannot test.
+        let mut single_bit = [0u8; BLOCK];
+        single_bit[0] = 1;
+        let mut mixed_single = single_bit;
+        salsa20_8(&mut mixed_single);
+        assert_ne!(
+            mixed_single, single_bit,
+            "salsa20/8 must not be the identity on a non-zero block"
+        );
 
         for byte in 0..BLOCK {
             let mut flipped = [0u8; BLOCK];

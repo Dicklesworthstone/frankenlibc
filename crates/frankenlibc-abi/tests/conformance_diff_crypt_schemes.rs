@@ -36,7 +36,7 @@ type CryptFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char
 /// Resolve `crypt` from libxcrypt, refusing to hand back fl's own definition.
 fn host_crypt() -> Option<CryptFn> {
     static H: OnceLock<Option<usize>> = OnceLock::new();
-    *H.get_or_init(|| {
+    (*H.get_or_init(|| {
         // SAFETY: dlopen/dlsym with NUL-terminated names; the handle is
         // intentionally leaked for the process lifetime.
         unsafe {
@@ -63,12 +63,27 @@ fn host_crypt() -> Option<CryptFn> {
             );
             Some(sym as usize)
         }
-    })
+    }))
     .map(|addr| {
         // SAFETY: the address came from dlsym on libcrypt's `crypt`, whose C
         // signature is `char *crypt(const char *, const char *)`.
         unsafe { std::mem::transmute::<usize, CryptFn>(addr) }
     })
+}
+
+/// The libxcrypt oracle returns a pointer into PROCESS-GLOBAL static storage,
+/// so concurrent `#[test]` threads clobber one another between the call and the
+/// copy. Every arm that consults the host takes this for its whole body.
+///
+/// This is not hypothetical: without it the host answered `".1XUHfURnGg8I"` for
+/// setting `"zz"` -- correct hash body, another arm's salt -- and five arms
+/// failed while fl's own (thread-local) arms passed. See bd-fegsgf for the same
+/// class fabricating "10 of 30" divergences on a zero-divergence build.
+fn oracle_lock() -> std::sync::MutexGuard<'static, ()> {
+    static ORACLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ORACLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn fl_crypt(key: &CStr, setting: &CStr) -> String {
@@ -147,6 +162,7 @@ const VECTORS: &[(&str, &str, &str)] = &[
 
 #[test]
 fn bcrypt_matches_live_libxcrypt() {
+    let _oracle = oracle_lock();
     let Some(host) = host_crypt() else {
         panic!("libxcrypt unavailable; this gate cannot run without its oracle");
     };
@@ -192,6 +208,7 @@ fn bcrypt_matches_live_libxcrypt() {
 /// never a plausible-looking hash.
 #[test]
 fn bcrypt_rejects_bad_settings_like_libxcrypt() {
+    let _oracle = oracle_lock();
     let Some(host) = host_crypt() else {
         panic!("libxcrypt unavailable; this gate cannot run without its oracle");
     };
@@ -224,7 +241,7 @@ type GensaltFn = unsafe extern "C" fn(*const c_char, u64, *const c_char, i32) ->
 
 fn host_gensalt() -> Option<GensaltFn> {
     static H: OnceLock<Option<usize>> = OnceLock::new();
-    *H.get_or_init(|| {
+    (*H.get_or_init(|| {
         // SAFETY: dlopen/dlsym with NUL-terminated names.
         unsafe {
             let mut handle = std::ptr::null_mut::<c_void>();
@@ -245,7 +262,7 @@ fn host_gensalt() -> Option<GensaltFn> {
             assert_ne!(sym as usize, fl, "resolved gensalt IS fl's own (bd-v0388t)");
             Some(sym as usize)
         }
-    })
+    }))
     .map(|addr| {
         // SAFETY: `char *crypt_gensalt(const char *, unsigned long, const char *, int)`.
         unsafe { std::mem::transmute::<usize, GensaltFn>(addr) }
@@ -324,6 +341,7 @@ const GENSALT_VECTORS: &[(&str, u64, i32, Option<&str>)] = &[
 
 #[test]
 fn gensalt_matches_live_libxcrypt() {
+    let _oracle = oracle_lock();
     let Some(host) = host_gensalt() else {
         panic!("libxcrypt unavailable; this gate cannot run without its oracle");
     };
@@ -389,6 +407,7 @@ fn gensalt_matches_live_libxcrypt() {
 /// gensalt and feeds the result straight to crypt.
 #[test]
 fn generated_settings_round_trip_through_crypt() {
+    let _oracle = oracle_lock();
     let Some(host) = host_crypt() else {
         panic!("libxcrypt unavailable; this gate cannot run without its oracle");
     };
@@ -484,6 +503,7 @@ const NTHASH_VECTORS: &[(&[u8], &str)] = &[
 
 #[test]
 fn nthash_matches_live_libxcrypt() {
+    let _oracle = oracle_lock();
     let Some(host) = host_crypt() else {
         panic!("libcrypt.so.1 did not resolve `crypt`; this gate cannot run vacuously");
     };
@@ -515,6 +535,7 @@ fn nthash_matches_live_libxcrypt() {
 /// fail a correct password against an existing `$3$abc$…` record.
 #[test]
 fn nthash_ignores_the_salt_and_never_echoes_it() {
+    let _oracle = oracle_lock();
     let Some(host) = host_crypt() else {
         panic!("no libxcrypt oracle");
     };
@@ -542,6 +563,7 @@ fn nthash_ignores_the_salt_and_never_echoes_it() {
 
 #[test]
 fn nthash_rejects_bad_settings_like_libxcrypt() {
+    let _oracle = oracle_lock();
     let Some(host) = host_crypt() else {
         panic!("no libxcrypt oracle");
     };

@@ -70,7 +70,7 @@ type CryptFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char
 /// Resolve `crypt` from libxcrypt, refusing to hand back fl's own definition.
 fn host_crypt() -> Option<CryptFn> {
     static H: OnceLock<Option<usize>> = OnceLock::new();
-    *H.get_or_init(|| {
+    (*H.get_or_init(|| {
         // SAFETY: dlopen/dlsym with NUL-terminated names; the handle is
         // intentionally leaked for the process lifetime.
         unsafe {
@@ -97,12 +97,27 @@ fn host_crypt() -> Option<CryptFn> {
             );
             Some(sym as usize)
         }
-    })
+    }))
     .map(|addr| {
         // SAFETY: the address came from dlsym on libcrypt's `crypt`, whose C
         // signature is `char *crypt(const char *, const char *)`.
         unsafe { std::mem::transmute::<usize, CryptFn>(addr) }
     })
+}
+
+/// The libxcrypt oracle returns a pointer into PROCESS-GLOBAL static storage,
+/// so concurrent `#[test]` threads clobber one another between the call and the
+/// copy. Every arm that consults the host takes this for its whole body.
+///
+/// This is not hypothetical: without it the host answered `".1XUHfURnGg8I"` for
+/// setting `"zz"` -- correct hash body, another arm's salt -- and five arms
+/// failed while fl's own (thread-local) arms passed. See bd-fegsgf for the same
+/// class fabricating "10 of 30" divergences on a zero-divergence build.
+fn oracle_lock() -> std::sync::MutexGuard<'static, ()> {
+    static ORACLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ORACLE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn cstring(bytes: &[u8]) -> CString {
@@ -198,6 +213,7 @@ const REJECTED: &[&[u8]] = &[
 /// against a stale transcript, so this runs first and says so plainly.
 #[test]
 fn pinned_vectors_still_match_the_live_host() {
+    let _oracle = oracle_lock();
     let Some(_) = host_crypt() else {
         panic!("libcrypt.so.1 did not resolve `crypt`; this gate cannot run vacuously");
     };
@@ -213,6 +229,7 @@ fn pinned_vectors_still_match_the_live_host() {
 
 #[test]
 fn des_hashes_match_the_host() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     for (key, setting, expected) in HASH_VECTORS {
         assert_eq!(
@@ -225,6 +242,7 @@ fn des_hashes_match_the_host() {
 
 #[test]
 fn key_is_capped_at_eight_bytes() {
+    let _oracle = oracle_lock();
     let (keys, setting, expected) = TRUNCATION_GROUP;
     for key in keys {
         assert_eq!(
@@ -242,6 +260,7 @@ fn key_is_capped_at_eight_bytes() {
 
 #[test]
 fn trailing_bytes_are_validated_then_discarded() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     let two_char = fl_crypt(b"password", b"ab");
     for setting in TRAILING_ACCEPTED {
@@ -261,6 +280,7 @@ fn trailing_bytes_are_validated_then_discarded() {
 
 #[test]
 fn invalid_settings_produce_the_failure_token() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     for setting in REJECTED {
         let host = host_hash(b"password", setting);
@@ -282,6 +302,7 @@ fn invalid_settings_produce_the_failure_token() {
 /// handful of vectors and fails here.
 #[test]
 fn every_salt_pair_matches_the_host() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     const A64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let mut checked = 0usize;
@@ -353,6 +374,7 @@ const BSDI_REJECTED: &[&[u8]] = &[
 
 #[test]
 fn bsdi_pinned_vectors_still_match_the_live_host() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     for (key, setting, expected) in BSDI_VECTORS {
         assert_eq!(
@@ -366,6 +388,7 @@ fn bsdi_pinned_vectors_still_match_the_live_host() {
 
 #[test]
 fn bsdi_hashes_match_the_host() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     for (key, setting, expected) in BSDI_VECTORS {
         assert_eq!(
@@ -381,6 +404,7 @@ fn bsdi_hashes_match_the_host() {
 /// and every fixed vector above would still pass on the first two.
 #[test]
 fn bsdi_consumes_the_whole_password() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     let keys: [&[u8]; 4] = [
         b"12345678",
@@ -420,6 +444,7 @@ fn bsdi_consumes_the_whole_password() {
 /// property rather than an internal coincidence.
 #[test]
 fn bsdi_at_count_25_equals_traditional_des() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     const A64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let value = |ch: u8| A64.iter().position(|&c| c == ch).expect("alphabet") as u32;
@@ -452,6 +477,7 @@ fn bsdi_at_count_25_equals_traditional_des() {
 /// same for every password, which is why this is worth its own arm.
 #[test]
 fn bsdi_count_zero_means_one_round() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     let zero = fl_crypt(b"password", b"_........");
     let one = fl_crypt(b"password", b"_/.......");
@@ -471,6 +497,7 @@ fn bsdi_count_zero_means_one_round() {
 
 #[test]
 fn bsdi_invalid_settings_produce_the_failure_token() {
+    let _oracle = oracle_lock();
     assert!(host_crypt().is_some(), "no libxcrypt oracle");
     for setting in BSDI_REJECTED {
         assert_eq!(

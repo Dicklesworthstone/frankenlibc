@@ -9720,7 +9720,14 @@ fn gensalt_scrypt_salt_chars(nrbytes: usize) -> Result<usize, c_int> {
 
 fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, want: usize, out: &mut Vec<u8>) {
     const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let n = nrbytes.min(12);
+    // Consume every byte the caller supplied. This was `nrbytes.min(12)`, which
+    // is the 12 bytes `$6$`'s sixteen characters need and silently truncated
+    // every longer scheme: `$7$` with 16 bytes of entropy emitted 16 real
+    // characters and then `AAAAAAAA`, so fl-generated scrypt settings carried a
+    // constant tail where the caller asked for salt. Caught by the first
+    // successful compile of conformance_diff_crypt_schemes.rs, which had never
+    // built and so had never run.
+    let n = nrbytes;
     if n == 0 || rbytes.is_null() {
         out.extend(std::iter::repeat_n(b'A', want));
         return;
@@ -9729,20 +9736,28 @@ fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, want: usize, out:
     let bytes = unsafe { core::slice::from_raw_parts(rbytes as *const u8, n) };
     let mut emitted = 0usize;
     let mut i = 0;
-    while i + 3 <= bytes.len() && emitted < want {
+    while i < bytes.len() && emitted < want {
         // libxcrypt packs each 3 random bytes LITTLE-ENDIAN and emits the LOW
         // 6 bits first. fl packed them big-endian and emitted the high bits
         // first, so identical input bytes produced different salt characters:
         // for rbytes "0123456789abcdef..." libxcrypt yields "k2XAnEHB" where fl
         // yielded "A12mAnEp..." (bd-5rfmrp). Verified against libcrypt.so.1 for
         // $1$, $5$ and $6$.
-        let value =
-            (bytes[i] as u32) | ((bytes[i + 1] as u32) << 8) | ((bytes[i + 2] as u32) << 16);
-        for shift in [0u32, 6, 12, 18] {
+        // A trailing PARTIAL group is encoded too, which the old `i + 3 <= len`
+        // loop could not express. libxcrypt emits ceil(bits/6) characters from
+        // whatever remains, so three bytes give four characters, two give three
+        // and one gives two. Verified at nrbytes 16/24/32/48/64, which produce
+        // 22/32/43/64/86 characters.
+        let available = (bytes.len() - i).min(3);
+        let mut value = 0u32;
+        for (offset, &byte) in bytes[i..i + available].iter().enumerate() {
+            value |= u32::from(byte) << (8 * offset);
+        }
+        for group in 0..(available * 8).div_ceil(6) {
             if emitted == want {
                 break;
             }
-            out.push(ALPHABET[((value >> shift) & 0x3F) as usize]);
+            out.push(ALPHABET[((value >> (6 * group)) & 0x3F) as usize]);
             emitted += 1;
         }
         i += 3;
