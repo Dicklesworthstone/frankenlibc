@@ -6116,12 +6116,92 @@ unsafe fn try_wcsftime_name_fast(
     Some(unsafe { write_wide_ascii(s, maxsize, bytes) })
 }
 
+/// Parse a wide string under the `strtod` grammar and write the x87 80-bit
+/// extended result to `out` as ten bytes in memory order.
+///
+/// The wide side needs no scanning machinery of its own: [`wide_parse_float`] is
+/// already generic over `T: Copy`, and `[u8; 10]` is `Copy`, so this is the same
+/// bounded-scan-and-project path `wcstod` uses with a different payload. The
+/// projection is one ASCII byte per wide character, which is why `consumed`
+/// carries straight over to a wide-pointer offset.
+///
+/// See [`crate::stdlib_abi::strtold_into`] for why the value leaves through
+/// memory rather than a return value.
+///
+/// # Safety
+///
+/// `nptr` must be NUL-terminated or NULL, `endptr` writable when non-NULL, and
+/// `out` must address ten writable bytes.
+pub unsafe extern "C" fn wcstold_into(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    out: *mut u8,
+) {
+    if nptr.is_null() {
+        // SAFETY: the caller guarantees ten writable bytes.
+        unsafe { core::ptr::write_bytes(out, 0, 10) };
+        if !endptr.is_null() {
+            // SAFETY: non-null by the branch, writable by contract.
+            unsafe { *endptr = nptr as *mut libc::wchar_t };
+        }
+        return;
+    }
+    // SAFETY: bounded scan and projection over a valid wide string.
+    let (bytes, consumed, erange) = unsafe {
+        wide_parse_float(
+            nptr,
+            |ascii: &[u8]| {
+                let scan = frankenlibc_core::float128::strtold_scan(ascii);
+                (scan.bytes, scan.consumed, scan.range_error)
+            },
+            |_value: [u8; 10], _prefix: &[u8], range_error: bool| range_error,
+        )
+    };
+    // SAFETY: ten writable bytes by contract.
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 10) };
+    if !endptr.is_null() {
+        // SAFETY: `consumed` is bounded by the parsed prefix length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
+    }
+    if erange {
+        // SAFETY: errno slot for the calling thread.
+        unsafe { set_abi_errno(libc::ERANGE) };
+    }
+}
+
+/// `wcstold` — wide string to `long double`, returned in ST(0).
+///
+/// A naked shim for the same reason [`crate::stdlib_abi::strtold`] is: on
+/// x86-64 SysV a `long double` return lives in the x87 register stack, which
+/// Rust cannot express. This previously returned `f64` from `wcstod` and left
+/// ST(0) untouched, so a C caller read stale x87 state rather than a value.
+///
+/// # Safety
+///
+/// Same contract as C's `wcstold`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn wcstold(_nptr: *const libc::wchar_t, _endptr: *mut *mut libc::wchar_t) {
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym wcstold_into,
+    )
+}
+
+/// `wcstold` where `long double` is not x87; see [`crate::stdlib_abi::strtold`].
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstold(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
 ) -> f64 {
-    // SAFETY: current ABI models long double as f64.
+    // SAFETY: ABI contract mirrors wcstod.
     unsafe { wcstod(nptr, endptr) }
 }
 
@@ -6988,7 +7068,30 @@ pub unsafe extern "C" fn wcstod_l(
     unsafe { wcstod(nptr, endptr) }
 }
 
-/// `wcstold_l` — locale-aware wide string to long double (f64 on Linux x86_64).
+/// `wcstold_l` — locale-aware wide string to `long double`, returned in ST(0).
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn wcstold_l(
+    _nptr: *const libc::wchar_t,
+    _endptr: *mut *mut libc::wchar_t,
+    _locale: *mut c_void,
+) {
+    // The locale arrives in RDX and is overwritten with the out-buffer pointer:
+    // fl implements the C locale only and the previous body discarded it too.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym wcstold_into,
+    )
+}
+
+/// `wcstold_l` where `long double` is not x87; see [`crate::stdlib_abi::strtold`].
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstold_l(
     nptr: *const libc::wchar_t,

@@ -1588,9 +1588,25 @@ fn wcstod_family_parses_ascii_and_updates_endptr() {
         4
     );
 
+    // `wcstold` is now a naked shim returning in ST(0), which Rust has no type
+    // for, so the value is checked through `wcstold_into` — the same path minus
+    // the one `fld` that hands the result to a C caller. 12.5 is exponent field
+    // 0x4002 with significand 0xc800000000000000, as glibc's own wcstold
+    // produces.
     end = std::ptr::null_mut();
-    let ld = unsafe { wcstold(input.as_ptr(), &mut end as *mut *mut libc::wchar_t) };
-    assert!((ld - 12.5).abs() < 1e-10);
+    let mut ld_bytes = [0u8; 10];
+    unsafe {
+        wcstold_into(
+            input.as_ptr(),
+            &mut end as *mut *mut libc::wchar_t,
+            ld_bytes.as_mut_ptr(),
+        )
+    };
+    assert_eq!(
+        u64::from_le_bytes(ld_bytes[..8].try_into().unwrap()),
+        0xc800_0000_0000_0000
+    );
+    assert_eq!(u16::from_le_bytes([ld_bytes[8], ld_bytes[9]]), 0x4002);
 
     let halfway = wstr(b"1.0000000596046447753906251");
     end = std::ptr::null_mut();
