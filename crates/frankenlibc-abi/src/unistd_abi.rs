@@ -232,6 +232,117 @@ fn runtime_page_size() -> usize {
 ///
 /// Same /proc/self/auxv walk as `runtime_page_size` above; the two are kept
 /// separate because each caches a different entry.
+/// One CPU cache level's `_SC_LEVEL*_CACHE_*` answers, in bytes / ways / bytes.
+#[derive(Clone, Copy)]
+struct CacheLevelInfo {
+    size: libc::c_long,
+    assoc: libc::c_long,
+    line: libc::c_long,
+}
+
+impl CacheLevelInfo {
+    /// A cache level this machine does not have.
+    ///
+    /// Size 0 but associativity and line size -1, which looks inconsistent and
+    /// is not: it is what glibc reports. Measured on a host with no L4 —
+    /// `sysconf(_SC_LEVEL4_CACHE_SIZE)` is 0 while `_SC_LEVEL4_CACHE_ASSOC` and
+    /// `_SC_LEVEL4_CACHE_LINESIZE` are -1. The absent-level convention is taken
+    /// from that measurement rather than invented.
+    const ABSENT: Self = Self {
+        size: 0,
+        assoc: -1,
+        line: -1,
+    };
+}
+
+/// The kernel's own CPU cache topology.
+struct CacheTopology {
+    l1i: CacheLevelInfo,
+    l1d: CacheLevelInfo,
+    l2: CacheLevelInfo,
+    l3: CacheLevelInfo,
+    l4: CacheLevelInfo,
+}
+
+/// Parse a sysfs cache `size` field ("32K", "32768K", "1M") into bytes.
+fn parse_sysfs_cache_size(raw: &str) -> Option<libc::c_long> {
+    let trimmed = raw.trim();
+    let (digits, multiplier) = match trimmed.as_bytes().last() {
+        Some(b'K' | b'k') => (&trimmed[..trimmed.len() - 1], 1024),
+        Some(b'M' | b'm') => (&trimmed[..trimmed.len() - 1], 1024 * 1024),
+        Some(b'G' | b'g') => (&trimmed[..trimmed.len() - 1], 1024 * 1024 * 1024),
+        _ => (trimmed, 1),
+    };
+    digits
+        .trim()
+        .parse::<libc::c_long>()
+        .ok()
+        .map(|v| v * multiplier)
+}
+
+/// Read the CPU cache topology once, from the kernel rather than from CPUID.
+///
+/// glibc answers the `_SC_LEVEL*_CACHE_*` selectors from CPUID descriptor
+/// tables with per-vendor Intel/AMD/Zhaoxin walks. Reproducing that would mean
+/// reproducing its vendor tables; the kernel has already done the work and
+/// publishes the result under /sys, so read that instead.
+///
+/// VERIFIED against live glibc 2.42 on an AMD Ryzen Threadripper PRO 5975WX:
+/// the two sources agree on 11 of the 12 rows this machine has —
+/// L1i size 32768 / line 64, L1d 32768 / 8 / 64, L2 524288 / 8 / 64,
+/// L3 33554432 / 16 / 64.
+///
+/// THE ONE DISAGREEMENT IS WHY `_SC_LEVEL1_ICACHE_ASSOC` IS NOT SERVED FROM
+/// HERE: sysfs reports 8 ways, glibc reports -1. glibc's CPUID path does not
+/// produce an instruction-cache associativity on this vendor, so following
+/// sysfs there would diverge from the incumbent. See the selector's own arm.
+fn cache_topology() -> &'static CacheTopology {
+    static CACHED: std::sync::OnceLock<CacheTopology> = std::sync::OnceLock::new();
+    CACHED.get_or_init(|| {
+        let mut topology = CacheTopology {
+            l1i: CacheLevelInfo::ABSENT,
+            l1d: CacheLevelInfo::ABSENT,
+            l2: CacheLevelInfo::ABSENT,
+            l3: CacheLevelInfo::ABSENT,
+            l4: CacheLevelInfo::ABSENT,
+        };
+        // cpu0 is what glibc reports too: these selectors describe "the" cache,
+        // not a per-CPU value, and heterogeneous machines have no better answer.
+        for index in 0..16 {
+            let dir = format!("/sys/devices/system/cpu/cpu0/cache/index{index}");
+            let Some(level) = runtime_procfs_long(&format!("{dir}/level")) else {
+                continue;
+            };
+            let kind = std::fs::read_to_string(format!("{dir}/type")).unwrap_or_default();
+            let kind = kind.trim();
+            let info = CacheLevelInfo {
+                size: std::fs::read_to_string(format!("{dir}/size"))
+                    .ok()
+                    .and_then(|raw| parse_sysfs_cache_size(&raw))
+                    .unwrap_or(-1),
+                assoc: runtime_procfs_long(&format!("{dir}/ways_of_associativity")).unwrap_or(-1),
+                line: runtime_procfs_long(&format!("{dir}/coherency_line_size")).unwrap_or(-1),
+            };
+            match level {
+                1 if kind == "Instruction" => topology.l1i = info,
+                1 if kind == "Data" => topology.l1d = info,
+                // A unified L1 answers for both halves.
+                1 => {
+                    topology.l1i = info;
+                    topology.l1d = info;
+                }
+                // Prefer a Unified entry at L2+, which is what glibc reports;
+                // only take a split entry if nothing has filled the slot yet.
+                2 if kind == "Unified" || topology.l2.line < 0 => topology.l2 = info,
+                3 if kind == "Unified" || topology.l3.line < 0 => topology.l3 = info,
+                4 if kind == "Unified" || topology.l4.line < 0 => topology.l4 = info,
+                _ => {}
+            }
+        }
+        topology
+    })
+}
+
 fn runtime_min_sigstksz() -> libc::c_long {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static CACHED: AtomicUsize = AtomicUsize::new(0);
@@ -2797,6 +2908,32 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // Per-kernel value from the auxiliary vector, not a constant.
         249 => runtime_min_sigstksz(), // _SC_MINSIGSTKSZ
 
+        // CPU cache selectors. Not constants and not a table: served from the
+        // kernel's published cache topology (see `cache_topology`), because a
+        // recorded value would report the build host's cache on every machine.
+        185 => cache_topology().l1i.size, // _SC_LEVEL1_ICACHE_SIZE
+        // _SC_LEVEL1_ICACHE_ASSOC is the one row NOT taken from sysfs. glibc's
+        // CPUID path yields no instruction-cache associativity on the measured
+        // vendor and reports -1, while sysfs reports 8 ways for the same cache.
+        // The incumbent is glibc, so -1 it is. This is the row to re-measure
+        // first on a different CPU: if some vendor makes glibc report a real
+        // associativity here, this arm is what has to change, and
+        // conformance_diff_sysconf_raw will say so rather than passing quietly.
+        186 => -1,                         // _SC_LEVEL1_ICACHE_ASSOC
+        187 => cache_topology().l1i.line,  // _SC_LEVEL1_ICACHE_LINESIZE
+        188 => cache_topology().l1d.size,  // _SC_LEVEL1_DCACHE_SIZE
+        189 => cache_topology().l1d.assoc, // _SC_LEVEL1_DCACHE_ASSOC
+        190 => cache_topology().l1d.line,  // _SC_LEVEL1_DCACHE_LINESIZE
+        191 => cache_topology().l2.size,   // _SC_LEVEL2_CACHE_SIZE
+        192 => cache_topology().l2.assoc,  // _SC_LEVEL2_CACHE_ASSOC
+        193 => cache_topology().l2.line,   // _SC_LEVEL2_CACHE_LINESIZE
+        194 => cache_topology().l3.size,   // _SC_LEVEL3_CACHE_SIZE
+        195 => cache_topology().l3.assoc,  // _SC_LEVEL3_CACHE_ASSOC
+        196 => cache_topology().l3.line,   // _SC_LEVEL3_CACHE_LINESIZE
+        197 => cache_topology().l4.size,   // _SC_LEVEL4_CACHE_SIZE
+        198 => cache_topology().l4.assoc,  // _SC_LEVEL4_CACHE_ASSOC
+        199 => cache_topology().l4.line,   // _SC_LEVEL4_CACHE_LINESIZE
+
         // POSIX option selectors above the old table's ceiling. Measured on
         // live glibc 2.42 on this host:
         //   132 _SC_ADVISORY_INFO 200809   235 _SC_IPV6         200809
@@ -2815,10 +2952,9 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // Same errno contract as the group above.
         //
         // 173 is absent on purpose: it is _SC_SYMLOOP_MAX, which has its own
-        // documented arm earlier in this match. 185..=199 are also absent:
-        // those are the CPU cache selectors, which glibc derives from CPUID
-        // rather than reporting as constants, so they need a real
-        // implementation rather than a table row (bd filed separately).
+        // documented arm earlier in this match. 185..=199 are absent because
+        // they are NOT constants -- the CPU cache selectors are served from the
+        // kernel's cache topology by the arms below.
         134..=136
         | 140..=148
         | 150..=152

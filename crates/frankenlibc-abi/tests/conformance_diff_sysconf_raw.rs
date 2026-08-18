@@ -47,17 +47,17 @@ const SENTINEL_ERRNO: c_int = 4242;
 
 /// Selectors this gate deliberately does NOT assert yet, and why (bd-fxu91j).
 ///
-/// 185..=199 are the CPU cache selectors (_SC_LEVEL{1,2,3,4}_*CACHE*). glibc
-/// derives them from CPUID, so they are machine-dependent: a table row would
-/// report THIS host's cache sizes on every host. 250 is _SC_SIGSTKSZ, which
-/// tracks AT_MINSIGSTKSZ (13504 = 4 x 3376 here) -- one host is one data point,
-/// not enough to pin the relationship.
+/// 250 is _SC_SIGSTKSZ, which tracks AT_MINSIGSTKSZ (13504 = 4 x 3376 on the
+/// measured host). One host is one data point, and the observation is equally
+/// consistent with "min + 10128", so the relationship is not pinned.
+///
+/// The CPU cache selectors 185..=199 USED to be here and are now implemented
+/// from the kernel's cache topology; they are asserted by the sweep below and
+/// by `cpu_cache_selectors_match_glibc`.
 ///
 /// Listed rather than silently skipped: the sweep counts them and prints what it
 /// declined, so widening the range cannot quietly read as full coverage.
-const KNOWN_UNIMPLEMENTED: &[c_int] = &[
-    185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 250,
-];
+const KNOWN_UNIMPLEMENTED: &[c_int] = &[250];
 
 // glibc selectors intentionally represented as raw numbers in the ABI match:
 // the Rust libc crate does not publish this complete set on every target.
@@ -274,4 +274,68 @@ fn restored_value_codes_match_host_exactly() {
         let f = unsafe { frankenlibc_abi::unistd_abi::sysconf(code) };
         assert_eq!(f, g, "{name} ({code}): fl={f} glibc={g}");
     }
+}
+
+/// The CPU cache selectors, named, because they are the one family here served
+/// from a DIFFERENT source than glibc uses: glibc walks CPUID with per-vendor
+/// tables, fl reads the kernel's published topology under
+/// /sys/devices/system/cpu/cpu0/cache/index*.
+///
+/// Two sources agreeing is the whole claim, so it gets its own test rather than
+/// being buried in the sweep. On the machine this was written against (AMD Ryzen
+/// Threadripper PRO 5975WX) they agree on 11 of the 12 rows the CPU has —
+/// and disagree on exactly one, _SC_LEVEL1_ICACHE_ASSOC, where sysfs reports 8
+/// ways and glibc reports -1. fl follows glibc there, by an explicit arm.
+///
+/// If this test fails on some other CPU, the useful question is WHICH row: a
+/// failure on 186 means the special case needs to become conditional, and a
+/// failure on any other row means the sysfs route itself does not track glibc
+/// and the family needs CPUID after all.
+const CACHE_SELECTORS: &[(c_int, &str)] = &[
+    (185, "_SC_LEVEL1_ICACHE_SIZE"),
+    (186, "_SC_LEVEL1_ICACHE_ASSOC"),
+    (187, "_SC_LEVEL1_ICACHE_LINESIZE"),
+    (188, "_SC_LEVEL1_DCACHE_SIZE"),
+    (189, "_SC_LEVEL1_DCACHE_ASSOC"),
+    (190, "_SC_LEVEL1_DCACHE_LINESIZE"),
+    (191, "_SC_LEVEL2_CACHE_SIZE"),
+    (192, "_SC_LEVEL2_CACHE_ASSOC"),
+    (193, "_SC_LEVEL2_CACHE_LINESIZE"),
+    (194, "_SC_LEVEL3_CACHE_SIZE"),
+    (195, "_SC_LEVEL3_CACHE_ASSOC"),
+    (196, "_SC_LEVEL3_CACHE_LINESIZE"),
+    (197, "_SC_LEVEL4_CACHE_SIZE"),
+    (198, "_SC_LEVEL4_CACHE_ASSOC"),
+    (199, "_SC_LEVEL4_CACHE_LINESIZE"),
+];
+
+#[test]
+fn cpu_cache_selectors_match_glibc() {
+    let mut divergences = Vec::new();
+    let mut real_values = 0usize;
+    for &(code, name) in CACHE_SELECTORS {
+        let g = unsafe { sysconf(code) };
+        let f = unsafe { frankenlibc_abi::unistd_abi::sysconf(code) };
+        if f != g {
+            divergences.push(format!("{name} ({code}): fl={f} glibc={g}"));
+        }
+        if g > 0 {
+            real_values += 1;
+        }
+    }
+    // A machine reporting -1 for everything would make the comparison above
+    // pass without testing anything. Every x86_64 host has at least an L1d
+    // size, an L1d line size and an L2, so require several real values.
+    assert!(
+        real_values >= 6,
+        "only {real_values} cache selectors returned a positive value from the HOST -- \
+         the comparison is near-vacuous on this machine, so treat a pass as unproven"
+    );
+    assert!(
+        divergences.is_empty(),
+        "CPU cache selector divergences vs glibc ({} of {}):\n  {}",
+        divergences.len(),
+        CACHE_SELECTORS.len(),
+        divergences.join("\n  ")
+    );
 }
