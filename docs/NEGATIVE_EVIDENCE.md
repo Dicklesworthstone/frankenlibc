@@ -31739,3 +31739,59 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   failure mode this family produces.
 - **VERDICT: NO SOURCE CHANGE.** This row corrects the record. The correctness fix stands; the
   performance claim above it does not, and CHANGELOG.md needs the same correction.
+
+## 2026-08-18 — REFUTED, my own hypothesis: `nl_langinfo`'s loss is not selector diversity and not match depth — it is dense same-category runs (`bd-nl-langinfo-contiguous-table-8dlrhi`)
+
+- **THE HYPOTHESIS THIS KILLS IS MINE.** The D1 conversion certified `nl_langinfo` as a loss that
+  grew with how many distinct selectors a caller cycled (codeset 1.18x, weekday 3.04x, month 3.28x,
+  glibc flat at 2.34 ns throughout), and I wrote it up as "cost scales with selector diversity" with
+  two candidate mechanisms: decision-tree DEPTH in `langinfo_value_for`'s sparse match, and cache
+  LOCALITY across ~30 independently-placed string literals. Both are wrong, and the pre-registered
+  discriminator is what says so.
+- **THE DISCRIMINATOR.** The two original cases varied depth AND distinct-literal count at once (7
+  in 8 slots versus 12 in 16), so neither could be isolated. `month7_cycle` holds count, cycle length
+  and category fixed against `weekday_cycle` and varies only depth. `mixed7_cycle` keeps the same
+  8-slot, 7-distinct shape but draws its selectors from THREE `nl_item` categories instead of one.
+  Both were committed (6062c2bda) with the prediction registered before the run.
+- **DEPTH IS REFUTED.** `weekday_cycle` 3.121155, CI [3.111647, 3.123201]; `month7_cycle` 3.131615,
+  CI [3.125192, 3.135783]. The `MON_*` arms sit roughly fourteen positions deeper in the match than
+  the `DAY_*` arms and cost **0.33%** more. Distinguishable, and nowhere near the 2.6x that needs
+  explaining.
+- **DIVERSITY IS REFUTED, and this is the surprise.** `mixed7_cycle` has exactly the same seven
+  distinct selectors per eight-slot cycle as `weekday_cycle`, and measures **1.316982**, CI
+  [1.315953, 1.318918] — **2.37x cheaper** than the same-count same-shape single-category case, and
+  only 11% above the single-selector `codeset` case at 1.181711. Cycling seven selectors is nearly
+  free when they come from different categories. So "more distinct selectors costs more" is false as
+  stated; my ledger row's phrasing was wrong and is corrected here.
+- **WHAT IS LEFT IS SPECIFIC AND NARROW.** The penalty attaches to cycling within a DENSE
+  SAME-CATEGORY RUN — `DAY_1..DAY_7`, `MON_1..MON_12` — and not to selector count, not to arm depth,
+  and not to spanning categories. `nl_item` is `(category << 16) | index`, so a dense same-category
+  run is exactly the shape rustc can compile to a jump table, i.e. ONE indirect branch cycling
+  through seven to twelve targets; the cross-category case instead resolves through a short chain of
+  direct compares. That is a HYPOTHESIS about the mechanism, consistent with all six rows and with
+  glibc's flatness — glibc indexes a contiguous array with no branch at all — and it is NOT
+  established by this run.
+- **IT ALSO SHARPENS THE LEVER RATHER THAN KILLING IT.** A contiguous blob with a dense per-category
+  index replaces the match with a computed load and no data-dependent branch, which is what glibc
+  does and what would make fl flat. The lever survives; the REASON to expect it to work has changed
+  from "locality" to "remove a data-dependent indirect branch", and so has the case that should be
+  used to judge it — `weekday_cycle` or `month7_cycle`, never `mixed7_cycle`, which is already close
+  to floor.
+- **THE INSTRUMENT THIS NEEDS IS THE ONE THE FLEET DENIES.** Branch-miss counts would settle the
+  jump-table hypothesis in one run and are immune to load and clock; `perf_event_paranoid=4` on the
+  workers and rch's refusal of valgrind block both counted instruments
+  (bd-counted-instruments-blocked-ql5i1h). This is the second lever in two days whose mechanism is
+  decidable by counting and not by wall clock.
+- **CONTRACT.** All six cases DECIDABLE, 0 wins of 6, every A/A null within 0.15% of 1.0 and every
+  effect clearing twice its null half-width. Host glibc linked directly, FrankenLibC by explicit
+  `dlopen`, arms proved distinct in address and serving object, conformance before timing. Worker
+  **ovh-a** (`hostname=fixmydocuments`), `loadavg 5.44,4.58,3.39`, `cpu_mhz_min=1754.3
+  cpu_mhz_median=1754.3 cpu_mhz_max=3591.0` at pre-measurement and `1754.3/1754.3/1754.3` at post,
+  quiet gate clear both phases (busy 0.060 then 0.050 against a 0.200 ceiling), 36 retained samples,
+  2000000 reps per arm. `bench_elf_sha256=6fc512f91205f46651...`, FL object
+  `sha256=78ad7991dbd29755134235519a552b7cb...`, incumbent `libc.so.6
+  6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, all self-reported in-process.
+  `FL_ARTIFACT_FRESHNESS` rebuilt the object before measuring.
+- **VERDICT: NO SOURCE CHANGE.** Two of my own mechanisms are eliminated for the price of a
+  case-table edit, before any rewrite of the locale table was attempted. That was the point of
+  running the discriminator first.
