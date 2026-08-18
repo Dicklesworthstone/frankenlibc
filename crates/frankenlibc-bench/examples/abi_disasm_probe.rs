@@ -45,15 +45,41 @@ fn main() {
         args.iter().map(String::as_str).collect()
     };
 
-    // Say which object was read and how big it is, so a row can never be quoted
-    // against an artifact nobody can identify.
-    match std::fs::metadata(&object) {
-        Ok(meta) => println!("DISASM_OBJECT path={object} bytes={}", meta.len()),
+    // BUILD THE CDYLIB FIRST. `cargo run --example` builds the example and the abi
+    // RLIB; the cdylib is a separate target nothing in that command requires, and
+    // the target dir persists per worker — so reading it without rebuilding
+    // disassembles whatever the last run happened to leave there. That is exactly
+    // how incumbent_coverage_ab measured a stale object for four conversions
+    // (bd-incumbent-stale-fl-artifact-pph3a1), and this probe reproduced the same
+    // mistake on its first outing: two runs of DIFFERENT source trees reported
+    // byte-identical results because both read one leftover artifact.
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let build = Command::new(&cargo)
+        .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        .status()
+        .expect("build the FrankenLibC cdylib");
+    assert!(build.success(), "cdylib build failed");
+
+    // Identify the object by CONTENT, not by path or size. Two builds of different
+    // source can share a size; only the hash settles which one is on disk, and a
+    // probe whose output cannot be tied to an artifact proves nothing.
+    let bytes = match std::fs::read(&object) {
+        Ok(bytes) => bytes,
         Err(error) => {
             println!("DISASM_UNAVAILABLE path={object} reason={error}");
             std::process::exit(2);
         }
+    };
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(&bytes);
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("write hex");
     }
+    println!(
+        "DISASM_OBJECT path={object} bytes={} sha256={hex}",
+        bytes.len()
+    );
 
     let tool = Command::new("objdump").arg("--version").output();
     match tool {
