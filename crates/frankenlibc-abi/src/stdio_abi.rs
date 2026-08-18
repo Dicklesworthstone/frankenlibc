@@ -9445,7 +9445,7 @@ fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
     bytes
 }
 
-unsafe fn write_long_double_from_f64(dest: *mut c_void, value: f64) {
+pub(crate) unsafe fn write_long_double_from_f64(dest: *mut c_void, value: f64) {
     let bytes = x86_extended80_bytes_from_f64(value);
     // SAFETY: `%Lf` callers provide a writable long-double destination. On the
     // supported Linux ABI used by this harness, the storage slot is 16 bytes.

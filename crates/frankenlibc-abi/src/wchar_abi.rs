@@ -4658,7 +4658,18 @@ macro_rules! wscanf_write_one {
                 }
             },
             ScanValue::Float(v) => match $spec.length {
-                LengthMod::L | LengthMod::BigL => {
+                // `%Lf` writes a LONG DOUBLE, not a double. Conflating the two
+                // put an f64 bit pattern in the first eight bytes of an x87
+                // object -- read back as x87 that is a nonsense significand
+                // paired with whatever stale bytes were already in the
+                // sign/exponent halfword, so the stored value was unrelated to
+                // the input. The narrow side has always split these; this is
+                // the same call it makes.
+                LengthMod::BigL => {
+                    let ptr = $args.next_arg::<*mut c_void>();
+                    crate::stdio_abi::write_long_double_from_f64(ptr, *v);
+                }
+                LengthMod::L => {
                     let ptr = $args.next_arg::<*mut f64>();
                     *ptr = *v;
                 }
