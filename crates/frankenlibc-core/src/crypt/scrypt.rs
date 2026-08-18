@@ -143,7 +143,10 @@ fn romix(block: &mut [u8], n: usize, r: usize) {
         // n is a power of two, checked by the caller, so `& (n - 1)` is the
         // modulo the RFC specifies.
         let j = integerify(&x, r) & (n - 1);
-        for (dst, src) in x.iter_mut().zip(v[j * block_len..(j + 1) * block_len].iter()) {
+        for (dst, src) in x
+            .iter_mut()
+            .zip(v[j * block_len..(j + 1) * block_len].iter())
+        {
             *dst ^= *src;
         }
         block_mix(&x, &mut scratch, r);
@@ -205,15 +208,33 @@ mod tests {
     #[test]
     fn scrypt_matches_rfc7914_vectors() {
         let cases: &[(&[u8], &[u8], usize, usize, usize, &str)] = &[
-            (b"", b"", 16, 1, 1,
-             "77d6576238657b203b19ca42c18a0497f16b4844e3074ae8dfdffa3fede21442\
-              fcd0069ded0948f8326a753a0fc81f17e8d3e0fb2e0d3628cf35e20c38d18906"),
-            (b"password", b"NaCl", 1024, 8, 16,
-             "fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b373162\
-              2eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640"),
-            (b"pleaseletmein", b"SodiumChloride", 16384, 8, 1,
-             "7023bdcb3afd7348461c06cd81fd38ebfda8fbba904f8e3ea9b543f6545da1f2\
-              d5432955613f0fcf62d49705242a9af9e61e85dc0d651e40dfcf017b45575887"),
+            (
+                b"",
+                b"",
+                16,
+                1,
+                1,
+                "77d6576238657b203b19ca42c18a0497f16b4844e3074ae8dfdffa3fede21442\
+              fcd0069ded0948f8326a753a0fc81f17e8d3e0fb2e0d3628cf35e20c38d18906",
+            ),
+            (
+                b"password",
+                b"NaCl",
+                1024,
+                8,
+                16,
+                "fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b373162\
+              2eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640",
+            ),
+            (
+                b"pleaseletmein",
+                b"SodiumChloride",
+                16384,
+                8,
+                1,
+                "7023bdcb3afd7348461c06cd81fd38ebfda8fbba904f8e3ea9b543f6545da1f2\
+              d5432955613f0fcf62d49705242a9af9e61e85dc0d651e40dfcf017b45575887",
+            ),
         ];
         for (password, salt, n, r, p, expected) in cases {
             let mut out = [0u8; 64];
@@ -230,10 +251,16 @@ mod tests {
         let mut out = [0u8; 32];
         assert!(scrypt(b"p", b"s", 0, 1, 1, &mut out).is_none(), "n=0");
         assert!(scrypt(b"p", b"s", 1, 1, 1, &mut out).is_none(), "n=1");
-        assert!(scrypt(b"p", b"s", 12, 1, 1, &mut out).is_none(), "n not a power of two");
+        assert!(
+            scrypt(b"p", b"s", 12, 1, 1, &mut out).is_none(),
+            "n not a power of two"
+        );
         assert!(scrypt(b"p", b"s", 16, 0, 1, &mut out).is_none(), "r=0");
         assert!(scrypt(b"p", b"s", 16, 1, 0, &mut out).is_none(), "p=0");
-        assert!(scrypt(b"p", b"s", 16, 1, 1, &mut []).is_none(), "empty output");
+        assert!(
+            scrypt(b"p", b"s", 16, 1, 1, &mut []).is_none(),
+            "empty output"
+        );
     }
 
     /// `block_mix` interleaves its output even-indices-first. A straight copy is

@@ -105,9 +105,7 @@ pub fn parse_crypt_salt(salt_bytes: &[u8], prefix_len: usize) -> Option<ShaCrypt
             // the same inputs.
             let mut value: u64 = 0;
             for &d in &num[..digits] {
-                value = value
-                    .saturating_mul(10)
-                    .saturating_add(u64::from(d - b'0'));
+                value = value.saturating_mul(10).saturating_add(u64::from(d - b'0'));
             }
             if !(u64::from(MIN_SHA_ROUNDS)..=u64::from(MAX_SHA_ROUNDS)).contains(&value) {
                 return None;

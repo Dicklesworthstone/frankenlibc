@@ -167,31 +167,61 @@ mod tests {
     fn malformed_settings_are_refused() {
         assert!(scrypt_crypt(b"pw", b"$5$notscrypt").is_none());
         assert!(scrypt_crypt(b"pw", b"$7$").is_none());
-        assert!(scrypt_crypt(b"pw", b"$7$A/....").is_none(), "truncated params");
-        assert!(scrypt_crypt(b"pw", b"$7$A/..../....").is_none(), "empty salt");
-        assert!(scrypt_crypt(b"pw", b"$7$!/..../....salt").is_none(), "bad N char");
+        assert!(
+            scrypt_crypt(b"pw", b"$7$A/....").is_none(),
+            "truncated params"
+        );
+        assert!(
+            scrypt_crypt(b"pw", b"$7$A/..../....").is_none(),
+            "empty salt"
+        );
+        assert!(
+            scrypt_crypt(b"pw", b"$7$!/..../....salt").is_none(),
+            "bad N char"
+        );
     }
 
     /// Vectors probed from live libxcrypt on this host.
     #[test]
     fn matches_live_libxcrypt_vectors() {
         let cases: &[(&str, &str, &str)] = &[
-            ("pleaseletmein", "$7$A/..../....saltsalt",
-             "$7$A/..../....saltsalt$j52Gpvx3asOcAf5W/3mbFW2IoqiBftt2f5Q/EQOIZ11"),
-            ("password", "$7$8/..../....abcdefgh",
-             "$7$8/..../....abcdefgh$91Mm9rMVtydowqeGE8ctdQN.C27cyyVaMPv5BkctUv."),
-            ("", "$7$6/..../....zzzzzzzz",
-             "$7$6/..../....zzzzzzzz$twsHHnIZ5N9dVGAazpYW/5xPjmnnyERRkDI770WRld/"),
-            ("a", "$7$6/..../....zzzzzzzz",
-             "$7$6/..../....zzzzzzzz$8bC5.IY9AFXMUl4iaCyhSE/ELi3JJWoyZU7Zi4Z0pq0"),
+            (
+                "pleaseletmein",
+                "$7$A/..../....saltsalt",
+                "$7$A/..../....saltsalt$j52Gpvx3asOcAf5W/3mbFW2IoqiBftt2f5Q/EQOIZ11",
+            ),
+            (
+                "password",
+                "$7$8/..../....abcdefgh",
+                "$7$8/..../....abcdefgh$91Mm9rMVtydowqeGE8ctdQN.C27cyyVaMPv5BkctUv.",
+            ),
+            (
+                "",
+                "$7$6/..../....zzzzzzzz",
+                "$7$6/..../....zzzzzzzz$twsHHnIZ5N9dVGAazpYW/5xPjmnnyERRkDI770WRld/",
+            ),
+            (
+                "a",
+                "$7$6/..../....zzzzzzzz",
+                "$7$6/..../....zzzzzzzz$8bC5.IY9AFXMUl4iaCyhSE/ELi3JJWoyZU7Zi4Z0pq0",
+            ),
             // p = 2 and r = 2: the two fields that would look identical if the
             // little-endian decode were reversed.
-            ("password", "$7$6/..../1....abcdefgh",
-             "$7$6/..../1....abcdefgh$bSIj281JqkJoEY5nOrDPSugWyy.B9.XnkOSzqYIJeo5"),
-            ("password", "$7$60..../....abcdefgh",
-             "$7$60..../....abcdefgh$pGAk4Zxqs1cDKsjUFgbLFTJzUOMDR0pW9XkIgrH.P10"),
-            ("long password with spaces and symbols !@#$%^", "$7$8/..../....SaltySalt",
-             "$7$8/..../....SaltySalt$.yd4PHsUCHjvS7oatqCKoEG0T.NirEqjge750V4p.f/"),
+            (
+                "password",
+                "$7$6/..../1....abcdefgh",
+                "$7$6/..../1....abcdefgh$bSIj281JqkJoEY5nOrDPSugWyy.B9.XnkOSzqYIJeo5",
+            ),
+            (
+                "password",
+                "$7$60..../....abcdefgh",
+                "$7$60..../....abcdefgh$pGAk4Zxqs1cDKsjUFgbLFTJzUOMDR0pW9XkIgrH.P10",
+            ),
+            (
+                "long password with spaces and symbols !@#$%^",
+                "$7$8/..../....SaltySalt",
+                "$7$8/..../....SaltySalt$.yd4PHsUCHjvS7oatqCKoEG0T.NirEqjge750V4p.f/",
+            ),
         ];
         for (password, setting, expected) in cases {
             let got = scrypt_crypt(password.as_bytes(), setting.as_bytes());

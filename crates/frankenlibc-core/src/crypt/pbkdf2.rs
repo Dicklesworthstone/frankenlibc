@@ -118,12 +118,20 @@ mod tests {
     #[test]
     fn pbkdf2_matches_independent_implementation() {
         let cases: &[(&[u8], &[u8], u32, &str)] = &[
-            (b"passwd", b"salt", 1,
-             "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc\
-              49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783"),
-            (b"Password", b"NaCl", 80000,
-             "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56\
-              a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d"),
+            (
+                b"passwd",
+                b"salt",
+                1,
+                "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc\
+              49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783",
+            ),
+            (
+                b"Password",
+                b"NaCl",
+                80000,
+                "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56\
+              a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d",
+            ),
         ];
         for (password, salt, iterations, expected) in cases {
             let mut out = [0u8; 64];
@@ -142,7 +150,11 @@ mod tests {
         pbkdf2_hmac_sha256(b"passwd", b"salt", 1, &mut two);
         let mut one = [0u8; 32];
         pbkdf2_hmac_sha256(b"passwd", b"salt", 1, &mut one);
-        assert_eq!(&two[..32], &one[..], "first block must not depend on length");
+        assert_eq!(
+            &two[..32],
+            &one[..],
+            "first block must not depend on length"
+        );
         assert_ne!(&two[..32], &two[32..], "the counter must advance");
     }
 }

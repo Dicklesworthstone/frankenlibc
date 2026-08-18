@@ -73,38 +73,75 @@ fn host_crypt() -> Option<CryptFn> {
 fn fl_crypt(key: &CStr, setting: &CStr) -> String {
     // SAFETY: both pointers are NUL-terminated and live for the call.
     let out = unsafe { frankenlibc_abi::unistd_abi::crypt(key.as_ptr(), setting.as_ptr()) };
-    assert!(!out.is_null(), "fl crypt must never return NULL (libxcrypt contract)");
+    assert!(
+        !out.is_null(),
+        "fl crypt must never return NULL (libxcrypt contract)"
+    );
     // SAFETY: non-null and NUL-terminated by the same contract.
-    unsafe { CStr::from_ptr(out) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(out) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `(password, setting, expected)` — all probed from live libxcrypt.
 const VECTORS: &[(&str, &str, &str)] = &[
-    ("", "$2b$04$abcdefghijklmnopqrstuu",
-     "$2b$04$abcdefghijklmnopqrstuubyCG3zY1GIXMyxfivm.ClDiInHzxjiq"),
-    ("a", "$2b$04$abcdefghijklmnopqrstuu",
-     "$2b$04$abcdefghijklmnopqrstuuMFdJu9yVgmagVAIC24fOZkaFqd3s9JC"),
-    ("password", "$2b$05$.OGB/.SE/ueHAeqKBO2NC.",
-     "$2b$05$.OGB/.SE/ueHAeqKBO2NC.l.rLVibUznFAk1jsn2/OhryTtvR79Iu"),
-    ("password", "$2a$05$.OGB/.SE/ueHAeqKBO2NC.",
-     "$2a$05$.OGB/.SE/ueHAeqKBO2NC.l.rLVibUznFAk1jsn2/OhryTtvR79Iu"),
-    ("password", "$2y$05$.OGB/.SE/ueHAeqKBO2NC.",
-     "$2y$05$.OGB/.SE/ueHAeqKBO2NC.l.rLVibUznFAk1jsn2/OhryTtvR79Iu"),
-    ("abcdefghijklmnopqrstuvwxyz", "$2b$06$.OGB/.SE/ueHAeqKBO2NC.",
-     "$2b$06$.OGB/.SE/ueHAeqKBO2NC..Cy/8oNnM3M8.rTlCMRXVi3Fs.jck9."),
-    ("~!@#$%^&*()      ~!@#$%^&*()PNBFRD", "$2b$04$abcdefghijklmnopqrstuu",
-     "$2b$04$abcdefghijklmnopqrstuuGspVVDvTz38hS7RBjIMQOom7jxHAiA."),
+    (
+        "",
+        "$2b$04$abcdefghijklmnopqrstuu",
+        "$2b$04$abcdefghijklmnopqrstuubyCG3zY1GIXMyxfivm.ClDiInHzxjiq",
+    ),
+    (
+        "a",
+        "$2b$04$abcdefghijklmnopqrstuu",
+        "$2b$04$abcdefghijklmnopqrstuuMFdJu9yVgmagVAIC24fOZkaFqd3s9JC",
+    ),
+    (
+        "password",
+        "$2b$05$.OGB/.SE/ueHAeqKBO2NC.",
+        "$2b$05$.OGB/.SE/ueHAeqKBO2NC.l.rLVibUznFAk1jsn2/OhryTtvR79Iu",
+    ),
+    (
+        "password",
+        "$2a$05$.OGB/.SE/ueHAeqKBO2NC.",
+        "$2a$05$.OGB/.SE/ueHAeqKBO2NC.l.rLVibUznFAk1jsn2/OhryTtvR79Iu",
+    ),
+    (
+        "password",
+        "$2y$05$.OGB/.SE/ueHAeqKBO2NC.",
+        "$2y$05$.OGB/.SE/ueHAeqKBO2NC.l.rLVibUznFAk1jsn2/OhryTtvR79Iu",
+    ),
+    (
+        "abcdefghijklmnopqrstuvwxyz",
+        "$2b$06$.OGB/.SE/ueHAeqKBO2NC.",
+        "$2b$06$.OGB/.SE/ueHAeqKBO2NC..Cy/8oNnM3M8.rTlCMRXVi3Fs.jck9.",
+    ),
+    (
+        "~!@#$%^&*()      ~!@#$%^&*()PNBFRD",
+        "$2b$04$abcdefghijklmnopqrstuu",
+        "$2b$04$abcdefghijklmnopqrstuuGspVVDvTz38hS7RBjIMQOom7jxHAiA.",
+    ),
     // 80 bytes: past bcrypt's 72-byte cap, so the tail must be discarded.
-    ("01234567890123456789012345678901234567890123456789012345678901234567890123456789",
-     "$2b$04$abcdefghijklmnopqrstuu",
-     "$2b$04$abcdefghijklmnopqrstuum2G75IXDN/xsgbNa/hCiPSKyIHQd70S"),
+    (
+        "01234567890123456789012345678901234567890123456789012345678901234567890123456789",
+        "$2b$04$abcdefghijklmnopqrstuu",
+        "$2b$04$abcdefghijklmnopqrstuum2G75IXDN/xsgbNa/hCiPSKyIHQd70S",
+    ),
     // The published OpenBSD triple.
-    ("U*U", "$2a$05$CCCCCCCCCCCCCCCCCCCCC.",
-     "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW"),
-    ("U*U*", "$2a$05$CCCCCCCCCCCCCCCCCCCCC.",
-     "$2a$05$CCCCCCCCCCCCCCCCCCCCC.VGOzA784oUp/Z0DY336zx7pLYAy0lwK"),
-    ("U*U*U", "$2a$05$XXXXXXXXXXXXXXXXXXXXXO",
-     "$2a$05$XXXXXXXXXXXXXXXXXXXXXOAcXxm9kjPGEMsLznoKqmqw7tc8WCx4a"),
+    (
+        "U*U",
+        "$2a$05$CCCCCCCCCCCCCCCCCCCCC.",
+        "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW",
+    ),
+    (
+        "U*U*",
+        "$2a$05$CCCCCCCCCCCCCCCCCCCCC.",
+        "$2a$05$CCCCCCCCCCCCCCCCCCCCC.VGOzA784oUp/Z0DY336zx7pLYAy0lwK",
+    ),
+    (
+        "U*U*U",
+        "$2a$05$XXXXXXXXXXXXXXXXXXXXXO",
+        "$2a$05$XXXXXXXXXXXXXXXXXXXXXOAcXxm9kjPGEMsLznoKqmqw7tc8WCx4a",
+    ),
 ];
 
 #[test]
@@ -120,9 +157,14 @@ fn bcrypt_matches_live_libxcrypt() {
 
         // SAFETY: both pointers are NUL-terminated and live for the call.
         let host_out = unsafe { host(key.as_ptr(), salt.as_ptr()) };
-        assert!(!host_out.is_null(), "host crypt returned NULL for {setting}");
+        assert!(
+            !host_out.is_null(),
+            "host crypt returned NULL for {setting}"
+        );
         // SAFETY: non-null and NUL-terminated.
-        let host_str = unsafe { CStr::from_ptr(host_out) }.to_string_lossy().into_owned();
+        let host_str = unsafe { CStr::from_ptr(host_out) }
+            .to_string_lossy()
+            .into_owned();
 
         // The pin catches a host whose libxcrypt has itself changed, which
         // would otherwise let fl and a drifted oracle agree on a wrong answer.
@@ -165,7 +207,9 @@ fn bcrypt_rejects_bad_settings_like_libxcrypt() {
         // SAFETY: NUL-terminated, live for the call.
         let host_out = unsafe { host(key.as_ptr(), salt.as_ptr()) };
         // SAFETY: libxcrypt never returns NULL here.
-        let host_str = unsafe { CStr::from_ptr(host_out) }.to_string_lossy().into_owned();
+        let host_str = unsafe { CStr::from_ptr(host_out) }
+            .to_string_lossy()
+            .into_owned();
         let fl_str = fl_crypt(&key, &salt);
         assert_eq!(fl_str, host_str, "rejected setting {setting}");
     }

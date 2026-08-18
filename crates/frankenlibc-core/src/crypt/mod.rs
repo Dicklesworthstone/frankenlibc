@@ -19,3 +19,4 @@ pub mod scrypt;
 pub mod scrypt_crypt;
 pub mod sha256;
 pub mod sha512;
+pub mod yescrypt_params;
