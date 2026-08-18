@@ -67,13 +67,85 @@ pub fn parse_mntent_line(line: &[u8]) -> Option<MntFields<'_>> {
 /// or empty inputs to `0` (matches glibc's behavior of treating
 /// missing/garbage trailing fields as zero).
 pub fn parse_mntent_freq_passno(freq_s: &[u8], passno_s: &[u8]) -> (i32, i32) {
-    let parse = |bytes: &[u8]| -> i32 {
-        std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0)
+    // glibc reads these with `sscanf(..., "%d %d", &freq, &passno)` on the rest
+    // of the line, and that has two consequences a per-token integer parse does
+    // not reproduce. Both are MEASURED against glibc 2.42 through an fmemopen'd
+    // getmntent_r:
+    //
+    //  * COUPLING. If the first conversion stops early, the second never
+    //    matches and passno keeps its initial 0 -- even though the text after
+    //    it is a perfectly good number:
+    //        "12abc 3" -> freq 12, passno 0   (a per-token parse gives 0 and 3)
+    //        "0x10 3"  -> freq 0,  passno 0   (strtol is base 10: reads "0")
+    //        "1e3 3"   -> freq 1,  passno 0
+    //    and if the FIRST conversion matches nothing at all, both stay 0:
+    //        "abc 3"   -> freq 0,  passno 0
+    //
+    //  * WRAPPING, not rejection. %d is strtol into a long, saturating at
+    //    LONG_MAX/LONG_MIN, then kept in an int -- so the low 32 bits survive:
+    //        "99999999999"           -> 1215752191
+    //        "2147483648"            -> -2147483648
+    //        "4294967296"            -> 0
+    //        "9223372036854775808"   -> -1   (saturated, low 32 bits all ones)
+    //    The previous implementation used Rust's `str::parse::<i32>`, which
+    //    REJECTS all of those and fell back to 0.
+    let (freq, freq_digits, freq_whole) = scan_mntent_int(freq_s);
+    if !freq_digits {
+        // The first conversion matched nothing, so neither field was assigned.
+        return (0, 0);
+    }
+    if !freq_whole {
+        // It stopped mid-token; the second conversion cannot match.
+        return (freq, 0);
+    }
+    let (passno, passno_digits, _) = scan_mntent_int(passno_s);
+    (freq, if passno_digits { passno } else { 0 })
+}
+
+/// One `%d` conversion, glibc-style.
+///
+/// Returns `(value, matched_any_digit, consumed_the_whole_field)`. The value is
+/// `strtol` semantics — optional sign, base 10, saturating at the `i64` ends —
+/// reduced to the low 32 bits, which is what storing a `long` into an `int`
+/// does.
+fn scan_mntent_int(bytes: &[u8]) -> (i32, bool, bool) {
+    let mut i = 0;
+    let negative = match bytes.first() {
+        Some(b'-') => {
+            i = 1;
+            true
+        }
+        Some(b'+') => {
+            i = 1;
+            false
+        }
+        _ => false,
     };
-    (parse(freq_s), parse(passno_s))
+    let start = i;
+    let mut acc: i64 = 0;
+    let mut saturated = false;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        let digit = i64::from(bytes[i] - b'0');
+        if !saturated {
+            match acc.checked_mul(10).and_then(|v| v.checked_add(digit)) {
+                Some(v) => acc = v,
+                None => saturated = true,
+            }
+        }
+        i += 1;
+    }
+    if i == start {
+        return (0, false, false);
+    }
+    let value: i64 = if saturated {
+        if negative { i64::MIN } else { i64::MAX }
+    } else if negative {
+        -acc
+    } else {
+        acc
+    };
+    // Storing a long in an int keeps the low 32 bits.
+    (value as i32, true, i == bytes.len())
 }
 
 /// Search a comma-separated options string for `needle` as a whole token.
