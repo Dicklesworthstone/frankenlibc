@@ -10,10 +10,14 @@
 //! `dlsym`-able, and a failure token everywhere else.
 //!
 //! MD4 is cryptographically broken and NTHASH is unsalted and uniterated, so
-//! this is a compatibility function and nothing else. It must never be reached
-//! by anything choosing a hash rather than verifying one — note that
-//! `crypt_gensalt` has no `$3$` prefix, which is libxcrypt making the same
-//! point.
+//! this is a compatibility function and nothing else — it exists to verify what
+//! is already stored, not to hash anything new.
+//!
+//! An earlier draft of this comment asserted that `crypt_gensalt` has no `$3$`
+//! prefix, and read that as libxcrypt declining to CREATE what it will VERIFY.
+//! That was a tidy story and it is false: `crypt_gensalt("$3$", ...)` returns
+//! `$3$` on libcrypt.so.1, and fl matches it. The recorded fact is the probe,
+//! not the reasoning I preferred.
 //!
 //! ## The format, measured
 //!

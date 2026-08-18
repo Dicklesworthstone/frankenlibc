@@ -9262,9 +9262,8 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     } else if salt_bytes.starts_with(b"$3$") {
         // NTHASH. Unsalted, uniterated MD4 — a compatibility scheme for Samba
         // and MS-CHAP credential stores, not a password hash anyone should
-        // choose. `crypt_gensalt` has no `$3$` prefix, here or in libxcrypt,
-        // which is the library making that distinction: fl will VERIFY one and
-        // will not CREATE one.
+        // choose. libxcrypt's gensalt does accept `$3$` (probed), so fl accepts
+        // it too rather than inventing a policy the incumbent does not have.
         crypt_nthash(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$7$") {
         // scrypt. Native as of bd-c6ykz1; previously fell through to host
@@ -9631,7 +9630,19 @@ fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
         return Err(errno::EINVAL);
     };
     match bytes.as_slice() {
-        b"" => Ok(b"$6$"),
+        // EMPTY MEANS DES, not the strongest available scheme. Measured:
+        // `crypt_gensalt("", 0, ...)` answers a two-character salt on
+        // libcrypt.so.1, where fl previously answered `$6$`. A caller that
+        // expects two characters and receives nineteen is a real compatibility
+        // break, which is why this matches the incumbent even though it is the
+        // WEAKER default. Note the strong default is reached by passing NULL,
+        // which is a different case and still lands on `$6$` below.
+        b"" => Ok(b""),
+        // `$3$` NTHASH: the setting is the bare prefix, since the scheme has no
+        // salt. libxcrypt's gensalt DOES support it -- I claimed in md4.rs that
+        // it did not, on the strength of the scheme being disreputable, and the
+        // probe refuted me.
+        b"$3$" => Ok(b"$3$"),
         b"$1$" => Ok(b"$1$"),
         b"$5$" => Ok(b"$5$"),
         b"$6$" => Ok(b"$6$"),
@@ -9643,8 +9654,22 @@ fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
         b"$2b$" => Ok(b"$2b$"),
         b"$2y$" => Ok(b"$2y$"),
         b"$7$" => Ok(b"$7$"),
+        // BSDI extended DES is selected by a leading underscore; anything after
+        // it is ignored (`_` and `__` both answer the same setting).
+        other if other.first() == Some(&b'_') => Ok(b"_"),
+        // A prefix whose first two bytes are crypt base-64 digits also selects
+        // traditional DES, and ONLY those two are examined -- `ab:` is accepted
+        // here even though `crypt` refuses that same string as a setting. Two
+        // different checks inside one library, measured separately rather than
+        // assumed to agree.
+        other if other.len() >= 2 && other[..2].iter().copied().all(is_crypt_b64_digit) => Ok(b""),
         _ => Err(errno::EINVAL),
     }
+}
+
+/// Is `ch` a crypt base-64 digit (`./0-9A-Za-z`)?
+fn is_crypt_b64_digit(ch: u8) -> bool {
+    matches!(ch, b'.' | b'/' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z')
 }
 
 /// Is `prefix` one of the bcrypt variants, which carry their own cost and salt
@@ -9763,7 +9788,47 @@ fn build_gensalt(
     let p = gensalt_prefix(prefix)?;
     out.extend_from_slice(p);
 
-    if gensalt_is_bcrypt(p) {
+    if p == b"$3$" {
+        // NTHASH has no salt and no cost, so the setting IS the prefix. Nothing
+        // is drawn from the entropy and any nrbytes is accepted.
+    } else if p.is_empty() {
+        // Traditional DES: two characters, ONE PER ENTROPY BYTE, low six bits.
+        // Deliberately NOT `gensalt_encode_bytes`, which packs three bytes
+        // little-endian and would emit `/6` where the incumbent emits `/0` for
+        // the same input -- measured across six entropy values.
+        //
+        // A non-zero count is REFUSED rather than ignored. Traditional DES has
+        // no tunable cost and the host returns NULL for every count except 0;
+        // accepting one silently would promise a work factor that is not there.
+        if count != 0 {
+            return Err(errno::EINVAL);
+        }
+        let entropy = gensalt_entropy(rbytes, nrbytes, 2)?;
+        for byte in entropy {
+            out.push(CRYPT_B64_ALPHABET[(byte & 0x3f) as usize]);
+        }
+    } else if p == b"_" {
+        // BSDI: `_` plus four count characters plus four salt characters, both
+        // little-endian base-64.
+        //
+        // THE COUNT IS FORCED ODD, which is measured and is not a detail anyone
+        // would guess: count 2 emits 3, 100 emits 101, 724 emits 725. Count 0
+        // selects the library default 725, and anything above the 24-bit field
+        // clamps to 16777215 rather than wrapping. Both matter -- a silently
+        // wrapped count would produce a far cheaper hash than the caller asked
+        // for.
+        let requested = if count == 0 { 725 } else { count | 1 };
+        let iterations = u32::try_from(requested.min(0x00ff_ffff)).map_err(|_| errno::EINVAL)?;
+        // Four salt characters come from three entropy bytes, so fewer than
+        // three is refused (measured: nrbytes 2 returns NULL, 3 succeeds).
+        if rbytes.is_null() || nrbytes < 3 {
+            return Err(errno::EINVAL);
+        }
+        for index in 0..4 {
+            out.push(CRYPT_B64_ALPHABET[((iterations >> (6 * index)) & 0x3f) as usize]);
+        }
+        gensalt_encode_bytes(rbytes, nrbytes, 4, out);
+    } else if gensalt_is_bcrypt(p) {
         // `$2?$` + two zero-padded cost digits + `$` + 22 salt characters.
         // Measured against libxcrypt: count 0 selects 05, counts 4..=31 are
         // taken literally, and 3 and 32 both return NULL rather than clamping.

@@ -284,6 +284,42 @@ const GENSALT_VECTORS: &[(&str, u64, i32, Option<&str>)] = &[
     // The pre-existing schemes must not have moved.
     ("$6$", 0, 16, Some("$6$/6k.2IU/5UE08g.1")),
     ("$1$", 0, 16, Some("$1$/6k.2IU/")),
+    // ---- traditional DES ----
+    // An EMPTY prefix means DES, not the strongest scheme. fl answered
+    // "$6$" here, so a caller expecting two characters got nineteen.
+    ("", 0, 16, Some("/0")),
+    // The two characters are one per entropy BYTE, low six bits -- not the
+    // three-byte little-endian packing every other scheme uses, which would
+    // emit "/6" from this same entropy.
+    ("", 0, 2, Some("/0")),
+    // No tunable cost: any non-zero count is refused, not ignored.
+    ("", 1, 16, None),
+    // Fewer than two entropy bytes is refused rather than padded.
+    ("", 0, 1, None),
+    // A prefix whose first two bytes are base-64 digits also selects DES...
+    ("ab", 0, 16, Some("/0")),
+    // ...and ONLY those two are examined. `crypt` refuses "ab:" as a setting
+    // while gensalt accepts it as a prefix -- two different checks in one
+    // library, measured separately rather than assumed to agree.
+    ("ab:", 0, 16, Some("/0")),
+    ("a", 0, 16, None),
+    ("!!", 0, 16, None),
+    // ---- BSDI extended DES ----
+    ("_", 0, 16, Some("_J9../6k.")),
+    // THE COUNT IS FORCED ODD. count 2 emits 3 (`1...` little-endian), and
+    // 724 and 725 both emit 725. An implementation that passed the count
+    // through would produce a setting the host never generates.
+    ("_", 2, 16, Some("_1.../6k.")),
+    ("_", 724, 16, Some("_J9../6k.")),
+    ("_", 725, 16, Some("_J9../6k.")),
+    // Four salt characters come from three entropy bytes, so two is refused.
+    ("_", 0, 2, None),
+    ("_", 0, 3, Some("_J9../6k.")),
+    // ---- NTHASH ----
+    // The setting IS the prefix: no salt, no cost, and nothing drawn from the
+    // entropy -- which is why nrbytes 0 still succeeds.
+    ("$3$", 0, 16, Some("$3$")),
+    ("$3$", 0, 0, Some("$3$")),
 ];
 
 #[test]
@@ -384,6 +420,40 @@ fn generated_settings_round_trip_through_crypt() {
         assert!(
             fl_hash.starts_with(prefix),
             "the hash must carry the setting it was made from: {fl_hash}"
+        );
+    }
+
+    // The three schemes added alongside DES round-trip too, and they are cheap
+    // enough to run at their DEFAULT cost: 25 rounds, 725 rounds, and one MD4.
+    // This is the property that makes a capability usable rather than merely
+    // present -- `passwd` calls gensalt and feeds the result straight to crypt,
+    // so a setting fl can generate but not hash would be worse than no setting.
+    for (prefix, nrbytes) in [("", 16), ("_", 16), ("$3$", 16)] {
+        let pfx = CString::new(prefix).unwrap();
+        // SAFETY: NUL-terminated prefix, 64 bytes of entropy.
+        let setting_ptr = unsafe {
+            frankenlibc_abi::unistd_abi::crypt_gensalt(pfx.as_ptr(), 0, bytes.as_ptr(), nrbytes)
+        };
+        assert!(
+            !setting_ptr.is_null(),
+            "fl gensalt refused {prefix:?}, so the scheme cannot be created"
+        );
+        // SAFETY: non-null and NUL-terminated.
+        let setting = unsafe { CStr::from_ptr(setting_ptr) }.to_owned();
+
+        let key = CString::new("password").unwrap();
+        let fl_hash = fl_crypt(&key, &setting);
+        // SAFETY: both NUL-terminated and live for the call.
+        let host_ptr = unsafe { host(key.as_ptr(), setting.as_ptr()) };
+        // SAFETY: libxcrypt never returns NULL here.
+        let host_hash = unsafe { CStr::from_ptr(host_ptr) }
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(fl_hash, host_hash, "round trip for {prefix:?}");
+        assert_ne!(
+            fl_hash, "*0",
+            "fl generated a setting for {prefix:?} that it then refused to hash"
         );
     }
 }
