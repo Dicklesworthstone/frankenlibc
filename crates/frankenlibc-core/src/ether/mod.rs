@@ -28,6 +28,12 @@ pub const ETHER_ADDR_TEXT_LEN: usize = 17;
 /// (`…:6x` -> NULL, but `…:6 ` -> OK, `…:6a` -> `…:6a`). Returns `None` if any
 /// octet is missing or malformed. Hex digits are case-insensitive.
 pub fn parse_ether_addr(bytes: &[u8]) -> Option<EtherAddr> {
+    parse_ether_addr_prefix(bytes).map(|(addr, _)| addr)
+}
+
+/// Like [`parse_ether_addr`], but also reports how many bytes the address
+/// occupied, so a caller can find the separator byte that follows it.
+pub fn parse_ether_addr_prefix(bytes: &[u8]) -> Option<(EtherAddr, usize)> {
     let mut octets = [0u8; 6];
     let mut idx = 0usize;
     for (slot, oct) in octets.iter_mut().enumerate() {
@@ -59,7 +65,7 @@ pub fn parse_ether_addr(bytes: &[u8]) -> Option<EtherAddr> {
             return None;
         }
     }
-    Some(octets)
+    Some((octets, idx))
 }
 
 /// glibc `isspace` set for ASCII: space plus the 0x09..=0x0D control whitespace
@@ -95,10 +101,15 @@ pub fn format_ether_addr(addr: &EtherAddr, out: &mut [u8]) -> usize {
 
 /// Parse one /etc/ethers line into an address and a borrowed hostname.
 ///
-/// Format: `<MAC> <hostname>` with leading whitespace allowed and any
-/// trailing whitespace / EOL bytes stripped from the hostname. Returns
-/// `None` for lines that don't have both a parseable MAC and a
-/// non-empty hostname.
+/// Format: address, one separator byte, hostname. Leading whitespace is NOT
+/// allowed — the first byte must begin the address — and trailing whitespace /
+/// EOL bytes are stripped from the hostname. Returns `None` for lines that
+/// don't have both a parseable MAC and a non-empty hostname.
+///
+/// This doc previously said "leading whitespace allowed", contradicting the
+/// code immediately below it, which was right. That is not a harmless typo: the
+/// /etc/networks parser shipped a real defect precisely because its code
+/// followed a wrong doc comment instead of the measured behaviour.
 pub fn parse_ether_line(line: &[u8]) -> Option<(EtherAddr, &[u8])> {
     // glibc's `ether_line` does NOT skip leading whitespace: the very first
     // byte must begin the address, so a line like "  01:.. host" is rejected
@@ -106,18 +117,28 @@ pub fn parse_ether_line(line: &[u8]) -> Option<(EtherAddr, &[u8])> {
     if line.is_empty() {
         return None;
     }
-    // MAC field ends at next whitespace.
-    let mac_end = line
-        .iter()
-        .position(|&b| b == b' ' || b == b'\t')
-        .unwrap_or(line.len());
-    if mac_end == 0 || mac_end >= line.len() {
+    // The address is parsed from the START of the line, and glibc then consumes
+    // EXACTLY ONE byte as the separator -- whatever that byte is -- before
+    // reading the hostname. Splitting the line at the first whitespace instead
+    // gets the hostname wrong whenever a non-blank byte follows the sixth
+    // octet. Measured against host ether_line:
+    //     "01:02:03:04:05:06:07 toolong" -> addr 01..06, host "07"
+    //     "01:02:03:04:05:06:xy host"    -> addr 01..06, host "xy"
+    //     "01:02:03:04:05:06zz host"     -> addr 01..06, host "z"
+    //     "01:02:03:04:05:06,host"       -> addr 01..06, host "host"
+    // In each case the byte after the address is discarded and the hostname
+    // runs to the next blank. fl answered "toolong", "host", "host" and "host".
+    let (addr, consumed) = parse_ether_addr_prefix(line)?;
+    if consumed >= line.len() {
+        // Nothing after the address, so there is no hostname.
         return None;
     }
-    let addr = parse_ether_addr(&line[..mac_end])?;
-    // Skip whitespace before hostname.
-    let rest = &line[mac_end..];
-    let host_start = rest.iter().position(|&b| b != b' ' && b != b'\t')?;
+    // Discard the single separator byte, then skip any further blanks.
+    let rest = &line[consumed + 1..];
+    let host_start = rest
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .unwrap_or(rest.len());
     let host_bytes = &rest[host_start..];
     // glibc terminates the hostname at the first '#' (inline comment),
     // whitespace, or EOL byte, and rejects a missing/comment-only hostname.
