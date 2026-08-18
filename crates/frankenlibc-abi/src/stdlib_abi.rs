@@ -4556,8 +4556,7 @@ pub unsafe extern "C" fn ecvt(
         // Write digits straight into BUF (reserve the last byte for the NUL) via
         // ecvt_into — no per-call Vec (which in the deployed dylib routes through
         // the interposed allocator). Byte-identical to the old core::ecvt→copy.
-        let (len, dp, neg) =
-            frankenlibc_core::stdlib::ecvt_into(value, ndigit, &mut buf[..383]);
+        let (len, dp, neg) = frankenlibc_core::stdlib::ecvt_into(value, ndigit, &mut buf[..383]);
         buf[len] = 0;
         if !decpt.is_null() {
             *decpt = dp;
@@ -4604,8 +4603,7 @@ pub unsafe extern "C" fn fcvt(
         // Write digits straight into BUF (reserve the last byte for the NUL) via
         // fcvt_into — no per-call Vec (interposed-allocator cost in the deployed
         // dylib). Byte-identical to the old core::fcvt→copy.
-        let (len, dp, neg) =
-            frankenlibc_core::stdlib::fcvt_into(value, ndigit, &mut buf[..383]);
+        let (len, dp, neg) = frankenlibc_core::stdlib::fcvt_into(value, ndigit, &mut buf[..383]);
         buf[len] = 0;
         if !decpt.is_null() {
             *decpt = dp;
@@ -5613,21 +5611,16 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
 // Batch: getusershell family — Implemented
 // ===========================================================================
 
-static VALID_SHELLS: &[&str] = &[
-    "/bin/sh",
-    "/bin/bash",
-    "/bin/zsh",
-    "/bin/csh",
-    "/bin/tcsh",
-    "/bin/dash",
-    "/bin/fish",
-    "/usr/bin/bash",
-    "/usr/bin/zsh",
-    "/usr/bin/fish",
-    "/usr/bin/tmux",
-    "/bin/false",
-    "/usr/sbin/nologin",
-];
+/// The list glibc falls back to when /etc/shells cannot be read.
+///
+/// TWO entries, not thirteen. Measured on the host by binding /dev/null (empty)
+/// and an unreadable file over /etc/shells: glibc answers exactly
+/// `/bin/sh`, `/bin/csh` in both cases. fl previously invented a thirteen-shell
+/// list including /bin/bash, /usr/bin/fish and /usr/sbin/nologin, so on a system
+/// without /etc/shells it reported shells glibc does not — and `/usr/sbin/nologin`
+/// as a VALID login shell is the wrong direction for a list whose whole purpose
+/// is deciding whether a shell is acceptable.
+static VALID_SHELLS: &[&str] = &["/bin/sh", "/bin/csh"];
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
@@ -5646,6 +5639,37 @@ fn with_shell_state<R>(f: impl FnOnce(&Cell<usize>, &RefCell<Vec<String>>) -> R)
     }
 }
 
+/// Extract one shell path from an /etc/shells line, the way glibc does.
+///
+/// NOT "trim the line and take all of it". glibc scans forward for the first
+/// `/`, abandoning the line if it meets a `#` or the end first, and the entry
+/// then runs from that `/` to the next blank or `#`. Measured by binding
+/// /etc/services over /etc/shells and walking getusershell: a line reading
+/// `tcpmux 1/tcp` comes back as `/tcp`, and lines with no `/` at all never
+/// appear.
+///
+/// So three things change versus taking the whole line: text before the first
+/// `/` is dropped, an inline `# comment` is dropped, and a line without a `/`
+/// is skipped rather than returned as a bogus shell path.
+fn usershell_entry(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    // Forward to the first '/', giving up at a '#' or end of line. A leading
+    // '#' comment is caught by this same scan, which is why glibc needs no
+    // separate comment test.
+    while i < bytes.len() && bytes[i] != b'/' && bytes[i] != b'#' {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] == b'#' {
+        return None;
+    }
+    let start = i;
+    while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'#' {
+        i += 1;
+    }
+    Some(&line[start..i])
+}
+
 /// `getusershell` — get valid login shell from /etc/shells.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn getusershell() -> *mut c_char {
@@ -5655,9 +5679,8 @@ pub extern "C" fn getusershell() -> *mut c_char {
             // Load from /etc/shells
             if let Ok(content) = std::fs::read_to_string("/etc/shells") {
                 for line in content.lines() {
-                    let line = line.trim();
-                    if !line.is_empty() && !line.starts_with('#') {
-                        cache.push(format!("{line}\0"));
+                    if let Some(entry) = usershell_entry(line) {
+                        cache.push(format!("{entry}\0"));
                     }
                 }
             }
@@ -6701,8 +6724,7 @@ pub unsafe extern "C" fn fcvt_r(
     // leading-zero stripping, rounded-to-zero, and negative-ndigit semantics;
     // deriving the required capacity from its full decimal-point position
     // avoids both the outer Vec and a second formatting pass.
-    let digit_capacity =
-        (effective_buflen - 1).min(MAX_LEGACY_CVT_DIGITS.saturating_add(320));
+    let digit_capacity = (effective_buflen - 1).min(MAX_LEGACY_CVT_DIGITS.saturating_add(320));
     // SAFETY: `buf` is non-null and `digit_capacity` is bounded by both the
     // caller's available space and fcvt_into's maximum finite f64 output.
     let digits = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), digit_capacity) };
