@@ -116,6 +116,18 @@ jobs:
         run: |
           cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/ci/release-abi.log
 
+      # Structural export checks (scripts/audit_abi_exports.py, core gates) prove
+      # a symbol is in .dynsym. This proves a loader RESOLVES it and that the
+      # code behind it is FrankenLibC's -- dladdr places each address inside the
+      # frankenlibc object, because a non-null dlsym can still be satisfied by an
+      # already-loaded glibc. Needs the release profile: the export attribute is
+      # cfg'd to not(debug_assertions), so no debug test can see an export.
+      - name: Check ABI exports resolve into FrankenLibC
+        run: |
+          mkdir -p artifacts/ci
+          cargo run --profile release -p frankenlibc-bench --features abi-bench \
+            --example abi_export_smoke 2>&1 | tee artifacts/ci/abi-export-smoke.log
+
       - name: Check replacement guard (interpose policy)
         run: |
           bash scripts/check_replacement_guard.sh interpose 2>&1 | tee artifacts/ci/replacement-guard-interpose.log
