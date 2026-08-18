@@ -305,3 +305,83 @@ fn two_symlinks_is_per_filesystem_not_a_constant() {
         "fl must report _PC_2_SYMLINKS=0 on devpts -- a constant 1 fails exactly here"
     );
 }
+
+/// `_PC_LINK_MAX` across every mounted filesystem, not just /tmp.
+///
+/// fl derives this from `statfs.f_type` and always has — the shape was right.
+/// The DATA was wrong: the table asserted PROC_SUPER_MAGIC and SYSFS_MAGIC map
+/// to 1, where glibc reports its default 127. `/proc` and `/sys` are mounted on
+/// every Linux box, so this was a live divergence that the one-path gate above
+/// could not see because it only ever asked /tmp (tmpfs, where fl's answer
+/// happened to equal the default).
+///
+/// A correct-shaped implementation with a wrong table is the failure mode this
+/// test exists for, which is why it sweeps mounts instead of checking a value.
+#[test]
+fn link_max_matches_glibc_on_every_mounted_filesystem() {
+    let mut dirs: Vec<String> = [
+        "/",
+        "/tmp",
+        "/proc",
+        "/sys",
+        "/sys/fs/cgroup",
+        "/dev",
+        "/dev/shm",
+        "/dev/pts",
+        "/run",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    if let Ok(entries) = std::fs::read_dir("/snap") {
+        for entry in entries.flatten().take(8) {
+            if let Ok(revs) = std::fs::read_dir(entry.path()) {
+                for rev in revs.flatten().take(2) {
+                    let p = rev.path();
+                    if p.is_dir()
+                        && p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))
+                    {
+                        dirs.push(p.to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut compared = 0usize;
+    let mut distinct = std::collections::BTreeSet::new();
+    let mut divergences = Vec::new();
+    for dir in &dirs {
+        let Ok(path) = CString::new(dir.as_str()) else {
+            continue;
+        };
+        let g = unsafe { pathconf(path.as_ptr(), libc::_PC_LINK_MAX) };
+        if g < 0 {
+            continue;
+        }
+        let f = unsafe { fu::pathconf(path.as_ptr(), libc::_PC_LINK_MAX) };
+        compared += 1;
+        distinct.insert(g);
+        if f != g {
+            divergences.push(format!("{dir}: fl={f} glibc={g}"));
+        }
+    }
+
+    assert!(compared >= 6, "only {compared} paths comparable");
+    // More than one distinct answer means the sweep actually crossed a
+    // filesystem boundary that matters; a run where everything returns 127
+    // would pass against a table that is entirely wrong.
+    assert!(
+        distinct.len() >= 2,
+        "every path reported the same _PC_LINK_MAX ({distinct:?}) -- this run cannot \
+         distinguish a correct table from a constant"
+    );
+    assert!(
+        divergences.is_empty(),
+        "_PC_LINK_MAX divergences vs glibc ({} of {compared}):\n  {}",
+        divergences.len(),
+        divergences.join("\n  ")
+    );
+}

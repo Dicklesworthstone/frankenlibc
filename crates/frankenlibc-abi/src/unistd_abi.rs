@@ -4274,19 +4274,36 @@ fn fs_link_max_for_type(f_type: i64) -> libc::c_long {
     const EXT2_SUPER_MAGIC: i64 = 0xEF53; // also EXT3, EXT4
     const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
     const XFS_SUPER_MAGIC: i64 = 0x58465342;
-    const TMPFS_MAGIC: i64 = 0x01021994;
-    const NFS_SUPER_MAGIC: i64 = 0x6969;
-    const RAMFS_MAGIC: i64 = 0x858458F6;
-    const PROC_SUPER_MAGIC: i64 = 0x9FA0;
-    const SYSFS_MAGIC: i64 = 0x62656572;
     match f_type {
         EXT2_SUPER_MAGIC => 65000, // EXT4 limit; ext2/3 cap at 32000 but glibc returns 65000
         BTRFS_SUPER_MAGIC => 65535,
         XFS_SUPER_MAGIC => 2147483647, // INT32_MAX
-        TMPFS_MAGIC | RAMFS_MAGIC => 127,
-        NFS_SUPER_MAGIC => 32000,
-        PROC_SUPER_MAGIC | SYSFS_MAGIC => 1,
-        _ => 127, // POSIX minimum (LINUX_LINK_MAX)
+        // Everything else takes glibc's default. THREE entries were removed
+        // from this match rather than added, because they were inventions:
+        //
+        //   PROC_SUPER_MAGIC (0x9fa0)  -> was 1, glibc says 127  [MEASURED]
+        //   SYSFS_MAGIC (0x62656572)   -> was 1, glibc says 127  [MEASURED]
+        //   NFS_SUPER_MAGIC (0x6969)   -> was 32000, glibc says 127
+        //
+        // The first two are reproducible on any Linux box: pathconf("/proc",
+        // _PC_LINK_MAX) and pathconf("/sys", _PC_LINK_MAX) are both 127 in
+        // glibc and were both 1 here. The NFS row could not be measured (no NFS
+        // mount), and comes from the incumbent's code instead: disassembling
+        // __statfs_link_max in libc.so.6 2.42 (the local helper pathconf tail-
+        // calls at 0x104360) gives the COMPLETE set of filesystem magics it
+        // compares --
+        //   0xef53, 0x2468, 0x2478, 0x11954, 0xbd00bd0, 0x12ff7b7, 0x52654973,
+        //   0x54190100, 0x58465342, 0x9123683e, 0xf2f52010
+        // -- and 0x6969 is not among them, nor are 0x9fa0, 0x62656572,
+        // 0x858458f6 (ramfs) or 0x01021994 (tmpfs). The tmpfs and ramfs arms
+        // this match used to carry were harmless because they returned the
+        // default anyway; they are dropped as noise.
+        //
+        // glibc DOES special-case eight magics that fl still does not, which
+        // means fl returns 127 where glibc returns a real limit on reiserfs,
+        // f2fs, ufs, minix and friends. Those are latent, unmeasurable here,
+        // and filed rather than guessed (see the bead referenced in the commit).
+        _ => 127, // POSIX minimum (LINUX_LINK_MAX), and glibc's default
     }
 }
 
