@@ -23,17 +23,53 @@
 //!         --example abi_disasm_probe -- memrchr strnlen
 //!
 //! With no arguments it probes a default set of delegating string wrappers.
+//!
+//! # NOT YET TRUSTWORTHY — read before using its output
+//!
+//! Two observations from its first session say the parsing or the build is not
+//! yet sound, and neither is explained:
+//!
+//! 1. On a freshly built object `memrchr` and `memchr` report IDENTICAL bodies
+//!    (337 instructions, 19 calls, 0 into core) differing only in one `_DYNAMIC`
+//!    offset, while on an earlier object they differed (349/19/2 against
+//!    337/19/0). Two symmetric wrappers COULD legitimately compile to the same
+//!    shape, but identical counts are equally consistent with the block
+//!    boundaries below picking up the wrong function: `--disassemble=SYM` does
+//!    not promise exactly one function, and the `take_while` on a blank line is
+//!    an assumption about objdump's layout, not a documented contract.
+//! 2. Two runs of the SAME source produced objects of different sizes
+//!    (21622800 and 21622776 bytes), so the build is not reproducible run to run
+//!    — plausibly `codegen-units = 16` in the default release profile, but
+//!    unverified.
+//!
+//! Until both are settled, treat a `calls_into_core` number here as a lead and
+//! not as evidence, and do not put one in a ledger row. What IS established is
+//! the plumbing: `objdump` can be reached on a worker through `cargo run`, and
+//! the object is now built and identified by SHA-256 before it is read.
 
 use std::process::Command;
 
 /// Wrappers whose core delegate is the open question (bd-abi-core-inline-boundary-nmjdud).
 const DEFAULT_SYMBOLS: &[&str] = &["memrchr", "memchr", "strnlen", "strlen"];
 
-fn shared_object() -> String {
-    let dir = std::env::var("FRANKENLIBC_BENCH_TARGET_DIR")
+/// The target directory the shipped cdylib is read from AND built into.
+///
+/// Both must be the same directory or the probe rebuilds one artifact and
+/// disassembles another — which is precisely what happened on the first attempt
+/// to fix the staleness: the inner `cargo build` inherited no `CARGO_TARGET_DIR`
+/// (the outer invocation unsets it and passes `--config build.target-dir`
+/// instead), so it built into the overlay's default `target/` while this probe
+/// went on reading `/data/tmp/cargo-target-frankenlibc`. The SHA-256 was
+/// unchanged across a source revert, which is the only reason the mistake was
+/// visible at all.
+fn target_dir() -> String {
+    std::env::var("FRANKENLIBC_BENCH_TARGET_DIR")
         .or_else(|_| std::env::var("CARGO_TARGET_DIR"))
-        .unwrap_or_else(|_| "target".to_owned());
-    format!("{dir}/release/libfrankenlibc_abi.so")
+        .unwrap_or_else(|_| "target".to_owned())
+}
+
+fn shared_object() -> String {
+    format!("{}/release/libfrankenlibc_abi.so", target_dir())
 }
 
 fn main() {
@@ -56,6 +92,8 @@ fn main() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let build = Command::new(&cargo)
         .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        // Same directory this probe reads from — see `target_dir`.
+        .env("CARGO_TARGET_DIR", target_dir())
         .status()
         .expect("build the FrankenLibC cdylib");
     assert!(build.success(), "cdylib build failed");
