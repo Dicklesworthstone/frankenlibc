@@ -282,12 +282,24 @@ fn math_oracle_arms_report_their_owning_object() {
     // conformance_diff_round_special, conformance_diff_copysign_fdim_special and
     // conformance_diff_fp_exceptions already do.
     //
-    // All nine below are what LLVM lowers to roundsd / andpd / sqrtsd and what
-    // `compiler_builtins` defines NON-weak, so the local definition wins the
-    // link. memcpy/memset/memmove/memcmp are declared weak there and correctly
-    // lose to libc.so.6 -- measured, not assumed.
+    // THE "LLVM LOWERS IT TO roundsd" EXPLANATION IS INCOMPLETE. It was written
+    // when the census covered 112 symbols and held for all nine then known. The
+    // census now covers 122 and the extra ten refute it in both directions:
+    //
+    //   round, trunc, rint  -- roundsd lowerings, and CAPTURED, as it predicts
+    //   nearbyint           -- also a roundsd lowering, and CLEAN
+    //   cbrt                -- not a roundsd lowering at all, and CAPTURED
+    //
+    // So the lowering is not the discriminator; what `compiler_builtins` happens
+    // to define NON-weak is. Do not extend this list by reasoning from the
+    // instruction a symbol lowers to -- add the symbol to the census and measure
+    // it, which is how the four new entries below were found.
+    //
+    // memcpy/memset/memmove/memcmp are declared weak there and correctly lose to
+    // libc.so.6 -- measured, not assumed.
     const KNOWN_CAPTURED: &[&str] = &[
-        "ceil", "copysign", "fabs", "fdim", "floor", "fmax", "fmin", "fmod", "sqrt",
+        "cbrt", "ceil", "copysign", "fabs", "fdim", "floor", "fmax", "fmin", "fmod", "rint",
+        "round", "sqrt", "trunc",
     ];
     let mut captured_names: Vec<&str> = captured.iter().map(|(name, _)| *name).collect();
     captured_names.sort_unstable();
