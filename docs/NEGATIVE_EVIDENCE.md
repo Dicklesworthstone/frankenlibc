@@ -32177,3 +32177,61 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   how fast it converts into a destination buffer. D1 rank 14's claim is about the SIMD count path
   specifically, so count mode is the right surface, but the number must not be read as a general
   conversion speedup.
+
+## 2026-08-18 — METHODOLOGY: a link-time `glibc` arm may not be glibc — 35 of 876 oracle arms are captured locally, and 10 gates were hollow
+
+- **SURFACE, not a perf claim.** No ratios here: this is about whether a
+  differential gate is measuring what it says. A gate that declares its oracle as
+  `unsafe extern "C" { fn f(..); }` is only comparing against glibc **if that
+  reference binds to `libc.so.6`**. For symbols `compiler_builtins` defines
+  non-weak, it does not — the local definition wins the link and `dladdr` places
+  the "glibc" arm inside the test executable. The gate then compares FrankenLibC
+  against not-glibc and passes.
+- **THE CAPTURED SET IS MEASURED, NEVER PREDICTED.**
+  `oracle_arm_provenance_math_screen` censuses **876 arms** — derived from every
+  symbol a no-`dlsym` `conformance_diff_*` gate declares, with `#[link_name]`
+  aliases resolved and libresolv/libcrypt linked in — and finds **35 captured**.
+  The file's original explanation, "what LLVM lowers to roundsd/andpd/sqrtsd", is
+  **refuted three ways**: `nearbyint` is such a lowering and is CLEAN, `cbrt` is
+  not one and is CAPTURED, and `lrint` returns an integer from the same operation
+  as the captured `rint` and is CLEAN. Add a symbol to the census and measure it;
+  do not reason from the instruction it lowers to.
+- **TEN GATES WERE HOLLOW, and the outcomes split three ways.**
+  `fe_rounding`, `round_mode`, `math_exact` — fl correct and identical.
+  `f128_classify`, `f128_maxmin_c23` — fl correct.
+  `cbrt_special` — **fl more accurate than glibc**: 6 of 22 cases differ by 1 ULP
+  and fl holds the correctly-rounded value every time; `cbrt(27)`, `cbrt(-27)` and
+  `cbrt(0.125)` have exactly representable roots, so cubing the result settles it
+  without trusting either side. That gate's contract had to change from
+  bit-identity to "exact where representable, ≤1 ULP otherwise" — **demanding
+  bit-identity would have meant regressing fl to reproduce glibc's error.**
+  `f128_fmod`, `f128_round_sqrt`, `f128_rint`, `f128_minmax` — **283 real
+  divergences**, all since fixed (`bd-buvzii`).
+- **THREE `glibc does X` COMMENTS IN `math_abi.rs` WERE OVERTURNED BY
+  MEASUREMENT IN ONE SESSION**, one of them citing an explicit verification:
+  `fmodf128` "glibc sets no errno for the nan-producing cases" (it sets EDOM);
+  `rintf128` "rounds nearest-even REGARDLESS of the mode, verified: under
+  FE_DOWNWARD rintf128(1.5) is still 2.0" (it honours the mode); `fminf128`
+  "glibc returns the second arg on a ±0 tie" (it returns the first). All three had
+  been checked against the captured arm. **A verification is only as good as the
+  thing it verified against.**
+- **AN ORACLE CAN ALSO BE UNUSABLE, AND THAT IS A RESULT.** `__fgetws_chk` with a
+  null stream: glibc SIGSEGVs before reaching `__chk_fail`, so it cannot arbitrate
+  the bound at all. `conformance_diff_fgetws_chk_bound` keeps the host call as a
+  **tripwire** asserting glibc still faults, and makes its substantive assertions
+  about fl.
+- **THE CHECK IS NOW AUTOMATIC**, which is what turns this from an audit into a
+  property: `no_differential_binds_a_captured_symbol_at_link_time` fails if any
+  gate declares a measured-captured symbol with no `dlsym` in the file. It found
+  `conformance_diff_cbrt_special` on its first run — a gate outside the
+  round-to-integer family being converted by hand, which nobody was going to look
+  at. It is deliberately conservative: a file mentioning `dlsym` anywhere is
+  trusted wholesale, because pinpointing which arm a shim resolves would mean
+  parsing Rust. Tightening that needs runtime `dladdr` inside each gate.
+- **A GREEN TEST STOPS TESTING IN AT LEAST THREE WAYS**, and all three turned up
+  in one day: a **fake arm** (above); a **stale expectation** — `__getlogin_r_chk`
+  compared against a recorded constant, fl had drifted to EINVAL where glibc
+  reports ERANGE, and the fixture was right; and **wrong arguments** —
+  `__fgetws_chk`'s `wide_request_exceeds_destlen` passed a request SMALLER than
+  the destination, so fl was right and the fixture was wrong. Note the last two
+  landed on opposite sides and neither was decidable by reading.
