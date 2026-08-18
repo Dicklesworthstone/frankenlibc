@@ -101,6 +101,24 @@ macro_rules! declare_math_arms {
 // signature is deliberately uniform: this file never CALLS these, it only takes
 // their addresses, so the declared prototype does not have to match the real one
 // for `dladdr` to answer correctly. Nothing here is invoked.
+/// The measured set of oracle arms a local provider captures in this binary.
+///
+/// ONE definition, used by both tests here: the ratchet that pins the measured
+/// set, and the check that no differential binds one of these at link time.
+/// They were briefly two literal copies and that is a silent-drift hazard --
+/// updating the ratchet after a new measurement while leaving the other list
+/// stale would quietly stop protecting the gates.
+///
+/// Every entry is MEASURED by `math_oracle_arms_report_their_owning_object`, not
+/// predicted. Do not add one by reasoning about what an operation lowers to:
+/// `nearbyint` is a roundsd lowering and is CLEAN, `cbrt` is not one and is
+/// CAPTURED, and `lrint` returns an integer from the same operation as the
+/// captured `rint` and is CLEAN.
+const KNOWN_CAPTURED: &[&str] = &[
+    "cbrt", "cbrtf", "ceil", "copysign", "fabs", "fdim", "floor", "fmax", "fmin", "fmod", "rint",
+    "rintf", "round", "roundf", "sqrt", "trunc", "truncf",
+];
+
 declare_math_arms!(
     acos, acosh, asin, atanh, ceil, cos, cosh, erfc, exp, exp2, exp10, expm1, fabs, floor, ilogb,
     lgamma, log, log10, log1p, log2, logb, sin, sinh, sqrt, tan, tanh, tgamma, y0, y1,
@@ -135,6 +153,7 @@ declare_more_arms!(
     // alongside `rint`, which IS captured. Converting `rint` while leaving its
     // siblings unmeasured would fix the symbol I happened to census and leave
     // the rest hollow for exactly the same reason.
+    cbrtf,
     llrint,
     llrintf,
     lrint,
@@ -345,10 +364,7 @@ fn math_oracle_arms_report_their_owning_object() {
     // (lrint, llrint clean), and neither nearbyint nor nearbyintf is captured.
     // Another reason not to predict from the lowering: the same operation is
     // captured at one return type and clean at another.
-    const KNOWN_CAPTURED: &[&str] = &[
-        "cbrt", "ceil", "copysign", "fabs", "fdim", "floor", "fmax", "fmin", "fmod", "rint",
-        "rintf", "round", "roundf", "sqrt", "trunc", "truncf",
-    ];
+
     let mut captured_names: Vec<&str> = captured.iter().map(|(name, _)| *name).collect();
     captured_names.sort_unstable();
     assert_eq!(
@@ -357,5 +373,78 @@ fn math_oracle_arms_report_their_owning_object() {
          that silently stopped testing glibc; disappearances mean an arm that was \
          converted no longer needs to be. Either way, investigate before editing \
          this list (bd-v0388t)."
+    );
+}
+
+/// Every differential that DECLARES a captured symbol at link time must also
+/// resolve it through `dlsym`, or its "glibc" arm is a local provider.
+///
+/// The screen above measures WHICH symbols are captured. This one closes the
+/// loop by checking that no gate binds one of them at link time -- which is the
+/// actual defect bd-v0388t is about, and which was previously found by hand.
+/// Three gates were converted that way (conformance_diff_fe_rounding,
+/// conformance_diff_round_mode, conformance_diff_math_exact) after censusing
+/// their siblings one set at a time; this makes the next one fail loudly instead
+/// of waiting for someone to think of looking.
+///
+/// The check is deliberately conservative: a file that mentions `dlsym` anywhere
+/// is trusted, because pinpointing WHICH arm a shim resolves would mean parsing
+/// Rust, and a false failure here would train people to edit the list rather
+/// than the gate.
+#[test]
+fn no_differential_binds_a_captured_symbol_at_link_time() {
+    let dir = std::path::Path::new("tests");
+    let entries = std::fs::read_dir(dir).expect("read tests/ -- test CWD is the package root");
+    let mut offenders: Vec<String> = Vec::new();
+    let mut scanned = 0usize;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if !name.starts_with("conformance_diff_") || !name.ends_with(".rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        scanned += 1;
+        if text.contains("dlsym") {
+            continue;
+        }
+        // Symbols declared inside an `extern "C" { ... }` block.
+        let mut inside = false;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("unsafe extern \"C\" {") || trimmed.starts_with("extern \"C\" {")
+            {
+                inside = true;
+                continue;
+            }
+            if inside {
+                if trimmed.starts_with('}') {
+                    inside = false;
+                    continue;
+                }
+                let declared = trimmed
+                    .strip_prefix("fn ")
+                    .or_else(|| trimmed.strip_prefix("pub fn "))
+                    .and_then(|rest| rest.split(['(', '<', ' ']).next());
+                if let Some(symbol) = declared
+                    && KNOWN_CAPTURED.contains(&symbol)
+                {
+                    offenders.push(format!("{name} declares captured `{symbol}`"));
+                }
+            }
+        }
+    }
+
+    assert!(scanned > 100, "only {scanned} differentials scanned; the glob is wrong");
+    assert!(
+        offenders.is_empty(),
+        "these gates bind a locally-captured symbol at link time, so their \
+         \"glibc\" arm is not glibc. Give the arm dlsym_oracle::host_fn, as \
+         conformance_diff_math_exact and conformance_diff_round_mode do. Do NOT \
+         remove the symbol from CAPTURED to silence this (bd-v0388t):\n{}",
+        offenders.join("\n")
     );
 }
