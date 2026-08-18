@@ -47,6 +47,7 @@
 //! the plumbing: `objdump` can be reached on a worker through `cargo run`, and
 //! the object is now built and identified by SHA-256 before it is read.
 
+use std::collections::BTreeMap;
 use std::process::Command;
 
 /// Wrappers whose core delegate is the open question (bd-abi-core-inline-boundary-nmjdud).
@@ -70,6 +71,113 @@ fn target_dir() -> String {
 
 fn shared_object() -> String {
     format!("{}/release/libfrankenlibc_abi.so", target_dir())
+}
+
+/// Name the callee of one `call` line, resolving GOT slots through relocations.
+///
+/// A direct call renders as `call <mangled_name>`. An INDIRECT call through the
+/// GOT renders as `call *0x..(%rip)` with a trailing `# 0x<slot> <_DYNAMIC+0x..>`
+/// comment, because no symbol covers the GOT slot itself. The first version of
+/// this probe read the `<...>` label and so reported every such call as
+/// `_DYNAMIC+0x1cd0` -- which then failed the `contains("frankenlibc_core")`
+/// test and was counted as NOT a call into core. That is the wrong way to be
+/// wrong: an indirect call is precisely the interposable, non-inlinable case
+/// this probe exists to find, so it must be named, not discarded.
+fn resolve_call_target(line: &str, got: &BTreeMap<u64, String>) -> String {
+    if let Some(comment) = line.split('#').nth(1) {
+        let slot = comment.trim().trim_start_matches("0x");
+        let slot = slot.split_whitespace().next().unwrap_or_default();
+        if let Ok(address) = u64::from_str_radix(slot, 16) {
+            return match got.get(&address) {
+                Some(symbol) => format!("GOT:{symbol}"),
+                None => format!("GOT:unresolved@{address:#x}"),
+            };
+        }
+    }
+    line.split('<')
+        .nth(1)
+        .map(|tail| tail.trim_end_matches('>').trim().to_owned())
+        .unwrap_or_else(|| "indirect".to_owned())
+}
+
+/// Map every dynamic relocation slot address to the symbol it binds.
+///
+/// `objdump -R` prints `<offset> <type> <symbol>`; the offset is the GOT slot
+/// address that appears in the disassembly comment, so this is what turns an
+/// anonymous slot back into a callee name.
+/// Every defined symbol as `(address, size, name)`, sorted by address.
+///
+/// Used to name an address that no relocation names -- specifically an ifunc
+/// resolver, which `objdump -R` reports only as `*ABS*+0x<addr>`.
+fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
+    let Ok(out) = Command::new("nm").args(["-S", "--defined-only", object]).output() else {
+        return Vec::new();
+    };
+    let mut table: Vec<(u64, u64, String)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let value = u64::from_str_radix(fields.next()?, 16).ok()?;
+            let size = u64::from_str_radix(fields.next()?, 16).ok()?;
+            let _kind = fields.next()?;
+            Some((value, size, fields.next()?.to_owned()))
+        })
+        .collect();
+    table.sort_by_key(|(address, _, _)| *address);
+    table
+}
+
+/// Name the function containing `address`, or `None` if no symbol covers it.
+fn symbol_at(table: &[(u64, u64, String)], address: u64) -> Option<&str> {
+    let index = table.partition_point(|(start, _, _)| *start <= address);
+    let (start, size, name) = table.get(index.checked_sub(1)?)?;
+    (address < start + size.max(&1)).then_some(name.as_str())
+}
+
+fn relocation_map(object: &str) -> BTreeMap<u64, String> {
+    let mut map = BTreeMap::new();
+    let Ok(out) = Command::new("objdump").args(["-R", object]).output() else {
+        return map;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(offset), Some(kind), Some(symbol)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if let Ok(address) = u64::from_str_radix(offset, 16) {
+            // The TYPE is kept, not discarded. Both R_X86_64_IRELATIVE (a real
+            // ifunc, resolver-dispatched) and R_X86_64_RELATIVE (an ordinary
+            // GOT-indirect call to a locally defined function) print their
+            // target as `*ABS*+0x<addr>`, so the address alone cannot tell them
+            // apart -- and calling the second one "ifunc" would misname the
+            // mechanism while the numbers stayed right.
+            let symbol = symbol.trim_end_matches("@GLIBC_2.2.5");
+            map.insert(address, format!("{kind} {symbol}"));
+        }
+    }
+    map
+}
+
+/// `(st_value, st_size)` for a defined symbol, read from the symbol table.
+///
+/// `nm -S --defined-only` prints `<value> <size> <type> <name>` for sized
+/// definitions. The size is the whole point: it turns "disassemble near this
+/// name and guess where it ends" into an exact range, which is what makes two
+/// adjacent wrappers distinguishable from each other.
+fn symbol_bounds(object: &str, symbol: &str) -> Option<(u64, u64)> {
+    let out = Command::new("nm")
+        .args(["-S", "--defined-only", object])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let value = u64::from_str_radix(fields.next()?, 16).ok()?;
+        let size = u64::from_str_radix(fields.next()?, 16).ok()?;
+        let _kind = fields.next()?;
+        (fields.next()? == symbol).then_some((value, size))
+    })
 }
 
 fn main() {
@@ -119,6 +227,22 @@ fn main() {
         bytes.len()
     );
 
+    // `nm` is preflighted for the same reason `objdump` is: `symbol_bounds`
+    // returns None when the tool is missing, which would print
+    // `status=not_in_symbol_table` for EVERY symbol and read like a clean
+    // finding that none of them exist. A missing tool must look like a missing
+    // tool.
+    match Command::new("nm").arg("--version").output() {
+        Ok(out) if out.status.success() => {
+            let first = String::from_utf8_lossy(&out.stdout);
+            println!("DISASM_TOOL nm={}", first.lines().next().unwrap_or("unknown"));
+        }
+        _ => {
+            println!("DISASM_UNAVAILABLE reason=nm_not_runnable");
+            std::process::exit(2);
+        }
+    }
+
     let tool = Command::new("objdump").arg("--version").output();
     match tool {
         Ok(out) if out.status.success() => {
@@ -136,24 +260,63 @@ fn main() {
         }
     }
 
+    let table = symbol_table(&object);
+    // An IRELATIVE relocation names no symbol -- `objdump -R` prints only
+    // `*ABS*+0x<resolver>`. Mapping that address back through the symbol table
+    // is what distinguishes "this call vanished into core" from "this call is
+    // an ifunc dispatch", which are opposite answers to the inlining question.
+    let got: BTreeMap<u64, String> = relocation_map(&object)
+        .into_iter()
+        .map(|(slot, symbol)| {
+            let (kind, target) = symbol.split_once(' ').unwrap_or(("?", &symbol));
+            let resolved = target
+                .strip_prefix("*ABS*+0x")
+                .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+                .and_then(|address| symbol_at(&table, address))
+                .map(|name| format!("{kind}:{name}"));
+            let kind = kind.to_owned();
+            (slot, resolved.unwrap_or_else(|| format!("{kind}:{target}")))
+        })
+        .collect();
+    println!(
+        "DISASM_RELOCATIONS slots={} symbols={}",
+        got.len(),
+        table.len()
+    );
+
     for symbol in symbols {
+        // Bounds come from the ELF symbol table, not from objdump's textual
+        // layout. The first version searched the disassembly for `<symbol>:` and
+        // read to the next blank line -- an assumption about formatting rather
+        // than a contract, since `--disassemble=SYM` does not promise exactly one
+        // function -- and it reported `memrchr` and `memchr` with byte-identical
+        // bodies. `st_value`/`st_size` let the range be stated instead of guessed.
+        let Some((address, size)) = symbol_bounds(&object, symbol) else {
+            println!("DISASM_SYMBOL symbol={symbol} status=not_in_symbol_table");
+            continue;
+        };
         let out = Command::new("objdump")
-            .args(["-d", &format!("--disassemble={symbol}"), &object])
+            .args([
+                "-d",
+                &format!("--start-address=0x{address:x}"),
+                &format!("--stop-address=0x{:x}", address + size),
+                &object,
+            ])
             .output()
             .expect("run objdump");
         let text = String::from_utf8_lossy(&out.stdout);
 
-        // objdump prints a header block then one line per instruction; instruction
-        // lines carry a tab-separated mnemonic after the byte column.
+        // Instruction lines look like `  <hex addr>:\t<bytes>\t<mnemonic> ...`;
+        // headers and the section banner carry no tabs.
         let body: Vec<&str> = text
             .lines()
-            .skip_while(|line| !line.contains(&format!("<{symbol}>:")))
-            .skip(1)
-            .take_while(|line| !line.trim().is_empty())
+            .filter(|line| line.contains(":\t") && line.matches('\t').count() >= 2)
             .collect();
 
         if body.is_empty() {
-            println!("DISASM_SYMBOL symbol={symbol} status=not_found_in_object");
+            println!(
+                "DISASM_SYMBOL symbol={symbol} status=empty_range addr={address:#x} size={size}"
+            );
             continue;
         }
 
@@ -161,12 +324,7 @@ fn main() {
         let calls: Vec<String> = body
             .iter()
             .filter(|line| line.contains("\tcall"))
-            .map(|line| {
-                line.split('<')
-                    .nth(1)
-                    .map(|tail| tail.trim_end_matches('>').trim().to_owned())
-                    .unwrap_or_else(|| "indirect".to_owned())
-            })
+            .map(|line| resolve_call_target(line, &got))
             .collect();
 
         let core_calls = calls
@@ -174,9 +332,19 @@ fn main() {
             .filter(|target| target.contains("frankenlibc_core"))
             .count();
 
+        // Counted separately because an indirect call is a different cost and a
+        // different hazard from a direct one: it cannot be inlined, and it is
+        // interposable, which is the mechanism behind both the PLT-tax vein and
+        // the interposed-symbol recursion class.
+        let indirect_calls = calls
+            .iter()
+            .filter(|target| target.starts_with("GOT:"))
+            .count();
+
         println!(
-            "DISASM_SYMBOL symbol={symbol} instructions={instructions} calls={} \
-             calls_into_core={core_calls} targets={:?}",
+            "DISASM_SYMBOL symbol={symbol} addr={address:#x} size={size} \
+             instructions={instructions} calls={} calls_into_core={core_calls} \
+             indirect_calls={indirect_calls} targets={:?}",
             calls.len(),
             calls
         );
