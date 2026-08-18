@@ -618,6 +618,329 @@ pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp:
     rational_to_binary128(sign, &num, &den)
 }
 
+/// Correctly-rounded x87 80-bit extended for the hexadecimal value
+/// `(-1)^negative · 0x<int_hex>.<frac_hex> · 2^binexp`.
+///
+/// The sibling of [`hex_to_binary128`], and rounded once for the same reason
+/// [`decimal_to_x87_extended`] is.
+pub fn hex_to_x87_extended(
+    negative: bool,
+    int_hex: &[u8],
+    frac_hex: &[u8],
+    binexp: i64,
+) -> [u8; 10] {
+    let mut m = BigUint { limbs: Vec::new() };
+    let mut any = false;
+    for &h in int_hex.iter().chain(frac_hex.iter()) {
+        let d = (h as char).to_digit(16).unwrap_or(0);
+        m.mul_small(16);
+        m.add_small(d);
+        any |= d != 0;
+    }
+    if !any {
+        return encode_x87(negative, 0, 0);
+    }
+    // value = M · 2^e2.
+    let e2 = binexp - 4 * frac_hex.len() as i64;
+    // Bound the shift before taking it. `0x1p999999999` must answer "infinity"
+    // rather than attempt a shift by a billion bits; the thresholds are far
+    // outside the 15-bit exponent range so no representable input reaches them.
+    if e2 > 20_000 {
+        return encode_x87(negative, 1 << 63, 0x7fff);
+    }
+    if e2 < -20_000 {
+        return encode_x87(negative, 0, 0);
+    }
+    let (num, den) = if e2 >= 0 {
+        (m.shl_bits(e2 as u32), BigUint::one())
+    } else {
+        (m, BigUint::one().shl_bits((-e2) as u32))
+    };
+    rational_to_x87(negative, &num, &den)
+}
+
+/// What [`strtold_scan`] found.
+pub struct X87Scan {
+    /// The x87 extended value, in memory order.
+    pub bytes: [u8; 10],
+    /// Bytes consumed. Zero means no conversion was performed, and the caller
+    /// must set `endptr` to the ORIGINAL pointer rather than to the point where
+    /// scanning stopped.
+    pub consumed: usize,
+    /// Whether the caller should set `ERANGE`.
+    pub range_error: bool,
+}
+
+/// Scan the C `strtod` grammar and produce an x87 extended value.
+///
+/// This is `strtold`'s whole front end: leading whitespace, an optional sign,
+/// then `inf`/`infinity`, `nan[(n-char-sequence)]`, a hexadecimal
+/// `0x<hex>[.<hex>][p<exp>]`, or a decimal `<digits>[.<digits>][e<exp>]`.
+///
+/// ## Rules that are not what the wording suggests
+///
+/// All of these were read off glibc rather than off the standard, and each one
+/// would be a plausible thing to get wrong:
+///
+/// ```text
+///   "1e"        consumes 1, not 2   an incomplete exponent BACKTRACKS
+///   "0x"        consumes 1, not 2   the "0" survives as a decimal zero
+///   "0x.p1"     consumes 1          likewise: no hex digits at all
+///   "0x1"       consumes 3          the p-exponent is OPTIONAL
+///   "nan(0x10)" payload 16          the n-char-sequence is parsed BASE-0
+///   "nan(abc)"  payload 0           a failed payload parse is 0, not a refusal
+///   "nan(12"    consumes 3          an unterminated sequence is not consumed
+///   "- 1"       consumes 0          no space is allowed after the sign
+///   "  1.5xyz"  consumes 5          trailing garbage simply ends the scan
+/// ```
+///
+/// ## `ERANGE` covers subnormals, not just zero
+///
+/// glibc raises `ERANGE` for every result whose exponent field is zero, and
+/// that includes values which are exactly representable: the minimum subnormal
+/// parses to significand 1 WITH `ERANGE`, while the smallest normal one
+/// exponent step above it does not. Testing only for a zero result would miss
+/// the whole subnormal range. The guard against a plain `"0"` is that the input
+/// had a nonzero significand.
+pub fn strtold_scan(s: &[u8]) -> X87Scan {
+    let at = |i: usize| -> u8 { s.get(i).copied().unwrap_or(0) };
+    let is_digit = |b: u8| b.is_ascii_digit();
+    let is_hex = |b: u8| b.is_ascii_hexdigit();
+    let eq_ci = |b: u8, c: u8| b.to_ascii_lowercase() == c;
+    let matches_ci =
+        |i: usize, word: &[u8]| word.iter().enumerate().all(|(k, &c)| eq_ci(at(i + k), c));
+
+    let mut i = 0usize;
+    while matches!(at(i), b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+        i += 1;
+    }
+    let mut negative = false;
+    match at(i) {
+        b'+' => i += 1,
+        b'-' => {
+            negative = true;
+            i += 1;
+        }
+        _ => {}
+    }
+
+    if matches_ci(i, b"inf") {
+        let mut j = i + 3;
+        if matches_ci(j, b"inity") {
+            j += 5;
+        }
+        return X87Scan {
+            bytes: encode_x87(negative, 1 << 63, 0x7fff),
+            consumed: j,
+            range_error: false,
+        };
+    }
+
+    if matches_ci(i, b"nan") {
+        let mut j = i + 3;
+        let mut payload = 0u64;
+        if at(j) == b'(' {
+            let start = j + 1;
+            let mut k = start;
+            while k < s.len() && (at(k).is_ascii_alphanumeric() || at(k) == b'_') {
+                k += 1;
+            }
+            if at(k) == b')' {
+                payload = parse_base0(&s[start..k]);
+                j = k + 1;
+            }
+        }
+        // Quiet NaN: exponent all ones, integer bit AND quiet bit set. An x87
+        // NaN with a clear integer bit is a "pseudo-NaN", which later parts
+        // reject as invalid rather than treating as a NaN.
+        let significand = (0b11u64 << 62) | (payload & ((1u64 << 62) - 1));
+        return X87Scan {
+            bytes: encode_x87(negative, significand, 0x7fff),
+            consumed: j,
+            range_error: false,
+        };
+    }
+
+    if at(i) == b'0' && eq_ci(at(i + 1), b'x') {
+        let int_start = i + 2;
+        let mut j = int_start;
+        while is_hex(at(j)) && j < s.len() {
+            j += 1;
+        }
+        let int_end = j;
+        let (mut frac_start, mut frac_end) = (j, j);
+        if at(j) == b'.' {
+            j += 1;
+            frac_start = j;
+            while is_hex(at(j)) && j < s.len() {
+                j += 1;
+            }
+            frac_end = j;
+        }
+        if int_end != int_start || frac_end != frac_start {
+            let mut binexp = 0i64;
+            let mut after = j;
+            if eq_ci(at(j), b'p') {
+                let mut e = j + 1;
+                let mut eneg = false;
+                match at(e) {
+                    b'+' => e += 1,
+                    b'-' => {
+                        eneg = true;
+                        e += 1;
+                    }
+                    _ => {}
+                }
+                let digits_start = e;
+                let mut value = 0i64;
+                while is_digit(at(e)) && e < s.len() {
+                    value = value
+                        .saturating_mul(10)
+                        .saturating_add(i64::from(at(e) - b'0'));
+                    e += 1;
+                }
+                if e > digits_start {
+                    binexp = if eneg { -value } else { value };
+                    after = e;
+                }
+            }
+            let nonzero = s[int_start..int_end]
+                .iter()
+                .chain(s[frac_start..frac_end].iter())
+                .any(|&b| b != b'0');
+            let bytes = hex_to_x87_extended(
+                negative,
+                &s[int_start..int_end],
+                &s[frac_start..frac_end],
+                binexp,
+            );
+            let range_error = x87_range_error(&bytes, nonzero);
+            return X87Scan {
+                bytes,
+                consumed: after,
+                range_error,
+            };
+        }
+        // "0x" with no hex digits at all: the "0" is a decimal zero and the "x"
+        // is not consumed.
+        return X87Scan {
+            bytes: encode_x87(negative, 0, 0),
+            consumed: i + 1,
+            range_error: false,
+        };
+    }
+
+    let int_start = i;
+    while is_digit(at(i)) && i < s.len() {
+        i += 1;
+    }
+    let int_end = i;
+    let (mut frac_start, mut frac_end) = (i, i);
+    if at(i) == b'.' {
+        i += 1;
+        frac_start = i;
+        while is_digit(at(i)) && i < s.len() {
+            i += 1;
+        }
+        frac_end = i;
+    }
+    if int_end == int_start && frac_end == frac_start {
+        // No conversion. `consumed` is zero so the caller restores the original
+        // pointer rather than reporting where the scan gave up.
+        return X87Scan {
+            bytes: [0u8; 10],
+            consumed: 0,
+            range_error: false,
+        };
+    }
+
+    let mut dexp_e = 0i64;
+    let mut after = i;
+    if eq_ci(at(i), b'e') {
+        let mut e = i + 1;
+        let mut eneg = false;
+        match at(e) {
+            b'+' => e += 1,
+            b'-' => {
+                eneg = true;
+                e += 1;
+            }
+            _ => {}
+        }
+        let digits_start = e;
+        let mut value = 0i64;
+        while is_digit(at(e)) && e < s.len() {
+            value = value
+                .saturating_mul(10)
+                .saturating_add(i64::from(at(e) - b'0'));
+            e += 1;
+        }
+        if e > digits_start {
+            dexp_e = if eneg { -value } else { value };
+            after = e;
+        }
+    }
+
+    let mut digits = Vec::with_capacity((int_end - int_start) + (frac_end - frac_start));
+    digits.extend_from_slice(&s[int_start..int_end]);
+    digits.extend_from_slice(&s[frac_start..frac_end]);
+    let dexp = dexp_e.saturating_sub((frac_end - frac_start) as i64);
+    let nonzero = digits.iter().any(|&b| b != b'0');
+    // The conversion clamps absurd exponents itself; saturating to i32 here
+    // only has to avoid wrapping on the way in.
+    let dexp = dexp.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let bytes = decimal_to_x87_extended(negative, &digits, dexp);
+    let range_error = x87_range_error(&bytes, nonzero);
+    X87Scan {
+        bytes,
+        consumed: after,
+        range_error,
+    }
+}
+
+/// `ERANGE` iff the value overflowed to infinity, or a nonzero input landed on
+/// a zero exponent field (subnormal or flushed to zero).
+fn x87_range_error(bytes: &[u8; 10], nonzero: bool) -> bool {
+    let exp_field = u16::from_le_bytes([bytes[8], bytes[9]]) & 0x7fff;
+    if exp_field == 0x7fff {
+        return true;
+    }
+    exp_field == 0 && nonzero
+}
+
+/// `strtoull(seq, NULL, 0)` semantics: an optional sign, an optional `0x`/`0`
+/// base prefix, then digits, stopping at the first invalid one. A sequence that
+/// yields no digits is zero rather than an error, which is what glibc does with
+/// `nan(abc)`.
+fn parse_base0(seq: &[u8]) -> u64 {
+    let mut i = 0usize;
+    if matches!(seq.first(), Some(b'+') | Some(b'-')) {
+        i = 1;
+    }
+    let mut radix = 10u32;
+    if seq.len() > i + 1 && seq[i] == b'0' && (seq[i + 1] | 0x20) == b'x' {
+        radix = 16;
+        i += 2;
+    } else if seq.len() > i && seq[i] == b'0' {
+        radix = 8;
+        i += 1;
+    }
+    let start = i;
+    let mut value = 0u64;
+    while i < seq.len() {
+        match (seq[i] as char).to_digit(radix) {
+            Some(d) => {
+                value = value
+                    .wrapping_mul(u64::from(radix))
+                    .wrapping_add(u64::from(d));
+                i += 1;
+            }
+            None => break,
+        }
+    }
+    if i == start { 0 } else { value }
+}
+
 /// Round a canonical significand (`digits`, `exp10`) — where the value equals
 /// `(digits as integer) · 10^exp10` — to at most `max_sig` significant decimal
 /// digits using round-half-to-even, returning a new canonical `(digits, exp10)`
@@ -1293,6 +1616,132 @@ mod tests {
         assert_eq!(
             minus_one[9], 0xbf,
             "the sign is the top bit of the last byte"
+        );
+    }
+
+    /// The whole scanner against glibc's `strtold`, comparing all three things
+    /// it produces: the value, how many bytes it consumed, and whether it
+    /// raised ERANGE. Each row is what glibc actually did on this host --
+    /// value read as the raw ten bytes out of a `long double`, offset as
+    /// `end - nptr`, errno checked for ERANGE.
+    ///
+    /// The corner cases are the point. Nine of these rows contradict a
+    /// reasonable reading of the standard, and every one of them was found by
+    /// running glibc rather than by reasoning: see `strtold_scan`'s docs.
+    #[test]
+    fn strtold_scan_matches_glibc() {
+        for (input, consumed, bits, range_error) in [
+            (b"  1.5xyz", 5, 0x3fffc000000000000000u128, false),
+            (b"+.5", 3, 0x3ffe8000000000000000u128, false),
+            (b".", 0, 0x00000000000000000000u128, false),
+            (b"e5", 0, 0x00000000000000000000u128, false),
+            (b"1e", 1, 0x3fff8000000000000000u128, false),
+            (b"1e+", 1, 0x3fff8000000000000000u128, false),
+            (b"0x", 1, 0x00000000000000000000u128, false),
+            (b"0x1p3", 5, 0x40028000000000000000u128, false),
+            (b"0x1.8p1", 7, 0x4000c000000000000000u128, false),
+            (b"inf", 3, 0x7fff8000000000000000u128, false),
+            (b"INFINITY", 8, 0x7fff8000000000000000u128, false),
+            (b"nan", 3, 0x7fffc000000000000000u128, false),
+            (b"nan(123)", 8, 0x7fffc00000000000007bu128, false),
+            (b"-inf", 4, 0xffff8000000000000000u128, false),
+            (b"1e999999", 8, 0x7fff8000000000000000u128, true),
+            (b"1e-999999", 9, 0x00000000000000000000u128, true),
+            (b"abc", 0, 0x00000000000000000000u128, false),
+            (b"  +0X1.FP-2z", 11, 0x3ffdf800000000000000u128, false),
+            (b".5e2", 4, 0x4004c800000000000000u128, false),
+            (b"5.", 2, 0x4001a000000000000000u128, false),
+            (b"1_000", 1, 0x3fff8000000000000000u128, false),
+            (b"0x1", 3, 0x3fff8000000000000000u128, false),
+            (b"0x.8p0", 6, 0x3ffe8000000000000000u128, false),
+            (b"0x1p", 3, 0x3fff8000000000000000u128, false),
+            (b"0x.p1", 1, 0x00000000000000000000u128, false),
+            (b"nan()", 5, 0x7fffc000000000000000u128, false),
+            (b"nan(abc)", 8, 0x7fffc000000000000000u128, false),
+            (b"nan(0x10)", 9, 0x7fffc000000000000010u128, false),
+            (b"nan(12", 3, 0x7fffc000000000000000u128, false),
+            (b"infinit", 3, 0x7fff8000000000000000u128, false),
+            (b"iNfInItY", 8, 0x7fff8000000000000000u128, false),
+            (b"1.5e+3", 6, 0x4009bb80000000000000u128, false),
+            (b"0x1p999999", 10, 0x7fff8000000000000000u128, true),
+            (b"0x1p-999999", 11, 0x00000000000000000000u128, true),
+            (b"- 1", 0, 0x00000000000000000000u128, false),
+            (b"-.e3", 0, 0x00000000000000000000u128, false),
+            (b"00.5", 4, 0x3ffe8000000000000000u128, false),
+            (b"0x0p0", 5, 0x00000000000000000000u128, false),
+            (b"-0", 2, 0x80000000000000000000u128, false),
+            (b"0X1P4", 5, 0x40038000000000000000u128, false),
+            (b"1", 1, 0x3fff8000000000000000u128, false),
+            (b"0", 1, 0x00000000000000000000u128, false),
+            (
+                b"3.14159265358979323846",
+                22,
+                0x4000c90fdaa22168c235u128,
+                false,
+            ),
+            (b"1e4933", 6, 0x7fff8000000000000000u128, true),
+            (b"1e-4950", 7, 0x00000000000000000003u128, true),
+            (b"1e-4951", 7, 0x00000000000000000000u128, true),
+            (
+                b"3.6451995318824746025e-4951",
+                27,
+                0x00000000000000000001u128,
+                true,
+            ),
+            (
+                b"3.3621031431120935063e-4932",
+                27,
+                0x00018000000000000000u128,
+                false,
+            ),
+            (b"0x8p-4", 6, 0x3ffe8000000000000000u128, false),
+        ] {
+            let scan = strtold_scan(input);
+            let mut got = 0u128;
+            for &byte in scan.bytes.iter().rev() {
+                got = (got << 8) | u128::from(byte);
+            }
+            let shown = core::str::from_utf8(input).unwrap_or("<non-utf8>");
+            assert_eq!(got, bits, "value for {shown:?}");
+            assert_eq!(scan.consumed, consumed, "endptr offset for {shown:?}");
+            assert_eq!(scan.range_error, range_error, "ERANGE for {shown:?}");
+        }
+    }
+
+    /// A no-conversion input must report ZERO consumed, not the offset where
+    /// scanning stopped. The distinction is what lets `strtold` restore the
+    /// caller's original pointer, which is how a caller detects that nothing
+    /// was parsed at all.
+    #[test]
+    fn strtold_scan_reports_no_conversion_as_zero() {
+        for input in [&b""[..], b"abc", b".", b"e5", b"- 1", b"  ", b"+", b"-.e3"] {
+            assert_eq!(
+                strtold_scan(input).consumed,
+                0,
+                "{:?} must consume nothing",
+                core::str::from_utf8(input).unwrap_or("<non-utf8>")
+            );
+        }
+    }
+
+    /// NaN carries the integer bit AND the quiet bit. An x87 NaN with a clear
+    /// integer bit is a "pseudo-NaN", which later parts reject as invalid
+    /// rather than treating as a NaN, so the sloppy encoding would fault.
+    #[test]
+    fn strtold_scan_nan_is_quiet_and_not_pseudo() {
+        let scan = strtold_scan(b"nan");
+        assert_eq!(u16::from_le_bytes([scan.bytes[8], scan.bytes[9]]), 0x7fff);
+        let significand = u64::from_le_bytes(scan.bytes[..8].try_into().unwrap());
+        assert_eq!(
+            significand >> 62,
+            0b11,
+            "integer and quiet bits must both be set"
+        );
+        // The payload is parsed base-0, so this is 16, not 10 and not a refusal.
+        let payload = strtold_scan(b"nan(0x10)");
+        assert_eq!(
+            u64::from_le_bytes(payload.bytes[..8].try_into().unwrap()) & 0xff,
+            16
         );
     }
 }
