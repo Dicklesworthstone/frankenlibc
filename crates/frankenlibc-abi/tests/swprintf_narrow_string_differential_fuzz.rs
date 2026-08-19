@@ -93,13 +93,24 @@ fn gen_fmt_s(r: &mut Lcg) -> String {
 #[test]
 fn swprintf_narrow_string_differential_fuzz_vs_glibc() {
     let utf8 = CString::new("C.UTF-8").unwrap();
-    if unsafe { setlocale(LC_ALL, utf8.as_ptr()) }.is_null() {
-        let alt = CString::new("en_US.UTF-8").unwrap();
+    let alt = CString::new("en_US.UTF-8").unwrap();
+    let chosen = if unsafe { setlocale(LC_ALL, utf8.as_ptr()) }.is_null() {
         if unsafe { setlocale(LC_ALL, alt.as_ptr()) }.is_null() {
             eprintln!("no UTF-8 locale available; skipping wide %s/%c differential");
             return;
         }
-    }
+        &alt
+    } else {
+        &utf8
+    };
+    // Put fl in the locale the host ACTUALLY accepted, not the one we asked for
+    // first. `setlocale` above is a link-time symbol, so it moves GLIBC only,
+    // and fl has started in POSIX C since b5aef5e3a. Hardcoding C.UTF-8 here
+    // would leave fl in POSIX C on a host that only has en_US.UTF-8 -- the very
+    // ASCII-fl-vs-UTF-8-glibc mismatch this pairing exists to prevent, and it
+    // would only show up on such a host.
+    // SAFETY: NUL-terminated name of the locale the host accepted.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(LC_ALL, chosen.as_ptr()) };
 
     let mut r = Lcg(0x5eed_5113_c0de_0007);
     let mut divs: Vec<String> = Vec::new();

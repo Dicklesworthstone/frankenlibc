@@ -95,15 +95,24 @@ fn printf_wide_string_differential_fuzz_vs_glibc() {
     // %ls/%lc multibyte encoding is locale-defined; fl encodes UTF-8, so match
     // the host to a UTF-8 locale. Skip the test if none is available.
     let utf8 = CString::new("C.UTF-8").unwrap();
-    let got = unsafe { setlocale(LC_ALL, utf8.as_ptr()) };
-    if got.is_null() {
-        let alt = CString::new("en_US.UTF-8").unwrap();
-        let got2 = unsafe { setlocale(LC_ALL, alt.as_ptr()) };
-        if got2.is_null() {
+    let alt = CString::new("en_US.UTF-8").unwrap();
+    let chosen = if unsafe { setlocale(LC_ALL, utf8.as_ptr()) }.is_null() {
+        if unsafe { setlocale(LC_ALL, alt.as_ptr()) }.is_null() {
             eprintln!("no UTF-8 locale available; skipping %ls/%lc differential");
             return;
         }
-    }
+        &alt
+    } else {
+        &utf8
+    };
+    // Put fl in the locale the host ACTUALLY accepted, not the one we asked for
+    // first. `setlocale` above is a link-time symbol, so it moves GLIBC only,
+    // and fl has started in POSIX C since b5aef5e3a. Hardcoding C.UTF-8 here
+    // would leave fl in POSIX C on a host that only has en_US.UTF-8 -- the very
+    // ASCII-fl-vs-UTF-8-glibc mismatch this pairing exists to prevent, and it
+    // would only show up on such a host.
+    // SAFETY: NUL-terminated name of the locale the host accepted.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(LC_ALL, chosen.as_ptr()) };
 
     let mut r = Lcg(0x7c0d_e15a_b1e2_0006);
     let mut divs: Vec<String> = Vec::new();
