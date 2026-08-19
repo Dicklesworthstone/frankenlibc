@@ -45,6 +45,19 @@ fn c16rtomb_matches_glibc() {
         eprintln!("C.UTF-8 unavailable; skipping");
         return;
     }
+    // Both implementations need the locale set, not just the oracle.
+    //
+    // The `setlocale` above is a LINK-TIME extern, and fl's exports are
+    // `no_mangle` only in release builds, so in a debug test it binds to
+    // GLIBC's setlocale. That put the ORACLE into C.UTF-8 and left fl in the
+    // startup "C" locale -- measured on this host, a fresh process starts at
+    // setlocale(LC_ALL,NULL)=="C", CODESET=="ANSI_X3.4-1968", MB_CUR_MAX==1.
+    //
+    // So every non-ASCII case compared UTF-8 glibc against ASCII-only fl and
+    // reported EILSEQ-vs-encoded as a divergence. The bug was the harness
+    // establishing its premise for one arm (bd-v0388t).
+    // SAFETY: NUL-terminated locale name.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, loc.as_ptr()) };
 
     let cases: &[&[u16]] = &[
         &[0x0041],                 // 'A'

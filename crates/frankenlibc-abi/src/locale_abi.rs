@@ -1120,13 +1120,28 @@ mod tests {
     use super::*;
     use std::ffi::CStr;
 
+    /// A process that has not called `setlocale` is in the `"C"` locale.
+    ///
+    /// This asserted `C.UTF-8`, which is what fl used to report before
+    /// b5aef5e3a deliberately flipped the default to POSIX C to match the
+    /// incumbent (bd-1kxrmz). The assertion was left pinning the value that
+    /// commit set out to change, and has been red ever since -- unnoticed
+    /// because the abi suite was aborting during the build.
+    ///
+    /// Measured on this host, from a C program that calls nothing first:
+    ///     setlocale(LC_ALL, NULL) == "C"
+    ///     nl_langinfo(CODESET)    == "ANSI_X3.4-1968"
+    ///     MB_CUR_MAX              == 1
     #[test]
-    fn setlocale_query_returns_utf8_c_locale() {
+    fn setlocale_query_at_startup_returns_posix_c() {
         // SAFETY: Null locale means query mode.
         let result = unsafe { setlocale(locale_core::LC_ALL, std::ptr::null()) };
         assert!(!result.is_null());
         let name = unsafe { CStr::from_ptr(result) }.to_bytes();
-        assert_eq!(name, b"C.UTF-8");
+        assert_eq!(
+            name, b"C",
+            "a program that never calls setlocale is in the C locale, as glibc reports"
+        );
     }
 
     #[test]
@@ -1164,13 +1179,23 @@ mod tests {
         assert_eq!(dp.to_bytes(), b".");
     }
 
+    /// `CODESET` in the startup locale is glibc's ASCII name, not UTF-8.
+    ///
+    /// Stale for the same reason as `setlocale_query_at_startup_returns_posix_c`
+    /// above: it pins fl's pre-b5aef5e3a default. glibc on this host reports
+    /// `ANSI_X3.4-1968` from a fresh process, and the whole point of that commit
+    /// was to agree with it.
     #[test]
-    fn nl_langinfo_codeset_returns_utf8() {
+    fn nl_langinfo_codeset_at_startup_is_ascii() {
         // SAFETY: CODESET is a valid item.
         let result = unsafe { nl_langinfo(libc::CODESET) };
         assert!(!result.is_null());
         let val = unsafe { CStr::from_ptr(result) };
-        assert_eq!(val.to_bytes(), b"UTF-8");
+        assert_eq!(
+            val.to_bytes(),
+            b"ANSI_X3.4-1968",
+            "the C locale's codeset is glibc's ASCII name"
+        );
     }
 
     #[test]

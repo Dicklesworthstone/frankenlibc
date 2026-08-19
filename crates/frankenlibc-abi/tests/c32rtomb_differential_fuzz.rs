@@ -90,6 +90,19 @@ fn gen_c32(r: &mut Lcg) -> u32 {
 #[test]
 fn c32rtomb_differential_fuzz_vs_glibc() {
     unsafe { setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    // Both implementations need the locale set, not just the oracle.
+    //
+    // The `setlocale` above is a LINK-TIME extern, and fl's exports are
+    // `no_mangle` only in release builds, so in a debug test it binds to
+    // GLIBC's setlocale. That put the ORACLE into C.UTF-8 and left fl in the
+    // startup "C" locale -- measured on this host, a fresh process starts at
+    // setlocale(LC_ALL,NULL)=="C", CODESET=="ANSI_X3.4-1968", MB_CUR_MAX==1.
+    //
+    // So every non-ASCII case compared UTF-8 glibc against ASCII-only fl and
+    // reported EILSEQ-vs-encoded as a divergence. The bug was the harness
+    // establishing its premise for one arm (bd-v0388t).
+    // SAFETY: NUL-terminated locale name.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     let mut r = Lcg(0xc32d_0d1e_2233_4455);
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
