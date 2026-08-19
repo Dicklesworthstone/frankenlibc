@@ -95,12 +95,20 @@ fn render_both(ty: u16) -> (c_int, c_int) {
             host_buf.as_mut_ptr(),
             host_buf.len(),
         );
+        // `ty` unconverted, because fl's export declares `class: u16, ty: u16,
+        // ttl: u32` while libresolv's prototype (SprintrrfFn above) is
+        // `ns_class, ns_type, u_long` -- enums, so `int`, and `unsigned long`.
+        // Both arms therefore receive the SAME VALUE through different declared
+        // widths. On x86-64 SysV that is benign for values this gate passes: the
+        // argument register holds the value and a narrower callee reads its low
+        // half. It is still a divergent C signature; filed rather than changed
+        // here, because widening a production export is not a test fix.
         let fl_rc = frankenlibc_abi::resolv_abi::ns_sprintrrf(
             msg.as_ptr(),
             msg.len(),
             name.as_ptr(),
             1,
-            c_int::from(ty),
+            ty,
             0,
             rdata.as_ptr(),
             rdata.len(),

@@ -39,11 +39,15 @@ use std::ffi::{c_int, c_void};
 mod dlsym_oracle;
 use dlsym_oracle::host_fn;
 
+/// The `tm` parameter is typed `*const c_void` rather than `*const libc::tm`
+/// so that fl's export and glibc's both unify with this one alias: fl declares
+/// it `*const c_void`. The two are ABI-identical -- a pointer argument is a
+/// pointer argument -- and the value passed still points at a real `libc::tm`.
 type WcsftimeLFn = unsafe extern "C" fn(
     *mut libc::wchar_t,
     usize,
     *const libc::wchar_t,
-    *const libc::tm,
+    *const c_void,
     *mut c_void,
 ) -> usize;
 type NewlocaleFn = unsafe extern "C" fn(c_int, *const std::ffi::c_char, *mut c_void) -> *mut c_void;
@@ -93,11 +97,20 @@ fn wide(s: &str) -> Vec<libc::wchar_t> {
 }
 
 fn pin_utc() {
-    // SAFETY: setenv/tzset with NUL-terminated literals. `%Z` reads the process
-    // zone and fl is UTC-only, so the zone must be fixed for the comparison.
+    // GLIBC's `tzset`, deliberately. `libc::tzset` does not exist -- the crate
+    // does not export it, which is what broke this file's compile -- and
+    // rustc's suggested `frankenlibc_abi::time_abi::tzset` would be the wrong
+    // one: it updates FL's zone state, while the arm that actually reads the
+    // process zone here is GLIBC's `%Z`. fl is UTC-only and needs no tzset, so
+    // pinning glibc's is both necessary and sufficient.
+    //
+    // SAFETY: `void tzset(void)`; setenv with NUL-terminated literals. fl's own
+    // export is passed so a collapsed oracle aborts (bd-v0388t).
     unsafe {
+        let host_tzset: unsafe extern "C" fn() =
+            host_fn(c"tzset", frankenlibc_abi::time_abi::tzset as *const ());
         libc::setenv(c"TZ".as_ptr(), c"UTC".as_ptr(), 1);
-        libc::tzset();
+        host_tzset();
     }
 }
 
@@ -111,7 +124,15 @@ fn render(
 ) -> (usize, String) {
     let mut buf = vec![0 as libc::wchar_t; 256];
     // SAFETY: `size <= buf.len()`, format is NUL-terminated, `tm` is live.
-    let n = unsafe { f(buf.as_mut_ptr(), size, fmt.as_ptr(), tm, loc) };
+    let n = unsafe {
+        f(
+            buf.as_mut_ptr(),
+            size,
+            fmt.as_ptr(),
+            std::ptr::from_ref(tm).cast::<c_void>(),
+            loc,
+        )
+    };
     let text = buf[..n]
         .iter()
         .filter_map(|&c| char::from_u32(c as u32))
