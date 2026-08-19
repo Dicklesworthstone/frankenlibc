@@ -5250,7 +5250,12 @@ use frankenlibc_core::stdio::{
 /// because the fast path is perf-tuned (bd-ntb9fq).
 pub(crate) fn format_has_long_double(segments: &[FormatSegment<'_>]) -> bool {
     segments.iter().any(|seg| match seg {
-        FormatSegment::Spec(spec) => spec.value_arg_is_float() && spec.length == LengthMod::BigL,
+        // Length first: it is a plain enum comparison, while
+        // `value_arg_is_float` resolves the spec's route. This predicate runs
+        // on EVERY printf call and can only short-circuit on a hit, so the
+        // cheap half goes first. See the perf note on bd-longdouble-varargs —
+        // the walk itself is still unmeasured debt.
+        FormatSegment::Spec(spec) => spec.length == LengthMod::BigL && spec.value_arg_is_float(),
         _ => false,
     })
 }
