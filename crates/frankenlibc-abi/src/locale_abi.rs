@@ -256,8 +256,69 @@ fn charset_for_request(name: &[u8]) -> Option<Charset> {
     match name {
         b"C" | b"POSIX" => Some(Charset::Ascii),
         b"C.UTF-8" | b"C.utf8" => Some(Charset::Utf8),
-        b"" => Some(Charset::Utf8),
         _ => None,
+    }
+}
+
+/// The charset a locale NAME implies, for names that came from the environment.
+///
+/// Deliberately wider than [`charset_for_request`]. That one gates which names
+/// `setlocale` accepts FROM A CALLER, where answering `None` yields ENOENT.
+/// This one is asked about whatever `LANG`/`LC_*` happens to hold, where
+/// refusing is not an option: glibc resolves the value against installed
+/// locales, and the codeset is the only part of that fl models.
+///
+/// So the codeset suffix decides. `en_US.UTF-8` is a UTF-8 locale even though fl
+/// cannot otherwise represent it; anything without a UTF-8 codeset resolves to
+/// ASCII, which is the C locale's charset and the safe answer for a charmap fl
+/// does not carry.
+fn env_charset_for_name(name: &[u8]) -> Charset {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(b".utf-8") || lower.ends_with(b".utf8") {
+        Charset::Utf8
+    } else {
+        Charset::Ascii
+    }
+}
+
+/// Resolve the empty locale name -- "adopt the environment" -- for ONE category.
+///
+/// POSIX precedence, which glibc implements and fl ignored entirely: `LC_ALL`,
+/// then the category's own variable, then `LANG`, then `"C"`. A variable that is
+/// set but EMPTY does not count as set.
+///
+/// Measured on live glibc 2.42, `setlocale(LC_ALL, "")` under `env -i`:
+///
+/// ```text
+///   (nothing set)     "C"        ANSI_X3.4-1968  MB_CUR_MAX 1
+///   LANG=C            "C"        ANSI_X3.4-1968  MB_CUR_MAX 1
+///   LANG=C.UTF-8      "C.UTF-8"  UTF-8           MB_CUR_MAX 6
+///   LC_ALL=C.UTF-8    "C.UTF-8"  UTF-8           MB_CUR_MAX 6
+///   LC_CTYPE=C.UTF-8  LC_CTYPE=C.UTF-8;LC_NUMERIC=C;...  UTF-8  MB_CUR_MAX 6
+/// ```
+///
+/// The last row is why this resolves PER CATEGORY rather than once for the
+/// process: one `LC_CTYPE` in the environment moves that category alone and
+/// leaves the rest in C, and `setlocale` then reports the composite string.
+fn env_charset_for_category(category: c_int) -> Charset {
+    fn var(name: &str) -> Option<Vec<u8>> {
+        let value = std::env::var_os(name)?;
+        let bytes = value.as_os_str().as_bytes().to_vec();
+        if bytes.is_empty() { None } else { Some(bytes) }
+    }
+    let specific = locale_core::COMPOSITE_ORDER
+        .iter()
+        .find(|(_, cat)| *cat == category)
+        .map(|(name, _)| *name);
+    match var("LC_ALL")
+        .or_else(|| specific.and_then(var))
+        .or_else(|| var("LANG"))
+    {
+        Some(name) => env_charset_for_name(&name),
+        // Nothing set: the C locale, NOT UTF-8. fl answered UTF-8 here
+        // unconditionally, which is the defect b5aef5e3a fixed for the startup
+        // locale surviving at this entry point (bd-9t8wzq, bd-1kxrmz).
+        None => Charset::Ascii,
     }
 }
 /// POSIX C-locale radix character.
@@ -373,6 +434,23 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, true);
         return std::ptr::null();
     };
+
+    // An empty name means "adopt the environment", resolved per category.
+    if name.is_empty() {
+        if category == locale_core::LC_ALL {
+            for (_, cat) in locale_core::COMPOSITE_ORDER.iter() {
+                set_category_charset(*cat, env_charset_for_category(*cat));
+            }
+        } else {
+            set_category_charset(category, env_charset_for_category(category));
+        }
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
+        return if category == locale_core::LC_ALL {
+            lc_all_report()
+        } else {
+            locale_name_for(category_charset(category)).as_ptr() as *const c_char
+        };
+    }
 
     if let Some(charset) = charset_for_request(&name) {
         // The selection and the report are one step: whatever name goes back to
@@ -909,6 +987,14 @@ pub unsafe extern "C" fn newlocale(
         return std::ptr::null_mut();
     };
     let _ = base;
+
+    // POSIX gives `newlocale` the same empty-name rule as `setlocale`: "" is the
+    // environment's locale, not a synonym for UTF-8. An fl handle carries one
+    // charset, and the codec is what it is used for, so LC_CTYPE decides.
+    if name.is_empty() {
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
+        return locale_handle_for(env_charset_for_category(locale_core::LC_CTYPE));
+    }
 
     if let Some(charset) = charset_for_request(&name) {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
