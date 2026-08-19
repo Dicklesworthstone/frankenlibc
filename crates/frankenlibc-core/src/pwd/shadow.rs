@@ -509,9 +509,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_fields_after_flag() {
-        let line = b"u:x:0:0:0:0:0:0:42:ignored:tail";
-        let e = parse_shadow_line(line).unwrap();
+    fn a_tenth_field_rejects_the_entry() {
+        // /etc/shadow has exactly nine fields and glibc refuses anything longer:
+        // host fgetspent returns NULL for "u:x:1:2:3:4:5:6:7:extra". fl used to
+        // stop reading after the flag and silently accept the remainder, which
+        // is what this test asserted.
+        assert!(parse_shadow_line(b"u:x:0:0:0:0:0:0:42:ignored:tail").is_none());
+        // Nine fields is still fine, and the flag is still read.
+        let e = parse_shadow_line(b"u:x:0:0:0:0:0:0:42").expect("nine fields is valid");
         assert_eq!(e.flag, 42);
         assert_eq!(e.expire, 0);
     }

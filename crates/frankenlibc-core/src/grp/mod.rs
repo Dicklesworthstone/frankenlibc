@@ -332,13 +332,21 @@ ubuntu:x:1000:
     }
 
     #[test]
-    fn rejects_leading_plus_in_gid() {
-        assert!(parse_group_line(b"root:x:+0:").is_none());
+    fn accepts_leading_plus_in_gid() {
+        // strtoul takes a '+'. Measured against host fgetgrent over an
+        // fmemopen'd line: "g:x:+7:a" is gid 7. This asserted rejection, which
+        // dropped a line the incumbent yields.
+        assert_eq!(parse_group_line(b"root:x:+0:").unwrap().gr_gid, 0);
+        assert_eq!(parse_group_line(b"root:x:+7:").unwrap().gr_gid, 7);
     }
 
     #[test]
-    fn reject_empty_name() {
-        assert!(parse_group_line(b":x:0:").is_none());
+    fn empty_group_name_is_an_entry_not_a_rejection() {
+        // Host fgetgrent returns ":x:7:a" with gr_name "". The "reject empty
+        // name" rule was fl's own invention.
+        let e = parse_group_line(b":x:0:").expect("glibc yields this entry");
+        assert_eq!(e.gr_name, b"");
+        assert_eq!(e.gr_gid, 0);
     }
 
     #[test]
@@ -420,13 +428,17 @@ ubuntu:x:1000:
     }
 
     #[test]
-    fn reject_gid_overflow_sign_and_trailing_junk() {
+    fn reject_gid_overflow_and_trailing_junk_but_accept_a_sign() {
+        // Still rejected, and each was confirmed against the host: a value past
+        // 32 bits, a minus sign, trailing junk, and a trailing blank.
         assert!(parse_group_line(b"root:x:4294967296:").is_none());
         assert!(parse_group_line(b"root:x:-1:").is_none());
-        assert!(parse_group_line(b"root:x:+1:").is_none());
         assert!(parse_group_line(b"root:x:1x:").is_none());
         assert!(parse_group_line(b"root:x:1 :").is_none());
-        assert!(parse_group_line(b"root:x: \t+42:").is_none());
+        // NOT rejected: strtoul skips leading blanks and takes a '+'. These two
+        // asserted rejection and were wrong about the incumbent.
+        assert_eq!(parse_group_line(b"root:x:+1:").unwrap().gr_gid, 1);
+        assert_eq!(parse_group_line(b"root:x: \t+42:").unwrap().gr_gid, 42);
 
         let entry = parse_group_line(b"root:x: \t42:").unwrap();
         assert_eq!(entry.gr_gid, 42);

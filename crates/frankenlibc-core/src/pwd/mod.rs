@@ -386,8 +386,13 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     }
 
     #[test]
-    fn reject_empty_name() {
-        assert!(parse_passwd_line(b":x:0:0::/:/bin/sh").is_none());
+    fn empty_login_name_is_an_entry_not_a_rejection() {
+        // Host fgetpwent returns ":x:1:1:g:d:s" with pw_name "". Rejecting it
+        // was fl's own rule and dropped a line the incumbent yields.
+        let e = parse_passwd_line(b":x:0:0::/:/bin/sh").expect("glibc yields this entry");
+        assert_eq!(e.pw_name, b"");
+        assert_eq!(e.pw_uid, 0);
+        assert_eq!(e.pw_shell, b"/bin/sh");
     }
 
     #[test]

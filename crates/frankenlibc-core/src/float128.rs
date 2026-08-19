@@ -1670,8 +1670,14 @@ mod tests {
     /// running glibc rather than by reasoning: see `strtold_scan`'s docs.
     #[test]
     fn strtold_scan_matches_glibc() {
-        for (input, consumed, bits, range_error) in [
-            (b"  1.5xyz", 5, 0x3fffc000000000000000u128, false),
+        // The element type is spelled out, and the first row is sliced, so
+        // every row unsize-coerces to `&[u8]`. Without that the array literal
+        // takes its element type from the first row's LENGTH, and each row of a
+        // different length is an E0308 — 43 of them, which is exactly what
+        // stopped frankenlibc-core compiling the first time this table was
+        // built by a generator rather than written by hand.
+        let cases: &[(&[u8], usize, u128, bool)] = &[
+            (&b"  1.5xyz"[..], 5, 0x3fffc000000000000000u128, false),
             (b"+.5", 3, 0x3ffe8000000000000000u128, false),
             (b".", 0, 0x00000000000000000000u128, false),
             (b"e5", 0, 0x00000000000000000000u128, false),
@@ -1735,7 +1741,8 @@ mod tests {
                 false,
             ),
             (b"0x8p-4", 6, 0x3ffe8000000000000000u128, false),
-        ] {
+        ];
+        for &(input, consumed, bits, range_error) in cases {
             let scan = strtold_scan(input);
             let mut got = 0u128;
             for &byte in scan.bytes.iter().rev() {
