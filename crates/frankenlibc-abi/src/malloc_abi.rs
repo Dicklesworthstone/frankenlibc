@@ -456,6 +456,31 @@ static SEGMENT_ARENA_BASE: AtomicUsize = AtomicUsize::new(0);
 // flush path (which would be a larger change than the question deserves).
 static SEGMENT_PATH_ALLOCS: AtomicUsize = AtomicUsize::new(0);
 static FALLBACK_PATH_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+// `malloc` has THREE paths, and the two counters above only ever covered the
+// first. Both reading zero therefore means "the instrumented branch was not
+// entered", NOT "segments lost" -- which is exactly the false verdict
+// bd-e0y02p's probes were reporting. This counter covers the third path so the
+// three are mutually exclusive and their sum is the call count.
+static NONSTRICT_PATH_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+// `malloc` also returns EARLY, before any of the three paths above, when the
+// reentry guard is unavailable or bootstrap passthrough is active. Both hand the
+// request straight to the host allocator. Until these were counted the accounting
+// could not be closed, and an unaccounted run was being read as a verdict.
+static BOOTSTRAP_PATH_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+/// Bump a path counter, compiled out unless `alloc-path-telemetry` is on.
+///
+/// These sit on the allocator hot path. malloc is a headline number for this
+/// campaign, so the default build must not pay for a diagnostic: without the
+/// feature this is a no-op and the counters stay zero, which the probes report as
+/// INCONCLUSIVE rather than turning into a verdict.
+#[inline(always)]
+fn bump_path_counter(counter: &AtomicUsize) {
+    #[cfg(feature = "alloc-path-telemetry")]
+    counter.fetch_add(1, Ordering::Relaxed);
+    #[cfg(not(feature = "alloc-path-telemetry"))]
+    let _ = counter;
+}
 static SEGMENT_OWNED_BITMAP: AtomicU64 = AtomicU64::new(0);
 // Segment ids are claimed only when a thread exhausts its local class segment.
 // This counter is deliberately absent from the warmed allocation/free cycle.
@@ -3044,6 +3069,55 @@ pub fn segment_path_split() -> (usize, usize, bool) {
     )
 }
 
+#[must_use]
+/// `(segment, fallback, nonstrict, arena_ready)` — the FULL path split.
+///
+/// `malloc` has three mutually exclusive paths and `segment_path_split` only ever
+/// covered one of them:
+///   1. strict + proof-carried fast path — segment or fallback;
+///   2. strict without the PCC fast path — segment or fallback, previously
+///      UNCOUNTED;
+///   3. non-strict — signal guard, `allocator_stage_context`, `decide`, the
+///      membrane pipeline, `record_allocator_stage_outcome`, `observe`.
+///
+/// With only (1) instrumented, a run that took (2) or (3) reported
+/// `segment=0 fallback=0`, and both bd-e0y02p probes turned that into
+/// "segments never hit, premise HOLDS" — a conclusion drawn from an
+/// uninstrumented branch. `segment + fallback + nonstrict` should now equal the
+/// number of successful `malloc` calls; if it does not, the split is still
+/// incomplete and no verdict should be read from it.
+pub fn malloc_path_counters() -> (usize, usize, usize, bool) {
+    (
+        SEGMENT_PATH_ALLOCS.load(Ordering::Relaxed),
+        FALLBACK_PATH_ALLOCS.load(Ordering::Relaxed),
+        NONSTRICT_PATH_ALLOCS.load(Ordering::Relaxed),
+        SEGMENT_ARENA_BASE.load(Ordering::Acquire) != 0,
+    )
+}
+
+#[must_use]
+/// `(segment, fallback, nonstrict, bootstrap)` — an EXHAUSTIVE split of `malloc`.
+///
+/// Every successful `malloc` increments exactly one of these four, so the sum is
+/// the call count and `sum != calls` means the split is still incomplete. That
+/// property is the point: bd-e0y02p's probes previously read a verdict off two
+/// counters that covered one of five branches, so a run in which none of them
+/// fired printed `segment_allocs=0` and was reported as "segments never hit,
+/// premise HOLDS".
+///
+/// `bootstrap` is the pair of early returns at the top of `malloc` — reentry
+/// guard unavailable, or bootstrap passthrough active — which hand the request
+/// straight to the host allocator and never touch the arena, the size index or
+/// the membrane at all.
+pub fn malloc_path_counters_full() -> (usize, usize, usize, usize) {
+    (
+        SEGMENT_PATH_ALLOCS.load(Ordering::Relaxed),
+        FALLBACK_PATH_ALLOCS.load(Ordering::Relaxed),
+        NONSTRICT_PATH_ALLOCS.load(Ordering::Relaxed),
+        BOOTSTRAP_PATH_ALLOCS.load(Ordering::Relaxed),
+    )
+}
+
 pub fn export_alloc_stats_snapshot_jsonl(bead_id: &str, run_id: &str, mode: &str) -> String {
     export_alloc_stats_snapshot_jsonl_from_snapshot(snapshot_alloc_stats(), bead_id, run_id, mode)
 }
@@ -4203,11 +4277,13 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+        bump_path_counter(&BOOTSTRAP_PATH_ALLOCS);
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_malloc_passthrough(size) };
     };
 
     if allocator_bootstrap_passthrough_active() {
+        bump_path_counter(&BOOTSTRAP_PATH_ALLOCS);
         return unsafe { bootstrap_malloc_passthrough(size) };
     }
 
@@ -4232,11 +4308,11 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             if !out.is_null() {
                 match segment_class {
                     Some(class_index) => {
-                        SEGMENT_PATH_ALLOCS.fetch_add(1, Ordering::Relaxed);
+                        bump_path_counter(&SEGMENT_PATH_ALLOCS);
                         record_alloc_stats_binned(Some(reentry_guard.slot), req, class_index)
                     }
                     None => {
-                        FALLBACK_PATH_ALLOCS.fetch_add(1, Ordering::Relaxed);
+                        bump_path_counter(&FALLBACK_PATH_ALLOCS);
                         fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                         record_alloc_stats(Some(reentry_guard.slot), req);
                     }
@@ -4258,9 +4334,15 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         if !out.is_null() {
             match segment_class {
                 Some(class_index) => {
+                    // Counted here too: this is the strict path WITHOUT the
+                    // proof-carried fast path, and it does the same
+                    // segment-or-fallback work as the branch above. Leaving it
+                    // uncounted is what made both counters read zero.
+                    bump_path_counter(&SEGMENT_PATH_ALLOCS);
                     record_alloc_stats_binned(Some(reentry_guard.slot), req, class_index)
                 }
                 None => {
+                    bump_path_counter(&FALLBACK_PATH_ALLOCS);
                     fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                     record_alloc_stats(Some(reentry_guard.slot), req);
                 }
@@ -4303,6 +4385,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         }
     };
     if !out.is_null() {
+        bump_path_counter(&NONSTRICT_PATH_ALLOCS);
         record_alloc_stats(Some(reentry_guard.slot), req);
     }
     runtime_policy::observe(

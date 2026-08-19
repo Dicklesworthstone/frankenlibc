@@ -34,7 +34,7 @@
 //! absolute per-arm timing, and mixing a timing claim into a structural probe
 //! would invite quoting an unquiet number.
 
-use frankenlibc_abi::malloc_abi::{free, malloc, segment_path_split};
+use frankenlibc_abi::malloc_abi::{free, malloc, malloc_path_counters, malloc_path_counters_full};
 
 /// Sizes the ~133 ns gap was measured at (2026-07-02: 16/64/256/1024 bytes, flat
 /// across the range, which is what makes it a FIXED per-call cost).
@@ -44,7 +44,54 @@ const SIZES: [usize; 4] = [16, 64, 256, 1024];
 const PAIRS_PER_SIZE: usize = 20_000;
 
 fn main() {
-    let (before_segment, before_fallback, arena_ready) = segment_path_split();
+    // WHICH `malloc` DOES A CALL TO `fl::malloc` ACTUALLY REACH?
+    //
+    // The four-way split above is exhaustive over `malloc_abi::malloc`, so if a
+    // run's counters do not move, the call never entered that function. Resolve
+    // the symbol three ways and compare against fl's own address: `RTLD_DEFAULT`
+    // is what a PLT-routed call binds to, and if that is glibc's `malloc` then a
+    // probe's "fl arm" is measuring the host allocator.
+    {
+        let fl_addr = malloc as *const () as usize;
+        let dflt = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"malloc".as_ptr()) } as usize;
+        let next = unsafe { libc::dlsym(libc::RTLD_NEXT, c"malloc".as_ptr()) } as usize;
+        println!(
+            "MALLOC_SYMBOL_RESOLUTION fl_malloc=0x{fl_addr:x} rtld_default=0x{dflt:x} \
+             rtld_next=0x{next:x} default_is_fl={} ",
+            dflt == fl_addr
+        );
+
+        // Direct counter check: a bounded number of calls through the same path
+        // the loop uses, with the exhaustive split read either side.
+        let (a0, b0, c0, d0) = malloc_path_counters_full();
+        for _ in 0..1000 {
+            // black_box on BOTH the size and the pointer. Without it LLVM
+            // recognises the `malloc`/`free` pair on an unused result and deletes
+            // it outright -- fl's entry point is literally named `malloc` with the
+            // C ABI, so it is treated as the builtin. That elision is what made
+            // this probe's counters read zero.
+            let p = unsafe { malloc(std::hint::black_box(32)) };
+            std::hint::black_box(p);
+            if !p.is_null() {
+                unsafe { free(p) };
+            }
+        }
+        let (a1, b1, c1, d1) = malloc_path_counters_full();
+        let delta = (a1 - a0) + (b1 - b0) + (c1 - c0) + (d1 - d0);
+        println!(
+            "MALLOC_ENTRY_CHECK calls=1000 counted_delta={delta} \
+             note={}",
+            if delta == 0 {
+                "ZERO_the_call_does_not_reach_malloc_abi_malloc"
+            } else if delta >= 1000 {
+                "OK_calls_reach_fl_malloc"
+            } else {
+                "PARTIAL_some_calls_bypass_fl_malloc"
+            }
+        );
+    }
+
+    let (before_segment, before_fallback, before_nonstrict, arena_ready) = malloc_path_counters();
     println!(
         "MALLOC_SEGMENT_SPLIT phase=start arena_ready={arena_ready} \
          segment_allocs={before_segment} fallback_allocs={before_fallback}"
@@ -60,21 +107,29 @@ fn main() {
     }
 
     for size in SIZES {
-        let (seg_in, fb_in, _) = segment_path_split();
+        let (seg_in, fb_in, ns_in, _) = malloc_path_counters();
         for _ in 0..PAIRS_PER_SIZE {
             // SAFETY: a plain malloc/free pair through fl's own entry points; the
             // pointer is freed before the next iteration and never dereferenced.
-            let ptr = unsafe { malloc(size) };
+            //
+            // black_box is LOAD-BEARING here, not hygiene: in a release build LLVM
+            // treats a `malloc`/`free` pair whose result is unused as the libc
+            // builtin and eliminates it, so the loop performed ZERO allocations
+            // and every counter read 0 -- which this probe then reported as
+            // "segments never hit, premise HOLDS".
+            let ptr = unsafe { malloc(std::hint::black_box(size)) };
+            std::hint::black_box(ptr);
             if ptr.is_null() {
                 println!("MALLOC_SEGMENT_SPLIT size={size} status=malloc_returned_null");
                 break;
             }
             unsafe { free(ptr) };
         }
-        let (seg_out, fb_out, _) = segment_path_split();
+        let (seg_out, fb_out, ns_out, _) = malloc_path_counters();
         let seg = seg_out.saturating_sub(seg_in);
         let fb = fb_out.saturating_sub(fb_in);
-        let total = seg + fb;
+        let ns = ns_out.saturating_sub(ns_in);
+        let total = seg + fb + ns;
         // Reported as a share, because the absolute counts include whatever the
         // process allocated for its own bookkeeping between samples.
         let share = if total == 0 {
@@ -82,16 +137,44 @@ fn main() {
         } else {
             (seg as f64) * 100.0 / (total as f64)
         };
+        // `accounted` is the guard that was missing: without it a run where NO
+        // counter fired printed `segment_allocs=0` and was read as "segments
+        // lost", when it actually means the counted branches were never entered.
         println!(
             "MALLOC_SEGMENT_SPLIT size={size} pairs={PAIRS_PER_SIZE} \
-             segment_allocs={seg} fallback_allocs={fb} segment_share_pct={share:.2}"
+             segment_allocs={seg} fallback_allocs={fb} nonstrict_allocs={ns} \
+             accounted={total} segment_share_pct={share:.2}"
         );
     }
 
-    let (after_segment, after_fallback, _) = segment_path_split();
+    let (fseg, ffb, fns, fboot) = malloc_path_counters_full();
+    println!(
+        "MALLOC_PATH_FULL segment={fseg} fallback={ffb} nonstrict={fns} bootstrap={fboot} \
+         sum={}",
+        fseg + ffb + fns + fboot
+    );
+    let (after_segment, after_fallback, after_nonstrict, _) = malloc_path_counters();
     let seg = after_segment.saturating_sub(before_segment);
     let fb = after_fallback.saturating_sub(before_fallback);
-    let verdict = if seg == 0 {
+    let ns = after_nonstrict.saturating_sub(before_nonstrict);
+    let expected = SIZES.len() * PAIRS_PER_SIZE;
+    let accounted = seg + fb + ns;
+    let verdict = if accounted == 0 {
+        // THE GUARD THIS PROBE WAS MISSING. Every counter reading zero does not
+        // mean "segments lost" -- it means no counted branch ran, so the split is
+        // unmeasured and no verdict may be read from it. Reported as such rather
+        // than as a premise-holds.
+        "INCONCLUSIVE_no_counter_fired_split_is_uninstrumented_for_this_path"
+    } else if accounted * 100 < expected * 50 {
+        // Fewer than half the calls landed anywhere countable: still not a basis
+        // for a structural decision.
+        "INCONCLUSIVE_counters_account_for_under_half_the_calls"
+    } else if ns > 0 && seg == 0 && fb == 0 {
+        // All traffic took the non-strict membrane pipeline, which does not touch
+        // the arena insert or the size index at all -- so the bead's premise is
+        // about code this configuration never runs.
+        "NONSTRICT_PATH_SERVED_EVERYTHING_premise_is_about_an_unrun_branch"
+    } else if seg == 0 {
         // The slab exists and never ran: fix the gating, do not build a second one.
         "segments_never_hit_premise_HOLDS"
     } else if fb == 0 {
@@ -103,6 +186,7 @@ fn main() {
     };
     println!(
         "MALLOC_SEGMENT_SPLIT phase=end segment_allocs={seg} fallback_allocs={fb} \
+         nonstrict_allocs={ns} accounted={accounted} expected={expected} \
          verdict={verdict}"
     );
 }

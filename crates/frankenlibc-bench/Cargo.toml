@@ -10,7 +10,7 @@ unsafe_code = "allow"
 
 [features]
 default = []
-abi-bench = ["dep:frankenlibc-abi"]
+abi-bench = ["dep:frankenlibc-abi", "frankenlibc-abi/alloc-path-telemetry"]
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }

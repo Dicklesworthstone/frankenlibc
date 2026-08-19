@@ -390,6 +390,25 @@ fn main() {
 
     use frankenlibc_abi::malloc_abi as fl;
 
+    // bd-e0y02p's DECIDING MEASUREMENT, printed before and after the workload.
+    //
+    // The bead proposes building an address-derived slab to delete the per-call
+    // arena insert + size index + global spinlock. Its own second falsification
+    // criterion is that if those are ALREADY skipped and the ~133ns gap persists,
+    // the design is refuted and the cost lives elsewhere (framing, the membrane's
+    // decide/observe, the reentry guard). `segment_path_split` is the
+    // discriminator: malloc takes the segment path (no hash, no index, no lock)
+    // or the fallback path (all three).
+    //
+    // `arena_ready == false` answers it on its own — nothing could ever have been
+    // segment-backed, so the fallback served everything and the premise holds.
+    let (seg0, fb0, ns0, boot0) = fl::malloc_path_counters_full();
+    let (_, _, ready0) = fl::segment_path_split();
+    println!(
+        "SEGMENT_SPLIT_BEFORE segment={seg0} fallback={fb0} nonstrict={ns0} bootstrap={boot0} \
+         arena_ready={ready0}"
+    );
+
     let it = 100_000u64;
     // malloc+free round-trip (the common churn pattern), various small sizes.
     for &sz in &[16usize, 64, 256, 1024] {
@@ -526,6 +545,43 @@ fn main() {
         "FREE_NULL_AB old={old_fp:.2} new={fp:.2} new/old={:.3} saves={:.2}ns/call",
         fp / old_fp,
         old_fp - fp
+    );
+
+    // The deciding line. Deltas across the whole run, so the split reflects the
+    // traffic actually measured above rather than process startup.
+    let (seg1, fb1, ns1, boot1) = fl::malloc_path_counters_full();
+    let (_, _, ready1) = fl::segment_path_split();
+    let dseg = seg1.saturating_sub(seg0);
+    let dfb = fb1.saturating_sub(fb0);
+    let dns = ns1.saturating_sub(ns0);
+    let dboot = boot1.saturating_sub(boot0);
+    // The four counters are exhaustive over `malloc`, so `total` must move with
+    // the work. A zero means the loops were elided or took an uncounted branch,
+    // and NO verdict may be read from the run.
+    let total = dseg + dfb + dns + dboot;
+    let pct = if total == 0 {
+        0.0
+    } else {
+        100.0 * dseg as f64 / total as f64
+    };
+    println!(
+        "SEGMENT_SPLIT_AFTER segment={seg1} fallback={fb1} nonstrict={ns1} bootstrap={boot1} \
+         arena_ready={ready1} delta_segment={dseg} delta_fallback={dfb} delta_nonstrict={dns} \
+         delta_bootstrap={dboot} accounted={total} segment_pct={pct:.2}"
+    );
+    println!(
+        "BD_E0Y02P_VERDICT {}",
+        if total == 0 {
+            "INCONCLUSIVE: no malloc path counter moved — the loops were elided or took an uncounted branch; do NOT read a verdict from this run"
+        } else if !ready1 {
+            "PREMISE-HOLDS: segment arena never mapped, fallback served everything"
+        } else if pct >= 99.0 {
+            "DESIGN-REFUTED: segment path already serves the traffic, so the arena insert, size index and malloc-side spinlock are ALREADY skipped and the gap is elsewhere"
+        } else if pct <= 1.0 {
+            "PREMISE-HOLDS: segment arena mapped but effectively unused, fallback served the traffic"
+        } else {
+            "MIXED: read delta_segment/delta_fallback before concluding"
+        }
     );
 }
 

@@ -19,6 +19,11 @@ owned-unwind-stub = []
 owned-tls-cache = ["frankenlibc-core/owned-tls-cache", "frankenlibc-membrane/owned-tls-cache"]
 runtime-tracing = ["dep:tracing", "frankenlibc-core/runtime-tracing"]
 conformance-testing = []
+# Per-path malloc counters. OFF by default so deployed builds pay nothing: these
+# are relaxed atomics on the allocator hot path, and malloc is a headline number.
+# With the feature off the accessors report zeros and the probes report
+# INCONCLUSIVE rather than inventing a verdict (bd-e0y02p).
+alloc-path-telemetry = []
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }
