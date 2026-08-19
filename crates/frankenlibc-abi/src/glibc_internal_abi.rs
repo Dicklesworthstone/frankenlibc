@@ -901,10 +901,66 @@ pub unsafe extern "C" fn strtof64_l(
     let _ = loc;
     unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
 }
+/// `strtof64x` — `_Float64x` is x87 80-bit on x86-64, the same ABI class as
+/// `long double`, so this returns in ST(0) exactly like
+/// [`crate::stdlib_abi::strtold`]. It previously returned `f64`, which meant a
+/// C caller read an untouched x87 register.
+///
+/// # Safety
+///
+/// Same contract as C's `strtof64x`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn strtof64x(_nptr: *const c_char, _endptr: *mut *mut c_char) {
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym crate::stdlib_abi::strtold_into,
+    )
+}
+
+/// `strtof64x` where `_Float64x` is not x87; see [`crate::stdlib_abi::strtold`].
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof64x(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
-    unsafe { crate::stdlib_abi::strtold(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
 }
+/// `strtof64x_l` — `_Float64x` is x87 80-bit on x86-64, the same ABI class as
+/// `long double`, so this returns in ST(0) exactly like
+/// [`crate::stdlib_abi::strtold`]. It previously returned `f64`, which meant a
+/// C caller read an untouched x87 register.
+///
+/// # Safety
+///
+/// Same contract as C's `strtof64x_l`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn strtof64x_l(
+    _nptr: *const c_char,
+    _endptr: *mut *mut c_char,
+    _loc: *mut c_void,
+) {
+    // The locale arrives in RDX and is discarded, so the out-buffer
+    // pointer takes its place — as in `strtold_l`.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym crate::stdlib_abi::strtold_into,
+    )
+}
+
+/// `strtof64x_l` where `_Float64x` is not x87; see [`crate::stdlib_abi::strtold`].
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof64x_l(
     nptr: *const c_char,
@@ -912,7 +968,7 @@ pub unsafe extern "C" fn strtof64x_l(
     loc: *mut c_void,
 ) -> f64 {
     let _ = loc;
-    unsafe { crate::stdlib_abi::strtold(nptr, endptr) }
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
 }
 /// Correctly-rounded `strtof128` core: parses the strtod grammar (whitespace,
 /// sign, inf/infinity, nan[(...)], hex `0x..p..`, decimal `..e..`), sets
@@ -1190,10 +1246,66 @@ pub unsafe extern "C" fn wcstof64_l(
     let _ = loc;
     unsafe { crate::wchar_abi::wcstod(nptr.cast(), endptr.cast()) }
 }
+/// `wcstof64x` — `_Float64x` is x87 80-bit on x86-64, the same ABI class as
+/// `long double`, so this returns in ST(0) exactly like
+/// [`crate::stdlib_abi::strtold`]. It previously returned `f64`, which meant a
+/// C caller read an untouched x87 register.
+///
+/// # Safety
+///
+/// Same contract as C's `wcstof64x`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn wcstof64x(_nptr: *const WcharT, _endptr: *mut *mut WcharT) {
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym crate::wchar_abi::wcstold_into,
+    )
+}
+
+/// `wcstof64x` where `_Float64x` is not x87; see [`crate::stdlib_abi::strtold`].
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstof64x(nptr: *const WcharT, endptr: *mut *mut WcharT) -> f64 {
-    unsafe { crate::wchar_abi::wcstold(nptr.cast(), endptr.cast()) }
+    unsafe { crate::wchar_abi::wcstod(nptr.cast(), endptr.cast()) }
 }
+/// `wcstof64x_l` — `_Float64x` is x87 80-bit on x86-64, the same ABI class as
+/// `long double`, so this returns in ST(0) exactly like
+/// [`crate::stdlib_abi::strtold`]. It previously returned `f64`, which meant a
+/// C caller read an untouched x87 register.
+///
+/// # Safety
+///
+/// Same contract as C's `wcstof64x_l`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn wcstof64x_l(
+    _nptr: *const WcharT,
+    _endptr: *mut *mut WcharT,
+    _loc: *mut c_void,
+) {
+    // The locale arrives in RDX and is discarded, so the out-buffer
+    // pointer takes its place — as in `strtold_l`.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym crate::wchar_abi::wcstold_into,
+    )
+}
+
+/// `wcstof64x_l` where `_Float64x` is not x87; see [`crate::stdlib_abi::strtold`].
+#[cfg(not(target_arch = "x86_64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstof64x_l(
     nptr: *const WcharT,
@@ -1201,7 +1313,7 @@ pub unsafe extern "C" fn wcstof64x_l(
     loc: *mut c_void,
 ) -> f64 {
     let _ = loc;
-    unsafe { crate::wchar_abi::wcstold(nptr.cast(), endptr.cast()) }
+    unsafe { crate::wchar_abi::wcstod(nptr.cast(), endptr.cast()) }
 }
 /// Wide `strtof128`: the float grammar is pure ASCII, so copy the leading ASCII
 /// run into a narrow buffer, parse with strtof128_bits, and map the consumed
