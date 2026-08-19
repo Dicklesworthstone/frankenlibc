@@ -171,16 +171,57 @@ fn getgrgid_nonexistent() {
 }
 
 #[test]
-fn getgrnam_getgrgid_ignore_signed_gid_rows() {
-    let fixture = b"plus:x:+27:root\nvalid:x:27:root\n";
+fn getgrnam_getgrgid_accept_signed_numeric_fields_like_glibc() {
+    // Previously asserted that `plus:x:+27:root` was ignored. Measured against
+    // live glibc 2.42 with the fixture bind-mounted over /etc/group:
+    //     getgrnam("plusgid") -> NON-NULL gid=1001
+    // glibc parses the gid with strtoul, which consumes a leading sign, so the
+    // row resolves. fl agreed with glibc and the arm failed anyway. The rule
+    // this was reaching for applies to the NAME field -- see
+    // `getgrnam_skips_nis_compat_prefixed_name_rows`.
+    let fixture = b"plus:x:+27:root\nvalid:x:28:root\n";
     with_group_file(fixture, || {
         let plus = CString::new("plus").unwrap();
-        assert!(unsafe { getgrnam(plus.as_ptr()) }.is_null());
+        let g = unsafe { getgrnam(plus.as_ptr()) };
+        assert!(!g.is_null(), "glibc accepts a '+' in the gid field");
+        assert_eq!(unsafe { (*g).gr_gid }, 27, "the sign is consumed, not kept");
 
-        let grp = unsafe { getgrgid(27) };
-        assert!(!grp.is_null(), "valid unsigned gid row should still match");
+        let grp = unsafe { getgrgid(28) };
+        assert!(
+            !grp.is_null(),
+            "ordinary unsigned gid row should still match"
+        );
         let gr_name = unsafe { CStr::from_ptr((*grp).gr_name) };
         assert_eq!(gr_name.to_bytes(), b"valid");
+    });
+}
+
+/// glibc's files backend SKIPS a group row whose NAME begins with `+` or `-`.
+///
+/// Measured against live glibc 2.42 (same probe shape as the passwd side): the
+/// entry is unreachable under both the `+name` and bare `name` spellings.
+/// NEGATIVE CASE: stripping the sign instead of dropping the row resolves one of
+/// the two lookups and fails here.
+#[test]
+fn getgrnam_skips_nis_compat_prefixed_name_rows() {
+    let fixture = b"+nisgrp:x:40:root\n-minusgrp:x:41:root\nvalidg:x:42:root\n";
+    with_group_file(fixture, || {
+        for name in ["+nisgrp", "nisgrp", "-minusgrp", "minusgrp"] {
+            let c = CString::new(name).unwrap();
+            assert!(
+                unsafe { getgrnam(c.as_ptr()) }.is_null(),
+                "glibc's files backend drops NIS-compat rows; {name} must not resolve"
+            );
+        }
+        assert!(
+            unsafe { getgrgid(40) }.is_null(),
+            "a dropped NIS row must not be reachable by gid either"
+        );
+
+        let grp = unsafe { getgrgid(42) };
+        assert!(!grp.is_null(), "the ordinary row is still kept");
+        let gr_name = unsafe { CStr::from_ptr((*grp).gr_name) };
+        assert_eq!(gr_name.to_bytes(), b"validg");
     });
 }
 
@@ -1257,31 +1298,34 @@ fn group_from_gid_zero_with_nogroup_renders_zero() {
 /// that iteration yields only the well-formed entries.
 #[test]
 fn getgrent_skips_malformed_and_comment_lines() {
-    with_group_file(b"root:x:0:\nmalformed\n#comment\nusers:x:100:alice,bob\n", || {
-        // SAFETY: single-threaded under GROUP_ENV_LOCK; the iteration is closed
-        // by endgrent below.
-        unsafe { setgrent() };
-        let mut names = Vec::new();
-        loop {
-            // SAFETY: iteration continues until getgrent reports NULL.
-            let entry = unsafe { getgrent() };
-            if entry.is_null() {
-                break;
+    with_group_file(
+        b"root:x:0:\nmalformed\n#comment\nusers:x:100:alice,bob\n",
+        || {
+            // SAFETY: single-threaded under GROUP_ENV_LOCK; the iteration is closed
+            // by endgrent below.
+            unsafe { setgrent() };
+            let mut names = Vec::new();
+            loop {
+                // SAFETY: iteration continues until getgrent reports NULL.
+                let entry = unsafe { getgrent() };
+                if entry.is_null() {
+                    break;
+                }
+                // SAFETY: a non-NULL entry points at valid thread-local storage.
+                let name = unsafe { CStr::from_ptr((*entry).gr_name) };
+                names.push(name.to_bytes().to_vec());
             }
-            // SAFETY: a non-NULL entry points at valid thread-local storage.
-            let name = unsafe { CStr::from_ptr((*entry).gr_name) };
-            names.push(name.to_bytes().to_vec());
-        }
-        // SAFETY: closes the iteration opened above.
-        unsafe { endgrent() };
+            // SAFETY: closes the iteration opened above.
+            unsafe { endgrent() };
 
-        assert_eq!(
-            names,
-            vec![b"root".to_vec(), b"users".to_vec()],
-            "a malformed line and a comment must be skipped, leaving only the two \
+            assert_eq!(
+                names,
+                vec![b"root".to_vec(), b"users".to_vec()],
+                "a malformed line and a comment must be skipped, leaving only the two \
              well-formed entries"
-        );
-    });
+            );
+        },
+    );
 }
 
 /// A group file rewritten MID-ITERATION restarts the enumeration.
@@ -1303,7 +1347,9 @@ fn getgrent_restarts_when_the_group_file_changes_mid_iteration() {
         let first = unsafe { getgrent() };
         assert!(!first.is_null(), "iteration should yield the first entry");
         // SAFETY: non-NULL entry points at valid thread-local storage.
-        let first_name = unsafe { CStr::from_ptr((*first).gr_name) }.to_bytes().to_vec();
+        let first_name = unsafe { CStr::from_ptr((*first).gr_name) }
+            .to_bytes()
+            .to_vec();
         assert_eq!(first_name, b"root".to_vec());
 
         // Rewrite WITHOUT closing the enumeration: the next getgrent must see
@@ -1314,9 +1360,14 @@ fn getgrent_restarts_when_the_group_file_changes_mid_iteration() {
 
         // SAFETY: continues the same enumeration across the rewrite.
         let after = unsafe { getgrent() };
-        assert!(!after.is_null(), "iteration should continue after the rewrite");
+        assert!(
+            !after.is_null(),
+            "iteration should continue after the rewrite"
+        );
         // SAFETY: non-NULL entry.
-        let after_name = unsafe { CStr::from_ptr((*after).gr_name) }.to_bytes().to_vec();
+        let after_name = unsafe { CStr::from_ptr((*after).gr_name) }
+            .to_bytes()
+            .to_vec();
         // SAFETY: closes the enumeration.
         unsafe { endgrent() };
 

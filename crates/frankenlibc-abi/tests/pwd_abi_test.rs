@@ -319,21 +319,96 @@ fn getpwuid_not_found() {
     });
 }
 
+/// A `+` in a NUMERIC field is ACCEPTED, because glibc parses those with
+/// `strtoul`, which consumes a leading sign.
+///
+/// This arm previously asserted the opposite -- that `plusuid:x:+1000:...` was
+/// ignored -- and it was simply wrong about the incumbent. Measured against live
+/// glibc 2.42 with the fixture bind-mounted over `/etc/passwd`:
+///
+/// ```text
+/// getpwnam("plusuid") -> NON-NULL uid=1000 gid=1000
+/// getpwnam("plusgid") -> NON-NULL uid=1001 gid=1001
+/// ```
+///
+/// fl agreed with glibc and the arm failed anyway. The rule the arm was reaching
+/// for is real but lives somewhere else: it is the NAME field, not the numeric
+/// fields, that makes glibc skip a row (see
+/// `getpwnam_skips_nis_compat_prefixed_name_rows`).
 #[test]
-fn getpwnam_getpwuid_ignore_signed_uid_gid_rows() {
+fn getpwnam_getpwuid_accept_signed_numeric_fields_like_glibc() {
     let fixture = b"\
 plusuid:x:+1000:1000:Plus:/home/plus:/bin/sh
 plusgid:x:1001:+1001:PlusGid:/home/plusgid:/bin/sh
-valid:x:1000:1000:Valid:/home/valid:/bin/sh
+valid:x:1002:1002:Valid:/home/valid:/bin/sh
 ";
     with_passwd_file(fixture, || {
         let plusuid = CString::new("plusuid").unwrap();
         let plusgid = CString::new("plusgid").unwrap();
-        assert!(unsafe { getpwnam(plusuid.as_ptr()) }.is_null());
-        assert!(unsafe { getpwnam(plusgid.as_ptr()) }.is_null());
 
-        let pw = unsafe { getpwuid(1000) };
-        assert!(!pw.is_null(), "valid unsigned uid row should still match");
+        let a = unsafe { getpwnam(plusuid.as_ptr()) };
+        assert!(!a.is_null(), "glibc accepts a '+' in the uid field");
+        assert_eq!(
+            unsafe { (*a).pw_uid },
+            1000,
+            "the sign is consumed, not kept"
+        );
+
+        let b = unsafe { getpwnam(plusgid.as_ptr()) };
+        assert!(!b.is_null(), "glibc accepts a '+' in the gid field");
+        assert_eq!(
+            unsafe { (*b).pw_gid },
+            1001,
+            "the sign is consumed, not kept"
+        );
+
+        let pw = unsafe { getpwuid(1002) };
+        assert!(!pw.is_null(), "ordinary unsigned row should still match");
+        let pw_name = unsafe { CStr::from_ptr((*pw).pw_name) };
+        assert_eq!(pw_name.to_bytes(), b"valid");
+    });
+}
+
+/// glibc's files backend SKIPS a row whose NAME begins with `+` or `-`.
+///
+/// Those are NIS/compat markers, and the plain `files` service drops the line
+/// entirely -- the entry is unreachable under BOTH spellings. Measured against
+/// live glibc 2.42 with the fixture bind-mounted over `/etc/passwd`:
+///
+/// ```text
+/// getpwnam("+nisrow")   -> NULL
+/// getpwnam("nisrow")    -> NULL     (not reachable with the sign stripped either)
+/// getpwnam("-minusrow") -> NULL
+/// getpwnam("minusrow")  -> NULL
+/// getpwnam("valid")     -> NON-NULL uid=1002
+/// ```
+///
+/// This is the rule the old signed-uid arm was groping for, asserted where it
+/// actually applies. NEGATIVE CASE: an implementation that merely strips the
+/// sign, or that only skips the exact `+name` spelling, still resolves one of
+/// the two lookups and fails here.
+#[test]
+fn getpwnam_skips_nis_compat_prefixed_name_rows() {
+    let fixture = b"\
++nisrow:x:1000:1000:Nis:/home/nis:/bin/sh
+-minusrow:x:1001:1001:Minus:/home/m:/bin/sh
+valid:x:1002:1002:Valid:/home/valid:/bin/sh
+";
+    with_passwd_file(fixture, || {
+        for name in ["+nisrow", "nisrow", "-minusrow", "minusrow"] {
+            let c = CString::new(name).unwrap();
+            assert!(
+                unsafe { getpwnam(c.as_ptr()) }.is_null(),
+                "glibc's files backend drops NIS-compat rows; {name} must not resolve"
+            );
+        }
+        assert!(
+            unsafe { getpwuid(1000) }.is_null(),
+            "a dropped NIS row must not be reachable by uid either"
+        );
+
+        let pw = unsafe { getpwuid(1002) };
+        assert!(!pw.is_null(), "the ordinary row is still kept");
         let pw_name = unsafe { CStr::from_ptr((*pw).pw_name) };
         assert_eq!(pw_name.to_bytes(), b"valid");
     });

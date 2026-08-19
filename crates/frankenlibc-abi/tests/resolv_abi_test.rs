@@ -1711,7 +1711,14 @@ fn getaddrinfo_ignores_malformed_service_protocol_field() {
 }
 
 #[test]
-fn getaddrinfo_ignores_signed_service_port_field() {
+fn getaddrinfo_accepts_signed_service_port_field_like_glibc() {
+    // Previously asserted EAI_SERVICE for a `/etc/services` row whose port field
+    // carries a sign. Measured against live glibc 2.42 with the fixture
+    // bind-mounted over /etc/services:
+    //     getservbyname("fixture-svc","tcp") -> NON-NULL port=80
+    //     getaddrinfo(host, "fixture-svc")   -> OK port=80
+    // glibc parses the port with strtoul, which consumes a leading sign, so the
+    // service resolves. fl agreed with glibc and the arm failed anyway.
     with_resolver_backends(
         Some(b"203.0.113.10 fixture-host\n"),
         Some(b"fixture-svc +80/tcp\n"),
@@ -1723,8 +1730,17 @@ fn getaddrinfo_ignores_signed_service_port_field() {
             let rc = unsafe {
                 resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
             };
-            assert_eq!(rc, libc::EAI_SERVICE);
-            assert!(res.is_null());
+            assert_eq!(rc, 0, "glibc resolves a signed port field to its value");
+            assert!(!res.is_null());
+            unsafe {
+                let sa = (*res).ai_addr as *const libc::sockaddr_in;
+                assert_eq!(
+                    u16::from_be((*sa).sin_port),
+                    80,
+                    "the sign is consumed, not kept"
+                );
+                resolv_abi::freeaddrinfo(res);
+            }
         },
     );
 }

@@ -127,9 +127,34 @@ fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
 ///
 /// Scans `content` (expected to be the full `/etc/passwd` file) line by line.
 /// Returns the first matching entry (case-sensitive, matching glibc behavior).
+/// True when a row is a NIS/compat marker rather than a real account.
+///
+/// glibc's `files` backend treats a leading `+` or `-` on the NAME field as a
+/// NIS compat directive. Such a row is still ENUMERATED -- `getpwent` and
+/// `fgetpwent` both yield it with the sign intact -- but it is never MATCHED by
+/// a lookup. Measured against live glibc 2.42 with the fixture bind-mounted
+/// over `/etc/passwd`:
+///
+/// ```text
+/// getpwent  -> +nisrow / -minusrow / valid      (all three enumerated)
+/// fgetpwent -> +nisrow / -minusrow / valid      (all three)
+/// getpwnam("+nisrow") / ("nisrow")   -> NULL
+/// getpwnam("-minusrow") / ("minusrow") -> NULL
+/// getpwuid(1000) / getpwuid(1001)    -> NULL
+/// getpwuid(1002)                     -> valid
+/// ```
+///
+/// So the filter belongs on the LOOKUP path only. Putting it in
+/// `parse_passwd_line` would also drop the row from enumeration, which glibc
+/// does not do -- one primitive, two doors (bd-80kppk).
+fn is_nis_compat_name(name: &[u8]) -> bool {
+    matches!(name.first(), Some(b'+') | Some(b'-'))
+}
+
 pub fn lookup_by_name(content: &[u8], name: &[u8]) -> Option<Passwd> {
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_passwd_line(line)
+            && !is_nis_compat_name(&entry.pw_name)
             && entry.pw_name == name
         {
             return Some(entry);
@@ -145,6 +170,7 @@ pub fn lookup_by_name(content: &[u8], name: &[u8]) -> Option<Passwd> {
 pub fn lookup_by_uid(content: &[u8], uid: u32) -> Option<Passwd> {
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_passwd_line(line)
+            && !is_nis_compat_name(&entry.pw_name)
             && entry.pw_uid == uid
         {
             return Some(entry);

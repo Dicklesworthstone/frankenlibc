@@ -120,9 +120,20 @@ fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
 ///
 /// Scans `content` (expected to be the full `/etc/group` file) line by line.
 /// Returns the first matching entry (case-sensitive, matching glibc behavior).
+/// True when a row is a NIS/compat marker rather than a real group.
+///
+/// Same rule as the passwd side: glibc's `files` backend still ENUMERATES a row
+/// whose NAME begins with `+` or `-`, but never MATCHES it from a lookup. The
+/// filter therefore belongs on the lookup path only, not in `parse_group_line`,
+/// which feeds `getgrent`/`fgetgrent`.
+fn is_nis_compat_name(name: &[u8]) -> bool {
+    matches!(name.first(), Some(b'+') | Some(b'-'))
+}
+
 pub fn lookup_by_name(content: &[u8], name: &[u8]) -> Option<Group> {
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_group_line(line)
+            && !is_nis_compat_name(&entry.gr_name)
             && entry.gr_name == name
         {
             return Some(entry);
@@ -138,6 +149,7 @@ pub fn lookup_by_name(content: &[u8], name: &[u8]) -> Option<Group> {
 pub fn lookup_by_gid(content: &[u8], gid: u32) -> Option<Group> {
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_group_line(line)
+            && !is_nis_compat_name(&entry.gr_name)
             && entry.gr_gid == gid
         {
             return Some(entry);
