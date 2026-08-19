@@ -78,6 +78,12 @@ macro_rules! both {
 #[test]
 fn fwprintf_matches_glibc() {
     unsafe { g::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    // fl needs the same locale, not just the oracle: the call above is a
+    // link-time/`libc` symbol, so it moves GLIBC only, and fl has started in
+    // POSIX C since b5aef5e3a. Comparing an ASCII fl against a UTF-8 glibc
+    // fails for a reason that has nothing to do with what this gate tests.
+    // SAFETY: same NUL-terminated locale name as the call above.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
 
     let wide = wfmt("wide-arg");
     both!("decimal", "n=%d\n", 42 as c_int);

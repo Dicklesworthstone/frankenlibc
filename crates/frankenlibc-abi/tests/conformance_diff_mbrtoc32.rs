@@ -51,6 +51,12 @@ fn mbrtoc32_matches_glibc() {
     // Put glibc into a UTF-8 locale so mbrtoc32 decodes UTF-8.
     let utf8 = CString::new("C.UTF-8").unwrap();
     unsafe { setlocale(LC_ALL, utf8.as_ptr()) };
+    // fl needs the same locale, not just the oracle: the call above is a
+    // link-time/`libc` symbol, so it moves GLIBC only, and fl has started in
+    // POSIX C since b5aef5e3a. Comparing an ASCII fl against a UTF-8 glibc
+    // fails for a reason that has nothing to do with what this gate tests.
+    // SAFETY: same NUL-terminated locale name as the call above.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(LC_ALL, utf8.as_ptr()) };
 
     let cases: &[(&[u8], usize)] = &[
         (b"A", 1),            // ASCII

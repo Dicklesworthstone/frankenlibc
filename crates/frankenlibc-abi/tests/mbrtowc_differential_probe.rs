@@ -80,6 +80,13 @@ fn mbrtowc_matches_host_glibc_over_utf8_surface() {
         eprintln!("C.UTF-8 locale unavailable; skipping mbrtowc differential probe");
         return;
     }
+    // fl needs the same locale, not just the oracle. `setlocale` above is a
+    // link-time symbol, so in a debug test it binds GLIBC's and moves only the
+    // host; fl has started in POSIX C since b5aef5e3a. Without this the probe
+    // compares an ASCII fl against a UTF-8 glibc -- measured here as 342 of 942
+    // cases "diverging", none of which is about mbrtowc.
+    // SAFETY: same NUL-terminated locale name.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr()) };
 
     let mut compared = 0u64;
     let mut divergences: Vec<(Vec<u8>, usize, MbResult, MbResult)> = Vec::new();
