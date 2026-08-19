@@ -323,7 +323,8 @@ pub(crate) fn strict_field_list_is_scannable(
         return true;
     }
     !kinds[..fields.saturating_sub(1)].contains(&b's')
-}/// True when the format is exactly `"%s"` — no width, no suppression, no length
+}
+/// True when the format is exactly `"%s"` — no width, no suppression, no length
 /// modifier. Tested only AFTER the decimal-int probe declines.
 ///
 /// The two probes are separate on purpose, and it was measured: folding them
@@ -619,7 +620,11 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
             };
             if rc == libc::EOF {
                 return StrictDecimalIntsScan {
-                    count: if count == 0 { libc::EOF } else { count as c_int },
+                    count: if count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
                     input_failure: count == 0,
                     values,
                 };
@@ -639,10 +644,15 @@ pub(crate) unsafe fn strict_scan_decimal_ints(
         if kinds[index] == b's' {
             // SAFETY: the probe accepted a `%s` at this position, so the caller
             // passed a `char *` sized for the token plus its NUL.
-            let rc = unsafe { strict_scan_single_string_from(p, destinations[index].cast(), &mut p) };
+            let rc =
+                unsafe { strict_scan_single_string_from(p, destinations[index].cast(), &mut p) };
             if rc == libc::EOF {
                 return StrictDecimalIntsScan {
-                    count: if count == 0 { libc::EOF } else { count as c_int },
+                    count: if count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
                     input_failure: count == 0,
                     values,
                 };
@@ -1839,8 +1849,43 @@ pub fn stdio_stdout_sentinel_ptr_for_tests() -> *mut c_void {
 }
 
 #[inline]
+/// True when `id` is a handle fl itself minted, rather than a real host
+/// `FILE *`.
+///
+/// fl hands out synthetic ids: `0x1000_0001..=0x1000_0003` for the standard
+/// streams and `0x1000_0010` upward from `alloc_stream_id`. `NEXT_STREAM_ID`
+/// only ever increases, so anything at or above the sentinel base and below the
+/// current watermark is an id fl issued at some point -- whether or not the
+/// registry still holds it. Real `FILE *` values live in libc's data segment or
+/// on the heap, far above this window.
+fn is_fl_issued_stream_id(id: usize) -> bool {
+    if id < STDIN_SENTINEL {
+        return false;
+    }
+    let watermark = *NEXT_STREAM_ID.lock().unwrap_or_else(|e| e.into_inner());
+    id < watermark
+}
+
 fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
-    if is_standard_sentinel_id(id) && stream as usize == id {
+    // Never hand one of fl's own ids to the host, registered or not.
+    //
+    // The sentinel-only form of this guard left every ORDINARY fl id exposed to
+    // exactly the failure bd-0ftdgt documents for the standard streams. Once a
+    // stream has been removed from the registry -- a concurrent `fclose`, a
+    // double close, or `fcloseall` racing a sibling thread's close -- the
+    // `!registry_contains_stream(id)` fallback below concludes "not mine, must
+    // be a host handle" and passes the synthetic id straight to glibc, which
+    // dereferences it.
+    //
+    // Measured (bd-u2daxd), caught under gdb on the conformance suite at
+    // --test-threads 16:
+    //     #0  _IO_new_fclose (fp=0x10000044) at ./libio/iofclose.c:48
+    //     #1  frankenlibc_abi::stdio_abi::fclose (stream=0x10000044)
+    //     #2  frankenlibc_abi::stdio_abi::fcloseall ()
+    // `0x1000_0044` is an `alloc_stream_id` value, not an address. With this
+    // guard the same call returns EOF/EBADF through the registry path, which is
+    // what a close of an already-closed stream is supposed to do.
+    if stream as usize == id && is_fl_issued_stream_id(id) {
         return false;
     }
     !registry_contains_stream(id)
@@ -9760,7 +9805,10 @@ impl Drop for ScanfReadBuf {
             let mut slot = pool.borrow_mut();
             // Keep whichever buffer has the larger capacity: a reentrant call
             // would otherwise leave the pool holding the smaller one.
-            if slot.as_ref().map_or(true, |held| held.capacity() < buf.capacity()) {
+            if slot
+                .as_ref()
+                .map_or(true, |held| held.capacity() < buf.capacity())
+            {
                 *slot = Some(buf);
             }
         });
@@ -9783,7 +9831,10 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
     if s.is_mem_backed() {
         sync_and_unregister_fast_fixed_mem_read(id, s);
-        return (ScanfReadBuf::from_vec(s.mem_read(limit)), ScanfReadState::Memory);
+        return (
+            ScanfReadBuf::from_vec(s.mem_read(limit)),
+            ScanfReadState::Memory,
+        );
     }
 
     let fd = s.fd();
@@ -9827,7 +9878,10 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     let base = s.offset();
     let mut buf = s.buffered_read(cap);
     if buf.len() >= cap || s.is_eof() || s.is_error() {
-        return (ScanfReadBuf::from_vec(buf), ScanfReadState::BufferedFd { base });
+        return (
+            ScanfReadBuf::from_vec(buf),
+            ScanfReadState::BufferedFd { base },
+        );
     }
 
     let mut tmp = vec![0u8; cap - buf.len()];
@@ -9835,12 +9889,18 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     if rc > 0 {
         tmp.truncate(rc as usize);
         buf.extend_from_slice(&tmp);
-        (ScanfReadBuf::from_vec(buf), ScanfReadState::BufferedFd { base })
+        (
+            ScanfReadBuf::from_vec(buf),
+            ScanfReadState::BufferedFd { base },
+        )
     } else {
         if rc == 0 {
             s.set_eof();
         }
-        (ScanfReadBuf::from_vec(buf), ScanfReadState::BufferedFd { base })
+        (
+            ScanfReadBuf::from_vec(buf),
+            ScanfReadState::BufferedFd { base },
+        )
     }
 }
 
@@ -9913,7 +9973,8 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
     }
 
     if runtime_policy::strict_passthrough_active() {
-        if let Some((fields, sep, kinds, delims)) = unsafe { strict_decimal_int_format_count(format) }
+        if let Some((fields, sep, kinds, delims)) =
+            unsafe { strict_decimal_int_format_count(format) }
             && strict_field_list_is_scannable(fields, sep, &kinds)
         {
             // Every destination is fetched BEFORE the scan. Fetching a variadic
@@ -12812,7 +12873,8 @@ pub unsafe extern "C" fn __isoc99_sscanf(
     // `__isoc23_sscanf`: the fallback delegates to `vsscanf`, which decides for
     // itself, so deciding here too would bill the engine path twice.
     if !s.is_null() && !format.is_null() && runtime_policy::strict_passthrough_active() {
-        if let Some((fields, sep, kinds, delims)) = unsafe { strict_decimal_int_format_count(format) }
+        if let Some((fields, sep, kinds, delims)) =
+            unsafe { strict_decimal_int_format_count(format) }
             && strict_field_list_is_scannable(fields, sep, &kinds)
         {
             let (_, decision) =

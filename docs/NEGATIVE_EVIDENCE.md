@@ -32273,3 +32273,51 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `OTHER_PREFIX`. fl delegates to the host, and live `libcrypt.so.1` returns
   **`$y$` (yescrypt), not `$6$`, on both this host and worker ovh-a**. fl is
   right; the arms encode a pre-yescrypt libxcrypt. Do not "fix" fl here.
+
+## 2026-08-19 — REFUTED, my own hypothesis: stdin identity is NOT the cause of the `frankenlibc_conformance` SIGSEGV, though it *was* the cause of the hang and the abort (`bd-u2daxd`, PurpleRaven)
+
+- **Refuted premise, and it was the bead's central one.** `bd-u2daxd` recorded
+  the `--lib` instability as "PARALLELISM-INDUCED, not ordering-induced and not
+  worker-specific", on the strength of "3 of 5 default-threaded runs green, the
+  single-threaded run green". That inference is wrong. The single-threaded run
+  was green because of **what its stdin was**, not how many threads it had.
+  Eight fixture arms read the process's real fd 0 unredirected; under
+  `cargo test` fd 0 is normally `/dev/null`, so their declared "empty stdin"
+  premise held by accident. Measured, same binary, same two tests,
+  `--test-threads 1`, only fd 0 differing: `/dev/null` → 2 passed in 0.03s;
+  live pipe with no data → **hangs forever**. `--test-threads` is not the
+  variable.
+- **Two real defects fell out and are fixed and gated** (`ae4e60009`): at
+  pristine HEAD `b159846ef`, whole suite, `-j16` — stdin = live pipe with no
+  data **wedged** (172/173 reported, no summary line, one thread in
+  `unix_stream_data_wait` on fd 0 and a second futex-blocked behind it); stdin =
+  pipe carrying data **aborted**, `rc=134`, 145/173 reported, no summary line,
+  because the three `scanf` arms passed **no destination** for their `%d` and
+  `scanf_write_values!` fetched a pointer no caller ever pushed.
+- **But the hypothesis that this explained the bead does not survive its own
+  discriminator, which is the point of this entry.** With the fix in place and
+  stdin *explicitly* `< /dev/null`, `-j16`, 8 iterations: **5 ok, 2 SIGSEGV
+  (rc=139), 1 assertion failure**. The SIGSEGV reproduces at 124 of 175 tests
+  reported with no summary line — the same shape as the bead's original
+  "122 of 173". So there is a second, independent defect and `bd-u2daxd` stays
+  open. Had I closed it on the stdin fix, the crash would have been re-filed
+  from scratch later.
+- **Rejected measurement practice, specific to this bead: "prefer a quiet
+  window" is exactly backwards here.** Both crashes landed while loadavg was
+  100–180; the rate visibly collapsed when the host quieted to ~30. Load is the
+  amplifier. Run this one loaded.
+- **Three instruments that returned vacuous greens before one worked**, all
+  costing real iterations: (1) `gdb` cannot *attach* here —
+  `/proc/sys/kernel/yama/ptrace_scope = 1` — but it can *launch*, which
+  suffices; (2) `gdb -batch` stops on the suite's **own** `SIGUSR1` from the
+  `signal_async` arms and ends the batch early, which reads as a clean run —
+  twelve of my "clean" iterations were vacuous, and the tell was that they
+  finished in ~5s against a 16s suite; needs
+  `handle all nostop noprint pass` then `handle SIGSEGV stop print nopass`;
+  (3) `gdb` executes every `-ex` unconditionally, so grepping for a marker
+  emitted by `-ex echo` matches clean runs too — detect on
+  `received signal SIG(SEGV|BUS|ABRT)`. `apport` owns `core_pattern` here and
+  saved no core for this binary, so `/var/crash` is a dead end.
+- **What actually located the stdin defect, in under a minute and with no
+  debugger:** `ls -l /proc/<pid>/fd` (only 0,1,2 open; fd 0 a `socket:[...]`)
+  plus `cat /proc/<pid>/task/*/wchan`.
