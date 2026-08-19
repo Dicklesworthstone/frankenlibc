@@ -45,7 +45,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 | Large classified ABI surface | **4,119 exported symbols** all classified |
 | Native ownership is substantial and measured | **2,395 `Implemented` + 414 `RawSyscall` = 2,809 / 4,119 (68.2% native coverage)** |
 | Host-backed interpose subset is explicit | **1,310 `WrapsHostLibc` (31.8%), 0 `GlibcCallThrough`, 0 `Stub`** |
-| Interposition exercises real workloads today | Curated smoke battery: **60 passes / 0 fails / 4 optional skips** across strict + hardened modes, backed by the checked smoke artifact (see `COMPATIBILITY.md`) |
+| Interposition exercises real workloads today | Curated smoke battery: **60 passes / 0 fails / 4 optional skips** across strict + hardened modes, backed by the checked smoke artifact (see `docs/planning/COMPATIBILITY.md`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
 | Verification is first-class | Harness CLI, 40+ fixture families, **258 completion-contract artifacts**, **68 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings |
@@ -1460,7 +1460,7 @@ The remaining hard areas are difficult for real systems reasons, not because the
 
 - The current shipping artifact is the **interpose** shared library, not a fully standalone libc replacement.
 - The deployment model is `LD_PRELOAD`; setuid/setgid binaries are out of scope because the kernel loader ignores `LD_PRELOAD` for them.
-- The curated preload smoke battery currently has 60 pass / 0 fail / 4 optional skips across strict and hardened modes; see `COMPATIBILITY.md` for workload status details.
+- The curated preload smoke battery currently has 60 pass / 0 fail / 4 optional skips across strict and hardened modes; see `docs/planning/COMPATIBILITY.md` for workload status details.
 - Hardened mode is fixture-and-oracle-verified for the defined healing taxonomy; that is not a blanket production-readiness claim for arbitrary workloads.
 - Performance: strict-mode overhead is budgeted at < 20 ns/call and hardened-mode at < 200 ns/call; perf gates measure rather than assume, and regressions surface in `scripts/check_perf_regression_gate.sh`.
 - The README summarizes current reality; canonical truth lives in generated reports and gates.

@@ -81,7 +81,7 @@
         "FEATURE_PARITY.md",
         "PLAN_TO_PORT_GLIBC_TO_RUST.md",
         "PROPOSED_ARCHITECTURE.md",
-        "EXISTING_GLIBC_STRUCTURE.md"
+        "docs/planning/EXISTING_GLIBC_STRUCTURE.md"
       ],
       "required_env_keys": [
         "FRANKENLIBC_MODE",

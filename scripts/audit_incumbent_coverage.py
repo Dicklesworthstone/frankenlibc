@@ -26,7 +26,7 @@ LEDGER = ROOT / "docs" / "NEGATIVE_EVIDENCE.md"
 
 # Docs a user actually reads.
 PUBLIC_DOCS = [
-    "README.md", "COMPATIBILITY.md", "FEATURE_PARITY.md", "PARITY-COVERAGE.md",
+    "README.md", "docs/planning/COMPATIBILITY.md", "FEATURE_PARITY.md", "docs/planning/PARITY-COVERAGE.md",
     "DEPLOYMENT.md", "CHANGELOG.md", "docs/RELEASE_READINESS_SCORECARD.md",
 ]
 

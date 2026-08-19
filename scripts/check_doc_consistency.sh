@@ -6,7 +6,7 @@
 #   - LIVE-CLAIM docs: README.md, DEPLOYMENT.md, FEATURE_PARITY.md, SECURITY.md
 #     Their factual claims MUST match freshly regenerated artifacts.
 #   - PLANNING docs: PLAN_TO_PORT_GLIBC_TO_RUST.md, PROPOSED_ARCHITECTURE.md,
-#     REALITY_CHECK_BRIDGE_PLAN.md. These are aspirational/historical and must
+#     docs/planning/REALITY_CHECK_BRIDGE_PLAN.md. These are aspirational/historical and must
 #     carry a header declaring them planning artifacts.
 #
 # Exit codes:
@@ -50,7 +50,7 @@ LIVE_CLAIM_DOCS = [
 PLANNING_DOCS = [
     "PLAN_TO_PORT_GLIBC_TO_RUST.md",
     "PROPOSED_ARCHITECTURE.md",
-    "REALITY_CHECK_BRIDGE_PLAN.md",
+    "docs/planning/REALITY_CHECK_BRIDGE_PLAN.md",
 ]
 
 PLANNING_HEADER_PATTERNS = [

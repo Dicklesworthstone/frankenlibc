@@ -9,7 +9,7 @@
       "purpose": "Primary spec-first migration plan and closure criteria source"
     },
     {
-      "path": "EXISTING_GLIBC_STRUCTURE.md",
+      "path": "docs/planning/EXISTING_GLIBC_STRUCTURE.md",
       "purpose": "Legacy subsystem pressure-map baseline"
     },
     {
@@ -47,15 +47,15 @@
             "type": "paths_exist",
             "paths": [
               "PLAN_TO_PORT_GLIBC_TO_RUST.md",
-              "EXISTING_GLIBC_STRUCTURE.md",
+              "docs/planning/EXISTING_GLIBC_STRUCTURE.md",
               "PROPOSED_ARCHITECTURE.md",
               "FEATURE_PARITY.md"
             ]
           },
-          "check_cmd": "test -f PLAN_TO_PORT_GLIBC_TO_RUST.md && test -f EXISTING_GLIBC_STRUCTURE.md && test -f PROPOSED_ARCHITECTURE.md && test -f FEATURE_PARITY.md",
+          "check_cmd": "test -f PLAN_TO_PORT_GLIBC_TO_RUST.md && test -f docs/planning/EXISTING_GLIBC_STRUCTURE.md && test -f PROPOSED_ARCHITECTURE.md && test -f FEATURE_PARITY.md",
           "artifact_paths": [
             "PLAN_TO_PORT_GLIBC_TO_RUST.md",
-            "EXISTING_GLIBC_STRUCTURE.md",
+            "docs/planning/EXISTING_GLIBC_STRUCTURE.md",
             "PROPOSED_ARCHITECTURE.md",
             "FEATURE_PARITY.md"
           ],

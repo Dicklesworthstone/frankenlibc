@@ -314,7 +314,7 @@ FrankenLibC/
 ├── AGENTS.md                     # This file
 ├── README.md
 ├── PLAN_TO_PORT_GLIBC_TO_RUST.md
-├── EXISTING_GLIBC_STRUCTURE.md
+├── docs/planning/EXISTING_GLIBC_STRUCTURE.md
 ├── PROPOSED_ARCHITECTURE.md
 ├── FEATURE_PARITY.md
 ├── legacy_glibc_code/            # Reference only — never translate line-by-line
@@ -821,7 +821,7 @@ cargo test --workspace --all-targets
 ### Required Docs (Keep Updated)
 
 - `PLAN_TO_PORT_GLIBC_TO_RUST.md`
-- `EXISTING_GLIBC_STRUCTURE.md`
+- `docs/planning/EXISTING_GLIBC_STRUCTURE.md`
 - `PROPOSED_ARCHITECTURE.md`
 - `FEATURE_PARITY.md`
 

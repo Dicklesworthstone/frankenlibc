@@ -19,7 +19,7 @@ DOC_FILES = (
     "FEATURE_PARITY.md",
     "PLAN_TO_PORT_GLIBC_TO_RUST.md",
     "PROPOSED_ARCHITECTURE.md",
-    "EXISTING_GLIBC_STRUCTURE.md",
+    "docs/planning/EXISTING_GLIBC_STRUCTURE.md",
 )
 
 DOC_GOVERNANCE_SURFACES: tuple[dict[str, Any], ...] = (
