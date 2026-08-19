@@ -240,3 +240,99 @@ fn a_conversion_after_a_long_double_reads_its_own_argument() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The WIDE side: swprintf has its own extraction macro and had the same bug.
+// ---------------------------------------------------------------------------
+
+type HostSwprintf = unsafe extern "C" fn() -> c_int;
+
+fn host_swprintf() -> HostSwprintf {
+    static H: OnceLock<Option<usize>> = OnceLock::new();
+    let addr = (*H.get_or_init(|| {
+        // SAFETY: dlopen/dlsym with NUL-terminated names; handle leaked.
+        unsafe {
+            let handle = libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            if handle.is_null() {
+                return None;
+            }
+            let sym = libc::dlsym(handle, c"swprintf".as_ptr());
+            if sym.is_null() {
+                return None;
+            }
+            let fl = frankenlibc_abi::wchar_abi::swprintf as *const () as usize;
+            assert_ne!(
+                sym as usize, fl,
+                "resolved swprintf IS fl's own (bd-v0388t)"
+            );
+            Some(sym as usize)
+        }
+    }))
+    .expect("glibc swprintf must resolve");
+    // SAFETY: the address came from dlsym on glibc's swprintf.
+    unsafe { std::mem::transmute::<usize, HostSwprintf>(addr) }
+}
+
+fn wide(text: &str) -> Vec<u32> {
+    text.chars()
+        .map(|c| c as u32)
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn render_wide(buf: &[u32]) -> String {
+    buf.iter()
+        .take_while(|&&c| c != 0)
+        .filter_map(|&c| char::from_u32(c))
+        .collect()
+}
+
+/// Both arms of a wide format carrying a long double and a trailing int.
+fn both_wide(fmt: &str, value: &[u8; 16], trailing: c_int) -> (String, String) {
+    let fmt_w = wide(fmt);
+    let mut host_buf = [0u32; 256];
+    let mut fl_buf = [0u32; 256];
+    // SAFETY: 256 wide chars each; sixteen readable value bytes. swprintf has
+    // the same register layout as snprintf, so the same trampoline applies.
+    unsafe {
+        call_snprintf_ld_then_int(
+            host_buf.as_mut_ptr().cast::<c_char>(),
+            host_buf.len(),
+            fmt_w.as_ptr().cast::<c_char>(),
+            value.as_ptr(),
+            trailing,
+            std::mem::transmute::<HostSwprintf, HostSnprintf>(host_swprintf()),
+        );
+        call_snprintf_ld_then_int(
+            fl_buf.as_mut_ptr().cast::<c_char>(),
+            fl_buf.len(),
+            fmt_w.as_ptr().cast::<c_char>(),
+            value.as_ptr(),
+            trailing,
+            std::mem::transmute::<*const (), HostSnprintf>(
+                frankenlibc_abi::wchar_abi::swprintf as *const (),
+            ),
+        );
+    }
+    (render_wide(&host_buf), render_wide(&fl_buf))
+}
+
+/// The wide extraction macro is a separate copy of the same logic, so it had
+/// the same bug and needs its own arm — fixing the narrow side proves nothing
+/// about this one.
+#[test]
+fn wide_long_double_matches_live_glibc() {
+    let value = x87(b"125", -1, false);
+    for fmt in ["%.2Lf|%d", "%Lf %d", "%.1Lf[%d]"] {
+        let (host, fl) = both_wide(fmt, &value, 4242);
+        assert_eq!(fl, host, "wide argument stream diverges for {fmt:?}");
+        assert!(
+            fl.contains("4242"),
+            "the trailing int was lost for wide {fmt:?}: {fl:?}"
+        );
+        assert!(
+            fl.contains("12.5"),
+            "the long double was misread for wide {fmt:?}: {fl:?}"
+        );
+    }
+}
