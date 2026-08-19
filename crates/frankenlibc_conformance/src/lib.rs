@@ -17972,21 +17972,58 @@ fn init_pthread_cond_for_case(
     }
 }
 
+/// Signal a condvar on behalf of a waiting arm, without depending on the waiter
+/// having parked in time.
+///
+/// The previous shape was `sleep(delay_ms)` then exactly ONE signal. POSIX makes
+/// a signal delivered while no thread is waiting a no-op, so if the waiter had
+/// not parked yet -- purely a matter of scheduling luck under host load -- that
+/// single signal was discarded and the arm's UNBOUNDED `pthread_cond_wait`
+/// blocked forever. That is bd-j05zw5: `pthread_cond_fixture_cases` wedged in
+/// `futex_do_wait` while its four siblings finished.
+///
+/// The fix is to keep signalling until the waiter reports that its wait
+/// returned. Re-signalling is legal and observationally harmless -- a signal
+/// with no waiter is a no-op, asserted directly against live fl in
+/// `crates/frankenlibc-abi/tests/pthread_cond_lost_wakeup_shape.rs` -- so this
+/// changes nothing an arm can observe except that the wakeup now cannot be lost.
+///
+/// This deliberately does NOT take the mutex. Several callers join this thread
+/// while still holding it (`verify_mutex_held_on_return` unlocks only after the
+/// join), so acquiring it here deadlocks: the notifier blocks in
+/// `pthread_mutex_lock` while the arm blocks in `join`. Measured, and it is why
+/// the mutex-holding version was reverted. The one arm that publishes a
+/// predicate does take the mutex, inline, where the ordering actually matters.
+///
+/// The loop is bounded so an implementation regression ends the arm with a wrong
+/// value rather than hanging the suite -- bd-u2daxd's complaint about hangs.
 fn spawn_cond_notifier(
     cond_addr: usize,
     delay_ms: u64,
     broadcast: bool,
+    woke: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> std::thread::JoinHandle<i32> {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         let cond = cond_addr as *mut libc::pthread_cond_t;
-        unsafe {
-            if broadcast {
-                frankenlibc_abi::pthread_abi::pthread_cond_broadcast(cond)
-            } else {
-                frankenlibc_abi::pthread_abi::pthread_cond_signal(cond)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut last_rc;
+        loop {
+            last_rc = unsafe {
+                if broadcast {
+                    frankenlibc_abi::pthread_abi::pthread_cond_broadcast(cond)
+                } else {
+                    frankenlibc_abi::pthread_abi::pthread_cond_signal(cond)
+                }
+            };
+            if woke.load(std::sync::atomic::Ordering::Acquire)
+                || std::time::Instant::now() >= deadline
+            {
+                break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        last_rc
     })
 }
 
@@ -18326,13 +18363,37 @@ fn execute_pthread_cond_wait_case(
         let predicate = std::sync::Arc::new(AtomicU32::new(0));
         let predicate_clone = std::sync::Arc::clone(&predicate);
         let cond_addr = cond as usize;
+        let mutex_addr = mutex as usize;
+        // Publish the predicate and signal while HOLDING the mutex (bd-j05zw5).
+        // Doing it unlocked let the store+signal land after the waiter had read
+        // the predicate as 0 but before it parked; POSIX discards a signal with
+        // no waiter, so the waiter then blocked forever on an unbounded
+        // `pthread_cond_wait`. Holding the mutex makes that window unreachable,
+        // because the waiter owns the mutex from its predicate read until
+        // `pthread_cond_wait` has released it. Proven both ways in
+        // crates/frankenlibc-abi/tests/pthread_cond_lost_wakeup_shape.rs.
         let notifier = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(20));
             let cond = cond_addr as *mut libc::pthread_cond_t;
-            let first = unsafe { frankenlibc_abi::pthread_abi::pthread_cond_signal(cond) };
+            let mutex = mutex_addr as *mut libc::pthread_mutex_t;
+            let first = unsafe {
+                let locked = frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex);
+                let rc = frankenlibc_abi::pthread_abi::pthread_cond_signal(cond);
+                if locked == 0 {
+                    frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
+                }
+                rc
+            };
             std::thread::sleep(std::time::Duration::from_millis(20));
-            predicate_clone.store(1, Ordering::Release);
-            let second = unsafe { frankenlibc_abi::pthread_abi::pthread_cond_signal(cond) };
+            let second = unsafe {
+                let locked = frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex);
+                predicate_clone.store(1, Ordering::Release);
+                let rc = frankenlibc_abi::pthread_abi::pthread_cond_signal(cond);
+                if locked == 0 {
+                    frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
+                }
+                rc
+            };
             (first, second)
         });
 
@@ -18424,14 +18485,18 @@ fn execute_pthread_cond_wait_case(
         });
 
         std::thread::sleep(std::time::Duration::from_millis(25));
-        let notifier = spawn_cond_notifier(cond as usize, 25, true);
+        let cond_woke = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let notifier =
+            spawn_cond_notifier(cond as usize, 25, true, std::sync::Arc::clone(&cond_woke));
 
         let output = unsafe {
             let lock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex_b);
             if lock_rc != 0 {
+                cond_woke.store(true, std::sync::atomic::Ordering::Release);
                 format!("lock_failed:{}", format_pthread_status(lock_rc))
             } else {
                 let wait_rc = frankenlibc_abi::pthread_abi::pthread_cond_wait(cond, mutex_b);
+                cond_woke.store(true, std::sync::atomic::Ordering::Release);
                 let unlock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex_b);
                 let notify_rc = notifier
                     .join()
@@ -18512,13 +18577,17 @@ fn execute_pthread_cond_wait_case(
         let mutex = alloc_pthread_mutex_ptr();
         init_pthread_mutex_for_case(mutex)?;
         init_pthread_cond_for_case(cond, None)?;
-        let notifier = spawn_cond_notifier(cond as usize, 20, false);
+        let cond_woke = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let notifier =
+            spawn_cond_notifier(cond as usize, 20, false, std::sync::Arc::clone(&cond_woke));
         let output = unsafe {
             let lock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex);
             if lock_rc != 0 {
+                cond_woke.store(true, std::sync::atomic::Ordering::Release);
                 format!("lock_failed:{}", format_pthread_status(lock_rc))
             } else {
                 let wait_rc = frankenlibc_abi::pthread_abi::pthread_cond_wait(cond, mutex);
+                cond_woke.store(true, std::sync::atomic::Ordering::Release);
                 let notify_rc = notifier
                     .join()
                     .map_err(|_| String::from("wait notifier thread panicked"))?;
@@ -18665,11 +18734,17 @@ fn execute_pthread_cond_timedwait_case(
                     _ => clock_abstime_after(clock_id, 200)?,
                 };
 
+                let cond_woke = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let notifier = if matches!(
                     deadline_alias.as_deref(),
                     Some("future") | Some("monotonic_future")
                 ) {
-                    Some(spawn_cond_notifier(cond as usize, 20, false))
+                    Some(spawn_cond_notifier(
+                        cond as usize,
+                        20,
+                        false,
+                        std::sync::Arc::clone(&cond_woke),
+                    ))
                 } else {
                     None
                 };
@@ -18679,6 +18754,7 @@ fn execute_pthread_cond_timedwait_case(
                     mutex,
                     &abstime as *const libc::timespec,
                 );
+                cond_woke.store(true, std::sync::atomic::Ordering::Release);
                 let notify_rc = if let Some(handle) = notifier {
                     handle
                         .join()
@@ -18812,11 +18888,17 @@ fn execute_pthread_cond_clockwait_case(
                     }
                 } else {
                     let abstime = build_timespec_from_fixture(inputs, clock_id, 200)?;
+                    let cond_woke = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let notifier = if matches!(
                         parse_optional_string(inputs, "deadline")?.as_deref(),
                         Some("future") | Some("future_long")
                     ) {
-                        Some(spawn_cond_notifier(cond as usize, 20, false))
+                        Some(spawn_cond_notifier(
+                            cond as usize,
+                            20,
+                            false,
+                            std::sync::Arc::clone(&cond_woke),
+                        ))
                     } else {
                         None
                     };
@@ -18826,6 +18908,7 @@ fn execute_pthread_cond_clockwait_case(
                         clock_id,
                         &abstime as *const libc::timespec,
                     );
+                    cond_woke.store(true, std::sync::atomic::Ordering::Release);
                     let notify_rc = if let Some(handle) = notifier {
                         handle
                             .join()
