@@ -5905,6 +5905,33 @@ fn format_generic_rdata(rdata: &[u8], ty: u16, out: &mut String) {
     }
 }
 
+/// Run a type-specific formatter, falling back to the generic form if it
+/// cannot parse the rdata.
+///
+/// The discriminator for refusing is an EMBEDDED DOMAIN NAME, not whether we
+/// have a formatter for the type -- see `rdata_embeds_a_domain_name`. So a
+/// formatter that rejects its input tells us only that the type-specific
+/// presentation is unavailable, which is exactly the case RFC 3597's generic
+/// form exists for.
+///
+/// The output is truncated back to `mark` first: a partially-written rendering
+/// from the failed attempt would otherwise be prefixed to the generic form.
+/// `format_txt_rdata` in particular emits each string as it goes and can fail
+/// part way through.
+fn specific_or_generic(
+    formatter: fn(&[u8], &mut String) -> Result<(), ()>,
+    rdata: &[u8],
+    ty: u16,
+    out: &mut String,
+) -> Result<(), ()> {
+    let mark = out.len();
+    if formatter(rdata, out).is_err() {
+        out.truncate(mark);
+        format_generic_rdata(rdata, ty, out);
+    }
+    Ok(())
+}
+
 unsafe fn format_rdata(
     msg: *const u8,
     msglen: usize,
@@ -5923,8 +5950,13 @@ unsafe fn format_rdata(
         unsafe { core::slice::from_raw_parts(rdata, rdlen) }
     };
     match ty {
-        1 => format_a_rdata(slice, out),
-        28 => format_aaaa_rdata(slice, out),
+        // A/AAAA/TXT have specific formatters that reject rdata of the wrong
+        // shape, but a rejection here is NOT a refusal: libresolv renders these
+        // generically when the rdata does not fit, because their rdata holds no
+        // domain name and there is nothing to decompress. Measured, and now
+        // gated by conformance_diff_ns_rdata_types.
+        1 => specific_or_generic(format_a_rdata, slice, ty, out),
+        28 => specific_or_generic(format_aaaa_rdata, slice, ty, out),
         2 | 5 | 12 => unsafe { format_name_rdata(msg, msglen, rdata, out) },
         15 => {
             // MX: 2-byte preference + name
@@ -5936,7 +5968,7 @@ unsafe fn format_rdata(
             let _ = write!(out, "{pref} ");
             unsafe { format_name_rdata(msg, msglen, rdata.add(2), out) }
         }
-        16 => format_txt_rdata(slice, out),
+        16 => specific_or_generic(format_txt_rdata, slice, ty, out),
         _ if rdata_embeds_a_domain_name(ty) => {
             // A type whose presentation format CONTAINS a domain name, but for
             // which fl has no specific arm. Refuse rather than fall back to the
