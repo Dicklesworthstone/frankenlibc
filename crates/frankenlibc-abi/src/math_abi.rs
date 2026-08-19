@@ -14699,10 +14699,23 @@ mod tests {
         assert_eq!(quo & 0x7, 3 & 0x7);
         assert_eq!(abi_errno(), 0);
 
-        // domain error: y == 0
+        // y == 0 is NOT an errno-reporting domain error in glibc.
+        //
+        // Measured on the live incumbent (glibc 2.42, libm.so.6, via ctypes):
+        //     remquo(1.0, 0.0) -> nan, errno 0 (unset)
+        // C99 calls this a domain error, but glibc reports it through the
+        // FE_INVALID flag rather than errno, and math_errhandling on this
+        // platform does not promise errno for it. fl already agreed; this
+        // assertion pinned EDOM, which fl has never set here, so the arm has
+        // been red for as long as it has been able to run.
         set_errno_for_test(0);
-        let _ = unsafe { remquo(1.0, 0.0, std::ptr::null_mut()) };
-        assert_eq!(abi_errno(), libc::EDOM);
+        let rem_zero = unsafe { remquo(1.0, 0.0, std::ptr::null_mut()) };
+        assert!(rem_zero.is_nan(), "remquo(x, 0) returns NaN");
+        assert_eq!(
+            abi_errno(),
+            0,
+            "glibc leaves errno untouched for remquo(x, 0) — it signals via FE_INVALID"
+        );
     }
 
     #[test]
@@ -14731,13 +14744,29 @@ mod tests {
         assert_eq!(abi_errno(), 0);
     }
 
+    /// `y0(0)` is a POLE error, not a domain error.
+    ///
+    /// Measured on the live incumbent (glibc 2.42, libm.so.6, via ctypes):
+    ///     y0( 0.0) -> -inf, errno 34 (ERANGE)
+    ///     y0(-1.0) ->  nan, errno 33 (EDOM)
+    ///     y1( 0.0) -> -inf, errno 34 (ERANGE)
+    /// Zero is IN the domain of y0; the function is simply unbounded there, so
+    /// the result is a pole (ERANGE) rather than an invalid argument (EDOM).
+    /// The sibling arm `y0_domain_error_negative` covers the genuine EDOM case
+    /// and passes, which is why only this one was red.
+    ///
+    /// fl already returned ERANGE; the assertion was wrong, not the code.
     #[test]
-    fn y0_domain_error_at_zero() {
+    fn y0_pole_error_at_zero() {
         set_errno_for_test(0);
         // SAFETY: ABI entrypoint accepts plain f64 input.
         let v = unsafe { y0(0.0) };
-        assert!(v.is_infinite());
-        assert_eq!(abi_errno(), libc::EDOM);
+        assert!(v.is_infinite() && v.is_sign_negative(), "y0(0) is -inf");
+        assert_eq!(
+            abi_errno(),
+            libc::ERANGE,
+            "y0(0) is a pole error (ERANGE) like glibc, not EDOM"
+        );
     }
 
     #[test]

@@ -1271,8 +1271,19 @@ mod tests {
         // No crash, no-op verified.
     }
 
+    /// `catopen("")` reports ENOENT, not EINVAL.
+    ///
+    /// This test asserted EINVAL and was named for it, which was fl's ORIGINAL
+    /// behaviour (93749b4bb). fb7d7cc03 then fixed fl to match glibc -- an
+    /// empty name is a name that does not resolve, not a malformed argument --
+    /// and left this test pinning the value it had just corrected. It has been
+    /// red ever since, unnoticed because the whole abi suite was aborting
+    /// during the build.
+    ///
+    /// The lesson is the one bd-fix-shipped-ungated records: assert what the
+    /// ORACLE produces, and make sure the assertion actually runs.
     #[test]
-    fn catopen_empty_name_sets_einval() {
+    fn catopen_empty_name_sets_enoent() {
         let empty = b"\0";
         unsafe { set_abi_errno(0) };
         // SAFETY: The catalog name pointer is NUL-terminated.
@@ -1280,7 +1291,8 @@ mod tests {
         assert_eq!(catd, INVALID_NL_CATD);
         assert_eq!(
             unsafe { *crate::errno_abi::__errno_location() },
-            libc::EINVAL
+            libc::ENOENT,
+            "catopen(\"\") must report ENOENT like glibc (fb7d7cc03, bd-rp1e32)"
         );
     }
 
