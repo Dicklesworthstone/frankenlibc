@@ -560,7 +560,13 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
         .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
-    let number = parse_network_number_bytes(fields.next()?)?;
+    // LEFT-ALIGN here, not in the helper. getnetent shifts the value up by one
+    // byte per ABSENT component — "127" is 0x7f000000, not 0x7f — while
+    // inet_network, which shares the fold below, returns the right-aligned
+    // number. Putting the shift in the shared helper (f5317dccd) fixed this
+    // path and broke that contract; see parse_network_number_components.
+    let (raw, components) = parse_network_number_components(fields.next()?)?;
+    let number = raw << (8 * (4 - components));
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(NetworkEntry {
         name: name.to_vec(),
@@ -594,6 +600,32 @@ pub fn parse_network_number(s: &str) -> Option<u32> {
 }
 
 fn parse_network_number_bytes(bytes: &[u8]) -> Option<u32> {
+    parse_network_number_components(bytes).map(|(value, _)| value)
+}
+
+/// The `inet_network` fold, plus how many dot-separated components it consumed.
+///
+/// RIGHT-ALIGNED, deliberately: this is `inet_network`'s contract and it is
+/// pinned to the live function by conformance_diff_network_number.rs. The
+/// component count exists so `parse_networks_line` can LEFT-align on top,
+/// because getnetent does not report what inet_network returns:
+///
+///     token        inet_network   getnetent n_net
+///     "127"         0x0000007f     0x7f000000
+///     "192.168"     0x0000c0a8     0xc0a80000
+///     "10.0.0"      0x000a0000     0x0a000000
+///     "10.0.0.1"    0x0a000001     0x0a000001
+///
+/// Both measured on the host — the second column by calling inet_network, the
+/// third by bind-mounting a synthetic /etc/networks and walking getnetent. Only
+/// the full dotted quad agrees, and /etc/networks is conventionally written
+/// short, so the two rules genuinely differ for almost every real entry.
+///
+/// The shift lived in THIS function briefly (f5317dccd) and that was wrong: it
+/// fixed the netent path by breaking the inet_network contract the function is
+/// named for and gated against. One helper, two callers, two rules — the shift
+/// belongs to the caller that needs it.
+fn parse_network_number_components(bytes: &[u8]) -> Option<(u32, u32)> {
     if bytes.is_empty() {
         return None;
     }
@@ -607,21 +639,7 @@ fn parse_network_number_bytes(bytes: &[u8]) -> Option<u32> {
         result = (result << 8) | v;
         components += 1;
     }
-    // LEFT-ALIGN. This is the whole defect that was here: the fold above
-    // right-aligns, which is what `inet_network` returns, and the netent parser
-    // does NOT return that. Measured on live glibc by bind-mounting a synthetic
-    // /etc/networks and walking getnetent, against inet_network on the same
-    // tokens:
-    //     token       inet_network   getnetent n_net
-    //     "127"        0x0000007f     0x7f000000
-    //     "192.168"    0x0000c0a8     0xc0a80000
-    //     "10.0.0"     0x000a0000     0x0a000000
-    //     "10.0.0.1"   0x0a000001     0x0a000001
-    // so the number is shifted up by one byte per ABSENT component, and only
-    // the full dotted-quad form agrees with inet_network. /etc/networks is
-    // conventionally written in the short forms, so fl was returning a value
-    // 8, 16 or 24 bits off for essentially every real entry.
-    Some(result << (8 * (4 - components)))
+    Some((result, components))
 }
 
 /// Parse one `inet_network` component: base-16/8/10 with a `<= 0xff` cap.
@@ -2074,8 +2092,10 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
             bytes in proptest::collection::vec(any::<u8>(), 0..512),
         ) {
             if let Some(entry) = parse_services_line(&bytes) {
-                // Protocol must be non-empty (the parser rejects empty)
-                prop_assert!(!entry.protocol.is_empty());
+                // The protocol MAY be empty: getservent accepts both "noproto 84"
+                // (no '/') and "emptyproto 85/" and reports an empty s_proto for
+                // each, so "the parser rejects empty" is no longer true and was
+                // never true of the incumbent.
                 prop_assert!(!entry.name.is_empty());
 
                 // All decoded fields must be substrings of the
@@ -2084,14 +2104,20 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
                     Some(pos) => &bytes[..pos],
                     None => &bytes[..],
                 };
-                prop_assert!(pre_comment
-                    .windows(entry.name.len())
-                    .any(|w| w == entry.name));
-                prop_assert!(pre_comment
-                    .windows(entry.protocol.len())
-                    .any(|w| w == entry.protocol));
+                // `windows(0)` PANICS ("window size must be non-zero"), and an
+                // empty protocol is now a legal parse ("noproto 84",
+                // "emptyproto 85/"), so the empty case has to be handled rather
+                // than fed to windows(). An empty field is trivially a
+                // substring. The fuzzer found this the moment the parser
+                // started producing empty protocols -- the panic was in the
+                // CHECK, not in the parser.
+                let is_substring = |field: &[u8]| -> bool {
+                    field.is_empty() || pre_comment.windows(field.len()).any(|w| w == field)
+                };
+                prop_assert!(is_substring(&entry.name));
+                prop_assert!(is_substring(&entry.protocol));
                 for alias in &entry.aliases {
-                    prop_assert!(pre_comment.windows(alias.len()).any(|w| w == alias));
+                    prop_assert!(is_substring(alias));
                 }
             }
         }
@@ -2184,11 +2210,14 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
                 },
                 Case {
                     id: "SERVICES-PARSE-008",
-                    // An empty protocol field after '/' is ill-formed.
-                    spec_ref: "services(5) ¶Format — empty protocol rejected",
+                    // An empty protocol after '/' is ACCEPTED, not ill-formed:
+                    // getservent reports "emptyproto 85/" with an empty s_proto
+                    // rather than skipping the line. The old expectation came
+                    // from reading services(5), not from the incumbent.
+                    spec_ref: "measured: getservent over a bound /etc/services",
                     input: b"bad 22/",
-                    expected_name: None,
-                    expected_port: 0,
+                    expected_name: Some(b"bad"),
+                    expected_port: 22,
                     expected_proto: b"",
                     expected_aliases: &[],
                 },
@@ -2204,22 +2233,27 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
                 },
                 Case {
                     id: "SERVICES-PARSE-010",
-                    // A leading sign is not part of the decimal port grammar.
-                    spec_ref: "services(5) ¶Format — signed port rejected",
+                    // A leading '+' IS part of the grammar glibc implements --
+                    // it reads the port with strtoul. Measured: getservent
+                    // reports "plusport +86/tcp" as port 86. A leading '-' is
+                    // still refused (SERVICES-PARSE-014).
+                    spec_ref: "measured: getservent over a bound /etc/services",
                     input: b"bad +80/tcp",
-                    expected_name: None,
-                    expected_port: 0,
-                    expected_proto: b"",
+                    expected_name: Some(b"bad"),
+                    expected_port: 80,
+                    expected_proto: b"tcp",
                     expected_aliases: &[],
                 },
                 Case {
                     id: "SERVICES-PARSE-011",
-                    // Port > 65535 must be rejected (u16 overflow).
-                    spec_ref: "services(5) ¶Format — port must fit u16 (0..=65535)",
+                    // A port past 65535 WRAPS, it is not rejected: glibc stores
+                    // it through a uint16_t. Measured: "overflow 99999/tcp"
+                    // comes back as 34463 (99999 - 65536), so 70000 is 4464.
+                    spec_ref: "measured: getservent over a bound /etc/services",
                     input: b"bad 70000/tcp",
-                    expected_name: None,
-                    expected_port: 0,
-                    expected_proto: b"",
+                    expected_name: Some(b"bad"),
+                    expected_port: 4464,
+                    expected_proto: b"tcp",
                     expected_aliases: &[],
                 },
                 Case {
