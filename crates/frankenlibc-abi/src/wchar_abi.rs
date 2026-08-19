@@ -4544,7 +4544,7 @@ use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue};
 /// there. Everything else keeps the register path, byte-identical.
 macro_rules! extract_wprintf_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
-        if crate::stdio_abi::format_has_long_double($segments) {
+        if $segments.has_long_double() {
             // `$args` is already `&mut VaListImpl`; taking another reference
             // would hand the walker a pointer to the REFERENCE, which reads a
             // pointer where gp_offset belongs. That mistake on the narrow side

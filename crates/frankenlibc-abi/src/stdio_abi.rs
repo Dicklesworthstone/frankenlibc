@@ -5236,30 +5236,6 @@ use frankenlibc_core::stdio::{
     format_str, parse_format_string, positional_printf_arg_plan as core_positional_printf_arg_plan,
 };
 
-/// Does this format consume a `long double` argument?
-///
-/// `%Lf` and friends are class X87 on x86-64 SysV, which is passed in MEMORY —
-/// a 16-byte slot in the overflow area, never a register. Rust's `next_arg`
-/// dispatches on the Rust type and there is no Rust type that classifies as
-/// X87, so such an argument cannot be read through it at all: a 16-byte struct
-/// classifies as INTEGER and would consume two GP registers, a third wrong
-/// answer rather than a fix.
-///
-/// So a format containing one has to be extracted by the hand-written va_list
-/// walker instead. This predicate keeps that detour off every other format,
-/// because the fast path is perf-tuned (bd-ntb9fq).
-pub(crate) fn format_has_long_double(segments: &[FormatSegment<'_>]) -> bool {
-    segments.iter().any(|seg| match seg {
-        // Length first: it is a plain enum comparison, while
-        // `value_arg_is_float` resolves the spec's route. This predicate runs
-        // on EVERY printf call and can only short-circuit on a hit, so the
-        // cheap half goes first. See the perf note on bd-longdouble-varargs —
-        // the walk itself is still unmeasured debt.
-        FormatSegment::Spec(spec) => spec.length == LengthMod::BigL && spec.value_arg_is_float(),
-        _ => false,
-    })
-}
-
 /// Maximum variadic arguments we extract per printf call.
 pub(crate) const MAX_VA_ARGS: usize = 32;
 
@@ -5283,7 +5259,7 @@ pub(crate) const MAX_VA_ARGS: usize = 32;
 /// path unchanged, because it is perf-tuned (bd-ntb9fq).
 macro_rules! extract_va_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
-        if crate::stdio_abi::format_has_long_double($segments) {
+        if $segments.has_long_double() {
             // On x86-64 `VaListImpl` IS the `__va_list_tag` the ABI describes,
             // so a pointer to it is what C would pass as a `va_list`.
             //

@@ -719,6 +719,19 @@ pub struct FormatSegments<'a> {
     /// referenced position rather than a running total, so it cannot be
     /// accumulated incrementally.
     sequential_args: usize,
+    /// Whether any spec consumes a `long double`, accumulated for the same
+    /// reason as the two fields above.
+    ///
+    /// The argument extractor has to know this before it reads anything,
+    /// because a `long double` vararg is class X87 and passed in MEMORY —
+    /// `next_arg` cannot read it, and reading it as a double leaves sixteen
+    /// stack bytes unconsumed, which corrupts every following conversion. The
+    /// first version of that check walked the segments on every call, which is
+    /// precisely the traversal `any_positional` (10.63% self time) and
+    /// `sequential_args` (3.48% of instructions) were introduced to remove.
+    /// Unlike those two, this one cannot even short-circuit on the common
+    /// case: it returns false only after visiting every segment.
+    has_long_double: bool,
 }
 
 impl<'a> FormatSegments<'a> {
@@ -729,6 +742,7 @@ impl<'a> FormatSegments<'a> {
             heap: None,
             any_positional: false,
             sequential_args: 0,
+            has_long_double: false,
         }
     }
 
@@ -744,6 +758,12 @@ impl<'a> FormatSegments<'a> {
     /// Recorded during `push`, so this is a field read rather than a walk.
     pub fn any_positional(&self) -> bool {
         self.any_positional
+    }
+
+    /// Whether any spec consumes a `long double`. Field read, not a walk — see
+    /// the field's own note for why that matters here.
+    pub fn has_long_double(&self) -> bool {
+        self.has_long_double
     }
 
     pub fn push(&mut self, segment: FormatSegment<'a>) {
@@ -764,6 +784,11 @@ impl<'a> FormatSegments<'a> {
             }
             if spec.consumes_value_arg() {
                 self.sequential_args += 1;
+            }
+            // Length first: a plain enum comparison, where `value_arg_is_float`
+            // resolves the spec's route.
+            if spec.length == LengthMod::BigL && spec.value_arg_is_float() {
+                self.has_long_double = true;
             }
         }
         if let Some(heap) = &mut self.heap {
@@ -2874,6 +2899,97 @@ mod tests {
                 accumulated,
                 walked,
                 "format {:?}: accumulated {accumulated} but the walk says {walked}",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    /// `has_long_double` must agree with an independent walk over the specs.
+    ///
+    /// The accumulator runs at parse time and the extractor trusts it without
+    /// re-checking, so a drift here does not print a wrong number: it routes a
+    /// format to the register reader that cannot see an X87 argument at all,
+    /// leaving sixteen stack bytes unconsumed and corrupting every conversion
+    /// after the `%Lf`. That is silent, so it is pinned against the definition
+    /// the same way `sequential_args` is.
+    #[test]
+    fn has_long_double_matches_an_independent_walk() {
+        let formats: &[&[u8]] = &[
+            // No long double anywhere — the case that must stay false, and the
+            // one the extractor takes on essentially every real call.
+            b"",
+            b"no conversions at all",
+            b"%s %d %f %g %e",
+            b"%lf %llf %hf",
+            b"%%",
+            b"%n",
+            b"100%% done",
+            // Present, in each float conversion that accepts the length.
+            b"%Lf",
+            b"%Le",
+            b"%Lg",
+            b"%LG",
+            b"%La",
+            b"%LA",
+            // Present but not first: the walk cannot short-circuit early, and
+            // a scan that gave up after the first spec would miss these.
+            b"%d %Lf",
+            b"%s %s %s %s %s %Lf",
+            b"%d %s %u %x %c %p %Le end",
+            // Past the inline/heap boundary, so the heap arm is covered.
+            b"%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %Lf",
+            // `L` on a conversion that is NOT floating point. glibc treats it
+            // as a no-op for integers, so these consume an int, not sixteen
+            // stack bytes — flagging them would send an ordinary format down
+            // the slow hand-written walker.
+            b"%Ld",
+            b"%Lu",
+            b"%Ls",
+            b"%Lc",
+            // Width and precision spelled with `L` before the conversion.
+            b"%12.4Lf",
+            b"%-*.*Lf",
+            // Truncated: no conversion character at all.
+            b"%L",
+            b"%12L",
+        ];
+
+        for fmt in formats {
+            let segments = parse_format_string(fmt);
+            let walked = segments.iter().any(|seg| match seg {
+                FormatSegment::Spec(spec) => {
+                    spec.length == LengthMod::BigL && spec.value_arg_is_float()
+                }
+                _ => false,
+            });
+            assert_eq!(
+                segments.has_long_double(),
+                walked,
+                "format {:?}: field says {} but the walk says {walked}",
+                String::from_utf8_lossy(fmt),
+                segments.has_long_double()
+            );
+        }
+    }
+
+    /// The flag must be TRUE for the formats that need the X87-aware reader and
+    /// FALSE for the ones that do not.
+    ///
+    /// The test above only proves the field and the walk agree; if both were
+    /// wrong in the same way it would still pass. This one states the answers.
+    #[test]
+    fn has_long_double_is_set_for_the_formats_that_need_it() {
+        for fmt in [&b"%Lf"[..], b"%Le", b"%Lg", b"%d %Lf", b"%12.4Lf", b"%La"] {
+            assert!(
+                parse_format_string(fmt).has_long_double(),
+                "format {:?} carries a long double and must take the X87 reader",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+        for fmt in [&b"%f"[..], b"%lf", b"%d", b"%s", b"", b"%Ld", b"%%", b"%L"] {
+            assert!(
+                !parse_format_string(fmt).has_long_double(),
+                "format {:?} has no long double and must stay on the fast reader",
                 String::from_utf8_lossy(fmt)
             );
         }
