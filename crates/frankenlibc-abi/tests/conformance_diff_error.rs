@@ -41,7 +41,7 @@ use std::os::unix::io::FromRawFd;
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
-use dlsym_oracle::host_fn;
+use dlsym_oracle::{host_addr, host_fn};
 
 type ErrorFn = unsafe extern "C" fn(c_int, c_int, *const c_char, ...);
 
@@ -79,18 +79,42 @@ fn capture_stderr(body: impl FnOnce()) -> Vec<u8> {
     }
 }
 
-/// The program name glibc prefixes with, read from the live global so the
+/// The program name glibc prefixes with, read from the LIVE glibc global so the
 /// expectations do not hardcode a test-runner name.
+///
+/// Resolved through `dlsym`, for two reasons. `libc::program_invocation_name`
+/// does not exist — the crate does not export it, which is what broke this
+/// file's compile. And rustc's suggested replacement,
+/// `frankenlibc_abi::startup_abi::program_invocation_name`, would have been
+/// worse than the error: it is fl's own `AtomicPtr`, stored by fl's startup
+/// code, which never runs in a test process. It is null here, so `prog` would
+/// be empty and every prefix assertion below would compare `""` against `""`
+/// and pass while proving nothing.
 fn program_name() -> String {
-    // SAFETY: `program_invocation_name` is a NUL-terminated global.
-    unsafe {
-        let ptr = libc::program_invocation_name;
+    // SAFETY: `program_invocation_name` is a `char *` global, so `host_addr`
+    // returns the address OF the pointer and one deref yields the string. fl's
+    // own definition is passed so a collapsed oracle aborts (bd-v0388t).
+    let name = unsafe {
+        let slot = host_addr(
+            c"program_invocation_name",
+            (&raw const frankenlibc_abi::startup_abi::program_invocation_name).cast::<()>(),
+        );
+        let ptr = *slot.cast::<*const c_char>();
         if ptr.is_null() {
             String::new()
         } else {
             std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
         }
-    }
+    };
+    // An empty prefix would make every expectation below vacuous, and it is
+    // exactly what the two wrong readings of this global produce. Fail as a
+    // broken probe instead of passing as evidence.
+    assert!(
+        !name.is_empty(),
+        "glibc's program_invocation_name is empty — the oracle is broken, so \
+         this gate cannot run. Do NOT read this as agreement about fl."
+    );
+    name
 }
 
 #[test]
@@ -186,7 +210,7 @@ fn error_message_count_skips_suppressed_messages() {
     // SAFETY: both are plain globals fl exports.
     unsafe {
         frankenlibc_abi::glibc_internal_abi::error_one_per_line = 1;
-        frankenlibc_abi::glibc_internal_abi::error_message_count = 0;
+        frankenlibc_abi::stdlib_abi::error_message_count = 0;
     }
     let file = c"f.c";
     let msg = c"dup";
@@ -212,7 +236,7 @@ fn error_message_count_skips_suppressed_messages() {
     assert!(!third.is_empty(), "a different line must print again");
 
     // SAFETY: reading the global back.
-    let count = unsafe { frankenlibc_abi::glibc_internal_abi::error_message_count };
+    let count = unsafe { frankenlibc_abi::stdlib_abi::error_message_count };
     assert_eq!(
         count, 2,
         "three calls, two messages — the suppressed one must NOT increment \
