@@ -8390,7 +8390,7 @@ unsafe fn vprintf_read_x87(overflow_ptr: *mut *mut u8) -> u64 {
 /// integer, so it agrees with converting the exact rational — checked against
 /// exact-rational rounding over 6007 values spanning x87 subnormals, the f64
 /// subnormal band, and the overflow edge.
-fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
+pub(crate) fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
     let significand = u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]);
@@ -9403,7 +9403,7 @@ use frankenlibc_core::stdio::scanf::{
     ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format, scan_input,
 };
 
-fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
+pub(crate) fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
     let bits = value.to_bits();
     let sign = ((bits >> 63) as u16) << 15;
     let exponent = ((bits >> 52) & 0x7ff) as i32;

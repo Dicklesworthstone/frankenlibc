@@ -6742,13 +6742,114 @@ pub unsafe extern "C" fn fcvt_r(
 
 // Quad-precision stubs (use f64 on platforms without __float128 support)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// `qecvt`/`qfcvt`/`qgcvt` on targets where `long double` is not x87.
+///
+/// Only x86-64 passes a `long double` in a stack slot the shim can point at. On
+/// other targets the historical `c_double` signature is kept and re-encoded, so
+/// the formatting body is shared rather than duplicated.
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn qecvt(
     value: c_double,
     ndigit: c_int,
     decpt: *mut c_int,
     sign: *mut c_int,
 ) -> *mut c_char {
-    // Reuse ecvt for quad precision (f64 approximation)
+    let bytes = crate::stdio_abi::x86_extended80_bytes_from_f64(value);
+    // SAFETY: `bytes` is 16 bytes, of which the helper reads ten.
+    unsafe { qecvt_x87(ndigit, decpt, sign, bytes.as_ptr()) }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qfcvt(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+) -> *mut c_char {
+    let bytes = crate::stdio_abi::x86_extended80_bytes_from_f64(value);
+    // SAFETY: as above.
+    unsafe { qfcvt_x87(ndigit, decpt, sign, bytes.as_ptr()) }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char) -> *mut c_char {
+    let bytes = crate::stdio_abi::x86_extended80_bytes_from_f64(value);
+    // SAFETY: as above.
+    unsafe { qgcvt_x87(ndigit, buf, bytes.as_ptr()) }
+}
+
+/// Read the ten significant bytes of an x87 `long double` argument.
+///
+/// # Safety
+///
+/// `value` must address the caller's 16-byte long double slot.
+unsafe fn x87_arg(value: *const u8) -> f64 {
+    let mut bytes = [0u8; 10];
+    // SAFETY: the shim points this at the caller's stack slot, which the SysV
+    // ABI guarantees is 16 bytes, of which ten are significant.
+    unsafe { core::ptr::copy_nonoverlapping(value, bytes.as_mut_ptr(), 10) };
+    crate::stdio_abi::f64_from_x87_bytes(&bytes)
+}
+
+/// `qecvt` — the `long double` form of `ecvt`.
+///
+/// ## Why a naked shim
+///
+/// glibc declares `qecvt(long double value, ...)`. On x86-64 SysV a `long
+/// double` parameter is class MEMORY: the caller pushes it on the stack and
+/// XMM0 is never written. fl declared the parameter as `c_double`, so it read
+/// XMM0 and every call returned digits for whatever happened to be in that
+/// register — not an "f64 approximation" of the argument, as the old comment
+/// said, but an unrelated number.
+///
+/// The shim hands the stack slot to ordinary Rust as a pointer. Measured with
+/// gcc, not read off the ABI document: the value sits at `[rsp+8]`, the integer
+/// and pointer parameters still start at RDI as though the long double were not
+/// in the sequence, so the out-pointer takes the next free integer register —
+/// RCX here — and a tail `jmp` returns the `char *` in RAX untouched.
+///
+/// STILL LOSSY, deliberately and visibly: the value is rounded to `f64` before
+/// formatting, so digits past the seventeenth are not the long double's. That
+/// is a bounded, documented shortfall where the previous behaviour was
+/// unbounded nonsense. Carrying full precision needs the binary128 digit path
+/// (`float128::x87_to_binary128` is the exact widening, already in place).
+///
+/// # Safety
+///
+/// Same contract as C's `qecvt`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn qecvt(
+    _value: c_double,
+    _ndigit: c_int,
+    _decpt: *mut c_int,
+    _sign: *mut c_int,
+) -> *mut c_char {
+    core::arch::naked_asm!(
+        "lea rcx, [rsp+8]",
+        "jmp {into}",
+        into = sym qecvt_x87,
+    )
+}
+
+/// The body of [`qecvt`], reached with the long double as a pointer.
+///
+/// # Safety
+///
+/// `value` must address the caller's long double slot; the other pointers obey
+/// C's `qecvt` contract.
+unsafe extern "C" fn qecvt_x87(
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+    value: *const u8,
+) -> *mut c_char {
+    // SAFETY: the shim points `value` at the caller's stack slot.
+    let value = unsafe { x87_arg(value) };
     with_qecvt_buf(|b| {
         let mut buf = b.borrow_mut();
         unsafe {
@@ -6766,12 +6867,41 @@ pub unsafe extern "C" fn qecvt(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// `qfcvt` — the `long double` form of `fcvt`. See [`qecvt`] for why this is a
+/// naked shim and what it still rounds away.
+///
+/// # Safety
+///
+/// Same contract as C's `qfcvt`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
 pub unsafe extern "C" fn qfcvt(
-    value: c_double,
+    _value: c_double,
+    _ndigit: c_int,
+    _decpt: *mut c_int,
+    _sign: *mut c_int,
+) -> *mut c_char {
+    core::arch::naked_asm!(
+        "lea rcx, [rsp+8]",
+        "jmp {into}",
+        into = sym qfcvt_x87,
+    )
+}
+
+/// The body of [`qfcvt`], reached with the long double as a pointer.
+///
+/// # Safety
+///
+/// As [`qecvt_x87`].
+unsafe extern "C" fn qfcvt_x87(
     ndigit: c_int,
     decpt: *mut c_int,
     sign: *mut c_int,
+    value: *const u8,
 ) -> *mut c_char {
+    // SAFETY: the shim points `value` at the caller's stack slot.
+    let value = unsafe { x87_arg(value) };
     with_qfcvt_buf(|b| {
         let mut buf = b.borrow_mut();
         unsafe {
@@ -6789,7 +6919,34 @@ pub unsafe extern "C" fn qfcvt(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char) -> *mut c_char {
+/// `qgcvt` — the `long double` form of `gcvt`. See [`qecvt`].
+///
+/// The out-pointer register differs from [`qecvt`]'s: this function has one
+/// fewer integer parameter, so the next free register is RDX rather than RCX.
+/// Both were measured; copying the wrong one is silent.
+///
+/// # Safety
+///
+/// Same contract as C's `qgcvt`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn qgcvt(_value: c_double, _ndigit: c_int, _buf: *mut c_char) -> *mut c_char {
+    core::arch::naked_asm!(
+        "lea rdx, [rsp+8]",
+        "jmp {into}",
+        into = sym qgcvt_x87,
+    )
+}
+
+/// The body of [`qgcvt`], reached with the long double as a pointer.
+///
+/// # Safety
+///
+/// As [`qecvt_x87`].
+unsafe extern "C" fn qgcvt_x87(ndigit: c_int, buf: *mut c_char, value: *const u8) -> *mut c_char {
+    // SAFETY: the shim points `value` at the caller's stack slot.
+    let value = unsafe { x87_arg(value) };
     if buf.is_null() {
         return std::ptr::null_mut();
     }
