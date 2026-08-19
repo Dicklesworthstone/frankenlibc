@@ -292,6 +292,14 @@ fn parse_sysfs_cache_size(raw: &str) -> Option<libc::c_long> {
 /// L1i size 32768 / line 64, L1d 32768 / 8 / 64, L2 524288 / 8 / 64,
 /// L3 33554432 / 16 / 64.
 ///
+/// CONFIRMED ON A SECOND, DIFFERENT CPU (bd-fxu91j): AMD EPYC-Genoa (Zen 4)
+/// against glibc 2.43 — a different microarchitecture, a different vendor
+/// generation, and a different glibc minor than the Zen 3 host above. It
+/// matters that its numbers are not the same: L2 is 1048576 there against
+/// 524288 here, so the agreement is the sysfs route TRACKING glibc rather than
+/// two sources happening to quote one machine's constants. The 15 selectors
+/// agree on both hosts.
+///
 /// THE ONE DISAGREEMENT IS WHY `_SC_LEVEL1_ICACHE_ASSOC` IS NOT SERVED FROM
 /// HERE: sysfs reports 8 ways, glibc reports -1. glibc's CPUID path does not
 /// produce an instruction-cache associativity on this vendor, so following
@@ -372,6 +380,53 @@ fn runtime_min_sigstksz() -> libc::c_long {
     value as libc::c_long
 }
 
+/// Which `sysinfo(2)` RAM field a page count is being taken from.
+#[derive(Clone, Copy)]
+pub(crate) enum SysinfoRam {
+    /// `totalram` -- backs `_SC_PHYS_PAGES` and `get_phys_pages`.
+    Total,
+    /// `freeram` -- backs `_SC_AVPHYS_PAGES` and `get_avphys_pages`.
+    Free,
+}
+
+/// Physical-memory page counts, taken from `sysinfo(2)` exactly as glibc does.
+///
+/// THE SOURCE IS THE SYSCALL, NOT /proc/meminfo, and that is measured rather
+/// than stylistic. Bind-mounting an empty file over the procfs entry under
+/// bwrap leaves live glibc 2.42 still answering both selectors correctly, so
+/// it cannot be reading that file. fl did read it, which made these selectors
+/// fail in any mount namespace without a populated /proc -- containers most of
+/// all -- where glibc succeeds.
+///
+/// The arithmetic is glibc's, confirmed against the live incumbent at the same
+/// instant on this host:
+///     freeram   60547252224 * mem_unit 1 / 4096 = 14782044 == _SC_AVPHYS_PAGES
+///     totalram 231692279808 * mem_unit 1 / 4096 = 56565498 == _SC_PHYS_PAGES
+///
+/// `mem_unit` is 1 on every current Linux, but it is applied rather than
+/// assumed: the kernel added the field precisely so these counts could be
+/// scaled on machines where they would otherwise overflow the word, and
+/// ignoring it would under-report by that factor on exactly those machines.
+/// The multiply is checked for the same reason.
+pub(crate) fn sysinfo_ram_pages(which: SysinfoRam) -> Option<libc::c_long> {
+    let page_size = runtime_page_size() as u64;
+    if page_size == 0 {
+        return None;
+    }
+    let mut info = std::mem::MaybeUninit::<syscall::Sysinfo>::zeroed();
+    // SAFETY: `sys_sysinfo` writes a `struct sysinfo` and never reads from it,
+    // and this is a correctly-sized, correctly-typed, zeroed slot for one.
+    unsafe { syscall::sys_sysinfo(info.as_mut_ptr()) }.ok()?;
+    // SAFETY: the syscall returned success, so the kernel filled every field.
+    let info = unsafe { info.assume_init() };
+    let raw = match which {
+        SysinfoRam::Total => info.totalram,
+        SysinfoRam::Free => info.freeram,
+    };
+    let bytes = raw.checked_mul(u64::from(info.mem_unit.max(1)))?;
+    libc::c_long::try_from(bytes / page_size).ok()
+}
+
 #[inline]
 fn runtime_procfs_long(path: &str) -> Option<libc::c_long> {
     std::fs::read_to_string(path)
@@ -380,30 +435,6 @@ fn runtime_procfs_long(path: &str) -> Option<libc::c_long> {
         .parse::<u64>()
         .ok()
         .and_then(|value| libc::c_long::try_from(value).ok())
-}
-
-#[inline]
-fn runtime_meminfo_pages(field: &str) -> Option<libc::c_long> {
-    let page_size = runtime_page_size();
-    if page_size == 0 {
-        return None;
-    }
-
-    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-    for line in meminfo.lines() {
-        if !line.starts_with(field) {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 2 {
-            return None;
-        }
-        let kb = parts[1].parse::<u64>().ok()?;
-        let bytes = kb.checked_mul(1024)?;
-        let pages = bytes / page_size as u64;
-        return libc::c_long::try_from(pages).ok();
-    }
-    None
 }
 
 fn maybe_clamp_io_len(requested: usize, addr: usize, enable_repair: bool) -> (usize, bool) {
@@ -2746,8 +2777,14 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         }
         libc::_SC_STREAM_MAX => 16, // FOPEN_MAX (matches glibc)
         libc::_SC_IOV_MAX => 1024,
-        libc::_SC_PHYS_PAGES => runtime_meminfo_pages("MemTotal:").unwrap_or(-1),
-        libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemAvailable:").unwrap_or(-1),
+        // glibc answers both of these by CALLING __get_phys_pages /
+        // __get_avphys_pages, so they route through the same helper here and
+        // cannot drift apart -- which is exactly the defect this replaces:
+        // bd-l18p7s corrected get_avphys_pages and left sysconf on a different
+        // field, so the two doors into one glibc primitive disagreed by the
+        // size of the page cache.
+        libc::_SC_PHYS_PAGES => sysinfo_ram_pages(SysinfoRam::Total).unwrap_or(-1),
+        libc::_SC_AVPHYS_PAGES => sysinfo_ram_pages(SysinfoRam::Free).unwrap_or(-1),
         libc::_SC_NGROUPS_MAX => {
             runtime_procfs_long("/proc/sys/kernel/ngroups_max").unwrap_or(65536)
         }
@@ -2963,6 +3000,14 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // threshold is exactly where min * 4 crosses 8192 (2047 * 4 = 8188,
         // 2048 * 4 = 8192), so no input separates them. Saturating multiply
         // because the multiplicand comes from the auxiliary vector.
+        //
+        // THE OBSERVATIONAL AMBIGUITY IS STILL UNRESOLVED, and reading the
+        // incumbent is the only thing that closes it. A second host was
+        // checked for exactly the missing data point (AMD EPYC-Genoa, glibc
+        // 2.43) and it publishes AT_MINSIGSTKSZ = 3376 as well, so 13504 is
+        // still equally consistent with "min + 10128" on the evidence of both
+        // machines. Do not read the two-host agreement as confirmation of the
+        // formula -- it confirms only that both kernels publish the same value.
         250 => runtime_min_sigstksz().saturating_mul(4).max(8192), // _SC_SIGSTKSZ
 
         // CPU cache selectors. Not constants and not a table: served from the
@@ -2972,10 +3017,14 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // _SC_LEVEL1_ICACHE_ASSOC is the one row NOT taken from sysfs. glibc's
         // CPUID path yields no instruction-cache associativity on the measured
         // vendor and reports -1, while sysfs reports 8 ways for the same cache.
-        // The incumbent is glibc, so -1 it is. This is the row to re-measure
-        // first on a different CPU: if some vendor makes glibc report a real
-        // associativity here, this arm is what has to change, and
-        // conformance_diff_sysconf_raw will say so rather than passing quietly.
+        // The incumbent is glibc, so -1 it is. This was flagged as the row to
+        // re-measure first on a different CPU, and it has been: glibc 2.43 on
+        // an AMD EPYC-Genoa (Zen 4) also reports -1 here while ITS sysfs also
+        // reports 8 ways, so the suppression holds across two vendor
+        // generations and two glibc minors rather than resting on one machine.
+        // If some future vendor makes glibc report a real associativity, this
+        // arm is what has to change, and conformance_diff_sysconf_raw will say
+        // so rather than passing quietly.
         186 => -1,                         // _SC_LEVEL1_ICACHE_ASSOC
         187 => cache_topology().l1i.line,  // _SC_LEVEL1_ICACHE_LINESIZE
         188 => cache_topology().l1d.size,  // _SC_LEVEL1_DCACHE_SIZE

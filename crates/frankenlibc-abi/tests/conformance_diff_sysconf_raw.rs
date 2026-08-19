@@ -289,6 +289,14 @@ fn restored_value_codes_match_host_exactly() {
 /// failure on 186 means the special case needs to become conditional, and a
 /// failure on any other row means the sysfs route itself does not track glibc
 /// and the family needs CPUID after all.
+///
+/// IT HAS NOW RUN ON A SECOND CPU AND PASSED (bd-fxu91j): AMD EPYC-Genoa
+/// (Zen 4) against glibc 2.43, where L2 is 1048576 rather than the 524288 of
+/// the Zen 3 host it was written on. The differing value is the load-bearing
+/// part -- had both machines quoted identical numbers, agreement would not
+/// have distinguished "sysfs tracks glibc" from "both happen to hold this
+/// host's constants". 186 reported -1 from glibc and 8 ways from sysfs on that
+/// machine too, so the one special case generalised rather than being local.
 const CACHE_SELECTORS: &[(c_int, &str)] = &[
     (185, "_SC_LEVEL1_ICACHE_SIZE"),
     (186, "_SC_LEVEL1_ICACHE_ASSOC"),

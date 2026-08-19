@@ -5391,46 +5391,24 @@ pub extern "C" fn get_nprocs_conf() -> c_int {
 /// `get_phys_pages` — return number of physical memory pages.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn get_phys_pages() -> c_long {
-    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-        for line in content.lines() {
-            if line.starts_with("MemTotal:") {
-                // MemTotal:       16384000 kB
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2
-                    && let Ok(kb) = parts[1].parse::<c_long>()
-                {
-                    let page_size = unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) };
-                    let page_size = if page_size > 0 { page_size } else { 4096 };
-                    return (kb * 1024) / page_size;
-                }
-            }
-        }
-    }
-    0
+    // sysinfo(2).totalram, which is what glibc's __get_phys_pages reads. Shared
+    // with sysconf(_SC_PHYS_PAGES): glibc answers that selector by calling THIS
+    // function, so a second derivation here is a second thing to keep in sync.
+    // See `sysinfo_ram_pages` for why the syscall, and not /proc/meminfo, is
+    // the correct source.
+    crate::unistd_abi::sysinfo_ram_pages(crate::unistd_abi::SysinfoRam::Total).unwrap_or(0)
 }
 
 /// `get_avphys_pages` — return number of available physical memory pages.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn get_avphys_pages() -> c_long {
-    // glibc's __get_avphys_pages returns sysinfo(2).freeram — the raw free RAM,
-    // i.e. /proc/meminfo "MemFree" — NOT "MemAvailable" (a larger kernel
-    // estimate that counts reclaimable cache). Using MemAvailable overcounted
-    // available pages by a wide margin. bd-l18p7s.
-    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-        for line in content.lines() {
-            if line.starts_with("MemFree:") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2
-                    && let Ok(kb) = parts[1].parse::<c_long>()
-                {
-                    let page_size = unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) };
-                    let page_size = if page_size > 0 { page_size } else { 4096 };
-                    return (kb * 1024) / page_size;
-                }
-            }
-        }
-    }
-    0
+    // glibc's __get_avphys_pages returns sysinfo(2).freeram -- the RAW free
+    // RAM, not the "MemAvailable" estimate that adds back reclaimable cache.
+    // bd-l18p7s fixed that field here and left sysconf(_SC_AVPHYS_PAGES)
+    // reading MemAvailable, so the two disagreed by the size of the page cache
+    // (2.99x on this host, 5.29x on an EPYC worker). Both now share one
+    // derivation so they cannot separate again; bd-80kppk.
+    crate::unistd_abi::sysinfo_ram_pages(crate::unistd_abi::SysinfoRam::Free).unwrap_or(0)
 }
 
 // POSIX/GNU binary tree search exports live in search_abi.rs. Keep this

@@ -116,22 +116,115 @@ fn sysconf_stable_values_match_glibc() {
 }
 
 #[test]
-fn sysconf_avphys_pages_agrees_in_magnitude() {
-    // Free-RAM pages fluctuate between the two calls, so we don't assert exact
-    // equality — only that both report a plausible, same-sign value (the fix
-    // was MemAvailable -> MemFree; MemAvailable would be much larger, but here
-    // we just guard against -1/0 vs a real count divergence).
-    let g = unsafe { libc::sysconf(libc::_SC_AVPHYS_PAGES) };
-    let f = unsafe { fl_sysconf(libc::_SC_AVPHYS_PAGES) };
-    assert!(g > 0, "glibc _SC_AVPHYS_PAGES should be positive");
-    assert!(f > 0, "fl _SC_AVPHYS_PAGES should be positive (MemFree)");
-    // Both derive from free RAM; allow a 4x window for fluctuation/estimate.
-    let lo = g / 4;
-    let hi = g.saturating_mul(4);
+fn sysconf_avphys_pages_tracks_free_ram_not_the_available_estimate() {
+    // THIS REPLACES A 4x-WINDOW MAGNITUDE CHECK THAT WAS BOTH VACUOUS AND
+    // FLAKY, and the two faults had one cause: it compared fl against a second
+    // reading of glibc and accepted anything within 4x.
+    //
+    //   VACUOUS -- fl answered /proc/meminfo MemAvailable while glibc reports
+    //     the raw free RAM from sysinfo(2). Measured on the worker that ran
+    //     this gate green: MemFree 431648 pages against MemAvailable 1676548,
+    //     a ratio of 3.88x, INSIDE the 4x window. So the gate passed over a
+    //     live 3.88x over-report. Its own comment claimed to pin "the fix was
+    //     MemAvailable -> MemFree"; that fix (bd-l18p7s) had landed on
+    //     get_avphys_pages only, and sysconf still read the other field.
+    //   FLAKY -- on a worker whose page cache pushed the ratio to 5.29x the
+    //     same gate failed, so one permanent defect presented as an
+    //     intermittent RED that depended on which host drew the run.
+    //
+    // The replacement does NOT key on the MemFree/MemAvailable ratio. A first
+    // version did, and a negative control caught it failing outright on a
+    // cold-cache worker (ratio 1.38x) where it could not discriminate -- a gate
+    // that REDs on correct code because of the host's page cache is the same
+    // trap in a new costume. Instead fl is bracketed against the incumbent
+    // itself, which is host-independent: both sides read one kernel counter, so
+    // they agree to within its drift across two adjacent calls, and a value
+    // taken from any other source is tens of percent away.
+    let free_pages = meminfo_pages("MemFree:");
+    let available_pages = meminfo_pages("MemAvailable:");
+
+    let g_first = unsafe { libc::sysconf(libc::_SC_AVPHYS_PAGES) };
     assert!(
-        f >= lo && f <= hi,
-        "fl _SC_AVPHYS_PAGES {f} not within [{lo},{hi}] of glibc {g}"
+        g_first > 0,
+        "host premise: glibc _SC_AVPHYS_PAGES must be positive, got {g_first}"
     );
+    println!("AVPHYS: glibc={g_first} MemFree={free_pages:?} MemAvailable={available_pages:?}");
+
+    // Both fl entry points are judged, because glibc implements
+    // sysconf(_SC_AVPHYS_PAGES) by CALLING get_avphys_pages. Fixing one and not
+    // the other is precisely how the divergence above survived: the direct
+    // function had a bracketing test in stdlib_abi_test and the selector had
+    // none, so only the untested door was wrong.
+    for (label, probe) in [
+        (
+            "sysconf(_SC_AVPHYS_PAGES)",
+            (|| unsafe { fl_sysconf(libc::_SC_AVPHYS_PAGES) }) as fn() -> libc::c_long,
+        ),
+        (
+            "get_avphys_pages()",
+            // Wrapped rather than named directly: it is an `extern "C" fn`,
+            // which does not coerce to a Rust `fn` pointer.
+            (|| frankenlibc_abi::stdlib_abi::get_avphys_pages()) as fn() -> libc::c_long,
+        ),
+    ] {
+        assert_brackets_host_free_ram(label, probe, free_pages, available_pages);
+    }
+}
+
+/// Assert an fl probe reports the same kernel counter glibc does.
+///
+/// BRACKETING, not equality: free RAM moves, so the host is sampled either side
+/// of fl's call and fl must land between those samples. Drift across two
+/// adjacent library calls is far smaller than the gap to any other candidate
+/// source -- MemAvailable ran 1.38x to 5.29x above free RAM across the workers
+/// measured -- so this separates "same counter, sampled a moment apart" from
+/// "different counter" without needing to know which host it is running on.
+/// Non-monotonic jitter inside a single window is retried, the same shape the
+/// get_avphys_pages arm in stdlib_abi_test already uses.
+fn assert_brackets_host_free_ram(
+    label: &str,
+    probe: fn() -> libc::c_long,
+    free_pages: Option<i64>,
+    available_pages: Option<i64>,
+) {
+    // Absorbs unit rounding only; the counter itself is compared by bracket.
+    const SLACK: libc::c_long = 64;
+    let mut attempts = Vec::new();
+    for _ in 0..8 {
+        let before = unsafe { libc::sysconf(libc::_SC_AVPHYS_PAGES) };
+        let observed = probe();
+        let after = unsafe { libc::sysconf(libc::_SC_AVPHYS_PAGES) };
+        let (lo, hi) = (before.min(after), before.max(after));
+        if observed >= lo - SLACK && observed <= hi + SLACK {
+            return;
+        }
+        attempts.push(format!("host [{lo},{hi}] fl {observed}"));
+    }
+    panic!(
+        "fl {label} never landed inside the host's own free-RAM window in 8 attempts.\n           {}\n  For reference on this host: MemFree {free_pages:?} pages, MemAvailable          {available_pages:?} pages. An fl value near MemAvailable means it is reporting the          kernel's reclaimable-cache ESTIMATE where glibc reports raw free RAM (sysinfo(2)          freeram), which over-states free memory by the size of the page cache.",
+        attempts.join("\n  ")
+    )
+}
+
+/// Read a `/proc/meminfo` field and convert its kB figure to pages.
+///
+/// Diagnostic only -- nothing is asserted against it. glibc does not read this
+/// file for these selectors (emptying it under bwrap leaves glibc answering
+/// correctly), so it is reported to make a failure legible, not to define the
+/// expected value.
+fn meminfo_pages(field: &str) -> Option<i64> {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 {
+        return None;
+    }
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix(field) {
+            let kb: i64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb.checked_mul(1024)? / page_size);
+        }
+    }
+    None
 }
 
 #[test]
