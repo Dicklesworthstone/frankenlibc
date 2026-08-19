@@ -32403,3 +32403,42 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   it cannot attach, but it can launch, and `-ex "source"` a script doing
   `threading.Timer(N, lambda: gdb.post_event(lambda: gdb.execute('interrupt')))`
   then `run` produces `thread apply all bt` from a wedged process.
+
+## 2026-08-19 — REFUTED: three abi arms asserted a glibc rule that does not exist ("a `+` in a numeric field makes the row ignored"), and the documented full-crate sweep is disk-infeasible (`bd-aykfv1`, PurpleRaven)
+
+- **Refuted claim, held by three arms in three crates.**
+  `pwd_abi_test::getpwnam_getpwuid_ignore_signed_uid_gid_rows`,
+  `grp_abi_test::getgrnam_getgrgid_ignore_signed_gid_rows` and
+  `resolv_abi_test::getaddrinfo_ignores_signed_service_port_field` all asserted
+  that a leading `+` in a **numeric** field (uid, gid, `/etc/services` port)
+  makes glibc drop the row. It does not — glibc parses those with `strtoul`,
+  which consumes the sign. Measured against live glibc 2.42 with each fixture
+  bind-mounted via `bwrap`: `getpwnam("plusuid")` → uid=1000,
+  `getgrnam` → gid=1001, `getservbyname("fixture-svc","tcp")` → port 80,
+  `getaddrinfo` → port 80. **fl agreed with the incumbent in all three cases and
+  the arms failed anyway.**
+- **The rule they were reaching for is real but lives on the NAME field**, and
+  correcting them surfaced a genuine fl defect: glibc's files backend treats a
+  leading `+`/`-` on the name as a NIS compat marker, and such a row is
+  **enumerated but never matched**. Measured: `getpwent`/`fgetpwent` yield
+  `+nisrow` with the sign intact, while `getpwnam("+nisrow")`,
+  `getpwnam("nisrow")` and `getpwuid(1000)` are all NULL. fl matched NIS rows
+  from lookups; fixed on the lookup path only (`e39e0c4c4`).
+- **My own first instinct was wrong and is worth recording:** I was about to put
+  the filter in `parse_passwd_line`, which would also have dropped the row from
+  `getpwent`/`fgetpwent` — behaviour glibc does **not** have. `bd-80kppk`'s
+  one-primitive-two-doors shape. The probe that caught it was running
+  `fgetpwent` and `getpwent` over the same fixture, not just `getpwnam`.
+- **REJECTED as infeasible: this bead's documented sweep method.**
+  `cargo build --tests -p frankenlibc-abi --keep-going` builds **1135** targets;
+  the ones on disk average **134 MB**, so the full set is ≈**152 GB** against
+  220 GB free and a 42 GB floor. Do not run it. Sweeping the **42** named
+  `*_abi_test` suites instead costs ~3 GB and covers ~3900 arms, which is where
+  the mass is (unistd 542, stdlib 419, glibc_internal 273, stdio 260, pthread
+  208, string 201, resolv 192). Result: 3856 passed / 1 failed.
+- **A third way a gate goes dark, distinct from unrun and unbuildable:**
+  `owned_unwind_abi_test` holds 21 `#[test]` fns behind
+  `#![cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]` — the
+  exact feature set whose policy gate exits 1 (`bd-haor6r`). It compiles to an
+  empty binary and reports `0 passed; 0 failed`, which is **indistinguishable
+  from passing** in any suite-level tally.
