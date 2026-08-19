@@ -32364,3 +32364,42 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `fcloseall`, which closes every non-standard stream in the process *including
   one another's*: 4 passed at `--test-threads 1`, 2 failed at the default. The
   arms, not fl — now serialised behind a file-local lock.
+
+## 2026-08-19 — REFUTED ×3 on the way to `bd-j05zw5`: the bead's own suspect, a mutex-marker theory, and a mutex-holding notifier that deadlocks (PurpleRaven)
+
+- **The bead's prime suspect was refutable without a build.** `bd-j05zw5`
+  nominated `reset_pthread_cond_case_state`'s process-wide reset. It cannot
+  matter: that reset touches counters and `FORCE_NATIVE_MUTEX`, and
+  **`FORCE_NATIVE_MUTEX` has zero readers repo-wide** — four writes, no reads.
+  Filed as `bd-vzymbn`, because it also makes
+  `pthread_mutex_force_native_for_tests` and its swap/restore siblings no-ops
+  that four `pthread_abi_test` arms believe are pinning an implementation path.
+  **Check reachability before building a theory on a flag** — this is the second
+  time in two days that a named mechanism turned out to be dead code.
+- **REFUTED by reading, before it cost a build: core's `relock_mutex` does not
+  strand ABI waiters.** The theory was that its `CAS(0→1)` fast path drops the
+  contended marker that `futex_unlock_normal` keys on (`prev == 1` → no wake),
+  stranding anyone parked on `2`. It does not: `relock_mutex` performs
+  `CAS(1→2)` immediately before parking, which restores the marker. Reading the
+  loop twice was cheaper than the A/B it would have justified.
+- **REJECTED, and it is now a comment in the source so it is not retried: making
+  `spawn_cond_notifier` hold the mutex deadlocks.** It is the obvious fix and it
+  is wrong, because several callers `join()` the notifier while **still holding
+  the mutex** (`verify_mutex_held_on_return` unlocks only after the join).
+  Measured under gdb: `Thread 5` in `pthread_mutex_lock` inside the notifier,
+  `Thread 2` in `JoinHandle::join` inside the arm. The correct fix for the
+  no-predicate arms is a bounded **retry**, not a lock; the mutex is only right
+  for the one arm that publishes a predicate.
+- **The soak is the weak half of the evidence and the entry says so.** The
+  original hang never reproduced again — **200 solo runs, 600 runs at 24-way
+  concurrency, 75 subset runs, all clean** — so the post-fix 150-round clean soak
+  is *not* a before/after. What carries the claim is a deterministic gate
+  (`pthread_cond_lost_wakeup_shape.rs`) showing the arms' shape blocks past 8s
+  without the mutex and completes with it, plus fl's own asserted behaviour that
+  a signal with no waiter does not wake a later waiter. **When a race will not
+  reproduce, build the shape and force the interleaving instead of counting
+  clean runs.**
+- **gdb can still get you frames out of a hang here** despite `ptrace_scope=1`:
+  it cannot attach, but it can launch, and `-ex "source"` a script doing
+  `threading.Timer(N, lambda: gdb.post_event(lambda: gdb.execute('interrupt')))`
+  then `run` produces `thread apply all bt` from a wedged process.
