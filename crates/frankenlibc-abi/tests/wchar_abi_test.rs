@@ -827,8 +827,68 @@ fn iswspace_l_matches_base_for_ascii() {
 
 // ── mblen / mbtowc / wctomb ────────────────────────────────────────────────
 
+/// Switch to a UTF-8 locale for the duration of a multibyte test, and put the
+/// previous one back.
+///
+/// fl starts in the POSIX C locale, where the charset is ASCII and any byte
+/// >= 0x80 is EILSEQ. That is not a quirk — it is what glibc does. Measured on
+/// this host with a C program that never calls setlocale:
+///
+/// ```text
+///   MB_CUR_MAX = 1
+///   mblen("\xc3\xa9") = -1, errno = EILSEQ
+/// ```
+///
+/// and both `setlocale(LC_ALL, "")` (with LANG=en_US.UTF-8) and
+/// `setlocale(LC_ALL, "C.UTF-8")` then give MB_CUR_MAX 6 and mblen 2. So a test
+/// that wants to convert UTF-8 has to ask for it, like any real program.
+///
+/// The lock matters: `setlocale` is process-global and libtest runs these on
+/// parallel threads, so without serialising, one test's locale leaks into
+/// another's assertions.
+fn utf8_locale() -> Utf8LocaleGuard {
+    static LOCALE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCALE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // SAFETY: NUL-terminated locale name; the returned pointer is fl's static
+    // buffer, read before any further setlocale call.
+    let previous = unsafe {
+        let current = frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, std::ptr::null());
+        let saved = if current.is_null() {
+            String::from("C")
+        } else {
+            std::ffi::CStr::from_ptr(current)
+                .to_string_lossy()
+                .into_owned()
+        };
+        let utf8 = std::ffi::CString::new("C.UTF-8").expect("no NUL");
+        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr());
+        saved
+    };
+    Utf8LocaleGuard {
+        previous,
+        _guard: guard,
+    }
+}
+
+struct Utf8LocaleGuard {
+    previous: String,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for Utf8LocaleGuard {
+    fn drop(&mut self) {
+        if let Ok(name) = std::ffi::CString::new(self.previous.as_str()) {
+            // SAFETY: NUL-terminated name captured from setlocale itself.
+            unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, name.as_ptr()) };
+        }
+    }
+}
+
 #[test]
 fn mblen_measures_ascii_and_multibyte() {
+    let _utf8 = utf8_locale();
     let ascii = *b"A";
     assert_eq!(unsafe { mblen(ascii.as_ptr(), 1) }, 1);
 
@@ -851,6 +911,7 @@ fn mbtowc_converts_ascii() {
 
 #[test]
 fn mbtowc_converts_multibyte() {
+    let _utf8 = utf8_locale();
     let mut wc: u32 = 0;
     let utf8 = [0xC3u8, 0xA9]; // é
     let n = unsafe { mbtowc(&mut wc, utf8.as_ptr(), 2) };
@@ -868,6 +929,7 @@ fn wctomb_encodes_ascii() {
 
 #[test]
 fn wctomb_encodes_multibyte() {
+    let _utf8 = utf8_locale();
     let mut buf = [0u8; 4];
     let n = unsafe { wctomb(buf.as_mut_ptr(), 'é' as u32) };
     assert_eq!(n, 2);
@@ -879,6 +941,7 @@ fn wctomb_encodes_multibyte() {
 
 #[test]
 fn mbstowcs_converts_utf8_to_wide() {
+    let _utf8 = utf8_locale();
     let src = b"A\xC3\xA9\0"; // "Aé"
     let mut dst = [0u32; 4];
     let n = unsafe { mbstowcs(dst.as_mut_ptr(), src.as_ptr(), 4) };
@@ -908,6 +971,7 @@ fn mbstowcs_rejects_unterminated_known_input() {
 
 #[test]
 fn wcstombs_converts_wide_to_utf8() {
+    let _utf8 = utf8_locale();
     let src = [b'A' as u32, 'é' as u32, 0];
     let mut dst = [0u8; 8];
     let n = unsafe { wcstombs(dst.as_mut_ptr(), src.as_ptr(), 8) };
@@ -949,6 +1013,7 @@ fn mbsinit_returns_nonzero_for_initial_state() {
 
 #[test]
 fn mbrlen_measures_multibyte() {
+    let _utf8 = utf8_locale();
     let ascii = *b"X";
     let n = unsafe { mbrlen(ascii.as_ptr() as *const c_char, 1, std::ptr::null_mut()) };
     assert_eq!(n, 1);
@@ -1166,6 +1231,7 @@ fn c32rtomb_encodes_ascii() {
 
 #[test]
 fn c32rtomb_encodes_multibyte() {
+    let _utf8 = utf8_locale();
     let mut buf = [0i8; 4];
     let n = unsafe { c32rtomb(buf.as_mut_ptr(), 'é' as u32, std::ptr::null_mut()) };
     assert_eq!(n, 2);
@@ -1184,6 +1250,7 @@ fn mbrtoc32_decodes_ascii() {
 
 #[test]
 fn mbrtoc32_decodes_multibyte() {
+    let _utf8 = utf8_locale();
     let mut c32: u32 = 0;
     let input = [0xC3u8 as i8, 0xA9u8 as i8]; // é
     let n = unsafe { mbrtoc32(&mut c32, input.as_ptr(), 2, std::ptr::null_mut()) };
@@ -1375,6 +1442,7 @@ fn wcrtomb_encodes_ascii_and_reports_invalid() {
 
 #[test]
 fn mbrtowc_handles_success_incomplete_and_invalid() {
+    let _utf8 = utf8_locale();
     let mut wc: libc::wchar_t = 0;
     let ascii = [b'Z' as i8];
 
@@ -1416,6 +1484,7 @@ fn mbrtowc_handles_success_incomplete_and_invalid() {
 
 #[test]
 fn mbsrtowcs_converts_and_updates_source_pointer() {
+    let _utf8 = utf8_locale();
     let src = [0xC3_u8 as i8, 0xA9_u8 as i8, b'A' as i8, 0];
     let mut src_ptr = src.as_ptr();
     let mut dst = [0_i32; 8];
@@ -1461,6 +1530,7 @@ fn mbsrtowcs_rejects_unterminated_known_input() {
 
 #[test]
 fn wcsrtombs_converts_and_updates_source_pointer() {
+    let _utf8 = utf8_locale();
     let src = [b'A' as i32, 0x754c_i32, 0];
     let mut src_ptr = src.as_ptr();
     let mut dst = [0_i8; 16];
@@ -1809,6 +1879,7 @@ fn wcsftime_l_null_locale_matches_base() {
 
 #[test]
 fn wide_stream_char_roundtrip_and_pushback() {
+    let _utf8 = utf8_locale();
     let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
     assert!(!stream.is_null());
 
@@ -1935,6 +2006,7 @@ fn wide_stream_string_io_handles_newline_splitting() {
 
 #[test]
 fn open_wmemstream_flushes_wide_buffer_and_reports_orientation() {
+    let _utf8 = utf8_locale();
     let mut buf: *mut u32 = std::ptr::null_mut();
     let mut size = 0usize;
     let stream = unsafe { open_wmemstream(&mut buf, &mut size) };
@@ -2093,6 +2165,7 @@ fn fgetwln_accepts_null_lenp() {
 /// compared the pooled converter against the fresh one on `<U+110000>`.
 #[test]
 fn swprintf_wide_format_replaces_invalid_codepoint() {
+    let _utf8 = utf8_locale();
     // 0x110000 is one past the Unicode maximum, so it is not a scalar value and
     // cannot be written as a Rust char literal — hence the raw array, as the
     // stranded test also built it.
@@ -2124,8 +2197,18 @@ fn swprintf_wide_format_replaces_invalid_codepoint() {
 #[test]
 fn swprintf_reused_format_buffer_does_not_leak_between_calls() {
     let long_fmt = [
-        b'[' as u32, b'%' as u32, b'd' as u32, b'-' as u32, b'-' as u32, b'-' as u32,
-        b'-' as u32, b'-' as u32, b'-' as u32, b'-' as u32, b']' as u32, 0,
+        b'[' as u32,
+        b'%' as u32,
+        b'd' as u32,
+        b'-' as u32,
+        b'-' as u32,
+        b'-' as u32,
+        b'-' as u32,
+        b'-' as u32,
+        b'-' as u32,
+        b'-' as u32,
+        b']' as u32,
+        0,
     ];
     let mut buf = [0u32; 64];
     // SAFETY: NUL-terminated format, buffer large enough.
