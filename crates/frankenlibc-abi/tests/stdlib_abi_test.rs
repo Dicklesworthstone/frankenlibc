@@ -13,11 +13,11 @@ use frankenlibc_abi::stdlib_abi::{
     fcvt_r, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
     get_phys_pages, getbsize, getenv, getenv_r, getsubopt, getusershell, humanize_number,
     initstate, initstate_r, jrand48, l64a, lcong48, lcong48_r, lrand48, lrand48_r, mkostemp,
-    mkostemps, mkstemps, mrand48, nrand48, on_exit, putenv, qecvt, qfcvt, qgcvt, qsort_r, rand,
-    random, random_r, reallocarray, reallocf, recallocarray, seed48, seed48_r, setenv, setstate,
-    setstate_r, setusershell, srand, srand48, srand48_r, srandom, srandom_r, strpct, strspct,
-    strtod, strtof, strtoi, strtold_into, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
-    system, unsetenv,
+    mkostemps, mkstemps, mrand48, nrand48, on_exit, putenv, qecvt_x87, qfcvt_x87, qgcvt_x87,
+    qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray, seed48, seed48_r,
+    setenv, setstate, setstate_r, setusershell, srand, srand48, srand48_r, srandom, srandom_r,
+    strpct, strspct, strtod, strtof, strtoi, strtold_into, strtoll, strtonum, strtoq, strtou,
+    strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -4597,6 +4597,17 @@ fn gcvt_caps_tracked_two_byte_buffer() {
     unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
 }
 
+/// Encode an `f64` as the ten x87 bytes a C caller would push for a
+/// `long double` argument.
+///
+/// The `q*` entry points are naked shims that read their value from the stack
+/// slot the SysV ABI reserves for a MEMORY-class argument. A Rust caller cannot
+/// produce that — passing `c_double` puts the value in XMM0, which the shim
+/// correctly ignores — so these tests call the same helper the shim calls.
+fn x87(value: f64) -> [u8; 16] {
+    frankenlibc_abi::stdio_abi::x86_extended80_bytes_from_f64(value)
+}
+
 #[test]
 fn qgcvt_basic_conversion() {
     // ndigit is the number of *significant* digits per %g semantics
@@ -4604,7 +4615,8 @@ fn qgcvt_basic_conversion() {
     // digits within the precision budget. With ndigit=2 the answer is
     // "3.2" (rounded to 2 sig digits), not "3.25".
     let mut buf = [0u8; 64];
-    let result = unsafe { qgcvt(3.25, 6, buf.as_mut_ptr() as *mut libc::c_char) };
+    let value = x87(3.25);
+    let result = unsafe { qgcvt_x87(6, buf.as_mut_ptr() as *mut libc::c_char, value.as_ptr()) };
     assert!(!result.is_null());
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert!(s.to_str().unwrap().contains("3.25"));
@@ -4616,14 +4628,20 @@ fn qecvt_and_qfcvt_keep_separate_reused_static_buffers() {
     let mut decpt: libc::c_int = 0;
     let mut sign: libc::c_int = 0;
 
-    let qecvt_first = unsafe { qecvt(123.456, 6, &mut decpt, &mut sign) };
+    // This asserted only that the two static buffers are distinct, so it stayed
+    // GREEN while feeding the shims an XMM0 register they do not read — i.e. it
+    // was exercising whatever happened to be in that register. Routing it
+    // through the helper makes the inputs real again.
+    let big = x87(123.456);
+    let small = x87(7.5);
+    let qecvt_first = unsafe { qecvt_x87(6, &mut decpt, &mut sign, big.as_ptr()) };
     assert!(!qecvt_first.is_null());
-    let qecvt_second = unsafe { qecvt(7.5, 3, &mut decpt, &mut sign) };
+    let qecvt_second = unsafe { qecvt_x87(3, &mut decpt, &mut sign, small.as_ptr()) };
     assert_eq!(qecvt_first, qecvt_second);
 
-    let qfcvt_first = unsafe { qfcvt(123.456, 3, &mut decpt, &mut sign) };
+    let qfcvt_first = unsafe { qfcvt_x87(3, &mut decpt, &mut sign, big.as_ptr()) };
     assert!(!qfcvt_first.is_null());
-    let qfcvt_second = unsafe { qfcvt(7.5, 1, &mut decpt, &mut sign) };
+    let qfcvt_second = unsafe { qfcvt_x87(1, &mut decpt, &mut sign, small.as_ptr()) };
     assert_eq!(qfcvt_first, qfcvt_second);
     assert_ne!(qecvt_first, qfcvt_first);
 }
@@ -4634,7 +4652,8 @@ fn qgcvt_caps_tracked_one_byte_buffer() {
     let raw = unsafe { malloc_tracked_bytes(1) };
     unsafe { raw.write(b'X') };
 
-    let result = unsafe { qgcvt(123.456, 10, raw.cast::<libc::c_char>()) };
+    let value = x87(123.456);
+    let result = unsafe { qgcvt_x87(10, raw.cast::<libc::c_char>(), value.as_ptr()) };
 
     assert_eq!(result.cast::<u8>(), raw);
     assert_eq!(unsafe { raw.read() }, 0);
@@ -10100,7 +10119,8 @@ fn qgcvt_matches_shared_percent_g_renderer_across_precision_boundary() {
             let prec = (ndigit.max(0) as usize).min(512);
             let expected = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
             let mut buf = [0 as libc::c_char; 640];
-            let result = unsafe { qgcvt(value, ndigit, buf.as_mut_ptr()) };
+            let encoded = x87(value);
+            let result = unsafe { qgcvt_x87(ndigit, buf.as_mut_ptr(), encoded.as_ptr()) };
             let actual = unsafe { std::ffi::CStr::from_ptr(result) };
             assert_eq!(
                 actual.to_bytes(),

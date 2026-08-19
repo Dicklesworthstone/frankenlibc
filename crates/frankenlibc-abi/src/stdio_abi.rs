@@ -9403,7 +9403,7 @@ use frankenlibc_core::stdio::scanf::{
     ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format, scan_input,
 };
 
-pub(crate) fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
+pub fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
     let bits = value.to_bits();
     let sign = ((bits >> 63) as u16) << 15;
     let exponent = ((bits >> 52) & 0x7ff) as i32;

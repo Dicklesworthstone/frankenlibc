@@ -6842,7 +6842,7 @@ pub unsafe extern "C" fn qecvt(
 ///
 /// `value` must address the caller's long double slot; the other pointers obey
 /// C's `qecvt` contract.
-unsafe extern "C" fn qecvt_x87(
+pub unsafe extern "C" fn qecvt_x87(
     ndigit: c_int,
     decpt: *mut c_int,
     sign: *mut c_int,
@@ -6894,7 +6894,7 @@ pub unsafe extern "C" fn qfcvt(
 /// # Safety
 ///
 /// As [`qecvt_x87`].
-unsafe extern "C" fn qfcvt_x87(
+pub unsafe extern "C" fn qfcvt_x87(
     ndigit: c_int,
     decpt: *mut c_int,
     sign: *mut c_int,
@@ -6944,7 +6944,11 @@ pub unsafe extern "C" fn qgcvt(_value: c_double, _ndigit: c_int, _buf: *mut c_ch
 /// # Safety
 ///
 /// As [`qecvt_x87`].
-unsafe extern "C" fn qgcvt_x87(ndigit: c_int, buf: *mut c_char, value: *const u8) -> *mut c_char {
+pub unsafe extern "C" fn qgcvt_x87(
+    ndigit: c_int,
+    buf: *mut c_char,
+    value: *const u8,
+) -> *mut c_char {
     // SAFETY: the shim points `value` at the caller's stack slot.
     let value = unsafe { x87_arg(value) };
     if buf.is_null() {
