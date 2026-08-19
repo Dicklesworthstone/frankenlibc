@@ -104,19 +104,35 @@ impl DnsHeader {
             id,
             // QR=0 (query), RD=1 (recursion desired), AD=1 (authentic data).
             //
-            // AD is set because glibc sets it on outgoing queries by default:
-            // RES_TRUSTAD joined RES_DEFAULT in glibc 2.31, and byte 3 of the
-            // header is RA(7) Z(6) AD(5) CD(4) RCODE(3..0), so glibc emits 0x20
-            // there where fl emitted 0x00 (bd-ym6gw0).
+            // KNOWN WRONG ON HOSTS WITHOUT `trust-ad`; tracked as bd-b275vh.
             //
-            // PINNED AS A CONSTANT, DELIBERATELY. In glibc this bit is a
-            // FUNCTION of `_res.options`, so a caller that clears RES_TRUSTAD
-            // gets AD=0. fl has no resolver options model to consult: `_res` is
-            // an opaque 600-byte blob in glibc_internal_abi and nothing in the
-            // tree defines RES_TRUSTAD or an options word. So this matches
-            // glibc's DEFAULT and cannot yet follow a caller that changes it.
-            // If fl ever grows an options word, this must become conditional on
-            // it rather than staying a literal.
+            // This constant was justified by "RES_TRUSTAD joined RES_DEFAULT in
+            // glibc 2.31", i.e. that glibc sets AD on outgoing queries BY
+            // DEFAULT. That half is false, and the measurement is one bwrap
+            // invocation. Live glibc 2.42, res_mkquery(QUERY, "example.com",
+            // IN, A), reading the header's flag word:
+            //     resolv.conf with    "options edns0 trust-ad" -> 0x0120 AD=1
+            //     resolv.conf without trust-ad                 -> 0x0100 AD=0
+            // So glibc DERIVES this bit from the resolver configuration, and
+            // RES_TRUSTAD is not in RES_DEFAULT. Byte 3 of the header is
+            // RA(7) Z(6) AD(5) CD(4) RCODE(3..0), so the difference is 0x20.
+            //
+            // It read as correct because every machine on this fleet runs
+            // systemd-resolved, which writes `trust-ad` into /etc/resolv.conf --
+            // so fl agrees with the incumbent on both hosts anyone has measured
+            // and diverges on the DEFAULT configuration, which is most hosts
+            // elsewhere. Leaving the literal at 0x0120 is therefore the
+            // conservative choice until the fix lands, because lowering it
+            // alone would regress this fleet.
+            //
+            // THE FIX IS NOT A ONE-LINER, which is why this is a comment and a
+            // bead rather than an edit: resolv::config::ResolverConfig must
+            // gain `trust_ad` (its `options` parser already models rotate and
+            // use-vc and silently ignores the rest), this default must become
+            // 0x0100, and the SENDING path must pass the config through -- all
+            // together, since the middle step alone is a regression. Its gate
+            // has to drive BOTH resolver configurations; a single-configuration
+            // gate is exactly what let this constant survive.
             flags: 0x0120,
             qdcount: 1,
             ancount: 0,

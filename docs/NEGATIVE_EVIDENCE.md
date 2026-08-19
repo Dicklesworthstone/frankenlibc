@@ -32243,3 +32243,33 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `__fgetws_chk`'s `wide_request_exceeds_destlen` passed a request SMALLER than
   the destination, so fl was right and the fixture was wrong. Note the last two
   landed on opposite sides and neither was decidable by reading.
+
+## 2026-08-19 — "glibc sets the DNS AD bit by default" is FALSE (bd-b275vh, CreamSummit)
+
+- **Refuted claim, written in fl's own source.** `resolv/dns.rs` pinned
+  `DnsHeader::new_query` flags to `0x0120`, justified by "RES_TRUSTAD joined
+  RES_DEFAULT in glibc 2.31", i.e. that glibc sets AD on outgoing queries by
+  default. Live glibc 2.42 `res_mkquery`: **`0x0120` with `options ... trust-ad`
+  in resolv.conf, `0x0100` without it.** RES_TRUSTAD is not in RES_DEFAULT;
+  glibc derives the bit from resolver configuration. The discriminator was one
+  `bwrap` bind-mount of a resolv.conf lacking the option.
+- **Why it read as correct:** every worker on this fleet runs systemd-resolved,
+  which writes `trust-ad`. Both hosts measured (this box, worker ovh-a) carry it
+  and both report `0x0120`, so fl agrees with the incumbent everywhere anyone
+  has looked and diverges on the *default* configuration. bd-80kppk shape (a)
+  and (c) at once — a constant where the incumbent derives, with agreement
+  confined to the operating point everyone tests.
+- **Rejected fix, recorded so it is not retried:** updating the failing
+  conformance fixture `dns_header_query` from 256 to 288 to make the matrix
+  green. That bakes one fleet's resolver configuration into the spec and locks
+  in the defect. The fixture is right for the default configuration.
+- **Also rejected:** lowering the literal to `0x0100` on its own. Correct for
+  default hosts, a regression on this fleet, because the sending path does not
+  yet carry the config. The three steps land together or not at all.
+
+- **`crypt_preferred_method` SHA512 fixtures are stale, not an fl defect**
+  (same matrix run). Fixtures `crypt_preferred_method_sha512_prefix_{strict,
+  hardened}` expect `CRYPT_PREFERRED_METHOD_SHA512_PREFIX`; fl reports
+  `OTHER_PREFIX`. fl delegates to the host, and live `libcrypt.so.1` returns
+  **`$y$` (yescrypt), not `$6$`, on both this host and worker ovh-a**. fl is
+  right; the arms encode a pre-yescrypt libxcrypt. Do not "fix" fl here.
