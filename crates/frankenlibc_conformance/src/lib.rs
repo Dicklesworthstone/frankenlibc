@@ -21266,16 +21266,77 @@ fn crypt_gensalt_ra_fixture_actual() -> Result<String, String> {
     Ok(class)
 }
 
+/// The host libcrypt's `crypt_preferred_method`, resolved through the library
+/// itself rather than the process's symbol table.
+///
+/// PROVENANCE MATTERS HERE. fl also exports `crypt_preferred_method`, so a bare
+/// `dlsym(RTLD_DEFAULT, ...)` or a link-time declaration could bind to fl and
+/// make this "oracle" a mirror of the thing under test -- the captured-arm trap
+/// recorded on bd-aykfv1 as category 4. Opening libcrypt.so.1 by name and
+/// resolving on THAT handle cannot return fl's definition.
+///
+/// Returns None when the host has no such symbol, which is a real possibility:
+/// `crypt_preferred_method` is a libxcrypt extension, absent from glibc's
+/// libcrypt and from libcrypt.so.2.
+fn host_crypt_preferred_method_bytes() -> Option<Vec<u8>> {
+    let soname = CString::new("libcrypt.so.1").ok()?;
+    let symbol = CString::new("crypt_preferred_method").ok()?;
+    // SAFETY: both strings are NUL-terminated and live across the calls; the
+    // handle is deliberately leaked so the resolved function stays mapped.
+    let handle = unsafe { libc::dlopen(soname.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        return None;
+    }
+    // SAFETY: `handle` is a live handle from the dlopen above.
+    let addr = unsafe { libc::dlsym(handle, symbol.as_ptr()) };
+    if addr.is_null() {
+        return None;
+    }
+    // SAFETY: libxcrypt declares crypt_preferred_method as `const char *(void)`.
+    let f: extern "C" fn() -> *const c_char = unsafe { std::mem::transmute(addr) };
+    let ptr = f();
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: a non-null return from libcrypt is a NUL-terminated static string.
+    Some(unsafe { CStr::from_ptr(ptr) }.to_bytes().to_vec())
+}
+
+/// Classify fl's `crypt_preferred_method` by AGREEMENT WITH THE HOST, not by
+/// matching a recorded prefix.
+///
+/// THIS USED TO PIN `$6$`. The fixtures asserted
+/// CRYPT_PREFERRED_METHOD_SHA512_PREFIX and this function reported it whenever
+/// fl returned exactly `$6$`. fl delegates to the host, and live libcrypt.so.1
+/// returns `$y$` (yescrypt) on every machine measured -- this box and worker
+/// ovh-a -- so the arms went red against a correct implementation. The recorded
+/// value encoded a pre-yescrypt libxcrypt (bd-2x984b).
+///
+/// Swapping one constant for another would only move the staleness, so the
+/// class now says whether fl reports what libcrypt reports IN THE SAME RUN.
+/// That is stable across distributions and across a future default change.
+///
+/// WHAT THIS DOES AND DOES NOT CATCH, stated because the difference matters: it
+/// fails whenever fl diverges from the host, which includes fl answering a
+/// hardcoded constant on any host that prefers something else. It cannot
+/// distinguish delegation from a constant that happens to equal this host's
+/// preference -- no in-process check can, without a second libcrypt to compare
+/// against.
 fn crypt_preferred_method_fixture_actual() -> Result<String, String> {
     let ptr = unsafe { frankenlibc_abi::unistd_abi::crypt_preferred_method() };
     if ptr.is_null() {
         return Ok(String::from("CRYPT_PREFERRED_METHOD_NULL"));
     }
     let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
-    if bytes == b"$6$" {
-        Ok(String::from("CRYPT_PREFERRED_METHOD_SHA512_PREFIX"))
+    let Some(host) = host_crypt_preferred_method_bytes() else {
+        // Say so rather than passing quietly: with no oracle the comparison is
+        // vacuous, and a token that looks like success would hide that.
+        return Ok(String::from("CRYPT_PREFERRED_METHOD_HOST_ORACLE_ABSENT"));
+    };
+    if bytes == host.as_slice() {
+        Ok(String::from("CRYPT_PREFERRED_METHOD_MATCHES_HOST"))
     } else {
-        Ok(String::from("CRYPT_PREFERRED_METHOD_OTHER_PREFIX"))
+        Ok(String::from("CRYPT_PREFERRED_METHOD_DIVERGES_FROM_HOST"))
     }
 }
 

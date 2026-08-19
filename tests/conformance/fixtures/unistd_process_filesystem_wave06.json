@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "unistd/process-filesystem",
   "captured_at": "2026-05-13T11:10:00Z",
-  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-06 crypt reentrant, terminal-id, login-id, daemon isolation, gettext passthrough, and DNS wire-format helper symbols. Outputs classify prefixes, hash algorithm classes, isolated daemon exit status, gettext passthrough, and DNS label lengths without recording raw hashes, generated salt bytes, terminal paths, login names, uids, file descriptors, cwd/session state, gettext catalog files, locale state, DNS network data, timestamps, stderr bytes, raw pointers, or process-global counters.",
+  "description": "Deterministic strict/hardened fixture evidence for the fcq-unistd-process-filesystem wave-06 crypt reentrant, terminal-id, login-id, daemon isolation, gettext passthrough, and DNS wire-format helper symbols. Outputs classify prefixes, hash algorithm classes, isolated daemon exit status, gettext passthrough, and DNS label lengths without recording raw hashes, generated salt bytes, terminal paths, login names, uids, file descriptors, cwd/session state, gettext catalog files, locale state, DNS network data, timestamps, stderr bytes, raw pointers, or process-global counters.  crypt_preferred_method (bd-2x984b): these two cases pinned CRYPT_PREFERRED_METHOD_SHA512_PREFIX, i.e. the literal \"$6$\". fl delegates to the host and live libcrypt.so.1 returns \"$y$\" (yescrypt) on every machine measured, so the arms went red against a correct implementation -- the recorded value encoded a pre-yescrypt libxcrypt. They now assert AGREEMENT with the live host in the same run, which does not go stale when a distribution changes its preferred method, and their oracle_source names libcrypt rather than FrankenLibC itself.",
   "spec_reference": "libcrypt crypt_preferred_method and crypt_r/crypt_ra/crypt_rn contracts, POSIX ctermid and cuserid class behavior, BSD daemon detach semantics under isolated child execution, GNU dcgettext/dcngettext untranslated passthrough behavior, and RFC 1035 dn_comp/dn_expand/dn_skipname DNS wire-format helper contracts.",
   "campaign": {
     "bead": "bd-dx0rc",
@@ -40,12 +40,12 @@
       "spec_section": "libcrypt preferred method prefix class",
       "inputs": {
         "symbol": "crypt_preferred_method",
-        "scenario": "sha512_prefix_class_without_pointer_capture",
-        "expected": "CRYPT_PREFERRED_METHOD_SHA512_PREFIX",
-        "oracle_source": "FrankenLibC libcrypt preferred method class",
+        "scenario": "preferred_method_tracks_host_libcrypt_without_pointer_capture",
+        "expected": "CRYPT_PREFERRED_METHOD_MATCHES_HOST",
+        "oracle_source": "live host libcrypt.so.1 crypt_preferred_method, resolved on the library handle",
         "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
       },
-      "expected_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
+      "expected_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_MATCHES_HOST;actual=CRYPT_PREFERRED_METHOD_MATCHES_HOST;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -55,12 +55,12 @@
       "spec_section": "libcrypt preferred method prefix class",
       "inputs": {
         "symbol": "crypt_preferred_method",
-        "scenario": "sha512_prefix_class_without_pointer_capture",
-        "expected": "CRYPT_PREFERRED_METHOD_SHA512_PREFIX",
-        "oracle_source": "FrankenLibC libcrypt preferred method class",
+        "scenario": "preferred_method_tracks_host_libcrypt_without_pointer_capture",
+        "expected": "CRYPT_PREFERRED_METHOD_MATCHES_HOST",
+        "oracle_source": "live host libcrypt.so.1 crypt_preferred_method, resolved on the library handle",
         "ambient_state_policy": "forbid_crypt_hash_salt_path_user_fd_daemon_gettext_dns_time_or_pointer_capture"
       },
-      "expected_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
+      "expected_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_MATCHES_HOST;actual=CRYPT_PREFERRED_METHOD_MATCHES_HOST;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
