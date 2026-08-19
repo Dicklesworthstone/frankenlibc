@@ -5236,12 +5236,68 @@ use frankenlibc_core::stdio::{
     format_str, parse_format_string, positional_printf_arg_plan as core_positional_printf_arg_plan,
 };
 
+/// Does this format consume a `long double` argument?
+///
+/// `%Lf` and friends are class X87 on x86-64 SysV, which is passed in MEMORY —
+/// a 16-byte slot in the overflow area, never a register. Rust's `next_arg`
+/// dispatches on the Rust type and there is no Rust type that classifies as
+/// X87, so such an argument cannot be read through it at all: a 16-byte struct
+/// classifies as INTEGER and would consume two GP registers, a third wrong
+/// answer rather than a fix.
+///
+/// So a format containing one has to be extracted by the hand-written va_list
+/// walker instead. This predicate keeps that detour off every other format,
+/// because the fast path is perf-tuned (bd-ntb9fq).
+pub(crate) fn format_has_long_double(segments: &[FormatSegment<'_>]) -> bool {
+    segments.iter().any(|seg| match seg {
+        FormatSegment::Spec(spec) => spec.value_arg_is_float() && spec.length == LengthMod::BigL,
+        _ => false,
+    })
+}
+
 /// Maximum variadic arguments we extract per printf call.
 pub(crate) const MAX_VA_ARGS: usize = 32;
 
 /// Extract variadic arguments from `$args` into `$buf`, guided by `$segments`.
 /// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
+/// Extract variadic arguments, choosing a reader that can see them all.
+///
+/// A `long double` argument is class X87 on x86-64 SysV, which is passed in
+/// MEMORY — a sixteen-byte slot in the overflow area, never a register. Rust's
+/// `next_arg` dispatches on the Rust type and no Rust type classifies as X87,
+/// so `%Lf` cannot be read through it at all; a sixteen-byte struct classifies
+/// as INTEGER and would consume two GP registers, which is a third wrong answer
+/// rather than a fix.
+///
+/// Reading it as a double was not merely a wrong number. The caller's sixteen
+/// stack bytes went unconsumed, so every FOLLOWING conversion read the wrong
+/// argument — one `%Lf` corrupted the rest of the format string.
+///
+/// So a format carrying one is extracted by the hand-written va_list walker,
+/// which reads the stack slot correctly. Every other format keeps the register
+/// path unchanged, because it is perf-tuned (bd-ntb9fq).
 macro_rules! extract_va_args {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        if crate::stdio_abi::format_has_long_double($segments) {
+            // On x86-64 `VaListImpl` IS the `__va_list_tag` the ABI describes,
+            // so a pointer to it is what C would pass as a `va_list`.
+            //
+            // `$args` is ALREADY `&mut VaListImpl` at every call site, so this
+            // must not take another reference: `&mut $args` yields a pointer to
+            // the REFERENCE, and the walker then reads a pointer where it
+            // expects gp_offset. That produced "0.000000" for 1.0L — the x87
+            // significand reinterpreted — which looks like a formatting bug and
+            // is not one. `from_mut` also avoids naming the unstable type.
+            let _ap = core::ptr::from_mut($args).cast::<core::ffi::c_void>();
+            // SAFETY: `_ap` addresses this frame's va_list for the call.
+            unsafe { crate::stdio_abi::vprintf_extract_args($segments, _ap, $buf, $extract_count) }
+        } else {
+            extract_va_args_registers!($segments, $args, $buf, $extract_count)
+        }
+    }};
+}
+
+macro_rules! extract_va_args_registers {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
         if let Some(_plan) = core_positional_printf_arg_plan($segments) {
