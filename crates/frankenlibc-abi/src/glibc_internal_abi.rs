@@ -7654,7 +7654,17 @@ pub unsafe extern "C" fn sgetspent_r(
     };
     // Format: name:passwd:lastchg:min:max:warn:inact:expire:flag
     let fields: Vec<&str> = line_str.splitn(9, ':').collect();
-    if fields.len() < 2 {
+    // EIGHT fields minimum, not two. /etc/shadow has nine, and the flag field
+    // is the only optional one. Measured against host sgetspent:
+    //     "u:x"                  -> NULL
+    //     "u:x:1"                -> NULL
+    //     "u:x:1:2:3:4:5"        -> NULL   (seven fields)
+    //     "u:x:1:2:3:4:5:6"      -> accepted, flag = ~0UL
+    //     "u:x:1:2:3:4:5:6:7"    -> accepted
+    // A two-field minimum let short lines through as entries whose numeric
+    // fields were all the -1 "unset" sentinel, which glibc never produces from
+    // a truncated line -- it refuses the line outright.
+    if fields.len() < 8 {
         return libc::EINVAL;
     }
     // Check buffer space

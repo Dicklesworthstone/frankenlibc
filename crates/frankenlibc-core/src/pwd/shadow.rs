@@ -122,6 +122,18 @@ fn parse_decimal_u64_digits(digits: &[u8]) -> Option<u64> {
 /// Returns `None` for blank lines, comment lines (first non-whitespace
 /// byte is `#`), or lines with fewer than 8 colon-separated fields
 /// (the `flag` field is optional). Trailing `\n` / `\r\n` is tolerated.
+///
+/// THIS IS THE FILE RULE, and it is deliberately not the only shadow parser in
+/// the tree. `sgetspent_r` (frankenlibc-abi/src/glibc_internal_abi.rs) parses a
+/// STRING and must not do what this does: measured against the host,
+/// `sgetspent("  u:x:1:2:3:4:5:6:7")` keeps the name `"  u"` where `fgetspent`
+/// on the same text strips it to `"u"`, and `sgetspent("#c:x:1:2:3:4:5:6:7")`
+/// returns a user NAMED `"#c"` where `fgetspent` skips the line. The blank-trim
+/// and comment tests below belong to the file path only.
+///
+/// Two parsers for one format is normally how this codebase's rules drift
+/// apart, so the split is recorded on both sides rather than left to be
+/// "cleaned up" into a single function that would then be wrong for one caller.
 pub fn parse_shadow_line(line: &[u8]) -> Option<ShadowEntry> {
     let line = strip_trailing_eol(line);
     let trimmed = trim_leading_ws(line);
