@@ -100,40 +100,41 @@ pub struct DnsHeader {
 impl DnsHeader {
     /// Create a new query header with the given transaction ID.
     pub fn new_query(id: u16) -> Self {
+        // glibc's DEFAULT: QR=0 (query), RD=1 (recursion desired), AD=0.
+        //
+        // Callers that have a resolver configuration should use
+        // `new_query_with_trust_ad` instead; this is the answer for a resolver
+        // that has not been told otherwise.
+        Self::new_query_with_trust_ad(id, false)
+    }
+
+    /// Build a query header, honouring the resolver's `trust-ad` option.
+    ///
+    /// THE AD BIT IS DERIVED, NOT CONSTANT, and this function exists because fl
+    /// previously pinned it ON. Byte 3 of the header is
+    /// RA(7) Z(6) AD(5) CD(4) RCODE(3..0), so AD contributes 0x0020.
+    ///
+    /// Measured against the live incumbent, glibc 2.42
+    /// `res_mkquery(QUERY, "example.com", IN, A)`, reading the flag word:
+    ///
+    /// | /etc/resolv.conf              | glibc flags |
+    /// |------------------------------|-------------|
+    /// | `options edns0 trust-ad`     | `0x0120`    |
+    /// | same, without `trust-ad`     | `0x0100`    |
+    ///
+    /// The second row was produced by bind-mounting a resolv.conf lacking the
+    /// option over /etc/resolv.conf under bwrap. So `RES_TRUSTAD` is not in
+    /// `RES_DEFAULT`; glibc reads it from the resolver configuration.
+    ///
+    /// The old constant `0x0120` was justified by the opposite claim and looked
+    /// correct because every machine on the fleet it was written on runs
+    /// systemd-resolved, which writes `trust-ad` into resolv.conf. It therefore
+    /// agreed with the incumbent on every host anyone had measured and diverged
+    /// on the DEFAULT configuration (bd-b275vh).
+    pub fn new_query_with_trust_ad(id: u16, trust_ad: bool) -> Self {
         Self {
             id,
-            // QR=0 (query), RD=1 (recursion desired), AD=1 (authentic data).
-            //
-            // KNOWN WRONG ON HOSTS WITHOUT `trust-ad`; tracked as bd-b275vh.
-            //
-            // This constant was justified by "RES_TRUSTAD joined RES_DEFAULT in
-            // glibc 2.31", i.e. that glibc sets AD on outgoing queries BY
-            // DEFAULT. That half is false, and the measurement is one bwrap
-            // invocation. Live glibc 2.42, res_mkquery(QUERY, "example.com",
-            // IN, A), reading the header's flag word:
-            //     resolv.conf with    "options edns0 trust-ad" -> 0x0120 AD=1
-            //     resolv.conf without trust-ad                 -> 0x0100 AD=0
-            // So glibc DERIVES this bit from the resolver configuration, and
-            // RES_TRUSTAD is not in RES_DEFAULT. Byte 3 of the header is
-            // RA(7) Z(6) AD(5) CD(4) RCODE(3..0), so the difference is 0x20.
-            //
-            // It read as correct because every machine on this fleet runs
-            // systemd-resolved, which writes `trust-ad` into /etc/resolv.conf --
-            // so fl agrees with the incumbent on both hosts anyone has measured
-            // and diverges on the DEFAULT configuration, which is most hosts
-            // elsewhere. Leaving the literal at 0x0120 is therefore the
-            // conservative choice until the fix lands, because lowering it
-            // alone would regress this fleet.
-            //
-            // THE FIX IS NOT A ONE-LINER, which is why this is a comment and a
-            // bead rather than an edit: resolv::config::ResolverConfig must
-            // gain `trust_ad` (its `options` parser already models rotate and
-            // use-vc and silently ignores the rest), this default must become
-            // 0x0100, and the SENDING path must pass the config through -- all
-            // together, since the middle step alone is a regression. Its gate
-            // has to drive BOTH resolver configurations; a single-configuration
-            // gate is exactly what let this constant survive.
-            flags: 0x0120,
+            flags: if trust_ad { 0x0120 } else { 0x0100 },
             qdcount: 1,
             ancount: 0,
             nscount: 0,
@@ -353,8 +354,21 @@ pub struct DnsMessage {
 impl DnsMessage {
     /// Create a new query message for the given hostname and record type.
     pub fn new_query(id: u16, hostname: &[u8], qtype: u16) -> Option<Self> {
+        Self::new_query_with_trust_ad(id, hostname, qtype, false)
+    }
+
+    /// Build a query message, honouring the resolver's `trust-ad` option.
+    ///
+    /// See `DnsHeader::new_query_with_trust_ad` for why the AD bit is derived
+    /// from the resolver configuration rather than pinned (bd-b275vh).
+    pub fn new_query_with_trust_ad(
+        id: u16,
+        hostname: &[u8],
+        qtype: u16,
+        trust_ad: bool,
+    ) -> Option<Self> {
         Some(Self {
-            header: DnsHeader::new_query(id),
+            header: DnsHeader::new_query_with_trust_ad(id, trust_ad),
             questions: vec![DnsQuestion {
                 qname: encode_domain_name(hostname)?,
                 qtype,

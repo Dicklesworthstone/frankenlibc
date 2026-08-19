@@ -2317,6 +2317,7 @@ fn udp_dns_query(
     qtype_val: u16,
     nameserver: std::net::IpAddr,
     timeout_secs: u32,
+    trust_ad: bool,
 ) -> Option<Vec<frankenlibc_core::resolv::dns::DnsRecord>> {
     use frankenlibc_core::resolv::dns::{
         DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsMessage, parse_dns_response, rcode,
@@ -2343,7 +2344,9 @@ fn udp_dns_query(
     };
 
     // Encode query
-    let Some(msg) = DnsMessage::new_query(id, hostname, qtype_val) else {
+    // AD is derived from the resolver configuration, not pinned: glibc sets it
+    // only when resolv.conf carries `trust-ad` (bd-b275vh).
+    let Some(msg) = DnsMessage::new_query_with_trust_ad(id, hostname, qtype_val, trust_ad) else {
         DNS_METRICS
             .queries_parse_error
             .fetch_add(1, AtomicOrdering::Relaxed);
@@ -2533,7 +2536,8 @@ fn native_dns_resolve(
             for ns in &config.nameservers {
                 if want_v4
                     && result.ipv4.is_empty()
-                    && let Some(records) = udp_dns_query(name, qtype::A, *ns, config.timeout)
+                    && let Some(records) =
+                        udp_dns_query(name, qtype::A, *ns, config.timeout, config.trust_ad)
                 {
                     for rec in &records {
                         if let Some(v4) = rec.as_ipv4() {
@@ -2543,7 +2547,8 @@ fn native_dns_resolve(
                 }
                 if want_v6
                     && result.ipv6.is_empty()
-                    && let Some(records) = udp_dns_query(name, qtype::AAAA, *ns, config.timeout)
+                    && let Some(records) =
+                        udp_dns_query(name, qtype::AAAA, *ns, config.timeout, config.trust_ad)
                 {
                     for rec in &records {
                         if let Some(v6) = rec.as_ipv6() {

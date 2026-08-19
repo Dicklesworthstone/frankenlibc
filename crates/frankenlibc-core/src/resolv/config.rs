@@ -7,7 +7,8 @@
 //! - `nameserver <ip>`: DNS server address (up to 3)
 //! - `domain <name>`: Local domain name
 //! - `search <name>...`: Search list for hostname lookup
-//! - `options <opt>...`: Various options (ndots, timeout, attempts)
+//! - `options <opt>...`: Various options (ndots, timeout, attempts, rotate,
+//!   use-vc, trust-ad)
 //!
 //! # Default Behavior
 //!
@@ -60,6 +61,16 @@ pub struct ResolverConfig {
     pub rotate: bool,
     /// Use TCP instead of UDP
     pub use_vc: bool,
+    /// `options trust-ad`: set the AD bit on outgoing queries and trust it on
+    /// replies.
+    ///
+    /// MEASURED, because the obvious reading is wrong: this is NOT on by
+    /// default. Live glibc 2.42 `res_mkquery` emits header flags 0x0120 (AD=1)
+    /// when resolv.conf carries `trust-ad` and 0x0100 (AD=0) when it does not,
+    /// so RES_TRUSTAD is not part of RES_DEFAULT. fl previously hardcoded the
+    /// bit ON, which matched every host on a systemd-resolved fleet (it writes
+    /// `trust-ad`) and diverged on the default configuration (bd-b275vh).
+    pub trust_ad: bool,
 }
 
 impl Default for ResolverConfig {
@@ -73,6 +84,7 @@ impl Default for ResolverConfig {
             attempts: DEFAULT_ATTEMPTS,
             rotate: false,
             use_vc: false,
+            trust_ad: false,
         }
     }
 }
@@ -89,6 +101,7 @@ impl ResolverConfig {
             attempts: DEFAULT_ATTEMPTS,
             rotate: false,
             use_vc: false,
+            trust_ad: false,
         }
     }
 
@@ -190,6 +203,8 @@ impl ResolverConfig {
             self.rotate = true;
         } else if opt == b"use-vc" {
             self.use_vc = true;
+        } else if opt == b"trust-ad" {
+            self.trust_ad = true;
         }
         // Other options are silently ignored
     }

@@ -1467,8 +1467,16 @@ pub unsafe extern "C" fn __res_mkquery(
     let out = buf as *mut u8;
     let out_slice = unsafe { std::slice::from_raw_parts_mut(out, effective_buflen) };
 
-    // Header: ID, flags (RD=1), qdcount=1
-    let hdr = frankenlibc_core::resolv::dns::DnsHeader::new_query(tx_id);
+    // Header: ID, flags (RD=1, AD from resolv.conf), qdcount=1.
+    //
+    // This is the function glibc's res_mkquery is compared against, and its AD
+    // bit is DERIVED: live glibc emits 0x0120 when resolv.conf carries
+    // `trust-ad` and 0x0100 when it does not (bd-b275vh). Reuses unistd_abi's
+    // cached resolver config so the whole crate answers from one parse.
+    let hdr = frankenlibc_core::resolv::dns::DnsHeader::new_query_with_trust_ad(
+        tx_id,
+        crate::unistd_abi::RESOLV_CONFIG.trust_ad,
+    );
     let _ = hdr.encode(out_slice);
 
     // Question section.

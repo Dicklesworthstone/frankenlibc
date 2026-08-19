@@ -15906,7 +15906,9 @@ unsafe fn dns_query_raw(
     static TX_COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(1);
     let tx_id = TX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let mut header = DnsHeader::new_query(tx_id);
+    // AD is derived from the resolver configuration, not pinned: glibc
+    // sets it only when resolv.conf carries `trust-ad` (bd-b275vh).
+    let mut header = DnsHeader::new_query_with_trust_ad(tx_id, config.trust_ad);
     header.qdcount = 1;
 
     let Some(qname) = frankenlibc_core::resolv::dns::encode_domain_name(dname) else {
