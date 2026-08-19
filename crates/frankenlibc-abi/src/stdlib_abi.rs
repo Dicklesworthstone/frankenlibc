@@ -6765,12 +6765,27 @@ pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char)
 ///
 /// `value` must address the caller's 16-byte long double slot.
 unsafe fn x87_arg(value: *const u8) -> f64 {
+    // SAFETY: as `x87_bytes`.
+    let bytes = unsafe { x87_bytes(value) };
+    crate::stdio_abi::f64_from_x87_bytes(&bytes)
+}
+
+/// The ten significant bytes of an x87 `long double` argument.
+///
+/// # Safety
+///
+/// `value` must address the caller's 16-byte long double slot.
+unsafe fn x87_bytes(value: *const u8) -> [u8; 10] {
     let mut bytes = [0u8; 10];
     // SAFETY: the shim points this at the caller's stack slot, which the SysV
     // ABI guarantees is 16 bytes, of which ten are significant.
     unsafe { core::ptr::copy_nonoverlapping(value, bytes.as_mut_ptr(), 10) };
-    crate::stdio_abi::f64_from_x87_bytes(&bytes)
+    bytes
 }
+
+/// glibc caps the `q*` conversions at the decimal width of a long double;
+/// measured, `qecvt(pi, 40)` returns 21 digits.
+const QCVT_MAX_DIGITS: usize = 21;
 
 /// `qecvt` — the `long double` form of `ecvt`.
 ///
@@ -6820,27 +6835,54 @@ pub unsafe extern "C" fn qecvt(
 ///
 /// `value` must address the caller's long double slot; the other pointers obey
 /// C's `qecvt` contract.
+/// Write `ecvt`/`fcvt`-shaped output into one of the legacy static buffers.
+///
+/// Shared by [`qecvt_x87`] and [`qfcvt_x87`], which differ only in which core
+/// routine produces the digits.
+///
+/// # Safety
+///
+/// `decpt` and `sign`, when non-NULL, must be writable.
+unsafe fn write_qcvt(
+    digits: &[u8],
+    dp: i32,
+    negative: bool,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+    buf: &mut [u8],
+) -> *mut c_char {
+    let len = digits.len().min(buf.len() - 1);
+    buf[..len].copy_from_slice(&digits[..len]);
+    buf[len] = 0;
+    if !decpt.is_null() {
+        // SAFETY: non-null by the branch, writable by contract.
+        unsafe { *decpt = dp };
+    }
+    if !sign.is_null() {
+        // SAFETY: as above.
+        unsafe { *sign = c_int::from(negative) };
+    }
+    buf.as_ptr() as *mut c_char
+}
+
 pub unsafe extern "C" fn qecvt_x87(
     ndigit: c_int,
     decpt: *mut c_int,
     sign: *mut c_int,
     value: *const u8,
 ) -> *mut c_char {
-    // SAFETY: the shim points `value` at the caller's stack slot.
-    let value = unsafe { x87_arg(value) };
+    // SAFETY: the shim points `value` at the caller's ten significant bytes.
+    let bytes = unsafe { x87_bytes(value) };
+    // EXACT digits, not an f64 round-trip. The previous body converted to f64
+    // first, which a live comparison against glibc caught at the seventeenth
+    // digit: for 0.1 at ndigit=17 it produced 10000000000000001 where the long
+    // double's own expansion is 10000000000000000.
+    let want = (ndigit.max(0) as usize).min(QCVT_MAX_DIGITS);
+    let (digits, dp, negative) = frankenlibc_core::float128::x87_ecvt(&bytes, want);
     with_qecvt_buf(|b| {
         let mut buf = b.borrow_mut();
-        unsafe {
-            ecvt_r(
-                value,
-                ndigit,
-                decpt,
-                sign,
-                buf.as_mut_ptr() as *mut c_char,
-                128,
-            );
-        }
-        buf.as_ptr() as *mut c_char
+        // SAFETY: caller-supplied out-pointers; the buffer is ours.
+        unsafe { write_qcvt(&digits, dp, negative, decpt, sign, &mut buf[..]) }
     })
 }
 
@@ -6878,21 +6920,14 @@ pub unsafe extern "C" fn qfcvt_x87(
     sign: *mut c_int,
     value: *const u8,
 ) -> *mut c_char {
-    // SAFETY: the shim points `value` at the caller's stack slot.
-    let value = unsafe { x87_arg(value) };
+    // SAFETY: the shim points `value` at the caller's ten significant bytes.
+    let bytes = unsafe { x87_bytes(value) };
+    let want = (ndigit.max(0) as usize).min(QCVT_MAX_DIGITS);
+    let (digits, dp, negative) = frankenlibc_core::float128::x87_fcvt(&bytes, want);
     with_qfcvt_buf(|b| {
         let mut buf = b.borrow_mut();
-        unsafe {
-            fcvt_r(
-                value,
-                ndigit,
-                decpt,
-                sign,
-                buf.as_mut_ptr() as *mut c_char,
-                128,
-            );
-        }
-        buf.as_ptr() as *mut c_char
+        // SAFETY: caller-supplied out-pointers; the buffer is ours.
+        unsafe { write_qcvt(&digits, dp, negative, decpt, sign, &mut buf[..]) }
     })
 }
 

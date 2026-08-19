@@ -618,6 +618,130 @@ pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp:
     rational_to_binary128(sign, &num, &den)
 }
 
+/// `ecvt`-style digits for an x87 `long double`: `ndigit` significant digits,
+/// the decimal-point position, and the sign.
+///
+/// EXACT. The value is widened to binary128 — which loses nothing, the formats
+/// share an exponent field and binary128's significand contains x87's — and
+/// [`classify_binary128`] yields its exact decimal expansion, which is then
+/// rounded once to `ndigit` places. Nothing is routed through `f64`.
+///
+/// That matters at the seventeenth digit and beyond, which is exactly where a
+/// live comparison against glibc caught the previous implementation: for `0.1`
+/// at `ndigit = 17` an f64 round-trip gives `10000000000000001` where the long
+/// double's own expansion gives `10000000000000000`.
+///
+/// Non-finite values follow the `ecvt` convention rather than the numeric one:
+/// the digit string is `"inf"`/`"nan"` (with a leading `-` when negative),
+/// `decpt` is 0, and the returned sign flag is false — the sign travels in the
+/// string. That is what glibc does and what fl's `f64` `ecvt` already did.
+pub fn x87_ecvt(bytes: &[u8; 10], ndigit: usize) -> (Vec<u8>, i32, bool) {
+    match classify_binary128(x87_to_binary128(bytes)) {
+        F128Class::Zero { negative } => (vec![b'0'; ndigit], 1, negative),
+        F128Class::Infinity { negative } => (nonfinite_digits(negative, b"inf"), 0, false),
+        F128Class::Nan { negative, .. } => (nonfinite_digits(negative, b"nan"), 0, false),
+        F128Class::Finite {
+            negative,
+            digits,
+            exp10,
+        } => {
+            if ndigit == 0 {
+                // glibc returns an empty string and leaves decpt at the value's
+                // own decimal point.
+                return (Vec::new(), exp10 + digits.len() as i32, negative);
+            }
+            let (mut rounded, rexp) = round_to_sig_digits(&digits, exp10, ndigit);
+            // `decpt` is invariant under the padding below: appending a zero
+            // multiplies the integer by ten and drops the exponent by one.
+            let decpt = rexp + rounded.len() as i32;
+            rounded.resize(ndigit, b'0');
+            (rounded, decpt, negative)
+        }
+    }
+}
+
+/// `fcvt`-style digits for an x87 `long double`: `ndigit` digits AFTER the
+/// decimal point.
+///
+/// Expressed through [`x87_ecvt`], because "n digits after the point" is "the
+/// digits before the point, plus n, significant digits" — the count is only
+/// knowable after the exact expansion places the point.
+pub fn x87_fcvt(bytes: &[u8; 10], ndigit: usize) -> (Vec<u8>, i32, bool) {
+    match classify_binary128(x87_to_binary128(bytes)) {
+        F128Class::Zero { negative } => (vec![b'0'; ndigit], 1, negative),
+        F128Class::Infinity { negative } => (nonfinite_digits(negative, b"inf"), 0, false),
+        F128Class::Nan { negative, .. } => (nonfinite_digits(negative, b"nan"), 0, false),
+        F128Class::Finite {
+            negative,
+            digits,
+            exp10,
+        } => {
+            let point = exp10 + digits.len() as i32;
+            let significant = point + ndigit as i32;
+            if significant <= 0 {
+                // Below the requested place the whole value rounds to 0 or to a
+                // single 1, and glibc's rendering of that is not the obvious
+                // one. Measured:
+                //
+                //     qfcvt(0.6,    0) = "1"  decpt  1     qfcvt(0.5,  0) = "0" decpt  1
+                //     qfcvt(0.05,   1) = "1"  decpt  0     qfcvt(0.04, 1) = ""  decpt -1
+                //     qfcvt(0.006,  2) = "1"  decpt -1     qfcvt(0.005,2) = ""  decpt -2
+                //
+                // so a rounded-up result is "1" at decpt 1-ndigit, while a
+                // rounded-down one is an EMPTY string at decpt -ndigit — except
+                // at ndigit 0, where it is "0" at decpt 1, the same shape as a
+                // true zero. Ties go to even, which is why 0.5 and 0.005 round
+                // DOWN.
+                let rounds_up = rounds_up_to_one(&digits, point, ndigit as i32);
+                return if rounds_up {
+                    (vec![b'1'], 1 - ndigit as i32, negative)
+                } else if ndigit == 0 {
+                    (vec![b'0'], 1, negative)
+                } else {
+                    (Vec::new(), -(ndigit as i32), negative)
+                };
+            }
+            let (mut rounded, rexp) = round_to_sig_digits(&digits, exp10, significant as usize);
+            let decpt = rexp + rounded.len() as i32;
+            // Rounding can carry a place (0.99 -> 1.0), which changes how many
+            // digits sit after the point.
+            let want = (decpt + ndigit as i32).max(0) as usize;
+            rounded.resize(want, b'0');
+            (rounded, decpt, negative)
+        }
+    }
+}
+
+/// Does `0.<digits> * 10^point` reach one half of `10^-ndigit`?
+///
+/// Only asked when the value rounds away entirely, so the answer decides
+/// between a single `1` and nothing. Comparing in normalised form avoids any
+/// arithmetic: the threshold is `0.5 * 10^-ndigit`, so the exponents decide it
+/// unless they are equal, and then the digits do. A tie goes to even, which
+/// means DOWN — the alternative would be 1, which is odd.
+fn rounds_up_to_one(digits: &[u8], point: i32, ndigit: i32) -> bool {
+    match point.cmp(&-ndigit) {
+        core::cmp::Ordering::Greater => true,
+        core::cmp::Ordering::Less => false,
+        core::cmp::Ordering::Equal => match digits.first().copied().unwrap_or(b'0').cmp(&b'5') {
+            core::cmp::Ordering::Greater => true,
+            core::cmp::Ordering::Less => false,
+            // Exactly one half unless something nonzero follows.
+            core::cmp::Ordering::Equal => digits[1..].iter().any(|&d| d != b'0'),
+        },
+    }
+}
+
+/// `ecvt`'s rendering of a non-finite: the sign lives in the string.
+fn nonfinite_digits(negative: bool, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len() + 1);
+    if negative {
+        out.push(b'-');
+    }
+    out.extend_from_slice(body);
+    out
+}
+
 /// Widen an x87 80-bit extended value to IEEE binary128. EXACT, never rounds.
 ///
 /// ## Why it cannot lose anything
