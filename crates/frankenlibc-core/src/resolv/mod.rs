@@ -1335,8 +1335,41 @@ mod tests {
     }
 
     #[test]
-    fn parse_services_rejects_extra_protocol_separator() {
-        assert!(parse_services_line(b"bad 80/tcp/garbage").is_none());
+    fn parse_services_extra_separator_belongs_to_the_protocol() {
+        // This asserted `.is_none()` and was WRONG about the incumbent. Only the
+        // FIRST '/' separates; everything after it is the protocol name.
+        // Measured by binding a synthetic /etc/services over the real one and
+        // walking getservent: "extraslash 87/tcp/x" comes back with protocol
+        // "tcp/x", not skipped.
+        let e = parse_services_line(b"bad 80/tcp/garbage").expect("glibc yields this entry");
+        assert_eq!(e.port, 80);
+        assert_eq!(e.protocol, b"tcp/garbage");
+    }
+
+    #[test]
+    fn parse_services_missing_and_empty_protocol_are_accepted() {
+        // Also measured against getservent: a missing '/' and an empty protocol
+        // both yield an entry with an EMPTY protocol rather than a skipped line.
+        let none = parse_services_line(b"noproto 84").expect("no slash is still an entry");
+        assert_eq!((none.port, none.protocol.as_slice()), (84, &b""[..]));
+        let empty = parse_services_line(b"emptyproto 85/").expect("empty protocol is an entry");
+        assert_eq!((empty.port, empty.protocol.as_slice()), (85, &b""[..]));
+    }
+
+    #[test]
+    fn parse_services_port_keeps_low_16_bits_and_accepts_a_plus() {
+        // getservent reports "overflow 99999/tcp" as port 34463 (99999 - 65536),
+        // because glibc stores the port through a uint16_t. It is NOT rejected.
+        let wrapped = parse_services_line(b"overflow 99999/tcp").expect("wraps, not rejected");
+        assert_eq!(wrapped.port, 34463);
+        // A leading '+' is accepted; a '-' is not.
+        assert_eq!(
+            parse_services_line(b"plusport +86/tcp")
+                .expect("'+' accepted")
+                .port,
+            86
+        );
+        assert!(parse_services_line(b"negport -1/tcp").is_none());
     }
 
     // ---- lookup_service ----
@@ -2318,9 +2351,28 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
     }
 
     #[test]
-    fn protocol_rejects_signed_number() {
-        assert!(parse_protocols_line(b"foo +6").is_none());
+    fn protocol_accepts_plus_and_rejects_minus() {
+        // Only the MINUS is rejected. glibc reads the number with strtoul, so a
+        // leading '+' is fine — measured by binding a synthetic /etc/protocols
+        // over the real one and walking getprotoent: "plusnum +7" comes back as
+        // protocol 7, while "negnum -1" is skipped. The old assertion rejected
+        // both and dropped an entry the incumbent yields.
+        assert_eq!(parse_protocols_line(b"foo +6").unwrap().number, 6);
         assert!(parse_protocols_line(b"foo -1").is_none());
+    }
+
+    #[test]
+    fn protocol_number_keeps_low_32_bits() {
+        // Also measured: "intmaxplus 2147483648" is accepted and comes back as
+        // -2147483648 (the value is read unsigned and stored in an int), while
+        // "overflow 4294967296" and "huge 99999999999" exceed 32 bits and are
+        // refused. fl previously refused all three via i32::try_from.
+        assert_eq!(
+            parse_protocols_line(b"big 2147483648").unwrap().number,
+            i32::MIN
+        );
+        assert!(parse_protocols_line(b"over 4294967296").is_none());
+        assert!(parse_protocols_line(b"huge 99999999999").is_none());
     }
 
     #[test]
@@ -2455,11 +2507,14 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
 
     #[test]
     fn network_basic_plain_decimal() {
-        // Plain decimal (no dots) is taken as-is, matching glibc's
-        // inet_network("127") -> 127 behavior.
+        // LEFT-aligned: "127" is 0x7f000000, not 127. The old assertion (and its
+        // comment) described inet_network, which really does return 0x7f — but
+        // the netent parser is not inet_network. Measured by binding a synthetic
+        // /etc/networks over the real one and walking getnetent: n_net is
+        // 0x7f000000.
         let e = parse_networks_line(b"loopback 127").unwrap();
         assert_eq!(e.name, b"loopback");
-        assert_eq!(e.number, 127);
+        assert_eq!(e.number, 0x7f00_0000);
         assert!(e.aliases.is_empty());
     }
 
@@ -2472,10 +2527,13 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
 
     #[test]
     fn network_with_dotted_quad() {
-        // inet_network("169.254") is right-aligned -> (169<<8)|254 = 0xa9fe.
+        // Two components shift up by two bytes: 169.254 -> 0xa9fe0000, which is
+        // the address a caller expects for a /16. inet_network("169.254") is
+        // 0xa9fe and getnetent is not inet_network — measured on the host,
+        // "withalias 192.168" comes back as 0xc0a80000.
         let e = parse_networks_line(b"link-local 169.254").unwrap();
         assert_eq!(e.name, b"link-local");
-        assert_eq!(e.number, (169u32 << 8) | 254);
+        assert_eq!(e.number, 0xa9fe_0000);
     }
 
     #[test]

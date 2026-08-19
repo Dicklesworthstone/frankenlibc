@@ -198,22 +198,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_negative_program_number() {
-        // glibc uses `int r_number` so negative is technically representable.
-        let e = parse_rpc_line(b"weird -1").unwrap();
-        assert_eq!(e.number, -1);
+    fn parse_rejects_negative_program_number() {
+        // "technically representable" is not the same as "spellable". glibc
+        // reads the field with strtoul, so a '-' fails the conversion and the
+        // whole line is refused — measured by binding a synthetic /etc/rpc over
+        // the real one and walking getrpcent: "negnum -1" never appears. The
+        // field IS a signed int, and a negative value can only arrive there by
+        // wrapping a large unsigned one (see the next test).
+        assert!(parse_rpc_line(b"weird -1").is_none());
     }
 
     #[test]
-    fn parse_accepts_signed_program_number_limits() {
+    fn parse_program_number_limits() {
         assert_eq!(parse_rpc_line(b"max 2147483647").unwrap().number, i32::MAX);
-        assert_eq!(parse_rpc_line(b"min -2147483648").unwrap().number, i32::MIN);
+        // 2^31 is ACCEPTED and arrives negative: the digits are read unsigned
+        // and stored in an int. Measured on the host, "intmaxplus 2147483648"
+        // comes back as -2147483648. This previously asserted `.is_none()`.
+        assert_eq!(parse_rpc_line(b"min 2147483648").unwrap().number, i32::MIN);
         assert_eq!(parse_rpc_line(b"plus +123").unwrap().number, 123);
     }
 
     #[test]
-    fn parse_rejects_program_number_overflow_and_bare_sign() {
-        assert!(parse_rpc_line(b"too-big 2147483648").is_none());
+    fn parse_rejects_program_number_past_32_bits_and_bare_sign() {
+        // 2^32 and beyond do not fit and ARE refused — "overflow 4294967296"
+        // and "huge 99999999999" are both absent from getrpcent's output, which
+        // is what bounds the wrap above.
+        assert!(parse_rpc_line(b"too-big 4294967296").is_none());
+        assert!(parse_rpc_line(b"huge 99999999999").is_none());
         assert!(parse_rpc_line(b"too-small -2147483649").is_none());
         assert!(parse_rpc_line(b"bare-plus +").is_none());
         assert!(parse_rpc_line(b"bare-minus -").is_none());
