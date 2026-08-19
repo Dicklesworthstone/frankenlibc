@@ -9715,7 +9715,13 @@ fn gensalt_scrypt_salt_chars(nrbytes: usize) -> Result<usize, c_int> {
     if nrbytes < 16 {
         return Err(errno::EINVAL);
     }
-    Ok(nrbytes.div_ceil(3) * 4)
+    // SIX bits per character over the whole byte string, not four characters
+    // per whole 3-byte group. The two agree only when nrbytes is a multiple of
+    // 3, which is why this survived: the comment above cites 16/24/32/64 ->
+    // 22/32/43/86 as measured, and `div_ceil(3) * 4` reproduces only the 24.
+    // For 16 it returned 24, so the encoder was asked for two characters more
+    // than exist and padded them with 'A' — a constant tail in a salt.
+    Ok((nrbytes * 8).div_ceil(6))
 }
 
 fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, want: usize, out: &mut Vec<u8>) {
