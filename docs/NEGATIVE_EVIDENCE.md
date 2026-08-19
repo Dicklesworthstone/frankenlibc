@@ -32321,3 +32321,46 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **What actually located the stdin defect, in under a minute and with no
   debugger:** `ls -l /proc/<pid>/fd` (only 0,1,2 open; fd 0 a `socket:[...]`)
   plus `cat /proc/<pid>/task/*/wchan`.
+
+## 2026-08-19 — REFUTED, my own fix: closing `fclose`'s host-delegation door did not move the suite crash rate; the defect was 14 doors wide (`bd-u2daxd`, PurpleRaven)
+
+- **The claim I nearly banked.** After `a367cdbef` fixed `may_delegate_to_host`,
+  a 20-iteration loop of the fixed binary at `--test-threads 16` gave **18 ok,
+  2 assertion failures, ZERO crashes**, against a pre-fix 2-in-8. That reads as
+  a clean kill and it is not evidence: 0 of 20 is entirely consistent with a
+  ~5–10% rate, and the pre-fix figure had been taken at loadavg 100–180 against
+  this run's 35–77. **Two different windows are not an A/B.**
+- **The control changed the verdict.** Interleaved, same window, alternating
+  arms, 14 iterations each, both binaries from the same source differing only in
+  the predicate: **PRE ok=12 fail=1 crash=1 | POST ok=11 fail=2 crash=1.** The
+  fix was real — deterministic reproducer, gated — but it did **not** change the
+  suite-level crash rate, because the crash moved to the next door.
+- **Why: the delegation decision was duplicated, not centralised.** `fclose`
+  consulted `may_delegate_to_host`; an audit of all **32** host-delegation sites
+  in `stdio_abi.rs` found **14 that rolled their own** "not in the registry,
+  therefore the host's" test. The next crash was `fputs` →
+  `write_bytes_without_runtime_policy` → glibc `fwrite(fp=0x10000012)`, an
+  `alloc_stream_id` value. `classify_stream_for_locking` had it too, ending
+  "not ours → `Foreign`" and routing stale ids to `host_flockfile`. Fixed
+  across the family in `3c4684b1a`.
+- **Post-fix, the numbers that do support the claim** — deterministic gate
+  (`every_stdio_entry_point_refuses_a_stale_fl_handle`) that *segfaults* on the
+  previous commit in the same frames as production, plus a **250-round soak of
+  the 5-test reproducer at HEAD: 247 ok, 3 assertion failures, 0 crashes,
+  0 hangs**, where the pre-fix rate of ~1-in-60 predicted ~4.
+- **Rejected instrument: the unreported-test set.** Intersecting "tests that had
+  not reported" across three crashes gave **50 of 51** — it discriminates
+  nothing, because libtest's schedule is deterministic and every crash stops at
+  the same progress point. What works is `--format json -Z unstable-options`,
+  whose per-test `started` events make the in-flight set exactly
+  `started − completed`: **141 started, 125 completed, 16 in flight** = exactly
+  `--test-threads`. That cut 175 candidates to 5.
+- **Rejected instrument: gdb on the whole suite.** 25 iterations, no fault, all
+  of them real runs (173–175 tests each). Its ptrace stops perturb full-suite
+  timing enough to suppress the race. The *same* gdb invocation caught it on the
+  5-test subset at iteration 37. Narrow the workload before reaching for the
+  debugger, not after.
+- **My own gate carried the bug it tests for.** Its four arms each call
+  `fcloseall`, which closes every non-standard stream in the process *including
+  one another's*: 4 passed at `--test-threads 1`, 2 failed at the default. The
+  arms, not fl — now serialised behind a file-local lock.
