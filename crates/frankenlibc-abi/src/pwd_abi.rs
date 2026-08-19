@@ -1188,7 +1188,9 @@ pub unsafe extern "C" fn getspent_r(
 // Implementation reads /etc/gshadow using the core parser from
 // frankenlibc_core::pwd::gshadow.
 
-use frankenlibc_core::pwd::gshadow::{Gshadow, lookup_gshadow_by_name, parse_gshadow_line};
+use frankenlibc_core::pwd::gshadow::{
+    Gshadow, lookup_gshadow_by_name, parse_gshadow_file_line, parse_gshadow_line,
+};
 
 /// C-compatible struct sgrp layout (matches glibc <gshadow.h>).
 #[repr(C)]
@@ -1410,7 +1412,8 @@ pub unsafe extern "C" fn getsgent() -> *mut c_void {
         };
         for line in remaining.split(|&b| b == b'\n') {
             storage.enum_offset += line.len() + 1; // +1 for the newline
-            if let Some(entry) = parse_gshadow_line(line) {
+            // FILE rule: comments/blanks skipped, leading blanks stripped.
+            if let Some(entry) = parse_gshadow_file_line(line) {
                 return pack_gshadow_into_static_storage(storage, &entry);
             }
         }
@@ -1440,7 +1443,8 @@ pub unsafe extern "C" fn getsgent_r(
         };
         for line in remaining.split(|&b| b == b'\n') {
             storage.enum_offset += line.len() + 1;
-            if let Some(entry) = parse_gshadow_line(line) {
+            // FILE rule, same as the non-reentrant scanner above.
+            if let Some(entry) = parse_gshadow_file_line(line) {
                 let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
                 if sgrp.is_null() {
                     return libc::ERANGE;
