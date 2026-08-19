@@ -4530,7 +4530,35 @@ use frankenlibc_core::stdio::printf::LengthMod;
 use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue};
 
 /// Extract variadic args for wide printf — mirrors extract_va_args from stdio_abi.
+/// Extract wide-printf variadic arguments, choosing a reader that can see them
+/// all.
+///
+/// Identical reasoning to the narrow `extract_va_args`: a `long double` is
+/// class X87 and passed in MEMORY, `next_arg` dispatches on the Rust type and
+/// no Rust type classifies as X87, so `%Lf` cannot be read through it. Reading
+/// it as a double also leaves the caller's sixteen stack bytes unconsumed, so
+/// every FOLLOWING conversion reads the wrong argument.
+///
+/// The va_list walker in `stdio_abi` handles it correctly and the wide `vw*`
+/// entry points already call it, so a format carrying a long double routes
+/// there. Everything else keeps the register path, byte-identical.
 macro_rules! extract_wprintf_args {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        if crate::stdio_abi::format_has_long_double($segments) {
+            // `$args` is already `&mut VaListImpl`; taking another reference
+            // would hand the walker a pointer to the REFERENCE, which reads a
+            // pointer where gp_offset belongs. That mistake on the narrow side
+            // printed "0.000000" for 1.0L — the x87 significand reinterpreted.
+            let _ap = core::ptr::from_mut($args).cast::<core::ffi::c_void>();
+            // SAFETY: `_ap` addresses this frame's va_list for the call.
+            unsafe { crate::stdio_abi::vprintf_extract_args($segments, _ap, $buf, $extract_count) }
+        } else {
+            extract_wprintf_args_registers!($segments, $args, $buf, $extract_count)
+        }
+    }};
+}
+
+macro_rules! extract_wprintf_args_registers {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
         if let Some(_plan) = positional_printf_arg_plan($segments) {
