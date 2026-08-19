@@ -17603,7 +17603,6 @@ pub unsafe extern "C" fn __strerror_l(errnum: c_int, locale: *mut c_void) -> *mu
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
     static DOT: &[u8] = b".\0";
-    static SLASH: &[u8] = b"/\0";
 
     if path.is_null() {
         return DOT.as_ptr() as *mut c_char;
@@ -17620,7 +17619,21 @@ pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
         end -= 1;
     }
     if end == 0 {
-        return SLASH.as_ptr() as *mut c_char;
+        // Every byte is a slash. glibc returns a pointer to the LAST slash,
+        // INSIDE the caller's buffer, and leaves the buffer unmodified.
+        // Measured on live glibc 2.42:
+        //     "/"   -> offset 0, buffer unchanged
+        //     "//"  -> offset 1, buffer unchanged
+        //     "///" -> offset 2, buffer unchanged
+        // Returning a static here produced the right STRING and the wrong
+        // POINTER, which matters because __xpg_basename's contract is that the
+        // result aliases the input: callers compute `result - path`, and a
+        // caller writing through the result would hit a read-only string
+        // literal and take SIGSEGV instead of editing its own buffer.
+        //
+        // The empty-string case is genuinely static -- glibc returns a "." that
+        // is outside the buffer -- and is handled above.
+        return unsafe { path.add(bytes.len() - 1) };
     }
     let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
         Some(pos) => pos + 1,
