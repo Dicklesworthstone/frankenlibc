@@ -4669,7 +4669,8 @@ fn qgcvt_caps_tracked_two_byte_buffer() {
         raw.add(1).write(b'Y');
     }
 
-    let result = unsafe { qgcvt(123.456, 10, raw.cast::<libc::c_char>()) };
+    let value = x87(123.456);
+    let result = unsafe { qgcvt_x87(10, raw.cast::<libc::c_char>(), value.as_ptr()) };
 
     assert_eq!(result.cast::<u8>(), raw);
     assert_eq!(unsafe { raw.read() }, b'1');
@@ -4834,7 +4835,8 @@ fn qgcvt_huge_precision_caps_tracked_two_byte_buffer() {
         raw.add(1).write(b'Y');
     }
 
-    let result = unsafe { qgcvt(123.456, libc::c_int::MAX, raw.cast::<libc::c_char>()) };
+    let value = x87(123.456);
+    let result = unsafe { qgcvt_x87(libc::c_int::MAX, raw.cast::<libc::c_char>(), value.as_ptr()) };
 
     assert_eq!(result.cast::<u8>(), raw);
     assert_eq!(unsafe { raw.add(1).read() }, 0);
