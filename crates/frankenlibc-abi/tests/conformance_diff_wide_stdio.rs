@@ -100,6 +100,12 @@ fn lines(path: &str, n: c_int, host: bool, cap: usize) -> Vec<Vec<i64>> {
 #[test]
 fn wide_stdio_decode_matches_glibc() {
     let loc = CString::new("C.UTF-8").unwrap();
+    // fl needs the same locale, not just the oracle. `setlocale` below is a
+    // link-time symbol, so in a debug test it binds GLIBC's and moves the
+    // oracle alone; fl has started in POSIX C since b5aef5e3a. Set fl's first,
+    // unconditionally -- if the host switch then fails the arm skips anyway.
+    // SAFETY: same NUL-terminated locale name, same category, as below.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(0, loc.as_ptr()) };
     if unsafe { setlocale(0, loc.as_ptr()) }.is_null() {
         eprintln!("C.UTF-8 unavailable; skipping");
         return;

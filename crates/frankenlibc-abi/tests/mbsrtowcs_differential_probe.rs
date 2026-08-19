@@ -111,6 +111,12 @@ fn finish(
 fn mbsrtowcs_matches_host_glibc() {
     let utf8 = c"C.UTF-8";
     // SAFETY: standard libc locale switch for this single-threaded test.
+    // fl needs the same locale, not just the oracle. `setlocale` below is a
+    // link-time symbol, so in a debug test it binds GLIBC's and moves the
+    // oracle alone; fl has started in POSIX C since b5aef5e3a. Set fl's first,
+    // unconditionally -- if the host switch then fails the arm skips anyway.
+    // SAFETY: same NUL-terminated locale name, same category, as below.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr()) };
     if unsafe { setlocale(libc::LC_ALL, utf8.as_ptr()) }.is_null() {
         eprintln!("C.UTF-8 locale unavailable; skipping mbsrtowcs differential probe");
         return;
