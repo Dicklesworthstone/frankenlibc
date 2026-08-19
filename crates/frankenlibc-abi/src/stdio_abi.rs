@@ -1866,6 +1866,15 @@ fn is_fl_issued_stream_id(id: usize) -> bool {
     id < watermark
 }
 
+/// True when `stream` may be handed to host glibc as a real `FILE *`.
+///
+/// The complement of `is_fl_issued_stream_id` on the raw pointer value. A
+/// genuine host `FILE *` lives in libc's data segment or on the heap, far above
+/// fl's id window, so this is false only for handles fl minted itself.
+fn stream_is_host_owned(stream: *mut c_void) -> bool {
+    !is_fl_issued_stream_id(stream as usize)
+}
+
 fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
     // Never hand one of fl's own ids to the host, registered or not.
     //
@@ -2496,7 +2505,9 @@ unsafe fn write_bytes_without_runtime_policy(
     let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), _stream) };
             if written == 0 {
                 unsafe { sync_host_errno(0) };
@@ -3389,7 +3400,9 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 
     let Some(cell) = stream_cell(id) else {
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fgetc) = unsafe { host_fgetc_fn() } {
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fgetc) = unsafe { host_fgetc_fn() }
+        {
             let rc = unsafe { host_fgetc(stream) };
             mark_host_io_started(stream);
             if rc == libc::EOF {
@@ -3531,7 +3544,9 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fputc) = unsafe { host_fputc_fn() } {
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fputc) = unsafe { host_fputc_fn() }
+        {
             let rc = unsafe { host_fputc(c, stream) };
             if rc == libc::EOF {
                 unsafe { sync_host_errno(0) };
@@ -4104,7 +4119,9 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
     let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fputs) = unsafe { host_fputs_fn() } {
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fputs) = unsafe { host_fputs_fn() }
+        {
             let rc = unsafe { host_fputs(s, stream) };
             if rc == libc::EOF {
                 unsafe { sync_host_errno(0) };
@@ -4461,7 +4478,9 @@ pub unsafe extern "C" fn fwrite(
     let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
             let rc = unsafe { host_fwrite(ptr, size, nmemb, stream) };
             if rc == 0 {
                 unsafe { sync_host_errno(0) };
@@ -5114,7 +5133,9 @@ pub unsafe extern "C" fn setvbuf(
         }
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fn) = unsafe { host_setvbuf_fn() } {
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fn) = unsafe { host_setvbuf_fn() }
+        {
             let rc = unsafe { host_fn(stream, _buf, mode, size) };
             if rc != 0 {
                 unsafe { sync_host_errno(errno::EBADF) };
@@ -7890,7 +7911,9 @@ pub unsafe extern "C" fn fprintf(
     } else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+        if stream_is_host_owned(stream)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written > 0 {
                 mark_host_io_started(stream);
@@ -8125,7 +8148,9 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     } else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+        if stream_is_host_owned(stdout_ptr)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
             if written > 0 {
                 mark_host_io_started(stdout_ptr);
@@ -9103,7 +9128,9 @@ pub unsafe extern "C" fn vfprintf(
     } else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+        if stream_is_host_owned(stream)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written > 0 {
                 mark_host_io_started(stream);
@@ -9307,7 +9334,9 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     } else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
-        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+        if stream_is_host_owned(stdout_ptr)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
             let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
             if written > 0 {
                 mark_host_io_started(stdout_ptr);
@@ -12068,6 +12097,15 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
     if registry_contains_stream(id) {
         // This is our stream (from fopen, etc.) but using legacy StdioStream
         // which doesn't have mutex support. Treat as no-op for locking.
+        return StreamType::LegacyStdioStream;
+    }
+
+    // An id fl minted but that the registry no longer holds is still OURS, not
+    // foreign. Classifying it Foreign sends it to host_flockfile/ftrylockfile/
+    // funlockfile, which dereference it as a `FILE *` -- the same defect as
+    // bd-u2daxd's fclose and fwrite doors. Locking a legacy stream is already a
+    // no-op, so that is the correct landing place.
+    if is_fl_issued_stream_id(id) {
         return StreamType::LegacyStdioStream;
     }
 
