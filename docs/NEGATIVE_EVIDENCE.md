@@ -32442,3 +32442,49 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   exact feature set whose policy gate exits 1 (`bd-haor6r`). It compiles to an
   empty binary and reports `0 passed; 0 failed`, which is **indistinguishable
   from passing** in any suite-level tally.
+
+## 2026-08-19 — REFUTED, a whole design: `bd-e0y02p`'s address-derived slab removes machinery that is already skipped — and BOTH probes that said otherwise were measuring nothing (PurpleRaven)
+
+- **Refuted design, by its own stated criterion.** `bd-e0y02p` proposed an
+  address-derived slab to delete the per-call arena insert, the size index and
+  the malloc-side global spinlock. Measured, one invocation, timing and path
+  split together: **`segment_pct=100.00`** (`delta_segment=49477398`,
+  `delta_fallback=40`, `delta_nonstrict=0`, `delta_bootstrap=0`,
+  `accounted=49477438`). All three are **already bypassed** at every size the
+  gap was measured at. The design would remove nothing. Closed.
+- **The number it targeted was stale.** The bead designs against 16.6x / ~133 ns
+  (2026-07-02). Live, same-invocation, vs glibc via `dlmopen`:
+  **6.2183–6.2765x**, fl ~30.8 ns vs glibc ~4.7 ns, all four sizes ADMISSIBLE,
+  per-arm A/A nulls 0.9955–1.0062, balanced ABBAABBA square, n=41. Still flat
+  across a 64x size range, so still fixed per-call overhead — but ~26 ns of it,
+  not 133 ns. Successor filed as `bd-ny3hsa`.
+- **BOTH existing probes reported the opposite verdict, and both were measuring
+  nothing.** Two independent defects, either sufficient on its own:
+  1. **Elision.** `malloc_segment_split_probe`'s loop had no `black_box`. fl's
+     entry point is literally named `malloc` with the C ABI, so LLVM treats it as
+     the builtin and **deletes an allocate/free pair whose result is unused**. The
+     loop performed **zero** allocations while printing per-size rows. Adding
+     `black_box` moved `accounted` from 0 to exactly 80000 of 80000.
+  2. **Partial instrumentation.** `malloc` has **five** exits; the counters
+     covered **one** (strict + proof-carried fast path). A run taking any other
+     printed `segment=0 fallback=0`, which both probes read as "segments lost"
+     rather than "nothing was counted".
+  They compound: (1) meant no allocations happened, (2) meant that even when they
+  did the counters could stay zero. **A zero was reachable two ways and neither
+  was checked** — `zero is not evidence`, in an allocator.
+- **Guards added so the mistake is not repeatable:**
+  `malloc_path_counters_full()` is exhaustive (segment + fallback + nonstrict +
+  bootstrap = the call count, so an incomplete split is detectable);
+  both probes print `INCONCLUSIVE_*` when `accounted` is zero or under half the
+  calls; `MALLOC_ENTRY_CHECK` asserts calls reach fl (1000 → `counted_delta=1000`);
+  `MALLOC_SYMBOL_RESOLUTION` records that `RTLD_DEFAULT` resolves `malloc` to fl's
+  own address, ruling out host interposition instead of assuming it.
+- **Rejected on cost grounds: shipping the counters unconditionally.** They are
+  relaxed atomics on the allocator hot path and malloc is a headline number, so
+  they sit behind a default-OFF `alloc-path-telemetry` feature. Deployed builds
+  pay nothing; with the feature off the accessors report zeros and the probes
+  correctly say INCONCLUSIVE.
+- **Dead code this leaves behind:** `src/slab_region.rs` was written for the
+  refuted design and its own header says to delete it if segments turn out to be
+  hit. They are, 100%. Flagged on the bead, not actioned — an unwired second
+  ownership mechanism in an allocator is a liability.
