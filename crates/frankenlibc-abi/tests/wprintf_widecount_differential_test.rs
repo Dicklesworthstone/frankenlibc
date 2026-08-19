@@ -58,6 +58,11 @@ fn wprintf_return_is_wide_count_not_bytes() {
     unsafe {
         let utf8 = CString::new("C.UTF-8").unwrap();
         setlocale(6 /* LC_ALL */, utf8.as_ptr());
+        // fl needs the same locale, not just the oracle: `setlocale` here is a
+        // link-time symbol that binds GLIBC's in a debug test, and fl has started
+        // in POSIX C since b5aef5e3a. Without this the gate compares an ASCII fl
+        // against a UTF-8 glibc and fails for a reason unrelated to what it tests.
+        frankenlibc_abi::locale_abi::setlocale(6 /* LC_ALL */, utf8.as_ptr());
     }
     let path = CString::new(format!("/tmp/fl_wprintf_cap_{}", std::process::id())).unwrap();
     let tmp_fd = unsafe {

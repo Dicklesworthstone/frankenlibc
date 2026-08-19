@@ -82,6 +82,11 @@ fn swscanf_int_differential_fuzz_vs_glibc() {
     unsafe {
         let utf8 = std::ffi::CString::new("C.UTF-8").unwrap();
         setlocale(6, utf8.as_ptr());
+        // fl needs the same locale, not just the oracle: `setlocale` here is a
+        // link-time symbol that binds GLIBC's in a debug test, and fl has started
+        // in POSIX C since b5aef5e3a. Without this the gate compares an ASCII fl
+        // against a UTF-8 glibc and fails for a reason unrelated to what it tests.
+        frankenlibc_abi::locale_abi::setlocale(6, utf8.as_ptr());
     }
     let mut r = Lcg(0x5ca7_f00d_1234_abcd);
     let mut divs: Vec<String> = Vec::new();

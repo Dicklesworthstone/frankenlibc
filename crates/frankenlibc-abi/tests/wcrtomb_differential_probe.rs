@@ -66,6 +66,12 @@ fn wcrtomb_matches_host_glibc_over_codepoint_surface() {
     let utf8 = c"C.UTF-8";
     // SAFETY: standard libc locale switch for this single-threaded test.
     let set = unsafe { setlocale(libc::LC_ALL, utf8.as_ptr()) };
+    // fl needs the same locale, not just the oracle: `setlocale` here is a
+    // link-time symbol that binds GLIBC's in a debug test, and fl has started
+    // in POSIX C since b5aef5e3a. Without this the gate compares an ASCII fl
+    // against a UTF-8 glibc and fails for a reason unrelated to what it tests.
+    // SAFETY: same NUL-terminated locale name as the call above.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr()) };
     if set.is_null() {
         eprintln!("C.UTF-8 locale unavailable; skipping wcrtomb differential probe");
         return;

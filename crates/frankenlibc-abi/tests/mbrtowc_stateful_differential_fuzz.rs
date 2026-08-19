@@ -158,6 +158,12 @@ fn host_call(wc: &mut libc::wchar_t, s: &[u8], n: usize, st: &mut libc::mbstate_
 fn mbrtowc_stateful_differential_fuzz_vs_glibc() {
     let utf8 = c"C.UTF-8";
     let set = unsafe { setlocale(libc::LC_ALL, utf8.as_ptr()) };
+    // fl needs the same locale, not just the oracle: `setlocale` here is a
+    // link-time symbol that binds GLIBC's in a debug test, and fl has started
+    // in POSIX C since b5aef5e3a. Without this the gate compares an ASCII fl
+    // against a UTF-8 glibc and fails for a reason unrelated to what it tests.
+    // SAFETY: same NUL-terminated locale name as the call above.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, utf8.as_ptr()) };
     if set.is_null() {
         eprintln!("C.UTF-8 locale unavailable; skipping mbrtowc stateful fuzz");
         return;

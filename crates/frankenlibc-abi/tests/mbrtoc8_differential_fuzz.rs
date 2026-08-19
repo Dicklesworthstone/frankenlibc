@@ -114,6 +114,12 @@ fn drive(
 #[test]
 fn mbrtoc8_differential_fuzz_vs_glibc() {
     unsafe { setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    // fl needs the same locale, not just the oracle: `setlocale` here is a
+    // link-time symbol that binds GLIBC's in a debug test, and fl has started
+    // in POSIX C since b5aef5e3a. Without this the gate compares an ASCII fl
+    // against a UTF-8 glibc and fails for a reason unrelated to what it tests.
+    // SAFETY: same NUL-terminated locale name as the call above.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     let mut r = Lcg(0xc8de_ad08_1122_3344);
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
