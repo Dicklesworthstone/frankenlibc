@@ -1,6 +1,6 @@
 //! Conformance and parity tooling for frankenlibc.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_void};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -6231,6 +6231,173 @@ fn run_with_stdout_redirected_to_devnull(f: impl FnOnce() -> c_int) -> Result<c_
     }
 
     Ok(rc)
+}
+
+std::thread_local! {
+    /// Nesting depth of `run_with_stdin_redirected_to_devnull` on this thread.
+    static STDIN_REDIRECT_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn stdio_stdin_redirect_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Run `f` with file descriptor 0 pointed at `/dev/null`.
+///
+/// The `*_empty_stdin_*` fixture arms (`scanf`, `vscanf`, `getchar` and
+/// friends) assert what a conversion returns when stdin is at end of file.
+/// Nothing established that premise: they read whatever descriptor 0 the suite
+/// happened to be launched with. Under `cargo test` that is normally
+/// `/dev/null`, so the arms passed by accident. Executed directly — which is
+/// the prescribed way to run these targets — descriptor 0 is the caller's
+/// terminal, pipe or socket, and a blocking read on it never returns: bd-u2daxd
+/// observed the whole suite wedged with a thread parked in
+/// `unix_stream_data_wait` on fd 0 and a second thread futex-blocked behind it.
+///
+/// Redirecting makes the premise true by construction instead of by luck. It
+/// must hold a lock, because descriptor 0 is process-wide state shared with
+/// every other test libtest is running in parallel.
+fn run_with_stdin_redirected_to_devnull<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    // Acquire only at the outermost redirect on this thread. The nesting case
+    // exists so a gate can install a stdin of its own choosing and still have
+    // the arm underneath perform its real redirect; a plain `Mutex` would
+    // self-deadlock there, and skipping the inner redirect would make such a
+    // gate unable to tell a redirecting arm from an ambient-reading one.
+    let _guard = if STDIN_REDIRECT_DEPTH.with(Cell::get) == 0 {
+        Some(stdio_stdin_redirect_lock())
+    } else {
+        None
+    };
+    STDIN_REDIRECT_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let result = run_with_stdin_redirected_to_devnull_inner(f);
+    STDIN_REDIRECT_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    result
+}
+
+fn run_with_stdin_redirected_to_devnull_inner<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    let devnull = CString::new("/dev/null").map_err(|_| String::from("invalid /dev/null path"))?;
+    let saved_stdin = unsafe { libc::dup(libc::STDIN_FILENO) };
+    if saved_stdin < 0 {
+        return Err(String::from("failed to dup stdin"));
+    }
+
+    let devnull_fd = unsafe { libc::open(devnull.as_ptr(), libc::O_RDONLY) };
+    if devnull_fd < 0 {
+        unsafe { libc::close(saved_stdin) };
+        return Err(String::from(
+            "failed to open /dev/null for stdin redirection",
+        ));
+    }
+
+    if unsafe { libc::dup2(devnull_fd, libc::STDIN_FILENO) } < 0 {
+        unsafe {
+            libc::close(devnull_fd);
+            libc::close(saved_stdin);
+        }
+        return Err(String::from("failed to redirect stdin to /dev/null"));
+    }
+    unsafe { libc::close(devnull_fd) };
+
+    let value = f();
+
+    let restore_rc = unsafe { libc::dup2(saved_stdin, libc::STDIN_FILENO) };
+    unsafe { libc::close(saved_stdin) };
+    if restore_rc < 0 {
+        return Err(String::from("failed to restore stdin"));
+    }
+
+    Ok(value)
+}
+
+/// Run `f` with file descriptor 0 backed by a pipe pre-loaded with `payload`,
+/// then restore descriptor 0 and return whatever of `payload` was left unread.
+///
+/// This is the instrument for the negative half of the `*_empty_stdin_*`
+/// contract: an arm that honours the fixtures' declared
+/// `forbid_ambient_...stdin...` policy redirects to `/dev/null` and therefore
+/// leaves the payload untouched, while an arm that reads ambient stdin
+/// consumes it and reports a value instead of end of file.
+///
+/// The write end is closed before `f` runs, so an arm that *does* read ambient
+/// stdin reaches end of file after the payload rather than blocking — the gate
+/// fails fast instead of wedging the suite.
+#[cfg(test)]
+fn run_with_stdin_from_bytes<T>(
+    payload: &[u8],
+    f: impl FnOnce() -> T,
+) -> Result<(T, Vec<u8>), String> {
+    let _guard = if STDIN_REDIRECT_DEPTH.with(Cell::get) == 0 {
+        Some(stdio_stdin_redirect_lock())
+    } else {
+        None
+    };
+    STDIN_REDIRECT_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let result = run_with_stdin_from_bytes_inner(payload, f);
+    STDIN_REDIRECT_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    result
+}
+
+#[cfg(test)]
+fn run_with_stdin_from_bytes_inner<T>(
+    payload: &[u8],
+    f: impl FnOnce() -> T,
+) -> Result<(T, Vec<u8>), String> {
+    let mut fds = [-1 as c_int; 2];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(String::from("failed to create stdin payload pipe"));
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+
+    let written =
+        unsafe { libc::write(write_fd, payload.as_ptr() as *const c_void, payload.len()) };
+    unsafe { libc::close(write_fd) };
+    if written < 0 || written as usize != payload.len() {
+        unsafe { libc::close(read_fd) };
+        return Err(String::from("failed to seed stdin payload pipe"));
+    }
+
+    let saved_stdin = unsafe { libc::dup(libc::STDIN_FILENO) };
+    if saved_stdin < 0 {
+        unsafe { libc::close(read_fd) };
+        return Err(String::from("failed to dup stdin"));
+    }
+    if unsafe { libc::dup2(read_fd, libc::STDIN_FILENO) } < 0 {
+        unsafe {
+            libc::close(read_fd);
+            libc::close(saved_stdin);
+        }
+        return Err(String::from("failed to install stdin payload pipe"));
+    }
+
+    // A sticky EOF flag left on the `stdin` FILE by an earlier arm would let a
+    // non-redirecting implementation report end of file without ever touching
+    // the descriptor, which would make this gate pass vacuously.
+    unsafe { frankenlibc_abi::stdio_abi::clearerr(frankenlibc_abi::stdio_abi::stdin) };
+
+    let value = f();
+
+    let restore_rc = unsafe { libc::dup2(saved_stdin, libc::STDIN_FILENO) };
+    unsafe { libc::close(saved_stdin) };
+
+    let mut leftover = Vec::new();
+    let mut chunk = [0u8; 64];
+    loop {
+        let got = unsafe { libc::read(read_fd, chunk.as_mut_ptr() as *mut c_void, chunk.len()) };
+        if got <= 0 {
+            break;
+        }
+        leftover.extend_from_slice(&chunk[..got as usize]);
+    }
+    unsafe { libc::close(read_fd) };
+
+    if restore_rc < 0 {
+        return Err(String::from("failed to restore stdin"));
+    }
+    Ok((value, leftover))
 }
 
 fn run_with_devnull_fd(f: impl FnOnce(c_int) -> c_int) -> Result<c_int, String> {
@@ -13608,8 +13775,7 @@ fn execute_iconv_case(
         && frankenlibc_abi::iconv_abi::hardened_iconv_open_denied(
             tocode.as_bytes(),
             fromcode.as_bytes(),
-        )
-    {
+        ) {
         format_iconv_open_error(frankenlibc_core::iconv::ICONV_EINVAL)
     } else {
         run_impl_iconv_case(&tocode, &fromcode, &input, out_len)
@@ -22808,7 +22974,12 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
         }),
         "__isoc23_scanf" => {
             let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
-            let rc = unsafe { frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr()) };
+            // See the `scanf` arm: one destination per conversion directive is
+            // mandatory, not optional-because-EOF.
+            let mut value: c_int = -99;
+            let rc = run_with_stdin_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr(), &mut value as *mut c_int)
+            })?;
             Ok(format!("ISOC23_SCANF_EMPTY_RC_{rc}"))
         }
         "__isoc23_sscanf" => {
@@ -22839,9 +23010,11 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
             let mut value: c_int = -99;
             let mut destinations = [&mut value as *mut c_int as *mut c_void];
-            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
-                frankenlibc_abi::stdio_abi::vscanf(fmt.as_ptr(), ap)
-            });
+            let rc = run_with_stdin_redirected_to_devnull(|| {
+                with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                    frankenlibc_abi::stdio_abi::vscanf(fmt.as_ptr(), ap)
+                })
+            })?;
             Ok(format!("ISOC23_VSCANF_EMPTY_RC_{rc}_VALUE_{value}"))
         }
         "__isoc23_vsscanf" => {
@@ -22864,7 +23037,12 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
         }),
         "__isoc99_scanf" => {
             let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
-            let rc = unsafe { frankenlibc_abi::stdio_abi::__isoc99_scanf(fmt.as_ptr()) };
+            // See the `scanf` arm: one destination per conversion directive is
+            // mandatory, not optional-because-EOF.
+            let mut value: c_int = -99;
+            let rc = run_with_stdin_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::__isoc99_scanf(fmt.as_ptr(), &mut value as *mut c_int)
+            })?;
             Ok(format!("ISOC99_SCANF_EMPTY_RC_{rc}"))
         }
         "__isoc99_sscanf" => {
@@ -22895,9 +23073,11 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
             let mut value: c_int = -99;
             let mut destinations = [&mut value as *mut c_int as *mut c_void];
-            let rc = with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
-                frankenlibc_abi::stdio_abi::__isoc99_vscanf(fmt.as_ptr(), ap)
-            });
+            let rc = run_with_stdin_redirected_to_devnull(|| {
+                with_scanf_destination_va_list(&mut destinations, |ap| unsafe {
+                    frankenlibc_abi::stdio_abi::__isoc99_vscanf(fmt.as_ptr(), ap)
+                })
+            })?;
             Ok(format!("ISOC99_VSCANF_EMPTY_RC_{rc}_VALUE_{value}"))
         }
         "__isoc99_vsscanf" => {
@@ -22927,7 +23107,9 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
         }
         "__isoc99_wscanf" => {
             let fmt = [0i32];
-            let rc = unsafe { frankenlibc_abi::isoc_abi::__isoc99_wscanf(fmt.as_ptr()) };
+            let rc = run_with_stdin_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::isoc_abi::__isoc99_wscanf(fmt.as_ptr())
+            })?;
             Ok(format!("ISOC99_WSCANF_EMPTY_FORMAT_RC_{rc}"))
         }
         "clearerr" => stdio_libio_tmpfile(|stream| {
@@ -23355,7 +23537,9 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             }
         }),
         "getchar" => {
-            let got = unsafe { frankenlibc_abi::stdio_abi::getchar() };
+            let got = run_with_stdin_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::getchar()
+            })?;
             if got == libc::EOF {
                 Ok(String::from("GETCHAR_EOF"))
             } else {
@@ -23363,7 +23547,9 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             }
         }
         "getchar_unlocked" => {
-            let got = unsafe { frankenlibc_abi::stdio_abi::getchar_unlocked() };
+            let got = run_with_stdin_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::getchar_unlocked()
+            })?;
             if got == libc::EOF {
                 Ok(String::from("GETCHAR_UNLOCKED_EOF"))
             } else {
@@ -23567,7 +23753,18 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
         }),
         "scanf" => {
             let fmt = CString::new("%d").map_err(|_| "scanf format has NUL".to_string())?;
-            let rc = unsafe { frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr()) };
+            // The `%d` directive MUST be given a destination even though the
+            // end-of-file premise means it is never written: `scanf` fetches
+            // one variadic argument per successful conversion, so an arm that
+            // passes none is undefined behaviour the moment stdin is not
+            // empty. Measured on bd-u2daxd: with a readable stdin this arm
+            // took a garbage pointer out of the register save area and aborted
+            // the process in `scanf_write_values!` with "misaligned pointer
+            // dereference: address must be a multiple of 0x4 but is 0x3".
+            let mut value: c_int = -99;
+            let rc = run_with_stdin_redirected_to_devnull(|| unsafe {
+                frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr(), &mut value as *mut c_int)
+            })?;
             Ok(format!("SCANF_EMPTY_RC_{rc}"))
         }
         other => Err(format!("unsupported stdio/libio fixture: {other}")),
@@ -27219,8 +27416,9 @@ fn execute_execve_case(
     let host_errno = unsafe { *libc::__errno_location() };
 
     process_spawn_reset_errno();
-    let fl_rc =
-        unsafe { frankenlibc_abi::process_abi::execve(path_c.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+    let fl_rc = unsafe {
+        frankenlibc_abi::process_abi::execve(path_c.as_ptr(), argv.as_ptr(), envp.as_ptr())
+    };
     let fl_errno = process_spawn_current_errno();
 
     // The match token deliberately carries no errno: execve's errno for a non-executable file
@@ -30995,6 +31193,148 @@ mod tests {
     /// comparison. The bare token `X` is also asserted to appear as both the
     /// `expected=` and `actual=` field, so a declaration cannot drift away from
     /// the token the arm actually computes.
+    /// Every `*_empty_stdin_*` arm must establish its own end-of-file premise
+    /// instead of reading whatever descriptor 0 the suite inherited.
+    ///
+    /// The fixtures already declare this: each of these cases carries
+    /// `ambient_state_policy = forbid_ambient_..._stdin_or_uncontrolled_input_capture`.
+    /// The arms did not honour it — they called `scanf`/`getchar` on ambient
+    /// stdin, and passed only because `cargo test` happens to hand the process
+    /// `/dev/null`. Run the same binary directly, which is the prescribed way
+    /// to execute these targets, and descriptor 0 is the caller's terminal,
+    /// pipe or socket: bd-u2daxd measured the whole 173-test suite wedged with
+    /// one thread parked in `unix_stream_data_wait` on fd 0 and a second
+    /// futex-blocked behind it, 172 tests reported and no summary line.
+    ///
+    /// The negative case is the point of this gate. Descriptor 0 is backed by a
+    /// pipe holding `77\n`, which is scannable as `%d` and readable as a
+    /// character, so an arm that reads ambient stdin reports `RC_1`/`RC_55`
+    /// rather than end of file AND leaves the pipe drained. Both assertions
+    /// below fail for such an arm; neither can be satisfied by accident.
+    #[test]
+    fn empty_stdin_arms_ignore_the_callers_stdin() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        const STDIN_ARMS: &[&str] = &[
+            "__isoc23_scanf",
+            "__isoc23_vscanf",
+            "__isoc99_scanf",
+            "__isoc99_vscanf",
+            "__isoc99_wscanf",
+            "getchar",
+            "getchar_unlocked",
+            "scanf",
+        ];
+        const PAYLOAD: &[u8] = b"77\n";
+
+        let sources: [(&str, &str); 4] = [
+            (
+                "stdio_libio_wave01",
+                include_str!("../../../tests/conformance/fixtures/stdio_libio_wave01.json"),
+            ),
+            (
+                "stdio_libio_wave02",
+                include_str!("../../../tests/conformance/fixtures/stdio_libio_wave02.json"),
+            ),
+            (
+                "stdio_libio_wave05",
+                include_str!("../../../tests/conformance/fixtures/stdio_libio_wave05.json"),
+            ),
+            (
+                "stdio_libio_wave06",
+                include_str!("../../../tests/conformance/fixtures/stdio_libio_wave06.json"),
+            ),
+        ];
+
+        let mut covered: Vec<String> = Vec::new();
+        for (set_name, raw) in sources {
+            let fixture: FixtureSetLite = serde_json::from_str(raw)
+                .unwrap_or_else(|err| panic!("{set_name} fixture should parse: {err}"));
+            for case in fixture.cases {
+                if !STDIN_ARMS.contains(&case.function.as_str()) {
+                    continue;
+                }
+                let (result, leftover) = run_with_stdin_from_bytes(PAYLOAD, || {
+                    execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                })
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "{set_name}/{} could not install a payload stdin: {err}",
+                        case.name
+                    )
+                });
+                let result = result.unwrap_or_else(|err| {
+                    panic!("{set_name}/{} failed to execute: {err}", case.name)
+                });
+
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "{set_name}/{} reported a different result with a readable stdin, so it is \
+                     reading ambient stdin instead of establishing its own end-of-file premise",
+                    case.name
+                );
+                assert_eq!(
+                    leftover, PAYLOAD,
+                    "{set_name}/{} consumed bytes from the caller's stdin; the fixture forbids \
+                     ambient stdin capture, and on a stdin with no writer this read blocks forever",
+                    case.name
+                );
+                covered.push(format!("{set_name}/{}", case.name));
+            }
+        }
+
+        // A gate that silently matched nothing would look identical to a green
+        // one; assert the scope it actually swept.
+        assert_eq!(
+            covered.len(),
+            16,
+            "expected 16 stdin-reading fixture cases, swept {}: {covered:?}",
+            covered.len()
+        );
+    }
+
+    /// `scanf` fetches one variadic argument per successful conversion, so the
+    /// destination is mandatory whenever the directive can convert.
+    ///
+    /// The fixture arms hid this behind an end-of-file premise: they passed no
+    /// destination at all, which is well defined only for as long as stdin
+    /// never yields a digit. bd-u2daxd measured what happens when it does —
+    /// `scanf_write_values!` took a pointer out of the register save area that
+    /// no caller ever pushed and aborted the process with "misaligned pointer
+    /// dereference: address must be a multiple of 0x4 but is 0x3", killing the
+    /// whole suite with no summary line.
+    ///
+    /// This gate drives the same call shape with a readable stdin. The
+    /// no-destination form does not merely return a different number here: it
+    /// aborts, which is precisely why it must never be reintroduced.
+    #[test]
+    fn scanf_writes_through_its_destination_when_stdin_is_readable() {
+        let fmt = CString::new("%d").expect("scanf format has NUL");
+        let mut value: c_int = -99;
+        let (rc, _leftover) = run_with_stdin_from_bytes(b"77\n", || unsafe {
+            frankenlibc_abi::stdio_abi::scanf(fmt.as_ptr(), &mut value as *mut c_int)
+        })
+        .expect("payload stdin should install");
+
+        assert_eq!(rc, 1, "scanf should report one successful conversion");
+        assert_eq!(
+            value, 77,
+            "scanf must write the converted value through the destination it was given"
+        );
+    }
+
     #[test]
     fn stdio_libio_wave02_fixture_cases_execute() {
         #[derive(Deserialize)]
@@ -31041,7 +31381,9 @@ mod tests {
             }
 
             let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
-                .unwrap_or_else(|err| panic!("fixture case {} failed to execute: {err}", case.name));
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
             assert_eq!(
                 result.impl_output, case.expected_output,
                 "fixture output mismatch for {} (mode {})",
