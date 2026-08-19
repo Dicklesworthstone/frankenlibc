@@ -982,7 +982,14 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     let mut pos = 0;
     let mut values = ScanValues::default();
     let mut count: i32 = 0;
-    let mut input_failure = true; // true until first successful read
+    // NOTE: there is deliberately no running `input_failure` flag any more.
+    // Each arm below decides EOF from what IT observed -- a directive that
+    // demanded input and did not get it -- rather than from whether some
+    // earlier directive happened to succeed. The running flag got both
+    // directions wrong: it stayed set through a format that completed
+    // (reporting EOF for `swscanf("xC6", " ")`, which glibc answers 0) and
+    // it got cleared by a SUPPRESSED conversion (reporting 0 for
+    // `swscanf("1", " %*2xx")`, which glibc answers -1).
 
     for dir in directives {
         match dir {
@@ -1009,11 +1016,22 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
             }
             ScanDirective::Literal(expected) => {
                 if pos >= input.len() {
+                    // A literal that runs out of input IS an input failure,
+                    // regardless of whether an earlier directive already read
+                    // something. Measured on glibc 2.42:
+                    //     swscanf("1",  " %*2xx") -> -1
+                    //     swscanf("",   "x")      -> -1
+                    // In the first, the suppressed %2x consumed the whole input
+                    // and cleared the running flag, yet glibc still reports EOF
+                    // because no ASSIGNMENT had been made. The caller applies
+                    // `input_failure && count == 0`, so reporting the input
+                    // failure here is what makes both rows come out right;
+                    // carrying the running flag reported 0 for the first.
                     return ScanResult {
                         values,
                         count,
                         consumed: pos,
-                        input_failure,
+                        input_failure: true,
                     };
                 }
                 if input[pos] != *expected {
@@ -1044,7 +1062,6 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                         };
                     }
                     Some((val, new_pos)) => {
-                        input_failure = false;
                         pos = new_pos;
                         if !spec.suppress
                             && let Some(v) = val
@@ -1061,11 +1078,25 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
         }
     }
 
+    // Every directive was satisfied, so this is NOT an input failure -- whatever
+    // the running flag says. It starts `true` and is only cleared by a
+    // successful CONVERSION, so a format that completes without one left it set
+    // and the caller reported EOF. Measured on glibc 2.42:
+    //     swscanf("xC6", " ") -> 0     whitespace-only format
+    //     swscanf("",    " ") -> 0     ...even against empty input
+    //     swscanf("xx",  "x") -> 0     literal matched, nothing assigned
+    // Whitespace matches zero or more characters and so can never fail, which
+    // is why the second row is 0 and not EOF; `x` against "" is EOF only
+    // because the literal demanded a character that was not there, and that is
+    // handled at the Literal arm above.
+    //
+    // `stdio_abi`'s strict fast-path scanner already returned `false` here; this
+    // is the general engine catching up with it.
     ScanResult {
         values,
         count,
         consumed: pos,
-        input_failure,
+        input_failure: false,
     }
 }
 
