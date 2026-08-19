@@ -2,17 +2,145 @@
 
 All notable changes to FrankenLibC are documented in this file.
 
-FrankenLibC has no formal releases, version tags, or GitHub Releases. The project is at **v0.1.0** (pre-release) and ships a single artifact: `target/release/libfrankenlibc_abi.so` used via `LD_PRELOAD`. This changelog is organized by capability milestones derived from the complete commit history (4,932 commits by a single author across 97 days of active development).
+FrankenLibC has no formal releases, version tags, or GitHub Releases (`git for-each-ref refs/tags` and `gh release list -R Dicklesworthstone/frankenlibc` are both empty as of 2026-08-19). The project is at **v0.1.0** (pre-release) and ships a single artifact: `target/release/libfrankenlibc_abi.so` used via `LD_PRELOAD`. This changelog is organized by capability milestones derived from the commit history on `main`.
 
 Repository: <https://github.com/Dicklesworthstone/frankenlibc>
 
+Scope window: project inception on 2026-02-08 through HEAD on 2026-08-19.
+This 2026-08-19 refresh covers the previously undocumented window **2026-05-17 through 2026-08-19** (Phases 17–21 plus the repo-janitor docs reorganization). Phases 1–16 are unchanged.
+Representative commits in each phase are live-linked to GitHub.
+
+## Version Timeline
+
+`Kind` distinguishes a published GitHub Release from a plain git tag.
+
+| Version | Kind | Date | Summary |
+|---------|------|------|---------|
+| `[Unreleased]` | dev head | 2026-08-19 | 10,519 non-merge commits; no tags; no GitHub Releases. Phases 17–21 cover 2026-05-17 → 2026-08-19. |
+| `0.1.0` | untagged workspace version | ongoing | Pre-release `LD_PRELOAD` artifact `libfrankenlibc_abi.so`. |
+
 ---
 
-## [Unreleased] -- HEAD (as of 2026-05-16)
+## [Unreleased] -- HEAD (as of 2026-08-19)
 
-**Current state:** **4119 classified symbols | 3705 Implemented + 414 RawSyscall = 100.0% native coverage** | 0 GlibcCallThrough | 0 WrapsHostLibc | 0 Stub. The classified support-matrix surface no longer reports any host-glibc call-through or wrapper rows; the shipping artifact is still the interpose-first `LD_PRELOAD` library (`libfrankenlibc_abi.so`), with replacement-level promotion gates and L1 evidence dashboards driving the path to a standalone replace artifact. Source of truth: `support_matrix.json` and `tests/conformance/reality_report.v1.json` (regenerated 2026-02-18 against the current matrix).
+**10,519** non-merge commits on `main` from 2026-02-08 through 2026-08-19; **5,297** of those landed after the previous changelog snapshot (2026-05-16). Workspace version remains **0.1.0**. No tags, no GitHub Releases.
 
-Methodology note: the entries in phases 1-7 below were assembled from raw commit history. Phases 8-16 below cover the post-Phase-7 burst of 4,281 additional commits (2026-03-22 .. 2026-05-16) and were assembled by mining git history, the local beads_rust (`br`) tracker, and the `tests/conformance/*_completion_contract.v1.json` evidence ledger. Bead IDs in `[bd-xxxxx]` correspond to issues tracked in `.beads/` and quoted in commit subjects for traceability.
+**Snapshot as of 2026-05-16 (close of Phase 16):** **4119 classified symbols | 3705 Implemented + 414 RawSyscall = 100.0% native coverage** | 0 GlibcCallThrough | 0 WrapsHostLibc | 0 Stub. The shipping artifact is still the interpose-first `LD_PRELOAD` library (`libfrankenlibc_abi.so`). Source of truth: `support_matrix.json` and `tests/conformance/reality_report.v1.json`.
+
+Closed beads in the 2026-05-17 → 2026-08-19 window: 1,776 (of 7,272 closed overall). Tracker: `.beads/issues.jsonl`.
+
+Methodology note: phases 1–7 were assembled from raw commit history. Phases 8–16 cover 2026-03-22 .. 2026-05-16. Phases 17–21 cover 2026-05-17 .. 2026-08-19 and were assembled by mining git history plus closed beads. Bead IDs in `[bd-xxxxx]` correspond to issues tracked in `.beads/`.
+
+`FEATURE_PARITY.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, and `PROPOSED_ARCHITECTURE.md` remain at the repo root because they are test-pinned; other planning docs moved to `docs/planning/` on 2026-08-19.
+
+---
+
+## Repo-janitor docs reorganization (2026-08-18 .. 2026-08-19)
+
+Non-locked root planning docs moved into [`docs/planning/`](docs/planning/). Test-pinned plans (`FEATURE_PARITY.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, `PROPOSED_ARCHITECTURE.md`) stay at the root so conformance claim-field contracts keep resolving. Skill-loop scratch was untracked.
+
+- Untrack skill-loop scratch; move root planning docs into `docs/planning/`
+  ([680a985](https://github.com/Dicklesworthstone/frankenlibc/commit/680a9858cb8c6139756a5fabc3e8cfa59bf5c110))
+- Relocate non-locked root docs; leave test-pinned plans
+  ([b9eebd3](https://github.com/Dicklesworthstone/frankenlibc/commit/b9eebd38b22e34907aafc006fc381a18b859941d))
+
+Same two days close the long-double ABI/printf stack: `%Lf` must consume its stack slot (narrow and wide), `strtold`/`qcvt` gain live glibc arms, and `setlocale("")` / `newlocale("")` read the environment instead of always picking UTF-8.
+
+- Variadic `%Lf` reads its stack slot and stops eating the next arg
+  ([6231ef0](https://github.com/Dicklesworthstone/frankenlibc/commit/6231ef04b5113ef64fa394ffadf2d98bffd35735))
+- Wide `%Lf` is the same bug; route wide printf through the va_list walker
+  ([cb6fbb4](https://github.com/Dicklesworthstone/frankenlibc/commit/cb6fbb405a06e16f5eb683f59914aebc53e28a68))
+- Exact long-double digits in `qcvt`, with a live gate that found glibc wrong
+  ([3bcb6e3](https://github.com/Dicklesworthstone/frankenlibc/commit/3bcb6e31b3897a5c396a4c39d4fe4ca8f079373d))
+- `setlocale("")` and `newlocale("")` read the environment instead of always picking UTF-8
+  ([03eb099](https://github.com/Dicklesworthstone/frankenlibc/commit/03eb09952405a7475cce65d0f9c989c388c4b826))
+
+---
+
+## Phase 21 -- Crypt surface, scanf/printf, locale/resolv, standalone packaging (2026-08-01 .. 2026-08-17)
+
+August before the janitor window (~1,100 non-merge commits; 357 beads closed in the month) is split between `crypt` family fill-in (`BDSI` extended DES, `NTHASH` `$3$`, gensalt for DES/BSDI/NTHASH), scanf/printf/malloc measured levers, and a packaging correction: stop shipping the non-standalone object as the replacement artifact (`bd-haor6r`).
+
+- Implement BSDI extended DES (`_`-prefix) on the same salted cipher (`bd-c6ykz1`)
+  ([e57a121](https://github.com/Dicklesworthstone/frankenlibc/commit/e57a121f55e65a6150d96683e02cab3e9c9c2a8a))
+- `NTHASH` (`$3$`) via MD4, and one shared setting-byte rule
+  ([f57c16e](https://github.com/Dicklesworthstone/frankenlibc/commit/f57c16edeb58acbd976640953639f412018cc253))
+- Gensalt for DES, BSDI and NTHASH
+  ([eb26b0e](https://github.com/Dicklesworthstone/frankenlibc/commit/eb26b0e3d001d2897990b3093c253ff303c88233))
+- Stop packaging the non-standalone object as the replacement (`bd-haor6r`)
+  ([c1e837e](https://github.com/Dicklesworthstone/frankenlibc/commit/c1e837e2531381f9a60c6d3bcdaa8760eb4d9acb))
+
+---
+
+## Phase 20 -- stdio, time, resolv, wchar/iconv measured campaign (2026-07-01 .. 2026-07-31)
+
+July (~770 non-merge commits; 122 beads closed) is a profile-driven stdio/time/wchar/iconv/resolv campaign against live glibc: fused multi-directive `snprintf`, specialized HTTP-date / RFC3164 / C-locale `strftime` emitters, and continuing wchar/iconv wins from June.
+
+- Fused multi-directive `snprintf` emitter — 0.788× vs live glibc
+  ([7eebd3d](https://github.com/Dicklesworthstone/frankenlibc/commit/7eebd3db43bd34c8157b7fc205453d6587be6775))
+- Specialize exact HTTP-date `strftime`
+  ([1ea3fdc](https://github.com/Dicklesworthstone/frankenlibc/commit/1ea3fdc95a87d22d2cec8101fe45864f3262ae9c))
+- Specialize exact RFC3164 `strftime`
+  ([068612c](https://github.com/Dicklesworthstone/frankenlibc/commit/068612c082c918a067382b03203a980d785271cb))
+- Compile C-locale `strftime %c` to a fixed emitter
+  ([adaecb6](https://github.com/Dicklesworthstone/frankenlibc/commit/adaecb6534da92865373c201cfff0e6f12eccf4b))
+- Fuse compact numeric timestamps / specialize day-first dates
+  ([ba20a8f](https://github.com/Dicklesworthstone/frankenlibc/commit/ba20a8fce17e59be9b77347b3fd468e2085d3d56),
+  [72dd729](https://github.com/Dicklesworthstone/frankenlibc/commit/72dd7296663c20de47c74698de2f5c59abe7258e))
+
+---
+
+## Phase 19 -- String, malloc, wchar membrane fast-paths (2026-06-15 .. 2026-06-30)
+
+Late June (~the second half of 2,431 June commits) is the string/malloc/wchar campaign: word-at-a-time and folded reverse scans, `free()` skipping PageOracle for fallback-tracked pointers, and a strict-passthrough wchar membrane that posts ~28–31× vs ORIG on `wcscpy`/`wcpcpy` and ~2–4× on the wide mem family, byte-identical.
+
+- Direct const-set span helpers / slice fill for `memset` prefix writes (`bd-2g7oyh`)
+  ([a0960fe](https://github.com/Dicklesworthstone/frankenlibc/commit/a0960fea8c4235384c7bc9863376f42c8490d8f7),
+  [cbd836d](https://github.com/Dicklesworthstone/frankenlibc/commit/cbd836db63cf1273f56bad474fbe31098a03f288))
+- Widen `memrchr` folded reverse scan
+  ([482eff6](https://github.com/Dicklesworthstone/frankenlibc/commit/482eff6747b70cf6e4ceef9f8c594f9f743b9a37))
+- `free()` skips PageOracle ownership query for fallback-tracked pointers
+  ([ee49d5e](https://github.com/Dicklesworthstone/frankenlibc/commit/ee49d5e169e9e14150336d6ff99e5b15133f47c1))
+- Strict fast-path for `wcscpy` — ~31× vs ORIG
+  ([b67a13f](https://github.com/Dicklesworthstone/frankenlibc/commit/b67a13f32f00435d66c1d37a4e4af30232a142b5))
+- Strict fast-path for `wcpcpy`/`wcpncpy` — ~28× vs ORIG
+  ([df92621](https://github.com/Dicklesworthstone/frankenlibc/commit/df92621e75cfa4b5613ffb05e8ed4886edecf047))
+- Extend strict-passthrough membrane to `wmemset`/`wmemcpy`/`wmemmove` — ~3.9×, byte-identical
+  ([93ef627](https://github.com/Dicklesworthstone/frankenlibc/commit/93ef6274effe35499dbd483e7197a48ce6c1ab6f))
+
+---
+
+## Phase 18 -- iconv charset completeness and glibc-faithful complex math (2026-05-25 .. 2026-06-14)
+
+`feat(iconv)` dominates the prefix counts (~181 commits in the gap): UTF-7 (RFC 2152) including shift state across `iconv()` calls, UCS-2 / UCS-2LE / UCS-2BE, L6/L7/ISO-10646-UTF-8 aliases, and ten charset-name aliases glibc accepts. In parallel, complex math is rewritten to glibc-faithful special values (no `inf*0` NaN at `im=0`, overflow-stable `ctanh`/`ctan`, branch-cut signs on `catanh`/`catan`) under epic `bd-2g7oyh`. Word-at-a-time `strlen`/`strcmp` opens the string campaign.
+
+- Word-at-a-time `strlen`/`strcmp`
+  ([08d27a2](https://github.com/Dicklesworthstone/frankenlibc/commit/08d27a233268a93d2c63b017d45303668851fb9f))
+- Glibc-faithful complex `cexp` special values — no `inf*0` NaN at `im=0` (`bd-2g7oyh.242`)
+  ([12dda24](https://github.com/Dicklesworthstone/frankenlibc/commit/12dda244e5e437e9ca0e84098a3502973a4c48d9))
+- Implement UTF-7 codec (RFC 2152) — completes `bd-zdxuly`
+  ([d93b5a3](https://github.com/Dicklesworthstone/frankenlibc/commit/d93b5a3a468319a16230355e1d0f6d861ded04c4))
+- UTF-7 decode shift state across `iconv()` calls (`bd-s41n4a`)
+  ([4fc6a74](https://github.com/Dicklesworthstone/frankenlibc/commit/4fc6a74862e41158d3645520cafa3ad8397892f7))
+- UCS-2 / UCS-2LE / UCS-2BE charsets
+  ([10b77df](https://github.com/Dicklesworthstone/frankenlibc/commit/10b77df656a087853435d3531f7e8b26c217a97e))
+- Ten charset-name aliases glibc accepts
+  ([4250fc5](https://github.com/Dicklesworthstone/frankenlibc/commit/4250fc53ab6a8f2e1463d4d94f81677165c98f4a))
+
+---
+
+## Phase 17 -- Debian packaging, soak tooling, promotion-proof tranches (2026-05-17 .. 2026-05-26)
+
+The week after Phase 16 is packaging and proof, not new ABI surface: Debian package build + contract tests (`bd-38x82.3`), WS8 soak orchestrator, and a large `bd-5tgwug` promotion-proof tranche covering unistd, fortify, RPC/XDR, math `clog10`, string/wchar, c11threads, setjmp, and pwd/gshadow.
+
+- Debian package build + contract tests (`bd-38x82.3`)
+  ([b13bad4](https://github.com/Dicklesworthstone/frankenlibc/commit/b13bad46289f790381bfd35b7c62d11cda6c5711))
+- Close unistd direct-proof tranche (`bd-5tgwug`)
+  ([743d805](https://github.com/Dicklesworthstone/frankenlibc/commit/743d805b441d43595f86f31a455ca99d1cdb3bd9))
+- Close fortify ABI ratchet bucket
+  ([f6e4e10](https://github.com/Dicklesworthstone/frankenlibc/commit/f6e4e10b37957d53b8677754648f646b9bda96c9))
+- Close RPC XDR ratchet bucket
+  ([dc1ddf6](https://github.com/Dicklesworthstone/frankenlibc/commit/dc1ddf67557b1dcdf6453f2a798e05e26860337a))
 
 ---
 
@@ -875,10 +1003,10 @@ The runtime math kernel provides the statistical foundation for the Transparent 
 
 ## Project Facts
 
-- **No tags or GitHub Releases** exist in this repository as of the [Unreleased] snapshot date at the top of this changelog (`git tag -l` and `gh release list` both empty).
+- **No tags or GitHub Releases** exist in this repository as of 2026-08-19 (`git for-each-ref refs/tags` and `gh release list -R Dicklesworthstone/frankenlibc` both empty).
 - The version badge in the README reads `0.1.0`; `Cargo.toml` workspace version matches.
 - The canonical coverage source of truth is `support_matrix.json` (with a snapshot in `tests/conformance/support_matrix_maintenance_report.v1.json`).
-- All commits are by a single author (`Dicklesworthstone`); see the [Unreleased] header for the running count.
+- See the [Unreleased] header for the running commit count (10,519 non-merge commits through 2026-08-19).
 - The project was originally named `glibc_rust` and renamed to FrankenLibC on 2026-02-12.
 - License is MIT with an OpenAI/Anthropic rider, adopted 2026-02-18.
-- The project started 2026-02-08; this changelog covers through the [Unreleased] snapshot date.
+- The project started 2026-02-08; this changelog covers through 2026-08-19. `FEATURE_PARITY.md` remains at the repo root (test-pinned); other planning docs live under `docs/planning/`.
