@@ -788,22 +788,38 @@ unsafe fn strict_scan_single_string_from(
 /// characters and precision/width count wide characters, not bytes (C99). Decoding
 /// stops at the first invalid byte (glibc would error the conversion there).
 fn utf8_take_chars(bytes: &[u8], limit: Option<usize>) -> (Vec<u8>, usize) {
-    let valid = match core::str::from_utf8(bytes) {
-        Ok(s) => s,
-        // The prefix up to `valid_up_to()` is guaranteed valid UTF-8.
-        Err(e) => core::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or(""),
+    let valid_up_to = match core::str::from_utf8(bytes) {
+        Ok(_) => bytes.len(),
+        Err(e) => e.valid_up_to(),
     };
+    // The prefix up to `valid_up_to` is guaranteed valid UTF-8.
+    let valid = core::str::from_utf8(&bytes[..valid_up_to]).unwrap_or("");
     match limit {
-        None => (valid.as_bytes().to_vec(), valid.chars().count()),
-        Some(p) => {
-            let cut = valid
-                .char_indices()
-                .nth(p)
-                .map(|(i, _)| i)
-                .unwrap_or(valid.len());
-            let taken = &valid.as_bytes()[..cut];
-            (taken.to_vec(), valid[..cut].chars().count())
-        }
+        // No precision: hand back EVERY byte, including any the decode could not
+        // use. Returning only the valid prefix DROPPED the offending bytes, so
+        // the caller's conversion never saw them and reported success on a
+        // silently shortened string — glibc fails the whole call.
+        //
+        // Measured on glibc 2.42, `swprintf(buf, 64, L"%s", "a\x80b")`:
+        //     LC_ALL=C        rc=-1 EILSEQ      fl answered rc=1, "a"
+        //     LC_ALL=C.UTF-8  rc=-1 EILSEQ
+        //
+        // This is the quiet direction of wrong: a caller testing `rc < 0` sees
+        // success and a plausible short string, and loses everything from the
+        // bad byte on with nothing to branch on. The count stays the count of
+        // DECODABLE characters — it only feeds field-width inflation, and the
+        // conversion downstream is about to fail anyway. (bd-ncirhf)
+        None => (bytes.to_vec(), valid.chars().count()),
+        Some(p) => match valid.char_indices().nth(p) {
+            // The precision is satisfied inside the valid prefix. Bytes past it
+            // are never examined, which is also what glibc does: precision caps
+            // how much of the string is converted at all.
+            Some((cut, _)) => (bytes[..cut].to_vec(), valid[..cut].chars().count()),
+            // Ran out of DECODABLE input before reaching the precision, so the
+            // bad bytes are inside the region the conversion must cover. Keep
+            // them, for the same reason as the unlimited arm.
+            None => (bytes.to_vec(), valid.chars().count()),
+        },
     }
 }
 
@@ -5362,6 +5378,25 @@ macro_rules! extract_va_args_registers {
                             _idx += 1;
                         }
                     }
+                    // UNREACHABLE by construction: a format containing a
+                    // `%Lf` sets `has_long_double`, and the dispatcher above
+                    // sends those to the va_list walker, which is the only
+                    // reader that can see an X87 stack slot. `next_arg` has no
+                    // X87 case to offer, so this arm keeps the pre-existing
+                    // behaviour rather than inventing a third wrong answer;
+                    // `positional_x87_implies_has_long_double` in core pins the
+                    // routing invariant so it cannot drift into being live.
+                    ValueArgKind::X87 => {
+                        debug_assert!(
+                            false,
+                            "X87 reached the register extractor: has_long_double \
+                             disagreed with the argument plan"
+                        );
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                    }
                 }
             }
         } else {
@@ -8375,6 +8410,18 @@ pub(crate) unsafe fn vprintf_extract_args(
                     if idx < extract_count {
                         buf[idx] =
                             unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                }
+                // `%1$Lf`. Before ValueArgKind carried an X87 class this arm
+                // did not exist and a positional long double fell into `Fp`
+                // above, taking eight bytes out of the SSE register save area
+                // and leaving the caller's sixteen stack bytes unconsumed —
+                // so every LATER positional argument was read from the wrong
+                // place too. bd-longdouble-varargs-43usjw item (B).
+                ValueArgKind::X87 => {
+                    if idx < extract_count {
+                        buf[idx] = unsafe { vprintf_read_x87(overflow_ptr) };
                         idx += 1;
                     }
                 }

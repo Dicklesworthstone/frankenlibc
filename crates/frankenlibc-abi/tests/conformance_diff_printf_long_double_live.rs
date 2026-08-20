@@ -23,7 +23,7 @@
 //! So the formats here deliberately put conversions AFTER the long double, and
 //! the assertions compare fl's whole output against glibc's whole output.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int};
 use std::sync::OnceLock;
 
 type HostSnprintf = unsafe extern "C" fn() -> c_int;
@@ -241,6 +241,66 @@ fn a_conversion_after_a_long_double_reads_its_own_argument() {
     }
 }
 
+/// THE POSITIONAL PATH, which the sequential fix above does not reach.
+///
+/// `positional_printf_arg_plan` returns a sequence of argument CLASSES, and
+/// that enum had exactly two variants — Gp and Fp — so `%1$Lf` was
+/// indistinguishable from `%1$f` at extraction time. Both extractors therefore
+/// read a positional long double out of the SSE register save area: wrong
+/// value, and the caller's sixteen stack bytes left unconsumed, so every later
+/// positional argument is read from the wrong place too.
+///
+/// The trailing `%2$d` is the part that catches the unconsumed slot. A format
+/// ending at the `%1$Lf` would print a wrong number and nothing else.
+#[test]
+fn positional_long_double_reads_its_own_argument() {
+    let value = x87(b"125", -1, false);
+    for fmt in [
+        "%1$.2Lf|%2$d",
+        "%1$Lf %2$d",
+        "%2$d[%1$.1Lf]",
+        "%2$d %2$d %1$.3Lf",
+    ] {
+        let (host, fl) = both_with_trailing(fmt, &value, 4242);
+        assert_eq!(fl, host, "positional argument stream diverges for {fmt:?}");
+        assert!(
+            fl.contains("4242"),
+            "the positional int was lost for {fmt:?}: {fl:?} — this is the \
+             unconsumed-stack-slot bug on the positional path"
+        );
+        assert!(
+            fl.contains("12.5"),
+            "the positional long double was misread for {fmt:?}: {fl:?}"
+        );
+    }
+}
+
+/// Values, positionally. Separate from the stream arm because a plan that
+/// classified X87 correctly but read the wrong ten bytes would pass the
+/// stream check (the following argument would still line up) and fail here.
+#[test]
+fn positional_long_double_values_match_live_glibc() {
+    for (digits, dexp, negative) in [
+        (&b"1"[..], 0, false),
+        (b"125", -1, false),
+        (b"125", -1, true),
+        (b"5", -1, false),
+        (b"0", 0, false),
+    ] {
+        let value = x87(digits, dexp, negative);
+        for fmt in ["%1$Lf", "%1$.2Lf", "%1$Le", "%1$Lg", "%1$12.3Lf"] {
+            let (host, fl) = both(fmt, &value);
+            assert_eq!(
+                fl,
+                host,
+                "{fmt} of {}e{} (negative={negative})",
+                String::from_utf8_lossy(digits),
+                dexp
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The WIDE side: swprintf has its own extraction macro and had the same bug.
 // ---------------------------------------------------------------------------
@@ -333,6 +393,28 @@ fn wide_long_double_matches_live_glibc() {
         assert!(
             fl.contains("12.5"),
             "the long double was misread for wide {fmt:?}: {fl:?}"
+        );
+    }
+}
+
+/// The wide extractor has its own copy of the plan loop, so it needs its own
+/// positional arm for the same reason the sequential wide arm exists.
+#[test]
+fn wide_positional_long_double_reads_its_own_argument() {
+    let value = x87(b"125", -1, false);
+    for fmt in ["%1$.2Lf|%2$d", "%2$d[%1$.1Lf]"] {
+        let (host, fl) = both_wide(fmt, &value, 4242);
+        assert_eq!(
+            fl, host,
+            "wide positional argument stream diverges for {fmt:?}"
+        );
+        assert!(
+            fl.contains("4242"),
+            "the positional int was lost for wide {fmt:?}: {fl:?}"
+        );
+        assert!(
+            fl.contains("12.5"),
+            "the positional long double was misread for wide {fmt:?}: {fl:?}"
         );
     }
 }

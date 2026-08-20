@@ -4576,6 +4576,25 @@ macro_rules! extract_wprintf_args_registers {
                             _idx += 1;
                         }
                     }
+                    // UNREACHABLE by construction: a format containing a
+                    // `%Lf` sets `has_long_double`, and the dispatcher above
+                    // sends those to the va_list walker, which is the only
+                    // reader that can see an X87 stack slot. `next_arg` has no
+                    // X87 case to offer, so this arm keeps the pre-existing
+                    // behaviour rather than inventing a third wrong answer;
+                    // `positional_x87_implies_has_long_double` in core pins the
+                    // routing invariant so it cannot drift into being live.
+                    ValueArgKind::X87 => {
+                        debug_assert!(
+                            false,
+                            "X87 reached the register extractor: has_long_double \
+                             disagreed with the argument plan"
+                        );
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                    }
                 }
             }
         } else {

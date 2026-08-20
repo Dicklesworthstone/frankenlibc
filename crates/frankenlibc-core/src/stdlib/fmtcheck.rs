@@ -152,8 +152,14 @@ pub fn compatible(user: &[u8], default_fmt: &[u8]) -> bool {
 }
 
 /// Convenience: returns the [`ValueArgKind`] sequence consumed by
-/// `fmt`. Coarser than [`shape_list`] (only Gp vs Fp), but useful
-/// for callers that only care about the va_list register class.
+/// `fmt`. Coarser than [`shape_list`] — it keeps only the argument
+/// CLASS (Gp, Fp, or the memory-passed X87 of `%Lf`), which is what
+/// a va_list extractor needs and all it needs.
+///
+/// Note this is not what [`compatible`] uses: format compatibility
+/// goes through [`shape_list`], whose `Float(LenClass::LongDouble)`
+/// has always separated `%Lf` from `%f`. Adding X87 here therefore
+/// leaves the compatibility verdict untouched.
 pub fn arg_kind_list(fmt: &[u8]) -> Vec<ValueArgKind> {
     let mut kinds = Vec::new();
     for seg in parse_format_string(fmt) {
@@ -459,7 +465,16 @@ mod tests {
     fn arg_kind_list_groups_int_string_pointer_as_gp() {
         use ValueArgKind::*;
         assert_eq!(arg_kind_list(b"%d %s %p %f"), vec![Gp, Gp, Gp, Fp]);
-        assert_eq!(arg_kind_list(b"%lld %Lf"), vec![Gp, Fp]);
+        assert_eq!(arg_kind_list(b"%lld %Lf"), vec![Gp, X87]);
+        // `L` on a FLOAT conversion is what makes an argument X87. On a
+        // non-float conversion it must not, and fl currently consumes no
+        // argument at all for `%Ld`/`%Lu`/`%Ls` — which live glibc 2.42 does
+        // NOT agree with (it prints `%Ld` of 1234567890123 as that number and
+        // `%Ls` as a wide string). That divergence is bd-3g1cvv
+        // and is deliberately NOT pinned here; all this arm claims is the one
+        // thing this change is responsible for, which is that `L` on an
+        // integer conversion does not become X87.
+        assert!(!arg_kind_list(b"%Ld %Lu %Ls").contains(&X87));
     }
 
     #[test]
@@ -470,6 +485,7 @@ mod tests {
         let projected: Vec<ValueArgKind> = shape_list(fmt)
             .into_iter()
             .map(|shape| match shape {
+                ConvShape::Float(LenClass::LongDouble) => X87,
                 ConvShape::Float(_) => Fp,
                 _ => Gp,
             })

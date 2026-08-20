@@ -126,6 +126,15 @@ enum ArgCategory {
 pub enum ValueArgKind {
     Gp,
     Fp,
+    /// x86-64 SysV class X87 — a `long double` vararg.
+    ///
+    /// Unlike [`Self::Fp`] this is passed in MEMORY: a sixteen-byte,
+    /// sixteen-byte aligned slot in the overflow area, never in an SSE
+    /// register. It needs its own class because an extractor that treats it as
+    /// `Fp` reads the wrong bytes AND leaves the caller's sixteen stack bytes
+    /// unconsumed, which shifts every argument after it — a corrupted argument
+    /// stream rather than one wrong number. bd-longdouble-varargs-43usjw.
+    X87,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,7 +378,17 @@ impl FormatSpec {
         if self.conversion == b'm' {
             return None;
         }
-        self.route().and_then(PrintfRoute::value_arg_kind)
+        let kind = self.route().and_then(PrintfRoute::value_arg_kind)?;
+        // The route is keyed on the conversion character alone, so it cannot
+        // see the `L` length modifier — and `L` is exactly what moves a float
+        // argument out of an SSE register and onto a sixteen-byte stack slot.
+        // `L` on a non-float conversion (`%Ld`) is a glibc no-op and must stay
+        // Gp, which is why this tests the route's answer rather than the
+        // length alone.
+        if matches!(kind, ValueArgKind::Fp) && self.length == LengthMod::BigL {
+            return Some(ValueArgKind::X87);
+        }
+        Some(kind)
     }
 
     pub fn positional_width_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
@@ -404,8 +423,22 @@ impl FormatSpec {
         Some((position, self.value_arg_kind()?))
     }
 
+    /// Does this spec consume a floating-point-typed value argument?
+    ///
+    /// True for `%f` and `%Lf` alike — they differ in HOW the argument is
+    /// passed, not in whether one is consumed, and a caller counting arguments
+    /// must see both. Callers that need to tell them apart use
+    /// [`Self::value_arg_is_x87`].
     pub fn value_arg_is_float(&self) -> bool {
-        matches!(self.value_arg_kind(), Some(ValueArgKind::Fp))
+        matches!(
+            self.value_arg_kind(),
+            Some(ValueArgKind::Fp | ValueArgKind::X87)
+        )
+    }
+
+    /// Is the value argument class X87 — a `long double`, passed in memory?
+    pub fn value_arg_is_x87(&self) -> bool {
+        matches!(self.value_arg_kind(), Some(ValueArgKind::X87))
     }
 
     pub fn value_arg_is_gp(&self) -> bool {
@@ -2993,6 +3026,75 @@ mod tests {
                 String::from_utf8_lossy(fmt)
             );
         }
+    }
+
+    /// The routing invariant the register-path extractors rely on.
+    ///
+    /// `extract_va_args!` (and its wide twin) decide which reader to use from
+    /// `has_long_double()`, and only the va_list walker can read an X87 stack
+    /// slot. So an `X87` entry in the argument plan must imply the flag — if
+    /// the two ever disagreed, a positional `%Lf` would reach a reader with no
+    /// X87 case at all, which is the argument-stream corruption this class was
+    /// added to end. The extractors' `debug_assert!(false, ...)` arms name this
+    /// test; it is what makes them dead code rather than a hope.
+    #[test]
+    fn positional_x87_implies_has_long_double() {
+        let formats: &[&[u8]] = &[
+            b"%1$Lf",
+            b"%1$Lf %2$d",
+            b"%2$d %1$.3Lf",
+            b"%1$Le %2$Lg %3$s",
+            b"%2$*1$.4Lf",
+            // Positional, no long double: the plan must carry no X87 at all.
+            b"%1$f %2$d",
+            b"%1$s %2$p",
+            b"%1$Ld",
+            // Non-positional: no plan is built, so nothing to check but the
+            // flag, which the walk tests above cover.
+            b"%Lf",
+            b"%d",
+        ];
+
+        for fmt in formats {
+            let segments = parse_format_string(fmt);
+            let plan = positional_printf_arg_plan(segments.as_slice());
+            let has_x87 = plan
+                .as_deref()
+                .is_some_and(|plan| plan.contains(&ValueArgKind::X87));
+            if has_x87 {
+                assert!(
+                    segments.has_long_double(),
+                    "format {:?}: plan carries X87 but has_long_double() is false, \
+                     so the extractor would route it to the register reader",
+                    String::from_utf8_lossy(fmt)
+                );
+            }
+        }
+
+        // Stated outright, because "no X87 anywhere" would satisfy the
+        // implication above vacuously.
+        let plan = positional_printf_arg_plan(parse_format_string(b"%2$d %1$.3Lf").as_slice())
+            .expect("positional format must yield a plan");
+        assert_eq!(
+            plan,
+            vec![ValueArgKind::X87, ValueArgKind::Gp],
+            "position 1 is the long double and position 2 the int, in that order"
+        );
+
+        let plan = positional_printf_arg_plan(parse_format_string(b"%1$Ld %2$f").as_slice())
+            .expect("positional format must yield a plan");
+        assert_eq!(
+            plan,
+            vec![ValueArgKind::Gp, ValueArgKind::Fp],
+            "`L` on an integer conversion must not become X87"
+        );
+        // Slot 1 above is Gp because fl classifies no argument at all for
+        // `%Ld` and the plan default-fills unassigned slots with Gp — not
+        // because it recognised an integer. Live glibc 2.42 DOES consume one
+        // there (`%Ld` of 1234567890123 prints that number), which is a
+        // separate divergence tracked as bd-3g1cvv. Said here so
+        // the next reader does not take this assertion as evidence that fl
+        // handles `%Ld`.
     }
 
     /// Positional formats must still take the walk, not the field.

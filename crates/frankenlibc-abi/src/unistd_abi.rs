@@ -4159,6 +4159,21 @@ macro_rules! extract_syslog_args {
                             _idx += 1;
                         }
                     }
+                    // REACHABLE and still wrong, unchanged from before this
+                    // class existed: these entry points have no
+                    // `has_long_double` dispatcher, so they never reach the
+                    // va_list walker and a `%Lf` here still reads the SSE save
+                    // area and leaves sixteen stack bytes unconsumed. Adding
+                    // the dispatcher is the remaining half of
+                    // bd-longdouble-varargs-43usjw item (A) and wants its own
+                    // gate; this arm exists so the new class does not silently
+                    // change what these do today.
+                    ValueArgKind::X87 => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                    }
                 }
             }
         } else {
