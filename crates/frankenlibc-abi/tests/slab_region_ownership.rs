@@ -18,7 +18,7 @@
 //! are never dereferenced, which is exactly the property under test.
 
 use frankenlibc_abi::slab_region::{
-    header_of, live_regions, owns, register, unregister, MAX_REGIONS, SLAB_ALIGN,
+    MAX_REGIONS, SLAB_ALIGN, header_of, live_regions, owns, register, unregister,
 };
 
 /// A region base that is aligned but deliberately NOT mapped.
@@ -129,6 +129,9 @@ fn a_released_region_leaves_the_envelope_wide_but_answers_false() {
 
     // Still inside the (unnarrowed) envelope, so this exercises the scan path
     // rather than the envelope reject -- and must still be false.
-    assert!(!owns(base), "a released region must answer false via the scan");
+    assert!(
+        !owns(base),
+        "a released region must answer false via the scan"
+    );
     assert_eq!(header_of(base), None);
 }

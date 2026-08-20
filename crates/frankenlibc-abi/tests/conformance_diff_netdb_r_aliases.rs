@@ -248,7 +248,9 @@ fn servent_reentrant_matches_glibc() {
             .zip(glist.iter())
             .enumerate()
             .find(|(_, (f, g))| f != g)
-            .map(|(i, (f, g))| format!("\n  first differing index {i}:\n    fl:    {f:?}\n    glibc: {g:?}"))
+            .map(|(i, (f, g))| {
+                format!("\n  first differing index {i}:\n    fl:    {f:?}\n    glibc: {g:?}")
+            })
             .unwrap_or_default();
         mismatches.push(format!(
             "getservent_r enumeration diverged: fl_len={} glibc_len={}{}",

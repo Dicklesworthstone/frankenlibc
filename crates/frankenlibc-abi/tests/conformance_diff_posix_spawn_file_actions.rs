@@ -128,9 +128,7 @@ macro_rules! drive {
                 Adder::Close => $m::posix_spawn_file_actions_addclose(p, $fd),
                 Adder::Dup2Old => $m::posix_spawn_file_actions_adddup2(p, $fd, 3),
                 Adder::Dup2New => $m::posix_spawn_file_actions_adddup2(p, 3, $fd),
-                Adder::Open => {
-                    $m::posix_spawn_file_actions_addopen(p, $fd, path.as_ptr(), 0, 0)
-                }
+                Adder::Open => $m::posix_spawn_file_actions_addopen(p, $fd, path.as_ptr(), 0, 0),
                 Adder::FchdirNp => $m::posix_spawn_file_actions_addfchdir_np(p, $fd),
                 Adder::ClosefromNp => $m::posix_spawn_file_actions_addclosefrom_np(p, $fd),
                 Adder::TcsetpgrpNp => $m::posix_spawn_file_actions_addtcsetpgrp_np(p, $fd),

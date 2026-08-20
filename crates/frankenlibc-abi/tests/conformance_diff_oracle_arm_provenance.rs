@@ -199,7 +199,11 @@ fn cpu_slot() -> String {
     if cpu < 0 {
         return "cpu=? (sched_getcpu failed)".to_string();
     }
-    let read = |p: String| std::fs::read_to_string(p).ok().map(|s| s.trim().to_string());
+    let read = |p: String| {
+        std::fs::read_to_string(p)
+            .ok()
+            .map(|s| s.trim().to_string())
+    };
     let base = format!("/sys/devices/system/cpu/cpu{cpu}");
     let core = read(format!("{base}/topology/core_id")).unwrap_or_else(|| "?".into());
     let siblings =

@@ -129,17 +129,20 @@ use crate::stdio_abi::{vasprintf, vdprintf, vfprintf, vprintf, vsnprintf};
 // fl's definition fails at the call site rather than silently binding to
 // something else, which is the whole point of importing rather than declaring.
 use crate::stdio_abi::{fgets, fread};
-use crate::unistd_abi::{vsyslog};
-use crate::wchar_abi::{fgetws, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf, vswprintf, vwprintf, wcsnrtombs, wcsrtombs, wcstombs};
+use crate::unistd_abi::vsyslog;
+use crate::wchar_abi::{
+    fgetws, mbsnrtowcs, mbsrtowcs, mbstowcs, vfwprintf, vswprintf, vwprintf, wcsnrtombs, wcsrtombs,
+    wcstombs,
+};
 
 // AND THE LAST FOUR (bd-8std0q). `longjmp` is the one that mattered most: fl's
 // `setjmp` produces the jmp_buf, so resolving `longjmp` to glibc would hand one
 // implementation's environment to the other's unwinder — undefined, and silently
 // dependent on link order. The rest follow the same rule as the block above.
-use crate::setjmp_abi::{longjmp};
-use crate::stdio_abi::{fgetc};
-use crate::unistd_abi::{getlogin_r};
-use crate::wchar_abi::{wctomb};
+use crate::setjmp_abi::longjmp;
+use crate::stdio_abi::fgetc;
+use crate::unistd_abi::getlogin_r;
+use crate::wchar_abi::wctomb;
 
 unsafe extern "C" {
     static stdin: *mut c_void;

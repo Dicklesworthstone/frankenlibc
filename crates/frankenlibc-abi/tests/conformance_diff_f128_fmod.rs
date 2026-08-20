@@ -137,12 +137,13 @@ fn f128_fmod_remainder_match_glibc() {
     // alone cannot tell whether a fix landed. A change that repairs errno while
     // leaving the NaN sign wrong keeps every case divergent and the count
     // identical, so the count would report "no progress" for real progress.
-    let errno_mismatches = mism.iter().filter(|m| {
-        match (m.find("e="), m.rfind("e=")) {
+    let errno_mismatches = mism
+        .iter()
+        .filter(|m| match (m.find("e="), m.rfind("e=")) {
             (Some(a), Some(b)) if a != b => m[a..].split(')').next() != m[b..].split(')').next(),
             _ => false,
-        }
-    }).count();
+        })
+        .count();
     println!(
         "F128_DIVERGENCE_BREAKDOWN total={} errno_half_differs={} bits_only={}",
         mism.len(),

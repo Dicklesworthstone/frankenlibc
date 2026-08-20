@@ -31,7 +31,7 @@
 //! (must not abort) and once where they AGREE that it overflows (must abort), so
 //! the gate fails if fl is too strict OR too lax.
 
-use std::ffi::{c_void, c_char};
+use std::ffi::{c_char, c_void};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Outcome {
@@ -152,40 +152,72 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
             frankenlibc_abi::fortify_abi::__wcscpy_chk,
             ()
         );
-        check!("__wcscpy_chk destlen=8 src=5", false,
-            || { let mut d = wide_dst(); let s = wide_src(5);
-                 // SAFETY: destination is 4096 wide chars; 8 is the CLAIMED size.
-                 unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 8) }; },
-            || { let mut d = wide_dst(); let s = wide_src(5);
-                 // SAFETY: as above, against fl.
-                 unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 8) }; });
-        check!("__wcscpy_chk destlen=3 src=5", true,
-            || { let mut d = wide_dst(); let s = wide_src(5);
-                 // SAFETY: as above; 3 < 6 required, so it must abort.
-                 unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 3) }; },
-            || { let mut d = wide_dst(); let s = wide_src(5);
-                 // SAFETY: as above, against fl.
-                 unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 3) }; });
+        check!(
+            "__wcscpy_chk destlen=8 src=5",
+            false,
+            || {
+                let mut d = wide_dst();
+                let s = wide_src(5);
+                // SAFETY: destination is 4096 wide chars; 8 is the CLAIMED size.
+                unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 8) };
+            },
+            || {
+                let mut d = wide_dst();
+                let s = wide_src(5);
+                // SAFETY: as above, against fl.
+                unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 8) };
+            }
+        );
+        check!(
+            "__wcscpy_chk destlen=3 src=5",
+            true,
+            || {
+                let mut d = wide_dst();
+                let s = wide_src(5);
+                // SAFETY: as above; 3 < 6 required, so it must abort.
+                unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 3) };
+            },
+            || {
+                let mut d = wide_dst();
+                let s = wide_src(5);
+                // SAFETY: as above, against fl.
+                unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 3) };
+            }
+        );
     }
 
     // --- __wmemset_chk / __wmemcpy_chk / __wmemmove_chk: n wide chars ---
     macro_rules! wmem3 {
         ($name:literal, $fl:expr) => {{
             let (_, hf, mf, _) = both!($name, Set, $fl, ());
-            check!(concat!($name, " n=100 destlen=256"), false,
-                || { let mut d = wide_dst();
-                     // SAFETY: 100 wide chars into a 4096-wide buffer.
-                     unsafe { hf(d.as_mut_ptr(), b'x' as u32, 100, 256) }; },
-                || { let mut d = wide_dst();
-                     // SAFETY: as above, against fl.
-                     unsafe { mf(d.as_mut_ptr(), b'x' as u32, 100, 256) }; });
-            check!(concat!($name, " n=300 destlen=256"), true,
-                || { let mut d = wide_dst();
-                     // SAFETY: 300 > 256 claimed, so it must abort before writing.
-                     unsafe { hf(d.as_mut_ptr(), b'x' as u32, 300, 256) }; },
-                || { let mut d = wide_dst();
-                     // SAFETY: as above, against fl.
-                     unsafe { mf(d.as_mut_ptr(), b'x' as u32, 300, 256) }; });
+            check!(
+                concat!($name, " n=100 destlen=256"),
+                false,
+                || {
+                    let mut d = wide_dst();
+                    // SAFETY: 100 wide chars into a 4096-wide buffer.
+                    unsafe { hf(d.as_mut_ptr(), b'x' as u32, 100, 256) };
+                },
+                || {
+                    let mut d = wide_dst();
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), b'x' as u32, 100, 256) };
+                }
+            );
+            check!(
+                concat!($name, " n=300 destlen=256"),
+                true,
+                || {
+                    let mut d = wide_dst();
+                    // SAFETY: 300 > 256 claimed, so it must abort before writing.
+                    unsafe { hf(d.as_mut_ptr(), b'x' as u32, 300, 256) };
+                },
+                || {
+                    let mut d = wide_dst();
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), b'x' as u32, 300, 256) };
+                }
+            );
         }};
     }
     wmem3!("__wmemset_chk", frankenlibc_abi::fortify_abi::__wmemset_chk);
@@ -193,24 +225,45 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
     macro_rules! wcopy {
         ($name:literal, $fl:expr) => {{
             let (_, hf, mf, _) = both!($name, NCpy, $fl, ());
-            check!(concat!($name, " n=100 destlen=256"), false,
-                || { let mut d = wide_dst(); let s = wide_src(200);
-                     // SAFETY: copying 100 wide chars from a 200-char source.
-                     unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 100, 256) }; },
-                || { let mut d = wide_dst(); let s = wide_src(200);
-                     // SAFETY: as above, against fl.
-                     unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 100, 256) }; });
-            check!(concat!($name, " n=300 destlen=256"), true,
-                || { let mut d = wide_dst(); let s = wide_src(400);
-                     // SAFETY: 300 > 256 claimed; must abort before writing.
-                     unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 300, 256) }; },
-                || { let mut d = wide_dst(); let s = wide_src(400);
-                     // SAFETY: as above, against fl.
-                     unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 300, 256) }; });
+            check!(
+                concat!($name, " n=100 destlen=256"),
+                false,
+                || {
+                    let mut d = wide_dst();
+                    let s = wide_src(200);
+                    // SAFETY: copying 100 wide chars from a 200-char source.
+                    unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 100, 256) };
+                },
+                || {
+                    let mut d = wide_dst();
+                    let s = wide_src(200);
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 100, 256) };
+                }
+            );
+            check!(
+                concat!($name, " n=300 destlen=256"),
+                true,
+                || {
+                    let mut d = wide_dst();
+                    let s = wide_src(400);
+                    // SAFETY: 300 > 256 claimed; must abort before writing.
+                    unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 300, 256) };
+                },
+                || {
+                    let mut d = wide_dst();
+                    let s = wide_src(400);
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 300, 256) };
+                }
+            );
         }};
     }
     wcopy!("__wmemcpy_chk", frankenlibc_abi::fortify_abi::__wmemcpy_chk);
-    wcopy!("__wmemmove_chk", frankenlibc_abi::fortify_abi::__wmemmove_chk);
+    wcopy!(
+        "__wmemmove_chk",
+        frankenlibc_abi::fortify_abi::__wmemmove_chk
+    );
     wcopy!("__wcsncpy_chk", frankenlibc_abi::fortify_abi::__wcsncpy_chk);
 
     // --- __mbstowcs_chk: len wide chars into dstlen wide chars ---
@@ -221,20 +274,34 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
             frankenlibc_abi::fortify_abi::__mbstowcs_chk,
             ()
         );
-        check!("__mbstowcs_chk len=100 dstlen=256", false,
-            || { let mut d = wide_dst();
-                 // SAFETY: converting at most 100 wide chars from a 5-byte string.
-                 unsafe { hf(d.as_mut_ptr(), c"hello".as_ptr(), 100, 256) }; },
-            || { let mut d = wide_dst();
-                 // SAFETY: as above, against fl.
-                 unsafe { mf(d.as_mut_ptr(), c"hello".as_ptr(), 100, 256) }; });
-        check!("__mbstowcs_chk len=300 dstlen=256", true,
-            || { let mut d = wide_dst();
-                 // SAFETY: 300 > 256 claimed; must abort.
-                 unsafe { hf(d.as_mut_ptr(), c"hello".as_ptr(), 300, 256) }; },
-            || { let mut d = wide_dst();
-                 // SAFETY: as above, against fl.
-                 unsafe { mf(d.as_mut_ptr(), c"hello".as_ptr(), 300, 256) }; });
+        check!(
+            "__mbstowcs_chk len=100 dstlen=256",
+            false,
+            || {
+                let mut d = wide_dst();
+                // SAFETY: converting at most 100 wide chars from a 5-byte string.
+                unsafe { hf(d.as_mut_ptr(), c"hello".as_ptr(), 100, 256) };
+            },
+            || {
+                let mut d = wide_dst();
+                // SAFETY: as above, against fl.
+                unsafe { mf(d.as_mut_ptr(), c"hello".as_ptr(), 100, 256) };
+            }
+        );
+        check!(
+            "__mbstowcs_chk len=300 dstlen=256",
+            true,
+            || {
+                let mut d = wide_dst();
+                // SAFETY: 300 > 256 claimed; must abort.
+                unsafe { hf(d.as_mut_ptr(), c"hello".as_ptr(), 300, 256) };
+            },
+            || {
+                let mut d = wide_dst();
+                // SAFETY: as above, against fl.
+                unsafe { mf(d.as_mut_ptr(), c"hello".as_ptr(), 300, 256) };
+            }
+        );
     }
 
     // --- The BYTE-destination half of the family, which must NOT be converted.
@@ -255,20 +322,38 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
             frankenlibc_abi::fortify_abi::__wcstombs_chk,
             ()
         );
-        check!("__wcstombs_chk n=100 dstlen=256", false,
-            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
-                 // SAFETY: 100 bytes into an 8192-byte destination.
-                 unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 100, 256) }; },
-            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
-                 // SAFETY: as above, against fl.
-                 unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 100, 256) }; });
-        check!("__wcstombs_chk n=257 dstlen=256", true,
-            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
-                 // SAFETY: 257 > 256 claimed bytes; must abort before writing.
-                 unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 257, 256) }; },
-            || { let mut d = vec![0 as c_char; 8192]; let s = wide_src(5);
-                 // SAFETY: as above, against fl.
-                 unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 257, 256) }; });
+        check!(
+            "__wcstombs_chk n=100 dstlen=256",
+            false,
+            || {
+                let mut d = vec![0 as c_char; 8192];
+                let s = wide_src(5);
+                // SAFETY: 100 bytes into an 8192-byte destination.
+                unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 100, 256) };
+            },
+            || {
+                let mut d = vec![0 as c_char; 8192];
+                let s = wide_src(5);
+                // SAFETY: as above, against fl.
+                unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 100, 256) };
+            }
+        );
+        check!(
+            "__wcstombs_chk n=257 dstlen=256",
+            true,
+            || {
+                let mut d = vec![0 as c_char; 8192];
+                let s = wide_src(5);
+                // SAFETY: 257 > 256 claimed bytes; must abort before writing.
+                unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 257, 256) };
+            },
+            || {
+                let mut d = vec![0 as c_char; 8192];
+                let s = wide_src(5);
+                // SAFETY: as above, against fl.
+                unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 257, 256) };
+            }
+        );
     }
 
     println!("compared {compared} wide-fortify cells, {aborts} host aborts");
@@ -282,5 +367,10 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
         "only {aborts} host aborts observed; this gate cannot see an over-strict \
          OR an absent check without them"
     );
-    assert!(bad.is_empty(), "{} divergent cells:\n  {}", bad.len(), bad.join("\n  "));
+    assert!(
+        bad.is_empty(),
+        "{} divergent cells:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
 }

@@ -109,8 +109,7 @@ unsafe extern "C" fn fmaf128(x: f128, y: f128, z: f128) -> f128 {
     unsafe { f(x, y, z) }
 }
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}
 
 fn errno_loc() -> *mut c_int {
     unsafe { libc::__errno_location() }
@@ -228,17 +227,16 @@ fn f128_round_sqrt_fma_match_glibc() {
     // alone cannot tell whether a fix landed. A change that repairs errno while
     // leaving the NaN sign wrong keeps every case divergent and the count
     // identical, so the count would report "no progress" for real progress.
-    let errno_mismatches = mism.iter().filter(|m| {
-        match (m.find("e="), m.rfind("e=")) {
+    let errno_mismatches = mism
+        .iter()
+        .filter(|m| match (m.find("e="), m.rfind("e=")) {
             (Some(a), Some(b)) if a != b => m[a..].split(')').next() != m[b..].split(')').next(),
             _ => false,
-        }
-    }).count();
-    for m in mism.iter().filter(|m| {
-        match (m.find("e="), m.rfind("e=")) {
-            (Some(a), Some(b)) if a != b => m[a..].split(')').next() != m[b..].split(')').next(),
-            _ => false,
-        }
+        })
+        .count();
+    for m in mism.iter().filter(|m| match (m.find("e="), m.rfind("e=")) {
+        (Some(a), Some(b)) if a != b => m[a..].split(')').next() != m[b..].split(')').next(),
+        _ => false,
     }) {
         println!("F128_ERRNO_STILL_DIFFERS {m}");
     }
