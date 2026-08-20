@@ -33,6 +33,15 @@ Methodology note: phases 1–7 were assembled from raw commit history. Phases 8�
 
 `FEATURE_PARITY.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, and `PROPOSED_ARCHITECTURE.md` remain at the repo root because they are test-pinned; other planning docs moved to `docs/planning/` on 2026-08-19.
 
+### Delivered capability
+
+- Phases 17–21: Debian/proof, iconv/complex math, string/malloc/wchar, stdio/time, crypt + standalone packaging.
+- Non-locked planning docs relocated under `docs/planning/`; test-pinned plans stay at root.
+
+### Closed workstreams
+
+- 1,776 beads closed in the 2026-05-17 → 2026-08-19 window. Tracker: [`.beads/issues.jsonl`](https://github.com/Dicklesworthstone/frankenlibc/blob/main/.beads/issues.jsonl).
+
 ---
 
 ## Repo-janitor docs reorganization (2026-08-18 .. 2026-08-19)
