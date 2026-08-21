@@ -4139,8 +4139,34 @@ fn syslog_days_to_ymd(days: i64) -> (i64, i32, i32) {
     (y, m as i32, d as i32)
 }
 
-/// Extract variadic args for syslog — same as printf's extract_va_args.
+/// Extract syslog's variadic args, choosing a reader that can see them all.
+///
+/// Same reasoning as `stdio_abi`'s `extract_va_args`: a `long double` vararg is
+/// class X87 and passed in MEMORY, `next_arg` dispatches on the Rust type and
+/// no Rust type classifies as X87, so `%Lf` cannot be read through it. Reading
+/// it as a double also leaves the caller's sixteen stack bytes unconsumed, so
+/// every following conversion in the message reads the wrong argument.
+///
+/// This is the fourth copy of this macro in the tree (stdio, wchar, err, here),
+/// and every one of them had to be fixed on its own — bd-longdouble-varargs-43usjw
+/// records the wide side staying broken for a day after the narrow side was
+/// fixed, for exactly this reason.
 macro_rules! extract_syslog_args {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        if $segments.has_long_double() {
+            // `$args` is already `&mut VaListImpl`; taking another reference
+            // would hand the walker a pointer to the REFERENCE, which reads a
+            // pointer where gp_offset belongs.
+            let _ap = core::ptr::from_mut($args).cast::<core::ffi::c_void>();
+            // SAFETY: `_ap` addresses this frame's va_list for the call.
+            unsafe { crate::stdio_abi::vprintf_extract_args($segments, _ap, $buf, $extract_count) }
+        } else {
+            extract_syslog_args_registers!($segments, $args, $buf, $extract_count)
+        }
+    }};
+}
+
+macro_rules! extract_syslog_args_registers {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         use frankenlibc_core::stdio::printf::FormatSegment;
         let mut _idx = 0usize;
@@ -4159,16 +4185,20 @@ macro_rules! extract_syslog_args {
                             _idx += 1;
                         }
                     }
-                    // REACHABLE and still wrong, unchanged from before this
-                    // class existed: these entry points have no
-                    // `has_long_double` dispatcher, so they never reach the
-                    // va_list walker and a `%Lf` here still reads the SSE save
-                    // area and leaves sixteen stack bytes unconsumed. Adding
-                    // the dispatcher is the remaining half of
-                    // bd-longdouble-varargs-43usjw item (A) and wants its own
-                    // gate; this arm exists so the new class does not silently
-                    // change what these do today.
+                    // UNREACHABLE by construction: a format carrying a
+                    // `%Lf` sets `has_long_double`, and the dispatcher above
+                    // routes those to the va_list walker, the only reader that
+                    // can see an X87 stack slot. `next_arg` has no X87 case to
+                    // offer, so this arm keeps the pre-dispatcher behaviour
+                    // rather than inventing a third wrong answer;
+                    // `positional_x87_implies_has_long_double` in core pins the
+                    // routing invariant so it cannot drift into being live.
                     ValueArgKind::X87 => {
+                        debug_assert!(
+                            false,
+                            "X87 reached the register extractor: has_long_double \
+                             disagreed with the argument plan"
+                        );
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
