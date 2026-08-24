@@ -45,6 +45,26 @@ fn dl<T: Copy>(handle: *mut c_void, name: &[u8]) -> T {
     unsafe { std::mem::transmute_copy::<usize, T>(&(p as usize)) }
 }
 
+/// Fold one returned pointer into a running checksum, order-sensitively.
+///
+/// NOT an XOR. The pair loop frees each block immediately, so every iteration
+/// gets the SAME address back, and an XOR of an even number of equal values is
+/// exactly zero — which is byte-for-byte what a loop the optimiser had deleted
+/// would print. The default `malloc` mode really did print `checksum=0x0` for
+/// both arms, so the one line that exists to prove the loop ran was proving
+/// nothing. The churn and growth modes below had already been converted to this
+/// mix for that reason; this is the third caller they were meant to share.
+///
+/// The multiply makes the fold non-commutative, so it also separates "N
+/// allocations happened" from "the same allocation happened N times in a
+/// different order", which a sum would not.
+#[inline]
+fn mix(accumulator: u64, ptr: *mut c_void) -> u64 {
+    accumulator
+        .wrapping_mul(0x100_0000_01b3)
+        .wrapping_add(ptr as u64)
+}
+
 /// Pairs per size class. Deliberately modest: callgrind runs ~50x slower than
 /// native, and instruction counts are exact rather than statistical, so there is
 /// nothing to gain from a large N and a lot of wall time to lose.
@@ -64,6 +84,42 @@ fn pairs() -> usize {
         .unwrap_or(PAIRS_DEFAULT)
 }
 const SIZES: [usize; 4] = [16, 64, 256, 1024];
+
+/// The size list for a run: [`SIZES`] unless trailing numeric arguments override it.
+///
+/// Split out of the churn arm and given to the malloc arm too, because the two
+/// halves of this allocator answer DIFFERENT questions above
+/// `MAX_SMALL_SIZE` (32 KiB) and only one of them could be asked. Below the
+/// ceiling every request is segment-served; above it `strict_small_or_host_allocate`
+/// declines and the request goes to `native_libc_malloc` plus the fallback size
+/// table. That fallback path is the target of bd-dcrhgl's inline size header,
+/// and with only the four default sizes compiled in there was no way to point
+/// this instrument at it.
+///
+/// Churn mode already had this and calloc's zero-fill dominates it: at 64 KiB a
+/// pair retires ~66,000 instructions, of which the wrapper is ~600, so the ratio
+/// reads 1.009x and says nothing about the wrapper. `malloc` does not fill, so
+/// the same size through the malloc arm is where the fallback table is visible.
+///
+/// Non-numeric and zero arguments are ignored rather than rejected: the caller
+/// may be passing a mode word ("churn"/"growth") in the same position.
+fn sizes_from_args(skip: usize) -> Vec<usize> {
+    sizes_from(std::env::args(), skip)
+}
+
+/// [`sizes_from_args`] over an explicit argument sequence, so it is testable.
+fn sizes_from(args: impl Iterator<Item = String>, skip: usize) -> Vec<usize> {
+    let overrides: Vec<usize> = args
+        .skip(skip)
+        .filter_map(|a| a.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .collect();
+    if overrides.is_empty() {
+        SIZES.to_vec()
+    } else {
+        overrides
+    }
+}
 
 /// Resolve `calloc` for an arm, mirroring how `main` resolves malloc/free.
 ///
@@ -126,17 +182,7 @@ fn main() {
     if std::env::args().nth(2).as_deref() == Some("churn") {
         let calloc_fn: CallocFn = calloc_for_arm(&arm);
         let iters = pairs();
-        let sizes: Vec<usize> = {
-            let overrides: Vec<usize> = std::env::args()
-                .skip(3)
-                .filter_map(|a| a.parse().ok())
-                .collect();
-            if overrides.is_empty() {
-                SIZES.to_vec()
-            } else {
-                overrides
-            }
-        };
+        let sizes: Vec<usize> = sizes_from_args(3);
         let mut checksum = 0u64;
         for &size in &sizes {
             for _ in 0..iters {
@@ -146,10 +192,7 @@ fn main() {
                 // Reading the first byte keeps the zero-fill observable: a fill
                 // that silently stopped happening would change this sum.
                 // SAFETY: `p` is live and at least one byte wide.
-                checksum = checksum
-                    .wrapping_mul(0x100_0000_01b3)
-                    .wrapping_add(p as u64)
-                    .wrapping_add(unsafe { *p.cast::<u8>() } as u64);
+                checksum = mix(checksum, p).wrapping_add(unsafe { *p.cast::<u8>() } as u64);
                 // SAFETY: allocated by this arm above, freed exactly once.
                 unsafe { free_fn(std::hint::black_box(p)) };
             }
@@ -181,16 +224,11 @@ fn main() {
                 // once below through the same arm.
                 let p = unsafe { calloc_fn(1, std::hint::black_box(size)) };
                 // Touch the first byte so a zero-fill that did not happen would
-                // show up as a wrong checksum rather than as free speed.
+                // show up as a wrong checksum rather than as free speed. The
+                // fold itself is `mix`, which is order-sensitive for the reason
+                // documented there.
                 // SAFETY: `p` is live and at least one byte wide.
-                // Order-sensitive mix, NOT an XOR. An XOR of fl's addresses
-                // cancelled to exactly 0x0 -- indistinguishable from what a loop
-                // that had been optimised away would print, which defeats the
-                // whole point of carrying a checksum.
-                checksum = checksum
-                    .wrapping_mul(0x100_0000_01b3)
-                    .wrapping_add(p as u64)
-                    .wrapping_add(unsafe { *p.cast::<u8>() } as u64);
+                checksum = mix(checksum, p).wrapping_add(unsafe { *p.cast::<u8>() } as u64);
                 held.push(p);
             }
             for p in held.drain(..) {
@@ -205,24 +243,163 @@ fn main() {
         return;
     }
 
-    // Checksum-accumulate the pointers so the loop cannot be optimised away and
-    // so a miscompiled arm shows up as a different checksum rather than as a
-    // suspiciously cheap run.
+    // Checksum-accumulate the pointers so a miscompiled arm shows up as a
+    // different checksum rather than as a suspiciously cheap run.
+    //
+    // The checksum does NOT keep the loop alive -- `black_box` on the size and
+    // on the freed pointer does that, and it has to, because fl's entry point
+    // is named `malloc` with the C ABI and LLVM treats it as the builtin. What
+    // the checksum adds is evidence that the pointers differed, which is why it
+    // must not be an XOR: see `mix`.
     let mut checksum = 0u64;
     let pairs = pairs();
-    for size in SIZES {
+    // Trailing numeric arguments select the sizes; see `sizes_from_args`. The
+    // mode word is at index 2 and is not numeric, so a plain
+    // `malloc_icount fl 65536` is unambiguous.
+    let sizes = sizes_from_args(2);
+    for size in sizes.iter().copied() {
         for _ in 0..pairs {
             // SAFETY: `size` is non-zero; every pointer returned is freed once
             // through the same arm's `free`.
             unsafe {
                 let p = malloc_fn(std::hint::black_box(size));
-                checksum ^= p as u64;
+                assert!(!p.is_null(), "malloc({size}) returned NULL");
+                checksum = mix(checksum, p);
                 free_fn(std::hint::black_box(p));
             }
         }
     }
 
     println!(
-        "MALLOC_ICOUNT arm={arm} pairs_per_size={pairs} sizes={SIZES:?} checksum=0x{checksum:x}"
+        "MALLOC_ICOUNT arm={arm} pairs_per_size={pairs} sizes={sizes:?} checksum=0x{checksum:x}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SIZES, mix, sizes_from};
+    use std::ffi::c_void;
+
+    fn args(list: &[&str]) -> std::vec::IntoIter<String> {
+        list.iter()
+            .map(|s| (*s).to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// The malloc arm must be able to reach ABOVE `MAX_SMALL_SIZE`.
+    ///
+    /// This is the whole point of the parameter: below 32 KiB every request is
+    /// segment-served and the fallback size table is never consulted, so an
+    /// instrument fixed at 16/64/256/1024 cannot measure the path bd-dcrhgl's
+    /// inline size header would replace.
+    #[test]
+    fn trailing_numeric_arguments_select_the_sizes() {
+        assert_eq!(sizes_from(args(&["prog", "fl", "65536"]), 2), vec![65536]);
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "65536", "131072"]), 2),
+            vec![65536, 131072]
+        );
+        // churn/growth pass their mode word at index 2 and sizes from 3.
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "churn", "65536"]), 3),
+            vec![65536]
+        );
+    }
+
+    /// With no override the default list is used, and a mode word must not be
+    /// mistaken for a size.
+    #[test]
+    fn a_mode_word_is_not_a_size() {
+        assert_eq!(sizes_from(args(&["prog", "fl"]), 2), SIZES.to_vec());
+        // `churn` parsed at skip=2 would be an override if the filter were
+        // wrong; it is not numeric, so the defaults must survive.
+        assert_eq!(sizes_from(args(&["prog", "fl", "churn"]), 2), SIZES.to_vec());
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "growth"]), 2),
+            SIZES.to_vec()
+        );
+    }
+
+    /// A zero size would make `calloc(1, 0)`/`malloc(0)` the thing measured,
+    /// which is a different question and returns a pointer that cannot be
+    /// dereferenced for the checksum. It is dropped, not accepted.
+    #[test]
+    fn zero_and_garbage_sizes_are_dropped() {
+        assert_eq!(sizes_from(args(&["prog", "fl", "0"]), 2), SIZES.to_vec());
+        assert_eq!(sizes_from(args(&["prog", "fl", "-8"]), 2), SIZES.to_vec());
+        assert_eq!(sizes_from(args(&["prog", "fl", "abc"]), 2), SIZES.to_vec());
+        // A valid size alongside garbage still selects the valid one.
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "abc", "4096", "0"]), 2),
+            vec![4096]
+        );
+    }
+
+    fn ptr(addr: usize) -> *mut c_void {
+        addr as *mut c_void
+    }
+
+    /// THE DEFECT, pinned. The pair loop frees each block immediately, so it
+    /// gets the same address back every time; the old `checksum ^= p as u64`
+    /// therefore cancelled to exactly zero on any even iteration count, and both
+    /// arms printed `checksum=0x0`.
+    ///
+    /// Zero is the value an ELIDED loop prints, so the one line that exists to
+    /// say the loop ran said nothing. Anything that reintroduces a self-cancelling
+    /// fold fails here.
+    #[test]
+    fn a_repeated_address_does_not_cancel_to_zero() {
+        let repeated = ptr(0x7f00_0000_1000);
+        for count in [2usize, 4, 8, 1024, 12_000] {
+            let mut acc = 0u64;
+            for _ in 0..count {
+                acc = mix(acc, repeated);
+            }
+            assert_ne!(
+                acc, 0,
+                "{count} folds of one address cancelled to zero — that is exactly \
+                 what an optimised-away loop prints"
+            );
+        }
+
+        // The property the old code lacked, stated directly: XOR does cancel.
+        let mut xored = 0u64;
+        for _ in 0..12_000 {
+            xored ^= repeated as u64;
+        }
+        assert_eq!(xored, 0, "the control must reproduce the original defect");
+    }
+
+    /// A sum would also survive the test above while still failing to
+    /// distinguish "N allocations" from "the same N addresses in another order".
+    /// The multiply is what makes the fold non-commutative.
+    #[test]
+    fn the_fold_is_order_sensitive() {
+        let a = ptr(0x1000);
+        let b = ptr(0x2000);
+        assert_ne!(
+            mix(mix(0, a), b),
+            mix(mix(0, b), a),
+            "the fold is commutative, so a reordered allocation stream is invisible"
+        );
+    }
+
+    /// A run of DISTINCT addresses — the growth-mode shape — must not land on
+    /// zero either, and consecutive prefixes must differ, so a loop that stopped
+    /// early is visible rather than absorbed.
+    #[test]
+    fn distinct_addresses_produce_distinct_running_values() {
+        let mut acc = 0u64;
+        let mut seen = Vec::new();
+        for i in 0..256usize {
+            acc = mix(acc, ptr(0x7f00_0000_0000 + i * 64));
+            assert_ne!(acc, 0, "prefix of length {} folded to zero", i + 1);
+            seen.push(acc);
+        }
+        seen.sort_unstable();
+        let before = seen.len();
+        seen.dedup();
+        assert_eq!(before, seen.len(), "two different prefixes folded to the same value");
+    }
 }

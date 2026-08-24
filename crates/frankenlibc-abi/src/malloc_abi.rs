@@ -574,7 +574,12 @@ impl SegmentMagazine {
         self.len = next_len;
         let entry = self.entries[next_len as usize];
         self.entries[next_len as usize] = u32::MAX;
-        (entry != u32::MAX).then_some(entry)
+        // Plain branch rather than `.then_some`, for the reason documented on
+        // `segment_arena_base_if_ready`.
+        if entry == u32::MAX {
+            return None;
+        }
+        Some(entry)
     }
 
     #[inline]
@@ -649,9 +654,22 @@ enum SegmentFreeResult {
 
 #[inline]
 fn segment_arena_base_if_ready() -> Option<usize> {
-    (SEGMENT_ARENA_STATE.load(Ordering::Acquire) == SEGMENT_ARENA_READY)
-        .then(|| SEGMENT_ARENA_BASE.load(Ordering::Relaxed))
-        .filter(|base| *base != 0)
+    // Written as plain branches, not `.then(..).filter(..)`. The combinator
+    // form is identical in meaning and NOT identical in codegen: LLVM
+    // materialised the `filter` predicate as a boolean
+    // (`xor/test/setne/cmp $1/je`) instead of branching on it, so the fast path
+    // spent nine instructions where six do, and the failure edge spent three
+    // instructions to reach an unconditional jump. Measured on the
+    // callgrind profile of the deployed malloc/free pair, which is straight-line
+    // code with no loop to amortise it.
+    if SEGMENT_ARENA_STATE.load(Ordering::Acquire) != SEGMENT_ARENA_READY {
+        return None;
+    }
+    let base = SEGMENT_ARENA_BASE.load(Ordering::Relaxed);
+    if base == 0 {
+        return None;
+    }
+    Some(base)
 }
 
 #[cold]
@@ -725,6 +743,21 @@ fn initialize_segment_arena() -> Option<usize> {
 
 #[inline]
 fn segment_owned_index(addr: usize) -> Option<usize> {
+    segment_owned_location(addr).map(|(index, _)| index)
+}
+
+/// The owning segment's index AND its base address, for a pointer into the
+/// arena.
+///
+/// The base is a by-product this function already has: the ownership test
+/// computes `addr - arena_base` and shifts it to get the index, so
+/// `arena_base + (index << SEGMENT_SHIFT)` costs one shift-add of values already
+/// in registers. Returning it lets the free path build a slot view without
+/// re-entering `segment_arena_base_if_ready`, which it otherwise did twice more
+/// per call -- once inside `segment_header` and once inside `segment_base` --
+/// for a value that is immutable once the arena is READY.
+#[inline]
+fn segment_owned_location(addr: usize) -> Option<(usize, usize)> {
     let arena_base = segment_arena_base_if_ready()?;
     let relative = addr.wrapping_sub(arena_base);
     if relative >= SEGMENT_ARENA_SIZE {
@@ -732,7 +765,15 @@ fn segment_owned_index(addr: usize) -> Option<usize> {
     }
     let index = relative >> SEGMENT_SHIFT;
     let owned = SEGMENT_OWNED_BITMAP.load(Ordering::Acquire);
-    ((owned & (1u64 << index)) != 0).then_some(index)
+    if owned & (1u64 << index) == 0 {
+        return None;
+    }
+    // `relative < SEGMENT_ARENA_SIZE` and `SEGMENT_ARENA_SIZE == SEGMENT_COUNT
+    // << SEGMENT_SHIFT`, so the index is in range by construction -- which is
+    // also what makes the `1u64 << index` above well-defined. `segment_base`
+    // re-checks this; callers that take the base from here do not need to.
+    debug_assert!(index < SEGMENT_COUNT);
+    Some((index, arena_base + (index << SEGMENT_SHIFT)))
 }
 
 #[inline]
@@ -743,7 +784,17 @@ fn segment_base(index: usize) -> Option<usize> {
 
 #[inline]
 fn segment_header(index: usize) -> Option<&'static SegmentMemoryHeader> {
-    let base = segment_base(index)?;
+    segment_header_at(segment_base(index)?)
+}
+
+/// [`segment_header`] for a caller that already knows the segment's base.
+///
+/// Same header, same four validity checks; the only thing it does not do is
+/// re-derive the base from the arena atomic. Split out because the two hot
+/// callers -- the free path's view builder and the magazine pop's view builder
+/// -- each had the base in hand and were paying for that derivation twice.
+#[inline]
+fn segment_header_at(base: usize) -> Option<&'static SegmentMemoryHeader> {
     // SAFETY: callers reach this helper only after an Acquire ownership-bit
     // observation.  Segment initialization wrote this immutable header and
     // mprotected its page read-only before publishing that bit.  Published
@@ -780,8 +831,8 @@ fn segment_slot_meta(
 
 #[inline]
 fn segment_slot_view(addr: usize) -> Option<SegmentSlotView> {
-    let segment_index = segment_owned_index(addr)?;
-    segment_slot_view_in_owned_segment(addr, segment_index)
+    let (segment_index, base) = segment_owned_location(addr)?;
+    segment_slot_view_in_owned_segment(addr, segment_index, base)
 }
 
 /// Builds a slot view after the caller has acquired a published ownership bit.
@@ -790,13 +841,19 @@ fn segment_slot_view(addr: usize) -> Option<SegmentSlotView> {
 /// strict free path has already performed that acquire before it reaches this
 /// helper, so repeating the arena-base and bitmap loads would add work without
 /// strengthening the ownership proof.
+///
+/// `base` is that segment's base address, which the ownership test computed on
+/// the way in ([`segment_owned_location`]). It is a parameter rather than a
+/// third derivation because deriving it here re-entered the arena atomic twice
+/// per free -- once for `segment_header`, once for `segment_base` -- to
+/// reconstruct a value the caller was already holding.
 #[inline]
 fn segment_slot_view_in_owned_segment(
     addr: usize,
     segment_index: usize,
+    base: usize,
 ) -> Option<SegmentSlotView> {
-    let header = segment_header(segment_index)?;
-    let base = segment_base(segment_index)?;
+    let header = segment_header_at(base)?;
     let relative = addr.wrapping_sub(base);
     if relative < SEGMENT_HEADER_BYTES {
         return None;
@@ -1042,12 +1099,15 @@ fn activate_segment_slot(
 
 #[inline]
 fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<SegmentSlotView> {
-    let header = segment_header(segment_index)?;
+    // The base is derived ONCE and handed to the header check, rather than
+    // `segment_header` and `segment_base` each re-reading the arena atomic for
+    // the same immutable value. Same checks, same result.
+    let base = segment_base(segment_index)?;
+    let header = segment_header_at(base)?;
     if slot_index >= header.slot_count {
         return None;
     }
     let meta = segment_slot_meta(segment_index, slot_index, header.slot_count)?;
-    let base = segment_base(segment_index)?;
     Some(SegmentSlotView {
         segment_index,
         class_index: header.class_index as usize,
@@ -1073,7 +1133,12 @@ fn decode_segment_slot(encoded: u32) -> Option<(usize, u32)> {
     }
     let segment_index = (encoded >> SEGMENT_SLOT_INDEX_BITS) as usize;
     let slot_index = encoded & SEGMENT_SLOT_INDEX_MASK;
-    (segment_index < SEGMENT_COUNT).then_some((segment_index, slot_index))
+    // Plain branch: `.then_some` on a TUPLE has to materialise the pair before
+    // discarding it on the false edge.
+    if segment_index >= SEGMENT_COUNT {
+        return None;
+    }
+    Some((segment_index, slot_index))
 }
 
 #[cold]
@@ -1256,10 +1321,10 @@ fn segment_free(
     ptr: *mut c_void,
 ) -> SegmentFreeResult {
     let addr = ptr as usize;
-    let Some(segment_index) = segment_owned_index(addr) else {
+    let Some((segment_index, base)) = segment_owned_location(addr) else {
         return SegmentFreeResult::NotOwned;
     };
-    let Some(view) = segment_slot_view_in_owned_segment(addr, segment_index) else {
+    let Some(view) = segment_slot_view_in_owned_segment(addr, segment_index, base) else {
         return SegmentFreeResult::OwnedInvalid;
     };
     if addr != view.user_base {
@@ -2388,7 +2453,7 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
         let Some(slot) = current_allocator_reentry_slot() else {
             return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
         };
-        unsafe { native_libc_free_with_slot(slot, ptr) };
+        unsafe { native_libc_free_host_only(slot, ptr) };
     }
 }
 
@@ -2403,9 +2468,38 @@ unsafe fn native_libc_free_with_slot(slot: &'static AllocatorReentrySlot, ptr: *
     if is_static_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
+    // SAFETY: the two ownership probes above have answered, so the pointer is
+    // neither an overflow mapping nor a static bump allocation.
+    unsafe { native_libc_free_host_only(slot, ptr) }
+}
+
+/// [`native_libc_free_with_slot`] for a caller that has ALREADY run the two
+/// ownership probes and had both decline.
+///
+/// Every public `free` path re-ran them. `free` tests `bump_mmap_release` and
+/// `is_static_bump_ptr` itself — it has to, because each owns a different
+/// retirement action — and then handed the pointer to a helper that opened by
+/// testing exactly the same two things, which by construction could only answer
+/// the same way. An overflow mapping or a bump pointer never reaches the call;
+/// it returned several lines earlier.
+///
+/// Split rather than deleted because the probes are load-bearing for the OTHER
+/// callers: [`native_libc_free_with_slot`] is still reached from paths that have
+/// established nothing about the pointer, and those keep the full form.
+///
+/// # Safety
+///
+/// `ptr` must be a host-allocator allocation: not an overflow mapping (
+/// `bump_mmap_release` must have declined) and not a static bump pointer (
+/// `is_static_bump_ptr` must be false). Calling this with either would leak the
+/// mapping or hand the host allocator memory it does not own.
+#[inline]
+#[allow(clippy::needless_return)]
+unsafe fn native_libc_free_host_only(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) {
     // In standalone mode, free is a no-op (bump allocator doesn't support freeing)
     #[cfg(feature = "standalone")]
     {
+        let _ = (slot, ptr);
         return;
     }
     #[cfg(not(feature = "standalone"))]
@@ -3731,12 +3825,12 @@ pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
     }
     if strict_allocator_host_path_active() {
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
         if !check_ownership(ptr as usize) {
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             return;
         }
     }
@@ -4465,7 +4559,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // `!check_ownership(ptr)` under the old combined gate.
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
             // SAFETY: tracked native-fallback allocation returned to the host.
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
@@ -4473,7 +4567,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // SAFETY: strict-mode preserves host allocator semantics. Some glibc
             // internals allocate without crossing our public malloc symbol, so
             // unknown pointers must still be returned to the host allocator.
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             return;
         }
         // Arena-owned pointer: fall through to the membrane free path below.
@@ -4508,7 +4602,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
         // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
         let _ = fallback_remove(ptr);
-        unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+        unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, false);
         record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
         return;
@@ -4549,7 +4643,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         FreeResult::ForeignPointer => {
             if fallback_remove(ptr) {
                 // SAFETY: pointer is tracked as native-fallback allocation.
-                unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+                unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             } else {
                 adverse = true;
                 if runtime_policy::mode().heals_enabled() {
