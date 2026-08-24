@@ -13939,8 +13939,8 @@ pub unsafe extern "C" fn __lgammal_r_finite(x: f64, signgamp: *mut c_int) -> f64
     unsafe { crate::math_abi::lgamma_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __lgammaf128_r_finite(x: f64, signgamp: *mut c_int) -> f64 {
-    unsafe { crate::math_abi::lgamma_r(x, signgamp) }
+pub unsafe extern "C" fn __lgammaf128_r_finite(x: f128, signgamp: *mut c_int) -> f128 {
+    unsafe { crate::math_abi::lgammaf128_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __gamma_r_finite(x: f64, signgamp: *mut c_int) -> f64 {
