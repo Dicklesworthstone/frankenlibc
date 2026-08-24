@@ -477,6 +477,10 @@ pub fn execute_fixture_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
+    // pthread keys are process-wide.  The TLS-key fixture arms reset and then
+    // exercise that shared table, so they must not overlap another such arm.
+    let _tls_key_table_guard = pthread_tls_key_fixture(function).then(tls_key_table_lock);
+
     if should_use_string_memory_hotpath_fixture(function, inputs) {
         return execute_string_memory_hotpaths_case(function, inputs, mode);
     }
@@ -15948,6 +15952,28 @@ static TLS_DTOR_MODE: AtomicU32 = AtomicU32::new(TLS_DTOR_MODE_COUNTER);
 static TLS_DTOR_KEY_ID: AtomicU32 = AtomicU32::new(TLS_INVALID_KEY_ID);
 static TLS_WORKER_KEY_ID: AtomicU32 = AtomicU32::new(TLS_INVALID_KEY_ID);
 static TLS_WORKER_VALUE: AtomicU64 = AtomicU64::new(0);
+
+fn pthread_tls_key_fixture(function: &str) -> bool {
+    matches!(
+        function,
+        "__pthread_getspecific"
+            | "__pthread_key_create"
+            | "__pthread_setspecific"
+            | "pthread_key_create"
+            | "pthread_key_delete"
+            | "pthread_getspecific"
+            | "pthread_setspecific"
+            | "teardown_thread_tls"
+    )
+}
+
+fn tls_key_table_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 
 fn tls_record_destructor_call(value: u64) {
     TLS_DTOR_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -35258,6 +35284,35 @@ mod tests {
             .expect("pthread_key_create should execute");
         assert_eq!(result.impl_output, "0");
         assert!(result.host_parity);
+    }
+
+    #[test]
+    fn pthread_tls_key_fixture_arms_serialize_process_wide_key_table() {
+        let exhaustion = serde_json::json!({ "prior_keys_consumed": 1024 });
+        let roundtrip = serde_json::json!({ "key": "valid_key_no_value_set" });
+
+        for _ in 0..8 {
+            std::thread::scope(|scope| {
+                let exhausted = scope.spawn(|| {
+                    execute_fixture_case("pthread_key_create", &exhaustion, "strict")
+                });
+                let roundtrip = scope.spawn(|| {
+                    execute_fixture_case("pthread_getspecific", &roundtrip, "strict")
+                });
+
+                let exhausted = exhausted
+                    .join()
+                    .expect("key-exhaustion fixture worker should not panic")
+                    .expect("key-exhaustion fixture should execute");
+                let roundtrip = roundtrip
+                    .join()
+                    .expect("getspecific fixture worker should not panic")
+                    .expect("getspecific fixture should execute");
+
+                assert_eq!(exhausted.impl_output, "EAGAIN");
+                assert_eq!(roundtrip.impl_output, "0");
+            });
+        }
     }
 
     #[test]
