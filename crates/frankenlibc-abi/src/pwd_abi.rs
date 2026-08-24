@@ -401,35 +401,38 @@ impl PwdStorage {
     fn fill_from(&mut self, entry: &frankenlibc_core::pwd::Passwd) -> *mut libc::passwd {
         self.current_uid_result = None;
 
-        // Build a buffer: name\0passwd\0gecos\0dir\0shell\0
+        // Colon-less NIS compat markers have NULL non-name fields in glibc,
+        // not pointers to empty strings.
         self.buf.clear();
         let name_off = 0;
         self.buf.extend_from_slice(&entry.pw_name);
         self.buf.push(0);
-        let passwd_off = self.buf.len();
-        self.buf.extend_from_slice(&entry.pw_passwd);
-        self.buf.push(0);
-        let gecos_off = self.buf.len();
-        self.buf.extend_from_slice(&entry.pw_gecos);
-        self.buf.push(0);
-        let dir_off = self.buf.len();
-        self.buf.extend_from_slice(&entry.pw_dir);
-        self.buf.push(0);
-        let shell_off = self.buf.len();
-        self.buf.extend_from_slice(&entry.pw_shell);
-        self.buf.push(0);
+        let append_field = |buf: &mut Vec<u8>, field: &[u8]| {
+            let offset = buf.len();
+            buf.extend_from_slice(field);
+            buf.push(0);
+            offset
+        };
+        let passwd_off = (!entry.nis_compat_null_fields)
+            .then(|| append_field(&mut self.buf, &entry.pw_passwd));
+        let gecos_off = (!entry.nis_compat_null_fields)
+            .then(|| append_field(&mut self.buf, &entry.pw_gecos));
+        let dir_off = (!entry.nis_compat_null_fields)
+            .then(|| append_field(&mut self.buf, &entry.pw_dir));
+        let shell_off = (!entry.nis_compat_null_fields)
+            .then(|| append_field(&mut self.buf, &entry.pw_shell));
 
         let base = self.buf.as_ptr() as *mut c_char;
         // SAFETY: offsets are within the buf allocation. Pointers are stable
         // because we don't resize buf again until the next fill_from call.
         self.pw = libc::passwd {
             pw_name: unsafe { base.add(name_off) },
-            pw_passwd: unsafe { base.add(passwd_off) },
+            pw_passwd: passwd_off.map_or(ptr::null_mut(), |off| unsafe { base.add(off) }),
             pw_uid: entry.pw_uid,
             pw_gid: entry.pw_gid,
-            pw_gecos: unsafe { base.add(gecos_off) },
-            pw_dir: unsafe { base.add(dir_off) },
-            pw_shell: unsafe { base.add(shell_off) },
+            pw_gecos: gecos_off.map_or(ptr::null_mut(), |off| unsafe { base.add(off) }),
+            pw_dir: dir_off.map_or(ptr::null_mut(), |off| unsafe { base.add(off) }),
+            pw_shell: shell_off.map_or(ptr::null_mut(), |off| unsafe { base.add(off) }),
         };
 
         &mut self.pw as *mut libc::passwd

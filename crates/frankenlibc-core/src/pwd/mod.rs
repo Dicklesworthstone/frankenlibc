@@ -23,6 +23,12 @@ pub struct Passwd {
     pub pw_dir: Vec<u8>,
     /// Login shell.
     pub pw_shell: Vec<u8>,
+    /// True for a colon-less NIS compat marker (`+name` or `-name`).
+    ///
+    /// glibc enumerates these records with their non-name pointer fields set to
+    /// NULL, rather than empty strings.  Retaining this bit lets the ABI layer
+    /// preserve that observable distinction.
+    pub nis_compat_null_fields: bool,
 }
 
 /// Aggregate parser accounting for passwd file scans.
@@ -73,6 +79,19 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         return None;
     }
 
+    if matches!(line.first(), Some(b'+') | Some(b'-')) && !line.contains(&b':') {
+        return Some(Passwd {
+            pw_name: line.to_vec(),
+            pw_passwd: Vec::new(),
+            pw_uid: 0,
+            pw_gid: 0,
+            pw_gecos: Vec::new(),
+            pw_dir: Vec::new(),
+            pw_shell: Vec::new(),
+            nis_compat_null_fields: true,
+        });
+    }
+
     // glibc requires only the first four fields (name:passwd:uid:gid); gecos,
     // dir, and shell are optional and default to empty. Keep the compatibility
     // shape where extra colons are absorbed into the shell field.
@@ -104,6 +123,7 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         pw_gecos: gecos.to_vec(),
         pw_dir: dir.to_vec(),
         pw_shell: shell.to_vec(),
+        nis_compat_null_fields: false,
     })
 }
 

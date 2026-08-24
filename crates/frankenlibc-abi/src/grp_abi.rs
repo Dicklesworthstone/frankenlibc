@@ -403,40 +403,54 @@ impl GrpStorage {
     fn fill_from(&mut self, entry: &frankenlibc_core::grp::Group) -> *mut libc::group {
         self.current_gid_result = None;
 
-        // Build buffer: name\0passwd\0member0\0member1\0...
+        // Colon-less NIS compat markers have NULL password/member fields in
+        // glibc, rather than empty strings and a one-element NULL list.
         self.buf.clear();
         let name_off = 0;
         self.buf.extend_from_slice(&entry.gr_name);
         self.buf.push(0);
-        let passwd_off = self.buf.len();
-        self.buf.extend_from_slice(&entry.gr_passwd);
-        self.buf.push(0);
+        let passwd_off = if entry.nis_compat_null_fields {
+            None
+        } else {
+            let offset = self.buf.len();
+            self.buf.extend_from_slice(&entry.gr_passwd);
+            self.buf.push(0);
+            Some(offset)
+        };
 
         // Member strings
         let mut mem_offsets = Vec::with_capacity(entry.gr_mem.len());
-        for member in &entry.gr_mem {
-            mem_offsets.push(self.buf.len());
-            self.buf.extend_from_slice(member);
-            self.buf.push(0);
+        if !entry.nis_compat_null_fields {
+            for member in &entry.gr_mem {
+                mem_offsets.push(self.buf.len());
+                self.buf.extend_from_slice(member);
+                self.buf.push(0);
+            }
         }
 
         let base = self.buf.as_ptr() as *mut c_char;
 
         // Build the NULL-terminated pointer array for gr_mem
         self.mem_ptrs.clear();
-        for off in &mem_offsets {
-            // SAFETY: offsets are within buf allocation.
-            self.mem_ptrs.push(unsafe { base.add(*off) });
+        if !entry.nis_compat_null_fields {
+            for off in &mem_offsets {
+                // SAFETY: offsets are within buf allocation.
+                self.mem_ptrs.push(unsafe { base.add(*off) });
+            }
+            self.mem_ptrs.push(ptr::null_mut()); // NULL terminator
         }
-        self.mem_ptrs.push(ptr::null_mut()); // NULL terminator
 
         // SAFETY: offsets are within buf allocation. Pointers are stable
         // because we don't resize buf/mem_ptrs again until the next fill_from call.
         self.gr = libc::group {
             gr_name: unsafe { base.add(name_off) },
-            gr_passwd: unsafe { base.add(passwd_off) },
+            gr_passwd: passwd_off.map_or(ptr::null_mut(), |off| unsafe { base.add(off) }),
             gr_gid: entry.gr_gid,
-            gr_mem: self.mem_ptrs.as_mut_ptr(),
+            gr_mem: if entry.nis_compat_null_fields {
+                ptr::null_mut()
+            } else {
+                self.mem_ptrs.as_mut_ptr()
+            },
         };
 
         &mut self.gr as *mut libc::group

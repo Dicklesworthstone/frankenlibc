@@ -390,6 +390,95 @@ fn link_max_matches_glibc_on_every_mounted_filesystem() {
     );
 }
 
+/// MINIX is deliberately mounted in a private mount namespace: its `LINK_MAX`
+/// value distinguishes the statfs dispatch from FrankenLibC's POSIX fallback,
+/// while the namespace's teardown leaves no mount or image in the worker.
+///
+/// The parent starts a fresh copy of this test under `unshare --mount`; only
+/// the child creates and mounts the image.  This gives the differential a live
+/// glibc oracle without relying on a host's pre-existing mount layout.
+#[test]
+fn link_max_matches_glibc_on_loopback_minix() {
+    const CHILD_ENV: &str = "FRANKENLIBC_PATHCONF_MINIX_CHILD";
+
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let output = std::process::Command::new("unshare")
+            .args(["--mount", "--propagation", "private"])
+            .env(CHILD_ENV, "1")
+            .arg(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "link_max_matches_glibc_on_loopback_minix",
+                "--nocapture",
+            ])
+            .output()
+            .expect("unshare must be available on the root oracle worker");
+        assert!(
+            output.status.success(),
+            "private-namespace MINIX oracle failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        return;
+    }
+
+    let root =
+        std::env::temp_dir().join(format!("frankenlibc-pathconf-minix-{}", std::process::id()));
+    let image = root.join("minix.img");
+    let mountpoint = root.join("mount");
+    std::fs::create_dir_all(&mountpoint).expect("private oracle workspace");
+    std::fs::File::create(&image)
+        .expect("MINIX image")
+        .set_len(4 * 1024 * 1024)
+        .expect("size MINIX image");
+
+    let image_path = image.to_str().expect("UTF-8 image path");
+    let mut format = ["/usr/sbin/mkfs.minix", "/sbin/mkfs.minix", "mkfs.minix"]
+        .into_iter()
+        .find(|program| std::path::Path::new(program).is_file())
+        .map(std::process::Command::new)
+        .unwrap_or_else(|| {
+            let mut command = std::process::Command::new("mkfs");
+            command.args(["-t", "minix"]);
+            command
+        });
+    let format = format
+        .args(["-1", image_path])
+        .output()
+        .expect("a MINIX mkfs frontend must be available on the root oracle worker");
+    assert!(
+        format.status.success(),
+        "MINIX mkfs failed: {}",
+        String::from_utf8_lossy(&format.stderr)
+    );
+
+    let mount = std::process::Command::new("mount")
+        .args([
+            "-t",
+            "minix",
+            "-o",
+            "loop",
+            image_path,
+            mountpoint.to_str().expect("UTF-8 mount path"),
+        ])
+        .output()
+        .expect("mount must be available on the root oracle worker");
+    assert!(
+        mount.status.success(),
+        "mounting private MINIX image failed: {}",
+        String::from_utf8_lossy(&mount.stderr)
+    );
+
+    let path = CString::new(mountpoint.to_string_lossy().as_bytes()).expect("mount path");
+    let host = unsafe { pathconf(path.as_ptr(), libc::_PC_LINK_MAX) };
+    let fl = unsafe { fu::pathconf(path.as_ptr(), libc::_PC_LINK_MAX) };
+    assert!(
+        host >= 0,
+        "host pathconf on mounted MINIX must succeed: {host}"
+    );
+    assert_eq!(fl, host, "MINIX _PC_LINK_MAX: fl={fl} glibc={host}");
+}
+
 /// `_PC_ASYNC_IO` is decided by the FILE TYPE, not by the filesystem and not by
 /// a constant.
 ///

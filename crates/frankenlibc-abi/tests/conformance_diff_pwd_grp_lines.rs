@@ -18,6 +18,8 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
+use frankenlibc_abi as fl;
+
 #[repr(C)]
 struct CPasswd {
     pw_name: *const c_char,
@@ -233,4 +235,49 @@ fn group_lines_match_glibc() {
         divergences.len(),
         divergences.join("\n  ")
     );
+}
+
+#[test]
+fn colonless_nis_entries_preserve_glibc_null_fields() {
+    for line in ["+@netgroup", "+user", "+", "-@ng", "-"] {
+        with_stream(line, |stream| {
+            let host = unsafe { fgetpwent(stream) };
+            assert!(!host.is_null(), "glibc rejected passwd NIS entry {line:?}");
+            let host = unsafe { &*host };
+            assert!(host.pw_passwd.is_null());
+            assert!(host.pw_gecos.is_null());
+            assert!(host.pw_dir.is_null());
+            assert!(host.pw_shell.is_null());
+        });
+
+        with_stream(line, |stream| {
+            let ours = unsafe { fl::fgetpwent(stream) }.cast::<CPasswd>();
+            assert!(!ours.is_null(), "fl rejected passwd NIS entry {line:?}");
+            let ours = unsafe { &*ours };
+            assert!(ours.pw_passwd.is_null());
+            assert!(ours.pw_gecos.is_null());
+            assert!(ours.pw_dir.is_null());
+            assert!(ours.pw_shell.is_null());
+            assert_eq!(unsafe { cstr(ours.pw_name) }, Some(line.as_bytes().to_vec()));
+        });
+    }
+
+    for line in ["+@netgroup", "+group", "+", "-@ng", "-"] {
+        with_stream(line, |stream| {
+            let host = unsafe { fgetgrent(stream) };
+            assert!(!host.is_null(), "glibc rejected group NIS entry {line:?}");
+            let host = unsafe { &*host };
+            assert!(host.gr_passwd.is_null());
+            assert!(host.gr_mem.is_null());
+        });
+
+        with_stream(line, |stream| {
+            let ours = unsafe { fl::fgetgrent(stream) }.cast::<CGroup>();
+            assert!(!ours.is_null(), "fl rejected group NIS entry {line:?}");
+            let ours = unsafe { &*ours };
+            assert!(ours.gr_passwd.is_null());
+            assert!(ours.gr_mem.is_null());
+            assert_eq!(unsafe { cstr(ours.gr_name) }, Some(line.as_bytes().to_vec()));
+        });
+    }
 }
