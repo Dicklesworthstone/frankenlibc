@@ -1744,7 +1744,20 @@ fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
 fn campaign_measured_sizes_take_the_address_derived_segment_path() {
     use frankenlibc_core::malloc::size_class::MAX_SMALL_SIZE;
 
+    let _guard = test_lock().lock().expect("test lock poisoned");
     signal_runtime_ready_for_tests();
+
+    // `segment_allocate` deliberately falls back to host malloc while another
+    // thread is publishing the shared arena.  The campaign measures the
+    // already-warmed allocator, so establish and prove that precondition
+    // before pinning its exact size set.
+    let warm = unsafe { malloc(16) };
+    assert!(!warm.is_null(), "warm-up malloc(16) returned NULL");
+    assert!(
+        malloc_segment_owned_for_tests(warm.cast_const()),
+        "warm-up malloc(16) did not publish the address-derived segment arena"
+    );
+    unsafe { free(warm) };
 
     for size in [16usize, 64, 256, 1024, MAX_SMALL_SIZE] {
         // SAFETY: plain allocation of `size` bytes through fl's public entry point.

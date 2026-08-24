@@ -208,7 +208,6 @@ struct TerminalSignatureTracker {
     rough_path: RoughPathMonitor,
     sequence_signature: TerminalSequenceSignature,
     illegal_transition_count: u64,
-    last_summary: Option<TerminalTrackerSummary>,
 }
 
 impl TerminalSignatureTracker {
@@ -217,7 +216,6 @@ impl TerminalSignatureTracker {
             rough_path: RoughPathMonitor::new(),
             sequence_signature: TerminalSequenceSignature::default(),
             illegal_transition_count: 0,
-            last_summary: None,
         }
     }
 
@@ -236,13 +234,7 @@ impl TerminalSignatureTracker {
             sequence_signature: self.sequence_signature,
             is_legal: report.is_legal,
         };
-        self.last_summary = Some(summary);
         summary
-    }
-
-    #[cfg(test)]
-    fn last_summary(&self) -> Option<TerminalTrackerSummary> {
-        self.last_summary
     }
 }
 
@@ -281,9 +273,9 @@ fn push_terminal_signature_log(line: String) {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[must_use]
-pub(crate) fn export_terminal_signature_log_jsonl() -> String {
+#[doc(hidden)]
+pub fn export_terminal_signature_log_jsonl() -> String {
     TERMINAL_SIGNATURE_LOGS
         .lock()
         .ok()
@@ -291,8 +283,8 @@ pub(crate) fn export_terminal_signature_log_jsonl() -> String {
         .unwrap_or_default()
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn clear_terminal_signature_log() {
+#[doc(hidden)]
+pub fn clear_terminal_signature_log() {
     if let Ok(mut logs) = TERMINAL_SIGNATURE_LOGS.lock() {
         logs.clear();
     }
@@ -1153,235 +1145,4 @@ pub unsafe extern "C" fn tcsendbreak(fd: c_int, duration: c_int) -> c_int {
     };
     runtime_policy::observe(ApiFamily::Termios, decision.profile, 8, rc != 0);
     rc
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn clear_terminal_signature_trackers_for_tests() {
-        FD_SIGNATURE_TRACKERS
-            .lock()
-            .expect("termios fd tracker mutex poisoned")
-            .clear();
-        PTR_SIGNATURE_TRACKERS
-            .lock()
-            .expect("termios pointer tracker mutex poisoned")
-            .clear();
-    }
-
-    fn cooked_termios() -> libc::termios {
-        let mut termios = zeroed_termios();
-        termios.c_iflag = (libc::ICRNL | libc::IXON) as libc::tcflag_t;
-        termios.c_oflag = libc::OPOST as libc::tcflag_t;
-        termios.c_cflag = (libc::CS8 | libc::CREAD | libc::B9600) as libc::tcflag_t;
-        termios.c_lflag = (libc::ICANON | libc::ISIG | libc::IEXTEN | libc::ECHO) as libc::tcflag_t;
-        termios.c_ispeed = libc::B9600;
-        termios.c_ospeed = libc::B9600;
-        termios
-    }
-
-    fn cbreak_termios() -> libc::termios {
-        let mut termios = cooked_termios();
-        termios.c_lflag &= !(libc::ICANON as libc::tcflag_t);
-        termios
-    }
-
-    fn raw_termios() -> libc::termios {
-        let mut termios = cooked_termios();
-        unsafe { crate::stdlib_abi::cfmakeraw(&mut termios) };
-        termios.c_cflag |= libc::CREAD as libc::tcflag_t;
-        termios.c_ispeed = libc::B9600;
-        termios.c_ospeed = libc::B9600;
-        termios
-    }
-
-    fn pty_pair() -> Option<(c_int, c_int)> {
-        let mut master = -1;
-        let mut slave = -1;
-        let rc = unsafe {
-            crate::unistd_abi::openpty(
-                &mut master,
-                &mut slave,
-                std::ptr::null_mut(),
-                std::ptr::null(),
-                std::ptr::null(),
-            )
-        };
-        if rc == 0 { Some((master, slave)) } else { None }
-    }
-
-    #[test]
-    fn raw_and_cbreak_classification_are_distinct() {
-        let cooked = TerminalSignatureClass::from_termios(&cooked_termios());
-        let cbreak = TerminalSignatureClass::from_termios(&cbreak_termios());
-        let raw = TerminalSignatureClass::from_termios(&raw_termios());
-
-        assert_eq!(cooked.mode, TerminalModeClass::Cooked);
-        assert_eq!(cbreak.mode, TerminalModeClass::Cbreak);
-        assert_eq!(raw.mode, TerminalModeClass::Raw);
-        assert!(cooked.echo_enabled);
-        assert!(cbreak.echo_enabled);
-        assert!(!raw.echo_enabled);
-    }
-
-    #[test]
-    fn canonical_diverged_speed_is_illegal() {
-        let before = cooked_termios();
-        let mut after = cooked_termios();
-        after.c_ospeed = libc::B115200;
-        after.c_cflag = (after.c_cflag & !(termios_core::CBAUD as libc::tcflag_t)) | libc::B115200;
-
-        let report = analyze_transition(&before, &after, termios_core::TCSANOW);
-
-        assert!(report.speed_axis_changed);
-        assert_eq!(report.kind, TerminalTransitionKind::SpeedShift);
-        assert!(!report.is_legal);
-        assert!(matches!(
-            report.current.speed_coupling,
-            SpeedCoupling::Diverged
-        ));
-    }
-
-    #[test]
-    fn order_independent_sequences_share_signature() {
-        let cooked = cooked_termios();
-
-        let mut cooked_silent = cooked_termios();
-        cooked_silent.c_lflag &= !(libc::ECHO as libc::tcflag_t);
-
-        let mut cbreak_echo = cooked_termios();
-        cbreak_echo.c_lflag &= !(libc::ICANON as libc::tcflag_t);
-
-        let mut cbreak_silent = cbreak_termios();
-        cbreak_silent.c_lflag &= !(libc::ECHO as libc::tcflag_t);
-
-        let mut sequence_a = TerminalSequenceSignature::default();
-        sequence_a.observe(analyze_transition(
-            &cooked,
-            &cooked_silent,
-            termios_core::TCSANOW,
-        ));
-        sequence_a.observe(analyze_transition(
-            &cooked_silent,
-            &cbreak_silent,
-            termios_core::TCSANOW,
-        ));
-
-        let mut sequence_b = TerminalSequenceSignature::default();
-        sequence_b.observe(analyze_transition(
-            &cooked,
-            &cbreak_echo,
-            termios_core::TCSANOW,
-        ));
-        sequence_b.observe(analyze_transition(
-            &cbreak_echo,
-            &cbreak_silent,
-            termios_core::TCSANOW,
-        ));
-
-        assert!(
-            sequence_a.equivalent_to(&sequence_b),
-            "expected order-independent signature equivalence: {sequence_a:?} vs {sequence_b:?}"
-        );
-    }
-
-    #[test]
-    fn cfsetospeed_tracks_struct_level_illegal_transition() {
-        clear_terminal_signature_trackers_for_tests();
-        clear_terminal_signature_log();
-        let mut termios = cooked_termios();
-        let ptr_key = (&termios as *const libc::termios) as usize;
-
-        let rc = unsafe { cfsetospeed(&mut termios, libc::B115200) };
-        assert_eq!(rc, 0);
-
-        let trackers = PTR_SIGNATURE_TRACKERS
-            .lock()
-            .expect("termios pointer tracker mutex poisoned");
-        let summary = trackers
-            .get(&ptr_key)
-            .and_then(TerminalSignatureTracker::last_summary)
-            .expect("pointer signature summary missing");
-        assert!(!summary.is_legal);
-        assert_eq!(summary.illegal_transition_count, 1);
-    }
-
-    #[test]
-    fn pty_bash_vim_tmux_sequences_stay_legal() {
-        clear_terminal_signature_trackers_for_tests();
-        clear_terminal_signature_log();
-        let Some((master, slave)) = pty_pair() else {
-            return;
-        };
-
-        let mut original = zeroed_termios();
-        let rc = unsafe { tcgetattr(slave, &mut original) };
-        assert_eq!(rc, 0);
-
-        // bash/login shell baseline: canonical cooked mode from the PTY.
-        // vim-like setup: disable canonical processing and echo first.
-        let mut cbreak = original;
-        cbreak.c_lflag &= !(libc::ICANON as libc::tcflag_t);
-        cbreak.c_lflag &= !(libc::ECHO as libc::tcflag_t);
-
-        // tmux/screen-like raw handoff: transition through a raw mode while
-        // preserving the original baud coupling from the live PTY.
-        let mut raw = cbreak;
-        unsafe { crate::stdlib_abi::cfmakeraw(&mut raw) };
-        raw.c_cflag |= libc::CREAD as libc::tcflag_t;
-        raw.c_ispeed = effective_input_speed(&original);
-        raw.c_ospeed = effective_output_speed(&original);
-
-        assert_eq!(unsafe { tcsetattr(slave, libc::TCSANOW, &cbreak) }, 0);
-        assert_eq!(unsafe { tcsetattr(slave, libc::TCSADRAIN, &raw) }, 0);
-        assert_eq!(unsafe { tcsetattr(slave, libc::TCSAFLUSH, &original) }, 0);
-
-        let trackers = FD_SIGNATURE_TRACKERS
-            .lock()
-            .expect("termios fd tracker mutex poisoned");
-        let summary = trackers
-            .get(&slave)
-            .and_then(TerminalSignatureTracker::last_summary)
-            .expect("fd signature summary missing");
-        assert!(summary.is_legal);
-        assert_eq!(summary.illegal_transition_count, 0);
-
-        unsafe {
-            crate::unistd_abi::close(master);
-            crate::unistd_abi::close(slave);
-        }
-    }
-
-    #[test]
-    fn terminal_signature_logs_include_required_fields() {
-        clear_terminal_signature_trackers_for_tests();
-        clear_terminal_signature_log();
-
-        let before = cooked_termios();
-        let mut after = cooked_termios();
-        after.c_ospeed = libc::B115200;
-        after.c_cflag = (after.c_cflag & !(termios_core::CBAUD as libc::tcflag_t)) | libc::B115200;
-
-        let _ = observe_ptr_transition(
-            "cfsetospeed",
-            0xfeed_cafe,
-            &before,
-            &after,
-            termios_core::TCSANOW,
-        );
-
-        let jsonl = export_terminal_signature_log_jsonl();
-        assert!(jsonl.contains("\"trace_id\""));
-        assert!(jsonl.contains("\"mode\""));
-        assert!(jsonl.contains("\"api_family\":\"termios\""));
-        assert!(jsonl.contains("\"symbol\":\"cfsetospeed\""));
-        assert!(jsonl.contains("\"decision_path\":\"termios->rough_path_signature\""));
-        assert!(jsonl.contains("\"healing_action\":null"));
-        assert!(jsonl.contains("\"errno\":0"));
-        assert!(jsonl.contains("\"latency_ns\":"));
-        assert!(
-            jsonl.contains("\"artifact_refs\":[\"crates/frankenlibc-abi/src/termios_abi.rs\"]")
-        );
-    }
 }
