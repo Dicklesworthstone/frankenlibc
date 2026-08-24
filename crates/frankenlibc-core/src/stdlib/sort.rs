@@ -94,6 +94,23 @@ fn elem(buf: &[u8], width: usize, i: usize) -> &[u8] {
     &buf[i * width..(i + 1) * width]
 }
 
+/// RESTORED, bd-nas5rt. 51c39dec3 replaced the four-ordering width-4 lane with a
+/// single-ordering one and its message says only that it "add[ed] a sorted i32
+/// natural fast lane". Signed DESCENDING, unsigned ascending and unsigned
+/// descending went with it, so every reverse-ordered or unsigned 32-bit sort
+/// dropped to the generic byte path and paid the caller's FFI comparator on all
+/// O(n log n) of its comparisons — the exact cost this lane exists to avoid.
+///
+/// The width-8 lane kept all four orderings (restored in 187b85580); this brings
+/// width 4 back into line with it.
+///
+/// The three extra orderings are nearly free to ATTEMPT: descending is the
+/// ascending result REVERSED, an O(n) pass rather than a second sort, and the
+/// unsigned pair is skipped entirely unless some key has its top bit set — in
+/// which case the unsigned order would equal the signed arrangement already
+/// rejected. Every candidate is still committed only if it verifies against the
+/// caller's own comparator, so a non-integer comparator falls through having
+/// paid one linear check per attempt.
 fn try_qsort_i32_natural_fast_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
 where
     F: Fn(&[u8], &[u8]) -> i32,
@@ -108,13 +125,33 @@ where
         values.push(i32::from_ne_bytes(bytes));
     }
 
-    values.sort_unstable();
-    for (chunk, value) in active.chunks_exact_mut(4).zip(&values) {
-        chunk.copy_from_slice(&value.to_ne_bytes());
+    // See the 8-byte lane for the full rationale; this is the 4-byte analog.
+    macro_rules! commit_if_ordered {
+        () => {{
+            for (chunk, value) in active.chunks_exact_mut(4).zip(&values) {
+                chunk.copy_from_slice(&value.to_ne_bytes());
+            }
+            if qsort_i32_candidate_is_ordered(active, compare) {
+                return true;
+            }
+        }};
     }
 
-    if qsort_i32_candidate_is_ordered(active, compare) {
-        return true;
+    // Signed ascending (the dominant int32_t case) then signed descending (its
+    // O(n) reverse — no second sort).
+    values.sort_unstable();
+    commit_if_ordered!();
+    values.reverse();
+    commit_if_ordered!();
+
+    // Unsigned ascending + descending (u32 sizes / indices / hashes / ids). Only
+    // when a key has the top bit set; `*v as u32` reinterprets the bits with no
+    // new allocation.
+    if values.iter().any(|&v| v < 0) {
+        values.sort_unstable_by(|a, b| (*a as u32).cmp(&(*b as u32)));
+        commit_if_ordered!();
+        values.reverse();
+        commit_if_ordered!();
     }
 
     for (chunk, bytes) in active.chunks_exact_mut(4).zip(original) {
@@ -866,6 +903,86 @@ mod sort_variant_tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The DESCENDING orderings must be taken by the lane, not by pdqsort
+    /// (bd-nas5rt).
+    ///
+    /// 51c39dec3 deleted signed-descending and both unsigned orderings from the
+    /// width-4 lane, and no gate noticed for two months because they all compare
+    /// sorted OUTPUT and pdqsort sorts descending correctly too. Comparator CALL
+    /// COUNT separates them: the lane sorts once, REVERSES (an O(n) pass) and
+    /// verifies adjacent pairs, so a descending sort costs about 2n calls, while
+    /// pdqsort needs O(n log n).
+    ///
+    /// The input is SCRAMBLED on purpose. A reverse-ordered input would be served
+    /// by the monotonic-detect lane in one pass — a different fast path — and the
+    /// count would prove nothing about this one.
+    #[test]
+    fn descending_and_unsigned_orderings_take_the_lane() {
+        use std::cell::Cell;
+
+        const NUM: usize = 512;
+        let mut order: Vec<i64> = (0..NUM as i64).collect();
+        let mut x: u64 = 0x243F_6A88_85A3_08D3;
+        for i in (1..NUM).rev() {
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            order.swap(i, (x.wrapping_mul(0x2545_F491_4F6C_DD1D) as usize) % (i + 1));
+        }
+        assert!(
+            !order.windows(2).all(|w| w[0] <= w[1]) && !order.windows(2).all(|w| w[0] >= w[1]),
+            "shuffled input came out monotone; a monotonic lane could serve it"
+        );
+
+        // (width, build element, read key) for the two integer lanes.
+        for width in [4usize, 8] {
+            let mut buf = vec![0u8; NUM * width];
+            for (i, v) in order.iter().enumerate() {
+                if width == 4 {
+                    buf[i * 4..i * 4 + 4].copy_from_slice(&(*v as i32).to_ne_bytes());
+                } else {
+                    buf[i * 8..i * 8 + 8].copy_from_slice(&v.to_ne_bytes());
+                }
+            }
+            let calls = Cell::new(0usize);
+            let desc = |a: &[u8], b: &[u8]| -> i32 {
+                calls.set(calls.get() + 1);
+                if width == 4 {
+                    let av = i32::from_ne_bytes(a[..4].try_into().unwrap());
+                    let bv = i32::from_ne_bytes(b[..4].try_into().unwrap());
+                    bv.cmp(&av) as i32
+                } else {
+                    let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+                    let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+                    bv.cmp(&av) as i32
+                }
+            };
+
+            qsort(&mut buf, width, desc);
+
+            let read = |i: usize| -> i64 {
+                if width == 4 {
+                    i32::from_ne_bytes(buf[i * 4..i * 4 + 4].try_into().unwrap()) as i64
+                } else {
+                    i64::from_ne_bytes(buf[i * 8..i * 8 + 8].try_into().unwrap())
+                }
+            };
+            for i in 1..NUM {
+                assert!(read(i - 1) >= read(i), "width {width}: not descending at {i}");
+            }
+            assert_eq!(read(0), NUM as i64 - 1, "width {width}: wrong maximum");
+            assert_eq!(read(NUM - 1), 0, "width {width}: wrong minimum");
+            assert!(
+                calls.get() <= 4 * NUM,
+                "width {width}: {} comparator calls for {NUM} elements. The lane sorts, \
+                 reverses and verifies in about 2n; this many means the DESCENDING \
+                 ordering was not taken and pdqsort ran instead — which is exactly the \
+                 state 51c39dec3 left width 4 in for two months with every gate green",
+                calls.get()
+            );
         }
     }
 
