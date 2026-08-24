@@ -43,6 +43,18 @@ type QsortFn = unsafe extern "C" fn(*mut c_void, usize, usize, Option<ComparFn>)
 /// form rather than a correct one is deliberate: it is what the fast lane has to
 /// cope with, and a driver that used `a < b ? -1 : ...` would measure a case the
 /// real world does not send.
+unsafe extern "C" fn cmp_i32_desc(a: *const c_void, b: *const c_void) -> i32 {
+    // SAFETY: as `cmp_i32`.
+    let (av, bv) = unsafe { (*(a as *const i32), *(b as *const i32)) };
+    if bv < av { -1 } else if bv > av { 1 } else { 0 }
+}
+
+unsafe extern "C" fn cmp_i64_desc(a: *const c_void, b: *const c_void) -> i32 {
+    // SAFETY: as `cmp_i64`.
+    let (av, bv) = unsafe { (*(a as *const i64), *(b as *const i64)) };
+    if bv < av { -1 } else if bv > av { 1 } else { 0 }
+}
+
 unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: the driver only passes pointers to 4-byte elements of its own
     // buffer when it selects this comparator.
@@ -203,16 +215,20 @@ fn drive(qsort_fn: QsortFn, source: &[i64], width: usize, rounds: usize) -> u64 
         // which aborted every width-4 case of the first sweep — a defect in this
         // driver, not in either sort.
         let mut buf = vec![0u8; size * width];
+        // QSORT_DESC=1 selects a DESCENDING comparator, which is the ordering
+        // 51c39dec3 deleted from the width-4 lane. Without it this driver can
+        // only ever measure the ascending path.
+        let descending = std::env::var_os("QSORT_DESC").is_some();
         let compar = if width == 4 {
             for (i, v) in source.iter().enumerate() {
                 buf[i * 4..i * 4 + 4].copy_from_slice(&(*v as i32).to_ne_bytes());
             }
-            cmp_i32 as ComparFn
+            if descending { cmp_i32_desc as ComparFn } else { cmp_i32 as ComparFn }
         } else {
             for (i, v) in source.iter().enumerate() {
                 buf[i * width..i * width + 8].copy_from_slice(&v.to_ne_bytes());
             }
-            cmp_i64 as ComparFn
+            if descending { cmp_i64_desc as ComparFn } else { cmp_i64 as ComparFn }
         };
         // SAFETY: `buf` holds `size` elements of `width` bytes and the comparator
         // reads only the leading 4 or 8 bytes of each pointer it is given.
@@ -260,9 +276,10 @@ fn main() {
     let glibc = resolve("glibc");
 
     println!(
-        "QSORT_PROVENANCE elf_sha256={} threads={} width={width} rounds={rounds} sizes={sizes:?}",
+        "QSORT_PROVENANCE elf_sha256={} threads={} width={width} rounds={rounds} sizes={sizes:?} desc={}",
         self_elf_sha256(),
-        thread_count()
+        thread_count(),
+        std::env::var_os("QSORT_DESC").is_some()
     );
 
     for size in sizes.iter().copied() {
