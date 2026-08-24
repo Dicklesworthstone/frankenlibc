@@ -14,6 +14,11 @@ pub struct Group {
     pub gr_gid: u32,
     /// Member list (comma-separated in file, split here).
     pub gr_mem: Vec<Vec<u8>>,
+    /// True for a colon-less NIS compat marker (`+name` or `-name`).
+    ///
+    /// Its password and member pointers are NULL in glibc's enumerated ABI
+    /// record, which differs from empty fields.
+    pub nis_compat_null_fields: bool,
 }
 
 /// Aggregate parser accounting for group file scans.
@@ -49,6 +54,16 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         return None;
     }
 
+    if matches!(line.first(), Some(b'+') | Some(b'-')) && !line.contains(&b':') {
+        return Some(Group {
+            gr_name: line.to_vec(),
+            gr_passwd: Vec::new(),
+            gr_gid: 0,
+            gr_mem: Vec::new(),
+            nis_compat_null_fields: true,
+        });
+    }
+
     // glibc requires only the first three fields (name:passwd:gid); the member
     // list is optional. When extra colons appear, glibc's last field absorbs
     // them (the members token is everything past the third colon), so a line
@@ -78,6 +93,7 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         gr_passwd: passwd.to_vec(),
         gr_gid: gid,
         gr_mem: members,
+        nis_compat_null_fields: false,
     })
 }
 
