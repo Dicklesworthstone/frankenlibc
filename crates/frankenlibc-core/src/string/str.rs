@@ -265,21 +265,6 @@ fn has_non_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) 
     (lanes.simd_eq(Simd::splat(0)) | !member).any()
 }
 
-#[inline(always)]
-fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    if !folded.is_ascii_lowercase() {
-        return has_byte_or_nul_simd_32(chunk, folded);
-    }
-
-    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    lanes.simd_eq(Simd::splat(0)).any()
-        || lanes.simd_eq(Simd::splat(folded)).any()
-        || lanes
-            .simd_eq(Simd::splat(folded.to_ascii_uppercase()))
-            .any()
-}
-
 #[inline]
 fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
     let mut table = [false; 256];
@@ -706,24 +691,44 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
         return find_byte_or_nul(s, folded);
     }
 
+    // Resolve the first folded candidate directly from the SIMD mask.  The
+    // prior coarse SIMD predicate re-scanned a flagged 32-byte panel scalar
+    // side, even though every set lane already exactly satisfies this stop
+    // condition.  A trailing-zero lookup preserves the earliest candidate.
     let upper = folded.to_ascii_uppercase();
-    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
     let mut base = 0usize;
+    let lower_wide = Simd::<u8, STRLEN_SIMD_LANES>::splat(folded);
+    let upper_wide = Simd::<u8, STRLEN_SIMD_LANES>::splat(upper);
+    let nul_wide = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
 
-    for chunk in simd_chunks.by_ref() {
-        if has_ascii_folded_byte_or_nul_simd_32(chunk, folded) {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || byte == folded || byte == upper {
-                    return base + j;
-                }
-            }
+    while base + STRLEN_SIMD_LANES <= s.len() {
+        let lanes = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[base..base + STRLEN_SIMD_LANES]);
+        let hits =
+            (lanes.simd_eq(nul_wide) | lanes.simd_eq(lower_wide) | lanes.simd_eq(upper_wide))
+                .to_bitmask();
+        if hits != 0 {
+            return base + hits.trailing_zeros() as usize;
+        }
+        base += STRLEN_SIMD_LANES;
+    }
+
+    let lower_narrow = Simd::<u8, SIMD_LANES>::splat(folded);
+    let upper_narrow = Simd::<u8, SIMD_LANES>::splat(upper);
+    let nul_narrow = Simd::<u8, SIMD_LANES>::splat(0);
+    while base + SIMD_LANES <= s.len() {
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[base..base + SIMD_LANES]);
+        let hits =
+            (lanes.simd_eq(nul_narrow) | lanes.simd_eq(lower_narrow) | lanes.simd_eq(upper_narrow))
+                .to_bitmask();
+        if hits != 0 {
+            return base + hits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+    for (offset, &byte) in s[base..].iter().enumerate() {
         if byte == 0 || byte == folded || byte == upper {
-            return base + j;
+            return base + offset;
         }
     }
 
@@ -3013,6 +3018,26 @@ mod tests {
         haystack[13] = b'Q';
         haystack[20] = 0;
         assert_eq!(strcasestr(&haystack, b"zq\0"), Some(12));
+    }
+
+    #[test]
+    fn strcasestr_wide_mask_resolves_the_final_lane() {
+        let mut haystack = [b'A'; STRLEN_SIMD_LANES + 3];
+        haystack[STRLEN_SIMD_LANES - 1] = b'Z';
+        haystack[STRLEN_SIMD_LANES] = b'Q';
+        haystack[STRLEN_SIMD_LANES + 1] = 0;
+
+        assert_eq!(strcasestr(&haystack, b"zq\0"), Some(STRLEN_SIMD_LANES - 1));
+    }
+
+    #[test]
+    fn strcasestr_wide_mask_stops_at_final_lane_nul() {
+        let mut haystack = [b'A'; STRLEN_SIMD_LANES + 3];
+        haystack[STRLEN_SIMD_LANES - 1] = 0;
+        haystack[STRLEN_SIMD_LANES] = b'Z';
+        haystack[STRLEN_SIMD_LANES + 1] = b'Q';
+
+        assert_eq!(strcasestr(&haystack, b"zq\0"), None);
     }
 
     #[test]
