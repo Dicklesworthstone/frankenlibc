@@ -321,6 +321,10 @@ fn strlen_measures_correctly() {
 fn strlen_bounds_tracked_unterminated_input() {
     unsafe {
         let raw = malloc_unterminated(b"hello");
+        assert_eq!(
+            frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw.cast()),
+            Some(5)
+        );
 
         assert_eq!(strlen(raw), 5);
 
