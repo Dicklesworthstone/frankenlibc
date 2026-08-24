@@ -1960,6 +1960,52 @@ fn calloc_returns_zeroed_memory_fresh_and_recycled() {
     }
 }
 
+/// Crossing a local magazine boundary must preserve `calloc` zeroing.
+///
+/// The allocator now carries slot origin from the producer: bump-chunk slots
+/// are fresh and magazine/spill slots are recycled.  This exercises both sources
+/// in one call sequence: dirty/free enough slots to populate the recycle paths,
+/// then request more zeroed slots than a local magazine can retain.
+#[test]
+fn calloc_zeroes_recycled_and_growth_slots_across_magazine_boundary() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+
+    const SIZE: usize = 1536;
+    const COUNT: usize = 16;
+    let mut dirty = Vec::with_capacity(COUNT);
+    for _ in 0..COUNT {
+        // SAFETY: allocate one slot, dirty it, and retain it for a single free below.
+        let ptr = unsafe { malloc(SIZE) };
+        assert!(!ptr.is_null(), "malloc({SIZE}) returned NULL");
+        // SAFETY: `ptr` is live and spans SIZE bytes.
+        unsafe { std::ptr::write_bytes(ptr.cast::<u8>(), 0xD3, SIZE) };
+        dirty.push(ptr);
+    }
+    for ptr in dirty {
+        // SAFETY: each pointer was allocated above and is freed exactly once.
+        unsafe { free(ptr) };
+    }
+
+    let mut zeroed = Vec::with_capacity(COUNT);
+    for _ in 0..COUNT {
+        // SAFETY: single-element calloc of SIZE bytes.
+        let ptr = unsafe { calloc(1, SIZE) };
+        assert!(!ptr.is_null(), "calloc(1, {SIZE}) returned NULL");
+        // SAFETY: `ptr` is live and spans SIZE bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), SIZE) };
+        assert!(
+            bytes.iter().all(|&byte| byte == 0),
+            "calloc returned a non-zero byte across the recycle/growth boundary"
+        );
+        zeroed.push(ptr);
+    }
+    for ptr in zeroed {
+        // SAFETY: each pointer was allocated above and is freed exactly once.
+        unsafe { free(ptr) };
+    }
+}
+
 /// The elision must not survive a `realloc` that shrinks and re-grows a slot.
 ///
 /// `segment_resize_in_place` rewrites a slot's requested size without moving it,

@@ -642,6 +642,18 @@ struct SegmentSlotView {
     meta: &'static SegmentSlotMeta,
 }
 
+/// Where a segment slot came from before being activated.
+///
+/// Bump chunks are monotonically claimed from slots that have never been
+/// exposed, while magazine and spill entries can only have arrived through a
+/// prior free.  Keeping that distinction at the producer avoids reloading the
+/// sidecar atomic merely to rediscover it on the fresh `calloc` growth path.
+#[derive(Clone, Copy)]
+enum SegmentSlotOrigin {
+    Fresh,
+    Recycled,
+}
+
 enum SegmentFreeResult {
     NotOwned,
     OwnedInvalid,
@@ -1046,24 +1058,25 @@ fn activate_segment_slot(
     view: SegmentSlotView,
     requested: usize,
     zeroed: bool,
+    origin: SegmentSlotOrigin,
 ) -> Option<*mut c_void> {
     if requested == 0 || requested > view.class_size || requested > u16::MAX as usize {
         return None;
     }
     let requested = requested as u16;
     debug_assert!(matches!(
-        view.meta.requested_size.load(Ordering::Relaxed),
-        0 | SEGMENT_SLOT_FREE
+        (origin, view.meta.requested_size.load(Ordering::Relaxed)),
+        (SegmentSlotOrigin::Fresh, 0) | (SegmentSlotOrigin::Recycled, SEGMENT_SLOT_FREE)
     ));
-    if zeroed {
+    if zeroed && matches!(origin, SegmentSlotOrigin::Recycled) {
         // A slot that has NEVER been handed out still holds the pages the arena
         // was mapped with, and that mapping is `MAP_PRIVATE | MAP_ANONYMOUS`,
         // which the kernel guarantees zero-filled on first touch. Zeroing it
         // again is pure work, so `calloc` skips it.
         //
-        // The slot's own metadata already distinguishes the two states, and the
-        // debug assertion above is the statement of that invariant: `0` means
-        // never activated, `SEGMENT_SLOT_FREE` means live-then-retired. Only the
+        // `origin` carries that distinction from the allocation path, and the
+        // debug assertion above checks the matching metadata state: `Fresh`
+        // means never activated, `Recycled` means live-then-retired. Only the
         // second can hold a previous caller's bytes.
         //
         // THREE FACTS MAKE THE ELISION SOUND, all checked rather than assumed:
@@ -1078,16 +1091,11 @@ fn activate_segment_slot(
         // If any of those three ever changes, `calloc_reuses_a_freed_slot_zeroed`
         // fails, because it frees a slot it has filled with 0xAA and re-callocs it.
         //
-        // The load is paid only by `calloc`; `malloc` passes `zeroed = false` and
-        // never reaches it.
-        let previously_handed_out = view.meta.requested_size.load(Ordering::Acquire) != 0;
-        if previously_handed_out {
-            // SAFETY: the caller exclusively removed this slot from its local
-            // magazine/spill bitmap or advanced its private bump cursor.  The
-            // pointer is not externally observable until this function returns.
-            unsafe {
-                std::ptr::write_bytes(view.user_base as *mut u8, 0, requested as usize);
-            }
+        // SAFETY: the caller exclusively removed this slot from its local
+        // magazine/spill bitmap. The pointer is not externally observable until
+        // this function returns.
+        unsafe {
+            std::ptr::write_bytes(view.user_base as *mut u8, 0, requested as usize);
         }
     }
     // Magazine pop, spill-bit CAS, and the owner-only bump cursor are three
@@ -1194,7 +1202,9 @@ fn allocate_from_spill(class_index: usize, requested: usize, zeroed: bool) -> Op
                 let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
                     break;
                 };
-                if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
+                if let Some(ptr) =
+                    activate_segment_slot(view, requested, zeroed, SegmentSlotOrigin::Recycled)
+                {
                     return Some(ptr);
                 }
                 break;
@@ -1238,7 +1248,9 @@ fn allocate_from_local_class(
         if view.class_index != class_index {
             continue;
         }
-        if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
+        if let Some(ptr) =
+            activate_segment_slot(view, requested, zeroed, SegmentSlotOrigin::Recycled)
+        {
             return Some(ptr);
         }
     }
@@ -1265,7 +1277,8 @@ fn allocate_from_local_class(
         let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
             continue;
         };
-        if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
+        if let Some(ptr) = activate_segment_slot(view, requested, zeroed, SegmentSlotOrigin::Fresh)
+        {
             return Some(ptr);
         }
     }
