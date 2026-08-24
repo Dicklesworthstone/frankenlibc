@@ -4704,6 +4704,13 @@ macro_rules! wscanf_write_one {
                     *ptr = *v as u32;
                 }
             },
+            // `%Lf` on the wide side reaches the same core engine, so it
+            // arrives already parsed at x87 precision; the destination is a
+            // `long double *` and the length modifier needs no second look.
+            ScanValue::LongDouble(bytes) => {
+                let ptr = $args.next_arg::<*mut c_void>();
+                crate::stdio_abi::write_long_double_bytes(ptr, bytes);
+            }
             ScanValue::Float(v) => match $spec.length {
                 // `%Lf` writes a LONG DOUBLE, not a double. Conflating the two
                 // put an f64 bit pattern in the first eight bytes of an x87
