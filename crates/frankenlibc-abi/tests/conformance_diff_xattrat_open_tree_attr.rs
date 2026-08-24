@@ -19,6 +19,7 @@ const SYS_GETXATTRAT: c_long = 464;
 const SYS_LISTXATTRAT: c_long = 465;
 const SYS_REMOVEXATTRAT: c_long = 466;
 const SYS_OPEN_TREE_ATTR: c_long = 467;
+const INVALID_AT_FLAGS: c_uint = c_uint::MAX;
 
 fn host_errno() -> c_int {
     unsafe { *libc::__errno_location() }
@@ -208,5 +209,50 @@ fn xattrat_and_open_tree_attr_invalid_failures_match_host_syscall() {
         fl, host,
         "open_tree_attr(invalid flags): fl={fl:?} host={host:?}"
     );
+    assert_eq!(fl.0, -1);
+}
+
+#[test]
+fn xattrat_invalid_at_flags_match_host_syscall_without_mutation() {
+    let path = c".";
+    let name = c"user.frankenlibc.invalid";
+
+    // These are read-only requests. The invalid flags must fail before the
+    // kernel reads an xattr, while a future flag-validation regression cannot
+    // write or remove an attribute as a side effect of this gate.
+    let host = host_getxattrat(
+        libc::AT_FDCWD,
+        path.as_ptr(),
+        INVALID_AT_FLAGS,
+        name.as_ptr(),
+        ptr::null_mut(),
+        0,
+    );
+    let fl = fl_getxattrat(
+        libc::AT_FDCWD,
+        path.as_ptr(),
+        INVALID_AT_FLAGS,
+        name.as_ptr(),
+        ptr::null_mut(),
+        0,
+    );
+    assert_eq!(fl, host, "getxattrat(invalid flags): fl={fl:?} host={host:?}");
+    assert_eq!(fl.0, -1);
+
+    let host = host_listxattrat(
+        libc::AT_FDCWD,
+        path.as_ptr(),
+        INVALID_AT_FLAGS,
+        ptr::null_mut(),
+        0,
+    );
+    let fl = fl_listxattrat(
+        libc::AT_FDCWD,
+        path.as_ptr(),
+        INVALID_AT_FLAGS,
+        ptr::null_mut(),
+        0,
+    );
+    assert_eq!(fl, host, "listxattrat(invalid flags): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
 }
