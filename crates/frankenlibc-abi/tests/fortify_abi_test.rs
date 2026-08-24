@@ -12,6 +12,27 @@ use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::fortify_abi::*;
 
+#[test]
+fn wide_fortify_entrypoints_use_target_wchar_t() {
+    // These coercions are deliberately compile-time ABI assertions. Linux
+    // x86_64 has a signed `wchar_t`, while aarch64 has an unsigned one; a
+    // private fixed-width alias can therefore pass host tests but fail every
+    // call from aarch64 fortify wrappers.
+    let _: unsafe extern "C" fn(
+        *mut libc::wchar_t,
+        *const libc::wchar_t,
+        usize,
+    ) -> *mut libc::wchar_t = __wcscpy_chk;
+    let _: unsafe extern "C" fn(
+        *mut libc::wchar_t,
+        usize,
+        c_int,
+        usize,
+        *const libc::wchar_t,
+        *mut c_void,
+    ) -> c_int = __vswprintf_chk;
+}
+
 fn clear_errno() {
     unsafe { *__errno_location() = 0 };
 }
@@ -450,7 +471,7 @@ fn stpncpy_chk_n_over_real_buffer_aborts_child_process() {
 //                         __wmemset_chk
 // ===========================================================================
 
-type WcharT = c_int;
+type WcharT = libc::wchar_t;
 
 unsafe extern "C" fn call_vsprintf_chk(
     buf: *mut c_char,
@@ -533,8 +554,8 @@ unsafe extern "C" fn call_vsyslog_chk(priority: c_int, fmt: *const c_char, mut a
 
 #[test]
 fn wcscpy_chk_safe() {
-    let src: [WcharT; 4] = [b'H' as i32, b'i' as i32, b'!' as i32, 0];
-    let mut dest = [0i32; 8];
+    let src: [WcharT; 4] = [b'H' as WcharT, b'i' as WcharT, b'!' as WcharT, 0];
+    let mut dest = [0 as WcharT; 8];
     let ret = unsafe {
         __wcscpy_chk(
             dest.as_mut_ptr(),
@@ -563,13 +584,13 @@ fn wcscpy_chk_src_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wcsncpy_chk_safe() {
-    let src: [WcharT; 3] = [b'A' as i32, b'B' as i32, 0];
-    let mut dest = [0xFFi32; 4];
+    let src: [WcharT; 3] = [b'A' as WcharT, b'B' as WcharT, 0];
+    let mut dest = [0xFF as WcharT; 4];
     unsafe {
         __wcsncpy_chk(dest.as_mut_ptr(), src.as_ptr(), 4, 4 * 4);
     }
-    assert_eq!(dest[0], b'A' as i32);
-    assert_eq!(dest[1], b'B' as i32);
+    assert_eq!(dest[0], b'A' as WcharT);
+    assert_eq!(dest[1], b'B' as WcharT);
     assert_eq!(dest[2], 0); // null terminator from src
     assert_eq!(dest[3], 0); // padding
 }
@@ -592,16 +613,16 @@ fn wcsncpy_chk_n_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wcscat_chk_safe() {
-    let mut dest = [0i32; 8];
-    dest[0] = b'X' as i32;
+    let mut dest = [0 as WcharT; 8];
+    dest[0] = b'X' as WcharT;
     dest[1] = 0;
-    let src: [WcharT; 3] = [b'Y' as i32, b'Z' as i32, 0];
+    let src: [WcharT; 3] = [b'Y' as WcharT, b'Z' as WcharT, 0];
     unsafe {
         __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), 8 * 4);
     }
-    assert_eq!(dest[0], b'X' as i32);
-    assert_eq!(dest[1], b'Y' as i32);
-    assert_eq!(dest[2], b'Z' as i32);
+    assert_eq!(dest[0], b'X' as WcharT);
+    assert_eq!(dest[1], b'Y' as WcharT);
+    assert_eq!(dest[2], b'Z' as WcharT);
     assert_eq!(dest[3], 0);
 }
 
@@ -622,17 +643,17 @@ fn wcscat_chk_src_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wcsncat_chk_safe() {
-    let mut dest = [0i32; 8];
-    dest[0] = b'A' as i32;
+    let mut dest = [0 as WcharT; 8];
+    dest[0] = b'A' as WcharT;
     dest[1] = 0;
-    let src: [WcharT; 4] = [b'B' as i32, b'C' as i32, b'D' as i32, 0];
+    let src: [WcharT; 4] = [b'B' as WcharT, b'C' as WcharT, b'D' as WcharT, 0];
     // Append at most 2 wide chars
     unsafe {
         __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 2, 8 * 4);
     }
-    assert_eq!(dest[0], b'A' as i32);
-    assert_eq!(dest[1], b'B' as i32);
-    assert_eq!(dest[2], b'C' as i32);
+    assert_eq!(dest[0], b'A' as WcharT);
+    assert_eq!(dest[1], b'B' as WcharT);
+    assert_eq!(dest[2], b'C' as WcharT);
     assert_eq!(dest[3], 0);
 }
 
@@ -655,7 +676,7 @@ fn wcsncat_chk_n_over_real_buffer_aborts_child_process() {
 #[test]
 fn wmemcpy_chk_safe() {
     let src: [WcharT; 3] = [100, 200, 300];
-    let mut dest = [0i32; 4];
+    let mut dest = [0 as WcharT; 4];
     let ret = unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, 4 * 4) };
     assert_eq!(ret, dest.as_mut_ptr());
     assert_eq!(&dest[..3], &[100, 200, 300]);
@@ -679,7 +700,7 @@ fn wmemcpy_chk_n_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wmemmove_chk_safe() {
-    let mut buf = [1i32, 2, 3, 4, 0, 0];
+    let mut buf: [WcharT; 6] = [1, 2, 3, 4, 0, 0];
     // Overlapping move: shift right by 2
     unsafe {
         __wmemmove_chk(
@@ -710,7 +731,7 @@ fn wmemmove_chk_n_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wmemset_chk_safe() {
-    let mut buf = [0i32; 5];
+    let mut buf = [0 as WcharT; 5];
     let ret = unsafe { __wmemset_chk(buf.as_mut_ptr(), 42, 5, 5 * 4) };
     assert_eq!(ret, buf.as_mut_ptr());
     assert_eq!(buf, [42; 5]);
@@ -1465,12 +1486,12 @@ fn ppoll_chk_nfds_byte_count_overflow_aborts_child_process() {
 #[test]
 fn mbstowcs_chk_safe() {
     let src = CString::new("abc").unwrap();
-    let mut dest = [0i32; 8];
+    let mut dest = [0 as WcharT; 8];
     let n = unsafe { __mbstowcs_chk(dest.as_mut_ptr(), src.as_ptr(), 8, 8 * 4) };
     assert_eq!(n, 3);
-    assert_eq!(dest[0], b'a' as i32);
-    assert_eq!(dest[1], b'b' as i32);
-    assert_eq!(dest[2], b'c' as i32);
+    assert_eq!(dest[0], b'a' as WcharT);
+    assert_eq!(dest[1], b'b' as WcharT);
+    assert_eq!(dest[2], b'c' as WcharT);
 }
 
 #[test]
@@ -1489,7 +1510,7 @@ fn mbstowcs_chk_n_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wcstombs_chk_safe() {
-    let src: [WcharT; 4] = [b'x' as i32, b'y' as i32, b'z' as i32, 0];
+    let src: [WcharT; 4] = [b'x' as WcharT, b'y' as WcharT, b'z' as WcharT, 0];
     let mut dest = [0u8; 16];
     let n = unsafe { __wcstombs_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 16, 16) };
     assert_eq!(n, 3);
@@ -1655,7 +1676,7 @@ fn host_wctomb_chk_boundary_is_mb_cur_max_not_mb_len_max() {
 fn mbsrtowcs_chk_safe() {
     let src_str = CString::new("hi").unwrap();
     let mut src_ptr: *const c_char = src_str.as_ptr();
-    let mut dest = [0i32; 8];
+    let mut dest = [0 as WcharT; 8];
     let n = unsafe {
         __mbsrtowcs_chk(
             dest.as_mut_ptr(),
@@ -1666,8 +1687,8 @@ fn mbsrtowcs_chk_safe() {
         )
     };
     assert_eq!(n, 2);
-    assert_eq!(dest[0], b'h' as i32);
-    assert_eq!(dest[1], b'i' as i32);
+    assert_eq!(dest[0], b'h' as WcharT);
+    assert_eq!(dest[1], b'i' as WcharT);
 }
 
 #[test]
@@ -1690,7 +1711,7 @@ fn mbsrtowcs_chk_n_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wcsrtombs_chk_safe() {
-    let src_arr: [WcharT; 3] = [b'A' as i32, b'B' as i32, 0];
+    let src_arr: [WcharT; 3] = [b'A' as WcharT, b'B' as WcharT, 0];
     let mut src_ptr: *const WcharT = src_arr.as_ptr();
     let mut dest = [0u8; 16];
     let n = unsafe {
@@ -2315,7 +2336,7 @@ fn vsyslog_chk_does_not_crash() {
 fn mbsnrtowcs_chk_basic() {
     let src_str = CString::new("abc").unwrap();
     let mut src_ptr: *const c_char = src_str.as_ptr();
-    let mut dest = [0i32; 8];
+    let mut dest = [0 as WcharT; 8];
     let n = unsafe {
         __mbsnrtowcs_chk(
             dest.as_mut_ptr(),
@@ -2327,9 +2348,9 @@ fn mbsnrtowcs_chk_basic() {
         )
     };
     assert_eq!(n, 3);
-    assert_eq!(dest[0], b'a' as i32);
-    assert_eq!(dest[1], b'b' as i32);
-    assert_eq!(dest[2], b'c' as i32);
+    assert_eq!(dest[0], b'a' as WcharT);
+    assert_eq!(dest[1], b'b' as WcharT);
+    assert_eq!(dest[2], b'c' as WcharT);
 }
 
 #[test]
@@ -2357,13 +2378,13 @@ fn mbsnrtowcs_chk_n_over_real_buffer_aborts_child_process() {
 
 #[test]
 fn wcsnrtombs_chk_basic() {
-    let src_arr: [c_int; 4] = [b'X' as i32, b'Y' as i32, b'Z' as i32, 0];
-    let mut src_ptr: *const c_int = src_arr.as_ptr();
+    let src_arr: [WcharT; 4] = [b'X' as WcharT, b'Y' as WcharT, b'Z' as WcharT, 0];
+    let mut src_ptr: *const WcharT = src_arr.as_ptr();
     let mut dest = [0u8; 16];
     let n = unsafe {
         __wcsnrtombs_chk(
             dest.as_mut_ptr().cast(),
-            &mut src_ptr as *mut *const c_int,
+            &mut src_ptr as *mut *const WcharT,
             3,  // nwc (max wchar_t to consume)
             16, // len (max bytes to write)
             std::ptr::null_mut(),
@@ -2420,7 +2441,7 @@ fn fwprintf_chk_to_devnull() {
     let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
     assert!(!fp.is_null());
 
-    let fmt: [WcharT; 3] = [b'%' as i32, b'd' as i32, 0];
+    let fmt: [WcharT; 3] = [b'%' as WcharT, b'd' as WcharT, 0];
     let ret = unsafe { __fwprintf_chk(fp.cast(), 0, fmt.as_ptr(), 22i32) };
     assert!(ret > 0, "__fwprintf_chk should return positive char count");
 
@@ -2434,7 +2455,7 @@ fn vfwprintf_chk_to_devnull() {
     let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
     assert!(!fp.is_null());
 
-    let fmt: [WcharT; 3] = [b'%' as i32, b'd' as i32, 0];
+    let fmt: [WcharT; 3] = [b'%' as WcharT, b'd' as WcharT, 0];
     let ret = unsafe { call_vfwprintf_chk(fp.cast(), fmt.as_ptr(), 33i32) };
     assert!(ret > 0, "__vfwprintf_chk should return positive char count");
 
@@ -2447,8 +2468,8 @@ fn vfwprintf_chk_to_devnull() {
 
 #[test]
 fn swprintf_chk_basic() {
-    let mut dest = [0i32; 32];
-    let fmt: [c_int; 5] = [b'%' as i32, b'd' as i32, b'!' as i32, 0, 0];
+    let mut dest = [0 as WcharT; 32];
+    let fmt: [WcharT; 5] = [b'%' as WcharT, b'd' as WcharT, b'!' as WcharT, 0, 0];
     let ret = unsafe {
         __swprintf_chk(
             dest.as_mut_ptr(),
@@ -2461,9 +2482,9 @@ fn swprintf_chk_basic() {
     };
     assert!(ret > 0, "__swprintf_chk should return positive count");
     // Should produce "99!" as wide characters
-    assert_eq!(dest[0], b'9' as i32);
-    assert_eq!(dest[1], b'9' as i32);
-    assert_eq!(dest[2], b'!' as i32);
+    assert_eq!(dest[0], b'9' as WcharT);
+    assert_eq!(dest[1], b'9' as WcharT);
+    assert_eq!(dest[2], b'!' as WcharT);
     assert_eq!(dest[3], 0);
 }
 
@@ -2518,12 +2539,12 @@ fn fgetws_chk_reads_wide_chars() {
     let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
     assert!(!fp.is_null());
 
-    let mut buf = [0i32; 32];
+    let mut buf = [0 as WcharT; 32];
     let ret = unsafe { __fgetws_chk(buf.as_mut_ptr(), 32 * 4, 32, fp.cast()) };
     if !ret.is_null() {
         // Should have read "hello\n" as wide chars
-        assert_eq!(buf[0], b'h' as i32);
-        assert_eq!(buf[1], b'e' as i32);
+        assert_eq!(buf[0], b'h' as WcharT);
+        assert_eq!(buf[1], b'e' as WcharT);
     }
 
     unsafe {
@@ -2546,11 +2567,11 @@ fn fgetws_unlocked_chk_reads_wide_chars() {
     let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
     assert!(!fp.is_null());
 
-    let mut buf = [0i32; 32];
+    let mut buf = [0 as WcharT; 32];
     let ret = unsafe { __fgetws_unlocked_chk(buf.as_mut_ptr(), 32 * 4, 32, fp.cast()) };
     if !ret.is_null() {
-        assert_eq!(buf[0], b'w' as i32);
-        assert_eq!(buf[1], b'i' as i32);
+        assert_eq!(buf[0], b'w' as WcharT);
+        assert_eq!(buf[1], b'i' as WcharT);
     }
 
     unsafe {
