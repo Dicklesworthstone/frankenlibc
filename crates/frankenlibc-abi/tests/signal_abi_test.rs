@@ -14,6 +14,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::signal_abi::{
     __libc_current_sigrtmax, __libc_current_sigrtmin, SIGNAL_SAFETY_MAP, SignalCriticalSectionKind,
@@ -1177,6 +1180,31 @@ fn siginterrupt_invalid_signal_sets_errno() {
         errno::EINVAL,
         "invalid siginterrupt signal should preserve EINVAL"
     );
+}
+
+#[test]
+fn siginterrupt_invalid_signal_matches_live_glibc_errno() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    type Siginterrupt = unsafe extern "C" fn(c_int, c_int) -> c_int;
+    type ErrnoLocation = unsafe extern "C" fn() -> *mut c_int;
+
+    let host_siginterrupt: Siginterrupt =
+        unsafe { dlsym_oracle::host_fn(c"siginterrupt", siginterrupt as *const ()) };
+    let host_errno_location: ErrnoLocation =
+        unsafe { dlsym_oracle::host_fn(c"__errno_location", __errno_location as *const ()) };
+
+    for &(signal, flag) in &[(0, 0), (0, 1), (-1, 0), (-1, 1)] {
+        unsafe { *host_errno_location() = errno::E2BIG };
+        let expected = unsafe { (host_siginterrupt(signal, flag), *host_errno_location()) };
+
+        unsafe { *__errno_location() = errno::E2BIG };
+        let actual = unsafe { (siginterrupt(signal, flag), *__errno_location()) };
+
+        assert_eq!(
+            actual, expected,
+            "siginterrupt({signal}, {flag}) must match live glibc's return/errno pair"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
