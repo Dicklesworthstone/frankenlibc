@@ -6061,9 +6061,9 @@ pub unsafe extern "C" fn ns_sprintrrf(
     msg: *const u8,
     msglen: usize,
     name: *const c_char,
-    class: u16,
-    ty: u16,
-    ttl: u32,
+    class: c_int,
+    ty: c_int,
+    ttl: libc::c_ulong,
     rdata: *const u8,
     rdlen: usize,
     _name_ctx: *const c_char,
@@ -6108,6 +6108,11 @@ pub unsafe extern "C" fn ns_sprintrrf(
     out.push_str(&String::from_utf8_lossy(&ttl_buf[..ttl_n as usize]));
     out.push(' ');
 
+    // `ns_class` and `ns_type` are C enums, hence `int` at this ABI
+    // boundary. DNS values themselves are 16-bit on the wire, which is the
+    // representation the formatter helpers consume.
+    let class = class as u16;
+    let ty = ty as u16;
     write_class_into(class, &mut out);
     out.push(' ');
     write_type_into(ty, &mut out);
@@ -6208,7 +6213,18 @@ pub unsafe extern "C" fn ns_sprintrr(
     let rdlen = unsafe { (*rr).rdlength } as usize;
     unsafe {
         ns_sprintrrf(
-            msg, msglen, name, class, ty, ttl, rdata, rdlen, name_ctx, origin, buf, buflen,
+            msg,
+            msglen,
+            name,
+            c_int::from(class),
+            c_int::from(ty),
+            libc::c_ulong::from(ttl),
+            rdata,
+            rdlen,
+            name_ctx,
+            origin,
+            buf,
+            buflen,
         )
     }
 }

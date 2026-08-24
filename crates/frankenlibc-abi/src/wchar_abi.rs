@@ -4995,6 +4995,115 @@ fn finish_swprintf(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> c_int {
     wide_count as c_int
 }
 
+/// Finish a wide-only rendering without passing its internal UTF-8 transport
+/// through the caller's multibyte locale.  The format literals and `%lc`/`%ls`
+/// arguments already began as wide characters; applying `LC_CTYPE` to them on
+/// the way back would create a conversion glibc never performs.
+fn finish_swprintf_wide_origin(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> Option<c_int> {
+    let rendered = std::str::from_utf8(rendered).ok()?;
+    let wide_count = rendered.chars().count();
+    if !s.is_null() && n != 0 {
+        let copy_len = wide_count.min(n.saturating_sub(1));
+        for (index, ch) in rendered.chars().take(copy_len).enumerate() {
+            // SAFETY: `index < copy_len < n`, so each output character and the
+            // terminator below are inside the caller-provided destination.
+            unsafe { *s.add(index) = ch as u32 as libc::wchar_t };
+        }
+        // SAFETY: `copy_len < n` whenever `n != 0`.
+        unsafe { *s.add(copy_len) = 0 };
+    }
+    Some(if wide_count >= n {
+        -1
+    } else {
+        wide_count as c_int
+    })
+}
+
+/// True when the wide printf renderer's byte buffer contains only its own
+/// UTF-8 transport: wide literals, ASCII integer output, and wide `%lc`/`%ls`
+/// output.  A narrow `%s` remains deliberately excluded because those bytes
+/// are caller multibyte data and must still be checked by `LC_CTYPE`.
+unsafe fn wide_format_has_only_wide_origin(format: *const libc::wchar_t) -> bool {
+    let mut cursor = format;
+    loop {
+        let wc = unsafe { *cursor } as u32;
+        if wc == 0 {
+            return true;
+        }
+        if wc > 0x10ffff {
+            return false;
+        }
+        if wc != b'%' as u32 {
+            cursor = unsafe { cursor.add(1) };
+            continue;
+        }
+
+        cursor = unsafe { cursor.add(1) };
+        if unsafe { *cursor } as u32 == b'%' as u32 {
+            cursor = unsafe { cursor.add(1) };
+            continue;
+        }
+        while {
+            let flag = unsafe { *cursor } as u32;
+            flag == b'-' as u32
+                || flag == b'+' as u32
+                || flag == b' ' as u32
+                || flag == b'#' as u32
+                || flag == b'0' as u32
+        } {
+            cursor = unsafe { cursor.add(1) };
+        }
+        while {
+            let digit = unsafe { *cursor } as u32;
+            digit >= b'0' as u32 && digit <= b'9' as u32
+        } {
+            cursor = unsafe { cursor.add(1) };
+        }
+        if unsafe { *cursor } as u32 == b'.' as u32 {
+            cursor = unsafe { cursor.add(1) };
+            while {
+                let digit = unsafe { *cursor } as u32;
+                digit >= b'0' as u32 && digit <= b'9' as u32
+            } {
+                cursor = unsafe { cursor.add(1) };
+            }
+        }
+
+        let length = unsafe { *cursor } as u32;
+        if length == b'h' as u32
+            || length == b'l' as u32
+            || length == b'j' as u32
+            || length == b'z' as u32
+            || length == b't' as u32
+            || length == b'L' as u32
+        {
+            cursor = unsafe { cursor.add(1) };
+            if (length == b'h' as u32 || length == b'l' as u32)
+                && unsafe { *cursor } as u32 == length
+            {
+                cursor = unsafe { cursor.add(1) };
+            }
+        }
+
+        let conversion = unsafe { *cursor } as u32;
+        let ascii_integer = conversion == b'd' as u32
+            || conversion == b'i' as u32
+            || conversion == b'u' as u32
+            || conversion == b'o' as u32
+            || conversion == b'x' as u32
+            || conversion == b'X' as u32;
+        let wide_conversion = (length == b'l' as u32
+            && (conversion == b'c' as u32 || conversion == b's' as u32))
+            || conversion == b'C' as u32
+            || conversion == b'S' as u32;
+        let allowed = ascii_integer || wide_conversion;
+        if !allowed {
+            return false;
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+}
+
 #[inline]
 unsafe fn is_exact_wide_percent_ls(format: *const libc::wchar_t) -> bool {
     unsafe {
@@ -5494,6 +5603,12 @@ pub unsafe extern "C" fn swprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+
+    if unsafe { wide_format_has_only_wide_origin(format) }
+        && let Some(result) = finish_swprintf_wide_origin(&rendered, s, n)
+    {
+        return result;
+    }
 
     // swprintf: if the output (including NUL) would exceed n, return -1 — but
     // glibc still writes the TRUNCATED prefix (min(n-1, produced) wide chars)
