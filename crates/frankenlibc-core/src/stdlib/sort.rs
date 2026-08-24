@@ -6,6 +6,8 @@ const MAX_INSERTION: usize = 20;
 const INSERTION_STACK_SCRATCH: usize = 64;
 const I32_FAST_LANE_MIN: usize = 64;
 const I32_FAST_LANE_MAX: usize = 2048;
+const I64_FAST_LANE_MIN: usize = 64;
+const I64_FAST_LANE_MAX: usize = 2048;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -45,6 +47,18 @@ where
         if try_qsort_i32_natural_fast_lane(base, num, &compare) {
             return;
         }
+    }
+
+    // RESTORED, bd-nas5rt. This arm shipped in cf6ff4df6 and was deleted 16 days
+    // later by 51c39dec3, whose message advertises only the i32 lane it added.
+    // Without it a `qsort` over `int64_t`/pointers -- the width every sort of a
+    // pointer array uses -- had no fast lane at all and paid an indirect call
+    // per comparison through pdqsort.
+    if width == 8
+        && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num)
+        && try_qsort_i64_natural_fast_lane(base, num, &compare)
+    {
+        return;
     }
 
     // Number of imbalanced partitions tolerated before falling back to
@@ -94,6 +108,81 @@ where
 {
     let mut prev = &active[..4];
     for current in active[4..].chunks_exact(4) {
+        if compare(prev, current) > 0 {
+            return false;
+        }
+        prev = current;
+    }
+    true
+}
+
+fn try_qsort_i64_natural_fast_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active_len = num * 8;
+    let active = &mut base[..active_len];
+    let mut original = Vec::with_capacity(num);
+    let mut values = Vec::with_capacity(num);
+    for chunk in active.chunks_exact(8) {
+        let bytes = [
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ];
+        original.push(bytes);
+        values.push(i64::from_ne_bytes(bytes));
+    }
+
+    // Each attempt writes the current `values` order into `active` and checks it
+    // against the caller's comparator, committing (returning) iff the arrangement
+    // is non-decreasing. A comparator matching none of the natural integer
+    // orderings (float, struct / partial key, …) falls through with the original
+    // bytes restored, exactly as before.
+    macro_rules! commit_if_ordered {
+        () => {{
+            for (chunk, value) in active.chunks_exact_mut(8).zip(&values) {
+                chunk.copy_from_slice(&value.to_ne_bytes());
+            }
+            if qsort_i64_candidate_is_ordered(active, compare) {
+                return true;
+            }
+        }};
+    }
+
+    // Signed ascending (the dominant int64_t / pointer / index case) then signed
+    // descending (top-N / recent-first). Descending is the ascending sort
+    // reversed, so it costs an O(n) reverse, not a second O(n log n) sort.
+    values.sort_unstable();
+    commit_if_ordered!();
+    values.reverse();
+    commit_if_ordered!();
+
+    // Unsigned ascending + descending (u64 sizes / hashes / ids). Without these,
+    // unsigned keys in the fast-lane window verify-fail above and drop to the
+    // generic byte sort, which pays the caller's FFI comparator on every one of
+    // its O(n log n) comparisons — the exact cost the fast lane avoids. Only
+    // attempted when some key has the top bit set: otherwise the unsigned order
+    // equals the signed arrangement already rejected, so a non-integer comparator
+    // pays nothing extra. `*v as u64` reinterprets the bits (an `as` cast between
+    // equal-width ints is bit-preserving), reusing the buffer with no allocation.
+    if values.iter().any(|&v| v < 0) {
+        values.sort_unstable_by(|a, b| (*a as u64).cmp(&(*b as u64)));
+        commit_if_ordered!();
+        values.reverse();
+        commit_if_ordered!();
+    }
+
+    for (chunk, bytes) in active.chunks_exact_mut(8).zip(original) {
+        chunk.copy_from_slice(&bytes);
+    }
+    false
+}
+
+fn qsort_i64_candidate_is_ordered<F>(active: &[u8], compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let mut prev = &active[..8];
+    for current in active[8..].chunks_exact(8) {
         if compare(prev, current) > 0 {
             return false;
         }
@@ -708,6 +797,192 @@ fn compare_translated(a: &[u8], b: &[u8], table: Option<&[u8; 256]>) -> core::cm
 mod sort_variant_tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    /// The width-8 fast lane must actually be TAKEN, not merely produce sorted
+    /// output (bd-nas5rt).
+    ///
+    /// This is the shape the four existing qsort gates lack, and it is why the
+    /// lane's deletion in 51c39dec3 went unnoticed for two months: they compare
+    /// sorted output against glibc, and `pdqsort_recurse` sorts correctly too,
+    /// so every one of them stayed green while the lane was gone.
+    ///
+    /// Comparator CALL COUNT separates the two paths without needing a counter
+    /// in production code. The lane sorts the raw `i64` values with the
+    /// standard-library sort and then verifies the candidate against the
+    /// caller's comparator on adjacent pairs only — exactly `num - 1` calls.
+    /// `pdqsort_recurse` needs O(num log num); for num = 512 that is several
+    /// thousand. A bound of `2 * num` cannot be met by any comparison sort, so
+    /// this assertion cannot pass on the fallback path.
+    #[test]
+    fn width8_fast_lane_is_taken_not_just_correct() {
+        use std::cell::Cell;
+
+        const NUM: usize = 512;
+        // SCRAMBLED input, and the choice is load-bearing. A descending array is
+        // the obvious way to make the lane's own sort do real work, and it makes
+        // this test HOLLOW: the surviving monotonic-detect lane recognises
+        // reverse order in one n-1 pass and reverses in place, so the assertion
+        // below passed with the i64 lane DISABLED (verified by building that arm).
+        // A scrambled permutation is monotone in neither direction, so nothing
+        // but the natural lane can reach the bound.
+        let mut buf = Vec::with_capacity(NUM * 8);
+        let mut x: u64 = 0x243F_6A88_85A3_08D3;
+        let mut order: Vec<i64> = (0..NUM as i64).collect();
+        for i in (1..NUM).rev() {
+            // xorshift64*, so the permutation is fixed and reproducible.
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            order.swap(i, (x.wrapping_mul(0x2545_F491_4F6C_DD1D) as usize) % (i + 1));
+        }
+        assert!(
+            !order.windows(2).all(|w| w[0] <= w[1]) && !order.windows(2).all(|w| w[0] >= w[1]),
+            "the shuffled input came out monotone, so a monotonic lane could serve \
+             it and this test would not exercise the width-8 natural lane"
+        );
+        for i in &order {
+            buf.extend_from_slice(&i.to_ne_bytes());
+        }
+
+        let calls = Cell::new(0usize);
+        let counting = |a: &[u8], b: &[u8]| -> i32 {
+            calls.set(calls.get() + 1);
+            let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+            let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+            av.cmp(&bv) as i32
+        };
+
+        qsort(&mut buf, 8, counting);
+
+        let out: Vec<i64> = buf
+            .chunks_exact(8)
+            .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+            .collect();
+        assert!(out.windows(2).all(|w| w[0] <= w[1]), "output is not sorted");
+        assert_eq!(out[0], 0);
+        assert_eq!(out[NUM - 1], NUM as i64 - 1);
+
+        let lane_calls = calls.get();
+
+        // NEGATIVE CONTROL, in the same binary and the same run: the identical
+        // values at width 16, which has no fast lane, so pdqsort must serve it.
+        // Without this the bound below is an unchecked constant, and an
+        // out-of-band "disable the lane and rebuild" arm proved a poor substitute
+        // -- run twice, it reported the test as hollow both times because rch had
+        // served a STALE artifact (identical overlay hash across a source change,
+        // frankenlibc-core recompiled zero times). A control that travels with the
+        // test cannot go stale relative to it.
+        let mut wide = Vec::with_capacity(NUM * 16);
+        for i in &order {
+            wide.extend_from_slice(&i.to_ne_bytes());
+            wide.extend_from_slice(&0i64.to_ne_bytes());
+        }
+        let wide_calls = Cell::new(0usize);
+        let wide_cmp = |a: &[u8], b: &[u8]| -> i32 {
+            wide_calls.set(wide_calls.get() + 1);
+            let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+            let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+            av.cmp(&bv) as i32
+        };
+        qsort(&mut wide, 16, wide_cmp);
+        let wide_out: Vec<i64> = wide
+            .chunks_exact(16)
+            .map(|c| i64::from_ne_bytes(c[..8].try_into().unwrap()))
+            .collect();
+        assert!(
+            wide_out.windows(2).all(|w| w[0] <= w[1]),
+            "width-16 control did not sort"
+        );
+        assert!(
+            wide_calls.get() > 2 * NUM,
+            "the width-16 control took only {} comparator calls for {NUM} elements, \
+             so SOME fast path served it too and it is not a valid no-lane baseline",
+            wide_calls.get()
+        );
+
+        assert!(
+            lane_calls <= 2 * NUM,
+            "qsort made {lane_calls} comparator calls for {NUM} width-8 elements \
+             against {} for the identical values at width 16. The width-8 fast lane \
+             verifies adjacent pairs in {} calls, so this many means the lane was \
+             NOT taken and pdqsort ran instead (bd-nas5rt: the lane was deleted once \
+             already and every output-only gate stayed green through it)",
+            wide_calls.get(),
+            NUM - 1
+        );
+    }
+
+    /// The lane must ROLL BACK when the caller's comparator disagrees with
+    /// integer order, and the result must obey the caller's comparator.
+    ///
+    /// This is the other half: a lane that committed unconditionally would pass
+    /// the test above and silently reorder data for every caller whose
+    /// comparator is not natural `i64` ascending.
+    ///
+    /// Choosing the key took two wrong answers, and the test now ASSERTS ITS OWN
+    /// PREMISE so it cannot take a third.
+    ///
+    /// A descending comparator is the obvious choice and it is wrong: this file
+    /// still has a monotonic-detect lane that recognises reverse-ordered input in
+    /// one n-1 pass and reverses in place, so descending is served correctly and
+    /// cheaply by a DIFFERENT fast path. `v.rotate_left(17)` is also wrong: for
+    /// `v < 2^47` it is just `v << 17`, which is ORDER-PRESERVING, so the natural
+    /// lane commits and is right to. Both times every correctness assertion
+    /// passed and only the call-count bound failed — the test was wrong, not the
+    /// code.
+    ///
+    /// A Fibonacci-hash multiply scrambles the order thoroughly, and the
+    /// `expected != natural` assertion below proves that for the actual data
+    /// rather than trusting the arithmetic.
+    #[test]
+    fn width8_fast_lane_rolls_back_for_a_disagreeing_comparator() {
+        use std::cell::Cell;
+
+        const NUM: usize = 512;
+        let mut buf = Vec::with_capacity(NUM * 8);
+        for i in 0..NUM as i64 {
+            buf.extend_from_slice(&i.to_ne_bytes());
+        }
+
+        let key = |v: i64| (v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let calls = Cell::new(0usize);
+        let rotated = |a: &[u8], b: &[u8]| -> i32 {
+            calls.set(calls.get() + 1);
+            let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+            let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+            key(av).cmp(&key(bv)) as i32
+        };
+
+        qsort(&mut buf, 8, rotated);
+
+        let out: Vec<i64> = buf
+            .chunks_exact(8)
+            .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+            .collect();
+        assert!(
+            out.windows(2).all(|w| key(w[0]) <= key(w[1])),
+            "output does not obey the caller's comparator — the fast lane \
+             committed a natural-order arrangement it should have rolled back"
+        );
+        let natural: Vec<i64> = (0..NUM as i64).collect();
+        let mut expected = natural.clone();
+        expected.sort_by_key(|v| key(*v));
+        // THE PREMISE, asserted rather than assumed: this comparator must really
+        // disagree with natural i64 order on this data, or the lane is entitled
+        // to commit and the count bound below would be testing nothing.
+        assert_ne!(
+            expected, natural,
+            "the chosen key is order-preserving on this data, so it cannot force \
+             the lane to roll back — pick a key that actually permutes"
+        );
+        assert_eq!(out, expected, "output is not the comparator's total order");
+        assert!(
+            calls.get() > 2 * NUM,
+            "only {} comparator calls: the lane appears to have COMMITTED for a \
+             comparator that disagrees with integer order",
+            calls.get()
+        );
+    }
 
     fn cmp_u32_le(a: &[u8], b: &[u8]) -> i32 {
         let av = u32::from_le_bytes(a[..4].try_into().unwrap());
