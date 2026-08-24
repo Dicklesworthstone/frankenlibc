@@ -285,6 +285,18 @@ fn c_utf8_locale_still_decodes_utf8() {
     assert_eq!(fl_cs, host_cs, "CODESET under LC_ALL=C.UTF-8");
     assert_eq!(fl_cs, b"UTF-8");
 
+    // LC_TIME names are static C-locale table entries, not LC_CTYPE data.
+    // This guards the strict fast path that returns them before consulting the
+    // active charset used by CODESET and the multibyte codec.
+    let (fl_day, host_day) = unsafe {
+        (
+            text(fl_nl_langinfo(libc::DAY_1)),
+            text((host().nl_langinfo)(libc::DAY_1)),
+        )
+    };
+    assert_eq!(fl_day, host_day, "DAY_1 under LC_ALL=C.UTF-8");
+    assert_eq!(fl_day, b"Sunday");
+
     // SAFETY: no arguments.
     let (fl_max, host_max) = unsafe { (fl_mb_cur_max(), (host().mb_cur_max)()) };
     assert_eq!(fl_max, host_max, "MB_CUR_MAX under LC_ALL=C.UTF-8");

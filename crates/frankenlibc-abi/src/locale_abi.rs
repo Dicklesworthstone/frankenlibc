@@ -614,6 +614,16 @@ fn langinfo_value_for(charset: Charset, item: libc::nl_item) -> &'static [u8] {
     if let Some(value) = lc_time_name(item) {
         return value;
     }
+    langinfo_non_lc_time_value_for(charset, item)
+}
+
+/// Lookup for selectors outside the immutable dense `LC_TIME` name block.
+///
+/// Keeping this separate lets strict `nl_langinfo` return a day/month name
+/// before reading `LC_CTYPE`: those names never depend on the active charset,
+/// while `CODESET` still must observe it.
+#[inline]
+fn langinfo_non_lc_time_value_for(charset: Charset, item: libc::nl_item) -> &'static [u8] {
     match item {
         libc::CODESET => codeset_for(charset),
         libc::RADIXCHAR => C_LOCALE_RADIX,
@@ -712,10 +722,15 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
     // Strict mode cannot repair or deny this scalar selector, and every result
-    // points into the immutable C-locale table above. Hardened mode and tests
-    // retain the full policy path.
+    // points into the immutable C-locale table above. The LC_TIME name block
+    // is also charset-independent, so avoid its otherwise-unneeded LC_CTYPE
+    // acquire load on the per-call path. Hardened mode and tests retain the
+    // full policy path.
     if runtime_policy::strict_passthrough_active() {
-        return langinfo_value_for(active_charset(), item).as_ptr() as *const c_char;
+        if let Some(value) = lc_time_name(item) {
+            return value.as_ptr() as *const c_char;
+        }
+        return langinfo_non_lc_time_value_for(active_charset(), item).as_ptr() as *const c_char;
     }
     nl_langinfo_with_policy(item)
 }
