@@ -43,6 +43,19 @@ type QsortFn = unsafe extern "C" fn(*mut c_void, usize, usize, Option<ComparFn>)
 /// form rather than a correct one is deliberate: it is what the fast lane has to
 /// cope with, and a driver that used `a < b ? -1 : ...` would measure a case the
 /// real world does not send.
+unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> i32 {
+    // SAFETY: the driver only passes pointers to 4-byte elements of its own
+    // buffer when it selects this comparator.
+    let (av, bv) = unsafe { (*(a as *const i32), *(b as *const i32)) };
+    if av < bv {
+        -1
+    } else if av > bv {
+        1
+    } else {
+        0
+    }
+}
+
 unsafe extern "C" fn cmp_i64(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: the loop below only ever passes pointers to 8-byte elements of its
     // own buffer.
@@ -102,10 +115,39 @@ fn scrambled(n: usize) -> Vec<i64> {
     v
 }
 
-fn main() {
-    let arm = std::env::args().nth(1).unwrap_or_else(|| "fl".to_string());
+/// SHA-256 of the running binary, read from `/proc/self/exe`.
+///
+/// Self-reported rather than taken from the shell that launched it: a hash
+/// computed outside the process can describe a DIFFERENT file if the target
+/// directory was rewritten between build and run, which is exactly how a stale
+/// artifact gets certified. This one cannot be wrong about which bytes are
+/// executing.
+fn self_elf_sha256() -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read("/proc/self/exe").expect("read /proc/self/exe");
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
 
-    let qsort_fn: QsortFn = match arm.as_str() {
+/// Live thread count from `/proc/self/status`, reported rather than assumed.
+///
+/// A second runnable thread would make the arms share a core and is the first
+/// thing to suspect in an anomalous row, so the count belongs in the output
+/// beside the numbers rather than in an assumption.
+fn thread_count() -> usize {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("Threads:"))
+                .and_then(|l| l.split_whitespace().nth(1).and_then(|n| n.parse().ok()))
+        })
+        .unwrap_or(0)
+}
+
+fn resolve(arm: &str) -> QsortFn {
+    match arm {
         "fl" => frankenlibc_abi::stdlib_abi::qsort as QsortFn,
         "glibc" => {
             // A NEW link map, so the incumbent is untouched by fl's interposition.
@@ -131,40 +173,104 @@ fn main() {
             unsafe { std::mem::transmute::<*mut c_void, QsortFn>(sym) }
         }
         other => panic!("unknown arm {other:?}; expected 'fl' or 'glibc'"),
-    };
+    }
+}
 
-    let rounds = rounds();
+/// Sort `rounds` copies of `source` through `qsort_fn`, at `width` bytes per
+/// element.
+///
+/// `width` selects which lane the call is eligible for: 4 is the i32 lane, 8 the
+/// i64 lane, and 16 is wider than any lane so it is served by `pdqsort` in fl and
+/// by the generic sort in glibc — a control that isolates how much of the gap is
+/// the lane rather than the surrounding machinery.
+fn drive(qsort_fn: QsortFn, source: &[i64], width: usize, rounds: usize) -> u64 {
+    let size = source.len();
     let mut checksum = 0u64;
+    for _ in 0..rounds {
+        // Rebuild from the same source each round, so every round sorts the SAME
+        // unsorted input. Re-sorting an already-sorted array would measure the
+        // monotonic-detect lane from round two onward.
+        // Write exactly `width` bytes per element. Writing eight at a
+        // FOUR-byte stride runs the last element past the end of the buffer,
+        // which aborted every width-4 case of the first sweep — a defect in this
+        // driver, not in either sort.
+        let mut buf = vec![0u8; size * width];
+        let compar = if width == 4 {
+            for (i, v) in source.iter().enumerate() {
+                buf[i * 4..i * 4 + 4].copy_from_slice(&(*v as i32).to_ne_bytes());
+            }
+            cmp_i32 as ComparFn
+        } else {
+            for (i, v) in source.iter().enumerate() {
+                buf[i * width..i * width + 8].copy_from_slice(&v.to_ne_bytes());
+            }
+            cmp_i64 as ComparFn
+        };
+        // SAFETY: `buf` holds `size` elements of `width` bytes and the comparator
+        // reads only the leading 4 or 8 bytes of each pointer it is given.
+        unsafe {
+            qsort_fn(
+                buf.as_mut_ptr().cast::<c_void>(),
+                std::hint::black_box(size),
+                width,
+                Some(compar),
+            );
+        }
+        // Order-sensitive fold, NOT an XOR: an XOR over a permutation of 0..n is
+        // the same for every ordering, so it would be identical whether or not
+        // the sort ran.
+        let read = |off: usize| -> i64 {
+            if width == 4 {
+                i32::from_ne_bytes(buf[off..off + 4].try_into().unwrap()) as i64
+            } else {
+                i64::from_ne_bytes(buf[off..off + 8].try_into().unwrap())
+            }
+        };
+        let first = read(0);
+        let last = read((size - 1) * width);
+        checksum = checksum
+            .wrapping_mul(0x100_0000_01b3)
+            .wrapping_add(first as u64)
+            .wrapping_add((last as u64) << 2);
+    }
+    checksum
+}
 
+fn main() {
+    // Both arms run in ONE process, so callgrind attributes each to its own
+    // function and the comparison is same-invocation rather than
+    // across-process. `--separate-callers` is not needed: fl's `qsort` and
+    // glibc's sort are distinct symbols in distinct objects.
+    let rounds = rounds();
     let sizes = sizes();
+    let width: usize = std::env::var("QSORT_WIDTH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+
+    let fl = resolve("fl");
+    let glibc = resolve("glibc");
+
+    println!(
+        "QSORT_PROVENANCE elf_sha256={} threads={} width={width} rounds={rounds} sizes={sizes:?}",
+        self_elf_sha256(),
+        thread_count()
+    );
+
     for size in sizes.iter().copied() {
         let source = scrambled(size);
-        for _ in 0..rounds {
-            // Re-scramble from the same source each round so every round sorts
-            // the SAME unsorted input. Sorting an already-sorted array would
-            // measure the monotonic lane from round two onward.
-            let mut buf = source.clone();
-            // SAFETY: `buf` holds `size` 8-byte elements and `cmp_i64` only
-            // dereferences 8 bytes at each pointer it is given.
-            unsafe {
-                qsort_fn(
-                    buf.as_mut_ptr().cast::<c_void>(),
-                    std::hint::black_box(size),
-                    8,
-                    Some(cmp_i64),
-                );
-            }
-            // Order-sensitive fold, NOT an XOR: an XOR over a permutation of
-            // 0..n is the same for every ordering, so it would be identical
-            // whether or not the sort ran.
-            checksum = checksum
-                .wrapping_mul(0x100_0000_01b3)
-                .wrapping_add(buf[0] as u64)
-                .wrapping_add((buf[size / 2] as u64) << 1)
-                .wrapping_add((buf[size - 1] as u64) << 2);
-            debug_assert!(buf.windows(2).all(|w| w[0] <= w[1]));
-        }
+        // ABBA: each arm runs twice, interleaved, so a drift in machine state
+        // over the run cannot be mistaken for a difference between the arms.
+        let a1 = drive(fl, &source, width, rounds);
+        let b1 = drive(glibc, &source, width, rounds);
+        let b2 = drive(glibc, &source, width, rounds);
+        let a2 = drive(fl, &source, width, rounds);
+        // Every arm sorts identical input, so all four checksums must agree.
+        // A mismatch means the two implementations disagree on the OUTPUT and no
+        // instruction count from this run is worth reading.
+        assert_eq!(a1, b1, "fl and glibc produced different orders at n={size}");
+        assert_eq!(a1, a2, "fl disagreed with itself at n={size}");
+        assert_eq!(b1, b2, "glibc disagreed with itself at n={size}");
+        println!("QSORT_CASE size={size} width={width} checksum=0x{a1:x} arms=ABBA");
     }
-
-    println!("QSORT_ICOUNT arm={arm} rounds={rounds} sizes={sizes:?} checksum=0x{checksum:x}");
 }

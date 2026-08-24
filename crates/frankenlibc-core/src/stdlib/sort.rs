@@ -5,7 +5,11 @@
 const MAX_INSERTION: usize = 20;
 const INSERTION_STACK_SCRATCH: usize = 64;
 const I32_FAST_LANE_MIN: usize = 64;
-const I32_FAST_LANE_MAX: usize = 2048;
+// Raised for the same reason, and on the same evidence, as the width-8 ceiling
+// below (bd-nas5rt). The width-4 sweep against live glibc shows the ceiling
+// exactly: fl WINS 1.83x at n=256 and 1.91x at n=1024, then LOSES 2.73x at 4096
+// and 2.65x at 16384 — the sign flips at the old 2048 bound and nowhere else.
+const I32_FAST_LANE_MAX: usize = 1 << 22;
 const I64_FAST_LANE_MIN: usize = 64;
 // MEASURED against live glibc (bd-nas5rt): inside the window the lane is
 // 0.528x of glibc (fl WINS 1.89x, 67,416 against 127,650 instructions for a
