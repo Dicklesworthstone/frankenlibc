@@ -466,15 +466,9 @@ mod tests {
         use ValueArgKind::*;
         assert_eq!(arg_kind_list(b"%d %s %p %f"), vec![Gp, Gp, Gp, Fp]);
         assert_eq!(arg_kind_list(b"%lld %Lf"), vec![Gp, X87]);
-        // `L` on a FLOAT conversion is what makes an argument X87. On a
-        // non-float conversion it must not, and fl currently consumes no
-        // argument at all for `%Ld`/`%Lu`/`%Ls` — which live glibc 2.42 does
-        // NOT agree with (it prints `%Ld` of 1234567890123 as that number and
-        // `%Ls` as a wide string). That divergence is bd-3g1cvv
-        // and is deliberately NOT pinned here; all this arm claims is the one
-        // thing this change is responsible for, which is that `L` on an
-        // integer conversion does not become X87.
-        assert!(!arg_kind_list(b"%Ld %Lu %Ls").contains(&X87));
+        // `L` on a float is X87. glibc instead treats it as `ll` on integers
+        // and as wide `l` on `s`/`c`; each of those consumes one GP argument.
+        assert_eq!(arg_kind_list(b"%Ld %Lu %Ls %Lc"), vec![Gp, Gp, Gp, Gp]);
     }
 
     #[test]

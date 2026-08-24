@@ -81,6 +81,24 @@ unsafe extern "C" fn call_snprintf_ld_then_int(
     )
 }
 
+/// `snprintf(buf, n, fmt, <GP value>, trailing)`.
+///
+/// # Safety
+///
+/// `buf` must address `n` writable bytes. `value` is passed as the first
+/// variadic general-purpose argument and `trailing` as the second.
+#[unsafe(naked)]
+unsafe extern "C" fn call_snprintf_gp_then_int(
+    _buf: *mut c_char,
+    _n: usize,
+    _fmt: *const c_char,
+    _value: usize,
+    _trailing: c_int,
+    _host: HostSnprintf,
+) -> c_int {
+    core::arch::naked_asm!("sub rsp, 8", "xor eax, eax", "call r9", "add rsp, 8", "ret",)
+}
+
 fn host_snprintf() -> HostSnprintf {
     static H: OnceLock<Option<usize>> = OnceLock::new();
     let addr = (*H.get_or_init(|| {
@@ -177,6 +195,35 @@ fn both_with_trailing(fmt: &str, value: &[u8; 16], trailing: c_int) -> (String, 
     (render(&host_buf), render(&fl_buf))
 }
 
+fn both_gp_with_trailing(fmt: &str, value: usize, trailing: c_int) -> (String, String) {
+    let fmt_c = CString::new(fmt).expect("no interior NUL");
+    let mut host_buf = [0 as c_char; 512];
+    let mut fl_buf = [0 as c_char; 512];
+    // SAFETY: both output buffers are writable and the trampoline preserves
+    // the SysV general-purpose vararg register layout.
+    unsafe {
+        call_snprintf_gp_then_int(
+            host_buf.as_mut_ptr(),
+            host_buf.len(),
+            fmt_c.as_ptr(),
+            value,
+            trailing,
+            host_snprintf(),
+        );
+        call_snprintf_gp_then_int(
+            fl_buf.as_mut_ptr(),
+            fl_buf.len(),
+            fmt_c.as_ptr(),
+            value,
+            trailing,
+            std::mem::transmute::<*const (), HostSnprintf>(
+                frankenlibc_abi::stdio_abi::snprintf as *const (),
+            ),
+        );
+    }
+    (render(&host_buf), render(&fl_buf))
+}
+
 /// The trampoline must be right before any comparison means anything.
 #[test]
 fn the_vararg_trampoline_passes_a_real_long_double() {
@@ -238,6 +285,21 @@ fn a_conversion_after_a_long_double_reads_its_own_argument() {
             "the trailing int was lost for {fmt:?}: {fl:?} — this is the \
              unconsumed-stack-slot bug"
         );
+    }
+}
+
+#[test]
+fn uppercase_l_aliases_consume_the_glibc_argument_shape() {
+    let wide_hi = [b'h' as u32, b'i' as u32, 0];
+    for (fmt, value, expected) in [
+        ("[%Ld|%d]", 1_234_567_890_123usize, "[1234567890123|77]"),
+        ("[%Lu|%d]", 42usize, "[42|77]"),
+        ("[%Ls|%d]", wide_hi.as_ptr() as usize, "[hi|77]"),
+        ("[%Lc|%d]", b'A' as usize, "[A|77]"),
+    ] {
+        let (host, fl) = both_gp_with_trailing(fmt, value, 77);
+        assert_eq!(host, expected, "live glibc oracle changed for {fmt:?}");
+        assert_eq!(fl, host, "fl argument stream diverges for {fmt:?}");
     }
 }
 

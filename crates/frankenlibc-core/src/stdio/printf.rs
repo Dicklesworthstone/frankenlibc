@@ -1195,6 +1195,18 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
         other => (other, length),
     };
 
+    // glibc accepts the historical uppercase `L` spelling on the integer
+    // conversions as `ll`, and on `s`/`c` as the wide `l` form. Normalize
+    // those aliases before route validation so they consume their argument
+    // rather than being rejected as an invalid directive. `L` remains a true
+    // long-double modifier only for floating conversions; it is not a blanket
+    // alias (for example, `%Ln` stays invalid).
+    let length = match (length, conversion) {
+        (LengthMod::BigL, b'd' | b'i' | b'o' | b'u' | b'x' | b'X') => LengthMod::Ll,
+        (LengthMod::BigL, b's' | b'c') => LengthMod::L,
+        (length, _) => length,
+    };
+
     let route = if conversion == b'm' {
         None
     } else {
@@ -3473,6 +3485,23 @@ mod tests {
         assert_eq!(spec.width, Width::None);
         assert_eq!(spec.precision, Precision::None);
         assert_eq!(spec.value_position, None);
+    }
+
+    #[test]
+    fn uppercase_l_aliases_are_conversion_specific() {
+        for (directive, expected_length) in [
+            (&b"Ld"[..], LengthMod::Ll),
+            (&b"Lu"[..], LengthMod::Ll),
+            (&b"Ls"[..], LengthMod::L),
+            (&b"Lc"[..], LengthMod::L),
+        ] {
+            let (spec, _) = parse_format_spec(directive).expect("glibc alias must parse");
+            assert_eq!(spec.length, expected_length, "{directive:?}");
+        }
+        assert!(
+            parse_format_spec(b"Ln").is_none(),
+            "uppercase L is not a blanket length alias"
+        );
     }
 
     #[test]
