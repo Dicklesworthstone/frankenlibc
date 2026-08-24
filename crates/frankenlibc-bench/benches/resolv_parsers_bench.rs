@@ -439,6 +439,7 @@ fn parse_passwd_line_old(line: &[u8]) -> Option<pwd::Passwd> {
         } else {
             Vec::new()
         },
+        nis_compat_null_fields: false,
     })
 }
 
