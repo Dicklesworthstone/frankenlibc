@@ -11,7 +11,7 @@ use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf
 use frankenlibc_core::syscall;
 use frankenlibc_core::unistd as unistd_core;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
@@ -5255,9 +5255,42 @@ unsafe fn vdso_getrandom_draw(buf: *mut c_void, buflen: usize, flags: c_uint) ->
     (n >= 0).then_some(n)
 }
 
+/// Strict-mode `getrandom` after the policy decision has already been proven to
+/// be an unconditional allow.
+///
+/// `ApiFamily::IoFd` takes the strict `decide` fast path to the same
+/// `Allow/Fast` decision every time, and non-adverse `observe` is already a
+/// no-op for that family. Avoid constructing that discarded decision on the
+/// successful path, while retaining the output-capacity clamp, vDSO routing,
+/// syscall fallback, errno, and adverse-result telemetry.
+#[inline]
+unsafe fn strict_getrandom_passthrough(
+    buf: *mut c_void,
+    buflen: usize,
+    flags: c_uint,
+) -> isize {
+    let effective_buflen = tracked_void_output_capacity(buf, buflen);
+    if let Some(n) = unsafe { vdso_getrandom_draw(buf, effective_buflen, flags) } {
+        return n;
+    }
+
+    match unsafe { syscall::sys_getrandom(buf as *mut u8, effective_buflen, flags) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, ValidationProfile::Fast, 8, true);
+            -1
+        }
+    }
+}
+
 /// Linux `getrandom` — fill buffer with random bytes from the kernel CSPRNG.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe { strict_getrandom_passthrough(buf, buflen, flags) };
+    }
+
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, buf as usize, buflen, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5298,6 +5331,19 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
             -1
         }
+    }
+}
+
+#[cfg(test)]
+mod getrandom_tests {
+    use super::*;
+
+    #[test]
+    fn strict_passthrough_accepts_a_null_zero_length_buffer() {
+        // SAFETY: getrandom(2) permits a null output pointer when the requested
+        // length is zero; this directly executes the strict-only fast path.
+        let result = unsafe { strict_getrandom_passthrough(std::ptr::null_mut(), 0, 0) };
+        assert_eq!(result, 0);
     }
 }
 
