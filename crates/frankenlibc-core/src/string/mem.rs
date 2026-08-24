@@ -1000,6 +1000,94 @@ mod tests {
         }
     }
 
+    /// Byte-at-a-time reference `memcmp` ordering — the ground truth any SIMD
+    /// lowering must reproduce bit-for-bit. Used by the isomorphism harness that
+    /// guards the L1-bound memcmp kernel (bd-2g7oyh.283 spike).
+    fn scalar_memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
+        let count = n.min(a.len()).min(b.len());
+        for k in 0..count {
+            if a[k] != b[k] {
+                return a[k].cmp(&b[k]);
+            }
+        }
+        core::cmp::Ordering::Equal
+    }
+
+    /// The 4096-byte bulk SIMD path must agree with the scalar reference for the
+    /// equal case and for a difference planted at every panel/block boundary
+    /// (and one byte either side), in both directions — exercising the wide
+    /// folded compare and the ordered first-difference resolver.
+    #[test]
+    fn memcmp_4096_bulk_matches_scalar() {
+        let a = vec![0x51u8; 4096];
+        assert_eq!(memcmp(&a, &a, 4096), core::cmp::Ordering::Equal);
+
+        let boundaries = [
+            0usize, 1, 31, 32, 33, 63, 64, 95, 96, 127, 128, 129, 255, 256, 1023, 1024, 2048, 4094,
+            4095,
+        ];
+        for &idx in &boundaries {
+            for &delta in &[1u8, 0xFF] {
+                let mut b = a.clone();
+                b[idx] = a[idx].wrapping_add(delta);
+                assert_eq!(
+                    memcmp(&a, &b, 4096),
+                    scalar_memcmp(&a, &b, 4096),
+                    "a<b diff at {idx} delta {delta}"
+                );
+                assert_eq!(
+                    memcmp(&b, &a, 4096),
+                    scalar_memcmp(&b, &a, 4096),
+                    "b<a diff at {idx} delta {delta}"
+                );
+            }
+        }
+    }
+
+    /// Golden rolling digest over a deterministic battery of `memcmp` orderings
+    /// across many lengths and first-difference positions. Pins the exact
+    /// observable ordering contract so any future memcmp lowering change that
+    /// alters behaviour is caught (complements `memcmp_golden_output_sha256`).
+    #[test]
+    fn memcmp_golden_ordering_digest() {
+        let mut state: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut mix = |ord: core::cmp::Ordering| {
+            let code: u8 = match ord {
+                core::cmp::Ordering::Less => 1,
+                core::cmp::Ordering::Equal => 2,
+                core::cmp::Ordering::Greater => 3,
+            };
+            state ^= code as u64;
+            state = state.wrapping_mul(0x0000_0100_0000_01b3);
+        };
+        let g = |seed: u64, i: usize| -> u8 {
+            let x = seed
+                .wrapping_add(i as u64)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            ((x >> 33) ^ x) as u8
+        };
+        for &len in &[
+            0usize, 1, 7, 8, 15, 16, 17, 31, 32, 33, 64, 127, 128, 255, 256, 257, 1024, 4096,
+        ] {
+            let base: Vec<u8> = (0..len).map(|i| g(0xABCD, i)).collect();
+            mix(memcmp(&base, &base, len));
+            if len > 0 {
+                for &pos in &[0usize, len / 3, len / 2, len.saturating_sub(1)] {
+                    let mut other = base.clone();
+                    other[pos] = other[pos].wrapping_add(1);
+                    mix(memcmp(&base, &other, len));
+                    mix(memcmp(&other, &base, len));
+                    other[pos] = base[pos].wrapping_sub(1);
+                    mix(memcmp(&base, &other, len));
+                }
+            }
+        }
+        assert_eq!(
+            state, 17_983_423_468_913_431_713,
+            "memcmp ordering digest changed — behaviour is no longer isomorphic"
+        );
+    }
+
     #[test]
     fn test_memchr_found() {
         assert_eq!(memchr(b"hello", b'l', 5), Some(2));
