@@ -4423,20 +4423,16 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         }
     }
 
-    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough does no
-    // validation, so the result is exactly the raw page-safe SIMD scan to NUL —
-    // reached now WITHOUT the four TLS/reentry probes. `scan_c_string` is lock-free,
-    // page-safe and TLS-free, so it is valid in every non-bootstrap context those
-    // probes guarded (reentry included: it holds no lock to deadlock on), making this
-    // byte-identical. Skip entrypoint_scope + known_remaining + the membrane (same as
-    // the `!heals && rem.is_none()` path below). Hardened mode keeps validating.
+    // Strict-mode fast path (the DEFAULT deployed mode): an untracked string has the
+    // raw page-safe scan semantics, but an allocator-tracked span is still a known
+    // safety boundary. Retain that cheap bound so an unterminated tracked buffer does
+    // not make the strict fast path read into the next allocation. This preserves the
+    // untracked hot path while matching the bounded behavior of the full path below.
     if runtime_policy::strict_passthrough_active() {
-        // `raw_lane_strlen_bytes` ignores its lane hint and just calls
-        // `scan_c_string(s, None).0`, so `select_string_simd_dispatch` built a
-        // dispatch struct (atomic feature-mask load + candidate probe + once-logger)
-        // purely to throw it away — ~12ns of dead work on the hottest libc
-        // entrypoint. Call the scanner directly (byte-identical result).
-        return unsafe { scan_c_string(s, None).0 };
+        let bound = known_remaining(s as usize);
+        // SAFETY: `bound`, when present, is derived from allocator bookkeeping;
+        // otherwise the page-safe scanner preserves ordinary libc scan semantics.
+        return unsafe { scan_c_string(s, bound).0 };
     }
 
     // Hardened mode only: the remaining reentry/TLS-access bypasses before the
