@@ -10,12 +10,12 @@ unsafe_code = "allow"
 
 [features]
 default = []
-abi-bench = ["dep:frankenlibc-abi", "frankenlibc-abi/alloc-path-telemetry"]
+abi-bench = ["frankenlibc-abi/alloc-path-telemetry"]
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }
 frankenlibc-core = { workspace = true }
-frankenlibc-abi = { workspace = true, optional = true }
+frankenlibc-abi = { workspace = true }
 # NOT a dev-dependency: src/lib.rs itself uses libc::c_int and the RTLD_* flags for
 # DEPLOYED_PRELOAD_DLOPEN_FLAGS. Dev-dependencies are invisible to the lib target, so
 # keeping libc there broke every example in this crate -- see bd-84z81u.

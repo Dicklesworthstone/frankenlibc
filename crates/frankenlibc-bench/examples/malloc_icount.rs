@@ -85,6 +85,42 @@ fn pairs() -> usize {
 }
 const SIZES: [usize; 4] = [16, 64, 256, 1024];
 
+/// The size list for a run: [`SIZES`] unless trailing numeric arguments override it.
+///
+/// Split out of the churn arm and given to the malloc arm too, because the two
+/// halves of this allocator answer DIFFERENT questions above
+/// `MAX_SMALL_SIZE` (32 KiB) and only one of them could be asked. Below the
+/// ceiling every request is segment-served; above it `strict_small_or_host_allocate`
+/// declines and the request goes to `native_libc_malloc` plus the fallback size
+/// table. That fallback path is the target of bd-dcrhgl's inline size header,
+/// and with only the four default sizes compiled in there was no way to point
+/// this instrument at it.
+///
+/// Churn mode already had this and calloc's zero-fill dominates it: at 64 KiB a
+/// pair retires ~66,000 instructions, of which the wrapper is ~600, so the ratio
+/// reads 1.009x and says nothing about the wrapper. `malloc` does not fill, so
+/// the same size through the malloc arm is where the fallback table is visible.
+///
+/// Non-numeric and zero arguments are ignored rather than rejected: the caller
+/// may be passing a mode word ("churn"/"growth") in the same position.
+fn sizes_from_args(skip: usize) -> Vec<usize> {
+    sizes_from(std::env::args(), skip)
+}
+
+/// [`sizes_from_args`] over an explicit argument sequence, so it is testable.
+fn sizes_from(args: impl Iterator<Item = String>, skip: usize) -> Vec<usize> {
+    let overrides: Vec<usize> = args
+        .skip(skip)
+        .filter_map(|a| a.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .collect();
+    if overrides.is_empty() {
+        SIZES.to_vec()
+    } else {
+        overrides
+    }
+}
+
 /// Resolve `calloc` for an arm, mirroring how `main` resolves malloc/free.
 ///
 /// The glibc arm comes from a NEW link map so the incumbent allocator is
@@ -146,17 +182,7 @@ fn main() {
     if std::env::args().nth(2).as_deref() == Some("churn") {
         let calloc_fn: CallocFn = calloc_for_arm(&arm);
         let iters = pairs();
-        let sizes: Vec<usize> = {
-            let overrides: Vec<usize> = std::env::args()
-                .skip(3)
-                .filter_map(|a| a.parse().ok())
-                .collect();
-            if overrides.is_empty() {
-                SIZES.to_vec()
-            } else {
-                overrides
-            }
-        };
+        let sizes: Vec<usize> = sizes_from_args(3);
         let mut checksum = 0u64;
         for &size in &sizes {
             for _ in 0..iters {
@@ -227,7 +253,11 @@ fn main() {
     // must not be an XOR: see `mix`.
     let mut checksum = 0u64;
     let pairs = pairs();
-    for size in SIZES {
+    // Trailing numeric arguments select the sizes; see `sizes_from_args`. The
+    // mode word is at index 2 and is not numeric, so a plain
+    // `malloc_icount fl 65536` is unambiguous.
+    let sizes = sizes_from_args(2);
+    for size in sizes.iter().copied() {
         for _ in 0..pairs {
             // SAFETY: `size` is non-zero; every pointer returned is freed once
             // through the same arm's `free`.
@@ -241,14 +271,70 @@ fn main() {
     }
 
     println!(
-        "MALLOC_ICOUNT arm={arm} pairs_per_size={pairs} sizes={SIZES:?} checksum=0x{checksum:x}"
+        "MALLOC_ICOUNT arm={arm} pairs_per_size={pairs} sizes={sizes:?} checksum=0x{checksum:x}"
     );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::mix;
+    use super::{SIZES, mix, sizes_from};
     use std::ffi::c_void;
+
+    fn args(list: &[&str]) -> std::vec::IntoIter<String> {
+        list.iter()
+            .map(|s| (*s).to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// The malloc arm must be able to reach ABOVE `MAX_SMALL_SIZE`.
+    ///
+    /// This is the whole point of the parameter: below 32 KiB every request is
+    /// segment-served and the fallback size table is never consulted, so an
+    /// instrument fixed at 16/64/256/1024 cannot measure the path bd-dcrhgl's
+    /// inline size header would replace.
+    #[test]
+    fn trailing_numeric_arguments_select_the_sizes() {
+        assert_eq!(sizes_from(args(&["prog", "fl", "65536"]), 2), vec![65536]);
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "65536", "131072"]), 2),
+            vec![65536, 131072]
+        );
+        // churn/growth pass their mode word at index 2 and sizes from 3.
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "churn", "65536"]), 3),
+            vec![65536]
+        );
+    }
+
+    /// With no override the default list is used, and a mode word must not be
+    /// mistaken for a size.
+    #[test]
+    fn a_mode_word_is_not_a_size() {
+        assert_eq!(sizes_from(args(&["prog", "fl"]), 2), SIZES.to_vec());
+        // `churn` parsed at skip=2 would be an override if the filter were
+        // wrong; it is not numeric, so the defaults must survive.
+        assert_eq!(sizes_from(args(&["prog", "fl", "churn"]), 2), SIZES.to_vec());
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "growth"]), 2),
+            SIZES.to_vec()
+        );
+    }
+
+    /// A zero size would make `calloc(1, 0)`/`malloc(0)` the thing measured,
+    /// which is a different question and returns a pointer that cannot be
+    /// dereferenced for the checksum. It is dropped, not accepted.
+    #[test]
+    fn zero_and_garbage_sizes_are_dropped() {
+        assert_eq!(sizes_from(args(&["prog", "fl", "0"]), 2), SIZES.to_vec());
+        assert_eq!(sizes_from(args(&["prog", "fl", "-8"]), 2), SIZES.to_vec());
+        assert_eq!(sizes_from(args(&["prog", "fl", "abc"]), 2), SIZES.to_vec());
+        // A valid size alongside garbage still selects the valid one.
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "abc", "4096", "0"]), 2),
+            vec![4096]
+        );
+    }
 
     fn ptr(addr: usize) -> *mut c_void {
         addr as *mut c_void
