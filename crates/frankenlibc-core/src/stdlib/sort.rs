@@ -7,7 +7,24 @@ const INSERTION_STACK_SCRATCH: usize = 64;
 const I32_FAST_LANE_MIN: usize = 64;
 const I32_FAST_LANE_MAX: usize = 2048;
 const I64_FAST_LANE_MIN: usize = 64;
-const I64_FAST_LANE_MAX: usize = 2048;
+// MEASURED against live glibc (bd-nas5rt): inside the window the lane is
+// 0.528x of glibc (fl WINS 1.89x, 67,416 against 127,650 instructions for a
+// 512-element sort); at 4096, one step outside it, fl is 2.574x (3,444,382
+// against 1,338,232). The ceiling, not the mechanism, is what gave glibc the
+// larger sorts.
+//
+// The lane's own cost is O(n) on top of a monomorphised sort: one pass to
+// extract, `sort_unstable`, one pass to write back, and an n-1 adjacent-pair
+// verify. glibc pays an INDIRECT CALL per comparison, O(n log n) of them, so
+// the lane's advantage grows with n rather than shrinking — there is no n at
+// which the old ceiling becomes the right answer.
+//
+// What the ceiling does bound is the WASTED work when the comparator disagrees
+// and the lane rolls back: extract + sort + restore, all O(n log n) at worst,
+// thrown away. That is a real cost and it is why this is raised to a large
+// bound rather than removed: past this point the two `Vec`s are large enough
+// that the allocation itself is worth avoiding.
+const I64_FAST_LANE_MAX: usize = 1 << 22;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
