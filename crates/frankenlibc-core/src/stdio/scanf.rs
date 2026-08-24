@@ -278,6 +278,21 @@ pub enum ScanValue {
     SignedInt(i64),
     UnsignedInt(u64),
     Float(f64),
+    /// An x87 extended-precision value, in memory order, produced ONLY by a
+    /// `%Lf` conversion.
+    ///
+    /// `%Lf` stores a `long double`, and routing it through `Float(f64)` fixed
+    /// the significand at 53 bits before any writer saw it — so
+    /// `sscanf("1.0000000000000000001", "%Lf", &ld)` stored exactly 1.0 and no
+    /// later widening could recover what the parse had already discarded. The
+    /// ten bytes here are what `float128::strtold_scan` produced from the same
+    /// accepted token, so the value reaching the caller is the one `strtold`
+    /// would have returned for that text.
+    ///
+    /// Ten bytes rather than sixteen: that is the significant extent of the x87
+    /// encoding, and the ABI writer owns the padding of the 16-byte storage
+    /// slot.
+    LongDouble([u8; 10]),
     Char(ScanBytes),
     String(ScanBytes),
     CharsConsumed(usize),
@@ -1507,6 +1522,30 @@ fn digit_value(b: u8, base: u32) -> Option<u32> {
     if val < base { Some(val) } else { None }
 }
 
+/// Wrap a scanned float value, carrying full x87 precision for `%Lf`.
+///
+/// The engine parses every float to `f64`, which is the right width for `%f`
+/// and `%lf` and the WRONG one for `%Lf`: the significand is truncated to 53
+/// bits before any writer sees the value, and widening at the ABI cannot
+/// recover digits the parse already threw away. For a long-double conversion
+/// the accepted token is re-read with [`crate::float128::strtold_scan`] — the
+/// same front end `strtold` uses, verified against glibc over 625 vectors.
+///
+/// `token` is the byte range this conversion ACCEPTED: sign included, field
+/// width already applied, trailing garbage already excluded. Passing the token
+/// rather than the remaining input is what keeps the two scanners from
+/// disagreeing about where the number ends — matching, backtracking and the
+/// consumed count all stay with the caller, and only the value's precision
+/// changes here.
+#[inline]
+fn float_scan_value(spec: &ScanSpec, val: f64, token: &[u8]) -> ScanValue {
+    if spec.length == LengthMod::BigL {
+        ScanValue::LongDouble(crate::float128::strtold_scan(token).bytes)
+    } else {
+        ScanValue::Float(val)
+    }
+}
+
 /// Scan a floating-point number.
 fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
@@ -1545,7 +1584,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             } else {
                 f64::INFINITY
             };
-            return Some((Some(ScanValue::Float(val)), i));
+            return Some((Some(float_scan_value(spec, val, &input[pos..i])), i));
         }
         if remaining.len() >= 3 && remaining[..3].eq_ignore_ascii_case(b"nan") {
             // glibc's strtod accepts an optional `(n-char-sequence)` payload
@@ -1588,7 +1627,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             // glibc's value with no second encoding step. Sharing it also keeps
             // scanf and strtod from drifting apart on the same grammar.
             let val = crate::stdlib::conversion::nan_f64(payload, negative);
-            return Some((Some(ScanValue::Float(val)), i + j));
+            return Some((Some(float_scan_value(spec, val, &input[pos..i + j])), i + j));
         }
     }
 
@@ -1597,7 +1636,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         && i + 1 < input.len()
         && input[i] == b'0'
         && (input[i + 1] == b'x' || input[i + 1] == b'X')
-        && let Some(result) = scan_hex_float(input, pos, i, chars_read, negative, max_chars)
+        && let Some(result) = scan_hex_float(input, pos, i, chars_read, negative, max_chars, spec)
     {
         return Some(result);
     }
@@ -1665,18 +1704,19 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     let magnitude: f64 = s.parse().ok()?;
     let val = if negative { -magnitude } else { magnitude };
 
-    Some((Some(ScanValue::Float(val)), i))
+    Some((Some(float_scan_value(spec, val, &input[pos..i])), i))
 }
 
 /// Scan a hex float (0x[h...h][.h...h][pN]) per C11 7.21.6.2.
 /// Called after the optional sign and 0x prefix have been detected.
 fn scan_hex_float(
     input: &[u8],
-    _start_pos: usize,
+    start_pos: usize,
     mut i: usize,
     mut chars_read: usize,
     negative: bool,
     max_chars: usize,
+    spec: &ScanSpec,
 ) -> Option<(Option<ScanValue>, usize)> {
     // Skip 0x/0X prefix.
     i += 2;
@@ -1724,7 +1764,7 @@ fn scan_hex_float(
         // or `0xyz` as matching failures.
         if saw_decimal_point {
             let val = if negative { -0.0 } else { 0.0 };
-            return Some((Some(ScanValue::Float(val)), i));
+            return Some((Some(float_scan_value(spec, val, &input[start_pos..i])), i));
         }
         return None;
     }
@@ -1788,7 +1828,7 @@ fn scan_hex_float(
         val = -val;
     }
 
-    Some((Some(ScanValue::Float(val)), i))
+    Some((Some(float_scan_value(spec, val, &input[start_pos..i])), i))
 }
 
 /// Byte length of the UTF-8 sequence beginning with `b`. Returns 1 for ASCII or

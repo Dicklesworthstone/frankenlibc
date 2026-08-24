@@ -5,7 +5,7 @@
 //! %c, %n (not counted), literal matching, and float parsing (compared via exact
 //! IEEE bits). glibc reference captured from a C sscanf probe.
 
-use frankenlibc_core::stdio::scanf::{ScanValue, parse_scanf_format, scan_input};
+use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input, ScanValue};
 
 fn run(fmt: &str, input: &str) -> String {
     let dirs = parse_scanf_format(fmt.as_bytes());
@@ -18,14 +18,21 @@ fn run(fmt: &str, input: &str) -> String {
         r.count
     };
     let mut s = format!("{ret}");
-    for v in &r.values {
+    for v in r.values.as_slice() {
         match v {
+            ScanValue::Unset => panic!("scanner result must not expose an unused inline slot"),
             ScanValue::SignedInt(i) => s += &format!(" i{i}"),
             ScanValue::UnsignedInt(u) => s += &format!(" u{u}"),
             ScanValue::Float(f) => s += &format!(" f{:016x}", f.to_bits()),
+            ScanValue::LongDouble(bytes) => {
+                s += " ld";
+                for byte in bytes {
+                    s += &format!("{byte:02x}");
+                }
+            }
             ScanValue::Char(b) | ScanValue::String(b) => {
                 s += " s";
-                s += &String::from_utf8_lossy(b);
+                s += &String::from_utf8_lossy(b.as_slice());
             }
             ScanValue::CharsConsumed(n) => s += &format!(" n{n}"),
             ScanValue::Pointer(p) => s += &format!(" p{p}"),

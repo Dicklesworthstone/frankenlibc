@@ -747,6 +747,28 @@ fn printf_conformance_runtime_flags_and_width() -> Result<(), String> {
 
 use frankenlibc_core::stdio::{ScanValue, parse_scanf_format, scan_input};
 
+/// Narrow an x87 extended-precision value only for comparison with a JSON f64
+/// fixture. The scanner keeps the original ten-byte value for the ABI writer;
+/// this helper intentionally does not participate in the implementation path.
+fn x87_extended_to_f64(bytes: &[u8; 10]) -> f64 {
+    let significand = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    let sign_exponent = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let negative = sign_exponent & 0x8000 != 0;
+    let exponent = sign_exponent & 0x7fff;
+
+    let magnitude = if exponent == 0x7fff {
+        if significand == 1 << 63 {
+            f64::INFINITY
+        } else {
+            f64::NAN
+        }
+    } else {
+        (significand as f64) * 2.0f64.powi(i32::from(exponent) - 16_446)
+    };
+
+    if negative { -magnitude } else { magnitude }
+}
+
 /// Run a scanf conformance test case and compare output.
 fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
     let inputs = &case.inputs;
@@ -778,6 +800,9 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
         for (i, (actual, expected)) in result.values.iter().zip(expected_values.iter()).enumerate()
         {
             match actual {
+                ScanValue::Unset => {
+                    return Err(format!("value {} unexpectedly exposed an unused scanner slot", i));
+                }
                 ScanValue::SignedInt(v) => {
                     if let Some(e) = expected.as_i64()
                         && *v != e
@@ -799,6 +824,16 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
                 ScanValue::Float(v) => {
                     if let Some(e) = expected.as_f64() {
                         // Allow some floating point tolerance
+                        let diff = (v - e).abs();
+                        let rel = diff / e.abs().max(1e-10);
+                        if rel > 1e-9 && diff > 1e-15 {
+                            return Err(format!("value {} mismatch: expected {}, got {}", i, e, v));
+                        }
+                    }
+                }
+                ScanValue::LongDouble(bytes) => {
+                    if let Some(e) = expected.as_f64() {
+                        let v = x87_extended_to_f64(bytes);
                         let diff = (v - e).abs();
                         let rel = diff / e.abs().max(1e-10);
                         if rel > 1e-9 && diff > 1e-15 {
@@ -972,7 +1007,10 @@ fn scanf_conformance_runtime_float_specifiers() -> Result<(), String> {
     let mut skipped = 0;
 
     for case in &fixture.cases {
-        if !case.name.starts_with("sscanf_f") && !case.name.starts_with("sscanf_lf") {
+        if !case.name.starts_with("sscanf_f")
+            && !case.name.starts_with("sscanf_lf")
+            && !case.name.starts_with("sscanf_Lf")
+        {
             skipped += 1;
             continue;
         }

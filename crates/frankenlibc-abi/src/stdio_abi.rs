@@ -9612,6 +9612,30 @@ pub(crate) unsafe fn write_long_double_from_f64(dest: *mut c_void, value: f64) {
     }
 }
 
+/// Store an x87 extended value that arrived as its ten significant bytes.
+///
+/// The counterpart of [`write_long_double_from_f64`] for a value that was never
+/// an `f64`: scanf's `%Lf` now parses straight to x87 (`ScanValue::LongDouble`),
+/// so there is nothing to widen and no precision to lose on the way in.
+///
+/// The six padding bytes of the 16-byte storage slot are zeroed, which is what
+/// the f64 path has always done — an x87 store writes only ten, but the object
+/// is sixteen bytes wide on this ABI and leaving stale bytes there would make
+/// two identical scans of the same text produce different memory.
+///
+/// # Safety
+///
+/// `dest` must address a writable `long double` (16 bytes on x86-64 SysV).
+pub(crate) unsafe fn write_long_double_bytes(dest: *mut c_void, bytes: &[u8; 10]) {
+    let mut slot = [0u8; 16];
+    slot[..10].copy_from_slice(bytes);
+    // SAFETY: `%Lf` callers provide a writable long-double destination, whose
+    // storage slot is 16 bytes on the supported Linux ABI.
+    unsafe {
+        std::ptr::copy_nonoverlapping(slot.as_ptr(), dest.cast::<u8>(), slot.len());
+    }
+}
+
 /// Write scanned values through va_list pointers.
 /// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
 /// `$args` is the variadic `args` from `mut args: ...`.
@@ -9688,7 +9712,17 @@ macro_rules! scanf_write_one {
                     *ptr = *v as u32;
                 }
             },
+            // Only a `%Lf` conversion produces this, and its destination is a
+            // `long double *`, so the length modifier needs no second look.
+            ScanValue::LongDouble(bytes) => {
+                let ptr = $args.next_arg::<*mut c_void>();
+                write_long_double_bytes(ptr, bytes);
+            }
             ScanValue::Float(v) => match $spec.length {
+                // Reached only when the engine declined to produce an x87
+                // value for a `L`-modified float — it does not today, and if
+                // that changes this stays a correct store of what was parsed
+                // rather than a silent write of the wrong width.
                 LengthMod::BigL => {
                     let ptr = $args.next_arg::<*mut c_void>();
                     write_long_double_from_f64(ptr, *v);
@@ -10478,6 +10512,9 @@ pub(crate) unsafe fn vscanf_write_one(
             LengthMod::Z | LengthMod::T => unsafe { *(dest as *mut usize) = *v as usize },
             _ => unsafe { *(dest as *mut u32) = *v as u32 },
         },
+        // See the macro: `%Lf` alone yields this, and `dest` is its
+        // `long double *`.
+        ScanValue::LongDouble(bytes) => unsafe { write_long_double_bytes(dest, bytes) },
         ScanValue::Float(v) => match spec.length {
             LengthMod::BigL => unsafe { write_long_double_from_f64(dest, *v) },
             LengthMod::L => unsafe { *(dest as *mut f64) = *v },
