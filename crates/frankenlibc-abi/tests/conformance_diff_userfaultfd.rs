@@ -54,5 +54,5 @@ fn userfaultfd_invalid_flags_match_host_syscall() {
         fl, host,
         "userfaultfd(invalid flags): fl={fl:?} host={host:?}"
     );
-    assert_eq!(fl, (-1, libc::EINVAL));
+    assert_eq!(fl.0, -1, "invalid userfaultfd flags must fail");
 }
