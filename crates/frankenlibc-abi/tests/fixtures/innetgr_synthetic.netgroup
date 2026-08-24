@@ -1,0 +1,4 @@
+# Exercises exact fields, empty-field wildcards, nested references, and case.
+team (build,alice,example.com) (,ops,) child
+child (ci,,example.com) (build,bob,example.com)
+CaseGroup (CaseHost,CaseUser,CaseDomain)

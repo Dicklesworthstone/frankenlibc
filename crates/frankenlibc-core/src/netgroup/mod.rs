@@ -30,7 +30,7 @@ pub struct NetgroupTriple {
 ///
 /// Returns an empty `Vec` when `group` is not present. Comments
 /// (`#` to end-of-line) and blank lines are skipped. Group name
-/// matching is case-insensitive (matches the glibc files backend).
+/// matching is byte-exact (matches the glibc files backend).
 ///
 /// Each `(host,user,domain)` triple is extracted as it appears;
 /// per-field whitespace is trimmed and missing trailing fields
@@ -42,7 +42,7 @@ pub fn parse_netgroup_triples(content: &[u8], group: &[u8]) -> Vec<NetgroupTripl
             continue;
         };
         let name = &line[name_start..name_end];
-        if !eq_ignore_ascii_case(name, group) {
+        if !netgroup_name_matches(name, group) {
             continue;
         }
         let rest = strip_inline_comment(&line[name_end..]);
@@ -87,7 +87,7 @@ fn first_token_bounds(line: &[u8]) -> Option<(usize, usize)> {
 /// glibc keeps a "known groups" list for exactly this. Without one this walk
 /// would not terminate.
 ///
-/// Group names are matched case-insensitively, the same rule
+/// Group names are matched byte-exactly, the same rule
 /// [`parse_netgroup_triples`] uses for the top-level name.
 #[must_use]
 pub fn expand_netgroup(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
@@ -96,7 +96,10 @@ pub fn expand_netgroup(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
     let mut pending: Vec<Vec<u8>> = vec![group.to_vec()];
 
     while let Some(name) = pending.pop() {
-        if visited.iter().any(|seen| eq_ignore_ascii_case(seen, &name)) {
+        if visited
+            .iter()
+            .any(|seen| netgroup_name_matches(seen, &name))
+        {
             continue;
         }
         visited.push(name.clone());
@@ -105,7 +108,7 @@ pub fn expand_netgroup(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
             let Some((name_start, name_end)) = first_token_bounds(line) else {
                 continue;
             };
-            if !eq_ignore_ascii_case(&line[name_start..name_end], &name) {
+            if !netgroup_name_matches(&line[name_start..name_end], &name) {
                 continue;
             }
             let rest = strip_inline_comment(&line[name_end..]);
@@ -191,13 +194,8 @@ fn trim_ascii(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
-fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .all(|(x, y)| x.eq_ignore_ascii_case(y))
+fn netgroup_name_matches(a: &[u8], b: &[u8]) -> bool {
+    a == b
 }
 
 #[cfg(test)]
@@ -296,14 +294,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_group_name_case_insensitive() {
+    fn parse_group_name_case_sensitive() {
         let content = b"AdMiNs (h,u,d)\n";
-        assert_eq!(
-            parse_netgroup_triples(content, b"admins"),
-            vec![t(b"h", b"u", b"d")]
-        );
+        assert!(parse_netgroup_triples(content, b"admins").is_empty());
         assert_eq!(
             parse_netgroup_triples(content, b"ADMINS"),
+            Vec::<NetgroupTriple>::new()
+        );
+        assert_eq!(
+            parse_netgroup_triples(content, b"AdMiNs"),
             vec![t(b"h", b"u", b"d")]
         );
     }

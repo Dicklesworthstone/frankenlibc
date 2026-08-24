@@ -6185,6 +6185,52 @@ fn profil_records_pc_samples() {
     );
 }
 
+#[repr(C)]
+struct SprofilRegion {
+    base: *mut c_void,
+    size: libc::size_t,
+    offset: libc::size_t,
+    scale: libc::c_ulong,
+}
+
+#[test]
+fn sprofil_records_samples_in_the_matching_region_only() {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        let mut matching = [0u16; 32_768];
+        let mut wrong = [0u16; 32_768];
+        let regions = [
+            SprofilRegion {
+                base: matching.as_mut_ptr().cast(),
+                size: std::mem::size_of_val(&matching),
+                offset: burn_profile_cpu as usize,
+                scale: u16::MAX as libc::c_ulong,
+            },
+            SprofilRegion {
+                base: wrong.as_mut_ptr().cast(),
+                size: std::mem::size_of_val(&wrong),
+                offset: 0,
+                scale: u16::MAX as libc::c_ulong,
+            },
+        ];
+        let mut period = unsafe { std::mem::zeroed::<libc::timeval>() };
+        if unsafe { sprofil(regions.as_ptr().cast_mut().cast(), 2, (&raw mut period).cast(), 0) } != 0 {
+            unsafe { libc::_exit(1) };
+        }
+        burn_profile_cpu();
+        if unsafe { sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0) } != 0 {
+            unsafe { libc::_exit(2) };
+        }
+        let matching_hit = matching.iter().any(|&sample| sample != 0);
+        let wrong_hit = wrong.iter().any(|&sample| sample != 0);
+        unsafe { libc::_exit(if matching_hit && !wrong_hit { 0 } else { 3 }) };
+    }
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0, "sprofil child failed with status {status:#x}");
+}
+
 // ---------------------------------------------------------------------------
 // __nss_lookup_function / __nss_hosts_lookup2 / __nss_next2
 // ---------------------------------------------------------------------------
