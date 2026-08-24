@@ -3,14 +3,22 @@
 export DH_VERBOSE = 1
 export CARGO_HOME = $(CURDIR)/.cargo
 
+# The Debian package may contain only the artifact forged for the standalone
+# replacement lane.  In particular, do not substitute the ordinary ABI cdylib:
+# it is an interpose object and is not built with the replacement linker policy.
+STANDALONE_ARTIFACT = $(CURDIR)/target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so
+
 %:
 	dh $@
 
 override_dh_auto_build:
-	cargo build --release --features standalone,owned-unwind-stub,owned-tls-cache \
-		--manifest-path crates/frankenlibc-abi/Cargo.toml
+	test -s "$(STANDALONE_ARTIFACT)" || { \
+		echo "ERROR: canonical standalone replacement artifact is missing: $(STANDALONE_ARTIFACT)" >&2; \
+		echo "       Refusing to substitute target/release/libfrankenlibc_abi.so." >&2; \
+		exit 1; \
+	}
 	mkdir -p debian/tmp/usr/lib/frankenlibc
-	cp target/release/libfrankenlibc_abi.so debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so
+	cp "$(STANDALONE_ARTIFACT)" debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so
 
 override_dh_auto_install:
 	mkdir -p debian/libfrankenlibc/usr/lib/frankenlibc
@@ -18,10 +26,9 @@ override_dh_auto_install:
 		debian/libfrankenlibc/usr/lib/frankenlibc/
 
 override_dh_auto_test:
-	# Verify the artifact has no glibc dependencies
-	! nm -u debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so 2>/dev/null | grep -q GLIBC
-	! readelf -d debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so 2>/dev/null | grep -E "NEEDED.*lib(c|pthread|dl)" || true
-
-override_dh_auto_clean:
-	cargo clean || true
-	rm -rf .cargo target debian/tmp
+	command -v nm >/dev/null || { echo "ERROR: nm is required to validate the package artifact" >&2; exit 1; }
+	command -v readelf >/dev/null || { echo "ERROR: readelf is required to validate the package artifact" >&2; exit 1; }
+	NM_OUTPUT="$$(nm -u debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so 2>&1)" || { echo "ERROR: nm could not inspect package artifact" >&2; echo "$$NM_OUTPUT" >&2; exit 1; }
+	! printf '%s\\n' "$$NM_OUTPUT" | grep -q GLIBC
+	READELF_OUTPUT="$$(readelf -d debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so 2>&1)" || { echo "ERROR: readelf could not inspect package artifact" >&2; echo "$$READELF_OUTPUT" >&2; exit 1; }
+	! printf '%s\\n' "$$READELF_OUTPUT" | grep -E "NEEDED.*lib(c|pthread|dl)"

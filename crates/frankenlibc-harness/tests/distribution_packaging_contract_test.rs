@@ -42,6 +42,10 @@ fn checker_path(root: &Path) -> PathBuf {
     root.join("scripts/check_distribution_packaging_contract.sh")
 }
 
+fn debian_rules_path(root: &Path) -> PathBuf {
+    root.join("packaging/debian/rules")
+}
+
 fn load_json(path: &Path) -> TestResult<Value> {
     Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
 }
@@ -335,6 +339,69 @@ fn checker_rejects_empty_artifact() -> TestResult {
             .is_some_and(|errors| errors.iter().any(|error| error
                 .as_str()
                 .is_some_and(|message| message.contains("empty_source_artifact"))))
+    );
+    Ok(())
+}
+
+#[test]
+fn debian_rules_package_only_the_canonical_standalone_artifact() -> TestResult {
+    if !command_available("make") {
+        eprintln!("skipping Debian rules check: make is not available");
+        return Ok(());
+    }
+
+    let root = workspace_root()?;
+    let work_dir = unique_dir(&root, "distribution-packaging-debian-rules")?;
+    let canonical = work_dir.join(
+        "target/standalone_replacement_artifact/cargo-target/release/libfrankenlibc_replace.so",
+    );
+    std::fs::create_dir_all(
+        canonical
+            .parent()
+            .ok_or_else(|| test_error("canonical artifact should have a parent"))?,
+    )?;
+    std::fs::write(&canonical, b"canonical-standalone-artifact")?;
+
+    let output = Command::new("make")
+        .arg("-C")
+        .arg(&work_dir)
+        .arg("-f")
+        .arg(debian_rules_path(&root))
+        .arg("override_dh_auto_build")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "Debian rules rejected the canonical artifact: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read(work_dir.join("debian/tmp/usr/lib/frankenlibc/libfrankenlibc_replace.so"))?,
+        b"canonical-standalone-artifact"
+    );
+
+    let interpose_only_dir = unique_dir(&root, "distribution-packaging-interpose-only")?;
+    let ordinary = interpose_only_dir.join("target/release/libfrankenlibc_abi.so");
+    std::fs::create_dir_all(
+        ordinary
+            .parent()
+            .ok_or_else(|| test_error("ordinary artifact should have a parent"))?,
+    )?;
+    std::fs::write(&ordinary, b"ordinary-interpose-artifact")?;
+    let output = Command::new("make")
+        .arg("-C")
+        .arg(&interpose_only_dir)
+        .arg("-f")
+        .arg(debian_rules_path(&root))
+        .arg("override_dh_auto_build")
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "Debian rules must reject an ordinary ABI artifact when the canonical replacement is absent"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Refusing to substitute target/release/libfrankenlibc_abi.so")
     );
     Ok(())
 }
