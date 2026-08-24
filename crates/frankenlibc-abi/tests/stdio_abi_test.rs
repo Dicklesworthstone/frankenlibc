@@ -3876,7 +3876,11 @@ fn fdopen_mode_mismatch_fails() {
 
     // Note: POSIX allows this to succeed or fail; if it fails, EINVAL expected
     if stream.is_null() {
-        let err = unsafe { *libc::__errno_location() };
+        // `fdopen` above is FrankenLibC's direct ABI entry point, so observe
+        // the errno slot exported by that same implementation.  Reading the
+        // host crate's separately linked `__errno_location` makes this arm
+        // depend on unrelated parallel host-libc activity instead.
+        let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
         assert_eq!(err, libc::EINVAL, "mode mismatch should set EINVAL");
     } else {
         // If it succeeded (some systems allow this), clean up
