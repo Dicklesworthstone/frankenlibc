@@ -237,7 +237,8 @@ impl<K> RbTree<K> {
             Some(h) => h,
         };
         let removed;
-        if cmp(needle, &h.key) == Ordering::Less {
+        let mut ordering = cmp(needle, &h.key);
+        if ordering == Ordering::Less {
             if !Self::is_red(h.left.as_deref())
                 && !Self::is_red(h.left.as_deref().and_then(|l| l.left.as_deref()))
             {
@@ -249,17 +250,27 @@ impl<K> RbTree<K> {
         } else {
             if Self::is_red(h.left.as_deref()) {
                 h = Self::rotate_right(h);
+                ordering = cmp(needle, &h.key);
             }
-            if cmp(needle, &h.key) == Ordering::Equal && h.right.is_none() {
+            // rotate_right may have replaced the node key.  Reuse the first
+            // comparison when it did not, and recompute exactly once when it
+            // did; the old form called the user comparator three times at an
+            // unchanged node on this branch.
+            if ordering == Ordering::Equal && h.right.is_none() {
                 *len -= 1;
                 return (None, Some(h.key));
             }
-            if !Self::is_red(h.right.as_deref())
-                && !Self::is_red(h.right.as_deref().and_then(|r| r.left.as_deref()))
-            {
+            let right_needs_red = !Self::is_red(h.right.as_deref())
+                && !Self::is_red(h.right.as_deref().and_then(|r| r.left.as_deref()));
+            let move_red_right_rotates =
+                right_needs_red && Self::is_red(h.left.as_deref().and_then(|l| l.left.as_deref()));
+            if right_needs_red {
                 h = Self::move_red_right(h);
             }
-            if cmp(needle, &h.key) == Ordering::Equal {
+            if move_red_right_rotates {
+                ordering = cmp(needle, &h.key);
+            }
+            if ordering == Ordering::Equal {
                 // Replace h.key with successor (min of right subtree),
                 // then delete successor.
                 let (new_right, succ_key) = Self::delete_min_rec(h.right.take());

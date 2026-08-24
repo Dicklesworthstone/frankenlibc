@@ -1029,6 +1029,30 @@ fn reset_format_string_cache_for_tests() {
 /// `fmt` points to the first byte AFTER '%'. Returns `(spec, bytes_consumed)`
 /// where `bytes_consumed` counts from `fmt[0]`. Returns `None` if malformed.
 pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
+    // The common fused-logging case is a bare one-byte conversion (`%s`,
+    // `%d`, `%u`, ...).  It has no positional index, flags, width, precision,
+    // or length modifier, so parsing those empty grammars once per conversion
+    // is pure overhead.  Keep this deliberately narrow: every decorated
+    // directive continues through the general parser below.
+    if let Some(&conversion) = fmt.first()
+        && matches!(
+            conversion,
+            b'd' | b'i' | b'u' | b'o' | b'x' | b'X' | b'c' | b's' | b'p' | b'n'
+        )
+    {
+        return Some((
+            FormatSpec::new(
+                FormatFlags::default(),
+                Width::None,
+                Precision::None,
+                LengthMod::None,
+                conversion,
+                None,
+            ),
+            1,
+        ));
+    }
+
     let mut pos = 0;
     let len = fmt.len();
     let value_position = if let Some((position, consumed)) = parse_positional_index(fmt) {
@@ -3449,6 +3473,23 @@ mod tests {
         assert_eq!(spec.width, Width::None);
         assert_eq!(spec.precision, Precision::None);
         assert_eq!(spec.value_position, None);
+    }
+
+    #[test]
+    fn bare_standard_directives_preserve_the_general_parser_contract() {
+        // These directives are the parser shortcut's entire domain.  The
+        // trailing byte proves that it consumes exactly the conversion byte;
+        // the following literal must remain available to parse_format_string.
+        for &conversion in b"diuoxXcspn" {
+            let (spec, consumed) = parse_format_spec(&[conversion, b'!']).unwrap();
+            assert_eq!(consumed, 1, "%{} consumed too much", conversion as char);
+            assert_eq!(spec.conversion, conversion);
+            assert_eq!(spec.flags, FormatFlags::default());
+            assert_eq!(spec.width, Width::None);
+            assert_eq!(spec.precision, Precision::None);
+            assert_eq!(spec.length, LengthMod::None);
+            assert_eq!(spec.value_position, None);
+        }
     }
 
     #[test]
