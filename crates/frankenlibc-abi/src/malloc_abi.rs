@@ -2453,7 +2453,7 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
         let Some(slot) = current_allocator_reentry_slot() else {
             return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
         };
-        unsafe { native_libc_free_with_slot(slot, ptr) };
+        unsafe { native_libc_free_host_only(slot, ptr) };
     }
 }
 
@@ -2468,9 +2468,38 @@ unsafe fn native_libc_free_with_slot(slot: &'static AllocatorReentrySlot, ptr: *
     if is_static_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
+    // SAFETY: the two ownership probes above have answered, so the pointer is
+    // neither an overflow mapping nor a static bump allocation.
+    unsafe { native_libc_free_host_only(slot, ptr) }
+}
+
+/// [`native_libc_free_with_slot`] for a caller that has ALREADY run the two
+/// ownership probes and had both decline.
+///
+/// Every public `free` path re-ran them. `free` tests `bump_mmap_release` and
+/// `is_static_bump_ptr` itself — it has to, because each owns a different
+/// retirement action — and then handed the pointer to a helper that opened by
+/// testing exactly the same two things, which by construction could only answer
+/// the same way. An overflow mapping or a bump pointer never reaches the call;
+/// it returned several lines earlier.
+///
+/// Split rather than deleted because the probes are load-bearing for the OTHER
+/// callers: [`native_libc_free_with_slot`] is still reached from paths that have
+/// established nothing about the pointer, and those keep the full form.
+///
+/// # Safety
+///
+/// `ptr` must be a host-allocator allocation: not an overflow mapping (
+/// `bump_mmap_release` must have declined) and not a static bump pointer (
+/// `is_static_bump_ptr` must be false). Calling this with either would leak the
+/// mapping or hand the host allocator memory it does not own.
+#[inline]
+#[allow(clippy::needless_return)]
+unsafe fn native_libc_free_host_only(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) {
     // In standalone mode, free is a no-op (bump allocator doesn't support freeing)
     #[cfg(feature = "standalone")]
     {
+        let _ = (slot, ptr);
         return;
     }
     #[cfg(not(feature = "standalone"))]
@@ -3796,12 +3825,12 @@ pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
     }
     if strict_allocator_host_path_active() {
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
         if !check_ownership(ptr as usize) {
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             return;
         }
     }
@@ -4530,7 +4559,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // `!check_ownership(ptr)` under the old combined gate.
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
             // SAFETY: tracked native-fallback allocation returned to the host.
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
@@ -4538,7 +4567,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // SAFETY: strict-mode preserves host allocator semantics. Some glibc
             // internals allocate without crossing our public malloc symbol, so
             // unknown pointers must still be returned to the host allocator.
-            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             return;
         }
         // Arena-owned pointer: fall through to the membrane free path below.
@@ -4573,7 +4602,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
         // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
         let _ = fallback_remove(ptr);
-        unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+        unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, false);
         record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
         return;
@@ -4614,7 +4643,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         FreeResult::ForeignPointer => {
             if fallback_remove(ptr) {
                 // SAFETY: pointer is tracked as native-fallback allocation.
-                unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+                unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
             } else {
                 adverse = true;
                 if runtime_policy::mode().heals_enabled() {
