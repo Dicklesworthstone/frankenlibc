@@ -34,7 +34,6 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("io_internal_abi", 5),
     ("pthread_abi", 6),
     ("stdio_abi", 6),
-    ("termios_abi", 6),
 ];
 // BURNED DOWN (bd-xh08pf):
 //   fenv_abi (11)      -> 10 retired against existing coverage in
@@ -60,7 +59,12 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                          entry points instead of widening the ABI surface to
 //                          reach `pthread_rc_to_thrd` and the THRD_*/MTX_*
 //                          constants)
-// 54 -> 48 stranded tests, 11 -> 9 modules.
+//   termios_abi (6)    -> tests/termios_abi_test.rs::
+//                         cfsetospeed_records_illegal_cooked_speed_transition
+//                         and ::tcsetattr_cbreak_raw_restore_sequence_on_pty
+//                         (rewritten through public ABI calls; the originals
+//                          inspected private tracker state directly)
+// 54 -> 42 stranded tests, 11 -> 8 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

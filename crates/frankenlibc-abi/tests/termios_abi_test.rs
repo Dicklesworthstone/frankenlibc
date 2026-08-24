@@ -8,7 +8,10 @@
 
 use std::ffi::c_void;
 
-use frankenlibc_abi::termios_abi::{cfgetispeed, cfgetospeed, cfsetispeed, cfsetospeed};
+use frankenlibc_abi::termios_abi::{
+    cfgetispeed, cfgetospeed, cfsetispeed, cfsetospeed, clear_terminal_signature_log,
+    export_terminal_signature_log_jsonl,
+};
 
 unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
@@ -343,6 +346,31 @@ fn cfset_input_output_independent() {
 }
 
 #[test]
+fn cfsetospeed_records_illegal_cooked_speed_transition() {
+    clear_terminal_signature_log();
+    let mut t: libc::termios = unsafe { std::mem::zeroed() };
+    t.c_iflag = libc::ICRNL | libc::IXON;
+    t.c_oflag = libc::OPOST;
+    t.c_cflag = libc::CS8 | libc::CREAD | libc::B9600;
+    t.c_lflag = libc::ICANON | libc::ISIG | libc::IEXTEN | libc::ECHO;
+    t.c_ispeed = libc::B9600;
+    t.c_ospeed = libc::B9600;
+
+    assert_eq!(unsafe { cfsetospeed(&mut t, libc::B115200) }, 0);
+    assert_eq!(unsafe { cfgetispeed(&t) }, libc::B9600);
+    assert_eq!(unsafe { cfgetospeed(&t) }, libc::B115200);
+
+    let jsonl = export_terminal_signature_log_jsonl();
+    assert!(jsonl.contains("\"trace_id\""));
+    assert!(jsonl.contains("\"api_family\":\"termios\""));
+    assert!(jsonl.contains("\"symbol\":\"cfsetospeed\""));
+    assert!(jsonl.contains("\"decision_path\":\"termios->rough_path_signature\""));
+    assert!(jsonl.contains("\"speed_coupling\":\"diverged\""));
+    assert!(jsonl.contains("\"is_legal\":false"));
+    assert!(jsonl.contains("\"illegal_transition_count\":1"));
+}
+
+#[test]
 fn cfgetispeed_preserves_b0_even_when_output_speed_is_set() {
     let mut t: libc::termios = unsafe { std::mem::zeroed() };
     unsafe { cfsetospeed(&mut t, libc::B115200) };
@@ -483,6 +511,29 @@ fn tcsetattr_tcsaflush_on_pty() {
         unsafe { tcgetattr(fd, &mut t) };
         let rc = unsafe { tcsetattr(fd, libc::TCSAFLUSH, &t) };
         assert_eq!(rc, 0, "tcsetattr(TCSAFLUSH) should succeed");
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+#[test]
+fn tcsetattr_cbreak_raw_restore_sequence_on_pty() {
+    use frankenlibc_abi::termios_abi::{tcgetattr, tcsetattr};
+    if let Some(fd) = open_pty_master() {
+        let mut original: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { tcgetattr(fd, &mut original) }, 0);
+
+        let mut cbreak = original;
+        cbreak.c_lflag &= !libc::ICANON;
+        cbreak.c_lflag &= !libc::ECHO;
+        let mut raw = cbreak;
+        unsafe { frankenlibc_abi::stdlib_abi::cfmakeraw(&mut raw) };
+        raw.c_cflag |= libc::CREAD;
+        raw.c_ispeed = original.c_ispeed;
+        raw.c_ospeed = original.c_ospeed;
+
+        assert_eq!(unsafe { tcsetattr(fd, libc::TCSANOW, &cbreak) }, 0);
+        assert_eq!(unsafe { tcsetattr(fd, libc::TCSADRAIN, &raw) }, 0);
+        assert_eq!(unsafe { tcsetattr(fd, libc::TCSAFLUSH, &original) }, 0);
         unsafe { frankenlibc_abi::unistd_abi::close(fd) };
     }
 }

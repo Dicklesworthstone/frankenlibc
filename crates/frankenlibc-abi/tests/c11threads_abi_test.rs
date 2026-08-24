@@ -13,6 +13,7 @@ use frankenlibc_abi::c11threads_abi::{
     tss_delete, tss_get, tss_set,
 };
 use frankenlibc_abi::dirent_abi::versionsort;
+use frankenlibc_abi::pthread_abi::pthread_self;
 use frankenlibc_abi::time_abi::{timespec_get, timespec_getres};
 
 const THRD_SUCCESS: c_int = 0;
@@ -162,6 +163,20 @@ fn test_thrd_current_equal() {
 }
 
 #[test]
+fn thrd_current_reuses_the_pthread_identity_cache() {
+    let first = thrd_current();
+    let second = thrd_current();
+    let pthread = unsafe { pthread_self() };
+
+    assert_ne!(first, 0, "current thread identity must be non-zero");
+    assert_eq!(
+        first, second,
+        "repeated C11 identity reads must stay stable"
+    );
+    assert_eq!(first, pthread, "C11 and pthread identity tokens must agree");
+}
+
+#[test]
 fn test_thrd_yield_does_not_crash() {
     thrd_yield();
 }
@@ -237,6 +252,28 @@ fn test_mtx_trylock() {
             THRD_BUSY,
             "busy trylock must return glibc thrd_busy=1"
         );
+        assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
+        mtx_destroy(&mut mtx);
+    }
+}
+
+#[test]
+fn mtx_trylock_busy_contract_holds_on_a_fresh_thread_cache() {
+    unsafe {
+        let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(mtx_init(&mut mtx, 0), THRD_SUCCESS);
+        assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS);
+
+        let mutex_addr = (&mut mtx as *mut libc::pthread_mutex_t) as usize;
+        let child = std::thread::spawn(move || {
+            let mutex = mutex_addr as *mut libc::pthread_mutex_t;
+            (mtx_trylock(mutex), mtx_trylock(mutex))
+        });
+        assert_eq!(
+            child.join().expect("trylock child must not panic"),
+            (THRD_BUSY, THRD_BUSY)
+        );
+
         assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
         mtx_destroy(&mut mtx);
     }
