@@ -34,7 +34,7 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
@@ -70,6 +70,16 @@ const FPCLASSIFY_REPS: usize = 4_000_000;
 // already hundreds of nanoseconds per call; the batch only has to be long
 // enough to swamp the timer, not to resolve a sub-nanosecond call.
 const MEMRCHR_REPS: usize = 200_000;
+// Large memory operations are bandwidth-bound, so these batches describe a
+// fixed amount of useful work rather than borrowing the small-format schedule.
+// They are deliberately long enough to amortize the clock without turning one
+// A/A sample into a host-wide memory-pressure event.
+const MEMCPY_LARGE_SIZE: usize = 64 * 1024;
+const MEMCPY_LARGE_REPS: usize = 2_048;
+const STRLEN_LARGE_SIZE: usize = 256 * 1024;
+const STRLEN_LARGE_REPS: usize = 512;
+const MEMORY_GUARD_BYTES: usize = 128;
+const MEMORY_DEST_SENTINEL: u8 = 0xA5;
 // Deletions each tdelete batch performs, across however many build-and-empty
 // cycles that takes. Equalizes sample WORK across tree sizes; see
 // `time_tdelete_batch` for why the small trees needed it.
@@ -125,6 +135,8 @@ type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type FpclassifyFn = unsafe extern "C" fn(f64) -> c_int;
 type FpclassifyfFn = unsafe extern "C" fn(f32) -> c_int;
 type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_void;
+type MemcpyFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
+type StrlenFn = unsafe extern "C" fn(*const c_char) -> usize;
 type TreeCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 type TsearchFn =
     unsafe extern "C" fn(*const c_void, *mut *mut c_void, TreeCompareFn) -> *mut c_void;
@@ -273,6 +285,14 @@ unsafe extern "C" {
     fn linked_host_fpclassifyf(value: f32) -> c_int;
     #[link_name = "memrchr"]
     fn linked_host_memrchr(haystack: *const c_void, needle: c_int, len: usize) -> *mut c_void;
+    #[link_name = "memcpy"]
+    fn linked_host_memcpy(
+        destination: *mut c_void,
+        source: *const c_void,
+        len: usize,
+    ) -> *mut c_void;
+    #[link_name = "strlen"]
+    fn linked_host_strlen(value: *const c_char) -> usize;
     #[link_name = "tsearch"]
     fn linked_host_tsearch(
         key: *const c_void,
@@ -542,6 +562,7 @@ enum Family {
     Fpclassify,
     Fpclassifyf,
     Memrchr,
+    MemcpyStrlen,
     Tdelete,
     Getrandom,
     Getauxval,
@@ -1030,6 +1051,7 @@ fn parse_args() -> Config {
             family = match args.next().as_deref() {
                 Some(value) if value == OsStr::new("nl_langinfo") => Family::NlLanginfo,
                 Some(value) if value == OsStr::new("memrchr") => Family::Memrchr,
+                Some(value) if value == OsStr::new("memcpy_strlen") => Family::MemcpyStrlen,
                 Some(value) if value == OsStr::new("tdelete") => Family::Tdelete,
                 Some(value) if value == OsStr::new("fpclassify") => Family::Fpclassify,
                 Some(value) if value == OsStr::new("fpclassifyf") => Family::Fpclassifyf,
@@ -1050,7 +1072,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
-                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, tdelete, getrandom, getauxval, \
+                    "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
@@ -1061,7 +1083,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|memrchr|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
@@ -5027,6 +5049,379 @@ fn run_memrchr(config: &Config) {
     }
 }
 
+/// A resolved large-copy arm. The source and destination stay owned by the
+/// runner for every timed sample, so a timed call cannot accidentally inherit a
+/// buffer allocated or initialized by the other provider.
+#[derive(Clone, Copy)]
+struct MemcpyArm {
+    function: MemcpyFn,
+    source: *const c_void,
+    destination: *mut c_void,
+    len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct StrlenArm {
+    function: StrlenFn,
+    source: *const c_char,
+}
+
+#[inline(never)]
+fn run_memcpy_large_batch(arm: MemcpyArm) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..MEMCPY_LARGE_REPS {
+        // SAFETY: the runner owns two disjoint allocations, each at least
+        // `arm.len` bytes long, for the whole batch.
+        let returned = unsafe {
+            black_box(arm.function)(
+                black_box(arm.destination),
+                black_box(arm.source),
+                black_box(arm.len),
+            )
+        };
+        accumulator ^= black_box(returned) as usize;
+    }
+    black_box(accumulator)
+}
+
+fn time_memcpy_large_batch(arm: MemcpyArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_memcpy_large_batch(arm));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / MEMCPY_LARGE_REPS as f64
+}
+
+#[inline(never)]
+fn run_strlen_large_batch(arm: StrlenArm) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..STRLEN_LARGE_REPS {
+        // SAFETY: `source` points at a runner-owned, NUL-terminated allocation
+        // that remains live for the entire batch.
+        let returned = unsafe { black_box(arm.function)(black_box(arm.source)) };
+        accumulator = accumulator.wrapping_add(black_box(returned));
+    }
+    black_box(accumulator)
+}
+
+fn time_strlen_large_batch(arm: StrlenArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_strlen_large_batch(arm));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / STRLEN_LARGE_REPS as f64
+}
+
+fn memory_source(len: usize) -> Vec<u8> {
+    (0..len)
+        .map(|index| ((index.wrapping_mul(131) % 251) + 1) as u8)
+        .collect()
+}
+
+/// Differentially prove both operations before the timed buffer is touched.
+/// The copy cases include empty, vector-boundary, page-crossing, and headline
+/// lengths. The strlen cases additionally prove that the terminator is the
+/// final byte, rather than merely observing a nonzero result on an arbitrary
+/// C string.
+fn check_memcpy_strlen_conformance(
+    host_memcpy: MemcpyFn,
+    fl_memcpy: MemcpyFn,
+    host_strlen: StrlenFn,
+    fl_strlen: StrlenFn,
+) -> (usize, usize) {
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+
+    for len in [
+        0usize,
+        1,
+        31,
+        63,
+        64,
+        65,
+        255,
+        256,
+        4095,
+        4096,
+        MEMCPY_LARGE_SIZE,
+    ] {
+        let source = memory_source(len);
+        let mut host_destination = vec![MEMORY_DEST_SENTINEL; len + MEMORY_GUARD_BYTES];
+        let mut fl_destination = vec![MEMORY_DEST_SENTINEL; len + MEMORY_GUARD_BYTES];
+        // SAFETY: each destination has `len + MEMORY_GUARD_BYTES` bytes and
+        // the source has `len` bytes, all of which stay live through the calls.
+        let host_return = unsafe {
+            host_memcpy(
+                host_destination.as_mut_ptr().cast(),
+                source.as_ptr().cast(),
+                len,
+            )
+        };
+        // SAFETY: same allocation contract as the host arm, with a distinct
+        // destination to avoid one provider's writes becoming the other's input.
+        let fl_return = unsafe {
+            fl_memcpy(
+                fl_destination.as_mut_ptr().cast(),
+                source.as_ptr().cast(),
+                len,
+            )
+        };
+        let host_ok = host_return == host_destination.as_mut_ptr().cast()
+            && host_destination[..len] == source[..]
+            && host_destination[len..]
+                .iter()
+                .all(|byte| *byte == MEMORY_DEST_SENTINEL);
+        let fl_ok = fl_return == fl_destination.as_mut_ptr().cast()
+            && fl_destination[..len] == source[..]
+            && fl_destination[len..]
+                .iter()
+                .all(|byte| *byte == MEMORY_DEST_SENTINEL);
+        if !host_ok || !fl_ok || host_destination != fl_destination {
+            mismatches += 1;
+        }
+        comparisons += 1;
+    }
+
+    for len in [
+        0usize,
+        1,
+        31,
+        63,
+        64,
+        65,
+        255,
+        256,
+        4095,
+        4096,
+        MEMCPY_LARGE_SIZE,
+        STRLEN_LARGE_SIZE,
+    ] {
+        let mut source = memory_source(len);
+        source.push(0);
+        // SAFETY: both functions receive the same NUL-terminated runner-owned
+        // byte vector, whose first terminator is deliberately at `len`.
+        let host_result = unsafe { host_strlen(source.as_ptr().cast()) };
+        let fl_result = unsafe { fl_strlen(source.as_ptr().cast()) };
+        if host_result != len || fl_result != host_result {
+            mismatches += 1;
+        }
+        comparisons += 1;
+    }
+
+    (comparisons, mismatches)
+}
+
+fn run_memcpy_strlen(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    // SAFETY: the explicit artifact path names a shared object selected by the caller.
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbols=memcpy,strlen deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            "plain_dlopen"
+        }
+    );
+    // SAFETY: `handle` is live and both names are NUL-terminated constants.
+    let fl_memcpy_symbol = unsafe { libc::dlsym(handle, c"memcpy".as_ptr()) };
+    // SAFETY: as above, for strlen.
+    let fl_strlen_symbol = unsafe { libc::dlsym(handle, c"strlen".as_ptr()) };
+    assert!(
+        !fl_memcpy_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC memcpy")
+    );
+    assert!(
+        !fl_strlen_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC strlen")
+    );
+
+    let host_memcpy: MemcpyFn = linked_host_memcpy;
+    let host_strlen: StrlenFn = linked_host_strlen;
+    // SAFETY: the exported symbols have the C signatures their types name.
+    let fl_memcpy: MemcpyFn = unsafe { std::mem::transmute(fl_memcpy_symbol) };
+    // SAFETY: as above, for strlen.
+    let fl_strlen: StrlenFn = unsafe { std::mem::transmute(fl_strlen_symbol) };
+    let incumbent_identity = symbol_object(host_memcpy as *const () as *const c_void)
+        .expect("identify host memcpy object");
+    let fl_identity =
+        symbol_object(fl_memcpy_symbol.cast_const()).expect("identify FrankenLibC memcpy object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbols=memcpy,strlen");
+    println!("FL_LINKAGE explicit_dlopen_local symbols=memcpy,strlen");
+    assert_incumbent_is_host_libc(&incumbent_identity, "memcpy");
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_memcpy as usize, fl_memcpy as usize,
+        "memcpy arms resolve to the same function address"
+    );
+    assert_ne!(
+        host_strlen as usize, fl_strlen as usize,
+        "strlen arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=memcpy incumbent_address={:#x} fl_address={:#x}",
+        host_memcpy as usize, fl_memcpy as usize,
+    );
+    println!(
+        "ARM_DISTINCT symbol=strlen incumbent_address={:#x} fl_address={:#x}",
+        host_strlen as usize, fl_strlen as usize,
+    );
+
+    let (comparisons, mismatches) =
+        check_memcpy_strlen_conformance(host_memcpy, fl_memcpy, host_strlen, fl_strlen);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbols=memcpy,strlen comparisons={comparisons} \
+         mismatches={mismatches} compared=memcpy_return_bytes_and_guard+strlen_exact_length \
+         covers=empty,vector_boundaries,page_boundaries,64k_copy,256k_strlen \
+         verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbols=memcpy,strlen phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!(
+            "INCUMBENT_COVERAGE_VERIFY_ONLY symbols=memcpy,strlen verdict={conformance_verdict}"
+        );
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(
+        mismatches, 0,
+        "large-memory arms are not observationally equivalent; refusing to time them"
+    );
+
+    let memcpy_source = memory_source(MEMCPY_LARGE_SIZE);
+    let mut host_memcpy_destination =
+        vec![MEMORY_DEST_SENTINEL; MEMCPY_LARGE_SIZE + MEMORY_GUARD_BYTES];
+    let mut fl_memcpy_destination =
+        vec![MEMORY_DEST_SENTINEL; MEMCPY_LARGE_SIZE + MEMORY_GUARD_BYTES];
+    let mut strlen_source = memory_source(STRLEN_LARGE_SIZE);
+    strlen_source.push(0);
+    let host_copy_arm = MemcpyArm {
+        function: host_memcpy,
+        source: memcpy_source.as_ptr().cast(),
+        destination: host_memcpy_destination.as_mut_ptr().cast(),
+        len: MEMCPY_LARGE_SIZE,
+    };
+    let fl_copy_arm = MemcpyArm {
+        function: fl_memcpy,
+        source: memcpy_source.as_ptr().cast(),
+        destination: fl_memcpy_destination.as_mut_ptr().cast(),
+        len: MEMCPY_LARGE_SIZE,
+    };
+    let host_strlen_arm = StrlenArm {
+        function: host_strlen,
+        source: strlen_source.as_ptr().cast(),
+    };
+    let fl_strlen_arm = StrlenArm {
+        function: fl_strlen,
+        source: strlen_source.as_ptr().cast(),
+    };
+    println!(
+        "MEMORY_BATCH_CONFIG memcpy_bytes_per_batch={} strlen_bytes_per_batch={} \
+         memcpy_reps={} strlen_reps={}",
+        MEMCPY_LARGE_SIZE * MEMCPY_LARGE_REPS,
+        STRLEN_LARGE_SIZE * STRLEN_LARGE_REPS,
+        MEMCPY_LARGE_REPS,
+        STRLEN_LARGE_REPS,
+    );
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "memory benchmark thread count changed between conformance and measurement"
+    );
+
+    let results = [
+        measure_arm_case_with_reps(
+            "memcpy_64k",
+            "64 KiB non-overlapping copy; historical large-copy loss",
+            MEMCPY_LARGE_REPS,
+            host_copy_arm,
+            fl_copy_arm,
+            time_memcpy_large_batch,
+        ),
+        measure_arm_case_with_reps(
+            "strlen_256k",
+            "256 KiB NUL-terminated scan; historical large-scan loss",
+            STRLEN_LARGE_REPS,
+            host_strlen_arm,
+            fl_strlen_arm,
+            time_strlen_large_batch,
+        ),
+    ];
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "memory benchmark thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print(
+            "memcpy_strlen",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
+    }
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbols=memcpy,strlen verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={} \
+         headline_case=memcpy_64k headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        results.len() - wins - losses,
+        results[0].effect_median,
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn run_fpclassify(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
@@ -8378,6 +8773,21 @@ fn measure_arm_case<A: Copy>(
     fl: A,
     time_batch: fn(A) -> f64,
 ) -> CaseResult {
+    measure_arm_case_with_reps(label, note, SNPRINTF_REPS, host, fl, time_batch)
+}
+
+/// Run the shared six-cell A/A schedule with the number of operations the
+/// specific workload needs per batch. Keeping the schedule here (rather than
+/// cloning it for large memory operations) keeps the null controls identical
+/// across all incumbent families.
+fn measure_arm_case_with_reps<A: Copy>(
+    label: &'static str,
+    note: &'static str,
+    reps_per_arm: usize,
+    host: A,
+    fl: A,
+    time_batch: fn(A) -> f64,
+) -> CaseResult {
     let retained = SAMPLES - WARMUPS;
     let mut fl_effect = Vec::with_capacity(retained);
     let mut glibc_effect = Vec::with_capacity(retained);
@@ -8437,7 +8847,7 @@ fn measure_arm_case<A: Copy>(
     summarize_case(
         label,
         note,
-        SNPRINTF_REPS,
+        reps_per_arm,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -9396,6 +9806,7 @@ fn main() {
     match config.family {
         Family::NlLanginfo => run_nl_langinfo(&config),
         Family::Memrchr => run_memrchr(&config),
+        Family::MemcpyStrlen => run_memcpy_strlen(&config),
         Family::Tdelete => run_tdelete(&config),
         Family::Fpclassify => run_fpclassify(&config),
         Family::Fpclassifyf => run_fpclassifyf(&config),
@@ -9450,6 +9861,19 @@ mod tests {
 
         assert_eq!(TEST_ALLOCATIONS.load(Ordering::Relaxed), 17);
         assert_eq!(TEST_FREES.load(Ordering::Relaxed), 17);
+    }
+
+    #[test]
+    fn memcpy_strlen_conformance_exercises_boundary_and_large_inputs() {
+        let (comparisons, mismatches) = check_memcpy_strlen_conformance(
+            linked_host_memcpy,
+            linked_host_memcpy,
+            linked_host_strlen,
+            linked_host_strlen,
+        );
+
+        assert_eq!(comparisons, 23);
+        assert_eq!(mismatches, 0);
     }
 }
 
