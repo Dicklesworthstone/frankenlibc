@@ -29,6 +29,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 const HOST_NOT_FOUND_ERRNO: c_int = 1;
@@ -5724,6 +5725,99 @@ fn write_class_into(class: u16, out: &mut String) {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ResolverRdataDialect {
+    type_prefix: bool,
+    refuses_tkey: bool,
+    refuses_tsig: bool,
+}
+
+const LEGACY_RDATA_DIALECT: ResolverRdataDialect = ResolverRdataDialect {
+    type_prefix: false,
+    refuses_tkey: true,
+    refuses_tsig: true,
+};
+
+/// libbind's generic-RR presentation changed between the deployed libresolv
+/// dialects: older copies print `999` and an "unknown RR type" note, while
+/// newer copies print `TYPE999` without that note. Calibrate once against the
+/// loaded host libresolv so a drop-in libc keeps its host's presentation ABI.
+fn resolver_rdata_dialect() -> ResolverRdataDialect {
+    static DIALECT: OnceLock<ResolverRdataDialect> = OnceLock::new();
+    *DIALECT.get_or_init(|| unsafe {
+        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        type SprintRrf = unsafe extern "C" fn(
+            *const u8,
+            usize,
+            *const c_char,
+            c_int,
+            c_int,
+            libc::c_ulong,
+            *const u8,
+            usize,
+            *const c_char,
+            *const c_char,
+            *mut c_char,
+            usize,
+        ) -> c_int;
+
+        let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
+            return LEGACY_RDATA_DIALECT;
+        };
+        let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
+            return LEGACY_RDATA_DIALECT;
+        };
+        // SAFETY: raw ELF resolution returns the host glibc entrypoints with
+        // their documented C signatures.
+        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
+        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
+        let handle = dlopen(
+            c"libresolv.so.2".as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL,
+        );
+        if handle.is_null() {
+            return LEGACY_RDATA_DIALECT;
+        }
+        let symbol = dlsym(handle, c"ns_sprintrrf".as_ptr());
+        if symbol.is_null() {
+            return LEGACY_RDATA_DIALECT;
+        }
+        // SAFETY: `symbol` was resolved from libresolv under its public name.
+        let sprintrrf: SprintRrf = core::mem::transmute(symbol);
+        let rdata = [0xde, 0xad, 0xbe, 0xef];
+        let mut buf = [0i8; 128];
+        let written = sprintrrf(
+            ptr::null(),
+            0,
+            c"probe".as_ptr(),
+            1,
+            999,
+            60,
+            rdata.as_ptr(),
+            rdata.len(),
+            ptr::null(),
+            ptr::null(),
+            buf.as_mut_ptr(),
+            buf.len(),
+        );
+        let type_prefix = written > 0
+            && CStr::from_ptr(buf.as_ptr())
+                .to_bytes()
+                .windows(b"TYPE999".len())
+                .any(|window| window == b"TYPE999");
+        ResolverRdataDialect {
+            type_prefix,
+            // The same two deployed dialects differ on malformed TKEY/TSIG:
+            // legacy libbind rejects them while the TYPE<n> dialect emits
+            // RFC 3597 generic rdata. This is the discriminator exercised by
+            // the live all-types corpus.
+            refuses_tkey: !type_prefix,
+            refuses_tsig: !type_prefix,
+        }
+    })
+}
+
 fn write_type_into(ty: u16, out: &mut String) {
     use std::fmt::Write;
     match ty {
@@ -5735,12 +5829,11 @@ fn write_type_into(ty: u16, out: &mut String) {
         16 => out.push_str("TXT"),
         28 => out.push_str("AAAA"),
         n => {
-            // Bare decimal, NOT "TYPE<n>". glibc's ns_sprintrrf renders the type
-            // through p_type/__p_type, which falls back to the decimal number,
-            // so the host emits "0S IN 999" where fl emitted "0S IN TYPE999"
-            // (bd-6z6apt). fl's own __p_type already does this correctly — the
-            // two renderings had simply drifted apart.
-            let _ = write!(out, "{n}");
+            if resolver_rdata_dialect().type_prefix {
+                let _ = write!(out, "TYPE{n}");
+            } else {
+                let _ = write!(out, "{n}");
+            }
         }
     }
 }
@@ -5844,12 +5937,13 @@ fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
 /// 40 (bd-6z6apt):
 ///
 /// ```text
-/// \# 3 (\t; unknown RR type 999\n\t01 02 03 )\t\t\t\t\t; ...
+/// \# 3 (\n\t01 02 03 )\t\t\t\t\t; ...
 /// ```
 ///
 /// The rules that reproduce every probed length:
-///  - the byte count, then ` (` and a `\t; unknown RR type <ty>` comment; a
-///    ZERO-length rdata gets no parens at all, just `\t;` and the comment;
+///  - the byte count, then ` (`; a malformed known type adds ` ; RR format
+///    error` before the dump, while an unknown type has no reason text. A
+///    ZERO-length rdata has no parenthesized hex dump;
 ///  - 16 bytes per line, each written lowercase as `"%02x "` (with its trailing
 ///    space), after a leading tab;
 ///  - the closing paren goes on the final line ONLY when that line is PARTIAL.
@@ -5857,7 +5951,7 @@ fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
 ///    a BIND quirk, reproduced deliberately rather than corrected;
 ///  - then tabs pad to column 56, then `; ` and an ASCII column with
 ///    non-printables shown as `.`.
-fn format_generic_rdata(rdata: &[u8], ty: u16, out: &mut String) {
+fn format_generic_rdata(rdata: &[u8], ty: u16, diagnostic: Option<&str>, out: &mut String) {
     use std::fmt::Write;
     /// Column the trailing `; <ascii>` comment starts at.
     const COMMENT_COLUMN: usize = 56;
@@ -5866,10 +5960,17 @@ fn format_generic_rdata(rdata: &[u8], ty: u16, out: &mut String) {
 
     let _ = write!(out, "\\# {}", rdata.len());
     if rdata.is_empty() {
-        let _ = write!(out, "\t; unknown RR type {ty}");
+        if let Some(diagnostic) = diagnostic {
+            let _ = write!(out, "\t; {diagnostic}");
+        }
         return;
     }
-    let _ = write!(out, " (\t; unknown RR type {ty}");
+    out.push_str(" (");
+    if let Some(diagnostic) = diagnostic {
+        let _ = write!(out, "\t; {diagnostic}");
+    } else if !resolver_rdata_dialect().type_prefix {
+        let _ = write!(out, "\t; unknown RR type {ty}");
+    }
 
     let mut remaining = rdata;
     while !remaining.is_empty() {
@@ -5927,7 +6028,7 @@ fn specific_or_generic(
     let mark = out.len();
     if formatter(rdata, out).is_err() {
         out.truncate(mark);
-        format_generic_rdata(rdata, ty, out);
+        format_generic_rdata(rdata, ty, Some("RR format error"), out);
     }
     Ok(())
 }
@@ -5977,7 +6078,7 @@ unsafe fn format_rdata(
             Err(())
         }
         _ => {
-            format_generic_rdata(slice, ty, out);
+            format_generic_rdata(slice, ty, None, out);
             Ok(())
         }
     }
@@ -5994,24 +6095,24 @@ unsafe fn format_rdata(
 /// record which refuse:
 ///
 /// ```text
-///   REFUSED: 2 5 6 7 8 9 12 14 15 17 18 21 26 39 249 250
+///   REFUSED: 2 5 6 7 8 9 12 14 15 17 18 21 26 39
 ///   GENERIC: everything else, INCLUDING A(1), AAAA(28) and TXT(16)
 /// ```
 ///
 /// A, AAAA and TXT are types glibc plainly knows — it has presentation
 /// formatters for all three — and it still renders them generically when the
 /// rdata does not fit. So knownness is not what decides it. Every one of the
-/// sixteen refusing types is a type whose rdata contains an EMBEDDED DOMAIN
-/// NAME: NS, CNAME, SOA, MB, MG, MR, PTR, MINFO, MX, RP, AFSDB, RT, PX, DNAME,
-/// TKEY, TSIG. The refusal comes from name decompression failing, which is a
+/// fourteen refusing types is a type whose rdata contains an EMBEDDED DOMAIN
+/// NAME: NS, CNAME, SOA, MB, MG, MR, PTR, MINFO, MX, RP, AFSDB, RT, PX, DNAME.
+/// The refusal comes from name decompression failing, which is a
 /// hard error rather than a formatting mismatch, because a truncated name may
 /// point anywhere in the message.
 ///
-/// That is a sixteen-entry rule rather than the several-hundred-entry table the
-/// bead anticipated, and it is measured rather than transcribed from an RFC.
+/// TKEY and TSIG differ across deployed libresolv releases, so their behavior
+/// is calibrated once with the rest of the presentation dialect.
 ///
 /// fl already has specific arms for NS/CNAME/PTR (2/5/12) and MX (15); this
-/// covers the remaining twelve, which previously fell through to the generic
+/// covers the remaining ten, which previously fell through to the generic
 /// renderer and reported success where glibc reports failure.
 fn rdata_embeds_a_domain_name(ty: u16) -> bool {
     matches!(
@@ -6029,10 +6130,12 @@ fn rdata_embeds_a_domain_name(ty: u16) -> bool {
         | 18  // AFSDB
         | 21  // RT
         | 26  // PX
-        | 39  // DNAME
-        | 249 // TKEY
-        | 250 // TSIG
-    )
+        | 39 // DNAME
+    ) || match ty {
+        249 => resolver_rdata_dialect().refuses_tkey,
+        250 => resolver_rdata_dialect().refuses_tsig,
+        _ => false,
+    }
 }
 
 /// libresolv `ns_sprintrrf(msg, msglen, name, class, type, ttl,
