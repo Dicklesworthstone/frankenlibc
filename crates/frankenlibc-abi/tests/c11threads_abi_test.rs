@@ -13,6 +13,7 @@ use frankenlibc_abi::c11threads_abi::{
     tss_delete, tss_get, tss_set,
 };
 use frankenlibc_abi::dirent_abi::versionsort;
+use frankenlibc_abi::pthread_abi::pthread_self;
 use frankenlibc_abi::time_abi::{timespec_get, timespec_getres};
 
 const THRD_SUCCESS: c_int = 0;
@@ -159,6 +160,20 @@ fn test_thrd_current_equal() {
     let tid = thrd_current();
     assert_ne!(tid, 0, "thrd_current should return non-zero");
     assert_ne!(thrd_equal(tid, tid), 0, "same thread should be equal");
+}
+
+#[test]
+fn thrd_current_reuses_the_pthread_identity_cache() {
+    let first = thrd_current();
+    let second = thrd_current();
+    let pthread = unsafe { pthread_self() };
+
+    assert_ne!(first, 0, "current thread identity must be non-zero");
+    assert_eq!(
+        first, second,
+        "repeated C11 identity reads must stay stable"
+    );
+    assert_eq!(first, pthread, "C11 and pthread identity tokens must agree");
 }
 
 #[test]

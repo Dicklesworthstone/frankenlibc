@@ -958,7 +958,7 @@ fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
 }
 
 #[inline(always)]
-fn native_pthread_self() -> libc::pthread_t {
+pub(crate) fn native_pthread_self() -> libc::pthread_t {
     // Per-thread cache: pthread_self() is constant for the life of a thread, so
     // the first computed value is cached in pthread TLS and every later call
     // returns it directly — skipping `core_self_tid()`, which issues a `gettid()`

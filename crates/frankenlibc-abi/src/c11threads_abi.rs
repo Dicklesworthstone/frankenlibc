@@ -166,7 +166,7 @@ pub unsafe extern "C" fn thrd_exit(res: c_int) -> ! {
 /// C11 `thrd_current` — return the calling thread's ID.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn thrd_current() -> ThrdT {
-    unsafe { crate::pthread_abi::pthread_self() }
+    crate::pthread_abi::native_pthread_self()
 }
 
 // thrd_equal — Implemented
