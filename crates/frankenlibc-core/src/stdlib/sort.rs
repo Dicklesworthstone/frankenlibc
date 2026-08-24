@@ -545,23 +545,45 @@ fn break_patterns(buf: &mut [u8], width: usize, lo: usize, hi: usize) {
     }
 }
 
+/// Swap two `width`-byte elements, in fixed-size blocks.
+///
+/// `swap_with_slice` looks like the obvious spelling and is the expensive one
+/// here: for a byte slice of runtime length it goes through a temporary and
+/// calls `memcpy`, and in THIS build that symbol resolves to fl's OWN
+/// interposed `memcpy` — so every element move in the sort paid the membrane.
+/// The profile showed it: at width 16 the move family (`swap_chunks` plus fl's
+/// `memcpy`/`memmove`/`raw_memmove_bytes`/`raw_overlap_copy`) was 49% of fl's
+/// cost per sort, against 14% for glibc's single vectorised
+/// `__memcpy_avx_unaligned_erms`.
+///
+/// Swapping through fixed-size arrays instead gives LLVM a known length at every
+/// step, so it emits register-width loads and stores and calls nothing. The
+/// 8-byte block is the unit because that is a machine word; the byte tail then
+/// handles widths that are not a multiple of it (a `struct` of three `int`s is
+/// width 12, and C programs sort those).
 fn swap_chunks(buffer: &mut [u8], i: usize, j: usize, width: usize) {
     if i == j {
         return;
     }
-    let (head, tail) = if i < j {
-        buffer.split_at_mut(j * width)
-    } else {
-        buffer.split_at_mut(i * width)
-    };
+    let (low, high) = if i < j { (i, j) } else { (j, i) };
+    let (head, tail) = buffer.split_at_mut(high * width);
+    let x = &mut head[low * width..low * width + width];
+    let y = &mut tail[..width];
 
-    let first = if i < j {
-        &mut head[i * width..(i + 1) * width]
-    } else {
-        &mut head[j * width..(j + 1) * width]
-    };
-
-    first.swap_with_slice(&mut tail[0..width]);
+    let mut off = 0usize;
+    while off + 8 <= width {
+        let xa: [u8; 8] = x[off..off + 8].try_into().expect("8-byte block");
+        let ya: [u8; 8] = y[off..off + 8].try_into().expect("8-byte block");
+        x[off..off + 8].copy_from_slice(&ya);
+        y[off..off + 8].copy_from_slice(&xa);
+        off += 8;
+    }
+    while off < width {
+        let t = x[off];
+        x[off] = y[off];
+        y[off] = t;
+        off += 1;
+    }
 }
 
 /// Insertion sort fallback for small or deeply-recursed subarrays.
@@ -818,6 +840,55 @@ fn compare_translated(a: &[u8], b: &[u8], table: Option<&[u8; 256]>) -> core::cm
 mod sort_variant_tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    /// `swap_chunks` moves 8-byte blocks and then a byte tail, so widths that
+    /// are NOT a multiple of 8 exercise a different path from the aligned ones.
+    ///
+    /// A struct of three `int`s is width 12 and C programs sort those, so the
+    /// tail is not a hypothetical. A swap that dropped or duplicated the tail
+    /// bytes would still produce a correctly ORDERED array whenever the
+    /// comparator only reads the leading bytes — which is exactly what the
+    /// existing golden-hash and isomorphism tests use — so this asserts the
+    /// FULL element travels, by giving every element a payload that the
+    /// comparator never looks at.
+    #[test]
+    fn swap_chunks_moves_the_whole_element_at_unaligned_widths() {
+        for width in [12usize, 20, 7, 9] {
+            const NUM: usize = 64;
+            let mut buf = vec![0u8; NUM * width];
+            for i in 0..NUM {
+                let key = (NUM - i) as u32;
+                buf[i * width..i * width + 4].copy_from_slice(&key.to_ne_bytes());
+                // Payload derived from the key, never read by the comparator.
+                for b in 1..width {
+                    buf[i * width + b] = (key as u8).wrapping_mul(b as u8).wrapping_add(0x5a);
+                }
+                buf[i * width..i * width + 4].copy_from_slice(&key.to_ne_bytes());
+            }
+
+            qsort(&mut buf, width, |a: &[u8], b: &[u8]| -> i32 {
+                let av = u32::from_ne_bytes(a[..4].try_into().unwrap());
+                let bv = u32::from_ne_bytes(b[..4].try_into().unwrap());
+                av.cmp(&bv) as i32
+            });
+
+            let mut prev = 0u32;
+            for i in 0..NUM {
+                let e = &buf[i * width..(i + 1) * width];
+                let key = u32::from_ne_bytes(e[..4].try_into().unwrap());
+                assert!(key >= prev, "width {width}: not sorted at {i}");
+                prev = key;
+                for b in 4..width {
+                    let want = (key as u8).wrapping_mul(b as u8).wrapping_add(0x5a);
+                    assert_eq!(
+                        e[b], want,
+                        "width {width}: element {i} (key {key}) lost its payload at byte {b} — \
+                         swap_chunks moved only part of the element"
+                    );
+                }
+            }
+        }
+    }
 
     /// The width-8 fast lane must actually be TAKEN, not merely produce sorted
     /// output (bd-nas5rt).
