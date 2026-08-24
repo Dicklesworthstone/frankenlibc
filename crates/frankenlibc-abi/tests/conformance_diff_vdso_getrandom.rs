@@ -166,6 +166,23 @@ fn vdso_getrandom_params_are_usable_and_a_draw_succeeds() {
 }
 
 #[test]
+fn vdso_getrandom_mapping_parameters_are_stable_for_the_process() {
+    let first = frankenlibc_abi::time_abi::vdso_getrandom_params_for_tests();
+    let second = frankenlibc_abi::time_abi::vdso_getrandom_params_for_tests();
+
+    if first.is_none() {
+        assert!(
+            vdso_mapping_present(),
+            "no vDSO mapping makes an absent getrandom symbol ambiguous"
+        );
+    }
+    assert_eq!(
+        first, second,
+        "vgetrandom mapping parameters changed within one process"
+    );
+}
+
+#[test]
 fn fl_getrandom_matches_success_semantics() {
     for len in [0usize, 1, 32, 256] {
         let mut buf = vec![0u8; len.max(1)];
