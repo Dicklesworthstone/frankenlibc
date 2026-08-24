@@ -87,8 +87,15 @@ fn mtx_trylock_strict_fastpath() -> bool {
             None => {
                 let mode = crate::runtime_policy::mode();
                 let strict = mode.validation_enabled() && !mode.heals_enabled();
-                cached.set(Some(strict));
-                strict
+                // `mode()` returns strict during an intentionally reentrant
+                // resolution. Do not pin that provisional answer: the atomic
+                // predicate remains false until strict is fully published.
+                if strict && !crate::runtime_policy::strict_passthrough_active() {
+                    false
+                } else {
+                    cached.set(Some(strict));
+                    strict
+                }
             }
         })
         // TLS can be unavailable during thread teardown. Preserve the existing
