@@ -725,6 +725,21 @@ fn initialize_segment_arena() -> Option<usize> {
 
 #[inline]
 fn segment_owned_index(addr: usize) -> Option<usize> {
+    segment_owned_location(addr).map(|(index, _)| index)
+}
+
+/// The owning segment's index AND its base address, for a pointer into the
+/// arena.
+///
+/// The base is a by-product this function already has: the ownership test
+/// computes `addr - arena_base` and shifts it to get the index, so
+/// `arena_base + (index << SEGMENT_SHIFT)` costs one shift-add of values already
+/// in registers. Returning it lets the free path build a slot view without
+/// re-entering `segment_arena_base_if_ready`, which it otherwise did twice more
+/// per call -- once inside `segment_header` and once inside `segment_base` --
+/// for a value that is immutable once the arena is READY.
+#[inline]
+fn segment_owned_location(addr: usize) -> Option<(usize, usize)> {
     let arena_base = segment_arena_base_if_ready()?;
     let relative = addr.wrapping_sub(arena_base);
     if relative >= SEGMENT_ARENA_SIZE {
@@ -732,7 +747,15 @@ fn segment_owned_index(addr: usize) -> Option<usize> {
     }
     let index = relative >> SEGMENT_SHIFT;
     let owned = SEGMENT_OWNED_BITMAP.load(Ordering::Acquire);
-    ((owned & (1u64 << index)) != 0).then_some(index)
+    if owned & (1u64 << index) == 0 {
+        return None;
+    }
+    // `relative < SEGMENT_ARENA_SIZE` and `SEGMENT_ARENA_SIZE == SEGMENT_COUNT
+    // << SEGMENT_SHIFT`, so the index is in range by construction -- which is
+    // also what makes the `1u64 << index` above well-defined. `segment_base`
+    // re-checks this; callers that take the base from here do not need to.
+    debug_assert!(index < SEGMENT_COUNT);
+    Some((index, arena_base + (index << SEGMENT_SHIFT)))
 }
 
 #[inline]
@@ -743,7 +766,17 @@ fn segment_base(index: usize) -> Option<usize> {
 
 #[inline]
 fn segment_header(index: usize) -> Option<&'static SegmentMemoryHeader> {
-    let base = segment_base(index)?;
+    segment_header_at(segment_base(index)?)
+}
+
+/// [`segment_header`] for a caller that already knows the segment's base.
+///
+/// Same header, same four validity checks; the only thing it does not do is
+/// re-derive the base from the arena atomic. Split out because the two hot
+/// callers -- the free path's view builder and the magazine pop's view builder
+/// -- each had the base in hand and were paying for that derivation twice.
+#[inline]
+fn segment_header_at(base: usize) -> Option<&'static SegmentMemoryHeader> {
     // SAFETY: callers reach this helper only after an Acquire ownership-bit
     // observation.  Segment initialization wrote this immutable header and
     // mprotected its page read-only before publishing that bit.  Published
@@ -780,8 +813,8 @@ fn segment_slot_meta(
 
 #[inline]
 fn segment_slot_view(addr: usize) -> Option<SegmentSlotView> {
-    let segment_index = segment_owned_index(addr)?;
-    segment_slot_view_in_owned_segment(addr, segment_index)
+    let (segment_index, base) = segment_owned_location(addr)?;
+    segment_slot_view_in_owned_segment(addr, segment_index, base)
 }
 
 /// Builds a slot view after the caller has acquired a published ownership bit.
@@ -790,13 +823,19 @@ fn segment_slot_view(addr: usize) -> Option<SegmentSlotView> {
 /// strict free path has already performed that acquire before it reaches this
 /// helper, so repeating the arena-base and bitmap loads would add work without
 /// strengthening the ownership proof.
+///
+/// `base` is that segment's base address, which the ownership test computed on
+/// the way in ([`segment_owned_location`]). It is a parameter rather than a
+/// third derivation because deriving it here re-entered the arena atomic twice
+/// per free -- once for `segment_header`, once for `segment_base` -- to
+/// reconstruct a value the caller was already holding.
 #[inline]
 fn segment_slot_view_in_owned_segment(
     addr: usize,
     segment_index: usize,
+    base: usize,
 ) -> Option<SegmentSlotView> {
-    let header = segment_header(segment_index)?;
-    let base = segment_base(segment_index)?;
+    let header = segment_header_at(base)?;
     let relative = addr.wrapping_sub(base);
     if relative < SEGMENT_HEADER_BYTES {
         return None;
@@ -1042,12 +1081,15 @@ fn activate_segment_slot(
 
 #[inline]
 fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<SegmentSlotView> {
-    let header = segment_header(segment_index)?;
+    // The base is derived ONCE and handed to the header check, rather than
+    // `segment_header` and `segment_base` each re-reading the arena atomic for
+    // the same immutable value. Same checks, same result.
+    let base = segment_base(segment_index)?;
+    let header = segment_header_at(base)?;
     if slot_index >= header.slot_count {
         return None;
     }
     let meta = segment_slot_meta(segment_index, slot_index, header.slot_count)?;
-    let base = segment_base(segment_index)?;
     Some(SegmentSlotView {
         segment_index,
         class_index: header.class_index as usize,
@@ -1256,10 +1298,10 @@ fn segment_free(
     ptr: *mut c_void,
 ) -> SegmentFreeResult {
     let addr = ptr as usize;
-    let Some(segment_index) = segment_owned_index(addr) else {
+    let Some((segment_index, base)) = segment_owned_location(addr) else {
         return SegmentFreeResult::NotOwned;
     };
-    let Some(view) = segment_slot_view_in_owned_segment(addr, segment_index) else {
+    let Some(view) = segment_slot_view_in_owned_segment(addr, segment_index, base) else {
         return SegmentFreeResult::OwnedInvalid;
     };
     if addr != view.user_base {
