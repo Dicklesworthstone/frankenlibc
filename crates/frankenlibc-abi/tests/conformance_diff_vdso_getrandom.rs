@@ -29,6 +29,35 @@
 
 use std::ffi::c_void;
 
+type GetrandomFn = unsafe extern "C" fn(*mut c_void, usize, libc::c_uint) -> isize;
+
+fn live_glibc_getrandom() -> GetrandomFn {
+    // SAFETY: libc.so.6 is the named incumbent and remains loaded for the
+    // process lifetime. `getrandom` has the exact ABI declared by GetrandomFn.
+    unsafe {
+        let handle = libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(!handle.is_null(), "failed to open live libc.so.6");
+        let raw = libc::dlsym(handle, c"getrandom".as_ptr());
+        assert!(!raw.is_null(), "libc.so.6 has no getrandom symbol");
+        assert_ne!(
+            raw as usize,
+            frankenlibc_abi::unistd_abi::getrandom as *const () as usize,
+            "incumbent lookup resolved to frankenlibc rather than libc.so.6"
+        );
+        std::mem::transmute(raw)
+    }
+}
+
+fn fl_errno() -> libc::c_int {
+    // SAFETY: FrankenLibC exposes its thread-local errno pointer.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn set_fl_errno(value: libc::c_int) {
+    // SAFETY: as above, this writes only the current thread's errno.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = value };
+}
+
 /// True when the running kernel is new enough to export the symbol at all.
 fn vdso_mapping_present() -> bool {
     // AT_SYSINFO_EHDR is present on any kernel that maps a vDSO; its absence
@@ -137,10 +166,24 @@ fn vdso_getrandom_params_are_usable_and_a_draw_succeeds() {
 }
 
 #[test]
-fn fl_getrandom_still_matches_glibc_semantics_on_the_syscall_path() {
-    // The routing is NOT landed, so fl still syscalls. This pins that the
-    // existing path is correct BEFORE it changes, so a later regression can be
-    // attributed to the routing rather than to something already broken.
+fn vdso_getrandom_mapping_parameters_are_stable_for_the_process() {
+    let first = frankenlibc_abi::time_abi::vdso_getrandom_params_for_tests();
+    let second = frankenlibc_abi::time_abi::vdso_getrandom_params_for_tests();
+
+    if first.is_none() {
+        assert!(
+            vdso_mapping_present(),
+            "no vDSO mapping makes an absent getrandom symbol ambiguous"
+        );
+    }
+    assert_eq!(
+        first, second,
+        "vgetrandom mapping parameters changed within one process"
+    );
+}
+
+#[test]
+fn fl_getrandom_matches_success_semantics() {
     for len in [0usize, 1, 32, 256] {
         let mut buf = vec![0u8; len.max(1)];
         // SAFETY: buffer is at least `len` bytes.
@@ -155,6 +198,34 @@ fn fl_getrandom_still_matches_glibc_semantics_on_the_syscall_path() {
                 "getrandom({len}) left the buffer all zeros"
             );
         }
+    }
+}
+
+#[test]
+fn fl_getrandom_zero_length_and_invalid_flags_match_live_glibc() {
+    let glibc_getrandom = live_glibc_getrandom();
+
+    for flags in [0, libc::c_uint::MAX] {
+        set_fl_errno(0);
+        // SAFETY: Linux permits a null buffer when length is zero.
+        let fl = unsafe {
+            frankenlibc_abi::unistd_abi::getrandom(std::ptr::null_mut(), 0, flags)
+        };
+        let fl_error = fl_errno();
+
+        // SAFETY: this calls the separately resolved live libc function with
+        // the same valid zero-length shape, and reads its current-thread errno.
+        let (glibc, glibc_error) = unsafe {
+            *libc::__errno_location() = 0;
+            let result = glibc_getrandom(std::ptr::null_mut(), 0, flags);
+            (result, *libc::__errno_location())
+        };
+
+        assert_eq!(
+            (fl, fl_error),
+            (glibc, glibc_error),
+            "getrandom(NULL, 0, {flags:#x}) diverged from live libc.so.6"
+        );
     }
 }
 

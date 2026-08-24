@@ -150,6 +150,10 @@ pub struct VdsoFastpathSnapshot {
 }
 
 static VDSO_SYMBOLS: OnceLock<VdsoSymbols> = OnceLock::new();
+/// Kernel-provided `vgetrandom` mapping parameters are immutable for the
+/// process lifetime. Caching avoids issuing the vDSO QUERY call before every
+/// steady-state draw while also caching a legitimate unsupported-kernel result.
+static VDSO_GETRANDOM_PARAMS: OnceLock<Option<VgetrandomOpaqueParams>> = OnceLock::new();
 static VDSO_CLOCK_GETTIME_HITS: AtomicU64 = AtomicU64::new(0);
 static VDSO_GETTIMEOFDAY_HITS: AtomicU64 = AtomicU64::new(0);
 
@@ -479,7 +483,7 @@ pub unsafe fn vdso_getrandom_draw_for_tests(
     }
 }
 
-pub(crate) fn vdso_getrandom_params() -> Option<VgetrandomOpaqueParams> {
+fn query_vdso_getrandom_params() -> Option<VgetrandomOpaqueParams> {
     let f = vdso_getrandom_fn()?;
     let mut params = VgetrandomOpaqueParams::default();
     // SAFETY: the QUERY form of the contract — a NULL buffer with zero length,
@@ -498,6 +502,10 @@ pub(crate) fn vdso_getrandom_params() -> Option<VgetrandomOpaqueParams> {
         return None;
     }
     Some(params)
+}
+
+pub(crate) fn vdso_getrandom_params() -> Option<VgetrandomOpaqueParams> {
+    *VDSO_GETRANDOM_PARAMS.get_or_init(query_vdso_getrandom_params)
 }
 
 // Minimal ELF64 layout for parsing the in-memory vDSO image (x86-64 / aarch64).
