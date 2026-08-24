@@ -1709,6 +1709,124 @@ fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
     assert_eq!(cleared["bytes_allocated"].as_u64(), Some(0));
 }
 
+/// The size-class ceiling is the boundary `segment_allocate` splits on, so pin
+/// BOTH sides of it (bd-dcrhgl).
+///
+/// ## What could break and would otherwise be silent
+///
+/// Nothing user-visible changes if this boundary moves: an allocation on the
+/// wrong side still succeeds, still has the right size and still frees. It just
+/// quietly stops being segment-served — and every ratio this campaign publishes
+/// is measured against the segment path, so a silent move would change what
+/// those numbers mean without failing anything. Both sides are asserted for
+/// that reason, not just the large one.
+///
+/// ## The lever this was written for, and its measured refusal
+///
+/// `segment_allocate` opens with `small_bin_index(requested)?`, so above the
+/// ceiling it is a call, a frame and a return to say "not mine" — 28
+/// instructions per 64 KiB malloc/free pair, paid by every large allocation. It
+/// is marked `#[inline]` and LLVM declines, the body being far too large.
+/// Splitting the entry test from the body removed that: 998.41 -> 967.41
+/// instructions per pair at 64 KiB, **-31.0**.
+///
+/// IT WAS REVERTED ANYWAY, because it cost the path that matters more. The
+/// small path (16/64/256/1024) went 549.19 -> 559.20, **+10.01 per pair**, and
+/// not for the reason the split suggests: pulling the body out of line changed
+/// `malloc`'s inlining budget, which spilled `record_alloc_stats_binned` (0.0 ->
+/// 46.0) out of the entry body it had been folded into. Removing
+/// `#[inline(never)]` and leaving the heuristic alone reproduced both numbers to
+/// the instruction, so the effect is the split itself, not the attribute.
+/// Trading +1.8% on the campaign's rank-1 surface for -3.1% on a secondary one
+/// is not a trade worth making.
+///
+/// The boundary assertions survive the revert because they pin a property of
+/// the allocator, not of that lever — and they are what would have caught the
+/// off-by-one the split invited (`<` where the lookup means `<=`, which would
+/// push `malloc(MAX_SMALL_SIZE)` itself onto the host allocator).
+///
+/// ## Why it warms up first, and why that is not a weakened assertion
+///
+/// `initialize_segment_arena` deliberately never blocks: while one thread holds
+/// `SEGMENT_ARENA_INITIALIZING` every other thread's `segment_arena_base_if_ready`
+/// answers `None` and its allocation legitimately goes to the host fallback.
+/// Asserting segment ownership from a cold, racing start therefore fails for a
+/// reason that has nothing to do with the boundary (see bd-pmvzsm). This warms
+/// the arena and ASSERTS THE WARM-UP TOOK, so the test either measures the
+/// operating point it names or fails loudly saying the arena never came up. It
+/// does not relax what is asserted afterwards.
+#[test]
+fn the_size_class_ceiling_is_the_segment_boundary() {
+    use frankenlibc_core::malloc::size_class::MAX_SMALL_SIZE;
+
+    signal_runtime_ready_for_tests();
+
+    // Establish the precondition: an arena that has actually reached READY.
+    let mut warmed = false;
+    for _ in 0..64 {
+        // SAFETY: a plain 16-byte allocation, freed immediately below.
+        let p = unsafe { malloc(16) };
+        assert!(!p.is_null(), "malloc(16) returned NULL during warm-up");
+        warmed = malloc_segment_owned_for_tests(p.cast_const());
+        // SAFETY: allocated just above, freed exactly once.
+        unsafe { free(p) };
+        if warmed {
+            break;
+        }
+    }
+    assert!(
+        warmed,
+        "the segment arena never reached READY across 64 warm-up allocations, so the \
+         boundary below cannot be tested — this is an arena-initialisation failure, not \
+         a size-class one"
+    );
+
+    // AT the ceiling: still segment-served. `<` instead of `<=` in the split
+    // would fail exactly here and nowhere else.
+    // SAFETY: allocation of MAX_SMALL_SIZE bytes, written to and freed below.
+    let at = unsafe { malloc(MAX_SMALL_SIZE) };
+    assert!(!at.is_null(), "malloc(MAX_SMALL_SIZE) returned NULL");
+    assert!(
+        malloc_segment_owned_for_tests(at.cast_const()),
+        "malloc(MAX_SMALL_SIZE = {MAX_SMALL_SIZE}) is NOT segment-owned. The class \
+         ceiling is inclusive — small_bin_index accepts it — so the segment entry test \
+         has an off-by-one and the largest small class now goes to the host allocator."
+    );
+    // Touch both ends so a wrongly-sized block faults here rather than later.
+    // SAFETY: the allocation is MAX_SMALL_SIZE bytes and both indices are inside it.
+    unsafe {
+        *at.cast::<u8>() = 0xA5;
+        *at.cast::<u8>().add(MAX_SMALL_SIZE - 1) = 0x5A;
+        assert_eq!(*at.cast::<u8>(), 0xA5);
+        assert_eq!(*at.cast::<u8>().add(MAX_SMALL_SIZE - 1), 0x5A);
+    }
+    // SAFETY: allocated above, freed exactly once.
+    unsafe { free(at) };
+
+    // ONE BYTE ABOVE: the host allocator answers, and the segment entry test
+    // must decline WITHOUT calling the body. This side holds regardless of arena
+    // state, which is why it is the half that can never be flaky.
+    let above = MAX_SMALL_SIZE + 1;
+    // SAFETY: allocation of `above` bytes, written to and freed below.
+    let over = unsafe { malloc(above) };
+    assert!(!over.is_null(), "malloc({above}) returned NULL");
+    assert!(
+        !malloc_segment_owned_for_tests(over.cast_const()),
+        "malloc({above}) reports segment ownership one byte ABOVE the ceiling — either \
+         the ceiling moved or the ownership predicate answers true for a host pointer, \
+         which would be a memory-safety defect rather than a performance one"
+    );
+    // SAFETY: the allocation is `above` bytes and both indices are inside it.
+    unsafe {
+        *over.cast::<u8>() = 0xC3;
+        *over.cast::<u8>().add(above - 1) = 0x3C;
+        assert_eq!(*over.cast::<u8>(), 0xC3);
+        assert_eq!(*over.cast::<u8>().add(above - 1), 0x3C);
+    }
+    // SAFETY: allocated above, freed exactly once.
+    unsafe { free(over) };
+}
+
 /// Pin the address-derived fast path over the exact sizes the allocator
 /// campaign measures (bd-e0y02p).
 ///
