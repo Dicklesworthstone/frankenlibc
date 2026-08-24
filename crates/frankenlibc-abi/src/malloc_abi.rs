@@ -2963,7 +2963,7 @@ impl StatsBin {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn record_stats_binned(
     slot: Option<&AllocatorReentrySlot>,
     op: usize,
@@ -3013,7 +3013,7 @@ fn record_free_stats(slot: Option<&AllocatorReentrySlot>, size: usize) {
 }
 
 /// `record_alloc_stats` for a caller that already knows the size class.
-#[inline]
+#[inline(always)]
 fn record_alloc_stats_binned(
     slot: Option<&AllocatorReentrySlot>,
     size: usize,
@@ -3028,7 +3028,7 @@ fn record_alloc_stats_binned(
 }
 
 /// `record_free_stats` for a caller that already knows the size class.
-#[inline]
+#[inline(always)]
 fn record_free_stats_binned(
     slot: Option<&AllocatorReentrySlot>,
     size: usize,
@@ -4585,6 +4585,40 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         }
         // Arena-owned pointer: fall through to the membrane free path below.
     }
+    // MEMBRANE TAIL, out of line. Neither hot path reaches it: a segment-owned
+    // pointer returned at the match above, and a host-delegated one returned
+    // inside the strict block. Only an ARENA-owned pointer falls through here,
+    // and the arena is used by hardened mode and bootstrap rather than by the
+    // deployed strict path.
+    //
+    // It is nevertheless what sizes this function. The tail runs entrypoint_scope,
+    // a signal critical section, allocator_stage_context, decide/observe and the
+    // healing match, so LLVM gives the WHOLE body six callee-saved pushes and a
+    // 152-byte frame -- and both hot paths pay that prologue and epilogue on every
+    // call to reach a return several lines earlier.
+    //
+    // Splitting a HOT tail was measured and rejected: whichever of the two hot
+    // paths goes out of line pays a call, so that trade is intrinsic (-4.99 on the
+    // small path bought +6.00 on the large one). This tail is the one that is cold
+    // for BOTH, so moving it should shrink the shared frame without either hot
+    // path paying a call.
+    //
+    // SAFETY: "reentry_guard" is live and its slot is exclusively ours.
+    unsafe { free_membrane_path(&reentry_guard, ptr) }
+}
+
+/// The arena/membrane half of [`free`], out of line so its frame is not charged
+/// to the two paths that never execute it.
+///
+/// `#[inline(never)]` IS the change: inlined back, the frame returns to both hot
+/// paths.
+///
+/// # Safety
+///
+/// `ptr` is arena-owned (every other ownership class returned in [`free`]) and
+/// `reentry_guard` is the live allocator guard held by the caller.
+#[inline(never)]
+unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_void) {
     let _trace_scope = runtime_policy::entrypoint_scope("free");
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
