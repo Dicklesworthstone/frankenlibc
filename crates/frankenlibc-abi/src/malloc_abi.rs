@@ -574,7 +574,12 @@ impl SegmentMagazine {
         self.len = next_len;
         let entry = self.entries[next_len as usize];
         self.entries[next_len as usize] = u32::MAX;
-        (entry != u32::MAX).then_some(entry)
+        // Plain branch rather than `.then_some`, for the reason documented on
+        // `segment_arena_base_if_ready`.
+        if entry == u32::MAX {
+            return None;
+        }
+        Some(entry)
     }
 
     #[inline]
@@ -649,9 +654,22 @@ enum SegmentFreeResult {
 
 #[inline]
 fn segment_arena_base_if_ready() -> Option<usize> {
-    (SEGMENT_ARENA_STATE.load(Ordering::Acquire) == SEGMENT_ARENA_READY)
-        .then(|| SEGMENT_ARENA_BASE.load(Ordering::Relaxed))
-        .filter(|base| *base != 0)
+    // Written as plain branches, not `.then(..).filter(..)`. The combinator
+    // form is identical in meaning and NOT identical in codegen: LLVM
+    // materialised the `filter` predicate as a boolean
+    // (`xor/test/setne/cmp $1/je`) instead of branching on it, so the fast path
+    // spent nine instructions where six do, and the failure edge spent three
+    // instructions to reach an unconditional jump. Measured on the
+    // callgrind profile of the deployed malloc/free pair, which is straight-line
+    // code with no loop to amortise it.
+    if SEGMENT_ARENA_STATE.load(Ordering::Acquire) != SEGMENT_ARENA_READY {
+        return None;
+    }
+    let base = SEGMENT_ARENA_BASE.load(Ordering::Relaxed);
+    if base == 0 {
+        return None;
+    }
+    Some(base)
 }
 
 #[cold]
@@ -1115,7 +1133,12 @@ fn decode_segment_slot(encoded: u32) -> Option<(usize, u32)> {
     }
     let segment_index = (encoded >> SEGMENT_SLOT_INDEX_BITS) as usize;
     let slot_index = encoded & SEGMENT_SLOT_INDEX_MASK;
-    (segment_index < SEGMENT_COUNT).then_some((segment_index, slot_index))
+    // Plain branch: `.then_some` on a TUPLE has to materialise the pair before
+    // discarding it on the false edge.
+    if segment_index >= SEGMENT_COUNT {
+        return None;
+    }
+    Some((segment_index, slot_index))
 }
 
 #[cold]
