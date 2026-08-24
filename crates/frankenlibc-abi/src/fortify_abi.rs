@@ -11,7 +11,11 @@ use frankenlibc_core::syscall as raw_syscall;
 
 use crate::malloc_abi::known_remaining;
 
-type WcharT = c_int; // wchar_t is int32 on Linux/x86_64
+// `wchar_t` has the same width on the Linux targets we support, but not the
+// same signedness: x86_64 uses `c_int`, whereas aarch64 uses `c_uint`.
+// Fortify entrypoints must use the target ABI type so their calls into the
+// wide-character implementation remain type-correct on both architectures.
+type WcharT = libc::wchar_t;
 type NfdsT = u64; // nfds_t on x86_64
 const WCHAR_SIZE: usize = core::mem::size_of::<WcharT>();
 const FORTIFY_PATH_MAX: usize = 4096;
@@ -818,7 +822,9 @@ pub unsafe extern "C" fn __getwd_chk(buf: *mut c_char, buflen: usize) -> *mut c_
         return unsafe { crate::glibc_internal_abi::getwd(buf) };
     }
 
-    let mut scratch = [0i8; FORTIFY_PATH_MAX];
+    // `c_char` is target-dependent (`i8` on x86_64 and `u8` on aarch64), just
+    // like the `getcwd` ABI that fills this scratch buffer.
+    let mut scratch = [0 as c_char; FORTIFY_PATH_MAX];
     // SAFETY: `scratch` is exactly FORTIFY_PATH_MAX bytes.
     let got = unsafe { crate::unistd_abi::getcwd(scratch.as_mut_ptr(), FORTIFY_PATH_MAX) };
     if got.is_null() {
