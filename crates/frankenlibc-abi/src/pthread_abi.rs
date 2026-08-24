@@ -98,11 +98,6 @@ static PTHREAD_CONCURRENCY_LEVEL: AtomicI32 = AtomicI32::new(0);
 #[allow(dead_code)]
 static PTHREAD_MUTEX_HTM_SITE: HtmSite = HtmSite::new("pthread_mutex_lock");
 
-/// Legacy test knob retained for compatibility with existing reset helpers.
-/// Mutex/condvar ABI entrypoints are native-only now.
-static FORCE_NATIVE_MUTEX: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
 /// When true, thread lifecycle operations (create/join/detach/self/equal) skip
 /// host delegation and use the native implementation. Non-standalone preload
 /// mode defaults to host pthreads because foreign runtimes depend on glibc's
@@ -2330,7 +2325,6 @@ fn reset_mutex_registry_for_tests() {
     MUTEX_SPIN_BRANCHES.store(0, Ordering::Relaxed);
     MUTEX_WAIT_BRANCHES.store(0, Ordering::Relaxed);
     MUTEX_WAKE_BRANCHES.store(0, Ordering::Relaxed);
-    FORCE_NATIVE_MUTEX.store(true, Ordering::Release);
 }
 
 fn mutex_branch_counters() -> (u64, u64, u64) {
@@ -2346,26 +2340,6 @@ fn mutex_branch_counters() -> (u64, u64, u64) {
 pub fn pthread_mutex_reset_state_for_tests() {
     reset_mutex_registry_for_tests();
     PTHREAD_MUTEX_HTM_SITE.reset_for_tests();
-}
-
-/// Test hook: force mutex/condvar lifecycle operations onto the native path.
-#[doc(hidden)]
-pub fn pthread_mutex_force_native_for_tests() {
-    FORCE_NATIVE_MUTEX.store(true, Ordering::Release);
-}
-
-/// Test hook: force native mutex/condvar behavior and return the previous mode
-/// so callers can restore it afterwards.
-#[doc(hidden)]
-pub fn pthread_mutex_swap_force_native_for_tests() -> bool {
-    FORCE_NATIVE_MUTEX.swap(true, Ordering::AcqRel)
-}
-
-/// Test hook: restore the mutex/condvar delegation mode after temporarily
-/// forcing native behavior in a test.
-#[doc(hidden)]
-pub fn pthread_mutex_restore_for_tests(previous: bool) {
-    FORCE_NATIVE_MUTEX.store(previous, Ordering::Release);
 }
 
 /// Test hook: snapshot spin/wait/wake branch counters.
