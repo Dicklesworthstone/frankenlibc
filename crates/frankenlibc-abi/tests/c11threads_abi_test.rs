@@ -258,6 +258,28 @@ fn test_mtx_trylock() {
 }
 
 #[test]
+fn mtx_trylock_busy_contract_holds_on_a_fresh_thread_cache() {
+    unsafe {
+        let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(mtx_init(&mut mtx, 0), THRD_SUCCESS);
+        assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS);
+
+        let mutex_addr = (&mut mtx as *mut libc::pthread_mutex_t) as usize;
+        let child = std::thread::spawn(move || {
+            let mutex = mutex_addr as *mut libc::pthread_mutex_t;
+            (mtx_trylock(mutex), mtx_trylock(mutex))
+        });
+        assert_eq!(
+            child.join().expect("trylock child must not panic"),
+            (THRD_BUSY, THRD_BUSY)
+        );
+
+        assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
+        mtx_destroy(&mut mtx);
+    }
+}
+
+#[test]
 fn test_mtx_recursive() {
     unsafe {
         let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
