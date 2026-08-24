@@ -11,10 +11,8 @@
 //! Sweeping every type 1..=299 through live `libresolv.so.2` with a valid
 //! message and a deliberately malformed 3-byte rdata:
 //!
-//! ```text
-//!   REFUSED: 2 5 6 7 8 9 12 14 15 17 18 21 26 39 249 250
-//!   GENERIC: everything else, INCLUDING A(1), AAAA(28) and TXT(16)
-//! ```
+//! The refusal set is a presentation-ABI property of the installed libresolv,
+//! so this test compares it live instead of pinning one release's set.
 //!
 //! A, AAAA and TXT are types glibc plainly knows — it has formatters for all
 //! three — and it still renders them generically when the rdata does not fit.
@@ -22,11 +20,10 @@
 //! its rdata, and the refusal is name decompression failing, which is a hard
 //! error rather than a formatting mismatch.
 //!
-//! The sweep is re-run here rather than pinned as a list alone, so a libresolv
-//! that changes its mind fails this gate instead of silently disagreeing with
-//! the sixteen-entry rule fl now implements.
+//! The sweep is re-run here against both libraries, so a libresolv that changes
+//! its mind exercises FrankenLibC's host-calibrated presentation behavior.
 
-use std::ffi::{c_char, c_int, c_ulong, CStr};
+use std::ffi::{CStr, c_char, c_int, c_ulong};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -46,9 +43,6 @@ type SprintrrfFn = unsafe extern "C" fn(
     *mut c_char,
     usize,
 ) -> c_int;
-
-/// The types fl refuses, from `rdata_embeds_a_domain_name`.
-const NAME_BEARING: &[u16] = &[2, 5, 6, 7, 8, 9, 12, 14, 15, 17, 18, 21, 26, 39, 249, 250];
 
 fn host_sprintrrf() -> SprintrrfFn {
     // SAFETY: the signature matches libresolv's declaration, and fl's own
@@ -188,21 +182,24 @@ fn malformed_rdata_refusal_matches_libresolv_across_every_type() {
     );
 }
 
-/// The rule fl implements must be exactly the set libresolv refuses — no more,
-/// no fewer. A drift in either direction is a divergence even if every
-/// individual type still agrees by accident.
+/// The resolver's structural refusal classification must be exactly the live
+/// libresolv classification — no more, no fewer.
 #[test]
-fn the_name_bearing_set_is_exactly_what_libresolv_refuses() {
-    let mut observed = Vec::new();
+fn name_bearing_refusal_classification_matches_live_libresolv() {
+    let mut host_refused = Vec::new();
+    let mut fl_refused = Vec::new();
     for ty in 1u16..=299 {
-        if render_both(ty).1 <= 0 {
-            observed.push(ty);
+        let (fl_rc, host_rc) = render_both(ty);
+        if host_rc <= 0 {
+            host_refused.push(ty);
+        }
+        if fl_rc <= 0 {
+            fl_refused.push(ty);
         }
     }
     assert_eq!(
-        observed, NAME_BEARING,
-        "libresolv's refusal set moved; fl's rdata_embeds_a_domain_name must \
-         move with it rather than being widened to make this pass"
+        fl_refused, host_refused,
+        "FrankenLibC's name-bearing refusal classification diverged from live libresolv"
     );
 }
 

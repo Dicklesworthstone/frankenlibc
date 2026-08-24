@@ -3967,9 +3967,9 @@ fn sprintrrf_to_str(
             msg.as_ptr(),
             msg.len(),
             cname.as_ptr(),
-            class,
-            ty,
-            ttl,
+            c_int::from(class),
+            c_int::from(ty),
+            libc::c_ulong::from(ttl),
             if rdata.is_empty() {
                 std::ptr::null()
             } else {
@@ -4008,9 +4008,9 @@ fn glibc_sprintrrf(
         *const u8,
         usize,
         *const c_char,
-        u16,
-        u16,
-        u32,
+        c_int,
+        c_int,
+        libc::c_ulong,
         *const u8,
         usize,
         *const c_char,
@@ -4052,9 +4052,9 @@ fn glibc_sprintrrf(
             msg_ptr,
             msg.len(),
             cname.as_ptr(),
-            class,
-            ty,
-            ttl,
+            c_int::from(class),
+            c_int::from(ty),
+            libc::c_ulong::from(ttl),
             rdata.as_ptr(),
             rdata.len(),
             std::ptr::null(),
@@ -4297,10 +4297,13 @@ fn ns_sprintrrf_rejects_tracked_unterminated_name() {
 }
 
 #[test]
-fn ns_sprintrrf_rejects_malformed_a_rdata() {
-    // A record requires exactly 4 bytes; passing 3 is malformed.
-    let s = sprintrrf_to_str(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 64);
-    assert!(s.is_none());
+fn ns_sprintrrf_malformed_a_uses_generic_format_like_glibc() {
+    // A record rdata requires four bytes. libresolv still renders a short
+    // payload generically because it does not contain a compressed name.
+    let host = glibc_sprintrrf(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 128);
+    let ours = sprintrrf_to_str(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 128);
+    assert_eq!(ours, host, "fl vs live glibc malformed A");
+    assert!(ours.expect("generic A rendering").contains("01 02 03"));
 }
 
 #[test]
@@ -4328,11 +4331,13 @@ fn ns_sprintrrf_rejects_null_rdata_with_nonzero_len() {
 }
 
 #[test]
-fn ns_sprintrrf_unsupported_known_type_uses_generic_type_number() {
-    // SOA rdata that is deliberately malformed, so both sides fall back to the
-    // RFC 3597 generic form rather than parsing it.
-    let s = assert_sprintrrf_matches_host(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64);
-    assert!(s.contains("010203"), "got: {s}");
+fn ns_sprintrrf_malformed_soa_is_rejected_like_glibc() {
+    // SOA rdata starts with two domain names. A truncated payload must be
+    // rejected rather than rendered as RFC 3597 generic data.
+    let host = glibc_sprintrrf(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64);
+    let ours = sprintrrf_to_str(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64);
+    assert_eq!(ours, host, "fl vs live glibc malformed SOA");
+    assert!(ours.is_none());
 }
 
 #[test]
