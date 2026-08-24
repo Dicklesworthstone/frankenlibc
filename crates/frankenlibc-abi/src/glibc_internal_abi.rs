@@ -5435,12 +5435,21 @@ pub unsafe extern "C" fn monstartup(lowpc: c_ulong, highpc: c_ulong) {
     let _ = (lowpc, highpc);
 }
 type HostProfilFn = unsafe extern "C" fn(*mut c_void, SizeT, SizeT, c_uint) -> c_int;
+type HostSprofilFn = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void, c_uint) -> c_int;
 
 #[inline]
 unsafe fn host_profil_fn() -> Option<HostProfilFn> {
     let addr = crate::host_resolve::resolve_host_symbol_raw("profil")?;
     // SAFETY: the raw ELF resolver returns the host libc's `profil` symbol,
     // whose ABI is exactly `HostProfilFn` on the supported Linux targets.
+    Some(unsafe { core::mem::transmute(addr) })
+}
+
+#[inline]
+unsafe fn host_sprofil_fn() -> Option<HostSprofilFn> {
+    let addr = crate::host_resolve::resolve_host_symbol_raw("sprofil")?;
+    // SAFETY: the raw ELF resolver returns the host libc's `sprofil` symbol,
+    // whose ABI is exactly `HostSprofilFn` on the supported Linux targets.
     Some(unsafe { core::mem::transmute(addr) })
 }
 
@@ -5481,15 +5490,15 @@ pub unsafe extern "C" fn sprofil(
     tvp: *mut c_void,
     flags: c_uint,
 ) -> c_int {
-    let _ = (profp, profcnt, flags);
-    if !tvp.is_null() && !tracked_output_too_short(tvp, size_of::<libc::timeval>()) {
-        let period = libc::timeval {
-            tv_sec: 0,
-            tv_usec: (1_000_000 / unsafe { __profile_frequency() }) as _,
-        };
-        unsafe { tvp.cast::<libc::timeval>().write(period) };
+    let Some(host_sprofil) = (unsafe { host_sprofil_fn() }) else {
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return -1;
+    };
+    let result = unsafe { host_sprofil(profp, profcnt, tvp, flags) };
+    if result != 0 {
+        unsafe { set_abi_errno(crate::host_resolve::host_errno(libc::EINVAL)) };
     }
-    0
+    result
 }
 
 // Misc POSIX functions
@@ -6324,12 +6333,19 @@ pub unsafe extern "C" fn init_module(
 /// one: a NULL ARGUMENT means the caller does not care about this position,
 /// and an EMPTY FIELD in the file means the entry matches anything there.
 /// Either one alone is sufficient.
-fn netgroup_field_matches(entry: &[u8], query: Option<&[u8]>) -> bool {
+fn netgroup_field_matches(entry: &[u8], query: Option<&[u8]>, case_insensitive: bool) -> bool {
     match query {
         // Caller passed NULL for this position.
         None => true,
         // An empty field in /etc/netgroup is the file's own wildcard.
-        Some(wanted) => entry.is_empty() || entry == wanted,
+        Some(wanted) => {
+            entry.is_empty()
+                || if case_insensitive {
+                    entry.eq_ignore_ascii_case(wanted)
+                } else {
+                    entry == wanted
+                }
+        }
     }
 }
 
@@ -6341,18 +6357,16 @@ fn netgroup_field_matches(entry: &[u8], query: Option<&[u8]>) -> bool {
 /// actually decides netgroup-based access — always answered "no" no matter what
 /// the file said, and the support matrix recorded it as Implemented.
 ///
-/// SEMANTICS NOT MEASURED HERE, and that limitation is real: /etc/netgroup does
-/// not exist on this host and the current throttle forbids creating one, so
-/// there was no way to run the incumbent. The wildcard rule below is the
-/// documented contract, not something observed, and this campaign has repeatedly
-/// found documented contracts to be wrong. It needs a gate against live glibc
-/// with a synthetic /etc/netgroup before it is trusted.
+/// Semantics are pinned by the fixture-isolated live-glibc differential gate in
+/// `conformance_diff_innetgr`; it binds a synthetic `/etc/netgroup` over the
+/// host path and checks NULL arguments, empty-field wildcards, nested groups,
+/// and case sensitivity.
 ///
 /// The risk has a direction worth stating: the old stub failed CLOSED (always
 /// "not a member"), and a wrong wildcard rule here could fail OPEN. Matching is
-/// therefore exact-compare with no case folding and no prefix logic — the
-/// narrowest reading of the contract — so an error is far likelier to deny a
-/// legitimate member than to admit a stranger.
+/// therefore host/domain ASCII case-insensitive compare with no prefix logic —
+/// the rule observed from the live glibc gate — so an error is far likelier to
+/// deny a legitimate member than to admit a stranger.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn innetgr(
     netgroup: *const c_char,
@@ -6395,9 +6409,9 @@ pub unsafe extern "C" fn innetgr(
     // through a nested group reference is still a member, and glibc follows
     // those references (see core::netgroup::expand_netgroup for the evidence).
     for triple in frankenlibc_core::netgroup::expand_netgroup(&content, &group) {
-        if netgroup_field_matches(&triple.host, wanted_host.as_deref())
-            && netgroup_field_matches(&triple.user, wanted_user.as_deref())
-            && netgroup_field_matches(&triple.domain, wanted_domain.as_deref())
+        if netgroup_field_matches(&triple.host, wanted_host.as_deref(), true)
+            && netgroup_field_matches(&triple.user, wanted_user.as_deref(), false)
+            && netgroup_field_matches(&triple.domain, wanted_domain.as_deref(), true)
         {
             return 1;
         }
