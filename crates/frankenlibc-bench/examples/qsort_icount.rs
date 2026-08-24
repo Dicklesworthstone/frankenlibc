@@ -123,6 +123,14 @@ fn scrambled(n: usize) -> Vec<i64> {
 /// artifact gets certified. This one cannot be wrong about which bytes are
 /// executing.
 fn self_elf_sha256() -> String {
+    // Hashing a 20 MB binary with a software SHA-256 costs ~1.1 BILLION
+    // instructions, which under callgrind dominated the whole profile at 74.7%
+    // and made per-frame reading of the SORT useless. It never perturbed the
+    // per-arm inclusive attribution (separate subtrees), but it is opted out of
+    // for profiling runs. Certification runs leave QSORT_NO_SHA unset.
+    if std::env::var_os("QSORT_NO_SHA").is_some() {
+        return "skipped(QSORT_NO_SHA)".to_string();
+    }
     use sha2::{Digest, Sha256};
     let bytes = std::fs::read("/proc/self/exe").expect("read /proc/self/exe");
     let mut h = Sha256::new();
