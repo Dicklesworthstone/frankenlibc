@@ -162,3 +162,34 @@ fn diff_swprintf_wide_char() {
         divs.join("\n")
     );
 }
+
+#[test]
+fn diff_swprintf_mixed_wide_only_conversions() {
+    let format = wfmt("label=%lc:%ls:%05d");
+    let wide_arg = wstr("日本");
+    let mut fb = vec![0 as Wc; 128];
+    let mut lb = vec![0 as Wc; 128];
+    let fl_n = unsafe {
+        fl::swprintf(
+            fb.as_mut_ptr(),
+            fb.len(),
+            format.as_ptr(),
+            'é' as c_int,
+            wide_arg.as_ptr(),
+            -3i32,
+        )
+    };
+    let libc_n = unsafe {
+        swprintf(
+            lb.as_mut_ptr(),
+            lb.len(),
+            format.as_ptr(),
+            'é' as c_int,
+            wide_arg.as_ptr(),
+            -3i32,
+        )
+    };
+
+    assert_eq!(fl_n, libc_n);
+    assert_eq!(used(&fb, fl_n), used(&lb, libc_n));
+}
