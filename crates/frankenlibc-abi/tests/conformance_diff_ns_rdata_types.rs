@@ -26,7 +26,7 @@
 //! that changes its mind fails this gate instead of silently disagreeing with
 //! the sixteen-entry rule fl now implements.
 
-use std::ffi::{c_char, c_int, c_ulong};
+use std::ffi::{c_char, c_int, c_ulong, CStr};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -95,20 +95,12 @@ fn render_both(ty: u16) -> (c_int, c_int) {
             host_buf.as_mut_ptr(),
             host_buf.len(),
         );
-        // `ty` unconverted, because fl's export declares `class: u16, ty: u16,
-        // ttl: u32` while libresolv's prototype (SprintrrfFn above) is
-        // `ns_class, ns_type, u_long` -- enums, so `int`, and `unsigned long`.
-        // Both arms therefore receive the SAME VALUE through different declared
-        // widths. On x86-64 SysV that is benign for values this gate passes: the
-        // argument register holds the value and a narrower callee reads its low
-        // half. It is still a divergent C signature; filed rather than changed
-        // here, because widening a production export is not a test fix.
         let fl_rc = frankenlibc_abi::resolv_abi::ns_sprintrrf(
             msg.as_ptr(),
             msg.len(),
             name.as_ptr(),
             1,
-            ty,
+            c_int::from(ty),
             0,
             rdata.as_ptr(),
             rdata.len(),
@@ -119,6 +111,58 @@ fn render_both(ty: u16) -> (c_int, c_int) {
         );
         (fl_rc, host_rc)
     }
+}
+
+#[test]
+fn exported_signature_and_full_width_ttl_match_libresolv() {
+    let _: SprintrrfFn = frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let ttl = c_ulong::from(u32::MAX) + 1;
+    let rdata = [127u8, 0, 0, 1];
+    let name = c"ttl.example.";
+    let mut host_buf = [0 as c_char; 256];
+    let mut fl_buf = [0 as c_char; 256];
+
+    // SAFETY: both calls receive live NUL-terminated names and writable output
+    // buffers; A rdata has exactly four bytes. The host function is resolved
+    // with the matching `SprintrrfFn` signature above.
+    let host_rc = unsafe {
+        host_sprintrrf()(
+            std::ptr::null(),
+            0,
+            name.as_ptr(),
+            1,
+            1,
+            ttl,
+            rdata.as_ptr(),
+            rdata.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            host_buf.as_mut_ptr(),
+            host_buf.len(),
+        )
+    };
+    let fl_rc = unsafe {
+        frankenlibc_abi::resolv_abi::ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            name.as_ptr(),
+            1,
+            1,
+            ttl,
+            rdata.as_ptr(),
+            rdata.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            fl_buf.as_mut_ptr(),
+            fl_buf.len(),
+        )
+    };
+
+    assert_eq!(fl_rc, host_rc, "full-width TTL return value");
+    assert!(host_rc >= 0, "live libresolv rejected the valid A record");
+    let host_text = unsafe { CStr::from_ptr(host_buf.as_ptr()) };
+    let fl_text = unsafe { CStr::from_ptr(fl_buf.as_ptr()) };
+    assert_eq!(fl_text, host_text, "full-width TTL presentation");
 }
 
 /// The sweep that produced the rule, re-run against the live oracle.
