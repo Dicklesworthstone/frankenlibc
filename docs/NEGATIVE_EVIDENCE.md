@@ -32788,3 +32788,78 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   8.456), and the direction is the wrong way round for a probe that must walk and miss. Combined
   with the disassembly — `check_ownership` and `known_remaining` are both on the `jae` edge — the
   registry is bypassed in strict mode, exactly as this ledger's earlier note predicted.
+
+## 2026-08-26 — REJECTED, a new mechanism and the sixth on this surface: making the magazine a real thread-cache works in the emitted code and costs 30 MB of `.data`, because per-thread allocator state is replicated 4096 times
+
+- **RESULT CLASS: loss/baseline (rejected lever).** Reverted; the change is stashed, not committed.
+  This is NOT one of the five mechanisms already refuted here (guard CAS, slot-retire elision,
+  `entrypoint_scope` hoist, address-derived slab, TLS model). It is the structural one the
+  `bd-ny3hsa` attribution named and left unwritten.
+- **THE LEVER.** `SegmentMagazine` cached a 32-bit `(segment, slot)` code — a cache of an INDEX,
+  not of a RESULT. `segment_free` derived the segment base, validated the header, resolved the
+  metadata sidecar and computed `user_base`, then discarded all four and kept 32 bits, so the very
+  next `malloc` rebuilt the identical view through `segment_slot_view_at`. The candidate cached the
+  finished view instead: `user_base`, the sidecar `meta` pointer, `class_size` and `class_index`.
+  Soundness is the same argument that carried the shipped arena-provenance change — the header is
+  written once and its page mprotected READ-ONLY before the ownership bit is published, published
+  segments are never reclaimed, and `meta_base` is set once. The one mutable field,
+  `requested_size`, was deliberately not cached. The ledger-protected magazine class check was kept
+  as an identical branch on the cached `class_index`.
+- **NOT the glibc-style intrusive free list, and that was checked rather than assumed.**
+  `activate_segment_slot` documents and `calloc_reuses_a_freed_slot_zeroed` TESTS the invariant that
+  fl never writes into a slot's payload to bookkeep it. Threading a `next` pointer through the freed
+  block — what `tcache_put`/`tcache_get` do — is excluded by contract here, not by taste.
+- **THE MECHANISM IS REAL IN THE EMITTED CODE, verified by disassembly before any timing.** In the
+  base object, `allocate_from_local_class` pops the u32, shifts it by 18, then loads
+  `SEGMENT_ARENA_STATE` and `SEGMENT_ARENA_BASE`, compares the header magic
+  (`movabs $0x4652414e4b534547`) and reads `SEGMENT_DESCRIPTORS`. In the candidate the same function
+  reads four fields straight out of the magazine entry
+  (`mov (%rdi,%rax,1)`, `mov 0x8(...)`, `movzwl 0x14(...)`, `movzwl 0x18(...)`) and that derivation
+  chain is gone: references inside the function drop from 5 to 4 for `SEGMENT_ARENA_STATE`, 5 to 4
+  for `SEGMENT_ARENA_BASE` and 2 to 1 for `SEGMENT_DESCRIPTORS` — one complete chain removed, the
+  survivors belonging to the bump/claim/spill paths that still need them.
+- **AND IT IS DISQUALIFIED BY SIZE, which is the finding worth keeping.** Measured with `size -A`
+  on the two objects: `.data` **7,809,480 -> 38,218,200 bytes**, a 4.89x increase; the shared object
+  itself **21,764,160 -> 52,171,400 bytes**, +140%. `.bss` is unchanged at 274,905,792.
+  The multiplier is `ALLOCATOR_REENTRY_SLOT_COUNT = 4096`: every thread slot holds a
+  `SegmentLocalState` of `NUM_SIZE_CLASSES = 32` `SegmentLocalClass` records, and those records are
+  in `.data` rather than `.bss` because they initialise non-zero fields. **Adding 24 bytes per
+  entry to an 8-entry magazine therefore costs 4096 x 32 x 192 bytes = 30 MB of file-backed data.**
+- **THAT BOUNDS A WHOLE FAMILY OF DESIGNS, not just this one.** `bd-ny3hsa` proposed widening
+  `SegmentLocalClass` from ~44 to ~136 bytes for exactly this purpose and flagged only the layout
+  risk. The 4096x replication is the reason the risk is not marginal: ANY "cache more per class"
+  design pays it, and the ceiling is low. That constraint was not written down anywhere before this
+  row.
+- **THE CANDIDATE ALSO NEVER PRODUCED A TIMING ROW, and I am not attributing that.** Three
+  independent attempts — two inside alternating ABBA scripts and one direct foreground run with a
+  420 s kill — each reached `INCUMBENT_COVERAGE_CONFORMANCE ... verdict=pass` and
+  `THREADS_OBSERVED phase=pre_guard` and then produced no host-wide-exclusivity line and no row.
+  In the same script and the same conditions the BASE arm completed normally. The allocator itself
+  is not obviously broken: the harness's pre-timing conformance contract (a non-null 64-byte round
+  trip, 2 comparisons) passed on the candidate every time. What stalls between that and the guard is
+  NOT established here, and the row does not claim it.
+- **THE BASE ARM THAT DID COMPLETE, for the record and as this row's null control.** Same worker,
+  same bench binary, `--fl-deepbind`: fl 62.976 ns against glibc 4.718 ns,
+  `ratio_median=13.066197`, bootstrap median CI [12.626703, 13.826129], `comparison=FL_SLOWER`,
+  `verdict=DECIDABLE`. Same-invocation A/A nulls both hold: FL/FL `null_median_ratio: 0.997207`,
+  bootstrap median CI [0.986852, 1.009144] — `null_bootstrap_median_ci: [0.986852, 1.009144]`;
+  glibc/glibc `null_median_ratio: 0.998653`, bootstrap median CI [0.984711, 1.038750]. Tolerance
+  0.020, both inside, `null_half_width=0.038750`, `clears_2x_null=true`, `samples=36`,
+  `reps_per_arm=100000`.
+- **CORRECTNESS WAS CHECKED AND THE FAILURE IT FOUND WAS PRE-EXISTING.** `cargo test -p
+  frankenlibc-abi --test malloc_abi_test` aborts on BOTH arms under default parallelism, at
+  different lines — base at the stats test (`left: Some(3)`, `right: Some(2)`), candidate at the
+  arena-publication assertion — and the offending test PASSES ALONE on both
+  (`1 passed; 0 failed ... 77 filtered out`). fl's runtime panic aborts the whole binary on the
+  first failure, so exactly one failure is ever visible per run and which one depends on
+  scheduling. The suite's global stats counters are shared across parallel tests; that is the
+  defect, and it is not this candidate's.
+- **PROVENANCE.** Base source at `998070b640879f95ec888990064a07833d926930`. Objects built from one
+  tree on worker `vmi1293453`, toolchain nightly-2026-04-28, config rustflags unchanged:
+  base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  candidate `sha256=39fb16601cd12f19307af0760c2cba933c7a824ed1072cb990624d09cb95da38`,
+  harness `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`.
+- **RETRY PREDICATE.** Do not re-propose caching more per magazine entry until
+  `ALLOCATOR_REENTRY_SLOT_COUNT` is no longer 4096 pre-initialised `.data` slots, or the per-thread
+  state is moved to a lazily-allocated side table. The mechanism is right and the container is
+  wrong; fix the container first.
