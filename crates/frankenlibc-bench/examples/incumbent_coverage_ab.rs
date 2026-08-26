@@ -5,7 +5,8 @@
 //! `sem_post`, inlined `thrd_current`, strict `mtx_trylock`, and hosts-backed
 //! `getaddrinfo`, `gethostbyaddr`, and `gethostbyname`, the coupled f32
 //! `sinhf`/`coshf` paths, the exact `snprintf` `%u`/`%p`/`%c` emitters, and
-//! `wcsnrtombs` count mode, and the post-parity-route `tanhf` path.
+//! `wcsnrtombs` count mode, the post-parity-route `tanhf` path, and the
+//! page-safe bounded-length scans (`strnlen`/`wcsnlen`).
 //! Their historical rows proved FrankenLibC self-speedups, but did not time
 //! live glibc in the same invocation -- or, for `snprintf`, quoted a glibc
 //! number from an `abi-bench` Criterion binary whose interposed allocator and
@@ -35,7 +36,7 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|tanhf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
+//!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -93,6 +94,7 @@ const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 // which left both sinhf and coshf UNDECIDABLE against a real effect. More reps
 // per batch shrinks the null, not the effect.
 const F32_HYPERBOLIC_REPS: usize = 1_000_000;
+const BOUNDED_LEN_REPS: usize = 200_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
 const GETHOSTBYNAME_REPS: usize = 5_000;
 const SNPRINTF_REPS: usize = 200_000;
@@ -132,6 +134,8 @@ type GetaddrinfoFn = unsafe extern "C" fn(
 ) -> c_int;
 type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
 type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
+type StrnlenFn = unsafe extern "C" fn(*const c_char, usize) -> usize;
+type WcsnlenFn = unsafe extern "C" fn(*const libc::wchar_t, usize) -> usize;
 type FpclassifyFn = unsafe extern "C" fn(f64) -> c_int;
 type FpclassifyfFn = unsafe extern "C" fn(f32) -> c_int;
 type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_void;
@@ -278,6 +282,10 @@ unsafe extern "C" {
     fn linked_host_coshf(value: f32) -> f32;
     #[link_name = "tanhf"]
     fn linked_host_tanhf(value: f32) -> f32;
+    #[link_name = "strnlen"]
+    fn linked_host_strnlen(value: *const c_char, bound: usize) -> usize;
+    #[link_name = "wcsnlen"]
+    fn linked_host_wcsnlen(value: *const libc::wchar_t, bound: usize) -> usize;
     // `fpclassify` is a MACRO in C; the object-code symbol both sides actually
     // export is `__fpclassify`. On this host it lives in libm.so.6, not
     // libc.so.6, so the incumbent-object assertion accepts either.
@@ -575,6 +583,7 @@ enum Family {
     GetaddrinfoHosts,
     SinhfCoshf,
     Tanhf,
+    BoundedLen,
     Gethostbyaddr,
     Gethostbyname,
     Snprintf,
@@ -1067,6 +1076,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
                 Some(value) if value == OsStr::new("tanhf") => Family::Tanhf,
+                Some(value) if value == OsStr::new("bounded_len") => Family::BoundedLen,
                 Some(value) if value == OsStr::new("gethostbyaddr") => Family::Gethostbyaddr,
                 Some(value) if value == OsStr::new("gethostbyname") => Family::Gethostbyname,
                 Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
@@ -1077,7 +1087,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
-                     sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, \
+                     sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
             };
@@ -1088,7 +1098,7 @@ fn parse_args() -> Config {
                  [--families a,b,c] \
                  [--family \
                   nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
-                  getaddrinfo_hosts|sinhf_coshf|tanhf|gethostbyaddr|gethostbyname|snprintf|\
+                  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
             );
@@ -3385,6 +3395,141 @@ fn measure_f32_unary_case(
         label,
         note,
         F32_HYPERBOLIC_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+const BOUNDED_LEN_CASES: [(&str, &str, usize); 8] = [
+    ("strnlen_bound_4", "wcsnlen_bound_4", 4),
+    ("strnlen_bound_8", "wcsnlen_bound_8", 8),
+    ("strnlen_bound_16", "wcsnlen_bound_16", 16),
+    ("strnlen_bound_31", "wcsnlen_bound_31", 31),
+    ("strnlen_bound_32", "wcsnlen_bound_32", 32),
+    ("strnlen_bound_63", "wcsnlen_bound_63", 63),
+    ("strnlen_bound_128", "wcsnlen_bound_128", 128),
+    ("strnlen_bound_4096", "wcsnlen_bound_4096", 4096),
+];
+
+fn bounded_len_reps(bound: usize) -> usize {
+    (4_000_000 / bound).clamp(20_000, BOUNDED_LEN_REPS)
+}
+
+#[inline(never)]
+fn run_strnlen_batch(function: StrnlenFn, input: *const c_char, bound: usize, reps: usize) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..reps {
+        accumulator ^= unsafe { black_box(function)(black_box(input), black_box(bound)) };
+    }
+    black_box(accumulator)
+}
+
+fn time_strnlen_batch(function: StrnlenFn, input: *const c_char, bound: usize, reps: usize) -> f64 {
+    let started = Instant::now();
+    black_box(run_strnlen_batch(function, input, bound, reps));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / reps as f64
+}
+
+#[inline(never)]
+fn run_wcsnlen_batch(
+    function: WcsnlenFn,
+    input: *const libc::wchar_t,
+    bound: usize,
+    reps: usize,
+) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..reps {
+        accumulator ^= unsafe { black_box(function)(black_box(input), black_box(bound)) };
+    }
+    black_box(accumulator)
+}
+
+fn time_wcsnlen_batch(
+    function: WcsnlenFn,
+    input: *const libc::wchar_t,
+    bound: usize,
+    reps: usize,
+) -> f64 {
+    let started = Instant::now();
+    black_box(run_wcsnlen_batch(function, input, bound, reps));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / reps as f64
+}
+
+fn measure_bounded_len_case<F, G>(
+    label: &'static str,
+    note: &'static str,
+    reps: usize,
+    host: F,
+    fl: G,
+) -> CaseResult
+where
+    F: Fn() -> f64,
+    G: Fn() -> f64,
+{
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+
+    for sample in 0..SAMPLES {
+        let mut effect_fl = 0.0;
+        let mut effect_glibc = 0.0;
+        let mut fa = 0.0;
+        let mut fb = 0.0;
+        let mut ga = 0.0;
+        let mut gb = 0.0;
+
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = fl();
+                    fb = fl();
+                }
+                0 => {
+                    fb = fl();
+                    fa = fl();
+                }
+                1 if sample % 2 == 0 => {
+                    ga = host();
+                    gb = host();
+                }
+                1 => {
+                    gb = host();
+                    ga = host();
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = fl();
+                    effect_glibc = host();
+                }
+                2 => {
+                    effect_glibc = host();
+                    effect_fl = fl();
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+
+    summarize_case(
+        label,
+        note,
+        reps,
         fl_effect,
         glibc_effect,
         fl_null_a,
@@ -7651,6 +7796,181 @@ fn run_tanhf(config: &Config) {
     }
 }
 
+fn first_non_edge_offset(address: usize, element_size: usize) -> usize {
+    let to_next_page = (4096 - (address & 4095)) & 4095;
+    (to_next_page + 64) / element_size
+}
+
+fn run_bounded_len(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_strnlen_symbol = unsafe { libc::dlsym(handle, c"strnlen".as_ptr()) };
+    let fl_wcsnlen_symbol = unsafe { libc::dlsym(handle, c"wcsnlen".as_ptr()) };
+    assert!(
+        !fl_strnlen_symbol.is_null() && !fl_wcsnlen_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC bounded-length symbols")
+    );
+
+    let host_strnlen: StrnlenFn = linked_host_strnlen;
+    let host_wcsnlen: WcsnlenFn = linked_host_wcsnlen;
+    let fl_strnlen: StrnlenFn = unsafe { std::mem::transmute(fl_strnlen_symbol) };
+    let fl_wcsnlen: WcsnlenFn = unsafe { std::mem::transmute(fl_wcsnlen_symbol) };
+    let incumbent_identity = symbol_object(host_strnlen as *const () as *const c_void)
+        .expect("identify host strnlen object");
+    let incumbent_wide_identity = symbol_object(host_wcsnlen as *const () as *const c_void)
+        .expect("identify host wcsnlen object");
+    let fl_identity =
+        symbol_object(fl_strnlen_symbol.cast_const()).expect("identify FrankenLibC strnlen object");
+    let fl_wide_identity =
+        symbol_object(fl_wcsnlen_symbol.cast_const()).expect("identify FrankenLibC wcsnlen object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbols=strnlen,wcsnlen");
+    println!("FL_LINKAGE explicit_dlopen_local symbols=strnlen,wcsnlen");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        incumbent_wide_identity.sha256, incumbent_identity.sha256,
+        "host strnlen and wcsnlen resolve to different serving objects"
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_eq!(
+        fl_wide_identity.sha256, fl_identity.sha256,
+        "FrankenLibC strnlen and wcsnlen resolve to different serving objects"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_strnlen as usize, fl_strnlen as usize,
+        "both strnlen arms resolve to the same function address"
+    );
+    assert_ne!(
+        host_wcsnlen as usize, fl_wcsnlen as usize,
+        "both wcsnlen arms resolve to the same function address"
+    );
+
+    let mut bytes = vec![b'x'; 3 * 4096 + 128];
+    let byte_offset = first_non_edge_offset(bytes.as_ptr() as usize, 1);
+    bytes[byte_offset + 4096] = 0;
+    let byte_input = unsafe { bytes.as_ptr().add(byte_offset).cast::<c_char>() };
+    let mut wide = vec![b'x' as libc::wchar_t; 3 * 4096];
+    let wide_offset = first_non_edge_offset(wide.as_ptr() as usize, size_of::<libc::wchar_t>());
+    wide[wide_offset + 4096] = 0;
+    let wide_input = unsafe { wide.as_ptr().add(wide_offset) };
+    let mut comparisons = 0usize;
+    for &(_, _, bound) in &BOUNDED_LEN_CASES {
+        let host_byte = unsafe { host_strnlen(byte_input, bound) };
+        let fl_byte = unsafe { fl_strnlen(byte_input, bound) };
+        assert_eq!(fl_byte, host_byte, "strnlen bound={bound}");
+        let host_wide = unsafe { host_wcsnlen(wide_input, bound) };
+        let fl_wide = unsafe { fl_wcsnlen(wide_input, bound) };
+        assert_eq!(fl_wide, host_wide, "wcsnlen bound={bound}");
+        comparisons += 2;
+
+        let nul_at = bound / 2;
+        bytes[byte_offset + nul_at] = 0;
+        wide[wide_offset + nul_at] = 0;
+        assert_eq!(unsafe { fl_strnlen(byte_input, bound) }, nul_at);
+        assert_eq!(unsafe { host_strnlen(byte_input, bound) }, nul_at);
+        assert_eq!(unsafe { fl_wcsnlen(wide_input, bound) }, nul_at);
+        assert_eq!(unsafe { host_wcsnlen(wide_input, bound) }, nul_at);
+        bytes[byte_offset + nul_at] = b'x';
+        wide[wide_offset + nul_at] = b'x' as libc::wchar_t;
+        comparisons += 4;
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbols=strnlen,wcsnlen comparisons={comparisons} \
+         bounds=4,8,16,31,32,63,128,4096 pointer_page_offset_bytes=64 verdict=pass"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbols=strnlen,wcsnlen phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbols=strnlen,wcsnlen verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(threads_pre, threads_pre_guard, "bounded-length thread count changed before measurement");
+
+    let mut results = Vec::with_capacity(BOUNDED_LEN_CASES.len() * 2);
+    for &(str_label, wide_label, bound) in &BOUNDED_LEN_CASES {
+        let reps = bounded_len_reps(bound);
+        results.push((
+            "strnlen",
+            measure_bounded_len_case(
+                str_label,
+                "page-interior bounded byte scan; NUL lies at the requested ceiling",
+                reps,
+                || time_strnlen_batch(host_strnlen, byte_input, bound, reps),
+                || time_strnlen_batch(fl_strnlen, byte_input, bound, reps),
+            ),
+        ));
+        results.push((
+            "wcsnlen",
+            measure_bounded_len_case(
+                wide_label,
+                "page-interior bounded wide scan; NUL lies at the requested ceiling",
+                reps,
+                || time_wcsnlen_batch(host_wcsnlen, wide_input, bound, reps),
+                || time_wcsnlen_batch(fl_wcsnlen, wide_input, bound, reps),
+            ),
+        ));
+    }
+
+    let threads_post = observed_threads();
+    assert_eq!(threads_post, threads_pre, "bounded-length thread count changed during measurement");
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for (symbol, result) in &results {
+        result.print(symbol, &incumbent_identity.path, threads_pre, threads_post);
+    }
+
+    let wins = results.iter().filter(|(_, result)| result.comparison == "FL_FASTER").count();
+    let losses = results.iter().filter(|(_, result)| result.comparison == "FL_SLOWER").count();
+    let undecidable = results.len() - wins - losses;
+    let verdict = if results.iter().all(|(_, result)| result.decidable()) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbols=strnlen,wcsnlen verdict={verdict} \
+         cases={} wins={wins} losses={losses} undecidable={undecidable} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 /// Destination bytes handed to every `snprintf` probe. Larger than the longest
 /// conversion under test so truncation is always a property of the `n` argument
 /// and never of the allocation.
@@ -9970,6 +10290,7 @@ fn main() {
         Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
         Family::SinhfCoshf => run_sinhf_coshf(&config),
         Family::Tanhf => run_tanhf(&config),
+        Family::BoundedLen => run_bounded_len(&config),
         Family::Gethostbyaddr => run_gethostbyaddr(&config),
         Family::Gethostbyname => run_gethostbyname(&config),
         Family::Snprintf => run_snprintf(&config),
