@@ -32967,15 +32967,45 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   again at `0x93ed40`. Three instructions per byte, one byte per iteration. Only ONE path reaches
   the vectorized scanner — `call string_abi::scan_c_string` at `0x93ecf2` — and it is guarded by
   `movzbl MODE_STATE; cmp $0x1,%cl; ja` plus an earlier byte test, so anything but the narrow
-  admitted mode falls into a byte loop. The measured 0.969 bytes/cycle says the deployed
+  admitted mode falls into a byte loop. The measured 0.969 bytes/cycle says the MEASURED
   configuration takes one of those byte loops.
+- **CORRECTION TO MY OWN SENTENCE ABOVE, made before anyone acts on it: I wrote "the deployed
+  configuration" and I have not earned the word "deployed".** Reading the source after writing the
+  row: the fast exit is guarded by `runtime_policy::strict_passthrough_active()`, whose comment
+  calls it "the DEFAULT deployed mode", and the FIRST gate in the function is
+  `runtime_policy::bootstrap_passthrough_active()`, which is true while the ABI runtime phase is
+  `AbiRuntimePhase::BootstrapPassthrough` — i.e. **before anything signals runtime-ready**. The
+  harness reaches fl by `dlopen` and calls the export directly; nothing in that path obviously
+  performs the ready transition (`malloc_abi_test` has to call `signal_runtime_ready_for_tests()`
+  explicitly). So the byte loop the throughput points at is most likely the BOOTSTRAP one, and
+  whether an LD_PRELOAD deployment also sits in that phase **is not established here**.
+- **AND THE SCANNER IS NOT THE DEFECT, which is worth stating because it is the obvious wrong
+  target.** `scan_c_string` in the same object is genuinely vectorized — 36 AVX instructions
+  (`vpcmpeqb`/`vpmovmskb`/`vpminub`), a 16-byte probe pair for short bounded scans and a 128-byte
+  4x32-lane folded tier for long ones. The kernel is fine; the export does not reach it.
+- **WHAT THE 51x IS AND IS NOT.** It is a true measurement of what this harness exercised, with
+  both nulls holding, and it is a true statement that the exported `strlen` contains byte loops.
+  It is NOT yet a deployed-defect claim, and the difference decides whether this is the campaign's
+  top target or a harness-configuration artifact. **Two facts argue it is not a blanket
+  degradation:** `memrchr` in the same harness and the same object measured 1.34-2.78x, not 50x,
+  and its export carries no phase gate; and `getauxval`, `snprintf` and `sscanf` all measured
+  WINS in the same sweep, so fl is not globally stuck in a slow mode.
+- **THE DISCRIMINATING EXPERIMENT, which must run before this number is quoted as a defect:**
+  measure the same case with fl reaching the ready phase (an explicit runtime-ready signal, or an
+  LD_PRELOAD harness rather than `dlopen`), and read `abi_runtime_phase()` at the moment of the
+  call rather than inferring it. If strlen is still ~50x with the phase ready, the target is real
+  and the lever is to route the remaining exits to `scan_c_string`. If it collapses to parity, the
+  51x is an artifact of measuring a bootstrap-phase object and this row's ranking claim must be
+  withdrawn.
 - **THIS CONFIRMS A SUSPICION THIS FILE HAS CARRIED SINCE JUNE AND NEVER PINNED.** The 2026-06-20
   entry recorded "strlen 255B: glibc 0.01s fl 0.16s ~16x (!! supposedly SIMD-done)" and could not
   explain it. The explanation is that the SIMD scanner is behind a mode gate the deployed path does
   not satisfy, and the fallback is not a slightly slower scanner — it is a byte loop. The related
   standing note that fl has "a shipped SIMD campaign that cannot reach a program" applies to
   `strlen` too, and now has a number: **51x**.
-- **WHAT THIS DOES TO THE RANKING.** New order, admissible cases only: `strlen_256k` 51.378060,
+- **WHAT THIS WOULD DO TO THE RANKING IF THE DISCRIMINATOR ABOVE CONFIRMS IT** — stated
+  conditionally on purpose, because the preceding bullet is unresolved. Order, admissible cases
+  only: `strlen_256k` 51.378060,
   then `malloc_free` 12.03-13.25, then `tdelete` ~2.7-3.0 and `memrchr` len64 2.706972, then
   `sinhf` 1.649593 / `coshf` 1.619743. The gap between rank 1 and rank 2 is a factor of four, and
   unlike `malloc_free` — which now carries six refuted mechanisms — this one has an obvious
