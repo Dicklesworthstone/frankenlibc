@@ -4534,6 +4534,20 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         }
     }
 
+    // Cold tail in its own frame — but split BELOW the bypass above, not above it.
+    // An earlier attempt moved the whole tail starting at `string_raw_passthrough_active()`
+    // and made hardened startup SIGSEGV deterministically: that bypass is the
+    // re-entrancy/TLS guard standing between an interposed `strlen` and a membrane
+    // that itself calls `strlen`, and it must not sit behind a `#[cold]
+    // #[inline(never)]` boundary. Everything from the trace scope down is ordinary
+    // validating work and moves safely. Worth 17 Ir on the entry (measured on an
+    // isolated split; `memrchr`/`memchr` measured 14.0 Ir for the same shape).
+    unsafe { strlen_validating(s) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strlen_validating(s: *const c_char) -> usize {
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
     let rem = known_remaining(s as usize);
     if !runtime_policy::mode().heals_enabled() && rem.is_none() {

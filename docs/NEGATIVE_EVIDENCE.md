@@ -35164,3 +35164,48 @@ earlier `c8232c0ec` sweep.
 - **`strlen` REMAINS THE WORST SURFACE at ~10x tracked**, and what is left is the 49 Ir positive
   probe — architectural, with its ceiling already priced. **Untracked `strlen` (string literals,
   stack buffers) is 6.5x and is a different, cheaper problem.**
+
+## 2026-08-26 — the refused `strlen` frame split, RECOVERED by splitting **below** the re-entrancy bypass instead of above it: flat **+16.0 Ir**, heap `strlen` 11.23x -> **9.996x**, static 6.54x -> **5.31x**
+
+- **RESULT CLASS: a counted win that began as a refutation, with the refutation's cause confirmed
+  by construction.** Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh
+  link-map namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2`
+  and conformance verified before counting. Baseline and candidate built from the **same HEAD**.
+- **THE PRIOR ROW REFUSED THIS CHANGE FOR A NAMED REASON, AND THE NAME WAS TESTABLE.** Splitting
+  `strlen`'s tail made hardened startup SIGSEGV 3/3, and the cause proposed there was that
+  **`string_raw_passthrough_active()` — the re-entrancy/TLS guard between an interposed `strlen`
+  and a membrane that itself calls `strlen` — had been moved behind a `#[cold] #[inline(never)]`
+  boundary.** That predicts a specific fix: split *below* the bypass, leaving it in the hot frame,
+  and move only the ordinary validating work from the trace scope down. **The prediction holds** —
+  hardened passes 3/3, and the prologue still collapses from
+  `push rbp/r15/r14/r13/r12/rbx; sub $0xb8,%rsp` to a single `push %rbx`.
+- **THE NUMBERS, FLAT AS THE MECHANISM REQUIRES.**
+
+  | provenance | len | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | heap (tracked) | 8 | 13.01 | 146.01 | **130.01** | 11.226x | **9.996x** | +16.00 |
+  | heap (tracked) | 32 | 21.00 | 156.97 | 140.97 | 7.475x | 6.713x | +16.00 |
+  | static | 8 | 13.01 | 85.01 | **69.01** | 6.536x | **5.306x** | +16.00 |
+  | static | 32 | 21.00 | 94.97 | 78.97 | 4.523x | 3.761x | +16.00 |
+  | stack | 8 | 13.01 | 87.01 | 71.01 | 6.690x | 5.459x | +16.00 |
+  | stack | 32 | 21.00 | 101.97 | 86.00 | 4.856x | 4.095x | +15.97 |
+
+  **+16.0 Ir at every provenance and every length** — the prologue/epilogue signature, matching the
+  17 Ir an isolated split measured earlier and the 14.0 Ir `memrchr`/`memchr` measured for the same
+  shape. **Heap `strlen` drops below 10x for the first time.**
+- **THE BASELINE ITSELF MOVED, WHICH IS WHY THESE NUMBERS ARE NOT THE PRIOR ROW'S.** Heap `strlen`
+  at L=8 reads 146.01 Ir here against 168.01 two rows ago: the `[8,16)` bounded tier landed in
+  between and is already in this baseline. The two changes compound —
+  **168.01 -> 130.01 Ir, 12.918x -> 9.996x** across the pair — but each was measured against its
+  own contemporaneous baseline, not chained arithmetic.
+- **CONFORMANCE, all against this object, in BOTH strict and hardened mode where the mode matters:**
+  first-NUL/bounded-tier suite **40,689 checks**; four-entrypoint heap-and-static suite **12,013
+  checks**; `strcmp` **140,016**; `memrchr` **951,906**. **0 failures throughout.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`,
+  candidate `332c1f166a526b2ed24d940deab972886a6162717273806c322979ebc1f8494f`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WHAT IS LEFT ON `strlen`:** the 49 Ir positive `known_remaining` probe (tracked buffers only),
+  which is architectural and already priced. **Untracked `strlen` is now 5.31x** and its residual
+  is ~33 Ir of three negative allocator lookups, each already gated on a flag or range test.
