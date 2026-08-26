@@ -35686,3 +35686,42 @@ reworded rather than the gate touched.)
   `wcschr` 1.886x, `wcsrchr` 1.888x, `wcslen` 1.872x, `wmemchr` 1.734x, `wmemcmp` 1.646x. **The
   worst wide entry is now 3.165x, down from 5.289x at the start of the sweep**, and the frame tax
   (~11 Ir each) is still unclaimed on eight of the ten entries.
+
+## 2026-08-26 — cold-tail split for `wcsncmp` (**3.167x -> 2.850x, +19 Ir**) and `wcscpy` (**3.026x -> 2.631x, +15 Ir**). Both now under 3x; `wcscpy` is under 100 Ir
+
+- **RESULT CLASS: counted improvement on two surfaces, isolated.** fl `LD_PRELOAD`ed against live
+  glibc in a fresh link-map namespace **in the same process image**, two-point over 2000 marginal
+  calls, `PHASE=2` and conformance verified before counting. **Baseline built from current HEAD**,
+  so these ratios are the true present state of the family, not a stale tree. Deterministic
+  instruction counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **THE LEVER WAS ALREADY PROVEN; ONLY THESE TWO ENTRIES HAD NOT CLAIMED IT.** Both opened
+  `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` — six callee-saved registers and an 88-byte frame
+  sized for the validating path, rented by the strict fast path on every call. After the split
+  `wcsncmp` opens with **`sub $0x18,%rsp` alone** and `wcscpy` with **`push %rbx` alone**.
+- **THE CUT IS AT THE STRICT GATE**, which is safe here for the same reason it was for `wcslen` and
+  not for `strlen`: nothing between the gate and the validating body is a re-entrancy bypass.
+
+  | family | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcsncmp` | 60.00 | 190.00 | **171.00** | 3.167x | **2.850x** | **+19.00** |
+  | `wcscpy` | 38.00 | 115.00 | **99.97** | 3.026x | **2.631x** | **+15.03** |
+  | others (6) | — | — | — | — | — | ≤0.03 |
+
+  Both exceed the family's typical 11-14 Ir for this shape, consistent with the larger frame they
+  were carrying. The six untouched families move by at most 0.03 Ir.
+- **CONFORMANCE.** Both existing suites re-run against this object in **strict and hardened**: the
+  `wcscmp`/`wcsncmp` differential (**563,781 checks** — first-difference ordering, two differences
+  with opposite signs, `n` swept around the difference, alignments 0..31, page-edge operands, signed
+  extremes) and the `wcscpy`/`wcscat` write-path differential (**26,440 checks** — contents, return
+  value, terminator written, and **no element past the terminator touched**, poison-verified).
+  **0 failures throughout.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `36635a2759ce0b52bfe33d9fc89e1581566d66933b558a00fe48cd0370e978a6`,
+  candidate `e4775ed7dcbded67fd7719d92af24f4751e8e19024c4ea362aeb062096ee662a`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER, MEASURED AGAINST CURRENT HEAD:** `wcsncmp` 2.850x, `wcscpy` 2.631x,
+  `wcsnlen` 2.425x, `wcscmp` 1.957x, `wcsrchr` 1.887x, `wcschr` 1.886x, `wmemchr` 1.734x,
+  `wmemcmp` 1.646x. **Nothing in the family is above 3x any more** (it opened at 5.289x), and
+  **six of eight are under 2x**. The frame tax remains unclaimed on `wcsnlen`, `wcschr`, `wcsrchr`,
+  `wmemchr`, `wcscmp`, `wmemcmp` and `wcscat`.

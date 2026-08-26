@@ -697,6 +697,14 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         return dst;
     }
 
+    // Cold tail in its own frame; see `wcsncmp_validating`. Same 6-push / 88-byte
+    // frame rented by the strict fast path above on every call.
+    unsafe { wcscpy_validating(dst, src) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
     let dst_bound = known_remaining(dst as usize).map(bytes_to_wchars);
     let src_bound = known_remaining(src as usize).map(bytes_to_wchars);
     let (_mode, decision) = runtime_policy::decide(
@@ -1299,6 +1307,17 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         return r;
     }
 
+    // Cold tail in its own frame, as `wcslen` and the narrow string entries do.
+    // This entry rented `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` from the
+    // validating path below on every strict call. Measured on the same shape
+    // elsewhere in this family: a flat 11-16 Ir. Nothing between the strict gate
+    // and here is a re-entrancy bypass, so the cut is at the gate itself.
+    unsafe { wcsncmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcsncmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
