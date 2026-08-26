@@ -576,6 +576,20 @@ pub unsafe extern "C" fn wcslen(s: *const u32) -> usize {
     if runtime_policy::strict_passthrough_active() {
         return unsafe { wide_strlen_unbounded(s) };
     }
+
+    // Cold tail in its own frame, as the narrow string entries already do. This
+    // entry opened `push rbp/r15/r14/rbx; sub $0x48,%rsp` — four callee-saved
+    // registers and a 72-byte frame sized for the validating/healing path below,
+    // rented by the strict fast path above on every call. Measured on the narrow
+    // family, same shape: a flat 11-16 Ir per call. Unlike `strlen`, nothing
+    // between the strict gate and here is a re-entrancy bypass, so the cut is at
+    // the gate itself.
+    unsafe { wcslen_validating(s) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcslen_validating(s: *const u32) -> usize {
     let known = known_remaining(s as usize);
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,

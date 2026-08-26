@@ -35209,3 +35209,70 @@ earlier `c8232c0ec` sweep.
 - **WHAT IS LEFT ON `strlen`:** the 49 Ir positive `known_remaining` probe (tracked buffers only),
   which is architectural and already priced. **Untracked `strlen` is now 5.31x** and its residual
   is ~33 Ir of three negative allocator lookups, each already gated on a flag or range test.
+
+## 2026-08-26 — re-derived frontier after the string work, and `wcslen` (the new worst) split: flat **+11-12 Ir**, 2.225x -> **1.872x**. **All ten wide-char entries carry the frame tax**; one is done
+
+- **RESULT CLASS: a re-derived ranking plus one counted win.** The 12-family survey was re-run
+  against the current HEAD object because the earlier ranking was stale — the string family had
+  moved under it. Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map
+  namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2` and
+  conformance verified before counting.
+- **THE FRONTIER MOVED, WHICH IS WHY RE-DERIVING IT MATTERED.**
+
+  | family | before | now |
+  |---|---:|---:|
+  | `memrchr` | 2.986x | **1.334x** |
+  | `strcmp` | 3.028x | **2.189x** |
+  | `tsearch`+`tdelete` | 1.701x | 1.297x |
+  | `wcslen` | 2.225x | 2.225x *(untouched — the new worst)* |
+  | `memcmp` | 2.014x | 2.014x |
+  | `snprintf` | 1.797x | 1.798x |
+  | `qsort` w16 | 1.621x | 1.621x |
+
+  Picking "next worst" off the old table would have re-attacked `memrchr` or `strcmp`, both already
+  more than halved. **`strlen` is still worse in absolute terms (9.996x tracked) but its only
+  remaining lever is the architectural `known_remaining` probe, already priced at 49 Ir.**
+- **`wcslen`'s SCANNER IS NOT THE PROBLEM.** Attribution: fl 80 Ir entirely self-contained, **no
+  callees**, against glibc's `__wcslen_avx2` at 31 Ir. `wide_strlen_unbounded` is already a proper
+  SIMD ladder — masked aligned first probe, 8-lane tier to the next 128-byte boundary, then a 128B
+  four-way min-combine unroll. The strict path also skips `known_remaining` entirely. What was left
+  was the frame.
+- **AND EVERY WIDE-CHAR ENTRY CARRIES IT** — this family was never in the earlier sweep, which only
+  looked at `string_abi`:
+
+  `wcslen` `push rbp/r15/r14/rbx; sub $0x48` · `wcsnlen` 6 pushes `sub $0x48` · `wcschr` 4 pushes
+  `sub $0x48` · `wcsrchr` 5 pushes `sub $0x40` · `wmemchr` 6 pushes `sub $0x48` · `wcscmp` 6 pushes
+  `sub $0x48` · `wcsncmp` 6 pushes `sub $0x58` · `wmemcmp` 6 pushes `sub $0x48` · `wcscpy` 6 pushes
+  `sub $0x58` · `wcscat` 6 pushes `sub $0x58`.
+
+  **Ten entrypoints; one is fixed here.** The other nine are named, not silently folded in.
+- **THE NUMBERS.** `wcslen`'s prologue collapses to a single `push %rax`:
+
+  | wchars | glibc | base | split | base | new | saved |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 4 | 14.98 | 34.98 | **24.03** | 2.335x | **1.604x** | +10.95 |
+  | 16 | 27.00 | 60.00 | 49.00 | 2.222x | 1.815x | +11.00 |
+  | 31 | 31.00 | 68.97 | **58.03** | 2.225x | **1.872x** | +10.95 |
+  | 64 | 62.00 | 105.00 | 93.00 | 1.694x | 1.500x | +12.00 |
+  | 256 | 122.00 | 171.00 | 159.00 | 1.402x | 1.303x | +12.00 |
+
+  Summed **440 -> 383 Ir, 12.9% fewer**; flat at +11-12 Ir, the prologue/epilogue signature.
+- **THE CUT IS AT THE STRICT GATE, WHICH IS SAFE HERE AND WAS NOT FOR `strlen`.** `strlen` needed
+  its cut placed *below* `string_raw_passthrough_active()` because that bypass must not sit behind
+  a cold boundary. `wcslen` has no such bypass between the strict gate and the validating body, so
+  the cut is at the gate — and **hardened startup passes 3/3**, which is the check that caught the
+  `strlen` version.
+- **CONFORMANCE.** Differential vs live glibc in the same image, **strict and hardened**. Targeted
+  at what this scanner keys on: **every alignment 0..31 crossed with every length 0..300** (it
+  aligns down to 32 B and masks, then steps to a 128 B boundary); heap operands so the hardened
+  path takes its `known_remaining` `Some` arm; a terminator placed as the last readable wchar
+  before a `PROT_NONE` page so an over-read faults; and wide values that must not be read as
+  terminators — `0xFFFFFFFF`, `0x00010000`, and **`0x00000100`, whose low byte is zero**, which a
+  byte-wise scan would stop on and a 32-bit lane compare must not. **10,226 checks, 0 failures** on
+  base and candidate, both modes.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`,
+  candidate `82bd2075b6a2a7116503ac516d50feff4ad0935c432c5db5dd74a4c0e27ebef6`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **NEXT:** the nine remaining wide-char entries above, then `strcmp` 2.189x and `memcmp` 2.014x.
