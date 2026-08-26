@@ -3509,6 +3509,46 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
             // same O(1) resolve used in scan_c_string/strchr. Byte-identical.
             return (i + flagged.trailing_zeros() as usize, false);
         }
+        // OVERLAPPING FINAL PANEL, placed ABOVE the 8-byte SWAR tier. An earlier
+        // version sat below every tier and measured -10 Ir: by the time it ran,
+        // SWAR had already nibbled the remainder down to about three bytes, so the
+        // panel paid two 32-byte loads to replace three scalar compares. Here it
+        // takes the WHOLE remainder instead. `strncmp(a, b, 43)` clears the 32B
+        // tier once to i=32, then `32 + 32 <= 43` fails and this resolves
+        // [11, 43) in one panel rather than SWAR-at-32, SWAR-declines-at-40, three
+        // scalar.
+        //
+        // `i + 32 > bound` is REQUIRED, not implied: the 32B tier declines both for
+        // a short remainder AND for a failed page guard, and only the first makes
+        // `bound - 32` meaningful. Omitting it in the `wcsncmp` version computed
+        // `usize::MAX - 32` on an unbounded call that declined on its page guard
+        // and read a wild address -- 114 conformance failures. With it,
+        // `start <= i` holds by construction.
+        if BOUNDED
+            && bound >= 32
+            && i + 32 > bound
+            && (p1 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+            && (p2 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+        {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            let start = bound - 32;
+            let skip = i - start;
+            // SAFETY: `[bound-32, bound)` is one 32-byte window, page-guarded above.
+            let a = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p1.add(start), 32)
+            });
+            let b = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p2.add(start), 32)
+            });
+            let m = (a.simd_ne(b) | a.simd_eq(Simd::splat(0))).to_bitmask()
+                & !((1u64 << skip) - 1);
+            if m == 0 {
+                // Every byte in [i, bound) is equal and non-NUL: bound reached.
+                return (bound, true);
+            }
+            return (start + m.trailing_zeros() as usize, false);
+        }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
             && wide_read_within_page(p2 as usize + i)
