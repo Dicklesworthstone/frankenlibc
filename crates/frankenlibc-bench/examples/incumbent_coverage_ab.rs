@@ -5,7 +5,7 @@
 //! `sem_post`, inlined `thrd_current`, strict `mtx_trylock`, and hosts-backed
 //! `getaddrinfo`, `gethostbyaddr`, and `gethostbyname`, the coupled f32
 //! `sinhf`/`coshf` paths, the exact `snprintf` `%u`/`%p`/`%c` emitters, and
-//! `wcsnrtombs` count mode.
+//! `wcsnrtombs` count mode, and the post-parity-route `tanhf` path.
 //! Their historical rows proved FrankenLibC self-speedups, but did not time
 //! live glibc in the same invocation -- or, for `snprintf`, quoted a glibc
 //! number from an `abi-bench` Criterion binary whose interposed allocator and
@@ -35,7 +35,7 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
+//!  getaddrinfo_hosts|sinhf_coshf|tanhf|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -276,6 +276,8 @@ unsafe extern "C" {
     fn linked_host_sinhf(value: f32) -> f32;
     #[link_name = "coshf"]
     fn linked_host_coshf(value: f32) -> f32;
+    #[link_name = "tanhf"]
+    fn linked_host_tanhf(value: f32) -> f32;
     // `fpclassify` is a MACRO in C; the object-code symbol both sides actually
     // export is `__fpclassify`. On this host it lives in libm.so.6, not
     // libc.so.6, so the incumbent-object assertion accepts either.
@@ -572,6 +574,7 @@ enum Family {
     MtxTrylock,
     GetaddrinfoHosts,
     SinhfCoshf,
+    Tanhf,
     Gethostbyaddr,
     Gethostbyname,
     Snprintf,
@@ -1063,6 +1066,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("mtx_trylock") => Family::MtxTrylock,
                 Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
+                Some(value) if value == OsStr::new("tanhf") => Family::Tanhf,
                 Some(value) if value == OsStr::new("gethostbyaddr") => Family::Gethostbyaddr,
                 Some(value) if value == OsStr::new("gethostbyname") => Family::Gethostbyname,
                 Some(value) if value == OsStr::new("snprintf") => Family::Snprintf,
@@ -1073,7 +1077,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
-                     sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, \
+                     sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
             };
@@ -1084,7 +1088,7 @@ fn parse_args() -> Config {
                  [--families a,b,c] \
                  [--family \
                   nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
-                  getaddrinfo_hosts|sinhf_coshf|gethostbyaddr|gethostbyname|snprintf|\
+                  getaddrinfo_hosts|sinhf_coshf|tanhf|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
             );
@@ -7500,6 +7504,153 @@ fn run_sinhf_coshf(config: &Config) {
     }
 }
 
+fn check_tanhf_conformance(host: F32UnaryFn, fl: F32UnaryFn) -> (usize, u32) {
+    let mut comparisons = 0usize;
+    for &input in HYPERBOLIC_SPECIAL_INPUTS {
+        let host_value = unsafe { host(input) };
+        let fl_value = unsafe { fl(input) };
+        assert!(
+            same_f32_bits(fl_value, host_value),
+            "tanhf special-value mismatch at {input:?}: fl={fl_value:?} host={host_value:?}"
+        );
+        comparisons += 1;
+    }
+
+    let mut worst_ulp = 0u32;
+    for &positive in &HYPERBOLIC_MID_INPUTS {
+        for input in [positive, -positive] {
+            let host_value = unsafe { host(input) };
+            let fl_value = unsafe { fl(input) };
+            let ulp = f32_ulp_distance(fl_value, host_value);
+            assert!(
+                ulp <= 4,
+                "tanhf exceeds 4 ULP at {input:?}: fl={fl_value:?} host={host_value:?} ulp={ulp}"
+            );
+            worst_ulp = worst_ulp.max(ulp);
+            comparisons += 1;
+        }
+    }
+
+    (comparisons, worst_ulp)
+}
+
+fn run_tanhf(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_tanhf_symbol = unsafe { libc::dlsym(handle, c"tanhf".as_ptr()) };
+    assert!(
+        !fl_tanhf_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC tanhf")
+    );
+
+    let host_tanhf: F32UnaryFn = linked_host_tanhf;
+    let fl_tanhf: F32UnaryFn = unsafe { std::mem::transmute(fl_tanhf_symbol) };
+    let incumbent_identity = symbol_object(host_tanhf as *const () as *const c_void)
+        .expect("identify host tanhf object");
+    let fl_identity =
+        symbol_object(fl_tanhf_symbol.cast_const()).expect("identify FrankenLibC tanhf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=tanhf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=tanhf");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libm.so")),
+        "incumbent resolved to {}, not host libm",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_tanhf as usize, fl_tanhf as usize,
+        "both tanhf arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=tanhf incumbent_address={:#x} fl_address={:#x}",
+        host_tanhf as usize, fl_tanhf as usize,
+    );
+
+    let (comparisons, worst_ulp) = check_tanhf_conformance(host_tanhf, fl_tanhf);
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=tanhf comparisons={comparisons} \
+         special_values_bit_exact=true sweep_inputs_per_sign=64 ulp_limit=4 \
+         worst_tanhf_ulp={worst_ulp} verdict=pass"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=tanhf phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=tanhf verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "tanhf observed thread count changed between conformance and measurement"
+    );
+
+    let result = measure_f32_unary_case(
+        "tanhf_mid_sweep",
+        "64-point positive sweep from 0.5 through 6.8 after f64-routing parity repair",
+        host_tanhf,
+        fl_tanhf,
+    );
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "tanhf observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print("tanhf", &incumbent_identity.path, threads_pre, threads_post);
+
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    let wins = usize::from(result.comparison == "FL_FASTER");
+    let losses = usize::from(result.comparison == "FL_SLOWER");
+    let undecidable = usize::from(!result.decidable());
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=tanhf verdict={verdict} cases=1 \
+         wins={wins} losses={losses} undecidable={undecidable} \
+         headline_case=tanhf_mid_sweep headline_ratio_median={:.6} \
+         headline_comparison={} threads_observed_pre={threads_pre} \
+         threads_observed_post={threads_post}",
+        result.effect_median, result.comparison,
+    );
+
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 /// Destination bytes handed to every `snprintf` probe. Larger than the longest
 /// conversion under test so truncation is always a property of the `n` argument
 /// and never of the allocation.
@@ -9818,6 +9969,7 @@ fn main() {
         Family::MtxTrylock => run_mtx_trylock(&config),
         Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
         Family::SinhfCoshf => run_sinhf_coshf(&config),
+        Family::Tanhf => run_tanhf(&config),
         Family::Gethostbyaddr => run_gethostbyaddr(&config),
         Family::Gethostbyname => run_gethostbyname(&config),
         Family::Snprintf => run_snprintf(&config),
