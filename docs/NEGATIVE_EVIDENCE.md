@@ -33336,3 +33336,48 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.19,0.13,0.17`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — CORRECTION TO MY OWN DEPLOYED `malloc_free` FIGURE: same-invocation at phase 2 gives 9.93x, not the 13.70x I reported. The statistic and the glibc arm were both doing work I attributed to fl
+
+- **RESULT CLASS: loss/baseline (correction).** Earlier today I reported deployed `malloc_free` at
+  **13.699x** — fl 41.698 ns against pure-glibc 3.044 ns — and said it corroborated the harness.
+  That comparison was **min-of-9 on both arms across TWO separate invocations**, which is the
+  weakest measurement I made all session and the only one I did not subject to a same-invocation
+  A/A null. Redone properly it reads **9.93x**. The earlier figure overstated the deployed gap.
+- **THE PROPER ARMS.** Same-invocation: fl by `LD_PRELOAD` (phase **2 = ACTIVE**, `ready=1`), live
+  glibc by `dlmopen(LM_ID_NEWLM, "libc.so.6")`, all four addresses printed and distinct
+  (`fl_malloc=0x7a40f7b76300`, `glibc_malloc=0x7a40f6eb56c0`, `fl_free=0x7a40f7b75d10`,
+  `glibc_free=0x7a40f6eb5d10`). **Each arm's pointers are freed by that arm's own `free`** — a
+  pointer never crosses providers. Conformance first: 64-byte round trip, both non-null, both
+  writable to the last byte, distinct — pass. 100,000 pairs per arm, 25 samples, ABBA, medians.
+- **THE ROWS.** `small_64` fl **47.1005 ns** against glibc **4.7450 ns** = **9.926384**;
+  `small_1024` fl **40.8461 ns** against **4.4173 ns** = **9.246733**. FL/FL nulls hold
+  (0.992915 and 1.014084). **The glibc/glibc nulls do NOT** — 1.088969 and 1.070212, both well
+  outside the 0.020 tolerance — so neither row is formally admissible. The effect is 9-10x against
+  a null failure of 7-9%, two orders of magnitude apart, so the direction and rough size are not
+  in doubt; the third digit is.
+- **WHY THE TWO FIGURES DIFFER, and it is not noise.** Two causes, both mine.
+  (1) **Statistic.** min-of-9 against median-of-25. glibc's minimum is 28% below its median
+  (3.044 vs ~4.25) while fl's is only 11% below (41.70 vs 47.10), so taking minima flatters glibc
+  and inflates the ratio.
+  (2) **Which glibc.** The earlier probe compared against the process's OWN glibc in a separate
+  run; this one compares against a `dlmopen` copy in the same process, which is slower. The
+  both-arms-glibc control measures that directly: at 64 bytes it reads **1.079178**, i.e. the
+  `dlmopen` arm is ~8% slower than the native one. At 1024 bytes the control is clean at
+  **0.998420** with both nulls holding.
+- **THE RANGE ACROSS THREE METHODS IS 9.2 TO 13.7, AND I AM NOT PICKING A FAVOURITE.**
+  harness `dlopen` medians 12.03-13.25 (nulls holding); this same-invocation deployed median
+  9.25-9.93 (fl/fl nulls holding, glibc/glibc failing); my cross-invocation min-of-9 13.70 (no
+  nulls at all). What every method agrees on: **`malloc_free` is the worst surface by a wide
+  margin — an order of magnitude — and nothing else measured this session is above 2.6x.** The
+  campaign target is unchanged; only my confidence in the third digit is.
+- **WHAT THIS SAYS ABOUT THE OTHER DEPLOYED ROWS.** `tdelete`, `memrchr`, `sinhf`/`coshf`,
+  `nl_langinfo`, `mtx_trylock` and `snprintf` were all measured with this same driver shape —
+  same-invocation, medians, ABBA, with a both-arms-glibc control run per surface. Those stand.
+  The one figure that used the weaker cross-invocation min-of-9 shape was this malloc row, and it
+  is the one being corrected. **The lesson is the shape, not the surface: a cross-invocation
+  minimum has no null and no control, and it was wrong by 38%.**
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.29,0.17,0.18`. Driver compiled on the worker with `cc -O2`.
