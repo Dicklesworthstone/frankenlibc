@@ -33021,3 +33021,63 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`,
   incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6`
   `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+
+## 2026-08-26 — WITHDRAWN: the `strlen` 51x is a MEASUREMENT-MODEL ARTIFACT. Deployed it is 1.31x. `dlopen` leaves fl in BootstrapPassthrough, and every function with a bootstrap gate is then timed on its scalar fallback
+
+- **RESULT CLASS: loss/baseline (retraction of my own row, plus the hazard it exposes).** This
+  withdraws the ranking claim in the two rows above it, which put `strlen_256k` at rank 1 with
+  51.378060x. That number is real as a measurement and wrong as a statement about FrankenLibC.
+  `malloc_free` remains the worst deployed surface.
+- **THE DISCRIMINATOR, run because the previous row said it had to be.** A standalone 80-line C
+  driver — no harness — `dlopen`s the object, reads the exported `__frankenlibc_runtime_phase()`
+  and `__frankenlibc_is_runtime_ready()` at three points, and times fl's `strlen` against glibc's
+  interleaved. It reproduces the harness exactly and then explains it:
+
+  | model | phase | ready | `strlen` 256 KiB | bytes/ns |
+  |---|---|---|---:|---:|
+  | pure glibc, no fl | — | — | 1336.047 ns | 196.2 |
+  | fl by `dlopen` | **0 = BOOTSTRAP** | 0 | 79,353.915 ns | 3.3 |
+  | fl by `dlopen`, `RTLD_DEEPBIND` | **0 = BOOTSTRAP** | 0 | 82,450.979 ns | 3.2 |
+  | **fl by `LD_PRELOAD`** | **2 = ACTIVE** | **1** | **1744.723 ns** | **150.2** |
+  | fl by `LD_PRELOAD` + `FRANKENLIBC_STARTUP_PHASE0=1` | 2 = ACTIVE | 1 | 1511.521 ns | 173.4 |
+
+  The phase reads **0 before any fl call, after warm-up, and after timing** under `dlopen`, and
+  **2 from the very first read** under `LD_PRELOAD`. Nothing in the `dlopen` path performs the
+  ready transition, so `strlen`'s first gate — `runtime_policy::bootstrap_passthrough_active()` —
+  is permanently true and the export takes the scalar byte loop the earlier row disassembled.
+- **DEPLOYED `strlen` IS 1744.723 / 1336.047 = 1.31x**, and 1.13x with the startup env set. Not
+  51x. **The artifact is a factor of 39.**
+- **THE HARNESS AND MY DRIVER AGREE, WHICH IS WHY THIS IS AN ARTIFACT AND NOT A DISAGREEMENT.**
+  `incumbent_coverage_ab` reported 51.378060 with both A/A nulls holding; my independent
+  `dlopen` driver reports 50.217262 (plain) and 51.065898 (deepbind) with its own A/A ratios at
+  1.008273/1.004723 and 0.999679/1.000980. Two unrelated instruments measuring the same wrong code
+  path agree to 2%. **A held null certifies repeatability, not relevance.**
+- **`malloc_free` IS NOT AFFECTED, and that was checked rather than assumed.** The same probe shape
+  under `LD_PRELOAD` at phase 2: 64-byte malloc/free pair, fl **41.698 ns** against pure-glibc
+  **3.044 ns** = **13.699x**, against the harness's `dlopen` figures of 12.03-13.25x. The two
+  models agree, so the allocator's headline survives and the earlier frontier rows stand for it.
+  `malloc` does carry a bootstrap check, but it is
+  `allocator_bootstrap_passthrough_active()`, a narrower condition that is not satisfied here.
+- **THE GENERAL HAZARD, which is the part worth keeping.** `incumbent_coverage_ab` reaches
+  FrankenLibC by `dlopen`, so **every family it measures runs against an object stuck in
+  BootstrapPassthrough**. For a symbol whose export has no bootstrap gate this changes nothing —
+  `memrchr` measured 1.34-2.78x in the same sweep and its export begins at `MODE_STATE` with no
+  phase read. For a symbol that does have one, the harness times a fallback that no deployed
+  process executes. Before quoting any string/memory row from this harness, check the export for
+  a `bootstrap_passthrough_active()` gate, or read `__frankenlibc_runtime_phase()` in the timing
+  process — it is one `dlsym` and one call.
+- **IT ALSO EXPLAINS A ROW THIS FILE COULD NOT EXPLAIN.** 2026-06-20 recorded "strlen 255B:
+  glibc 0.01s fl 0.16s ~16x (!! supposedly SIMD-done)" and left it open. The SIMD was done; the
+  measurement was in bootstrap phase. `scan_c_string` is genuinely vectorized in the shipped object
+  — 36 AVX instructions, a 16-byte probe pair, a 128-byte 4x32-lane folded tier — and at phase 2
+  it delivers 150-173 bytes/ns against glibc's 196.
+- **WHAT IS STILL OWED.** Deployed `strlen` at 1.31x is a modest, real loss and nobody has
+  measured its length curve at phase 2; the 256 KiB point is one sample of a bandwidth regime.
+  And the preload figures here are min-of-9 from a simple driver, not the harness's median-of-36
+  with bootstrap CIs — they are a cross-model discriminator, not a certified row. The 39x
+  separation is far outside anything that distinction could move.
+- **PROVENANCE.** FL object `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  built from HEAD `998070b640879f95ec888990064a07833d926930`. Worker `vmi1293453`, `loadavg 0.24`
+  at the start of the discriminator. Drivers compiled on the worker with `cc -O2` (`-fno-builtin-strlen`
+  for the preload probe so the call is not folded away); glibc baseline taken by running the same
+  binary with no `LD_PRELOAD`.
