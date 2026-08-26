@@ -20,7 +20,7 @@ use frankenlibc_membrane::runtime_math::clifford::{
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{known_remaining, known_remaining_strict};
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -4535,7 +4535,9 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // not make the strict fast path read into the next allocation. This preserves the
     // untracked hot path while matching the bounded behavior of the full path below.
     if runtime_policy::strict_passthrough_active() {
-        let bound = known_remaining(s as usize);
+        // `known_remaining_strict`: the mode was just established one line above,
+        // so re-deriving it inside the probe is redundant work on this hot path.
+        let bound = known_remaining_strict(s as usize);
         // SAFETY: `bound`, when present, is derived from allocator bookkeeping;
         // otherwise the page-safe scanner preserves ordinary libc scan semantics.
         return unsafe { scan_c_string(s, bound).0 };
