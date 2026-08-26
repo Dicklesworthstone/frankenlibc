@@ -35034,3 +35034,61 @@ earlier `c8232c0ec` sweep.
 - **PROVENANCE.** Mask-resolve only `019ca821c52d68dee6f6e42f5f9ac3225b90d6133aa9e7abefc44395807a8cc8`;
   mask-resolve + frame split `083507c6edf3cb33279a3364faaf14af340935d08a793ef9e0f0ac8142826d5a`.
   Built on `vmi1293453`, counted locally with `valgrind-3.25.1`.
+
+## 2026-08-26 — cold-tail split extended to `memchr` (+14.0 Ir), `strcmp` (+11.0), `strnlen` (+4.0). **`strlen` REFUSED THE SAME CHANGE: it SIGSEGVs hardened startup, 3/3** — the 17 Ir is real and not worth it
+
+- **RESULT CLASS: three counted wins and one regression caught before landing.** Instrument
+  unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same
+  process image**, arms asserted distinct, conformance before counting, two-point over 2000
+  marginal calls, driver loop's 10 Ir netted out. Baseline and candidate were built from the **same
+  HEAD**, so they differ only by these splits.
+
+  | entry | len | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `memchr` | 8 | 19.00 | 112.00 | 98.00 | 5.894x | 5.158x | **+14.00** |
+  | `memchr` | 32 | 19.00 | 71.00 | 56.97 | 3.737x | **2.998x** | +14.03 |
+  | `memchr` | 128 | 42.00 | 104.00 | 90.03 | 2.476x | 2.143x | +13.97 |
+  | `strcmp` | 8 | 20.00 | 73.97 | 63.00 | 3.699x | **3.150x** | **+10.97** |
+  | `strcmp` | 128 | 40.97 | 100.00 | 89.00 | 2.441x | 2.172x | +11.00 |
+  | `strnlen` | 8 | 18.01 | 90.03 | 86.01 | 5.000x | 4.777x | **+4.03** |
+  | `strnlen` | 128 | 48.00 | 86.00 | 82.00 | 1.792x | 1.708x | +4.00 |
+  | `strlen` | 8 | 13.01 | 168.03 | 168.01 | 12.920x | 12.918x | +0.03 *(not split)* |
+
+  Each saving is **exactly constant across lengths**, which is the signature of a prologue/epilogue
+  effect rather than anything length-dependent. `strnlen` gains least because its post-split
+  prologue still keeps five pushes — its fast path genuinely needs those registers.
+- **THE REGRESSION, AND WHY IT WAS ONLY VISIBLE IN HARDENED MODE.** `strlen` has the largest frame
+  of the family (`sub $0xb8,%rsp`, 184 bytes) and an isolated split measured **17 Ir**, so it
+  looked like the best of the four. Splitting it made **hardened-mode startup SIGSEGV, 3/3 runs**,
+  dying before `main`; strict mode was completely unaffected and every strict measurement passed.
+  Baseline at the same HEAD passed hardened 3/3. **The split is refused; the 17 Ir is real and is
+  not worth it.**
+- **WHY `strlen` AND NOT ITS SIBLINGS.** Alone among the four, `strlen`'s tail opens with
+  `string_raw_passthrough_active()` — the re-entrancy/TLS bypass that stands between an interposed
+  `strlen` and a validating membrane that itself calls `strlen`. Its three siblings, and the
+  already-landed `memrchr`, have no such bypass. Attribution by **isolation, not inference**:
+  rebuilding with `strlen` alone reverted and the other three still split passes hardened 3/3.
+- **A FALSE PASS THAT NEARLY HID IT, WORTH RECORDING.** The first hardened run under `stdbuf -oL`
+  reported `CHECKS=12013 FAILS=0 verdict=PASS`. **`stdbuf` works by setting its own `LD_PRELOAD`,
+  which displaced fl entirely** — the giveaway was `PHASE=-1` in that run's own header against
+  `PHASE=2` everywhere else. **Never wrap an `LD_PRELOAD` measurement in `stdbuf`.** Equally, the
+  crash's *silence* was itself misleading in the other direction: stdout was block-buffered, so a
+  SIGSEGV discarded the buffer and looked like "crashed before the first `printf`". gdb settled it
+  — `During startup program terminated with signal SIGSEGV` — which happened to be true, but the
+  missing output was not the evidence for it.
+- **CONFORMANCE.** Differential vs live glibc in the same image, run in **both strict and hardened
+  mode**, since the split moves the body that only executes when hardened: 12,013 checks over
+  lengths 0..600 on **both heap and static operands** (the validating path branches on exactly the
+  `known_remaining` distinction), covering `strlen`, `strnlen` full/truncated/zero-`n`, `memchr`
+  first/last/absent, and `strcmp` equal/differing/prefix. Plus the existing suites re-run against
+  this object: `strcmp` 140,016 checks and `memrchr` 951,906 checks. **0 failures throughout.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline (same HEAD, unpatched)
+  `de64e6b1a3adccd1b9f6782b5296ab232abbfaaf31def3a261359a34fb48cde9`; four-way split (**crashes
+  hardened, not landed**) `a4db02edf2feb0751a4404238be36a7215f35ad7d0301156b021a0923656f62e`;
+  three-way split (landed) `525a0803083c852749d1111af9bd0c5a9bd28aa5fee993f2b22360c5b45a52e6`.
+  Built on `vmi1293453`, counted locally with `valgrind-3.25.1`.
+- **`strlen` REMAINS THE WORST COUNTED SURFACE MEASURED SO FAR: 12.92x at L=8** (168 vs 13 Ir),
+  and it is now blocked on the `known_remaining` probe (109 Ir, priced earlier) rather than on
+  frame overhead — the frame lever is closed for this symbol.

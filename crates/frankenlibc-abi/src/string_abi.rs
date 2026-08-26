@@ -4176,6 +4176,17 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         };
     }
 
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` — the same six callee-saved
+    // registers and 136-byte frame `memrchr` had, rented by the strict fast path
+    // above on every call for registers it never touches. Measured there: a flat
+    // 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    unsafe { memchr_validating(s, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
@@ -4462,6 +4473,16 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return unsafe { scan_c_string(s, bound).0 };
     }
 
+    // NOT SPLIT, and this is load-bearing. `strlen`'s entry carries the largest
+    // frame of the string family (`sub $0xb8,%rsp`) so it looks like the best
+    // candidate, and an isolated split does measure 17 Ir. But unlike its
+    // siblings this tail opens with `string_raw_passthrough_active()` — the
+    // re-entrancy/TLS bypass that stands between an interposed `strlen` and the
+    // validating membrane that itself calls `strlen`. Putting it behind a
+    // `#[cold] #[inline(never)]` boundary made hardened-mode startup SIGSEGV
+    // deterministically (3/3 runs, dying before `main`; strict mode unaffected).
+    // The 17 Ir is real and is not worth this. See the 2026-08-26 ledger row.
+
     // Hardened mode only: the remaining reentry/TLS-access bypasses before the
     // validating membrane (the bootstrap term is harmlessly re-checked here).
     if string_raw_passthrough_active() {
@@ -4600,6 +4621,17 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
         return unsafe { scan_c_string_nul_or_bound(s, n).0 };
     }
 
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` — six callee-saved registers
+    // and an 88-byte frame sized for the validating path below, rented by the
+    // strict fast path above on every call. Measured on `memrchr`, identical
+    // prologue shape: a flat 14.0 Ir per call.
+    unsafe { strnlen_validating(s, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     let aligned = (s as usize) & 0x7 == 0;
     let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
@@ -4699,6 +4731,18 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         return (a as c_int) - (b as c_int);
     }
 
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x78,%rsp` — six callee-saved
+    // registers and a 120-byte frame sized for the validating path below, which
+    // the strict fast path above rented on every call for registers it never
+    // touches. Measured on `memrchr`, whose entry had the identical shape: a
+    // flat 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    unsafe { strcmp_validating(s1, s2) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(
