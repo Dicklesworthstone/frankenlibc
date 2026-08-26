@@ -35092,3 +35092,75 @@ earlier `c8232c0ec` sweep.
 - **`strlen` REMAINS THE WORST COUNTED SURFACE MEASURED SO FAR: 12.92x at L=8** (168 vs 13 Ir),
   and it is now blocked on the `known_remaining` probe (109 Ir, priced earlier) rather than on
   frame overhead — the frame lever is closed for this symbol.
+
+## 2026-08-26 — the `strlen` bound costs **34 Ir in the SCANNER**, not only 49 in the probe. A `[8,16)` bounded tier recovers up to **58 Ir**; `strlen` at bound 15 goes 14.67x -> 10.52x
+
+- **RESULT CLASS: a corrected attribution plus a counted win with one stated regression.**
+  Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the
+  same process image**, two-point over 2000 marginal calls, `PHASE=2` and conformance verified
+  before counting.
+- **PROVENANCE SPLITS `strlen` IN TWO, WHICH THE EARLIER ROWS DID NOT SEPARATE.** Same 8-byte
+  string, different buffer:
+
+  | buffer | glibc | fl | ratio |
+  |---|---:|---:|---:|
+  | heap (allocator-tracked) | 13.01 | **168.01** | **12.918x** |
+  | static (`.bss`) | 13.01 | 85.01 | 6.536x |
+  | stack | 13.01 | 87.01 | 6.690x |
+
+  Attribution at L=8, tracked vs untracked: `strlen` entry **34 / 34**, `known_remaining`
+  **82 / 33**, `scan_c_string` **53 / 19**. So the probe costs 49 Ir extra to answer *yes* — but
+  **the bound it returns then costs another 34 Ir inside the scanner**, which earlier rows folded
+  into "the probe". The untracked path is near its floor already: all three sources
+  (`bump_mmap_remaining`, `segment_owned_location`, `fallback_remaining`) open with a flag or a
+  range test, so ~33 Ir for three negative lookups is close to irreducible.
+- **WHY THE SCANNER GOT SLOWER WITH A BOUND.** `scan_c_string`'s bounded arm had an overlapping
+  16-byte probe pair for `[16,32)` but nothing below it, so a bound of 9 fell into the generic
+  ladder and descended 128 -> 64 -> 32 -> 8B SWAR -> scalar, testing tiers that cannot fire at that
+  bound. The unbounded arm resolves the same string in one panel — 19 Ir.
+- **THE FIX IS THE EXISTING TRICK ONE TIER DOWN**, two overlapping 8-byte probes covering
+  `[0,8)` and `[limit-8, limit)`:
+
+  | strlen | bound | glibc | base | fixed | base | new | saved |
+  |---:|---:|---:|---:|---:|---:|---:|---:|
+  | 3 | 4 | 14.00 | 170.00 | 172.00 | 12.143x | 12.286x | **−2.00** |
+  | 6 | 7 | 14.01 | 188.01 | 190.01 | 13.423x | 13.566x | **−2.00** |
+  | 7 | 8 | 14.01 | 177.03 | 139.01 | 12.640x | **9.925x** | +38.03 |
+  | 8 | 9 | 14.01 | 169.01 | 147.01 | 12.067x | 10.496x | +22.00 |
+  | 10 | 11 | 14.00 | 181.03 | 147.00 | 12.930x | 10.500x | +34.03 |
+  | 14 | 15 | 13.97 | 205.00 | 147.00 | 14.671x | **10.520x** | +58.00 |
+  | 20 | 21 | 14.03 | 140.00 | 140.00 | 9.981x | 9.981x | 0.00 |
+  | 40 | 41 | 22.00 | 177.00 | 175.00 | 8.045x | 7.954x | +2.00 |
+
+  Summed **1407 -> 1257 Ir, 10.7% fewer**. **The regression is stated: bounds under 8 pay 2 Ir**
+  for the extra dispatch and are not helped, since they still fall through to the generic ladder.
+- **A FIRST ATTEMPT TAXED EVERY LARGER BOUND, AND WAS RESTRUCTURED RATHER THAN SHIPPED.** Adding
+  `[8,16)` as a second top-level range check beside `(16..32)` cost **2-4 Ir at bounds 21 and 41** —
+  every bound above the band paying for a test that could not fire. Nesting both arms under a
+  single `limit < 32` removed it: bound 21 went to exactly neutral and **bound 41 to +2 Ir**,
+  because a bound of 32 or more now costs one compare where `(16..32).contains` cost two. The
+  in-band saving gives up 2 Ir for that (v1 139/145/145/145 vs v2 139/147/147/147) and is worth it.
+- **ONE OPTIMIZATION CONSIDERED AND REJECTED AS OUT-OF-CONTRACT.** The scanner could run its fast
+  *unbounded* page-safe scan and consult the bound only if no NUL turned up before `limit`, which
+  would erase the whole 34 Ir. It is rejected: `strlen`'s strict path documents the bound as
+  ensuring "an unterminated tracked buffer does not make the strict fast path read into the next
+  allocation", and reading-then-discarding those bytes is still reading them. **Not a performance
+  judgement — a contract one.**
+- **CONFORMANCE.** The property an overlapping-probe pair can break is **first-NUL ordering**, so
+  the test targets exactly that: every bound 0..64 with a NUL at every position, **and with two
+  NULs at every position pair** (the case where a probe-ordering bug returns the higher index);
+  `strlen` over heap allocations of every size 1..64 with the terminator walked through every
+  interior position, driving `limit` through `known_remaining` on the real path; and buffers whose
+  last readable byte is the last mapped byte before a `PROT_NONE` page, so **any read past `limit`
+  faults rather than quietly passing**. **40,689 checks, 0 failures**, in *both* strict and
+  hardened mode, on the base object and the candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `de64e6b1a3adccd1b9f6782b5296ab232abbfaaf31def3a261359a34fb48cde9`;
+  first attempt (taxes larger bounds, **not landed**)
+  `8b5a3eca2194c43f4c79013e9aaa8eb95b993a407f9e9cfc35839c8322246f0b`; landed
+  `08183d7736f932855afb2976bc7d4d81a25064a44f98699f8240140fdf23b4d3`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **`strlen` REMAINS THE WORST SURFACE at ~10x tracked**, and what is left is the 49 Ir positive
+  probe — architectural, with its ceiling already priced. **Untracked `strlen` (string literals,
+  stack buffers) is 6.5x and is a different, cheaper problem.**

@@ -1957,21 +1957,60 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
             // `limit` readable bytes). First-NUL ordering holds: probe 0 owns `[0,16)`;
             // if empty, every NUL position < 16 is ruled out so probe 1's lowest set bit
             // is the true first NUL ≥ 16. Benefits strnlen + every bounded scan caller.
-            if (16..32).contains(&limit) {
-                let v0 = Simd::<u8, 16>::from_slice(unsafe { core::slice::from_raw_parts(p, 16) });
-                let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
-                if m0 != 0 {
-                    return (m0.trailing_zeros() as usize, true);
+            // ...and the same trick one tier down for `[8, 16)`, which previously
+            // fell through to the generic ladder and descended 128 -> 64 -> 32 ->
+            // 8B SWAR -> scalar, testing tiers that cannot fire at that bound.
+            // Measured (callgrind two-point vs live glibc in the same process
+            // image): an 8-byte string in a 9-byte tracked allocation spent 53 Ir
+            // in this scanner against 19 Ir for the identical string scanned
+            // unbounded — the bound, not the bytes, was the cost.
+            //
+            // Both arms sit under ONE `limit < 32` test. Adding the `[8,16)` arm
+            // as a second top-level range check instead cost every larger bound
+            // an extra comparison, measured at 2-4 Ir for bounds 21 and 41; this
+            // shape charges a bound of 32 or more a single compare, which is one
+            // fewer than the original `(16..32).contains` did.
+            if limit < 32 {
+                if limit >= 16 {
+                    let v0 =
+                        Simd::<u8, 16>::from_slice(unsafe { core::slice::from_raw_parts(p, 16) });
+                    let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m0 != 0 {
+                        return (m0.trailing_zeros() as usize, true);
+                    }
+                    let off = limit - 16;
+                    let v1 = Simd::<u8, 16>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(off), 16)
+                    });
+                    let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m1 != 0 {
+                        return (off + m1.trailing_zeros() as usize, true);
+                    }
+                    return (limit, false);
                 }
-                let off = limit - 16;
-                let v1 = Simd::<u8, 16>::from_slice(unsafe {
-                    core::slice::from_raw_parts(p.add(off), 16)
-                });
-                let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
-                if m1 != 0 {
-                    return (off + m1.trailing_zeros() as usize, true);
+                if limit >= 8 {
+                    // `p[0..8]` and `p[limit-8..limit]` are both inside `[0, limit)`
+                    // because `limit >= 8`. First-NUL ordering holds for the same
+                    // reason as the 16-byte case: probe 0 owns `[0,8)`, so if it is
+                    // empty every NUL position below 8 is ruled out and probe 1's
+                    // lowest set bit is the true first NUL at or above 8.
+                    let v0 =
+                        Simd::<u8, 8>::from_slice(unsafe { core::slice::from_raw_parts(p, 8) });
+                    let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m0 != 0 {
+                        return (m0.trailing_zeros() as usize, true);
+                    }
+                    let off = limit - 8;
+                    let v1 = Simd::<u8, 8>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(off), 8)
+                    });
+                    let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m1 != 0 {
+                        return (off + m1.trailing_zeros() as usize, true);
+                    }
+                    return (limit, false);
                 }
-                return (limit, false);
+                // `limit < 8` falls through to the generic ladder below.
             }
             let mut i = 0usize;
             // 128-byte folded tier for large bounded scans: ONE combined NUL check per
