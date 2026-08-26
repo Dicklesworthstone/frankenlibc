@@ -35725,3 +35725,62 @@ reworded rather than the gate touched.)
   `wmemcmp` 1.646x. **Nothing in the family is above 3x any more** (it opened at 5.289x), and
   **six of eight are under 2x**. The frame tax remains unclaimed on `wcsnlen`, `wcschr`, `wcsrchr`,
   `wmemchr`, `wcscmp`, `wmemcmp` and `wcscat`.
+
+## 2026-08-26 — whole-library frontier re-derived; `strstr` **1.380x -> 1.291x (+29 Ir)** and `memcmp` **2.161x -> 2.080x (+5 Ir)**. **Nine more narrow entries carry the frame tax** — the earlier sweep had missed them
+
+- **RESULT CLASS: counted improvement on two surfaces, isolated, with one honest shortfall.** fl
+  `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same process image**,
+  two-point over 2000 marginal calls, `PHASE=2` and conformance verified before counting.
+  Deterministic instruction counts; no wall-clock claim, so no timed positive-result class is
+  asserted.
+- **THE FRONTIER, RE-DERIVED ACROSS THE WHOLE LIBRARY** after many turns inside `wchar`:
+
+  | surface | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `strlen` heap L=8 | 129.97 | 13.01 | **9.993x** |
+  | `strlen` stack / static L=8 | 71.01 / 69.01 | 13.03 | 5.448x / 5.295x |
+  | `strcmp` | 72.00 | 28.00 | 2.571x |
+  | `memcmp` | 134.00 | 62.00 | 2.161x |
+  | `wcslen` / `snprintf` / `qsort` w16 | — | — | 1.872x / 1.802x / 1.621x |
+  | `memrchr` / `strstr` / `tsearch`+`tdelete` | — | — | 1.381x / 1.380x / 1.290x |
+  | `qsort` i32 / `strtod` / `getenv` / `mktime` | — | — | fl ahead (0.644x … 0.073x) |
+
+  **`strlen` still dominates at ~10x tracked**, and its remaining cost is the architectural
+  `known_remaining` probe already priced at 49 Ir — not a lever that fits in one change.
+- **AND A SWEEP GAP THAT MATTERED.** The earlier frame-tax sweep checked only
+  `strlen`/`strcmp`/`memchr`/`strnlen`/`memrchr`. Re-running it across the narrow
+  comparison/search entries found **nine more still carrying it**: `memcmp` (`sub $0xa8`, 168 B),
+  `strspn`/`strcspn`/`strpbrk` (`sub $0xb8`, 184 B), `strcasecmp`/`memmem`/`strstr`/`strtok`
+  (`sub $0x98`), `strncmp` (`sub $0x88`) — all with the same six callee-saved pushes. Only
+  `strcmp` had been split. **A sweep is only as complete as its symbol list.**
+- **`memcmp`'s CUT HAD TO GO BELOW ITS BYPASS.** Like `strlen` and unlike `strstr`, `memcmp` has a
+  `string_raw_passthrough_active()` re-entrancy/TLS bypass between the strict gate and the
+  validating body. Cutting at the gate is what made `strlen` SIGSEGV hardened startup, so the cut
+  is placed below it; **the hardened conformance run completing at all is part of that evidence.**
+
+  | family | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `strstr` | 326.00 | 450.00 | **421.00** | 1.380x | **1.291x** | **+29.00** |
+  | `memcmp` | 62.00 | 134.00 | **128.97** | 2.161x | **2.080x** | **+5.03** |
+  | others (8) | — | — | — | — | — | ≤0.05 |
+
+- **`memcmp` GAINED FAR LESS THAN THE FAMILY AVERAGE, AND THE DISASSEMBLY SAYS WHY.** Every other
+  split collapsed its prologue to one or two instructions; `memcmp`'s went from
+  `push rbp/r15/r14/r13/r12/rbx; sub $0xa8,%rsp` to **`push rbp/r15/r14/rbx; push %rax`** — the
+  168-byte frame allocation is gone but **four callee-saved registers remain**, because the strict
+  fast path genuinely uses them. So the recoverable part here was the frame, not the saves, and
+  **+5 Ir is the whole lever for this symbol, not an underperforming version of a 14 Ir one.**
+- **CONFORMANCE.** Both entries, **strict and hardened** (the split moves the hardened-only body):
+  `memcmp` over lengths 0..260 with the difference at every position, **heap and static operands**
+  so the validating path's `known_remaining` branch takes both arms, `n` truncated before the
+  difference, and high-bit bytes (`memcmp` compares as **unsigned** char); `strstr` with the needle
+  at every position, absent, **empty**, longer than the remaining haystack, and **self-overlapping**
+  (`"aaa"` in a run of `a`). **44,700 checks, 0 failures** on base and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `36635a2759ce0b52bfe33d9fc89e1581566d66933b558a00fe48cd0370e978a6`,
+  candidate `db21f4649ce594caf57cbc23a7b2efdf8529a053486a3d2494eb7706269caf38`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`. Both objects predate the `wcsncmp`/`wcscpy` split
+  commit equally, so those two read pre-split values in **both** columns.
+- **STILL UNCLAIMED:** the frame tax on `strncmp`, `strcasecmp`, `memmem`, `strspn`, `strcspn`,
+  `strpbrk`, `strtok` (none yet measured for ratio), and on seven wide entries.

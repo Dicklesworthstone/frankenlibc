@@ -4120,6 +4120,21 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     }
 
+    // Cold tail in its own frame, cut BELOW the bypass above rather than at the
+    // strict gate. `memcmp` has the same shape `strlen` does: a
+    // `string_raw_passthrough_active()` re-entrancy/TLS bypass sits between the
+    // strict gate and the validating body, and putting that bypass behind a
+    // `#[cold] #[inline(never)]` boundary made hardened startup SIGSEGV
+    // deterministically for `strlen`. Everything from the trace scope down is
+    // ordinary validating work and moves safely. This entry carried the largest
+    // frame of the narrow comparison family — `push rbp/r15/r14/r13/r12/rbx;
+    // sub $0xa8,%rsp`, 168 bytes — rented by the strict fast path on every call.
+    unsafe { memcmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
     let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     let (mode, decision) = runtime_policy::decide(
@@ -6158,6 +6173,16 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         };
     }
 
+    // Cold tail in its own frame. Unlike `memcmp` there is no re-entrancy bypass
+    // between the strict gate and here, so the cut is at the gate. This entry
+    // opened `push rbp/r15/r14/r13/r12/rbx; sub $0x98,%rsp` — 152 bytes rented by
+    // the strict fast path on every call.
+    unsafe { strstr_validating(haystack, needle) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
     let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
         record_string_stage_outcome(
