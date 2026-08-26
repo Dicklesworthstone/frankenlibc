@@ -33627,3 +33627,37 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — `sinhf` 1.674x and `coshf` 1.599x certified on the interleaved instrument; `sinhf` is the WORSE of the two, reversing the order I reported
+
+- **RESULT CLASS: loss/baseline (certification, plus a reversal of my own ordering).** Both
+  functions were re-measured with the arms alternating every ~400 calls instead of a whole batch
+  each — the design that certified `memrchr` at 64 B. **All eight nulls hold**, deployed and
+  control, which neither between-batch depth achieved.
+- **THE ROWS.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM, "libm.so.6")`, arms distinct, 400-call micro-slices x 200 rounds, 25
+  samples: `sinhf_mid_sweep` fl **16.6289 ns** against glibc **10.1620 ns** = **1.673879**, nulls
+  fl/fl **1.009586** and glibc/glibc **1.003332**. `coshf_mid_sweep` fl **15.5537 ns** against
+  **9.8301 ns** = **1.599091**, nulls **0.985161** and **0.999525**.
+- **THE CONTROL IS THE TIGHTEST OF THE SESSION FOR `sinhf`.** Both-arms-glibc reads **0.999210**
+  for `sinhf` (0.08% bias) and **1.021347** for `coshf` (2.1%), all four control nulls holding.
+  Bias-corrected: **`sinhf` 1.6752, `coshf` 1.5657.**
+- **`sinhf` IS SOLID ACROSS ALL THREE DESIGNS.** 1.662216 (between-batch, depth 3), 1.679459
+  (depth 40, nulls failed), 1.673879 (interleaved, nulls hold) — a 1% band. That surface's number
+  is settled at **~1.67**.
+- **`coshf` IS NOT, AND THE INTERLEAVED VALUE IS THE ONE TO USE.** 1.680381 (depth 3), 1.807954
+  (depth 40, nulls failed), **1.599091** (interleaved, nulls hold) — a 13% band. The interleaved
+  run is the only one of the three whose nulls all hold and whose control is measured, so it
+  supersedes the other two.
+- **AND THAT REVERSES THE ORDER I PUBLISHED.** I reported `coshf` 1.680381 as worse than `sinhf`
+  1.662216 and ranked them that way in the deployed frontier. Corrected: **`sinhf` 1.675 is worse
+  than `coshf` 1.566.** The original 1.1% gap between them was smaller than the instrument bias
+  the control has since measured (2.1% on `coshf` alone), so the ordering was never supported —
+  it was noise presented as a ranking.
+- **UNCHANGED AND WORTH REPEATING:** both functions are **bit-identical to glibc** on all 256
+  mid-range inputs, maximum absolute difference **0.000e+00**, in every run of every design
+  including the controls. The ~6 ns per call buys nothing measurable in accuracy.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libm.so.6` resolved live in-process.
+  Worker `vmi1293453`. Driver compiled on the worker with `cc -O2 -ldl -lm`.
