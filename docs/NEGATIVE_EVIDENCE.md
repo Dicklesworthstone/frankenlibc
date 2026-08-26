@@ -32842,7 +32842,19 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   glibc/glibc null 0.996635 with bootstrap median CI [0.974448, 1.014709]. Both DECIDABLE
   FL_SLOWER, `clears_2x_null=true`, `samples=36`, `reps_per_arm=100000`.
   **12.721782 against 12.684885 is a 0.3% difference with almost totally overlapping intervals:
-  the lever buys nothing measurable.** Note the absolute FrankenLibC nanoseconds moved the other
+  the lever buys nothing measurable.**
+  The script ran four arms in a `tcache, base, base, tcache` order and the remaining two are
+  reported here rather than dropped. Third arm, base: `ratio_median=12.252905`, bootstrap median
+  CI [11.934356, 12.703537], fl 62.436 ns, FL/FL null 1.003116 with bootstrap median CI
+  [0.988698, 1.013598], nulls holding, DECIDABLE FL_SLOWER. Fourth arm, candidate:
+  `ratio_median=13.770063` with bootstrap median CI [12.917651, 15.132881] — but
+  `nulls_hold=false`, `comparison=NULL_VIOLATED`, exit status 2, so it is **INADMISSIBLE and is
+  not used**; it is quoted only so the run is not reported selectively.
+  The admissible set is therefore one candidate arm at 12.721782 against two base arms at
+  12.684885 and 12.252905. The base arms alone differ by 3.4%, which is larger than any gap
+  between the candidate and either of them, and the candidate sits ABOVE both. There is no win
+  here on any reading, and the spread between two arms of the SAME object is the reason a
+  single-pair comparison on this family cannot resolve a few percent. Note the absolute FrankenLibC nanoseconds moved the other
   way (62.163 against 65.614) while the ratios did not, because the glibc arm moved with it —
   which is exactly why the paired ratio is the statistic and a bare fl-ns comparison across runs
   is not.
