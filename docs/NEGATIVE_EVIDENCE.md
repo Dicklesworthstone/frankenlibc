@@ -32830,14 +32830,22 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   risk. The 4096x replication is the reason the risk is not marginal: ANY "cache more per class"
   design pays it, and the ceiling is low. That constraint was not written down anywhere before this
   row.
-- **THE CANDIDATE ALSO NEVER PRODUCED A TIMING ROW, and I am not attributing that.** Three
-  independent attempts — two inside alternating ABBA scripts and one direct foreground run with a
-  420 s kill — each reached `INCUMBENT_COVERAGE_CONFORMANCE ... verdict=pass` and
-  `THREADS_OBSERVED phase=pre_guard` and then produced no host-wide-exclusivity line and no row.
-  In the same script and the same conditions the BASE arm completed normally. The allocator itself
-  is not obviously broken: the harness's pre-timing conformance contract (a non-null 64-byte round
-  trip, 2 comparisons) passed on the candidate every time. What stalls between that and the guard is
-  NOT established here, and the row does not claim it.
+- **THE CANDIDATE NEVER PRODUCED A TIMING ROW, AND THE CAUSE IS NOW ESTABLISHED: IT IS THE HOST,
+  NOT THE CHANGE.** Four attempts each reached `INCUMBENT_COVERAGE_CONFORMANCE ... verdict=pass`
+  and `THREADS_OBSERVED phase=pre_guard` and then produced no host-wide-exclusivity line. Rather
+  than leave that unattributed, the fourth run was left alive and inspected through `/proc`:
+  `state=S`, `syscall: 230` (`clock_nanosleep`), kernel stack
+  `hrtimer_nanosleep -> common_nsleep_timens -> __x64_sys_clock_nanosleep`, `utime=14 stime=22`
+  ticks — **0.36 s of CPU across fifteen minutes** — 44 mappings, `VmRSS 8028 kB`, one thread.
+  Nothing is spinning, deadlocking or faulting; the process is asleep in the quiet gate's
+  per-sample timer. The reason it never clears is a co-tenant: `ps` shows an unrelated **`npm` at
+  115% CPU**, and every one of the eight CPUs reports a busy fraction of 0.183-0.217 against the
+  gate's 0.200 ceiling, so five consecutive clear samples never occur. The gate is doing exactly
+  its job. The BASE arm completed earlier because it caught a quieter window, not because the two
+  objects behave differently — the gate is HOST-wide and does not depend on which object is
+  loaded. **This stall is therefore not evidence about the candidate, and nothing about the
+  rejection rests on it**; the rejection rests on the section sizes above, which are properties of
+  the object and independent of any host condition.
 - **THE BASE ARM THAT DID COMPLETE, for the record and as this row's null control.** Same worker,
   same bench binary, `--fl-deepbind`: fl 62.976 ns against glibc 4.718 ns,
   `ratio_median=13.066197`, bootstrap median CI [12.626703, 13.826129], `comparison=FL_SLOWER`,
