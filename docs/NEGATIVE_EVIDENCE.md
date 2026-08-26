@@ -33396,3 +33396,55 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.29,0.17,0.18`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — CORRECTION AND A HIDDEN PARAMETER: `memrchr` at 512 B reads 1.769x or 1.326x depending ONLY on warm-up depth, and BOTH runs' A/A nulls held
+
+- **RESULT CLASS: loss/baseline (correction of my own row, plus the methodological finding that
+  caused it).** The `memrchr` row banked earlier today quoted 1.768632 at 512 B and 1.498049 at
+  4096 B as admissible, both nulls holding. Re-run with **the only change being warm-up depth**
+  — 3 rounds to 40, the remedy that fixed `malloc_free`'s failing null — the same driver on the
+  same binary and the same worker reads **1.325751** and **1.278946**, and those nulls hold too.
+  **A 33% move on a figure I called admissible, with no failing control anywhere.**
+- **THE TWO RUNS, side by side.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM)`, arms distinct, 25 samples, ABBA:
+
+  | length | 3 warm-up rounds | its nulls | 40 warm-up rounds | its nulls |
+  |---|---:|---|---:|---|
+  | 64 B | 2.301042 | 0.925997 **fail** / 1.000000 | 2.495260 | 0.960980 **fail** / 1.000978 |
+  | 512 B | 1.768632 | 0.985944 / 1.003173 both hold | **1.325751** | 0.989060 / 1.000000 both hold |
+  | 4096 B | 1.498049 | 0.998386 / 0.999062 both hold | **1.278946** | 1.000966 / 0.999446 both hold |
+
+- **THE LESSON, and it is one this project has already written down and I did not apply.** The
+  standing note is that *a held A/A null does not bound between-run reproducibility*. Here is a
+  clean demonstration: every null in both 512 B and 4096 B rows sits inside 1.5% of 1.0, and the
+  answers are 33% and 17% apart. **The null bounds within-run consistency. Warm-up depth is a
+  free parameter that moves the answer and that neither the null nor the control can see.** fl's
+  `memrchr` gets relatively faster with more warm-up — plausibly branch-predictor or i-cache state
+  on its multi-tier scanner, or the thread-local mode cache — while glibc's is warm almost at once.
+- **THE CONTROL IS NOW CLEAN AND PRICES A REAL PER-LENGTH BIAS.** With fl absent and glibc in both
+  slots, all six nulls hold and the ratios read **0.939800 / 1.022532 / 0.926433** at 64/512/4096.
+  So the instrument favours the fl slot by 6% at 64 B and 7% at 4096 B, and disfavours it by 2% at
+  512 B. Correcting the 40-round deployed figures: **2.655 at 64 B, 1.297 at 512 B, 1.380 at
+  4096 B.**
+- **THE 64-BYTE POINT HAS NOW RESISTED THREE INSTRUMENTS.** The harness's FL/FL null failed
+  (0.963050), my 3-round driver failed (0.925997), my 40-round driver still fails (0.960980) —
+  improved by the extra warm-up but not enough. At ~2.4-5.9 ns per call this case is below what
+  any of these designs resolve. It is also where the gap is largest (~2.5-2.7x corrected), so it
+  matters; a certified number needs a different design — arms alternating within a batch rather
+  than between batches — not another run.
+- **WHAT I AM WITHDRAWING AND WHAT SURVIVES.** Withdrawn: the specific figures 1.768632 and
+  1.498049 as *the* deployed values. What survives: `memrchr` is a real deployed loss at every
+  length measured, in the range **1.28-1.77 at 512 B and 1.28-1.50 at 4096 B**, rising sharply as
+  length falls, which is the fixed-per-call-cost signature the disassembly independently supports
+  (six pushes, a 136-byte frame, a GOT-indirect call). The direction, the shape and the mechanism
+  are unchanged; the third digit was never there.
+- **THIS QUALIFIES THE OTHER DEPLOYED ROWS FROM THIS SESSION.** `tdelete`, `sinhf`/`coshf`,
+  `nl_langinfo`, `mtx_trylock` and `snprintf` were all measured at 3 warm-up rounds and none was
+  re-run at 40. Their nulls held, but so did `memrchr`'s. **They should be read as accurate to
+  tens of percent, not to three digits, until re-run at depth.** The two surfaces that have been
+  measured at both depths — `malloc_free` (9.93 -> 9.16/9.51) and `memrchr` — moved 8% and 33%
+  respectively.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.16,0.10,0.14`. Driver compiled on the worker with `cc -O2`.
