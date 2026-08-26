@@ -33774,3 +33774,37 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`. Worker `vmi1293453`. Driver compiled on the worker
   with `cc -O2`; 200-call micro-slices x 100 rounds, 25 samples, arms interleaved.
+
+## 2026-08-26 — `qsort` width-16 generic is at PARITY deployed (1.083x raw, 1.007x bias-corrected) at n=1024 — the banked "1.6-1.7x" does not reproduce
+
+- **RESULT CLASS: loss/baseline (a believed loss retired).** "Width-16 generic qsort ~1.6-1.7x"
+  has been carried as a known gap. Measured in the deployed model it is **parity**.
+- **THE ROW.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`, arms distinct (`fl=0x7043afc4ab30`,
+  `glibc=0x7043aee4b7c0`), 1024 records of 16 bytes compared through an extern-C callback, arms
+  alternating sort-by-sort, 25 samples. **The array is refilled from an untouched master OUTSIDE
+  the timed region**, so every sort starts from the same unsorted permutation and only `qsort`
+  itself is timed. fl **70,396.7 ns** against glibc **64,867.6 ns** = **1.083348**. A/A nulls
+  fl/fl **1.006373**, glibc/glibc **1.006847** — both hold.
+- **THE CONTROL IS LARGE AND HOLDING, SO THE CORRECTION IS THE ANSWER.** Both-arms-glibc reads
+  **1.076188** with nulls 0.996641 and 1.009028 — a 7.6% bias against the fl slot, the largest
+  clean control this session, plausibly because the fl slot runs first in each round and eats the
+  colder master read. **Corrected: 1.083348 / 1.076188 = 1.0067.** Within 1% of glibc.
+- **CONFORMANCE IS STRONGER THAN USUAL HERE AND IT PASSES.** Both implementations produce the
+  **identical permutation** (`memcmp` of the two 16 KB outputs is zero) and fl's output is verified
+  **fully ordered** under the same comparator. A sort that is fast because it is wrong cannot hide
+  behind a timing number.
+- **WHY THE OLD FIGURE NO LONGER HOLDS, stated as the likeliest reading rather than a proof.**
+  HEAD carries recent sort work — pattern-defeating quicksort with median-of-medians and duplicate
+  collapsing, plus the restored fixed-width lanes. The 1.6-1.7x predates it. The banked figure
+  also came from an instruction-count driver (`qsort_icount`), not a wall-clock comparison against
+  live glibc, so the two were never measuring the same thing.
+- **SCOPE, stated narrowly.** This is **one size (n=1024) at one width (16) on one distribution**
+  (uniform pseudo-random). The sort family is known to be shape-sensitive — this ledger records
+  radix losing decisively on already-sorted input and winning on nearly-sorted — so parity here
+  does not license "qsort is at parity". It licenses removing the width-16 generic case at n=1024
+  from the frontier, which is what it was on it for.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.65,0.45,0.27`. Driver compiled on the worker with `cc -O2`.
