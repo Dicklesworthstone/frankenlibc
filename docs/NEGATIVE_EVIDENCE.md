@@ -32704,3 +32704,87 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   gap and an unrefuted lever. Filed as `bd-z4k8bh` with the mechanism decomposition: fl performs
   TWO comparator walks per delete and rebalances at every level, against glibc's single classic
   red-black descent.
+
+## 2026-08-26 — FRONTIER SWEEP, PART 2: `memrchr` at 64 bytes is 2.707x and ties `tdelete` for second place; `sscanf` is faster than glibc on ten of twelve cases; and the disassembly this ledger made a precondition for `memrchr` is finally done
+
+- **RESULT CLASS: loss/baseline (completes the row above).** The row above banked the first four
+  families of the sweep. This one banks the remaining five and CORRECTS its ranking table, which
+  named `tdelete` alone as second-worst before `memrchr` had reported. Same invocation chain, same
+  FL object `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`, same
+  `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`, same worker
+  `vmi1293453`, quiet gate clear at both phases of every family, `cpu_mhz` flat at 3195.2.
+- **`memrchr` TIES FOR SECOND, AND ITS WORST CASE IS THE SMALLEST BUFFER.** 7 losses of 8.
+  `len64_absent_incumbent_malloc` is the admissible worst: fl 8.456 ns against glibc 2.927 ns,
+  `ratio_median=2.706972`, bootstrap median CI [2.569122, 2.806562], FL/FL
+  `null_median_ratio: 1.008588` with bootstrap median CI [0.977872, 1.061365] and glibc/glibc
+  `null_median_ratio: 0.987887` with bootstrap median CI [0.979251, 1.004505] — both hold.
+  Then `len512` 1.779467 and 1.640366, `len4096_hit_near_start` 1.609997 and 1.575789,
+  `len4096_absent` 1.388635 and 1.339900, all with both nulls holding.
+  `len64_absent_fl_malloc` reads 2.783243 with a violated FL/FL null and is not admissible.
+  The gap SHRINKS with buffer length, which is the signature of a fixed per-call cost — about
+  5.5 ns of it — sitting on top of a scan that is otherwise competitive.
+- **`sscanf` IS OFF THE LOSS LIST.** Six decisive FL_FASTER cases with both nulls holding:
+  `two_ints` 0.308936, `key_value`-class shapes aside, `single_int` 0.343739, `string_token`
+  0.354369, `string_then_int` 0.354921, `long_string` 0.377071, `mixed_record` 0.396751. Four more
+  cases are faster still but carry a violated null (`scanset_only` 0.253462, `dotted_quad`
+  0.265013, `key_value` 0.331732, `two_strings` 0.418411). Only two cases are not wins and neither
+  is a loss: `float_only` 0.972669 CI [0.922652, 1.028828] and `long_hex` 1.049757 CI
+  [1.008193, 1.113344], both UNDECIDABLE. The frontier's "sscanf 1.05-2.02x pre-lever" is retired.
+- **`nl_langinfo` IS DOWN FROM 2.32x TO 1.31x.** `full_table_cycle` 1.311346 CI
+  [1.279907, 1.357058] and `weekday_cycle` 1.118803 CI [1.082494, 1.132077] are the two admissible
+  losses; `month_cycle` 1.069800 is UNDECIDABLE. The contiguous-run indexing landed.
+- **`mtx_trylock` 1.233477** CI [1.203955, 1.245877], DECIDABLE, both nulls holding — slightly
+  worse than the 1.1246 banked, on a different worker. **`thrd_current` 2.401530** CI
+  [2.336071, 2.505816] but with a violated null, so it is INCOMPLETE and must not be quoted as
+  2.4x; it was 1.1109 when last admissible, and a case that moves that far with a broken null
+  needs a larger sample, not a headline.
+- **THE COMPLETE CORRECTED FRONTIER, admissible cases only, worst first.**
+
+  | rank | family | case | ratio | 95% bootstrap median CI |
+  |---|---|---|---:|---:|
+  | 1 | `malloc_free` | small_64 | 12.03-13.25 | [11.54, 12.98] / [12.32, 13.58] |
+  | 2 | `tdelete` | tree8192 | 2.725062 | [2.662667, 2.797426] |
+  | 2 | `memrchr` | len64_absent | 2.706972 | [2.569122, 2.806562] |
+  | 4 | `memrchr` | len512_absent | 1.779467 | [1.715608, 1.878323] |
+  | 5 | `sinhf` | mid_sweep | 1.649593 | [1.612739, 1.734108] |
+  | 6 | `coshf` | mid_sweep | 1.619743 | [1.580683, 1.676635] |
+  | 7 | `memrchr` | len4096_hit | 1.609997 | [1.545588, 1.639618] |
+  | 8 | `memrchr` | len4096_absent | 1.388635 | [1.351786, 1.421558] |
+  | 9 | `nl_langinfo` | full_table | 1.311346 | [1.279907, 1.357058] |
+  | 10 | `mtx_trylock` | already_owned | 1.233477 | [1.203955, 1.245877] |
+  | 11 | `getrandom` | one_byte | 1.065832 | [1.055147, 1.071481] |
+
+  Ranks 2 and 2 are a tie: the two intervals overlap, so `tdelete` and small-`memrchr` cannot be
+  ordered against each other by this run.
+
+- **THE `memrchr` DISASSEMBLY, which this file made a PRECONDITION on 2026-08-18 and which nobody
+  had done.** That row rejected `#[inline]` on `core::memrchr`, noted that a wall-clock ratio
+  cannot distinguish "the call was never the cost" from "the attribute did not change the emitted
+  code", and wrote: *"That is now a precondition on any further attempt at this vein."* Done here,
+  on the exact object that produced the numbers above, with `objdump -d` and no fleet, no quiet
+  window and no privileges. What the `memrchr` export actually contains:
+  - a prologue of **six `push`es plus `sub $0x88,%rsp`** — a 136-byte frame plus six callee-saved
+    registers, emitted unconditionally at the top of the function;
+  - then `movzbl MODE_STATE; cmp $0x2,%al; jae` — a two-way split. `MODE_STRICT` is 1 and
+    `MODE_HARDENED` is 2, so **deployed strict mode takes the SHORT edge**: two null tests and
+    `call *0x2dbe5e(%rip)`, an indirect call through the GOT into core's scanner, then a
+    `test/cmovne` postlude;
+  - the long edge, taken only at `MODE_HARDENED` or above, calls
+    `malloc_abi::check_ownership`, `runtime_policy::check_ordering`, `malloc_abi::known_remaining`
+    and `runtime_policy::decide`, then unpacks the returned ordering into eight separate stack
+    bytes and walks them.
+- **THAT SETTLES BOTH PRIOR REFUTATIONS AND NAMES THE NEXT LEVER.** The GOT-indirect
+  `call *(%rip)` is visible in the emitted code, which CONFIRMS rather than assumes that the
+  ABI-to-core boundary survives as a call and that `#[inline]` on the core function could not have
+  removed it — the 2026-08-18 row's central ambiguity, resolved by looking. And the fixed ~5.5 ns
+  is not the scan tiers and not the call alone: **the strict fast path pays a prologue built for a
+  hardened path it never takes.** That is the hot/cold split shape, which shipped on the FFI-PCC
+  gate at 0.9463 and was separately REJECTED for `entrypoint_scope` because it did not reproduce
+  on 2 of 3 hosts. Its retry predicate therefore applies in full: **replicate on two quiet hosts
+  before shipping anything here.**
+- **ALSO SETTLED: the allocation-registry probe is NOT on the executed path.** The harness pairs
+  every `memrchr` case as `_fl_malloc` and `_incumbent_malloc` precisely to expose a registry hit
+  against a registry miss. Measured, the pair differs by 0.23 ns at 64 bytes (8.224 against
+  8.456), and the direction is the wrong way round for a probe that must walk and miss. Combined
+  with the disassembly — `check_ownership` and `known_remaining` are both on the `jae` edge — the
+  registry is bypassed in strict mode, exactly as this ledger's earlier note predicted.
