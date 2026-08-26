@@ -35640,3 +35640,49 @@ reworded rather than the gate touched.)
   frame tax on eight of the ten entries; and two flagged sites the grep still lists —
   `wide_strlen_bounded`'s `for j in 0..32` (hardened-only bounded path) and the case-insensitive
   wide compare at `wchar_abi.rs:6912`.
+
+## 2026-08-26 — `wcscpy` **5.289x -> 3.026x (+86 Ir)** with overlapping power-of-two stores. **This CORRECTS my own "no known lever" verdict from two rows ago.**
+
+- **RESULT CLASS: counted improvement, isolated — and a self-correction.** fl `LD_PRELOAD`ed against
+  live glibc in a fresh link-map namespace **in the same process image**, two-point over 2000
+  marginal calls, `PHASE=2` and conformance verified before counting. Deterministic instruction
+  counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **THE VERDICT THIS OVERTURNS.** After `copy_nonoverlapping` regressed this function by 46 Ir, I
+  wrote that `wide_fused_copy`'s 172 Ir had **"no known lever — the scalar loops are load-bearing,
+  and a full-width vector store is unsafe because `dst` is only guaranteed `len+1` elements."** The
+  first half was right and the second half was too narrow: **a full-width store is unsafe, but a
+  bounded one is not.** I ruled out the whole class on the strength of one member of it.
+- **THE CONSTRUCT.** For `n` in `1..=8`, two **overlapping** power-of-two moves — `[0,4)` and
+  `[n-4,n)` (or 2-wide, or one scalar) — rewrite some of the same source data, which is harmless,
+  and together touch **exactly `[0, n)`**. That is what makes them legal where a fixed 8-lane store
+  is not. Applied at all four element-loop sites: the head-mask branch, the `8 - align` first
+  chunk, the 8-lane tail and the 128B-tier tail.
+- **AND IT AVOIDS THE TRAP THAT KILLED THE LAST ATTEMPT** by construction: plain `read`/`write` of
+  `[u32; 4]` are inline 16-byte moves, whereas `copy_nonoverlapping` lowered to a **call to fl's own
+  interposed `memcpy`**. Verified, not assumed — caller attribution on the candidate profile shows
+  **zero `memcpy` calls on the measured path** (the two `call memcpy` sites still in `wcscpy`'s
+  disassembly are in the cold validating path). The failed version had 2 calls/pair, 148 Ir
+  inclusive.
+
+  | family | glibc | base | small-copy | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcscpy` | 38.00 | 200.97 | **115.00** | 5.289x | **3.026x** | **+85.97** |
+  | others (7) | — | — | — | — | — | 0.00 |
+
+  `wide_fused_copy` itself: **172 -> 86 Ir**. Every other wide family moves exactly 0.00.
+- **CONFORMANCE.** The same write-path suite as the refuted attempt, which is the point — it checks
+  contents and return value against live glibc, that the terminator is written, and **that not one
+  element past the terminator is touched** (destination poison-filled with `0xDEADBEEF` and every
+  element after the NUL re-verified), across **source alignments 0..31 crossed with lengths
+  0..200**, plus `wcscat` over destination prefixes 0..40 so the destination's alignment varies
+  independently. The overwrite check is exactly what an overlapping-store bug would trip.
+  **26,440 checks, 0 failures**, strict and hardened, on base and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `2c9bbeaeb21ae07fc2af7923064334c40a1ecf1b510df079cae386a15f7f18ea`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 3.026x, `wcsncmp` 3.165x, `wcsnlen` 2.427x, `wcscmp` 1.957x,
+  `wcschr` 1.886x, `wcsrchr` 1.888x, `wcslen` 1.872x, `wmemchr` 1.734x, `wmemcmp` 1.646x. **The
+  worst wide entry is now 3.165x, down from 5.289x at the start of the sweep**, and the frame tax
+  (~11 Ir each) is still unclaimed on eight of the ten entries.
