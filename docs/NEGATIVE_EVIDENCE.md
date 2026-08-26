@@ -32937,3 +32937,57 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`,
   incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6`
   `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, `samples=36`.
+
+## 2026-08-26 — FRONTIER HEADLINE REPLACED: `strlen` on 256 KiB is **51.378x** against live glibc, four times worse than `malloc_free`, and the deployed export scans ONE BYTE PER CYCLE
+
+- **RESULT CLASS: loss/baseline.** This supersedes the two frontier rows written earlier today,
+  which named `malloc_free` the worst surface at 12.03-13.25x. It is not. `malloc_free` is the worst
+  ALLOCATOR surface; the worst surface in the campaign is `strlen`, and it was missed because the
+  `memcpy_strlen` family had not been run at HEAD until now.
+- **THE ROW.** `incumbent_coverage_ab --family memcpy_strlen`, case `strlen_256k`, host glibc 2.42
+  linked directly into the timing process and FrankenLibC loaded beside it, both arms in the SAME
+  invocation: **fl 84,671.408 ns against glibc 1,686.685 ns**, `ratio_median=51.378060`, bootstrap
+  median CI [49.872131, 53.953221], `comparison=FL_SLOWER`, `clears_2x_null=true`, `samples=36`,
+  `reps_per_arm=512`. Same-invocation A/A nulls BOTH HOLD: FL/FL `null_median_ratio: 0.994718`,
+  bootstrap median CI [0.974352, 1.020769] — `null_bootstrap_median_ci: [0.974352, 1.020769]`;
+  glibc/glibc `null_median_ratio: 0.991137`, bootstrap median CI [0.980422, 1.008243]. Tolerance
+  0.020, both inside, no straddle veto, `null_half_width=0.025648`.
+- **THE SAME FAMILY'S OTHER CASE IS AT PARITY, which is what rules out a broken harness.**
+  `memcpy_64k`: fl 837.667 ns against glibc 848.312 ns, `ratio_median=1.001327`, CI
+  [0.979184, 1.014975], both nulls holding, UNDECIDABLE. The machinery works; the defect is
+  specific to the scan.
+- **THE THROUGHPUT ARITHMETIC NAMES THE MECHANISM BEFORE ANY DISASSEMBLY.** 262,144 bytes in
+  84,671.408 ns is **3.096 bytes/ns**, and at the run's own reported `cpu_mhz` of 3195.2 that is
+  **0.969 bytes per cycle** — one byte per cycle, the signature of a scalar byte loop. glibc's
+  1,686.685 ns is 155.4 bytes/ns, **48.6 bytes per cycle**, the signature of an unrolled 32-byte
+  AVX2 scan.
+- **AND THE DISASSEMBLY CONFIRMS IT, on the exact object that produced the number.** The exported
+  `strlen` in `dc480b40…c10865` has three exits, and **two of them are literal one-byte loops**:
+  `cmpb $0x0,0x1(%rbx,%r14,1); lea 0x1(%r14),%r14; jne` at `0x93ed10`, and the identical sequence
+  again at `0x93ed40`. Three instructions per byte, one byte per iteration. Only ONE path reaches
+  the vectorized scanner — `call string_abi::scan_c_string` at `0x93ecf2` — and it is guarded by
+  `movzbl MODE_STATE; cmp $0x1,%cl; ja` plus an earlier byte test, so anything but the narrow
+  admitted mode falls into a byte loop. The measured 0.969 bytes/cycle says the deployed
+  configuration takes one of those byte loops.
+- **THIS CONFIRMS A SUSPICION THIS FILE HAS CARRIED SINCE JUNE AND NEVER PINNED.** The 2026-06-20
+  entry recorded "strlen 255B: glibc 0.01s fl 0.16s ~16x (!! supposedly SIMD-done)" and could not
+  explain it. The explanation is that the SIMD scanner is behind a mode gate the deployed path does
+  not satisfy, and the fallback is not a slightly slower scanner — it is a byte loop. The related
+  standing note that fl has "a shipped SIMD campaign that cannot reach a program" applies to
+  `strlen` too, and now has a number: **51x**.
+- **WHAT THIS DOES TO THE RANKING.** New order, admissible cases only: `strlen_256k` 51.378060,
+  then `malloc_free` 12.03-13.25, then `tdelete` ~2.7-3.0 and `memrchr` len64 2.706972, then
+  `sinhf` 1.649593 / `coshf` 1.619743. The gap between rank 1 and rank 2 is a factor of four, and
+  unlike `malloc_free` — which now carries six refuted mechanisms — this one has an obvious
+  unrefuted lever: **make every exit of the exported `strlen` reach `scan_c_string`.**
+- **DO NOT SIZE THE LEVER FROM THIS ROW ALONE.** 256 KiB is a large-scan case chosen to expose
+  bandwidth behaviour; the fixed-cost regime at short lengths is a different question and the
+  `memrchr` family shows the two can point opposite ways. Measure the length curve before claiming
+  what a fix is worth.
+- **PROVENANCE.** HEAD `998070b640879f95ec888990064a07833d926930`, worker `vmi1293453` measured idle
+  immediately beforehand (`loadavg 0.46,0.47,1.07`, no process above 0.9% CPU), quiet gate
+  `verdict=clear`. FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`,
+  incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
