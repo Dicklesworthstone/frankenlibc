@@ -534,3 +534,40 @@ fn async_io_depends_on_file_type() {
          implementation would pass, so this run proves nothing"
     );
 }
+
+/// An unknown selector is rejected before glibc touches the pathname.
+///
+/// This is deliberately a missing pathname: a naive implementation which
+/// probes the path before validating `name` returns `ENOENT`, making an unknown
+/// selector indistinguishable from a valid query on a missing file.  glibc
+/// instead returns `EINVAL` for the bad selector.  The host assertion comes
+/// first so the test does not turn a local observation into the contract.
+#[test]
+fn invalid_selector_precedes_missing_path_lookup() {
+    const INVALID_SELECTOR: c_int = c_int::MAX;
+    let missing = CString::new("/definitely/not/a/frankenlibc/path").unwrap();
+
+    let (host, host_errno) = unsafe {
+        *libc::__errno_location() = SENTINEL_ERRNO;
+        let value = pathconf(missing.as_ptr(), INVALID_SELECTOR);
+        (value, *libc::__errno_location())
+    };
+    assert_eq!(host, -1, "host must reject an unknown pathconf selector");
+    assert_eq!(
+        host_errno,
+        libc::EINVAL,
+        "host must validate the selector before attempting the missing path"
+    );
+
+    let (fl, fl_errno) = unsafe {
+        *libc::__errno_location() = SENTINEL_ERRNO;
+        let value = fu::pathconf(missing.as_ptr(), INVALID_SELECTOR);
+        (value, *libc::__errno_location())
+    };
+    assert_eq!(fl, host, "unknown selector return value");
+    assert_eq!(
+        fl_errno, host_errno,
+        "fl must reject an unknown selector before pathname lookup; a stat-first implementation \
+         incorrectly reports ENOENT here"
+    );
+}

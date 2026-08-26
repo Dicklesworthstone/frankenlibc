@@ -4617,6 +4617,28 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
     }
 }
 
+/// Whether `name` is a selector implemented by [`pathconf`] and [`fpathconf`].
+///
+/// The value-table arms are valid selectors, as are the per-file and
+/// per-filesystem selectors handled by the public entry points.  Keep this
+/// predicate beside `pathconf_value` so an added table arm cannot be forgotten
+/// by the entry-point validation order.
+#[inline]
+fn is_supported_pathconf_selector(name: c_int) -> bool {
+    pathconf_value(name).is_some()
+        || matches!(
+            name,
+            libc::_PC_LINK_MAX
+                | libc::_PC_NAME_MAX
+                | libc::_PC_2_SYMLINKS
+                | libc::_PC_ASYNC_IO
+                | libc::_PC_FILESIZEBITS
+                | libc::_PC_REC_MIN_XFER_SIZE
+                | libc::_PC_REC_XFER_ALIGN
+                | libc::_PC_ALLOC_SIZE_MIN
+        )
+}
+
 #[inline]
 fn mix64(mut x: u64) -> u64 {
     x ^= x >> 30;
@@ -4691,6 +4713,15 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
     }
 
     if path.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    // glibc rejects an unknown selector before it attempts to resolve `path`.
+    // Performing the stat first reports ENOENT for a missing pathname instead
+    // of EINVAL, which changes the caller-visible error contract.
+    if !is_supported_pathconf_selector(name) {
         unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
