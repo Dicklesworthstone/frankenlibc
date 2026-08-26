@@ -33808,3 +33808,48 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.65,0.45,0.27`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — DEPLOYED `strlen` IS 3.7-4.7x SLOWER ON SHORT STRINGS: my earlier "deployed strlen is 1.31x" was measured at the ONE length where fl is at parity
+
+- **RESULT CLASS: loss/baseline (correction of my own figure, and a new frontier entry).** After
+  withdrawing the 51x `dlopen` artifact I reported deployed `strlen` at **1.31x** and moved on.
+  That number came from a single length — 256 KiB — measured with the crude cross-invocation
+  min-of-9 shape that later proved 38% wrong on `malloc_free`. Swept across lengths with the
+  interleaved instrument, **256 KiB is the only length where fl is competitive.**
+- **THE SWEEP.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`, arms distinct (`fl=0x7c433a33ecb0`,
+  `glibc=0x7c433979b880`), arms interleaved, 25 samples, every length length-checked against the
+  known value before timing.
+
+  | length | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control | corrected |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | 7 B | 11.3857 | 2.1808 | 5.238182 | 0.997396 | 0.959761 **fail** | 1.125096 | **4.66** |
+  | 64 B | 11.7150 | 2.9472 | 3.978378 | 0.992159 | 0.959012 **fail** | 1.074933 | **3.70** |
+  | 512 B | 13.8222 | 6.0191 | 2.339980 | 0.967244 **fail** | 0.990267 | 0.992412 | **2.36** |
+  | 4096 B | 30.1099 | 21.2640 | **1.385859** | 0.996806 | 1.001063 | 0.996644 | **1.39** |
+  | 256 KiB | 1643.1870 | 1664.6600 | **0.985482** | 1.004978 | 1.003550 | 1.007427 | **0.98** |
+
+  The two longest cases are fully admissible. The three short ones have one failing null each
+  (3-4%) against effects of 134-424%, so the direction is not in question even though the third
+  digit is.
+- **THE SHAPE IS THE POINT.** 4.66 -> 3.70 -> 2.36 -> 1.39 -> 0.98 as the string grows. That is a
+  **fixed per-call cost of roughly 9 nanoseconds** amortised over a scan that eventually dominates.
+  It matches the disassembly of this exact export precisely: six `push`es and `sub $0xb8` — a
+  184-byte frame — then a runtime-phase load, a `MODE_STATE` compare, a `known_remaining` call and
+  a GOT-indirect `call` into `scan_c_string`, all paid before a single byte is examined. At 7 bytes
+  the scan itself is about one cycle and the wrapper is the entire cost.
+- **WHY THIS MATTERS MORE THAN THE RATIO AT 256 KiB.** Real programs call `strlen` on short
+  strings — paths, identifiers, format fragments, argv entries. The length where fl reaches parity
+  is the length almost nobody calls it with. **Reporting 1.31x from a 256 KiB sample was
+  measuring the best case and calling it the answer**, which is the same error class as the
+  `dlopen` phase artifact I spent this session correcting, one level up: right instrument, wrong
+  operating point.
+- **REVISED FRONTIER POSITION.** At 4.66x corrected on 7-byte strings, deployed `strlen` is the
+  **second-worst surface measured this session**, behind `malloc_free` (~10x) and ahead of
+  `memrchr` at 64 B (2.88x). It also has a named, unrefuted mechanism and a concrete lever: the
+  wrapper, not the scanner — `scan_c_string` is genuinely vectorised and at 256 KiB it beats glibc.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.34,0.38,0.28`. Driver compiled with
+  `cc -O2 -fno-builtin-strlen` so the call is never folded.
