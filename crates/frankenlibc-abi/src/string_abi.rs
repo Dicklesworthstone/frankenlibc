@@ -4981,6 +4981,19 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
         return (a as c_int) - (b as c_int);
     }
 
+    // Cold tail in its own frame. This entry rented
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` from the validating path
+    // below on every strict call; line-level profiling (callgrind --dump-line,
+    // two-point) charged 8 Ir to the signature line and 8 to the closing brace --
+    // 16 Ir of prologue and epilogue, out of a 40 Ir entry whose actual strict
+    // work is about 13. Nothing between the strict gate and here is a re-entrancy
+    // bypass, so the cut is at the gate.
+    unsafe { strncmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(
