@@ -34677,3 +34677,83 @@ afterwards, which is how it was caught. -->
   `dc480b40…c10865`, frame split `73c6a836…bf398`, no-header-checks `d629aada…ddf3a`, memo
   `ae1fdded…a1175`, no-probe `912ce1a8…39634`. Counted locally with `valgrind-3.25.1`; all
   ablations remain stashed, none committed.
+
+## 2026-08-26 — malloc/free counted at **9.910x** (664 vs 67 Ir/pair); `__tls_get_addr` alone is **96 Ir**, more than glibc's entire malloc+free. `-Ztls-model=initial-exec` removes 108 Ir/pair (9.910x -> 8.298x) but makes fl **undlopenable**: fl's TLS block is **196,392 bytes against glibc's 136**
+
+- **RESULT CLASS: loss, counted, with one measured lever and a named blocker.** The allocator's
+  wall-clock A/A is structurally unfixable (a genuine A/A needs two independent instances of the
+  same allocator), which is exactly the case a deterministic instruction counter settles. The
+  counted ratio **corroborates the banked ~9.4x wall-clock figure** rather than replacing it.
+- **BOTH ARMS IN ONE PROCESS IMAGE**, which is better than the `strlen` setup: fl is `LD_PRELOAD`ed
+  and the live incumbent is a private glibc in a fresh link-map namespace via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` with its own arena. Arms asserted distinct by
+  pointer, conformance (writable, distinct, 64- and 1024-byte round trip) checked before counting,
+  `PHASE=2` verified on every run. Two-point difference over 2000 marginal `(malloc, free)` pairs;
+  the driver loop's 10 Ir appears identically in every arm and is netted out.
+
+  | size | fl | glibc | ratio |
+  |---|---:|---:|---:|
+  | 64 B | **663.983 Ir** | 67.001 Ir | **9.910x** |
+  | 1024 B | 664.033 Ir | 67.001 Ir | 9.910x |
+
+  **Both arms are flat in size** — 64 B and 1024 B agree to 0.05 Ir. fl's cost is entirely fixed
+  per-call bookkeeping, not allocation work, which is the same shape the `strlen` probe had.
+- **THE DECOMPOSITION, AND ITS OWN CROSS-CHECK.** Per-function self costs sum to **674.000**, exactly
+  the summary-derived marginal total — so this parse is sound, unlike the earlier one that attributed
+  more than the program spent (a cost line after `calls=` is the *inclusive* cost of that call and
+  must not be added to the caller).
+
+  | function | Ir/pair | share |
+  |---|---:|---:|
+  | `malloc_abi::segment_free` | 101 | 15.0% |
+  | **`__tls_get_addr`** | **96** | **14.2%** |
+  | `malloc_abi::enter_allocator_reentry_guard` | 84 | 12.5% |
+  | `malloc_abi::allocate_from_local_class` | 79 | 11.7% |
+  | `malloc` (fl entrypoint) | 79 | 11.7% |
+  | `FlatCombiningStats::apply_locked` | 67 | 9.9% |
+  | `free` (fl entrypoint) | 53 | 7.9% |
+  | `malloc_abi::segment_allocate` | 43 | 6.4% |
+  | `runtime_policy::mode` | 29 | 4.3% |
+  | `runtime_policy::entrypoint_scope` | 22 | 3.3% |
+  | `size_class::small_bin_index` | 11 | 1.6% |
+
+  **`__tls_get_addr` costs more per pair than glibc's entire malloc+free (96 vs 67).** It is not
+  allocator logic at all — it is the general-dynamic TLS access sequence, and the object carries
+  **2440 call sites** to it.
+- **THE LEVER, MEASURED.** `-Ztls-model=initial-exec` turns those accesses into direct `%fs:`
+  references: call sites **2440 -> 23**, and `__tls_get_addr` vanishes from the profile entirely.
+  The inlined accesses are cheaper in place too (guard 84 -> 76, `mode` 29 -> 26), so the saving
+  exceeds the 96 Ir the symbol itself cost: **664 -> 556 Ir/pair, 9.910x -> 8.298x, 108 Ir saved,
+  16.3% of fl's libc work.** On `strlen` the same object saves **1 Ir** (159 -> 158) — consistent
+  with that surface's cost being `known_remaining`, not TLS, and a useful negative control on the
+  claim that this flag is a general speedup.
+- **BOTH BUILD GUARDS PASS, so the arms differ only in TLS model.** `RUSTFLAGS` *replaces*
+  `build.rustflags`, so the control arm restates the config list verbatim
+  (`-Z threads=4 -Ctarget-feature=+avx2,+fma`) and came out **byte-identical to the base object**
+  (`dc480b40…c10865`), proving the restatement is complete; and the AVX2 census is unchanged across
+  arms (`vpcmpeqb` 1875, `vpbroadcast` 805), proving the ISA was not silently dropped.
+- **AND THE BLOCKER, WHICH IS WHY THIS IS NOT LANDED.** `dlopen` of the initial-exec object fails
+  outright: `cannot allocate memory in static TLS block`. Initial-exec must be satisfied from
+  glibc's static TLS surplus, and **fl's TLS block is 196,392 bytes against glibc's own
+  `libc.so.6` at 136 — a factor of 1444.** The conformance harness and `incumbent_coverage_ab`
+  both `dlopen` fl, so this flag would break them as they stand.
+- **TWO WAYS OUT, ONE OF THEM ALREADY VERIFIED.** `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=262144`
+  makes the `dlopen` succeed (round trip passes), and the preload path — how fl actually deploys —
+  is unaffected either way. But an env-var dependency is a real constraint on any consumer that
+  `dlopen`s fl without controlling its environment, so the clean fix is to shrink the block. Of the
+  TLS visible in `.dynsym` (53,943 bytes across 143 symbols; the object is stripped, so local
+  symbols are not counted), **81 symbols totalling 52,151 bytes are per-thread static return
+  buffers for non-reentrant APIs** — `GETMNTENT_BUF` 4096, `ALIAS_ITER` 4688, `FSTAB_STATE` 4176,
+  `HOST_ITER` 2288, `TTYENT_STATE` 2128, `SERVENT_TLS`, `PROTOENT_TLS`, `RPC_ENTRY_TLS`,
+  `FGETSPENT_TLS`, plus a 16,384-byte `pthread::tls::FALLBACK_TLS_VALUES`. Making fl's legacy
+  return contracts thread-local is a genuine improvement over glibc's shared static storage, but
+  **every thread pays for all of them inline whether or not it ever calls those functions.**
+  Replacing the inline storage with a lazily heap-allocated per-thread pointer keeps the
+  reentrancy property, costs 8 bytes of TLS each, and is what unlocks the 108 Ir.
+- **NOT LANDED, AND NOT CLAIMED AS A WIN.** No conformance suite has been run against the
+  initial-exec object; the flag is not in the tree. What is established is the counted ratio, the
+  mechanism, the size of the lever, and the precise reason it cannot ship yet.
+- **PROVENANCE.** Source at HEAD `998070b640879f95ec888990064a07833d926930`, built on worker
+  `vmi1293453`. Objects: base/control `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  initial-exec `34b53527327e13874d8293a98e8f93f6145926612664b42d4b2deb48d9ae375d`. Counted locally
+  with `valgrind-3.25.1` (no fleet worker has valgrind; a software counter needs no quiet host).
