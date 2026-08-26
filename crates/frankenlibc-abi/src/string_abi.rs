@@ -7159,9 +7159,36 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
             // full SIMD strlen on `accept`. This is the case glibc's early-stopping scan
             // beat us on (fixed 4-way-set setup floor). Byte-identical to the (1..=4)
             // set4 path with set=[c;4], complement=true.
-            let a0 = *(accept.cast::<u8>());
-            if a0 != 0 && *(accept.cast::<u8>().add(1)) == 0 {
-                return scan_c_string_first_not_byte(s, a0);
+            // ...and the same direct probe extended to sets of 2..=4 bytes, which
+            // previously fell into the gap between the 1-char shortcut and the
+            // 5..=64-byte `pcmpistri` probe. A 3-byte set like "abc" still ENDED
+            // in the `set4` path below, but only after paying a `pcmpistri` probe
+            // that declines every set under 5 bytes AND a full SIMD
+            // `scan_c_string` strlen over `accept` just to learn it is 3 long.
+            // Line-level profiling (callgrind --dump-line, two-point) put those at
+            // 16 and ~19 Ir of `strspn`'s 167.
+            //
+            // Each byte is read only after the previous one proved non-NUL, so
+            // this never reads past the terminator — exactly the safety argument
+            // the existing 2-byte probe already relies on.
+            let a = accept.cast::<u8>();
+            let a0 = *a;
+            if a0 != 0 {
+                let a1 = *a.add(1);
+                if a1 == 0 {
+                    return scan_c_string_first_not_byte(s, a0);
+                }
+                let a2 = *a.add(2);
+                if a2 == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a0, a1], true);
+                }
+                let a3 = *a.add(3);
+                if a3 == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a2, a2], true);
+                }
+                if *a.add(4) == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a2, a3], true);
+                }
             }
             // 5..=64-byte accept set: answer short spans with `pcmpistr*` BEFORE any
             // pass over `accept`, so the LUT path's fixed setup is skipped entirely
