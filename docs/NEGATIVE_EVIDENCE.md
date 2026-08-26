@@ -35446,3 +35446,51 @@ reworded rather than the gate touched.)
   counted with `valgrind-3.25.1`.
 - **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsnlen` 3.500x, `wcsncmp`
   3.167x, `wcschr` 2.703x, `wmemchr` 2.390x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.903x.
+
+## 2026-08-26 — `wcsnlen` **3.500x -> 2.425x (+43 Ir)**: the same discard-the-mask defect, now in `frankenlibc-core`, where the folded 256-element block resolved with a **scalar walk over all 256**
+
+- **RESULT CLASS: counted improvement, isolated.** Instrument unchanged: fl `LD_PRELOAD`ed against
+  live glibc in a fresh link-map namespace **in the same process image**, two-point over 2000
+  marginal calls, `PHASE=2` and conformance verified before counting. Deterministic instruction
+  counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **THE DEFECT, FOURTH SIGHTING, AND THE WORST ONE YET.** `core::string::wide::wcsnlen` asks
+  `.any()` on a lane compare and then finds the index with a **scalar `.position()` or element
+  loop** — in all three overlapping-probe arms (`[4,8)`, `[8,16)`, `[16,32)`), in the 16-lane chunk
+  loop, and, worst, in the folded 256-element block, where a flagged fold walked
+  **`for (j, &ch) in block.iter().enumerate()` over up to 256 elements** to recover an index four
+  vector compares already held. Attribution: fl `wcsnlen` = entry 37 + **core scan 102 Ir** against
+  glibc's `__wcsnlen_avx2` at 39.
+- **THE FIX.** `to_bitmask().trailing_zeros()` at all five sites. The folded block loses per-panel
+  information, so it re-tests `p0..p3` in order and resolves from the first non-empty mask — the
+  same shape used for the `wcscmp` 128B tier.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcsnlen` | 40.00 | 140.00 | **97.00** | 3.500x | **2.425x** | **+43.00** |
+  | others (7) | — | — | — | — | — | ≤0.03 |
+
+- **A BASELINE MISTAKE, CAUGHT AND CORRECTED, WORTH RECORDING.** The first comparison showed
+  `wcsncmp` −52 Ir and `wcscmp` −21 Ir alongside the `wcsnlen` gain, which would have read as this
+  change wrecking two neighbours. It did not: **the candidate was built from a source tree shipped
+  before the `const BOUNDED` commit, while the comparison baseline was an object that had it**, so
+  those two columns were measuring the missing commit, not this patch. Re-measured against the
+  object built from the *same* tree, `wcsncmp` and `wcscmp` move **0.00 and +0.03 Ir**. **Re-ship
+  the worker source after every landed commit**, or an A/B silently compares two different trees.
+- **CONFORMANCE.** The tiers are selected by `limit = min(maxlen, len)`, so the test walks all of
+  them and the boundaries between them: `maxlen` 0..300 crossed with a NUL at every position
+  (including beyond `maxlen` and absent entirely); explicit probes at every tier edge
+  (0,1,3,4,7,8,15,16,31,32,63,64,127,128,255,256,257,271,272); **two NULs at spread positions,
+  where the lowest index must win** — the case a wrong bit-pick or a wrong panel order gets wrong;
+  and wide values that must not read as terminators, including **`0x00000100`, whose low byte is
+  zero**. **24,471 checks, 0 failures**, strict and hardened, on base and candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib wcsnlen`: `3 passed; 0 failed`. Full core suite:
+  `3294 passed; 3 failed` — **the same three (`locale` ×2, `stdio::printf` ×1) and the same counts
+  as the baseline established earlier today with this change stashed.** Pre-existing; not
+  attributed here.
+- **PROVENANCE.** Baseline `9d1ecf31c4623f3bdc40a4ec0d98f4d30fa6e2e5c53611e3c55ab61ed85a8640`,
+  candidate `b1286600d8dc59f3572afe284ef5366c3534d55de95a0ef96e340de9c1d98436`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only — its copy loops are load-bearing),
+  `wcsncmp` 3.167x, `wcschr` 2.703x, `wcsnlen` 2.425x, `wmemchr` 2.390x, `wmemcmp` 2.246x,
+  `wcscmp` 1.957x, `wcsrchr` 1.903x. **`wcschr`/`wmemchr`/`wmemcmp`/`wcsrchr` are the four still
+  unexamined**, and eight of the ten wide entries still carry the frame tax.
