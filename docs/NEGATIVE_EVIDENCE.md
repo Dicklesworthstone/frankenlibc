@@ -34625,3 +34625,55 @@ afterwards, which is how it was caught. -->
   from HEAD `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453`. Counted **locally**
   with `valgrind-3.25.1` because no fleet worker has valgrind installed; a software counter needs
   no quiet host, which is the whole point.
+
+## 2026-08-26 — ALL FOUR LEVERS PRICED EXACTLY: frame split **17 Ir**, header checks **11 Ir**, memo **8 Ir**, whole probe **109 Ir**. The three micro-levers together recover a quarter of what the probe costs
+
+- **RESULT CLASS: loss/baseline (counted; resolves three experiments this investigation could not
+  settle by wall clock).** With a deterministic instrument in hand, the two ablations I had to
+  report as "roughly 1 ns" and "inconclusive" were re-run and counted. **Every one of them turns
+  out to be real, small, and exactly measurable.**
+- **THE TABLE.** Marginal instructions per 7-byte `strlen` on an fl-heap buffer, two-point
+  difference over 2000 calls, `LD_PRELOAD` with **PHASE=2 verified on every run**, conformance
+  checked before counting:
+
+  | configuration | Ir/call | vs glibc | saved vs base |
+  |---|---:|---:|---:|
+  | glibc | **23.006** | 1.000x | — |
+  | fl base | **159.006** | 6.911x | — |
+  | fl, hot/cold frame split | 142.006 | 6.172x | **17.000** |
+  | fl, no header validity checks | 148.006 | 6.433x | **11.000** |
+  | fl, segment geometry memo | 151.006 | 6.564x | **8.000** |
+  | fl, no probe at all | **50.033** | 2.175x | **108.973** |
+
+  The savings are exact integers because the counter is exact — against the 39% between-run band
+  that defeated the wall clock on the same three questions.
+- **TWO EARLIER VERDICTS ARE CORRECTED, ONE IN EACH DIRECTION.** The frame split I reverted for
+  buying "only ~10%" is worth **17 instructions**, a real 12.5% of the 136-instruction gap — my
+  wall reading of ~1.15 ns was right in magnitude and I was right to doubt its precision, not its
+  existence. The memo I called **inconclusive** genuinely does help, by **8 instructions** — the
+  smallest of the three, and the wall clock had no chance of seeing it. **"Inconclusive" was the
+  correct call at the time; it is no longer inconclusive.**
+- **AND THE COMBINED CEILING OF ALL THREE IS THE POINT.** 17 + 11 + 8 = **36 instructions** if they
+  were additive and all shipped, taking fl from 159 to ~123 Ir, **6.91x to ~5.35x**. Removing the
+  probe outright takes it to 50 Ir, **2.18x**. So the three things I could think to shave account
+  for **a third of the probe and a quarter of the gap**; the other 73 instructions are spread
+  through work none of these ablations touched. **`known_remaining` is not slow because of one
+  identifiable mistake — it is 109 instructions of distributed work**, and shaving it piecemeal
+  has a measured, unpromising ceiling.
+- **WHICH MAKES THE HONEST RECOMMENDATION A DESIGN QUESTION, NOT AN OPTIMISATION.** The probe
+  answers "how many bytes remain in this allocation" for a caller that, on a 7-byte string, needs
+  it only to decline to use it. The options that could actually move this are architectural: do
+  not consult the registry for scans below a length where the bound cannot bind; or make the bound
+  reachable without reconstructing the slot; or accept the page-safe scanner's guarantee for
+  untracked-looking pointers. Each is a contract change, and the counted numbers above are what
+  such a proposal should be judged against — **its ceiling is 109 instructions per call, and
+  everything short of restructuring gets at most 36 of them.**
+- **RESIDUAL, STATED SO NOBODY EXPECTS PARITY.** Even with the probe entirely gone fl is
+  **50.033 Ir against glibc's 23.006 — still 2.18x**. That remainder is the phase load, the strict
+  check, the GOT-indirect call into core and the scanner's own entry. Probe-focused work cannot
+  reach parity on this surface and should not be sold as if it could.
+- **PROVENANCE.** All five fl objects built from HEAD
+  `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453`: base
+  `dc480b40…c10865`, frame split `73c6a836…bf398`, no-header-checks `d629aada…ddf3a`, memo
+  `ae1fdded…a1175`, no-probe `912ce1a8…39634`. Counted locally with `valgrind-3.25.1`; all
+  ablations remain stashed, none committed.
