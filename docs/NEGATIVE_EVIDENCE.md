@@ -35276,3 +35276,61 @@ earlier `c8232c0ec` sweep.
   candidate `82bd2075b6a2a7116503ac516d50feff4ad0935c432c5db5dd74a4c0e27ebef6`. Built on
   `vmi1293453`, counted with `valgrind-3.25.1`.
 - **NEXT:** the nine remaining wide-char entries above, then `strcmp` 2.189x and `memcmp` 2.014x.
+
+## 2026-08-26 — REFUTED: replacing `wide_fused_copy`'s scalar tail loops with `copy_nonoverlapping` made `wcscpy` **WORSE, 5.289x -> 6.500x (+46 Ir)**. Inside fl it lowers to a call to fl's OWN interposed `memcpy`
+
+- **RESULT CLASS: refutation, with a mechanism that generalizes to every `_abi` crate call site.**
+  Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the
+  same process image**, two-point over 2000 marginal calls, `PHASE=2` and conformance verified
+  before counting. Baseline and candidate from the same source tree.
+- **FIRST, THE SURVEY THAT PICKED THE TARGET — and it is why this was not a blind split.** The
+  nine wide-char entries all carry the frame tax, but they were unmeasured, so blanket-splitting
+  them would have treated a 1.9x surface the same as a 5.3x one. Measured:
+
+  | family | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `wcscpy` | 201.03 | 38.00 | **5.290x** |
+  | `wcsncmp` | 243.00 | 60.00 | 4.050x |
+  | `wcsnlen` | 140.00 | 40.00 | 3.500x |
+  | `wcscmp` | 152.00 | 45.97 | 3.306x |
+  | `wcschr` | 119.00 | 44.00 | 2.704x |
+  | `wmemchr` | 153.02 | 64.00 | 2.391x |
+  | `wmemcmp` | 146.00 | 65.00 | 2.246x |
+  | `wcsrchr` | 118.00 | 61.97 | 1.904x |
+
+  **All are worse than `wcslen` was (2.225x)**, and `wcscpy` is the worst non-`strlen` surface
+  measured to date.
+- **THE HYPOTHESIS, WHICH LOOKED SOLID.** `wcscpy` splits as entry 29 Ir + `wide_fused_copy`
+  **172 Ir**, against glibc's entire `__wcscpy_avx2` at 38. `wide_fused_copy` scans with SIMD but
+  copies its partial chunks **one element at a time**: with a 32-byte-aligned source `align == 0`,
+  so the first-chunk loop moves eight wchars scalar, and each NUL-terminating tail branch moves up
+  to eight more. Replacing those four loops with `copy_nonoverlapping` — count exactly `nul+1`, so
+  it cannot overrun the way a full-width vector store would, and `wcscpy`'s contract already
+  forbids overlap — should have collapsed them to inline moves.
+- **IT DID THE OPPOSITE.** `wcscpy` **201.00 -> 247.00 Ir, 5.289x -> 6.500x, a 46 Ir regression.**
+  The other seven wide families moved by at most 0.04 Ir, confirming the change was isolated to
+  this function.
+- **THE MECHANISM, AND IT IS THE REUSABLE PART.** Attribution of the regressed object:
+  `wcscpy` 99 Ir self, **`memcpy` 80 Ir**, **`string_abi::raw_overlap_copy` 68 Ir**. Caller
+  attribution: **2 calls per pair into `memcpy`, 148 Ir inclusive.** `copy_nonoverlapping` did not
+  become an inline move — it became **a call to `memcpy`, which inside fl resolves to fl's own
+  interposed `memcpy` ABI entry**, membrane gate and all. **A scalar element loop is genuinely the
+  cheaper construct here**, and the existing code was right. This inverts the ordinary advice, and
+  it applies to every `ptr::copy`/`copy_nonoverlapping`/slice-copy site in the `_abi` crate, not
+  just this one.
+- **CONFORMANCE WAS CLEAN, WHICH IS WHY THE NUMBER IS THE ONLY REASON IT IS REVERTED.** The write
+  path was checked for three things — contents and return value against live glibc, terminator
+  written, and **not one element past the terminator touched** (destination pre-filled with a
+  `0xDEADBEEF` poison, every element after the NUL re-verified), across **source alignments 0..31
+  crossed with lengths 0..200** for `wcscpy`, plus `wcscat` over destination prefixes 0..40 so the
+  destination's alignment varies independently of the source's. **26,440 checks, 0 failures**, both
+  strict and hardened, on base and candidate.
+- **REVERTED.** Not committed; the tree is unchanged. Objects: baseline
+  `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`, candidate
+  `c0ded2c7166986dfe94c0b167b22cc872d68f8a6927c521db76ba91568091d9b`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **WHAT IS STILL AVAILABLE ON `wcscpy`:** its entry carries the frame tax
+  (`push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp`), worth ~11-12 Ir by the same measurement that
+  landed `wcslen`. The 172 Ir inside `wide_fused_copy` now has **no known lever** — the scalar
+  loops are load-bearing, and a full-width vector store is unsafe because `dst` is only guaranteed
+  `len+1` elements.
