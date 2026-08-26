@@ -4345,8 +4345,16 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     // fallback bookkeeping is still cheap and required for bounded C-string
     // scans that must reject unterminated tracked buffers before host passthrough.
     if runtime_policy::strict_passthrough_active() {
-        return bump_mmap_remaining(addr)
-            .or_else(|| segment_remaining(addr))
+        // Segment first. The three sources are mutually exclusive, so the ORDER is
+        // free of semantics and pure cost: whichever answers, the result is the
+        // same. Segment-backed allocations are the common case — bump-mmap only
+        // holds overflow allocations and is usually inactive entirely — yet it was
+        // probed first, so every ordinary heap pointer paid a failed
+        // `BUMP_OVERFLOW_ACTIVE` load before reaching the source that answers.
+        // Line-level profiling of `strlen` on a heap pointer (callgrind
+        // --dump-line, two-point) put this dispatch at 10 of the probe's 82 Ir.
+        return segment_remaining(addr)
+            .or_else(|| bump_mmap_remaining(addr))
             .or_else(|| fallback_remaining(addr));
     }
 
