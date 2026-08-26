@@ -34170,3 +34170,49 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.52,0.54,0.53`. Driver compiled with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — TIME/CALENDAR IS fl's STRONGEST AREA: `timegm` 2.6x faster, `strftime %A` 1.66x faster, ISO format 1.17x faster, and the only loss is `gmtime_r` at 1.04x
+
+- **RESULT CLASS: loss/baseline (one marginal loss found; three surfaces faster; a banked campaign
+  win independently corroborated).** Time was the last large unmeasured hot area — hot in logging
+  and serialisation, algorithmically non-trivial, and with prior history in this ledger.
+- **THE ARMS.** Same-invocation deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM)`, all three symbol pairs distinct, arms interleaved, 25 samples.
+  **Each arm owns its own `struct tm`**, and `timegm` copies it before every call so neither arm
+  mutates the other's state or benefits from a normalised input.
+- **CONFORMANCE FIRST, AND IT IS EXACT ON ALL THREE.** `gmtime_r` fields all equal
+  (y=125, mon=7, mday=26, h=9, wday=2, yday=237 on both); `timegm` returns **1756200000** on both,
+  round-tripping the input exactly; `strftime` produces the identical string
+  `"2025-08-26T09:20:00"`.
+
+  | case | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control | corrected |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `gmtime_r` | 21.6536 | 20.5814 | **1.044341** | 0.998929 | 1.008161 | 1.006887 | **1.037** |
+  | `strftime` `%Y-%m-%dT%H:%M:%S` | 71.0284 | 85.1158 | 0.854741 | 1.000701 | 1.001581 | 1.001627 | 0.853 |
+  | `strftime` `%A` | 10.6097 | 16.8156 | 0.615854 | 1.001761 | 1.000657 | 1.019997 | **0.604** |
+  | `timegm` | 14.0301 | 37.9460 | 0.379907 | 0.997698 | 1.012188 | 0.981200 | **0.387** |
+
+  **All four rows are fully admissible** — every one of the eight nulls is inside 1.3% of 1.0 —
+  and the four controls sit between 0.981 and 1.020, so no correction exceeds 2%.
+- **THE ONLY LOSS IS `gmtime_r` AT 1.037x**, which is the smallest deployed loss found this
+  session and barely distinguishable from parity. Given that `timegm` — the inverse conversion —
+  is 2.6x FASTER, the calendar arithmetic itself is clearly not the problem; whatever the 4% is,
+  it is not worth a lever.
+- **AND `strftime %A` INDEPENDENTLY CORROBORATES A BANKED CAMPAIGN WIN.** This file records
+  `ac74b07bc` as a campaign win for exact C-locale `strftime("%A")` at **0.540615**, measured by
+  the harness through `dlopen` with bootstrap-median CIs. Measured here by a different instrument,
+  in the deployed `LD_PRELOAD` model, at phase 2, against a `dlmopen` incumbent: **0.604
+  corrected**. Two unrelated methods agreeing that fl is roughly 1.7-1.9x faster on that surface.
+  **That is the first banked win in this ledger to be confirmed by a second, independent
+  instrument in the deployment model**, and it matters more than the number: the `dlopen` phase
+  artifact destroyed `strlen`'s figure and inflated `snprintf`'s, so a banked win surviving the
+  model change is not automatic.
+- **WHAT THIS SAYS ABOUT WHERE fl IS GOOD.** The pattern across the whole session: fl wins where
+  the work is real computation it controls end to end — `timegm`, `strftime`, `strtol`, `strtod`
+  fast paths, large `memcpy`, large `fwrite`, adversarial `strstr` — and loses where a thin
+  operation is wrapped in the ABI's entry sequence: short `strlen`, `memcpy`, `memcmp`, `fputc`,
+  `mtx_trylock`. Time/calendar has no thin operations, so it has no losses worth the name.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.51,0.56,0.54`. Driver compiled with `cc -O2 -fno-builtin`.
