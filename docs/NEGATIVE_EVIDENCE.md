@@ -34894,3 +34894,14 @@ afterwards, which is how it was caught. -->
   HEAD `998070b640879f95ec888990064a07833d926930`, counted locally with `valgrind-3.25.1`.
 - **NEXT ON THIS FRONTIER:** `memrchr` at 2.986x (215 vs 72 Ir) is now the worst unattacked
   surface in the survey, and `wcslen` 2.225x / `memcmp` 2.014x follow.
+
+### 2026-08-26 addendum — landing SHA for the `strcmp` early-out (swept by a concurrent `commit -a`)
+
+The `strcmp` per-panel early-out and its ledger row above were staged by me but landed inside
+another agent's commit **`37cf934af5757f30db63bcf66ddd3295288dcc9b`** ("bench(printf): calibrate
+stdout float coverage batch"), which ran `commit -a` over the shared worktree while my change was
+in the index. **The content at HEAD is byte-for-byte the object that was measured and
+conformance-tested** (`e1c91f8806dec22d394d0fc5a9cbff3d0279e9a96de8820919ada4581a1a2a78`);
+verified by reading the landed block at HEAD. Their commit is left untouched — this row exists so
+the evidence has a citable SHA rather than a rewritten history. Same hazard, same handling as the
+earlier `c8232c0ec` sweep.
