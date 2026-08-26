@@ -7339,6 +7339,34 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
     // body — scan s + reject, core strcspn. Skips the membrane bookkeeping.
     if !s.is_null() && !reject.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
+            // Direct probe for reject sets of 1..=4 bytes, ahead of everything else —
+            // the same gap `strspn` had. Those sets already had dedicated handling
+            // below, but only after a `pcmpistri` probe that declines every set under
+            // 5 bytes AND a full SIMD `scan_c_string` strlen over `reject` just to
+            // learn its length. Each byte is read only after the previous proved
+            // non-NUL, so this never reads past the terminator.
+            {
+                let r = reject.cast::<u8>();
+                let r0 = *r;
+                if r0 != 0 {
+                    let r1 = *r.add(1);
+                    if r1 == 0 {
+                        let (i, _found, _) = scan_c_string_for_byte(s, r0, None);
+                        return i;
+                    }
+                    let r2 = *r.add(2);
+                    if r2 == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r0, r1], false);
+                    }
+                    let r3 = *r.add(3);
+                    if r3 == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r2, r2], false);
+                    }
+                    if *r.add(4) == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r2, r3], false);
+                    }
+                }
+            }
             // 5..=64-byte reject set: `pcmpistr*` first, before the `reject` scan —
             // this is the arm that lost worst to glibc (14.81x at span 4 with a
             // 16-byte set).
