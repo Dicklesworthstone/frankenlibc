@@ -33166,3 +33166,47 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.22,0.19,0.38`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — DEPLOYMENT-VERIFIED LOSSES: `sinhf` 1.662x and `coshf` 1.680x at phase 2, bit-identical to glibc on every input, and the instrument prices itself at 1%
+
+- **RESULT CLASS: loss/baseline.** Fourth and fifth surfaces checked against the
+  `dlopen`-vs-`LD_PRELOAD` hazard. `strlen` was destroyed by it, `tdelete` and `memrchr` survived,
+  and these survive too.
+- **THE ARMS.** Same-invocation, deployed configuration: fl by `LD_PRELOAD` (phase read
+  **2 = ACTIVE**, `ready=1`), live glibc by `dlmopen(LM_ID_NEWLM, "libm.so.6")` — libm, not libc,
+  because that is where `sinhf`/`coshf` live. All four addresses printed and asserted distinct.
+  256 mid-range inputs spanning 0.5 to 5.0, 20,000 reps per arm, 25 samples, ABBA inside each.
+- **THE ROWS, from the admissible run.** `sinhf_mid_sweep` fl **16.4656 ns** against glibc
+  **9.9058 ns** = **1.662216**, A/A nulls fl/fl **1.000643** and glibc/glibc **1.002525**, both
+  inside 2%. `coshf_mid_sweep` fl **16.5097 ns** against glibc **9.8250 ns** = **1.680381**, nulls
+  **0.999037** and **1.000631**.
+- **A SECOND DEPLOYED RUN IS REPORTED AND NOT USED.** Re-run later: `sinhf` 1.640358 but its
+  glibc/glibc null was **1.076355**, and `coshf` 1.499057 with an fl/fl null of **1.058852**. Both
+  fail the 0.020 tolerance, so both are INADMISSIBLE and quoted only so the pair is not reported
+  selectively. Note the direction: the admissible run and the broken run bracket the harness's
+  figures rather than contradicting them, and `coshf` moved 1.680 -> 1.499 between runs while its
+  null broke — which is exactly what a broken null is warning about.
+- **THE INSTRUMENT PRICES ITSELF AT ABOUT 1%, measured on this surface.** The same driver with fl
+  NOT preloaded puts glibc in both slots — `dlopen("libm.so.6")` for the fl slot, `dlmopen` for
+  the comparison slot — and reads **1.012289** for `sinhf` and **0.991289** for `coshf`, with all
+  four nulls holding. No correction needed. Contrast the `tdelete` driver, whose identical control
+  showed a 6% bias: **the control is a per-surface measurement, not a property of the technique**,
+  and this row is the second demonstration of that.
+- **THE CONTROL ONLY RAN AFTER A DEFECT IN MY OWN DRIVER WAS FIXED.** The first attempt exited
+  with `dlsym` failure whenever fl was absent: the binary references no libm symbol directly, so
+  `--as-needed` dropped `libm` from the link and `RTLD_DEFAULT` had nothing to find. Silently that
+  looks like "the control cannot be run"; in fact it was the driver, and the fix is an explicit
+  `dlopen("libm.so.6")` for the control slot. A control that fails to run is not evidence of
+  anything.
+- **IT AGREES WITH THE HARNESS.** `incumbent_coverage_ab` under `dlopen` gave `sinhf` 1.649593 and
+  `coshf` 1.619743, both DECIDABLE with nulls holding. Deployed: 1.662216 and 1.680381. Within
+  ~1% and ~4%. No phase gate on these exports, so the banked numbers stand.
+- **AND THEY ARE BIT-IDENTICAL TO GLIBC, which makes this a clean speed question.** Across all 256
+  inputs the maximum relative difference against glibc is **0.000e+00** for both functions, in
+  every run including the control. So the 1.66-1.68x is not buying accuracy and cannot be defended
+  as a precision trade; whatever the extra ~6.6 ns per call is, it is pure overhead.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libm.so.6` resolved live in-process by
+  `dlmopen`. Worker `vmi1293453` at `loadavg 0.09,0.16,0.31`. Driver compiled on the worker with
+  `cc -O2 -ldl -lm`.
