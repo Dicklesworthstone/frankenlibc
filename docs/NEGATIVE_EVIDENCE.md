@@ -34086,3 +34086,46 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.44,0.48,0.45`. Driver compiled with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — STDIO: `fputc` looks ~3x slower and `fwrite(4096)` ~17% faster, but NO row is admissible — glibc's buffer flush makes its per-call cost bimodal and destroys the A/A null
+
+- **RESULT CLASS: method limit + indicative loss (no admissible ratio).** stdio was the largest
+  unmeasured hot area. The first driver I wrote **omitted the A/A nulls**; adding them is what
+  produced this row, because they immediately failed. Reporting the ratios without them would have
+  looked clean and been wrong.
+- **THE NUMBERS, deployed, fl by `LD_PRELOAD` at phase 2, live glibc by `dlmopen`, each arm
+  opening its OWN `/dev/null` stream** — fl's `FILE*` printed as **0x10000010**, a synthetic id,
+  against glibc's real 0x7c3620410000, so a stream must never cross arms and does not here.
+  Conformance passes: `fputc` returns 120 on both, `fwrite` returns 64 on both.
+
+  | case | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `fputc` | 8.8252 | 3.1146 | 3.054374 | **0.990804** | **0.334535** | 0.983323 |
+  | `fwrite` 64 B | 19.7179 | 12.9798 | 1.511485 | **1.001596** | **0.661420** | 0.748800 |
+  | `fwrite` 4096 B | 158.0438 | 184.5127 | 0.850279 | **1.008004** | **1.172297** | 0.990645 |
+
+- **THE glibc/glibc NULL AT 0.334 IS THE FINDING.** Two slices of the *same* glibc stream differ
+  by **3x**. The cause is buffering: glibc's `FILE` accumulates into a 4 KiB buffer and flushes
+  with a `write` syscall when it fills, so one slice of an A/A pair absorbs the syscall and the
+  other does not. It is the same slice-coupling that broke the allocator's A/A, an order of
+  magnitude worse, because a syscall is thousands of times the cost of the operation being timed.
+- **AND THE ASYMMETRY IS ITSELF A RESULT: fl's nulls HOLD on all three rows (0.9908, 1.0016,
+  1.0080) while glibc's fail on all three.** fl's per-call stdio cost is uniform; glibc's is
+  bursty. Whatever fl is doing, it is not accumulating into a buffer that periodically pays a
+  syscall in one place — which is a behavioural difference worth knowing independently of speed.
+- **WHAT THE NUMBERS INDICATE, labelled as indication and not measurement.** `fputc` at
+  **~3.05x** is consistent with the string family's fixed entry cost landing on a ~3 ns operation,
+  and its FL/FL null holds, so the fl arm is well behaved; it is the glibc reference that is
+  unreliable. At the buffer-sized write, where flushing happens on every call and the burstiness
+  largely cancels, the control is clean (0.990645) and **fl is about 15% faster** — the same
+  short-loses/long-wins shape as `memcpy` and `strlen`.
+- **HOW TO MEASURE THIS PROPERLY, since three surfaces have now hit slice coupling.** Give each
+  A/A slice its own stream, or `setvbuf` both arms to unbuffered so no call is cheaper than its
+  neighbour, or count syscalls instead of timing. The general rule this session has established:
+  **a wall-clock A/A null is only meaningful when the two slices are independent.** Allocators,
+  streams and anything else with shared internal state need the null constructed differently, and
+  `getrandom` showed a fourth variant where the incumbent arm itself is not representative.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.45,0.58,0.52`. Driver compiled with `cc -O2 -fno-builtin`.
