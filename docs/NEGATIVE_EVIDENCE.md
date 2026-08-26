@@ -35844,3 +35844,51 @@ reworded rather than the gate touched.)
   surface with an unexplored lever**, `strspn` 3.410x, `strcasecmp` 2.408x, `memcmp` 2.080x,
   `wcsncmp` 2.850x, `wcscpy` 2.631x, `strcmp` 1.750x. `strncmp`'s 107 Ir bounded scan still has no
   working fix; its frame tax (`sub $0x88`) is untouched.
+
+## 2026-08-26 — REJECTED (3 variants): `strncmp` bound<32 is **10.667x**, the worst ratio in the suite, and an overlapping 8-byte tail cannot pay for itself
+
+- **RESULT CLASS: measured loss, nothing landed.** fl `LD_PRELOAD`ed at PHASE=2 (asserted) against
+  live glibc via `dlmopen(LM_ID_NEWLM)` **in the same invocation**, arms distinct, two-point over
+  2000 marginal calls.
+- **Counted mechanism (callgrind Ir, two-point over 2000 marginal calls, no timer involved):**
+  at bound 31 fl runs **288 instructions vs 189 instructions** with the tail panel, while at
+  bound 43 it runs **98 instructions vs 108 instructions** — the work goes DOWN on three bounds
+  and UP on sixteen. instructions UP is what refutes this lever; no timing null is involved
+  because nothing here is timed.
+- **THE FINDING IS REAL EVEN THOUGH THE FIX IS NOT.** `strncmp` had been profiled at ONE bound (43)
+  for six turns. Sweeping bounds shows the ratio explodes below 32, where neither SIMD tier can
+  fire (the 32B tier needs `i+32 <= bound`; the existing overlapping panel is gated `bound >= 32`)
+  and the remainder runs byte-at-a-time:
+
+  | bound | 7 | 15 | 23 | **31** | 32 | 33 | 64 | 256 |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | ratio | 7.340x | 8.444x | 9.555x | **10.667x** | 2.667x | 2.722x | 2.667x | 1.343x |
+
+  The ratio climbs as the bound approaches a multiple of 8 from below — those leave the most bytes
+  for the scalar loop. **Bound 31 at 10.667x is worse than `strlen` heap L=4 (8.689x)**, i.e. the
+  worst measured point anywhere in this suite, and it was invisible at bound 43.
+- **THREE VARIANTS, ALL NET-NEGATIVE.** An overlapping 8-lane window ending exactly at `bound`,
+  lanes below `i` masked off:
+
+  | bound | glibc | base | v1 inline | v2 outlined | v3 gated `bound<32` |
+  |---|---:|---:|---:|---:|---:|
+  | 15 | 26.96 | 228.00 | 129.00 | 141.00 | 129.00 |
+  | **31** | 27.00 | 288.03 | **189.00** | 201.00 | **189.00** |
+  | 43 | 36.00 | 98.00 | 107.00 | 122.00 | 108.00 |
+  | 256 | 105.00 | 141.00 | 151.00 | 165.00 | 152.00 |
+
+  All three win **+99 Ir** on bounds ≡7 mod 8 and lose **10-32 Ir on every other bound sampled**,
+  including bounds that never execute the block.
+- **TWO HYPOTHESES FOR THE BROAD COST, BOTH REFUTED BY MEASUREMENT.** (1) Inlining bloat —
+  `scan_strcmp` is `#[inline(always)]`, so outlining the panel should have helped; it made every
+  bound **worse still** (−24/−26). (2) The condition chain — gating on `bound < 32` first, so larger
+  bounds leave on one comparison, changed nothing (−12/−10/−11/−11, same as ungated). The cost is
+  codegen in the always-inlined body and neither remedy reaches it.
+- **NOT LANDED.** Three of nineteen sampled bounds win; sixteen lose. Objects: v1
+  `5540573c7d83cc114877df171cfc56809f495ceeb72979b65df3bb7d4624ba1d`, v2
+  `cc4e99195c9c1b59677456ee19a0a814363165616245b95ca3d9c370c8cd7c95`, v3
+  `5dbca80c630165672a...` (see commit), baseline
+  `0e6609233741c12da6f7acf059a6d217690562a5449b7ef1887b608468cee1f0`. Conformance 1,859,731 checks
+  + 140,016, 0 failures strict and hardened on all three — the reject is purely on the numbers.
+- **STILL OPEN:** `strncmp` at bounds under 32 is the suite's worst surface and has no fix that pays.
+  Any future attempt must be measured across bounds, not at one.
