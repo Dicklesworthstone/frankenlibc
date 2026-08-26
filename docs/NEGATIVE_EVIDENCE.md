@@ -32642,3 +32642,65 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   local-dynamic `b564194dbc445e39aae2d86a1902929a194ca11e4598e490245c60a01364d820`,
   initial-exec `34b53527327e13874d8293a98e8f93f6145926612664b42d4b2deb48d9ae375d`.
   AVX2 instruction census 2680 in all three, so no arm differs in ISA.
+
+## 2026-08-26 — FRONTIER RE-MEASURED AT HEAD: `getrandom` and `snprintf` are off the loss list entirely, and the second-worst surface is `tdelete` at 2.725x
+
+- **RESULT CLASS: loss/baseline (ranking correction, all figures measured).** Unlike the
+  2026-08-16 restatement, which was written from banked numbers under an I/O stop and explicitly
+  ran nothing, every row here is a fresh same-invocation measurement against live glibc 2.42 at
+  HEAD `998070b640879f95ec888990064a07833d926930`. One `incumbent_coverage_ab` invocation drove
+  the families through `--families`, each in a fresh child, against one FrankenLibC object.
+- **PROVENANCE, shared by every row below.** Worker `vmi1293453`, 8 logical cores,
+  `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`, `loadavg` 0.77-0.92 at family start; quiet gate
+  `verdict=clear` at both phases of every family, `cpu_mhz` min, median and max all 3195.2
+  throughout, so no family straddled a clock ramp. `samples=36` on every case.
+  FL object `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`,
+  incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`. Each family ran its
+  pre-timing conformance contract before any number was taken.
+- **`tdelete` IS NOW THE SECOND-WORST SURFACE.** `tree8192` is the admissible case: fl 312.749 ns
+  against glibc 112.644 ns, `ratio_median=2.725062`, bootstrap median CI [2.662667, 2.797426],
+  FL/FL `null_median_ratio: 0.992089` with bootstrap median CI [0.982626, 1.002668] and
+  glibc/glibc `null_median_ratio: 1.002002` with bootstrap median CI [0.981760, 1.019530] — both
+  hold, `clears_2x_null=true`, `comparison=FL_SLOWER`. `tree1024` reads 3.000745 and `tree64`
+  2.537263, both with a violated null, so the family verdict is INCOMPLETE exactly as it was on
+  ovh-a in August; `tree1024`'s null failure reproducing on a second worker strengthens the
+  earlier finding that it is not noise to be re-run away. Conformance ran first: 386 comparisons,
+  `membership_verdict=pass`.
+- **`getrandom` IS OFF THE LOSS LIST.** The frontier ranked it second at 3.640x. Measured today:
+  `two_fifty_six_bytes` 1.000633 CI [0.991606, 1.008337] and `thirty_two_bytes` 1.010975 CI
+  [1.004675, 1.023555], both UNDECIDABLE against their nulls — that is parity stated as a bound,
+  not a loss. `one_byte` is a genuine but small loss at 1.065832 CI [1.055147, 1.071481] with both
+  nulls holding. `zero_bytes` is 1.176367 with a violated null and is not admissible. The vDSO
+  routing and the stack-output fast path did what they claimed.
+- **`snprintf` IS A WIN, NOT A 2.64-3.92x LOSS.** Four of five cases are decisive FL_FASTER with
+  both nulls holding: `unsigned_decimal_bare` 0.371485 CI [0.359946, 0.379750],
+  `character_bare` 0.378943 CI [0.363279, 0.389614], `signed_decimal_bare` 0.409599 CI
+  [0.396862, 0.431736], `pointer_bare` 0.558962 CI [0.537509, 0.578187]. `string_bare` reads
+  0.471733 with a violated null and is not admissible. The frontier's `snprintf_fused` row carried
+  an explicit "RE-MEASURE BEFORE USING" flag; this is that re-measure, and the printf fast-path
+  campaign closed the gap and then some.
+- **`sinhf` AND `coshf` ARE REAL, DECIDABLE LOSSES AND MOVE UP THE RANKING.** `sinhf_mid_sweep`
+  1.649593 CI [1.612739, 1.734108]; `coshf_mid_sweep` 1.619743 CI [1.580683, 1.676635]. Both
+  clear twice their null half-width with both nulls holding, `verdict=DECIDABLE`, 0 wins of 2.
+  Slightly better than the 1.794x / 1.765x banked on 2026-08-18, which was a different worker.
+- **THE CORRECTED FRONTIER, worst first, admissible cases only.**
+
+  | rank | family | case | ratio | 95% bootstrap median CI |
+  |---|---|---|---:|---:|
+  | 1 | `malloc_free` | small_64 | 12.03-13.25 | [11.54, 12.98] / [12.32, 13.58] |
+  | 2 | `tdelete` | tree8192 | 2.725062 | [2.662667, 2.797426] |
+  | 3 | `sinhf` | mid_sweep | 1.649593 | [1.612739, 1.734108] |
+  | 4 | `coshf` | mid_sweep | 1.619743 | [1.580683, 1.676635] |
+  | 5 | `getrandom` | one_byte | 1.065832 | [1.055147, 1.071481] |
+  | — | `getrandom` | 32B, 256B | 1.010975, 1.000633 | parity, UNDECIDABLE |
+  | — | `snprintf` | 4 bare cases | 0.371-0.559 | FL_FASTER, wins |
+
+- **WHAT CHANGED IN THE RANKING AND WHY IT MATTERS.** The old table sent the next reader to
+  `getrandom` (now parity) and `snprintf` (now a win) ahead of `tdelete`. Two of the top three
+  entries were retired surfaces. The gap between rank 1 and rank 2 is a factor of four, and
+  `malloc_free` has five refuted mechanisms on it, so `tdelete` is the surface with both a large
+  gap and an unrefuted lever. Filed as `bd-z4k8bh` with the mechanism decomposition: fl performs
+  TWO comparator walks per delete and rebalances at every level, against glibc's single classic
+  red-black descent.
