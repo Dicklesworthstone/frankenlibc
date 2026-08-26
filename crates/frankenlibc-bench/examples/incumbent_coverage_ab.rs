@@ -99,6 +99,10 @@ const BOUNDED_LEN_REPS: usize = 200_000;
 const GETHOSTBYADDR_REPS: usize = 5_000;
 const GETHOSTBYNAME_REPS: usize = 5_000;
 const SNPRINTF_REPS: usize = 200_000;
+// Stdout formatting includes the provider's stream lock and flush. Keeping it
+// separate prevents this new family from consuming the whole remote window
+// before the shared six-cell A/A schedule can report a verdict.
+const PRINTF_FLOAT_REPS: usize = 20_000;
 // 200_000 left the A/A nulls at 5-11% half-width on a shared worker, which made
 // three real effects (`%d` at 0.889, `%s` at 1.120, the dotted quad at 1.124)
 // undecidable against noise rather than against glibc. More reps per batch
@@ -11054,7 +11058,7 @@ fn assert_timed_stdout_is_live(arm: StdoutArm, who: &str) {
 #[inline(never)]
 fn run_stdout_float_batch(arm: StdoutArm, format: &CStr) -> u64 {
     let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
-    for index in 0..SNPRINTF_REPS {
+    for index in 0..PRINTF_FLOAT_REPS {
         let value = FLOAT_TIMING[index & (FLOAT_TIMING.len() - 1)];
         // SAFETY: `format` names one f64; fd 1 is redirected to this arm's
         // sink for the whole batch by the timing wrapper.
@@ -11072,7 +11076,7 @@ fn time_stdout_float_batch(arm: StdoutArm, format: &CStr) -> f64 {
     let saved = redirect_stdout_to(arm.sink_fd);
     let started = Instant::now();
     black_box(run_stdout_float_batch(arm, format));
-    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64;
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / PRINTF_FLOAT_REPS as f64;
     restore_stdout(saved);
     elapsed
 }
@@ -11191,9 +11195,9 @@ fn run_printf_float(config: &Config) {
     println!("{}", pre.contract_line("pre_measurement"));
     let threads_pre = observed_threads();
     let results = [
-        measure_arm_case("stdout_2dp", "printf \"%.2f\" through redirected stdout", host, fl, time_stdout_2f_batch),
-        measure_arm_case("stdout_4dp", "printf \"%.4f\" through redirected stdout", host, fl, time_stdout_4f_batch),
-        measure_arm_case("stdout_6dp", "printf bare \"%f\" through redirected stdout", host, fl, time_stdout_6f_batch),
+        measure_arm_case_with_reps("stdout_2dp", "printf \"%.2f\" through redirected stdout", PRINTF_FLOAT_REPS, host, fl, time_stdout_2f_batch),
+        measure_arm_case_with_reps("stdout_4dp", "printf \"%.4f\" through redirected stdout", PRINTF_FLOAT_REPS, host, fl, time_stdout_4f_batch),
+        measure_arm_case_with_reps("stdout_6dp", "printf bare \"%f\" through redirected stdout", PRINTF_FLOAT_REPS, host, fl, time_stdout_6f_batch),
     ];
     let threads_post = observed_threads();
     let post = guard.check_quiet().unwrap_or_else(|error| {

@@ -3406,19 +3406,32 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
                 });
                 (a.simd_ne(b) | a.simd_eq(zero)).to_bitmask()
             };
+            // EARLY-OUT PER PANEL. OR-combining all four masks gives the
+            // all-equal case a single branch, but it also prices four panels
+            // when the answer is in the first one — and the page guard admits
+            // this window for a 5-byte string, so EVERY compare under 128 bytes
+            // paid all four. Measured (callgrind two-point vs live glibc in the
+            // same process image): a flat ~99 Ir from L=4 to L=32 against
+            // glibc's 20, a fixed ~79-instruction floor at 4.95x. Testing each
+            // mask as it is produced lets a short or early-differing compare
+            // leave after one panel; the all-equal case still executes the same
+            // four compares, trading its single branch for four predictable
+            // ones. NOTE: this is an INSTRUCTION-COUNT trade — the OR form also
+            // lets the four loads issue without an intervening branch, which a
+            // cycle-accurate measurement may value differently for long strings.
             let f0 = cmp(0);
-            let f1 = cmp(32);
-            let f2 = cmp(64);
-            let f3 = cmp(96);
-            if f0 | f1 | f2 | f3 == 0 {
-                i += 128;
-                continue;
-            }
             if f0 != 0 {
                 return (i + f0.trailing_zeros() as usize, false);
             }
+            let f1 = cmp(32);
             if f1 != 0 {
                 return (i + 32 + f1.trailing_zeros() as usize, false);
+            }
+            let f2 = cmp(64);
+            let f3 = cmp(96);
+            if f2 | f3 == 0 {
+                i += 128;
+                continue;
             }
             if f2 != 0 {
                 return (i + 64 + f2.trailing_zeros() as usize, false);

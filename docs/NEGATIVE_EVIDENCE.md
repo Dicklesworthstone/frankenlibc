@@ -34807,3 +34807,90 @@ afterwards, which is how it was caught. -->
   `c3b54e7c4483d06bcf7ce15a4c14aca8bee68df8897d23671872a771825a7f72`, initial-exec
   `34b53527…ae375d`. Source HEAD `998070b640879f95ec888990064a07833d926930`, built on
   `vmi1293453`, counted locally with `valgrind-3.25.1`.
+
+## 2026-08-26 — counted survey of 12 families vs live glibc ranks `strcmp` worst at **3.03x** (4.95x on short inputs); per-panel early-out takes short compares **4.95x -> 3.70x** and medium **3.78x -> 3.04x**. Two other designs measured and REFUTED
+
+- **RESULT CLASS: a counted survey that re-ranked the frontier, one improvement landed, two
+  candidates refuted.** Instrument as before: fl `LD_PRELOAD`ed (PHASE=2, the deployed
+  configuration) against a live glibc in a fresh link-map namespace **in the same process image**,
+  arms asserted distinct by pointer, conformance checked before counting, two-point difference over
+  2000 marginal calls. The driver loop's 10 Ir is present identically in every arm and netted out.
+- **THE SURVEY.** Twelve families, each with an identical loop body across arms and only the
+  resolved function pointer differing:
+
+  | family | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `strcmp` | 112.03 | 37.00 | **3.028x** |
+  | `memrchr` | 214.98 | 72.00 | **2.986x** |
+  | `wcslen` | 89.00 | 40.00 | 2.225x |
+  | `memcmp` | 143.00 | 71.00 | 2.014x |
+  | `snprintf` | 3040.03 | 1692.00 | 1.797x |
+  | `tsearch`+`tdelete` | 2204.98 | 1296.26 | 1.701x |
+  | `qsort` width-16 | 29466.00 | 18182.00 | 1.621x |
+  | `strstr` | 459.00 | 335.00 | 1.370x |
+  | `qsort` i32 | 7977.40 | 12386.00 | 0.644x (fl ahead) |
+  | `strtod` | 560.00 | 886.00 | 0.632x (fl ahead) |
+  | `getenv` | 263.96 | 487.00 | 0.542x (fl ahead) |
+  | `mktime` | 210.00 | 2761.00 | 0.076x (fl ahead) |
+
+  **`qsort` width-16 lands at 1.621x, reproducing the banked 1.6-1.7x wall-clock figure** — an
+  independent cross-validation of the counted instrument on a surface whose loss was established
+  by a different method.
+- **`strcmp` IS A FIXED FLOOR, NOT A SCALING PROBLEM.** A length sweep shows fl **flat at 99-104 Ir
+  from L=4 to L=128** while glibc runs 20-41 — an excess of ~75-79 Ir that is constant, so the
+  ratio is worst where the string is shortest: **4.95x at L<=32**, decaying to 1.39x at L=256.
+  Attribution splits it as `strcmp` entry **34 Ir at every length** (glibc's entire 4-byte compare
+  is 20) plus `scan_strcmp` **65 Ir even for a 4-byte string**. The entry pays no `__tls_get_addr`
+  — checked, and it is zero — so unlike the allocator this is not TLS.
+- **THE CAUSE, AND HOW THE SWEEP PROVES IT.** `scan_strcmp`'s 128-byte window OR-combines four
+  32-lane masks so the all-equal case takes a single branch, and its page guard admits the window
+  for a 5-byte string as readily as a 5000-byte one. So **every compare shorter than 128 bytes
+  executed all four panels.** The sweep matches that structure exactly: 70 Ir at L=128 (one
+  window), 144 at L=192 (two), 398 at L=1024 (eight).
+- **WHAT SHIPPED: per-panel early-out.** Test each mask as it is produced, so a short or
+  early-differing compare leaves after one panel; `f2`/`f3` stay OR-combined. Counted against live
+  glibc:
+
+  | len | glibc | base | early-out | base | early-out |
+  |---|---:|---:|---:|---:|---:|
+  | 4-32 | 20.00 | 98.97 | **74.00** | 4.950x | **3.700x** |
+  | 43-64 | 27.00 | 102.02 | **82.00** | 3.778x | **3.037x** |
+  | 96 | 34.03 | 104.00 | 100.00 | 3.056x | 2.939x |
+  | 128 | 41.00 | 103.97 | 100.00 | 2.536x | 2.439x |
+  | 192 | 86.04 | 144.03 | 124.97 | 1.674x | 1.453x |
+  | 256 | 105.00 | 146.00 | 143.00 | 1.390x | 1.362x |
+  | 1024 | 243.00 | 397.97 | 401.00 | 1.638x | 1.650x |
+  | 4096 | 797.00 | 1457.96 | 1471.00 | 1.829x | 1.846x |
+
+  Better at 11 of 13 lengths; summed over the sweep **3053 -> 2874 Ir**. **The two regressions are
+  stated, not buried:** −3 Ir at L=1024 and −13 Ir at L=4096, both under 1%.
+- **AND THE HONEST LIMIT ON THAT CLAIM.** This is an **instruction-count** trade. The OR form also
+  lets the four loads issue without an intervening branch, so a cycle-accurate measurement may
+  value the long-string case differently than Ir does; the sub-1% regressions at 1024/4096 are
+  where that would show. The claim here is exactly what was measured — fewer instructions — not a
+  cycle-level win.
+- **TWO CANDIDATES MEASURED AND REFUTED, both conformance-clean, neither kept.**
+  **(1) First-panel probe** (one 32B panel before the loop): 99 -> 62 Ir at L<=32, the best short
+  result of the three — but after a clean first panel it re-enters the 128B window and runs four
+  more panels, costing **~20 Ir at every length from 43 to 1024**. Refuted as a net change.
+  **(2) Deferred window** (gate the 128B block on `i >= 128` so the 32B tier handles the first 128
+  bytes): worse at *both* ends — 84 Ir at L=4 against the probe's 62, and **+198 Ir at L=4096**,
+  because the added loop condition costs ~6 Ir on every one of the 32 window iterations. The
+  lesson that separates them: **a pre-loop check is nearly free; the same check inside the hot
+  loop is not.**
+- **CONFORMANCE.** Differential against live glibc in the same image, comparing result **signs**
+  (only the sign is contractual): every length 0..300 with the difference walked across every
+  position, early-NUL and prefix relations, high-bit bytes at 0x80/0xFF (`strcmp` compares as
+  *unsigned* char), and strings placed so their NUL lands on the **last mapped byte before a
+  `PROT_NONE` page** — one operand and then both — so any over-read past the terminator faults.
+  **140,016 checks, 0 failures**, on the base object and on all three candidates.
+- **GATE.** `cargo test -p frankenlibc-abi --lib` observed compiling and running:
+  `test result: ok. 200 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out`. A `strcmp`-filtered
+  run was discarded first as evidence: it printed `ok` over **0 tests** (201 filtered out).
+- **PROVENANCE.** Base `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`;
+  first-panel probe `eac5aebdc6d8f39f13032565716c14db9d763801539b41b49df44ff62cce1867`; deferred
+  window `9d8d2c077a24e1e760caf798c51e1148b9d25dc791f7791fbd705cf8b9026a15`; early-out
+  `e1c91f8806dec22d394d0fc5a9cbff3d0279e9a96de8820919ada4581a1a2a78`. Built on `vmi1293453` from
+  HEAD `998070b640879f95ec888990064a07833d926930`, counted locally with `valgrind-3.25.1`.
+- **NEXT ON THIS FRONTIER:** `memrchr` at 2.986x (215 vs 72 Ir) is now the worst unattacked
+  surface in the survey, and `wcslen` 2.225x / `memcmp` 2.014x follow.
