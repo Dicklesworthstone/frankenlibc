@@ -33727,3 +33727,50 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.27,0.16,0.15`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — NO RATIO CLAIMED: `getrandom` cannot be measured by the `dlmopen` instrument, and the both-arms-glibc control is what proves it — two copies of glibc differ by 12x
+
+- **RESULT CLASS: method limit (no performance claim).** `getrandom` was the last measured loss on
+  the frontier (harness `dlopen`: 1.065832 at one byte). The deployed interleaved run produces
+  numbers, and **they must not be used**, because the control run says the instrument is invalid
+  for this symbol. Reporting the numbers and the reason they are void is the whole content here.
+- **THE CONTROL, WHICH IS THE FINDING.** With fl absent, both slots are glibc — the "fl" slot
+  through `RTLD_DEFAULT`, the comparison slot through `dlmopen(LM_ID_NEWLM)`. Identical
+  implementation, so it must read 1.0. It reads:
+
+  | case | "fl" slot ns | dlmopen slot ns | control ratio |
+  |---|---:|---:|---:|
+  | `zero_bytes` | 7.1635 | 85.1548 | **0.084610** |
+  | `one_byte` | 11.6524 | 200.6297 | **0.057922** |
+  | `thirty_two` | 118.3241 | 212.6079 | **0.554722** |
+  | `two_fifty_six` | 722.1996 | 639.2206 | 1.154247 |
+
+  **Two copies of the same glibc, in one process, differ by up to 17x.** Nothing about
+  FrankenLibC is involved.
+- **THE MECHANISM.** glibc's `getrandom` uses the **vDSO** fast path, which depends on per-process
+  and per-thread state established by the main link namespace. A `dlmopen(LM_ID_NEWLM)` copy does
+  not inherit it and falls back to the raw syscall — 85 ns and 200 ns against 7 ns and 12 ns. The
+  gap closes as the request grows and real entropy work dominates, which is exactly the shape in
+  the table.
+- **SO THE DEPLOYED NUMBERS ARE VOID AND ARE RECORDED ONLY TO BE DISMISSED.** For completeness:
+  `zero_bytes` 1.238171, `one_byte` 1.279123 (both with all four nulls failing), `thirty_two`
+  1.030472 and `two_fifty_six` 1.009776 (nulls holding, but against controls of 0.554722 and
+  1.154247 — a 45% and 15% instrument bias). Conformance was clean throughout: return values
+  agree on all four sizes. **No ratio is claimed for `getrandom` on this instrument.**
+- **THIS IS THE DOMAIN LIMIT OF THE WHOLE `dlmopen` TECHNIQUE, and it is worth more than the
+  surface.** The method assumes a `dlmopen` copy of the incumbent behaves like the incumbent. That
+  holds for pure computation — `memrchr`, `sinhf`, `coshf`, `nl_langinfo` and `mtx_trylock` all
+  produced controls between 0.97 and 1.02 — and it fails for **any symbol whose implementation
+  depends on process- or namespace-global state**: vDSO bindings, auxv-derived caches, per-thread
+  setup performed at program start. `getauxval`, `gettimeofday`, `clock_gettime` and the
+  `getrandom` family are all in that class and should not be compared this way without checking
+  the control first.
+- **AND IT IS THE STRONGEST ARGUMENT YET FOR RUNNING THE CONTROL EVERY TIME.** Six surfaces this
+  session had clean controls and their numbers stand. This one had a control off by up to 17x, and
+  without it I would have published `getrandom` at ~1.24-1.28x deployed with a straight face — the
+  nulls on the two larger cases hold, the conformance passes, and nothing else in the output looks
+  wrong.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`. Worker `vmi1293453`. Driver compiled on the worker
+  with `cc -O2`; 200-call micro-slices x 100 rounds, 25 samples, arms interleaved.
