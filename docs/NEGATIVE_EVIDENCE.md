@@ -34757,3 +34757,53 @@ afterwards, which is how it was caught. -->
   `vmi1293453`. Objects: base/control `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
   initial-exec `34b53527327e13874d8293a98e8f93f6145926612664b42d4b2deb48d9ae375d`. Counted locally
   with `valgrind-3.25.1` (no fleet worker has valgrind; a software counter needs no quiet host).
+
+## 2026-08-26 — malloc/free levers priced: stats telemetry **90 Ir/pair**, TLS model **108 Ir/pair**. And a REFUTATION: ablating the obvious stats caller bought **5 Ir**, because the single-threaded hot path reaches `apply_locked` through a different, `#[inline(always)]` site
+
+- **RESULT CLASS: two counted levers plus one measured refutation of my own first guess.** Same
+  instrument as the 9.910x row above: both arms in one process image, fl `LD_PRELOAD`ed against a
+  live glibc in a fresh link-map namespace, two-point difference over 2000 `(malloc, free)` pairs,
+  `PHASE=2` and conformance verified on every run, driver loop's 10 Ir netted out.
+
+  | configuration | Ir/pair | vs glibc | saved |
+  |---|---:|---:|---:|
+  | glibc (incumbent) | **67.001** | 1.000x | — |
+  | fl base | **663.983** | 9.910x | — |
+  | fl, `record_mutation` ablated | 659.006 | 9.836x | **4.977** |
+  | fl, ALL stats ablated | 574.006 | 8.567x | **89.977** |
+  | fl, `-Ztls-model=initial-exec` | 556.006 | 8.298x | **107.977** |
+
+- **THE REFUTATION, WHICH IS THE POINT OF THE ROW.** `FlatCombiningStats::apply_locked` carries
+  67 Ir of self cost, and `record_mutation` is the caller that *looks* hot — it takes a global
+  `combiner_lock` CAS on every malloc and every free, and carries a comment from a previous
+  campaign describing it as the leaned-out per-alloc counter path. Ablating it moved **5 Ir**, and
+  `apply_locked` still stood at 67 Ir in the ablated profile. **The single-threaded hot path never
+  calls `record_mutation` at all.** `record_stats_binned` is `#[inline(always)]` and, when
+  `MULTI_THREADED` is false, calls `apply_locked` **directly on the slot's own
+  `segment_local.stats`** — no lock, no `record_mutation` — then returns. Ablating *that* site
+  buys **90 Ir**. Guessing the call path from self costs was wrong by **18x**.
+- **SO SELF COST NAMES THE EXPENSE, NOT THE LEVER.** Caller attribution is a separate read of the
+  profile and it is the one that locates the ablation: `fn=` is the calling function, `cfn=` names
+  the callee of the following `calls=` record, and that record's cost line is the call's
+  *inclusive* cost. Read that way, `apply_locked` is entered **once per malloc and once per free**
+  (32 and 35 Ir), which is what says the lock path is not involved.
+- **THE SAME READ PRICES THE TLS ACCESSES EXACTLY.** `__tls_get_addr` is **4 calls per pair at
+  24 Ir each**: two from `enter_allocator_reentry_guard`, one from `runtime_policy::mode`, one
+  from `malloc` itself. That is the whole of the 96 Ir, and it is why the initial-exec build
+  recovers it — see the preceding row for the `dlopen` blocker that keeps that flag from shipping.
+- **THE TWO LEVERS ARE LARGELY INDEPENDENT.** The TLS calls come from the guard, the mode read and
+  `malloc`'s own frame, not from the stats path. Taken together they are **~198 Ir of fl's 664**,
+  which would land the surface near **7.0x** — still a large loss, and worth stating plainly rather
+  than as a projected win: neither has been shipped, and the combined figure has not itself been
+  measured on a single object.
+- **WHAT SURVIVES IN THE ABLATED PROFILE** is the allocator proper — `segment_free` 101,
+  `allocate_from_local_class` 79, `segment_allocate` 43, plus `malloc`/`free` frames at 73/36 and
+  `runtime_policy::mode` at 29. Even with all telemetry removed fl spends **574 Ir against glibc's
+  67**; observability is 13.6% of the gap, not the cause of it.
+- **NOTHING LANDED.** Both ablations were prepared as patches, applied only on the worker's
+  archived source, and reverted there (marker count 0 after revert); the repository tree was never
+  left modified. Objects: base `dc480b40…c10865`, `record_mutation` ablation
+  `51515228ab890b27a0b934725969afa3f2818f10db3314082f2de8a010c826fb`, full-stats ablation
+  `c3b54e7c4483d06bcf7ce15a4c14aca8bee68df8897d23671872a771825a7f72`, initial-exec
+  `34b53527…ae375d`. Source HEAD `998070b640879f95ec888990064a07833d926930`, built on
+  `vmi1293453`, counted locally with `valgrind-3.25.1`.
