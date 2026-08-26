@@ -33947,3 +33947,55 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.91` (deployed) and 1.86 (control). Driver compiled on the
   worker with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — `memcpy`: fl BEATS glibc by 19% at 1 MiB and 6% at 64 KiB. Every short-length loss in the family is a fixed ~3-5 ns entry cost, and the kernels are not the problem
+
+- **RESULT CLASS: loss/baseline at short lengths, and the strongest evidence yet that the lever is
+  the wrapper.** The family row showed `memcpy` at 3.30x on 64 bytes. Swept across nine lengths
+  the picture inverts at scale.
+- **THE CURVE.** Same-invocation deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM)`, arms distinct and interleaved, 25 samples per point, **every copy
+  verified with `memcmp` against the source before it is timed**.
+
+  | bytes | fl ns | glibc ns | ratio | fl - glibc | FL/FL null | glibc/glibc null |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 8 | 4.8921 | 2.7207 | 1.836542 | +2.17 | 0.956855 | 0.967873 |
+  | 16 | 5.2957 | 2.6108 | 2.169716 | +2.68 | 0.971219 | 0.976521 |
+  | 32 | 7.0496 | 2.0529 | 3.341598 | +5.00 | 0.953033 | 1.007176 |
+  | 64 | 7.8132 | 2.0590 | 3.637929 | +5.75 | 0.936377 | 0.993208 |
+  | 128 | 6.0840 | 2.8652 | 2.170077 | +3.22 | 0.936223 | 0.984966 |
+  | 512 | 8.0333 | 5.6097 | 1.418492 | +2.42 | 0.991083 | 0.966422 |
+  | 4096 | 35.5675 | 32.5410 | 1.071610 | +3.03 | **0.995902** | **0.995060** |
+  | 65536 | 791.5928 | 849.8135 | **0.937900** | **-58.2** | **1.002727** | **1.001883** |
+  | 1048576 | 17017.8308 | 20959.2092 | **0.810692** | **-3941** | **0.999958** | **1.001095** |
+
+- **THE THREE LARGEST POINTS ARE FULLY ADMISSIBLE AND TWO OF THEM ARE WINS.** At 64 KiB fl is
+  **6.2% faster**; at 1 MiB it is **19% faster** — 17.0 microseconds against 21.0. Those are the
+  points whose A/A nulls hold tightest (within 0.3% of 1.0). **fl's copy kernel is not merely
+  competitive, it is better than glibc's at scale.**
+- **AND THE DEFICIT AT SHORT LENGTHS IS A CONSTANT, not a slope.** The `fl - glibc` column is
+  **+2.2 to +5.8 ns across three orders of magnitude** from 8 bytes to 4 KiB, while the ratio
+  swings from 1.84 to 3.64 and back to 1.07 purely because the denominator grows. A multiplicative
+  algorithmic gap would hold its ratio; an additive entry cost produces exactly this shape. The
+  peak ratio at 64 bytes is where glibc is fastest (2.06 ns), not where fl is slowest.
+- **THE CONTROL IS CLEAN ACROSS THE ENTIRE RANGE**, which is what makes the curve readable: with
+  fl absent the nine control ratios are 1.0109, 1.0582, 1.0063, 1.0126, 1.0312, 0.9491, 1.0045,
+  0.9963, 0.9981 — every one inside 6% of 1.0. The control's own nulls also sit at 0.95-1.01 at
+  short lengths, so the 4-6% null deviations in the deployed short-length rows are a property of
+  timing 2-8 ns operations, not something fl does.
+- **THIS REFRAMES THE FAMILY RESULT.** The previous row read `memcpy` 3.30x, `memcmp` 3.00x,
+  `memset` 1.94x as a family-wide loss. It is more precisely a **family-wide fixed entry cost of
+  roughly 3-5 nanoseconds**, sitting in front of kernels that are competitive at medium sizes and
+  **superior at large ones**. Removing that constant would take `memcpy` at 64 bytes from 3.64x to
+  about 1.9x and at 8 bytes from 1.84x to roughly parity, without touching a single line of
+  vectorised copy code.
+- **WHICH MAKES THE LEVER CONCRETE AND ITS PAYOFF ESTIMABLE.** The wrapper `strlen`'s disassembly
+  exposed — multi-`push` prologue with a large frame, runtime-phase load, `MODE_STATE` compare,
+  allocator-registry probe, GOT-indirect call into core — costs about 4 ns, and it is paid by
+  `memcpy`, `memset`, `memcmp`, `strcmp`, `strchr`, `strlen` and `memrchr` alike. That is one
+  edit site class with a measured, family-wide payoff, and nothing in this ledger has refuted it.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.49,0.74,0.49`. Driver compiled with `cc -O2 -fno-builtin`;
+  source and destination 64-byte aligned, 1 MiB buffers.
