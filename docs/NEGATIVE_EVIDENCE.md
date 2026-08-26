@@ -34216,3 +34216,57 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.51,0.56,0.54`. Driver compiled with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — `ctype` IS AT PARITY, REFUTING MY OWN PREDICTION — and the deployed ratio on thin operations tracks the export's PROLOGUE WEIGHT across seven symbols
+
+- **RESULT CLASS: loss/baseline (one admissible loss; a prediction of mine refuted; a structural
+  correlation quantified).** I predicted `ctype` would show the **largest** ratio of the session:
+  a ~1-2 ns table lookup carrying the ~4 ns entry cost should be 3-5x. **It is at parity.**
+- **THE ARMS.** Same-invocation deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM)`, arms distinct, interleaved, 25 samples. **Conformance is exhaustive
+  and exact: all 256 codepoints across `isalpha`, `isdigit`, `tolower`, `toupper` — 1024
+  comparisons, 0 mismatches**; `wcslen` agrees at 256.
+
+  | case | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `isalpha` | 2.2973 | 2.2871 | 1.001410 | 0.936499 | 0.945082 | 0.993146 |
+  | `isdigit` | 1.9753 | 1.8976 | 1.033749 | 0.886306 | 0.982337 | 0.973994 |
+  | `tolower` | 2.1294 | 2.2503 | 0.940816 | 0.949213 | 0.954545 | 0.974119 |
+  | `toupper` | 2.4204 | 2.4902 | 0.969387 | 0.959364 | 0.954065 | 1.084115 |
+  | `wcslen` 256 wchars | 11.5464 | 8.0435 | **1.428897** | **0.995303** | **0.996846** | 1.008525 |
+
+  The four `ctype` rows have failing nulls — but so do their controls, at the same magnitude, and
+  at 1.9-2.4 ns this is the timer-resolution floor already documented for `nl_langinfo`. All four
+  ratios sit within 6% of 1.0, so **parity is the finding and the broken nulls do not threaten it**.
+  `wcslen` is fully admissible at **1.428897** (corrected **1.417**).
+- **THE STRUCTURAL CORRELATION, and it is the useful part.** Disassembling each export's entry in
+  the same object and pairing it with that symbol's measured deployed ratio on short input:
+
+  | symbol | pushes | stack frame | deployed ratio (short) |
+  |---|---:|---:|---:|
+  | `isalpha` / `tolower` | **0** | **none** | 1.00 / 0.94 |
+  | `strtol` | 6 | **0x18** = 24 B | **0.54** (fl 1.85x faster) |
+  | `wcslen` | 4 | 0x48 = 72 B | 1.43 |
+  | `memcmp` | 6 | 0xa8 = 168 B | 3.00 |
+  | `strlen` | 6 | 0xb8 = 184 B | 4.66 |
+  | `memcpy` | 6 | 0xe8 = 232 B | 3.30 |
+
+  **The frame size predicts the loss and the push count does not.** `strtol` pushes six registers
+  and still beats glibc by 1.85x, because its frame is 24 bytes. Everything with a frame above
+  ~150 bytes is 3x or worse; everything with a small frame or none is parity or a win.
+- **WHICH SHARPENS THE LEVER FROM "the wrapper" TO SOMETHING MEASURABLE.** A large frame is the
+  signature of an entry that has the cold path's locals inlined into it — the policy structures,
+  the decision record, the trace scope. `ctype` and `strtol` demonstrate that fl's own ABI can
+  reach glibc parity or beat it when the entry does not carry that. The fix is not "make the
+  kernels faster" (they already win at size) and not "remove the checks" (a safety trade nobody
+  asked for) — it is to move the cold-path locals out of the hot entry so the frame collapses,
+  which is the hot/cold split whose retry predicate is replication on two quiet hosts.
+- **AND THE CORRELATION IS EVIDENCE, NOT PROOF.** Seven symbols is a small sample, frame size is a
+  proxy for how much cold machinery is inlined rather than the cost itself, and `wcslen` at 72
+  bytes and 1.43x is the only interior point. It predicts; it does not yet explain. A direct test
+  would be one export split hot/cold and re-measured — the frame should collapse and the ratio
+  should follow.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.36,0.44,0.50`. Driver compiled with `cc -O2 -fno-builtin`.
