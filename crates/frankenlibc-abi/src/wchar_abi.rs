@@ -1027,6 +1027,22 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
 ) -> (c_int, usize, bool) {
     const WLANES: usize = 8;
     let zv = Simd::<u32, WLANES>::splat(0);
+    // HOISTED WHOLE-RANGE PAGE CHECK. The 8-lane tier below re-ran
+    // `wide32_read_within_page` for BOTH operands on every 32-byte window; at a
+    // bound of 31 wchars that is four iterations and eight guard evaluations.
+    // Line-level profiling (callgrind --dump-line, two-point) charged 18 of the
+    // scanner's 119 Ir to that helper alone.
+    //
+    // The guard is loop-invariant whenever the whole compared range sits inside
+    // one page for both pointers: no window drawn from `[0, bound)` can then
+    // cross a page, so the per-window checks are dead weight. Computed once here,
+    // it short-circuits them. Only meaningful when `BOUNDED` -- an unbounded
+    // `wcscmp` has `bound == usize::MAX`, the span test fails, and the per-window
+    // guards stay exactly as they were.
+    let whole_range_in_page = BOUNDED
+        && bound <= 0x1000 / 4
+        && (s1 as usize & 0xFFF) + bound * 4 <= 0x1000
+        && (s2 as usize & 0xFFF) + bound * 4 <= 0x1000;
     let mut i = 0usize;
     loop {
         // 128-byte (32-wchar) unrolled fast path: the 32B/iter loop below re-ran the dual
@@ -1086,10 +1102,13 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
             return (0, idx + 1, false);
         }
         if i + WLANES <= bound
-            && wide32_read_within_page(s1.wrapping_add(i) as usize)
-            && wide32_read_within_page(s2.wrapping_add(i) as usize)
+            && (whole_range_in_page
+                || (wide32_read_within_page(s1.wrapping_add(i) as usize)
+                    && wide32_read_within_page(s2.wrapping_add(i) as usize)))
         {
             // SAFETY: both 32-byte reads stay within their pages and within bound.
+            // When `whole_range_in_page` holds, `[0, bound)` lies in a single page
+            // for both operands, so `[i, i+WLANES) ⊆ [0, bound)` cannot cross one.
             // Raw array loads (not Rust slices over C memory) mirror wcschr.
             let va = Simd::<u32, WLANES>::from_array(unsafe {
                 core::ptr::read(s1.add(i).cast::<[u32; WLANES]>())
