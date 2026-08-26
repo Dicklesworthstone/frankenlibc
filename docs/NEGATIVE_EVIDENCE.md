@@ -33692,3 +33692,38 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.05,0.12,0.14`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — `nl_langinfo` interleaved at 1.279x (~1.32 corrected); at 2.7 ns per call this surface is at the edge of what my driver resolves, and its glibc/glibc null fails in BOTH designs
+
+- **RESULT CLASS: loss/baseline (completes the interleaved sweep of the deployed frontier).**
+- **THE ROW.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`, arms distinct, 42-selector full-table cycle, 500-call
+  micro-slices x 200 rounds, 25 samples. Conformance first: **42 items, 0 mismatches**, byte for
+  byte. fl **3.3335 ns** against glibc **2.6701 ns** = **1.278791**. A/A nulls: fl/fl **1.019752**
+  (inside the 0.020 tolerance, just), glibc/glibc **1.026113** — **fails**.
+- **THE CONTROL IMPROVED BUT ITS NULL FAILS TOO.** Both-arms-glibc reads **0.971813** — bias
+  halved from the between-batch design's 0.944682 (5.5% -> 2.8%), which is the expected effect of
+  interleaving — but its glibc/glibc null is **1.031606**, also outside tolerance. Corrected
+  ratio: **1.3159**.
+- **BOTH DESIGNS AGREE ON THE VALUE, so the number is usable at the precision it deserves.**
+  Between-batch: 1.183198 raw, 1.2525 corrected. Interleaved: 1.278791 raw, 1.3159 corrected. The
+  corrected figures are **5% apart**. `nl_langinfo` is a real deployed loss of **about 1.25-1.32x**
+  and no more precise statement is supported.
+- **WHY THE NULL FAILS HERE AND NOWHERE ELSE — a resolution limit, stated so nobody spends another
+  run on it.** At **2.7 ns per call** this is the fastest surface measured all session, five times
+  quicker than `mtx_trylock` and twenty times quicker than `sinhf`. A 500-call micro-slice is
+  ~1.35 microseconds, and the two `clock_gettime` calls bracketing it cost roughly 25 ns each —
+  about **1.9% of the slice**, which is precisely the size of the null failures (2.6% and 3.2%).
+  **The instrument is measuring itself at this speed.** Fixing it means far larger micro-slices,
+  which reintroduces the drift that interleaving exists to remove, or a different timing method
+  entirely (counted instructions). Neither is worth it for a 1.3x surface.
+- **THE INTERLEAVED SWEEP IS NOW COMPLETE FOR EVERY DEPLOYED SURFACE THAT SUPPORTS IT.**
+  `malloc_free` ~10.0x, `memrchr` 2.934x at 64 B, `sinhf` 1.674x, `memrchr` 1.658x at 512 B,
+  `coshf` 1.599x, `mtx_trylock` 1.487x, `memrchr` 1.374x at 4096 B, `nl_langinfo` 1.279x.
+  `tdelete` (2.529x) cannot be micro-interleaved — its natural unit is a 3-millisecond
+  build-and-empty batch — but it was shown insensitive to warm-up depth (0.2%), which is the same
+  confound by another name.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.27,0.16,0.15`. Driver compiled on the worker with `cc -O2`.
