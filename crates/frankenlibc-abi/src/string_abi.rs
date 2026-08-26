@@ -7010,6 +7010,16 @@ pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_i
         return unsafe { scan_strcasecmp(s1, s2, usize::MAX) }.0;
     }
 
+    // Cold tail in its own frame. This entry rented
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x98,%rsp` -- 152 bytes -- from the
+    // validating path below, on every strict call. Nothing between the strict gate
+    // and here is a re-entrancy bypass, so the cut is at the gate.
+    unsafe { strcasecmp_validating(s1, s2) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strcasecmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(
