@@ -32830,8 +32830,24 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   risk. The 4096x replication is the reason the risk is not marginal: ANY "cache more per class"
   design pays it, and the ceiling is low. That constraint was not written down anywhere before this
   row.
-- **THE CANDIDATE NEVER PRODUCED A TIMING ROW, AND THE CAUSE IS NOW ESTABLISHED: IT IS THE HOST,
-  NOT THE CHANGE.** Four attempts each reached `INCUMBENT_COVERAGE_CONFORMANCE ... verdict=pass`
+- **THE CANDIDATE'S NUMBER, OBTAINED AT LAST, AND IT CONFIRMS THE REJECTION ON TIME AS WELL AS ON
+  SIZE.** A later window found the worker genuinely idle (`loadavg 0.39`, no process above 0.9%),
+  and the candidate ran to completion in that window. Two adjacent arms from one script, one
+  object each, both with same-invocation A/A nulls holding inside the 0.020 tolerance:
+  candidate `ratio_median=12.721782`, bootstrap median CI [11.736258, 14.778758], fl 62.163 ns
+  against glibc 5.092 ns, FL/FL null 1.011225 with bootstrap median CI [0.987663, 1.019071] and
+  glibc/glibc null 1.001311 with bootstrap median CI [0.989063, 1.029311];
+  base `ratio_median=12.684885`, bootstrap median CI [12.018040, 13.688520], fl 65.614 ns against
+  glibc 5.159 ns, FL/FL null 0.999356 with bootstrap median CI [0.975972, 1.015556] and
+  glibc/glibc null 0.996635 with bootstrap median CI [0.974448, 1.014709]. Both DECIDABLE
+  FL_SLOWER, `clears_2x_null=true`, `samples=36`, `reps_per_arm=100000`.
+  **12.721782 against 12.684885 is a 0.3% difference with almost totally overlapping intervals:
+  the lever buys nothing measurable.** Note the absolute FrankenLibC nanoseconds moved the other
+  way (62.163 against 65.614) while the ratios did not, because the glibc arm moved with it —
+  which is exactly why the paired ratio is the statistic and a bare fl-ns comparison across runs
+  is not.
+- **THE EARLIER RUNS THAT PRODUCED NO ROW WERE THE HOST, NOT THE CHANGE, and that was established
+  before this window rather than assumed.** Four attempts each reached `INCUMBENT_COVERAGE_CONFORMANCE ... verdict=pass`
   and `THREADS_OBSERVED phase=pre_guard` and then produced no host-wide-exclusivity line. Rather
   than leave that unattributed, the fourth run was left alive and inspected through `/proc`:
   `state=S`, `syscall: 230` (`clock_nanosleep`), kernel stack
@@ -32843,9 +32859,10 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   gate's 0.200 ceiling, so five consecutive clear samples never occur. The gate is doing exactly
   its job. The BASE arm completed earlier because it caught a quieter window, not because the two
   objects behave differently — the gate is HOST-wide and does not depend on which object is
-  loaded. **This stall is therefore not evidence about the candidate, and nothing about the
-  rejection rests on it**; the rejection rests on the section sizes above, which are properties of
-  the object and independent of any host condition.
+  loaded. **Those stalls were therefore not evidence about the candidate, and nothing about the
+  rejection rests on them.** The rejection now rests on two independent legs: the section sizes
+  above, which are properties of the object and independent of any host condition, and the paired
+  timing, which finds no effect.
 - **THE BASE ARM THAT DID COMPLETE, for the record and as this row's null control.** Same worker,
   same bench binary, `--fl-deepbind`: fl 62.976 ns against glibc 4.718 ns,
   `ratio_median=13.066197`, bootstrap median CI [12.626703, 13.826129], `comparison=FL_SLOWER`,
