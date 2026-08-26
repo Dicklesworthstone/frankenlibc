@@ -458,6 +458,15 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
     // n=1024 1.89x, n=4096 1.49x — the deployed wcscpy/wcpcpy strict hot path.
     lane8!();
     lane8!();
+    // A THIRD 8-lane chunk, carrying the prologue to i = 32. A fine length sweep
+    // found the band the first two left underserved: fl's excess over glibc sits
+    // at +38..40 Ir for L <= 23 and jumps to +60 at L = 24, exactly where the NUL
+    // stops being reachable from the prologue and the 128-byte tier is entered
+    // instead, loading four 32-byte chunks when one or two suffice (worst point
+    // L = 25 at 2.658x). Stopping at 32 rather than 40 keeps the wide tier's entry
+    // a multiple of its own 32-element stride -- a four-chunk prologue reached
+    // i = 40 and cost every length from 40 up 4 to 26 Ir.
+    lane8!();
 
     loop {
         // 128-byte (4×8-lane) tier, page-guarded: four 32-byte chunks per iteration, run
