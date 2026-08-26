@@ -2010,7 +2010,33 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                     }
                     return (limit, false);
                 }
-                // `limit < 8` falls through to the generic ladder below.
+                if limit >= 4 {
+                    // ...and once more for `[4, 8)`, the band a `malloc(5)`-backed
+                    // string lands in. That gap was noted when the `[8,16)` arm was
+                    // added and left unfixed, and a length sweep then showed what it
+                    // costs: heap `strlen` runs 142 Ir at L=4 but only 111 at L=8 and
+                    // 104 at L=16 -- NON-MONOTONIC, the shortest string the most
+                    // expensive, because bound 5 fell past every tier into the generic
+                    // ladder. At 10.918x vs glibc that was the worst measured point in
+                    // the whole suite. Two overlapping 4-byte probes cover it; both
+                    // reads sit inside `[0, limit)` because `limit >= 4`.
+                    let v0 =
+                        Simd::<u8, 4>::from_slice(unsafe { core::slice::from_raw_parts(p, 4) });
+                    let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m0 != 0 {
+                        return (m0.trailing_zeros() as usize, true);
+                    }
+                    let off = limit - 4;
+                    let v1 = Simd::<u8, 4>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(off), 4)
+                    });
+                    let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m1 != 0 {
+                        return (off + m1.trailing_zeros() as usize, true);
+                    }
+                    return (limit, false);
+                }
+                // `limit < 4` falls through to the generic ladder below.
             }
             let mut i = 0usize;
             // 128-byte folded tier for large bounded scans: ONE combined NUL check per
