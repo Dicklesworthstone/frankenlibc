@@ -33210,3 +33210,42 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `998070b640879f95ec888990064a07833d926930`; incumbent `libm.so.6` resolved live in-process by
   `dlmopen`. Worker `vmi1293453` at `loadavg 0.09,0.16,0.31`. Driver compiled on the worker with
   `cc -O2 -ldl -lm`.
+
+## 2026-08-26 — DEPLOYMENT-VERIFIED LOSS: `nl_langinfo` is 1.183x at phase 2 (about 1.25x once the instrument's own 5.5% bias is priced), 42 of 42 selectors byte-identical
+
+- **RESULT CLASS: loss/baseline.** Sixth surface checked against the `dlopen`-vs-`LD_PRELOAD`
+  hazard. Only `strlen` has been distorted by it so far; `tdelete`, `memrchr`, `sinhf`, `coshf`
+  and now `nl_langinfo` all reproduce.
+- **THE ARMS.** Same-invocation, deployed: fl by `LD_PRELOAD` (phase **2 = ACTIVE**, `ready=1`),
+  live glibc by `dlmopen(LM_ID_NEWLM, "libc.so.6")`, addresses asserted distinct
+  (`fl=0x7f7722bb23a0`, `glibc=0x7f7721e3ae00`). The case is the full-table cycle: 42 selectors
+  spanning `CODESET`, the date/time formats, all seven `DAY_`/`ABDAY_`, twelve `MON_`, six
+  `ABMON_`, `RADIXCHAR`, `THOUSEP`, `YESEXPR`, `NOEXPR`. 20,000 reps per arm, 25 samples, ABBA.
+- **CONFORMANCE RAN FIRST AND IS PERFECT.** Every one of the 42 selectors compared byte for byte
+  between the two live implementations: **42 items, 0 mismatches**. Both arms are in the C locale
+  by process default; fl keeps its own locale state, so this is two independent implementations
+  agreeing, not one reading the other's.
+- **THE ROW.** fl **2.8250 ns** against glibc **2.3876 ns** = **1.183198**. A/A nulls in the same
+  invocation: fl/fl **0.994849**, glibc/glibc **1.010984** — both inside the 0.020 tolerance.
+- **THE INSTRUMENT HAS A 5.5% BIAS HERE, and it is disclosed rather than absorbed.** fl not
+  preloaded puts glibc in both slots and should read 1.0; it reads **0.944682**, so the "fl" slot
+  is 5.5% faster for purely instrumental reasons — the `dlmopen` copy runs colder. Correcting,
+  the deployed ratio is **1.183198 / 0.944682 = 1.2525**, which moves *toward* the harness's
+  `dlopen` figure of 1.311346 rather than away from it. This row quotes the uncorrected 1.183198
+  as the conservative number and the corrected 1.25 as the better estimate.
+- **THE CONTROL'S OWN NULL IS MARGINAL AND THAT IS PART OF THE RECORD.** In the control run the
+  glibc/glibc A/A read **1.027862**, just outside the 0.020 tolerance, while fl/fl read 1.001572.
+  So the 5.5% bias figure is itself measured on a run whose null is slightly broken; treat it as
+  "about 5%", not as 5.5% to three digits. The deployed run's own nulls both held, which is what
+  the headline rests on.
+- **THIRD SURFACE, THIRD DIFFERENT BIAS.** `memrchr`'s control read 0.97-1.01 (clean), `sinhf`/
+  `coshf` read 0.99-1.01 (clean), `tdelete` read 0.938 (6% bias), `nl_langinfo` reads 0.945 (5.5%).
+  The pattern is that surfaces whose work is dominated by data the `dlmopen` copy has to fault in
+  show a bias, and cheap re-entrant lookups do not. **Run the control every time.**
+- **AGREEMENT ACROSS MODELS.** harness `dlopen` 1.311346 (nulls holding); deployed 1.183198
+  uncorrected, ~1.25 corrected. The surface is a real but small loss around 1.2-1.3x and carries
+  no phase gate.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.09,0.14,0.26`. Driver compiled on the worker with `cc -O2`.
