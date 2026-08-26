@@ -33249,3 +33249,42 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.09,0.14,0.26`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — DEPLOYMENT-VERIFIED LOSS: `mtx_trylock` is 1.448x at phase 2 — WORSE than the harness's 1.233x, so the `dlopen` artifact cuts BOTH ways
+
+- **RESULT CLASS: loss/baseline.** Seventh surface checked against the `dlopen`-vs-`LD_PRELOAD`
+  hazard, and the first one where the deployed number is worse than the banked one. That direction
+  matters more than the surface does.
+- **THE ARMS.** Same-invocation, deployed: fl by `LD_PRELOAD` (phase **2 = ACTIVE**, `ready=1`),
+  live glibc by `dlmopen(LM_ID_NEWLM, "libc.so.6")`, addresses asserted distinct
+  (`fl=0x7f4e7fa5a920`, `glibc=0x7f4e7ecad290`). Case is the harness's `already_owned_busy`:
+  the mutex is locked, so every `mtx_trylock` returns busy. 200,000 reps per arm, 25 samples, ABBA.
+- **EACH ARM INITIALISES AND LOCKS ITS OWN `mtx_t`, which is not a detail.** `mtx_t` layout is
+  implementation-defined and fl's need not match glibc's, so a single shared object handed to both
+  would be undefined behaviour dressed as a benchmark. Each arm calls its own `mtx_init` and
+  `mtx_lock` on its own 256-byte aligned buffer; nothing crosses.
+- **CONFORMANCE FIRST:** fl returns **1**, glibc returns **1** (`thrd_busy`), they agree.
+- **THE ROW.** fl **7.9354 ns** against glibc **5.4821 ns** = **1.447504**. A/A nulls in the same
+  invocation: fl/fl **0.998808**, glibc/glibc **1.009682** — both inside the 0.020 tolerance.
+- **AND THE INSTRUMENT IS CLEAN HERE — 0.3%.** fl not preloaded puts glibc in both slots and reads
+  **1.003142**, with nulls 0.995713 and 0.997258. No correction. Fourth surface, fourth control,
+  and the biases so far are 6% (`tdelete`), 5% (`nl_langinfo`), ~1% (`sinhf`/`coshf`, `memrchr`)
+  and 0.3% here.
+- **THE HAZARD CUTS BOTH WAYS, and this row is the counterexample that proves it.**
+  `incumbent_coverage_ab` under `dlopen` reported **1.233477**. Deployed is **1.447504** — 17%
+  WORSE, with a clean control and holding nulls on both sides. Compare `strlen`, where `dlopen`
+  reported 51.378060 against a deployed 1.31x. So a bootstrap-phase measurement can **overstate**
+  fl's cost by 39x when the fallback is a byte loop, and **understate** it when the fallback simply
+  skips the policy machinery the deployed path runs. **Any banked `dlopen` figure for a
+  phase-gated symbol is wrong in an unknown direction, not merely conservative.**
+- **THE MECHANISM, from the disassembly of the same object.** `mtx_trylock` opens with
+  `call __tls_get_addr@plt`, reads a thread-local mode byte at `+0x46e8`, and branches three ways.
+  The zero case jumps straight past the policy block; the `== 2` case falls into
+  `call runtime_policy::mode` and then reads `MODE_STATE`. Bootstrap takes the cheap edge,
+  deployed takes the expensive one — which is exactly the sign of the discrepancy above. It also
+  means this surface pays a general-dynamic TLS call per invocation, the cost the TLS-model lever
+  was rejected for on `malloc_free`; whether it matters at 7.9 ns rather than 62 ns is unmeasured.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.25,0.13,0.20`. Driver compiled on the worker with `cc -O2`.
