@@ -34374,3 +34374,51 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
   ablation `sha256=912ce1a849d9ebaf3395fa4efbd5560eb5e3e9934dadda273c7db3550ba39634`, both from
   HEAD `998070b640879f95ec888990064a07833d926930` built on worker `vmi1293453`.
+
+## 2026-08-26 — THE PROBE'S COST DEPENDS ON POINTER PROVENANCE: the same 7-byte `strlen` is 3.27x on a stack buffer, 3.67x on a static, and **4.69x on an fl-heap buffer** — with a perfect control
+
+- **RESULT CLASS: loss/baseline (mechanism confirmed without changing a line of fl).** The
+  ablation showed `known_remaining` is 7.24 ns of `strlen`'s 10.80 ns. Reading it: in strict mode
+  it tries `bump_mmap_remaining` (one atomic load, then out), then `segment_remaining`, which runs
+  the **full segment slot-view derivation** — arena state and base loads, ownership-bitmap Acquire,
+  header magic/class/size/slot-count revalidation, a reciprocal divide, a `user_base` recompute, a
+  descriptor `meta_base` Acquire and a `requested_size` Acquire. That predicts the probe should be
+  expensive **only when the pointer is inside fl's arena**. It is.
+- **THE TEST NEEDS NO CODE CHANGE: same string, same length, only where it lives.** Deployed, fl
+  by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by `dlmopen`, interleaved, 25 samples.
+  Addresses printed to prove provenance: stack `0x7fff4248e6d0`, static `0x5a7bb865a040`, fl heap
+  `0x7f033d410000`. All three return length 7 from both arms.
+
+  | buffer | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control |
+  |---|---:|---:|---:|---:|---:|---:|
+  | stack | 6.0792 | 1.8348 | 3.266723 | 0.968637 | 1.049569 | 0.998664 |
+  | static | 7.3273 | 1.9878 | 3.670440 | 0.975423 | 0.989819 | 0.999384 |
+  | **fl heap** | **9.7827** | 2.0945 | **4.686764** | **0.987547** | **1.000510** | 1.003749 |
+
+  **The heap row is fully admissible.** And the control is the cleanest of the session —
+  0.998664 / 0.999384 / 1.003749, all three within 0.4% of 1.0 with every null holding — so the
+  provenance difference is entirely fl's and owes nothing to the instrument.
+- **3.70 NANOSECONDS SEPARATE AN IDENTICAL SCAN OF AN IDENTICAL STRING**, purely because one copy
+  lives in fl's own heap and the other on the stack. That is the arena-hit path of the slot-view
+  derivation, measured end to end, with no ablation and no rebuild.
+- **COMBINING WITH THE ABLATION GIVES BOTH HALVES OF THE PROBE.** The no-probe build ran a heap
+  buffer at **3.56 ns**. So the probe costs about **2.5 ns when it MISSES** (stack, static — the
+  arena bounds check rejects early and `fallback_remaining` still runs) and about **6.2 ns when it
+  HITS** (fl heap — the full derivation). Neither half is small against glibc's 1.9 ns total.
+- **AND THE EXPENSIVE CASE IS THE COMMON ONE.** Real programs call `strlen`, `strcmp` and `memcpy`
+  on heap-allocated strings far more often than on stack arrays, and under a deployed fl every one
+  of those is an arena pointer. **The 4.69x is the realistic figure and the 3.27x is the
+  optimistic one**, which is the opposite of how a stack-buffer microbenchmark would have reported
+  it — worth stating because most string benchmarks use stack buffers.
+- **WHAT THIS DOES AND DOES NOT LICENSE.** It confirms where the time goes and that the cost is
+  structural, not a constant tax: the same entry point costs different amounts depending on what
+  it is handed. It does **not** say the derivation can be made cheap — that is a design question
+  about whether a read-only bound query needs the same header revalidation a `free` does, and this
+  ledger has already recorded that touching that machinery is not free (the magazine class check:
+  -2 instructions, +78% mispredicts). The narrow, testable version is: `segment_remaining` needs
+  only `requested - offset`, yet it revalidates immutable, read-only-mapped header fields on every
+  query. That is the next ablation, not the next commit.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.26,0.65,0.65`. Driver compiled `cc -O2 -fno-builtin-strlen`.
