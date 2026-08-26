@@ -33288,3 +33288,51 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.25,0.13,0.20`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — DEPLOYMENT CHECK ON A BANKED ADVANTAGE: `snprintf` is still faster than glibc at phase 2, but by LESS than the `dlopen` figures in four of five cases
+
+- **RESULT CLASS: verification, not a new claim.** The `mtx_trylock` row established that a
+  bootstrap-phase measurement can UNDERSTATE fl's deployed cost, which means a banked ADVANTAGE is
+  as suspect as a banked loss — if the `dlopen` run took a cheap bootstrap edge, a published win
+  could evaporate at phase 2. `snprintf` is the largest such claim on the board (`dlopen`:
+  0.371-0.559 across five cases), so it was checked. **It holds.** No campaign-win contract is
+  asserted here: this driver reports medians, not bootstrap CIs, so the certified row remains the
+  harness's and this is corroboration of it.
+- **THE ARMS.** Same-invocation, deployed: fl by `LD_PRELOAD` (phase **2 = ACTIVE**, `ready=1`),
+  live glibc by `dlmopen(LM_ID_NEWLM, "libc.so.6")`, addresses asserted distinct
+  (`fl=0x7aa4ff50fce0`, `glibc=0x7aa4fe86a7f0`). All five formats emitted through a function
+  pointer so `_FORTIFY_SOURCE` cannot rewrite the call to `__snprintf_chk`. 200,000 reps per arm,
+  25 samples, ABBA. Conformance first: **5 cases, 0 mismatches**, output compared byte for byte.
+- **THE ROWS, deployed, with the two whose A/A nulls both hold marked.**
+
+  | case | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | admissible |
+  |---|---:|---:|---:|---:|---:|---|
+  | `signed_decimal_bare` | 17.6853 | 33.4199 | **0.529184** | 1.002688 | 1.006382 | **yes** |
+  | `pointer_bare` | 25.9755 | 38.0471 | **0.682720** | 0.999530 | 1.000669 | **yes** |
+  | `unsigned_decimal_bare` | 16.8962 | 37.4293 | 0.451415 | 0.985587 | 0.966585 | no |
+  | `string_bare` | 11.7228 | 23.3377 | 0.502312 | 0.971692 | 1.003496 | no |
+  | `character_bare` | 4.7959 | 15.3310 | 0.312824 | 0.930834 | 0.963547 | no |
+
+- **THE DIRECTION IS THE FINDING.** Against the harness's `dlopen` figures — `unsigned_decimal`
+  0.371485, `signed_decimal` 0.409599, `character` 0.378943, `pointer` 0.558962, `string`
+  0.471733 — the deployed ratios are **higher in four of five** (0.451 vs 0.371, 0.529 vs 0.410,
+  0.683 vs 0.559, 0.502 vs 0.472); only `character_bare` improves (0.313 vs 0.379). fl is still
+  decisively faster, but **the banked margin is optimistic**, which is the same sign as
+  `mtx_trylock` and the same mechanism: at phase 2 the deployed path runs policy work the
+  bootstrap edge skips.
+- **THE INSTRUMENT IS NOISY ON THIS SURFACE AND THAT IS WHY THREE ROWS ARE INADMISSIBLE.** The
+  both-arms-glibc control reads **0.979798 / 1.020758 / 1.003219 / 0.985651 / 1.156146** across
+  the five cases, and its own nulls fail on three of them too. `string_bare`'s control is
+  **1.156146 with both nulls holding** — a 15.6% bias against the fl slot, so the deployed 0.502312
+  is if anything pessimistic there (0.434 corrected). At 5-40 ns per call with 200,000-rep batches
+  the A/A pairs are separated by enough work that ordering effects rival the effect; a certified
+  per-case `snprintf` number needs the harness's sampling discipline, not this driver's.
+- **WHAT IS ESTABLISHED AND WHAT IS NOT.** Established: `snprintf`'s advantage is not a
+  bootstrap-phase artifact, and two cases are clean at 0.529184 and 0.682720. Not established: the
+  exact per-case margins, and whether the four inflated cases are inflated by the phase difference
+  or by this driver's noise — separating those needs the harness re-run under `LD_PRELOAD`, which
+  it currently cannot do because it reaches fl by `dlopen`.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.19,0.13,0.17`. Driver compiled on the worker with `cc -O2`.
