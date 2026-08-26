@@ -33487,3 +33487,48 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.15,0.16,0.15`. Driver compiled on the worker with `cc -O2`;
   the tree is asserted empty after every batch.
+
+## 2026-08-26 — MY OWN "small and hot means warm-up-sensitive" RULE IS REFUTED BY THE FIRST TEST OF IT: `sinhf` moves 1%, and deeper warm-up BREAKS the nulls it fixed on `malloc_free`
+
+- **RESULT CLASS: loss/baseline (refutation of my own generalisation, one row after proposing
+  it).** The `tdelete` row proposed a rule from a two-point contrast: warm-up depth moves the
+  small, hot, predictor-bound cases (`memrchr` at 512 B, 33%) and leaves the large, memory-bound
+  ones alone (`tdelete`, 0.2%). It then predicted `sinhf`/`coshf`, `mtx_trylock` and
+  `nl_langinfo` were "in the sensitive class". **`sinhf` is 16 ns per call over 256 floats — as
+  small and hot as it gets — and it moves 1%.** The rule does not survive its first test.
+- **THE NUMBERS, deployed, fl by `LD_PRELOAD` at phase 2, glibc by `dlmopen("libm.so.6")`.**
+
+  | case | depth 3 | its nulls | depth 40 | its nulls |
+  |---|---:|---|---:|---|
+  | `sinhf_mid_sweep` | **1.662216** | 1.000643 / 1.002525 both hold | 1.679459 | 0.953204 **fail** / 0.964456 **fail** |
+  | `coshf_mid_sweep` | **1.680381** | 0.999037 / 1.000631 both hold | 1.807954 | 1.060108 **fail** / 1.008535 |
+
+- **AND THE SECOND SURPRISE IS WORSE FOR THE REMEDY: deeper warm-up BROKE the nulls here.** On
+  `malloc_free`, going from 3 rounds to 40 took the glibc/glibc null from 1.089 to 1.029 and fixed
+  it. On `sinhf`/`coshf` the identical change took nulls that HELD at 1.0006/1.0025 and
+  0.9990/1.0006 and broke three of the four (0.953204, 0.964456, 1.060108). **Warm-up depth is not
+  a monotonic improvement; it is another axis the measurement can drift along**, and 40 rounds x
+  2 arms x 20,000 reps is a long enough run for clock or thermal drift to enter where the shorter
+  one did not.
+- **SO THE ADMISSIBLE VALUES ARE STILL THE DEPTH-3 ONES**, because those are the ones whose nulls
+  held: `sinhf` **1.662216**, `coshf` **1.680381**. The depth-40 figures corroborate `sinhf` to 1%
+  and disagree with `coshf` by 7.6%, but both are inadmissible on their own nulls and neither
+  displaces anything.
+- **THE CONTROL IS STABLE ACROSS DEPTHS, which is what isolates the effect to the arms.**
+  Both-arms-glibc reads **0.983522 / 1.007736** at depth 40 against **1.012289 / 0.991289** at
+  depth 3 — about 1-2% either way at both depths, nulls holding. So the instrument's bias is not
+  what changed; the fl and glibc arms themselves became less reproducible in the longer run.
+- **WHAT SURVIVES ABOUT WARM-UP, stated narrowly this time.** Two surfaces improved with depth
+  (`malloc_free` null 8.9% -> 2.9%), one was indifferent (`tdelete`, 0.2% on the ratio), one moved
+  a lot (`memrchr` at 512 B, 33%), and one got worse (`sinhf`/`coshf` nulls). **Four surfaces,
+  four behaviours. There is no rule here yet — warm-up depth must be varied per surface and
+  reported, not chosen once and assumed.** The honest reading of every deployed figure in this
+  session is that it is good to tens of percent and carries an untested dependence on a parameter
+  I only discovered late.
+- **AND THE ONE THING THAT HAS NOT WOBBLED ONCE:** `sinhf` and `coshf` are **bit-identical to
+  glibc** on all 256 inputs, `0.000e+00` maximum relative difference, in every run at every depth
+  including the controls. Whatever the ~6-8 ns per call buys, it is not accuracy.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libm.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.22,0.15,0.14`. Driver compiled on the worker with `cc -O2`.
