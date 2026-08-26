@@ -34527,3 +34527,52 @@ afterwards, which is how it was caught. -->
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process by
   `dlmopen(LM_ID_NEWLM)`, fl by `LD_PRELOAD` at phase **2 = ACTIVE**. Worker `vmi1293453` at
   `loadavg 0.55,0.86,0.87`. Driver compiled `cc -O2 -fno-builtin-strlen`.
+
+## 2026-08-26 — INCONCLUSIVE, AND THE REASON MATTERS MORE THAN THE RESULT: the memo ablation showed no gain, but base itself moved 7.36 to 10.26 ns between runs on the identical object. This experiment could not resolve what it was built to measure
+
+- **RESULT CLASS: inconclusive (no lever claimed, and an honesty correction to my own earlier
+  confidence).** The previous row concluded the probe's ~7 ns is a chain of five to six dependent
+  loads and that "the only lever is to shorten the chain". This ablation was built to price that
+  lever. **It did not answer the question, and the reason is that the instrument is not precise
+  enough at this scale — which also bears on numbers I already published.**
+- **THE ABLATION.** A one-entry memo of the last segment's immutable geometry (`base`,
+  `class_size`, `meta_base`, `slot_reciprocal`) keyed on segment index, collapsing
+  `segment_remaining`'s walk to: arena base, memo key compare, then `requested_size`. Unsound by
+  construction — nothing invalidates it when a segment retires, and the key is process-global
+  rather than per-thread — so it was never a candidate. Reverted.
+- **THE RESULT: NO GAIN.**
+
+  | distinct buffers | base fl ns | memo fl ns | base ratio | memo ratio |
+  |---:|---:|---:|---:|---:|
+  | 1 | 7.3589 | 9.4551 | 4.091060 | 4.341689 |
+  | 64 | 9.1728 | 9.2450 | 4.520910 | 4.484116 |
+  | 1024 | 9.3610 | 8.4072 | 4.530554 | 4.328961 |
+  | 4096 | 9.5975 | 8.7581 | 4.594036 | 4.572555 |
+
+  Two rows move each way; no trend. Conformance passed on both (all 4096 buffers length 7).
+- **BUT LOOK AT THE BASE COLUMN AGAINST THE PREVIOUS RUN OF THE SAME OBJECT AND THE SAME CASE.**
+  `heap_1_buf_hot_meta` read **10.2628 ns** in the prior row and **7.3589 ns** here — the same
+  binary, the same worker, the same driver, a **39% swing**. The four base readings within this
+  single run span 7.36 to 9.60, a 30% spread. **An experiment whose base arm varies by a third
+  cannot resolve the ~2 ns effect it was built to detect.** Calling this a refutation of the
+  chain-length hypothesis would be reading noise as evidence, so I am not calling it one.
+- **AND THAT FORCES A CORRECTION TO MY OWN EARLIER PRECISION.** Two attributions in this
+  investigation were ~1 ns effects: the stack frame at **1.15 ns** and the header checks at
+  **0.94 ns**. Both were measured back to back within one invocation, which suppresses drift, but
+  both sit **at or below the between-run band just demonstrated**. They should be read as "small,
+  and not the dominant term" — which is what they were used for — and **not** as figures accurate
+  to the second digit. I quoted them to three.
+- **WHAT SURVIVES UNSHAKEN, and it is the thing that matters.** The probe removal took a 7-byte
+  heap `strlen` from ~10.8 ns to **3.56 ns** and the ratio from 4.97x to 1.67x — a 3x effect, an
+  order of magnitude above the noise band above, reproduced against a clean control, and
+  consistent with `ctype` and `strtol` (which perform no probe) being at parity or faster. The
+  headline finding of this investigation does not depend on any of the ~1 ns numbers.
+- **WHAT WOULD ACTUALLY SETTLE THE CHAIN QUESTION**, since wall-clock at this scale plainly will
+  not: counted instructions and counted cycles for the probe alone, which needs `perf` counters
+  (blocked fleet-wide by `perf_event_paranoid=4`) or `callgrind` (which rch refuses but which runs
+  fine over ssh-direct, as the malloc attribution work already established). That is the correct
+  next instrument for anything below ~2 ns, and this row is the evidence that wall-clock has been
+  pushed past its limit here.
+- **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  memo `sha256=ae1fddedc8c3bdc783656648631969c17cd3b6f2027e5945ca9d59e9309a1175`, both from HEAD
+  `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453` at `loadavg 0.53,0.61,0.75`.
