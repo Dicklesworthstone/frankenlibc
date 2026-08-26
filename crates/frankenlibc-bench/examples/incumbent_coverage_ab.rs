@@ -4727,8 +4727,8 @@ fn run_tdelete(config: &Config) {
     let undecidable = results.len() - wins - losses;
     let headline = results
         .iter()
-        .find(|result| result.label == "tree1024")
-        .expect("missing tree1024 result");
+        .find(|result| result.label == "tree8192")
+        .expect("missing tree8192 result");
     let verdict = if results.iter().all(CaseResult::decidable) {
         "DECIDABLE"
     } else {
@@ -4737,7 +4737,7 @@ fn run_tdelete(config: &Config) {
     println!(
         "INCUMBENT_COVERAGE_VERDICT symbol=tdelete verdict={verdict} \
          cases={} wins={wins} losses={losses} undecidable={undecidable} \
-         headline_case=tree1024 headline_ratio_median={:.6} \
+         headline_case=tree8192 headline_ratio_median={:.6} \
          headline_comparison={} registered_expectation=win_plausible \
          build_excluded_from_timing=true \
          threads_observed_pre={threads_pre} threads_observed_post={threads_post}",

@@ -1,13 +1,11 @@
-//! Left-leaning red-black tree (Sedgewick 2008) — guaranteed O(log n)
-//! insert/find/delete, generic over the key type with caller-supplied
-//! comparator on each operation.
+//! Red-black tree — guaranteed O(log n) insert/find/delete, generic over the
+//! key type with caller-supplied comparator on each operation.
 //!
-//! The LLRB invariants:
+//! The red-black invariants:
 //!   1. Every node is either RED or BLACK.
 //!   2. The root is BLACK.
-//!   3. RED edges only lean left (right children are never RED).
-//!   4. No node has two RED children.
-//!   5. Every root-to-leaf path has the same number of BLACK edges
+//!   3. No RED node has a RED child.
+//!   4. Every root-to-leaf path has the same number of BLACK edges
 //!      (the "black-height").
 //!
 //! These guarantee tree height ≤ 2 * log2(n+1).
@@ -59,7 +57,7 @@ pub enum PosixVisit {
     Leaf = 3,
 }
 
-/// Balanced binary search tree with LLRB invariants.
+/// Balanced binary search tree with red-black invariants.
 #[derive(Debug)]
 pub struct RbTree<K> {
     root: Option<Box<Node<K>>>,
@@ -197,31 +195,19 @@ impl<K> RbTree<K> {
     /// Delete the key matching `needle`. Returns the removed key on
     /// success; returns `None` if the key was not present.
     ///
-    /// The membership pre-check is REQUIRED, not an optimisation.
-    /// [`Self::delete_rec`] is Sedgewick's left-leaning red-black deletion,
-    /// whose stated precondition is that the key is present: the descent
-    /// applies `move_red_left`/`move_red_right` unconditionally to manufacture
-    /// a red node to delete, and its
-    /// `if needle == h.key && h.right.is_none() { return None }` step discards
-    /// the whole node. Those steps are only sound while the descent is
-    /// actually converging on an existing key. Run against an ABSENT key they
-    /// restructure a tree that had nothing to remove, and nodes are dropped —
-    /// `conformance_diff_tsearch` caught it as an in-order walk missing a
-    /// contiguous band of keys (87, 89, 103, 111, 123 in random trial 3) that
-    /// glibc's tdelete still had.
-    ///
-    /// `tdelete` on a missing key is an ordinary, documented no-op, so this
-    /// path is reached by any normal caller. bd-0v1jdb.
+    /// A missing key is an ordinary no-op. Unlike Sedgewick's LLRB deletion,
+    /// this plain red-black deletion does not need a separate membership walk:
+    /// a recursive result records whether a black-height deficit needs repair.
+    /// The `None` descent therefore returns without mutation, while a present
+    /// key uses exactly one comparator descent. bd-z4k8bh.
     pub fn delete<F: Fn(&K, &K) -> Ordering>(&mut self, needle: &K, cmp: &F) -> Option<K> {
-        if self.find(needle, cmp).is_none() {
-            return None;
-        }
         let prev_len = self.len;
-        let (new_root, removed) = Self::delete_rec(self.root.take(), needle, cmp, &mut self.len);
+        let (new_root, removed, _shortened) = Self::delete_rec(self.root.take(), needle, cmp);
         self.root = new_root;
         if let Some(ref mut r) = self.root {
             r.color = Color::Black;
         }
+        self.len -= usize::from(removed.is_some());
         debug_assert_eq!(self.len + usize::from(removed.is_some()), prev_len);
         removed
     }
@@ -230,82 +216,198 @@ impl<K> RbTree<K> {
         node: Option<Box<Node<K>>>,
         needle: &K,
         cmp: &F,
-        len: &mut usize,
-    ) -> (Option<Box<Node<K>>>, Option<K>) {
+    ) -> (Option<Box<Node<K>>>, Option<K>, bool) {
         let mut h = match node {
-            None => return (None, None),
+            None => return (None, None, false),
             Some(h) => h,
         };
-        let removed;
-        let mut ordering = cmp(needle, &h.key);
-        if ordering == Ordering::Less {
-            if !Self::is_red(h.left.as_deref())
-                && !Self::is_red(h.left.as_deref().and_then(|l| l.left.as_deref()))
-            {
-                h = Self::move_red_left(h);
+        match cmp(needle, &h.key) {
+            Ordering::Less => {
+                let (left, removed, shortened) = Self::delete_rec(h.left.take(), needle, cmp);
+                h.left = left;
+                if shortened {
+                    let (fixed, still_shortened) = Self::repair_left_shortened(h);
+                    (Some(fixed), removed, still_shortened)
+                } else {
+                    (Some(h), removed, false)
+                }
             }
-            let (new_left, r) = Self::delete_rec(h.left.take(), needle, cmp, len);
-            h.left = new_left;
-            removed = r;
-        } else {
-            if Self::is_red(h.left.as_deref()) {
-                h = Self::rotate_right(h);
-                ordering = cmp(needle, &h.key);
+            Ordering::Greater => {
+                let (right, removed, shortened) = Self::delete_rec(h.right.take(), needle, cmp);
+                h.right = right;
+                if shortened {
+                    let (fixed, still_shortened) = Self::repair_right_shortened(h);
+                    (Some(fixed), removed, still_shortened)
+                } else {
+                    (Some(h), removed, false)
+                }
             }
-            // rotate_right may have replaced the node key.  Reuse the first
-            // comparison when it did not, and recompute exactly once when it
-            // did; the old form called the user comparator three times at an
-            // unchanged node on this branch.
-            if ordering == Ordering::Equal && h.right.is_none() {
-                *len -= 1;
-                return (None, Some(h.key));
+            Ordering::Equal if h.left.is_some() && h.right.is_some() => {
+                let (right, successor, shortened) = Self::delete_min_rec(h.right.take());
+                h.right = right;
+                let old_key = core::mem::replace(
+                    &mut h.key,
+                    successor.expect("nonempty right subtree has a minimum"),
+                );
+                if shortened {
+                    let (fixed, still_shortened) = Self::repair_right_shortened(h);
+                    (Some(fixed), Some(old_key), still_shortened)
+                } else {
+                    (Some(h), Some(old_key), false)
+                }
             }
-            let right_needs_red = !Self::is_red(h.right.as_deref())
-                && !Self::is_red(h.right.as_deref().and_then(|r| r.left.as_deref()));
-            let move_red_right_rotates =
-                right_needs_red && Self::is_red(h.left.as_deref().and_then(|l| l.left.as_deref()));
-            if right_needs_red {
-                h = Self::move_red_right(h);
-            }
-            if move_red_right_rotates {
-                ordering = cmp(needle, &h.key);
-            }
-            if ordering == Ordering::Equal {
-                // Replace h.key with successor (min of right subtree),
-                // then delete successor.
-                let (new_right, succ_key) = Self::delete_min_rec(h.right.take());
-                let succ = succ_key.expect("right subtree nonempty");
-                let old_key = core::mem::replace(&mut h.key, succ);
-                h.right = new_right;
-                *len -= 1;
-                removed = Some(old_key);
-            } else {
-                let (new_right, r) = Self::delete_rec(h.right.take(), needle, cmp, len);
-                h.right = new_right;
-                removed = r;
+            Ordering::Equal => {
+                let old_color = h.color;
+                let child = h.left.take().or(h.right.take());
+                let mut child = child;
+                if let Some(ref mut child) = child {
+                    child.color = Color::Black;
+                }
+                let shortened = old_color == Color::Black && child.is_none();
+                (child, Some(h.key), shortened)
             }
         }
-        h = Self::fix_up(h);
-        (Some(h), removed)
     }
 
-    fn delete_min_rec(node: Option<Box<Node<K>>>) -> (Option<Box<Node<K>>>, Option<K>) {
+    fn delete_min_rec(node: Option<Box<Node<K>>>) -> (Option<Box<Node<K>>>, Option<K>, bool) {
         let mut h = match node {
-            None => return (None, None),
+            None => return (None, None, false),
             Some(h) => h,
         };
         if h.left.is_none() {
-            return (None, Some(h.key));
+            let old_color = h.color;
+            let mut child = h.right.take();
+            if let Some(ref mut child) = child {
+                child.color = Color::Black;
+            }
+            let shortened = old_color == Color::Black && child.is_none();
+            return (child, Some(h.key), shortened);
         }
-        if !Self::is_red(h.left.as_deref())
-            && !Self::is_red(h.left.as_deref().and_then(|l| l.left.as_deref()))
-        {
-            h = Self::move_red_left(h);
+        let (left, key, shortened) = Self::delete_min_rec(h.left.take());
+        h.left = left;
+        if shortened {
+            let (fixed, still_shortened) = Self::repair_left_shortened(h);
+            (Some(fixed), key, still_shortened)
+        } else {
+            (Some(h), key, false)
         }
-        let (new_left, k) = Self::delete_min_rec(h.left.take());
-        h.left = new_left;
-        h = Self::fix_up(h);
-        (Some(h), k)
+    }
+
+    /// Repair a one-black deficit in `h.left`. The boolean reports whether a
+    /// black parent with an all-black sibling must propagate that deficit upward.
+    fn repair_left_shortened(mut h: Box<Node<K>>) -> (Box<Node<K>>, bool) {
+        if Self::is_red(h.right.as_deref()) {
+            let mut root = Self::rotate_left(h);
+            let left = root.left.take().expect("rotate_left supplies old parent");
+            let (fixed_left, shortened) = Self::repair_left_shortened(left);
+            debug_assert!(!shortened, "red sibling must absorb left deficit");
+            root.left = Some(fixed_left);
+            return (root, false);
+        }
+
+        // A nil sibling is black with black children. This case occurs while a
+        // prior repair is propagating its deficit upward; it follows the same
+        // recolor/propagate rule as a present all-black sibling.
+        let Some(sibling) = h.right.as_deref_mut() else {
+            return if h.color == Color::Red {
+                h.color = Color::Black;
+                (h, false)
+            } else {
+                (h, true)
+            };
+        };
+        let sibling_left_red = Self::is_red(sibling.left.as_deref());
+        let sibling_right_red = Self::is_red(sibling.right.as_deref());
+        if !sibling_left_red && !sibling_right_red {
+            sibling.color = Color::Red;
+            return if h.color == Color::Red {
+                h.color = Color::Black;
+                (h, false)
+            } else {
+                (h, true)
+            };
+        }
+
+        if !sibling_right_red {
+            let sibling = h.right.take().expect("sibling exists");
+            let mut near = Self::rotate_right(sibling);
+            near.color = Color::Black;
+            near.right
+                .as_deref_mut()
+                .expect("near rotation has right child")
+                .color = Color::Red;
+            h.right = Some(near);
+        }
+        let parent_color = h.color;
+        let mut root = Self::rotate_left(h);
+        root.color = parent_color;
+        root.left
+            .as_deref_mut()
+            .expect("left rotation has old parent")
+            .color = Color::Black;
+        root.right
+            .as_deref_mut()
+            .expect("far red child exists")
+            .color = Color::Black;
+        (root, false)
+    }
+
+    /// Mirror of [`Self::repair_left_shortened`] for a deficit in `h.right`.
+    fn repair_right_shortened(mut h: Box<Node<K>>) -> (Box<Node<K>>, bool) {
+        if Self::is_red(h.left.as_deref()) {
+            let mut root = Self::rotate_right(h);
+            let right = root.right.take().expect("rotate_right supplies old parent");
+            let (fixed_right, shortened) = Self::repair_right_shortened(right);
+            debug_assert!(!shortened, "red sibling must absorb right deficit");
+            root.right = Some(fixed_right);
+            return (root, false);
+        }
+
+        // See the mirror case in `repair_left_shortened`: nil is an all-black
+        // sibling and therefore only passes the deficit on when the parent is
+        // black.
+        let Some(sibling) = h.left.as_deref_mut() else {
+            return if h.color == Color::Red {
+                h.color = Color::Black;
+                (h, false)
+            } else {
+                (h, true)
+            };
+        };
+        let sibling_left_red = Self::is_red(sibling.left.as_deref());
+        let sibling_right_red = Self::is_red(sibling.right.as_deref());
+        if !sibling_left_red && !sibling_right_red {
+            sibling.color = Color::Red;
+            return if h.color == Color::Red {
+                h.color = Color::Black;
+                (h, false)
+            } else {
+                (h, true)
+            };
+        }
+
+        if !sibling_left_red {
+            let sibling = h.left.take().expect("sibling exists");
+            let mut near = Self::rotate_left(sibling);
+            near.color = Color::Black;
+            near.left
+                .as_deref_mut()
+                .expect("near rotation has left child")
+                .color = Color::Red;
+            h.left = Some(near);
+        }
+        let parent_color = h.color;
+        let mut root = Self::rotate_right(h);
+        root.color = parent_color;
+        root.right
+            .as_deref_mut()
+            .expect("right rotation has old parent")
+            .color = Color::Black;
+        root.left
+            .as_deref_mut()
+            .expect("far red child exists")
+            .color = Color::Black;
+        (root, false)
     }
 
     fn is_red(n: Option<&Node<K>>) -> bool {
@@ -359,26 +461,6 @@ impl<K> RbTree<K> {
             h = Self::rotate_right(h);
         }
         if Self::is_red(h.left.as_deref()) && Self::is_red(h.right.as_deref()) {
-            Self::flip_colors(&mut h);
-        }
-        h
-    }
-
-    fn move_red_left(mut h: Box<Node<K>>) -> Box<Node<K>> {
-        Self::flip_colors(&mut h);
-        if Self::is_red(h.right.as_deref().and_then(|r| r.left.as_deref())) {
-            let r = h.right.take().expect("right exists");
-            h.right = Some(Self::rotate_right(r));
-            h = Self::rotate_left(h);
-            Self::flip_colors(&mut h);
-        }
-        h
-    }
-
-    fn move_red_right(mut h: Box<Node<K>>) -> Box<Node<K>> {
-        Self::flip_colors(&mut h);
-        if Self::is_red(h.left.as_deref().and_then(|l| l.left.as_deref())) {
-            h = Self::rotate_right(h);
             Self::flip_colors(&mut h);
         }
         h
@@ -486,29 +568,30 @@ impl<K> RbTree<K> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     fn cmp_i32(a: &i32, b: &i32) -> Ordering {
         a.cmp(b)
     }
 
-    /// Recursively verify the LLRB structural invariants and return the
+    /// Recursively verify the red-black structural invariants and return the
     /// black-height of `node` (counting the black null sentinel as 1).
     fn black_height(node: Option<&Node<i32>>) -> usize {
         match node {
             None => 1,
             Some(n) => {
-                // Invariant 3: RED links lean left — a RED right child is forbidden.
-                assert!(
-                    !matches!(n.right.as_deref(), Some(r) if r.color == Color::Red),
-                    "right-leaning red link at key {}",
-                    n.key
-                );
-                // Invariant 4: no two RED links in a row.
+                // A red node cannot have a red child.
                 if n.color == Color::Red {
                     assert!(
                         !matches!(n.left.as_deref(), Some(l) if l.color == Color::Red),
-                        "two consecutive red links at key {}",
+                        "red left child below red key {}",
+                        n.key
+                    );
+                    assert!(
+                        !matches!(n.right.as_deref(), Some(r) if r.color == Color::Red),
+                        "red right child below red key {}",
                         n.key
                     );
                 }
@@ -525,8 +608,8 @@ mod tests {
         }
     }
 
-    /// Assert every LLRB invariant plus in-order sortedness.
-    fn assert_llrb_invariants(t: &RbTree<i32>) {
+    /// Assert every plain red-black invariant plus in-order sortedness.
+    fn assert_rb_invariants(t: &RbTree<i32>) {
         if let Some(r) = t.root.as_deref() {
             // Invariant 2: the root is BLACK.
             assert_eq!(r.color, Color::Black, "root must be black");
@@ -538,6 +621,25 @@ mod tests {
         sorted.sort_unstable();
         assert_eq!(seen, sorted, "in-order traversal is not sorted");
         assert_eq!(seen.len(), t.len(), "node count disagrees with len()");
+    }
+
+    fn assert_left_leaning(node: Option<&Node<i32>>) {
+        if let Some(n) = node {
+            assert!(
+                !matches!(n.right.as_deref(), Some(r) if r.color == Color::Red),
+                "right-leaning red link at key {}",
+                n.key
+            );
+            assert_left_leaning(n.left.as_deref());
+            assert_left_leaning(n.right.as_deref());
+        }
+    }
+
+    /// Insertion retains the stricter LLRB shape even though deletion only
+    /// promises the ordinary red-black invariants.
+    fn assert_llrb_invariants(t: &RbTree<i32>) {
+        assert_rb_invariants(t);
+        assert_left_leaning(t.root.as_deref());
     }
 
     #[test]
@@ -625,6 +727,31 @@ mod tests {
     }
 
     #[test]
+    fn delete_existing_uses_one_comparator_descent() {
+        // The old LLRB deletion first called `find`, then walked the same path
+        // again in `delete_rec`, for four comparisons here. A seemingly safe
+        // implementation that restores that membership precheck regresses the
+        // exact hot path this bead targets.
+        let mut t = RbTree::new();
+        for k in [2i32, 1, 3] {
+            t.insert(k, &cmp_i32);
+        }
+        let comparisons = Cell::new(0usize);
+        let counted_cmp = |a: &i32, b: &i32| {
+            comparisons.set(comparisons.get() + 1);
+            a.cmp(b)
+        };
+
+        assert_eq!(t.delete(&1, &counted_cmp), Some(1));
+        assert_eq!(
+            comparisons.get(),
+            2,
+            "delete of a leaf must follow its search path once, not precheck then delete"
+        );
+        assert_rb_invariants(&t);
+    }
+
+    #[test]
     fn delete_missing_returns_none() {
         let mut t = RbTree::new();
         for k in [5i32, 2, 8] {
@@ -648,7 +775,7 @@ mod tests {
             let mut seen = Vec::new();
             t.walk(RbWalkOrder::InOrder, |k, _| seen.push(*k));
             assert_eq!(seen, expected);
-            assert_llrb_invariants(&t);
+            assert_rb_invariants(&t);
         }
     }
 
@@ -706,11 +833,16 @@ mod tests {
         let before = snapshot(&t);
         let len_before = t.len();
         assert_eq!(before.len(), len_before, "walk and len disagree up front");
-        assert!(len_before > 0, "tree must be non-empty for this to mean anything");
+        assert!(
+            len_before > 0,
+            "tree must be non-empty for this to mean anything"
+        );
 
         // Every odd value is absent by construction; so are the evens deleted
         // above and values outside the range.
-        for missing in [-3i32, -1, 1, 15, 31, 47, 63, 79, 95, 111, 127, 129, 1000, 0, 30, 90] {
+        for missing in [
+            -3i32, -1, 1, 15, 31, 47, 63, 79, 95, 111, 127, 129, 1000, 0, 30, 90,
+        ] {
             assert_eq!(
                 t.delete(&missing, &cmp_i32),
                 None,
@@ -724,7 +856,7 @@ mod tests {
             );
             // Structure too: a restructure that happened to keep every key
             // would still be a bug worth catching.
-            assert_llrb_invariants(&t);
+            assert_rb_invariants(&t);
         }
 
         // And the tree is still fully functional afterwards.
@@ -783,40 +915,40 @@ mod tests {
     }
 
     #[test]
-    fn ascending_delete_preserves_llrb_invariants() {
+    fn ascending_delete_preserves_red_black_invariants() {
         let mut t = RbTree::new();
         for k in 0i32..256 {
             t.insert(k, &cmp_i32);
         }
-        assert_llrb_invariants(&t);
+        assert_rb_invariants(&t);
         for k in 0i32..256 {
             assert_eq!(t.delete(&k, &cmp_i32), Some(k));
-            assert_llrb_invariants(&t);
+            assert_rb_invariants(&t);
         }
         assert!(t.is_empty());
     }
 
     #[test]
-    fn descending_delete_preserves_llrb_invariants() {
+    fn descending_delete_preserves_red_black_invariants() {
         let mut t = RbTree::new();
         for k in 0i32..256 {
             t.insert(k, &cmp_i32);
         }
         for k in (0i32..256).rev() {
             assert_eq!(t.delete(&k, &cmp_i32), Some(k));
-            assert_llrb_invariants(&t);
+            assert_rb_invariants(&t);
         }
         assert!(t.is_empty());
     }
 
     #[test]
-    fn randomized_delete_preserves_llrb_invariants() {
+    fn randomized_delete_preserves_red_black_invariants() {
         let mut t = RbTree::new();
         let n = 400i32;
         for k in 0..n {
             t.insert(k, &cmp_i32);
         }
-        assert_llrb_invariants(&t);
+        assert_rb_invariants(&t);
         // Deterministic xorshift removal order; check invariants after each.
         let mut state = 0x1234_5678_9abc_def0u64;
         let mut remaining: Vec<i32> = (0..n).collect();
@@ -828,7 +960,7 @@ mod tests {
             let k = remaining.swap_remove(idx);
             assert_eq!(t.delete(&k, &cmp_i32), Some(k));
             assert_eq!(t.len(), remaining.len());
-            assert_llrb_invariants(&t);
+            assert_rb_invariants(&t);
         }
         assert!(t.is_empty());
     }
