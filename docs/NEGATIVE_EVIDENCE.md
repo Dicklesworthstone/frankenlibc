@@ -34043,3 +34043,46 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.47,0.56,0.47`. Driver compiled with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — NUMBER PARSING: `strtod` is 1.33x SLOWER only on the hard-rounding path, faster everywhere else; `strtol` is 1.85x FASTER, which refutes the standing "strtol short-input loss"
+
+- **RESULT CLASS: loss/baseline (one admissible loss found; a standing claim refuted).** Parsing
+  was chosen as the next target because it is algorithmically hard, hot in real workloads
+  (JSON/CSV/config), and had never been measured deployed. Unlike the string family it is NOT
+  dominated by the fixed entry cost.
+- **THE ARMS.** Same-invocation deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM)`, arms distinct, interleaved, 25 samples. **Conformance ran first and
+  is exact on every case**: all three `strtod` results are **bit-identical** to glibc (compared by
+  `memcmp` on the `double`, not by printing) and both `strtol` results are equal, with the
+  `endptr` offset identical in all five.
+
+  | case | fl ns | glibc ns | ratio | nulls | control | corrected |
+  |---|---:|---:|---:|---|---:|---:|
+  | `strtod` `0.30000000000000004440892098500626` | 137.6952 | 106.4450 | **1.316700** | 1.009140 / 1.010483 | 0.993480 | **1.325** |
+  | `strtod` `1.797…e308` | 107.1441 | 125.8581 | 0.857999 | 0.999880 / 0.999780 | 0.996393 | 0.861 |
+  | `strtod` `3.14159` | 32.1605 | 66.4504 | 0.465965 | 0.999474 / 1.020739 | 0.995419 | 0.468 |
+  | `strtol` `12345` base 10 | 6.4410 | 12.4930 | 0.536152 | 1.001764 / 0.994305 | 0.987977 | 0.543 |
+  | `strtol` `7fffffffffffffff` base 16 | 22.2285 | 27.2950 | 0.799442 | 0.991859 / 0.993782 | 0.986703 | 0.810 |
+
+  The control is clean on all five (0.9867-0.9964), so no correction exceeds 1.4%.
+- **THE ONE LOSS IS SPECIFIC AND EXPLICABLE.** `0.30000000000000004440892098500626` is 32
+  significant digits — the case where correct rounding needs exact big-integer arithmetic rather
+  than a fast double-only path. fl is **33% slower there and bit-exact**, so it is paying for
+  correctness on the hard path, not getting it wrong cheaply. The short and huge-exponent inputs,
+  which take the fast paths, are both **faster than glibc**.
+- **AND A STANDING CLAIM IS REFUTED.** My own working note records "strtol LOSES 1.08-1.47x on
+  short decimal/octal/hex; the gap is FIXED setup overhead". Measured deployed against live glibc,
+  short decimal `strtol` is **0.543x — fl is 1.85x FASTER**, and long hex is 0.810x. Whatever
+  produced 1.08-1.47x was not this configuration; on the evidence here the short-input `strtol`
+  gap does not exist and should not be used to justify work.
+- **PARSING DOES NOT SHOW THE FAMILY'S ENTRY TAX, and that is informative.** `strtol` on `12345`
+  completes in **6.44 ns** — faster than fl's `memcpy` of 8 bytes (4.89 ns) plus its ~4 ns
+  wrapper, and faster than fl's `strlen` of a 7-byte string (11.39 ns). A function that parses
+  five digits cannot be paying the same ~4 ns entry cost that makes `strlen("abcdefg")` cost 11 ns.
+  So the wrapper tax is **not** uniform across the ABI: the string/memory entry points carry it
+  and the parsing entry points do not. Whatever the string family is doing at entry, `strtol`
+  demonstrates it is avoidable.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.44,0.48,0.45`. Driver compiled with `cc -O2 -fno-builtin`.
