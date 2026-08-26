@@ -33367,10 +33367,25 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   **0.998420** with both nulls holding.
 - **THE RANGE ACROSS THREE METHODS IS 9.2 TO 13.7, AND I AM NOT PICKING A FAVOURITE.**
   harness `dlopen` medians 12.03-13.25 (nulls holding); this same-invocation deployed median
-  9.25-9.93 (fl/fl nulls holding, glibc/glibc failing); my cross-invocation min-of-9 13.70 (no
-  nulls at all). What every method agrees on: **`malloc_free` is the worst surface by a wide
+  **9.16-9.93 across four measurements in two runs** (fl/fl nulls holding, glibc/glibc residual
+  ~3% after the drift fix); my cross-invocation min-of-9 13.70 (no nulls at all). What every method agrees on: **`malloc_free` is the worst surface by a wide
   margin — an order of magnitude — and nothing else measured this session is above 2.6x.** The
   campaign target is unchanged; only my confidence in the third digit is.
+- **SECOND RUN, WITH THE DRIFT CHASED DOWN, and it confirms the range.** The failing
+  glibc/glibc null was within-sample drift, not a real difference, so the warm-up was raised from
+  3 rounds to 40 and the whole thing re-run. The null improved from 1.088969/1.070212 to
+  **1.028850/1.033741**, and the FL/FL nulls now hold on both cases (1.000851 and 0.992486). The
+  ratios: `small_64` **9.156331** (fl 46.8387 ns vs glibc 5.1154), `small_1024` **9.511300**
+  (fl 45.6978 vs 4.8046). So four deployed same-invocation measurements across two runs read
+  **9.16, 9.25, 9.51, 9.93** — call it **~9.4x, spread ~8%**.
+- **THE RESIDUAL IS A POSITION EFFECT, NOT A PROVIDER EFFECT, and the control shows it.** In the
+  control run the FL/FL null fails (0.913761, 0.965002) while glibc/glibc holds (1.008263,
+  1.008750) — the exact opposite of the deployed run. Both slots are glibc there, so nothing about
+  a provider can explain it: whichever arm occupies the first/last position in a sample carries a
+  few percent. The ABBA average `(a+d)/2` against `(b+c)/2` cancels that for the RATIO, which is
+  why the ratio is stable at ~9.4 across runs while the nulls wobble. **A null failing at 3% on an
+  effect of 940% is telemetry about the instrument, not a veto on the direction** — but it is why
+  this row does not claim a third digit.
 - **WHAT THIS SAYS ABOUT THE OTHER DEPLOYED ROWS.** `tdelete`, `memrchr`, `sinhf`/`coshf`,
   `nl_langinfo`, `mtx_trylock` and `snprintf` were all measured with this same driver shape —
   same-invocation, medians, ABBA, with a both-arms-glibc control run per surface. Those stand.
