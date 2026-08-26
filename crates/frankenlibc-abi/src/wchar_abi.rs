@@ -369,6 +369,43 @@ unsafe fn wide_move_n(dst: *mut u32, src: *const u32, count: usize) {
 /// `src` must be a valid NUL-terminated wide string and `dst` must have room for
 /// `wcslen(src) + 1` wide chars (the caller's contract for C `wcscpy`/`wcpcpy`).
 #[inline]
+/// Copies `n` wide chars (1..=8) with OVERLAPPING power-of-two moves instead of an
+/// element-at-a-time loop.
+///
+/// The two moves rewrite some of the same source data, which is harmless, and
+/// together they touch exactly `[0, n)` — that is what makes this usable where a
+/// full 8-lane store is not: `wcscpy`'s destination is only guaranteed `len + 1`
+/// elements, so a fixed-width store past the terminator would overrun the
+/// caller's buffer.
+///
+/// Deliberately plain `read`/`write` of `[u32; N]` rather than
+/// `copy_nonoverlapping`: inside this crate the latter lowers to a CALL to fl's
+/// own interposed `memcpy` (measured +46 Ir on this very function), whereas these
+/// become inline 16- and 8-byte moves.
+///
+/// # Safety
+/// `n` must be in `1..=8`; `src` must be readable and `dst` writable for `n`
+/// elements; the two regions must not overlap.
+#[inline(always)]
+unsafe fn copy_wide_small(dst: *mut u32, src: *const u32, n: usize) {
+    debug_assert!((1..=8).contains(&n));
+    unsafe {
+        if n >= 4 {
+            let head = core::ptr::read(src.cast::<[u32; 4]>());
+            let tail = core::ptr::read(src.add(n - 4).cast::<[u32; 4]>());
+            core::ptr::write(dst.cast::<[u32; 4]>(), head);
+            core::ptr::write(dst.add(n - 4).cast::<[u32; 4]>(), tail);
+        } else if n >= 2 {
+            let head = core::ptr::read(src.cast::<[u32; 2]>());
+            let tail = core::ptr::read(src.add(n - 2).cast::<[u32; 2]>());
+            core::ptr::write(dst.cast::<[u32; 2]>(), head);
+            core::ptr::write(dst.add(n - 2).cast::<[u32; 2]>(), tail);
+        } else {
+            *dst = *src;
+        }
+    }
+}
+
 unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
     use std::simd::cmp::SimdOrd;
     let z = Simd::<u32, 8>::splat(0);
@@ -381,18 +418,15 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
     if m0 != 0 {
         // NUL within the first (masked) window: copy src[0..=nul] inclusive.
         let nul = m0.trailing_zeros() as usize - align;
-        for j in 0..=nul {
-            // SAFETY: j <= nul < remaining string length; dst has room for len+1.
-            unsafe { *dst.add(j) = *src.add(j) };
-        }
+        // SAFETY: nul < 8, so nul+1 is in 1..=8; dst has room for len+1.
+        unsafe { copy_wide_small(dst, src, nul + 1) };
         return nul;
     }
     // First (partial) chunk [src, base+8): (8 - align) elements, all confirmed non-NUL.
     let first = 8 - align;
-    for j in 0..first {
-        // SAFETY: within the just-read window; these lanes are non-NUL string chars.
-        unsafe { *dst.add(j) = *src.add(j) };
-    }
+    // SAFETY: `align` is 0..=7 so `first` is 1..=8; these lanes are non-NUL chars
+    // within the just-read window.
+    unsafe { copy_wide_small(dst, src, first) };
     let mut i = first; // src+i is 32-byte (8-u32) aligned
 
     // 8-lane step: reads/stores one 32-byte chunk at src+i (32-byte aligned ⇒ the load
@@ -406,10 +440,8 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
             let m = v.simd_eq(z).to_bitmask();
             if m != 0 {
                 let nul = m.trailing_zeros() as usize;
-                for j in 0..=nul {
-                    // SAFETY: copies through the NUL; dst has room for len+1.
-                    unsafe { *dst.add(i + j) = *src.add(i + j) };
-                }
+                // SAFETY: nul < 8; copies through the NUL, dst has room for len+1.
+                unsafe { copy_wide_small(dst.add(i), src.add(i), nul + 1) };
                 return i + nul;
             }
             // No NUL: all 8 lanes are real chars ⇒ dst has room for [i, i+8).
@@ -453,10 +485,8 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
                     if m != 0 {
                         let nul = m.trailing_zeros() as usize;
                         let off = i + k * 8;
-                        for j in 0..=nul {
-                            // SAFETY: copies through the NUL; dst has room for len+1.
-                            unsafe { *dst.add(off + j) = *src.add(off + j) };
-                        }
+                        // SAFETY: nul < 8; copies through the NUL, dst has room for len+1.
+                        unsafe { copy_wide_small(dst.add(off), src.add(off), nul + 1) };
                         return off + nul;
                     }
                     // SAFETY: this chunk is NUL-free ⇒ dst has room for [i+k*8, +8).
@@ -667,6 +697,14 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         return dst;
     }
 
+    // Cold tail in its own frame; see `wcsncmp_validating`. Same 6-push / 88-byte
+    // frame rented by the strict fast path above on every call.
+    unsafe { wcscpy_validating(dst, src) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
     let dst_bound = known_remaining(dst as usize).map(bytes_to_wchars);
     let src_bound = known_remaining(src as usize).map(bytes_to_wchars);
     let (_mode, decision) = runtime_policy::decide(
@@ -989,6 +1027,22 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
 ) -> (c_int, usize, bool) {
     const WLANES: usize = 8;
     let zv = Simd::<u32, WLANES>::splat(0);
+    // HOISTED WHOLE-RANGE PAGE CHECK. The 8-lane tier below re-ran
+    // `wide32_read_within_page` for BOTH operands on every 32-byte window; at a
+    // bound of 31 wchars that is four iterations and eight guard evaluations.
+    // Line-level profiling (callgrind --dump-line, two-point) charged 18 of the
+    // scanner's 119 Ir to that helper alone.
+    //
+    // The guard is loop-invariant whenever the whole compared range sits inside
+    // one page for both pointers: no window drawn from `[0, bound)` can then
+    // cross a page, so the per-window checks are dead weight. Computed once here,
+    // it short-circuits them. Only meaningful when `BOUNDED` -- an unbounded
+    // `wcscmp` has `bound == usize::MAX`, the span test fails, and the per-window
+    // guards stay exactly as they were.
+    let whole_range_in_page = BOUNDED
+        && bound <= 0x1000 / 4
+        && (s1 as usize & 0xFFF) + bound * 4 <= 0x1000
+        && (s2 as usize & 0xFFF) + bound * 4 <= 0x1000;
     let mut i = 0usize;
     loop {
         // 128-byte (32-wchar) unrolled fast path: the 32B/iter loop below re-ran the dual
@@ -1048,10 +1102,13 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
             return (0, idx + 1, false);
         }
         if i + WLANES <= bound
-            && wide32_read_within_page(s1.wrapping_add(i) as usize)
-            && wide32_read_within_page(s2.wrapping_add(i) as usize)
+            && (whole_range_in_page
+                || (wide32_read_within_page(s1.wrapping_add(i) as usize)
+                    && wide32_read_within_page(s2.wrapping_add(i) as usize)))
         {
             // SAFETY: both 32-byte reads stay within their pages and within bound.
+            // When `whole_range_in_page` holds, `[0, bound)` lies in a single page
+            // for both operands, so `[i, i+WLANES) ⊆ [0, bound)` cannot cross one.
             // Raw array loads (not Rust slices over C memory) mirror wcschr.
             let va = Simd::<u32, WLANES>::from_array(unsafe {
                 core::ptr::read(s1.add(i).cast::<[u32; WLANES]>())
@@ -1269,6 +1326,17 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         return r;
     }
 
+    // Cold tail in its own frame, as `wcslen` and the narrow string entries do.
+    // This entry rented `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` from the
+    // validating path below on every strict call. Measured on the same shape
+    // elsewhere in this family: a flat 11-16 Ir. Nothing between the strict gate
+    // and here is a re-entrancy bypass, so the cut is at the gate itself.
+    unsafe { wcsncmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcsncmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,

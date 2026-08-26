@@ -4340,13 +4340,44 @@ pub fn known_remaining_for_tests(addr: usize) -> Option<usize> {
     known_remaining(addr)
 }
 
+/// `known_remaining` for a caller that has ALREADY established strict mode.
+///
+/// Every strict ABI fast path tests `strict_passthrough_active()` and only then
+/// calls `known_remaining`, which tests it again — a redundant re-derivation on
+/// the hot path of every strict string entry. This entry point skips it and goes
+/// straight to the allocator sources.
+///
+/// The sources are also consulted with plain `if let` rather than an `or_else`
+/// chain. They are mutually exclusive, so this is the same query; line-level
+/// profiling (callgrind `--dump-line`, two-point) put the chain's Option plumbing
+/// at 10 of the 33 Ir an UNTRACKED pointer spends here — and untracked is the
+/// common case for string literals and stack buffers.
+#[inline]
+pub(crate) fn known_remaining_strict(addr: usize) -> Option<usize> {
+    if let Some(remaining) = segment_remaining(addr) {
+        return Some(remaining);
+    }
+    if let Some(remaining) = bump_mmap_remaining(addr) {
+        return Some(remaining);
+    }
+    fallback_remaining(addr)
+}
+
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     // Strict mode skips the full membrane validator, but allocator-owned
     // fallback bookkeeping is still cheap and required for bounded C-string
     // scans that must reject unterminated tracked buffers before host passthrough.
     if runtime_policy::strict_passthrough_active() {
-        return bump_mmap_remaining(addr)
-            .or_else(|| segment_remaining(addr))
+        // Segment first. The three sources are mutually exclusive, so the ORDER is
+        // free of semantics and pure cost: whichever answers, the result is the
+        // same. Segment-backed allocations are the common case — bump-mmap only
+        // holds overflow allocations and is usually inactive entirely — yet it was
+        // probed first, so every ordinary heap pointer paid a failed
+        // `BUMP_OVERFLOW_ACTIVE` load before reaching the source that answers.
+        // Line-level profiling of `strlen` on a heap pointer (callgrind
+        // --dump-line, two-point) put this dispatch at 10 of the probe's 82 Ir.
+        return segment_remaining(addr)
+            .or_else(|| bump_mmap_remaining(addr))
             .or_else(|| fallback_remaining(addr));
     }
 

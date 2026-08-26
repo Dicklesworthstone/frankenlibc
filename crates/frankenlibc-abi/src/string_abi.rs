@@ -20,7 +20,7 @@ use frankenlibc_membrane::runtime_math::clifford::{
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{known_remaining, known_remaining_strict};
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -1369,7 +1369,7 @@ pub unsafe fn bench_scan_strcmp(
     s2: *const c_char,
     bound: usize,
 ) -> (usize, bool) {
-    unsafe { scan_strcmp(s1, s2, bound) }
+    unsafe { scan_strcmp::<true>(s1, s2, bound) }
 }
 
 /// Benchmark/test hook for the SWAR [`scan_c_string_last_byte`] scanner (behind
@@ -3414,7 +3414,19 @@ fn wide_read_within_page(addr: usize) -> bool {
 /// byte step is taken. A flagged window (words unequal OR containing a NUL) is
 /// resolved byte-wise in scan order, so the exact first diff/NUL is returned —
 /// byte-identical to the scalar loop it replaces.
-unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (usize, bool) {
+/// `#[inline]`: this is called from exactly two strict fast paths (`strcmp` with
+/// `BOUNDED=false`, `strncmp`/`strncasecmp` with `true`), and as an out-of-line
+/// call each one paid four callee-saved pushes plus the matching pops. Line-level
+/// profiling (callgrind `--dump-line`, two-point) charged 25 of the bounded
+/// instantiation's 83 Ir to this signature line -- the pushes plus the guard
+/// arithmetic the compiler hoists to entry. Inlining lets each caller keep only
+/// the registers its own instantiation actually needs.
+#[inline(always)]
+unsafe fn scan_strcmp<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
     let p1 = s1.cast::<u8>();
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
@@ -3505,6 +3517,46 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
             // same O(1) resolve used in scan_c_string/strchr. Byte-identical.
             return (i + flagged.trailing_zeros() as usize, false);
         }
+        // OVERLAPPING FINAL PANEL, placed ABOVE the 8-byte SWAR tier. An earlier
+        // version sat below every tier and measured -10 Ir: by the time it ran,
+        // SWAR had already nibbled the remainder down to about three bytes, so the
+        // panel paid two 32-byte loads to replace three scalar compares. Here it
+        // takes the WHOLE remainder instead. `strncmp(a, b, 43)` clears the 32B
+        // tier once to i=32, then `32 + 32 <= 43` fails and this resolves
+        // [11, 43) in one panel rather than SWAR-at-32, SWAR-declines-at-40, three
+        // scalar.
+        //
+        // `i + 32 > bound` is REQUIRED, not implied: the 32B tier declines both for
+        // a short remainder AND for a failed page guard, and only the first makes
+        // `bound - 32` meaningful. Omitting it in the `wcsncmp` version computed
+        // `usize::MAX - 32` on an unbounded call that declined on its page guard
+        // and read a wild address -- 114 conformance failures. With it,
+        // `start <= i` holds by construction.
+        if BOUNDED
+            && bound >= 32
+            && i + 32 > bound
+            && (p1 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+            && (p2 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+        {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            let start = bound - 32;
+            let skip = i - start;
+            // SAFETY: `[bound-32, bound)` is one 32-byte window, page-guarded above.
+            let a = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p1.add(start), 32)
+            });
+            let b = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p2.add(start), 32)
+            });
+            let m = (a.simd_ne(b) | a.simd_eq(Simd::splat(0))).to_bitmask()
+                & !((1u64 << skip) - 1);
+            if m == 0 {
+                // Every byte in [i, bound) is equal and non-NUL: bound reached.
+                return (bound, true);
+            }
+            return (start + m.trailing_zeros() as usize, false);
+        }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
             && wide_read_within_page(p2 as usize + i)
@@ -3530,6 +3582,15 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
         if i >= bound {
             return (bound, true);
         }
+        // NO OVERLAPPING TAIL PANEL HERE, and that is a measured decision. The
+        // equivalent panel in `scan_wcscmp_simd` is worth +52 Ir, but here it
+        // measured **-10 Ir on `strncmp(a, b, 43)`** and was removed. The reason is
+        // the 8-byte SWAR tier directly above: unlike the wide scanner, this one
+        // has an intermediate tier that already grinds the remainder down to a few
+        // bytes, so a 32-byte panel arrives with ~3 bytes left to resolve and pays
+        // two 32-byte loads, a mask and a shift to replace about three scalar
+        // compares. **The same lever is not worth the same amount in two scanners
+        // with different tier ladders.** See the 2026-08-26 ledger row.
         // SAFETY: i < bound.
         let a = unsafe { *p1.add(i) };
         let b = unsafe { *p2.add(i) };
@@ -3539,6 +3600,7 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
         i += 1;
     }
 }
+
 
 /// Branchless SWAR ASCII lowercase: folds bytes in `'A'..='Z'` to `'a'..='z'`
 /// and leaves every other byte (incl. non-ASCII `>= 0x80`) untouched — exactly C
@@ -4120,6 +4182,21 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     }
 
+    // Cold tail in its own frame, cut BELOW the bypass above rather than at the
+    // strict gate. `memcmp` has the same shape `strlen` does: a
+    // `string_raw_passthrough_active()` re-entrancy/TLS bypass sits between the
+    // strict gate and the validating body, and putting that bypass behind a
+    // `#[cold] #[inline(never)]` boundary made hardened startup SIGSEGV
+    // deterministically for `strlen`. Everything from the trace scope down is
+    // ordinary validating work and moves safely. This entry carried the largest
+    // frame of the narrow comparison family — `push rbp/r15/r14/r13/r12/rbx;
+    // sub $0xa8,%rsp`, 168 bytes — rented by the strict fast path on every call.
+    unsafe { memcmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
     let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     let (mode, decision) = runtime_policy::decide(
@@ -4506,7 +4583,9 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // not make the strict fast path read into the next allocation. This preserves the
     // untracked hot path while matching the bounded behavior of the full path below.
     if runtime_policy::strict_passthrough_active() {
-        let bound = known_remaining(s as usize);
+        // `known_remaining_strict`: the mode was just established one line above,
+        // so re-deriving it inside the probe is redundant work on this hot path.
+        let bound = known_remaining_strict(s as usize);
         // SAFETY: `bound`, when present, is derived from allocator bookkeeping;
         // otherwise the page-safe scanner preserves ordinary libc scan semantics.
         return unsafe { scan_c_string(s, bound).0 };
@@ -4778,7 +4857,7 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         }
         // SAFETY: `scan_strcmp` with usize::MAX is the page-cross-guarded raw scan — the
         // identical call the strict full path makes (cmp_bound == None).
-        let (i, _hit_limit) = unsafe { scan_strcmp(s1, s2, usize::MAX) };
+        let (i, _hit_limit) = unsafe { scan_strcmp::<false>(s1, s2, usize::MAX) };
         let a = unsafe { *s1.add(i) } as u8;
         let b = unsafe { *s2.add(i) } as u8;
         return (a as c_int) - (b as c_int);
@@ -4848,7 +4927,7 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     // SWAR word-at-a-time compare (shared scan_strcmp, page-cross guarded),
     // byte-identical to the old scalar loop. `cmp_bound == None` => no limit.
     let (result, adverse, span) = unsafe {
-        let (i, hit_limit) = scan_strcmp(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
         if hit_limit {
             (0, true, i)
         } else {
@@ -4901,7 +4980,7 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
         if s1.is_null() || s2.is_null() {
             return 0;
         }
-        let (i, hit_limit) = unsafe { scan_strcmp(s1, s2, n) };
+        let (i, hit_limit) = unsafe { scan_strcmp::<true>(s1, s2, n) };
         if hit_limit {
             return 0;
         }
@@ -4910,6 +4989,19 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
         return (a as c_int) - (b as c_int);
     }
 
+    // Cold tail in its own frame. This entry rented
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` from the validating path
+    // below on every strict call; line-level profiling (callgrind --dump-line,
+    // two-point) charged 8 Ir to the signature line and 8 to the closing brace --
+    // 16 Ir of prologue and epilogue, out of a 40 Ir entry whose actual strict
+    // work is about 13. Nothing between the strict gate and here is a re-entrancy
+    // bypass, so the cut is at the gate.
+    unsafe { strncmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(
@@ -4963,7 +5055,7 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
     // SWAR word-at-a-time compare via the shared page-guarded scan_strcmp, bounded
     // by `cmp_limit`; byte-identical to the old scalar loop.
     let (result, span) = unsafe {
-        let (i, hit_limit) = scan_strcmp(s1, s2, cmp_limit);
+        let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
         if hit_limit {
             (0, i)
         } else {
@@ -6158,6 +6250,16 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         };
     }
 
+    // Cold tail in its own frame. Unlike `memcmp` there is no re-entrancy bypass
+    // between the strict gate and here, so the cut is at the gate. This entry
+    // opened `push rbp/r15/r14/r13/r12/rbx; sub $0x98,%rsp` — 152 bytes rented by
+    // the strict fast path on every call.
+    unsafe { strstr_validating(haystack, needle) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
     let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
         record_string_stage_outcome(
@@ -7078,9 +7180,36 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
             // full SIMD strlen on `accept`. This is the case glibc's early-stopping scan
             // beat us on (fixed 4-way-set setup floor). Byte-identical to the (1..=4)
             // set4 path with set=[c;4], complement=true.
-            let a0 = *(accept.cast::<u8>());
-            if a0 != 0 && *(accept.cast::<u8>().add(1)) == 0 {
-                return scan_c_string_first_not_byte(s, a0);
+            // ...and the same direct probe extended to sets of 2..=4 bytes, which
+            // previously fell into the gap between the 1-char shortcut and the
+            // 5..=64-byte `pcmpistri` probe. A 3-byte set like "abc" still ENDED
+            // in the `set4` path below, but only after paying a `pcmpistri` probe
+            // that declines every set under 5 bytes AND a full SIMD
+            // `scan_c_string` strlen over `accept` just to learn it is 3 long.
+            // Line-level profiling (callgrind --dump-line, two-point) put those at
+            // 16 and ~19 Ir of `strspn`'s 167.
+            //
+            // Each byte is read only after the previous one proved non-NUL, so
+            // this never reads past the terminator — exactly the safety argument
+            // the existing 2-byte probe already relies on.
+            let a = accept.cast::<u8>();
+            let a0 = *a;
+            if a0 != 0 {
+                let a1 = *a.add(1);
+                if a1 == 0 {
+                    return scan_c_string_first_not_byte(s, a0);
+                }
+                let a2 = *a.add(2);
+                if a2 == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a0, a1], true);
+                }
+                let a3 = *a.add(3);
+                if a3 == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a2, a2], true);
+                }
+                if *a.add(4) == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a2, a3], true);
+                }
             }
             // 5..=64-byte accept set: answer short spans with `pcmpistr*` BEFORE any
             // pass over `accept`, so the LUT path's fixed setup is skipped entirely
@@ -7142,6 +7271,18 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
         };
     }
 
+    // Cold tail in its own frame. This entry rented the largest frame in the
+    // narrow family -- `push rbp/r15/r14/r13/r12/rbx; sub $0xb8,%rsp`, 184 bytes --
+    // from the validating path below, on every strict call. Line-level profiling
+    // (callgrind --dump-line, two-point) charged 8 Ir to the signature line alone
+    // out of a 44 Ir entry. Nothing between the strict gate and here is a
+    // re-entrancy bypass, so the cut is at the gate.
+    unsafe { strspn_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strspn_validating(s: *const c_char, accept: *const c_char) -> usize {
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
     if s.is_null() || accept.is_null() {
         record_string_stage_outcome(
@@ -7231,6 +7372,34 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
     // body — scan s + reject, core strcspn. Skips the membrane bookkeeping.
     if !s.is_null() && !reject.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
+            // Direct probe for reject sets of 1..=4 bytes, ahead of everything else —
+            // the same gap `strspn` had. Those sets already had dedicated handling
+            // below, but only after a `pcmpistri` probe that declines every set under
+            // 5 bytes AND a full SIMD `scan_c_string` strlen over `reject` just to
+            // learn its length. Each byte is read only after the previous proved
+            // non-NUL, so this never reads past the terminator.
+            {
+                let r = reject.cast::<u8>();
+                let r0 = *r;
+                if r0 != 0 {
+                    let r1 = *r.add(1);
+                    if r1 == 0 {
+                        let (i, _found, _) = scan_c_string_for_byte(s, r0, None);
+                        return i;
+                    }
+                    let r2 = *r.add(2);
+                    if r2 == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r0, r1], false);
+                    }
+                    let r3 = *r.add(3);
+                    if r3 == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r2, r2], false);
+                    }
+                    if *r.add(4) == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r2, r3], false);
+                    }
+                }
+            }
             // 5..=64-byte reject set: `pcmpistr*` first, before the `reject` scan —
             // this is the arm that lost worst to glibc (14.81x at span 4 with a
             // 16-byte set).

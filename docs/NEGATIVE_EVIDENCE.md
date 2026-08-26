@@ -34527,3 +34527,1320 @@ afterwards, which is how it was caught. -->
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process by
   `dlmopen(LM_ID_NEWLM)`, fl by `LD_PRELOAD` at phase **2 = ACTIVE**. Worker `vmi1293453` at
   `loadavg 0.55,0.86,0.87`. Driver compiled `cc -O2 -fno-builtin-strlen`.
+
+## 2026-08-26 — INCONCLUSIVE, AND THE REASON MATTERS MORE THAN THE RESULT: the memo ablation showed no gain, but base itself moved 7.36 to 10.26 ns between runs on the identical object. This experiment could not resolve what it was built to measure
+
+- **RESULT CLASS: inconclusive (no lever claimed, and an honesty correction to my own earlier
+  confidence).** The previous row concluded the probe's ~7 ns is a chain of five to six dependent
+  loads and that "the only lever is to shorten the chain". This ablation was built to price that
+  lever. **It did not answer the question, and the reason is that the instrument is not precise
+  enough at this scale — which also bears on numbers I already published.**
+- **THE ABLATION.** A one-entry memo of the last segment's immutable geometry (`base`,
+  `class_size`, `meta_base`, `slot_reciprocal`) keyed on segment index, collapsing
+  `segment_remaining`'s walk to: arena base, memo key compare, then `requested_size`. Unsound by
+  construction — nothing invalidates it when a segment retires, and the key is process-global
+  rather than per-thread — so it was never a candidate. Reverted.
+- **THE RESULT: NO GAIN.**
+
+  | distinct buffers | base fl ns | memo fl ns | base ratio | memo ratio |
+  |---:|---:|---:|---:|---:|
+  | 1 | 7.3589 | 9.4551 | 4.091060 | 4.341689 |
+  | 64 | 9.1728 | 9.2450 | 4.520910 | 4.484116 |
+  | 1024 | 9.3610 | 8.4072 | 4.530554 | 4.328961 |
+  | 4096 | 9.5975 | 8.7581 | 4.594036 | 4.572555 |
+
+  Two rows move each way; no trend. Conformance passed on both (all 4096 buffers length 7).
+- **BUT LOOK AT THE BASE COLUMN AGAINST THE PREVIOUS RUN OF THE SAME OBJECT AND THE SAME CASE.**
+  `heap_1_buf_hot_meta` read **10.2628 ns** in the prior row and **7.3589 ns** here — the same
+  binary, the same worker, the same driver, a **39% swing**. The four base readings within this
+  single run span 7.36 to 9.60, a 30% spread. **An experiment whose base arm varies by a third
+  cannot resolve the ~2 ns effect it was built to detect.** Calling this a refutation of the
+  chain-length hypothesis would be reading noise as evidence, so I am not calling it one.
+- **AND THAT FORCES A CORRECTION TO MY OWN EARLIER PRECISION.** Two attributions in this
+  investigation were ~1 ns effects: the stack frame at **1.15 ns** and the header checks at
+  **0.94 ns**. Both were measured back to back within one invocation, which suppresses drift, but
+  both sit **at or below the between-run band just demonstrated**. They should be read as "small,
+  and not the dominant term" — which is what they were used for — and **not** as figures accurate
+  to the second digit. I quoted them to three.
+- **WHAT SURVIVES UNSHAKEN, and it is the thing that matters.** The probe removal took a 7-byte
+  heap `strlen` from ~10.8 ns to **3.56 ns** and the ratio from 4.97x to 1.67x — a 3x effect, an
+  order of magnitude above the noise band above, reproduced against a clean control, and
+  consistent with `ctype` and `strtol` (which perform no probe) being at parity or faster. The
+  headline finding of this investigation does not depend on any of the ~1 ns numbers.
+- **WHAT WOULD ACTUALLY SETTLE THE CHAIN QUESTION**, since wall-clock at this scale plainly will
+  not: counted instructions and counted cycles for the probe alone, which needs `perf` counters
+  (blocked fleet-wide by `perf_event_paranoid=4`) or `callgrind` (which rch refuses but which runs
+  fine over ssh-direct, as the malloc attribution work already established). That is the correct
+  next instrument for anything below ~2 ns, and this row is the evidence that wall-clock has been
+  pushed past its limit here.
+- **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  memo `sha256=ae1fddedc8c3bdc783656648631969c17cd3b6f2027e5945ca9d59e9309a1175`, both from HEAD
+  `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453` at `loadavg 0.53,0.61,0.75`.
+
+## 2026-08-26 — COUNTED, DEFINITIVE: the probe is **108.973 instructions per call**. fl's 7-byte `strlen` is 159.006 Ir against glibc's 23.006 — and without the probe it is 50.033, i.e. 2.18x instead of 6.91x
+
+- **RESULT CLASS: loss/baseline (counted mechanism; supersedes the wall-clock attributions in this
+  investigation).** The previous row showed wall-clock had been pushed past its limit — base moved
+  7.36 to 10.26 ns between runs on the identical object — and named the correct instrument.
+  Applied. **Instruction counts are software-counted, so they are layout-immune, load-independent,
+  and reproduce exactly.**
+- **THE MEASUREMENT.** `callgrind` on three configurations of one driver, two-point difference
+  (N=3000 minus N=1000, so 2000 marginal calls, startup fully cancelled), 7-byte string in an
+  fl-heap buffer, `LD_PRELOAD` giving **PHASE=2 (ACTIVE)** on both fl arms — verified in the
+  driver's own output — and conformance (`strlen` returns 7) checked before counting.
+
+  | configuration | Ir per call | vs glibc |
+  |---|---:|---:|
+  | fl base | **159.006** | **6.911x** |
+  | fl without the probe | **50.033** | **2.175x** |
+  | glibc | **23.006** | 1.000x |
+  | **the probe alone** | **108.973** | — |
+
+  `known_remaining`'s own marginal self-cost, read independently from the per-function annotation,
+  is **123.24 Ir/call** — consistent with the 108.97 difference to within the call-overhead the
+  ablation also removes.
+- **THE PROBE IS 69% OF fl's ENTIRE `strlen`.** One call to answer "how many bytes are left in
+  this allocation" costs **more than four times what glibc spends doing the whole job**.
+- **AND IT CORRECTS MY OWN MECHANISM STORY A THIRD TIME.** I described this cost as "five to six
+  dependent loads" and then as "serial load latency". **It is not a short pointer chase — it is
+  109 instructions of real work.** The flat-across-4096-buffers result stands (it is genuinely not
+  cache misses), but "a handful of dependent loads" understated it by an order of magnitude, and I
+  published that characterisation twice. At ~3.5 IPC, 109 instructions is ~31 cycles ~= 9.7 ns,
+  which reconciles with the ~7 ns wall measurement; a six-load chain would not have.
+- **THE TWO INSTRUMENTS AGREE ONCE BOTH ARE READ CORRECTLY.** Instruction ratio 6.911x against a
+  wall ratio of ~4.7x, and no-probe 2.175x against a wall 1.67x — fl runs its longer straight-line
+  code at better IPC than glibc runs its shorter code, which is exactly the expected direction and
+  is why the wall ratio is milder than the instruction ratio in both arms.
+- **WHAT THIS SETTLES FOR THE LEVER.** The target is now exact rather than atmospheric: **109
+  instructions**, in `known_remaining`, on every string and memory entry point that bounds its
+  access — and **50 Ir of unavoidable fl overhead** underneath it, against glibc's 23. Removing the
+  probe entirely would leave fl at 2.18x on instructions; that is the ceiling of any probe-focused
+  work, and it is a real ceiling rather than parity. Anything beyond it has to come from the 50.
+- **AND IT RETIRES THE WALL-CLOCK APPROACH FOR THIS QUESTION.** Every sub-2 ns attribution in this
+  investigation should be re-derived this way if anyone needs it: the frame split and the header
+  checks were each measured as ~1 ns against a 39% between-run band, whereas this instrument
+  resolves single instructions and cost four minutes to run on a machine nobody had to reserve.
+- **PROVENANCE.** fl base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  ablation `sha256=912ce1a849d9ebaf3395fa4efbd5560eb5e3e9934dadda273c7db3550ba39634`, both built
+  from HEAD `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453`. Counted **locally**
+  with `valgrind-3.25.1` because no fleet worker has valgrind installed; a software counter needs
+  no quiet host, which is the whole point.
+
+## 2026-08-26 — ALL FOUR LEVERS PRICED EXACTLY: frame split **17 Ir**, header checks **11 Ir**, memo **8 Ir**, whole probe **109 Ir**. The three micro-levers together recover a quarter of what the probe costs
+
+- **RESULT CLASS: loss/baseline (counted; resolves three experiments this investigation could not
+  settle by wall clock).** With a deterministic instrument in hand, the two ablations I had to
+  report as "roughly 1 ns" and "inconclusive" were re-run and counted. **Every one of them turns
+  out to be real, small, and exactly measurable.**
+- **THE TABLE.** Marginal instructions per 7-byte `strlen` on an fl-heap buffer, two-point
+  difference over 2000 calls, `LD_PRELOAD` with **PHASE=2 verified on every run**, conformance
+  checked before counting:
+
+  | configuration | Ir/call | vs glibc | saved vs base |
+  |---|---:|---:|---:|
+  | glibc | **23.006** | 1.000x | — |
+  | fl base | **159.006** | 6.911x | — |
+  | fl, hot/cold frame split | 142.006 | 6.172x | **17.000** |
+  | fl, no header validity checks | 148.006 | 6.433x | **11.000** |
+  | fl, segment geometry memo | 151.006 | 6.564x | **8.000** |
+  | fl, no probe at all | **50.033** | 2.175x | **108.973** |
+
+  The savings are exact integers because the counter is exact — against the 39% between-run band
+  that defeated the wall clock on the same three questions.
+- **TWO EARLIER VERDICTS ARE CORRECTED, ONE IN EACH DIRECTION.** The frame split I reverted for
+  buying "only ~10%" is worth **17 instructions**, a real 12.5% of the 136-instruction gap — my
+  wall reading of ~1.15 ns was right in magnitude and I was right to doubt its precision, not its
+  existence. The memo I called **inconclusive** genuinely does help, by **8 instructions** — the
+  smallest of the three, and the wall clock had no chance of seeing it. **"Inconclusive" was the
+  correct call at the time; it is no longer inconclusive.**
+- **AND THE COMBINED CEILING OF ALL THREE IS THE POINT.** 17 + 11 + 8 = **36 instructions** if they
+  were additive and all shipped, taking fl from 159 to ~123 Ir, **6.91x to ~5.35x**. Removing the
+  probe outright takes it to 50 Ir, **2.18x**. So the three things I could think to shave account
+  for **a third of the probe and a quarter of the gap**; the other 73 instructions are spread
+  through work none of these ablations touched. **`known_remaining` is not slow because of one
+  identifiable mistake — it is 109 instructions of distributed work**, and shaving it piecemeal
+  has a measured, unpromising ceiling.
+- **WHICH MAKES THE HONEST RECOMMENDATION A DESIGN QUESTION, NOT AN OPTIMISATION.** The probe
+  answers "how many bytes remain in this allocation" for a caller that, on a 7-byte string, needs
+  it only to decline to use it. The options that could actually move this are architectural: do
+  not consult the registry for scans below a length where the bound cannot bind; or make the bound
+  reachable without reconstructing the slot; or accept the page-safe scanner's guarantee for
+  untracked-looking pointers. Each is a contract change, and the counted numbers above are what
+  such a proposal should be judged against — **its ceiling is 109 instructions per call, and
+  everything short of restructuring gets at most 36 of them.**
+- **RESIDUAL, STATED SO NOBODY EXPECTS PARITY.** Even with the probe entirely gone fl is
+  **50.033 Ir against glibc's 23.006 — still 2.18x**. That remainder is the phase load, the strict
+  check, the GOT-indirect call into core and the scanner's own entry. Probe-focused work cannot
+  reach parity on this surface and should not be sold as if it could.
+- **PROVENANCE.** All five fl objects built from HEAD
+  `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453`: base
+  `dc480b40…c10865`, frame split `73c6a836…bf398`, no-header-checks `d629aada…ddf3a`, memo
+  `ae1fdded…a1175`, no-probe `912ce1a8…39634`. Counted locally with `valgrind-3.25.1`; all
+  ablations remain stashed, none committed.
+
+## 2026-08-26 — malloc/free counted at **9.910x** (664 vs 67 Ir/pair); `__tls_get_addr` alone is **96 Ir**, more than glibc's entire malloc+free. `-Ztls-model=initial-exec` removes 108 Ir/pair (9.910x -> 8.298x) but makes fl **undlopenable**: fl's TLS block is **196,392 bytes against glibc's 136**
+
+- **RESULT CLASS: loss, counted, with one measured lever and a named blocker.** The allocator's
+  wall-clock A/A is structurally unfixable (a genuine A/A needs two independent instances of the
+  same allocator), which is exactly the case a deterministic instruction counter settles. The
+  counted ratio **corroborates the banked ~9.4x wall-clock figure** rather than replacing it.
+- **BOTH ARMS IN ONE PROCESS IMAGE**, which is better than the `strlen` setup: fl is `LD_PRELOAD`ed
+  and the live incumbent is a private glibc in a fresh link-map namespace via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` with its own arena. Arms asserted distinct by
+  pointer, conformance (writable, distinct, 64- and 1024-byte round trip) checked before counting,
+  `PHASE=2` verified on every run. Two-point difference over 2000 marginal `(malloc, free)` pairs;
+  the driver loop's 10 Ir appears identically in every arm and is netted out.
+
+  | size | fl | glibc | ratio |
+  |---|---:|---:|---:|
+  | 64 B | **663.983 Ir** | 67.001 Ir | **9.910x** |
+  | 1024 B | 664.033 Ir | 67.001 Ir | 9.910x |
+
+  **Both arms are flat in size** — 64 B and 1024 B agree to 0.05 Ir. fl's cost is entirely fixed
+  per-call bookkeeping, not allocation work, which is the same shape the `strlen` probe had.
+- **THE DECOMPOSITION, AND ITS OWN CROSS-CHECK.** Per-function self costs sum to **674.000**, exactly
+  the summary-derived marginal total — so this parse is sound, unlike the earlier one that attributed
+  more than the program spent (a cost line after `calls=` is the *inclusive* cost of that call and
+  must not be added to the caller).
+
+  | function | Ir/pair | share |
+  |---|---:|---:|
+  | `malloc_abi::segment_free` | 101 | 15.0% |
+  | **`__tls_get_addr`** | **96** | **14.2%** |
+  | `malloc_abi::enter_allocator_reentry_guard` | 84 | 12.5% |
+  | `malloc_abi::allocate_from_local_class` | 79 | 11.7% |
+  | `malloc` (fl entrypoint) | 79 | 11.7% |
+  | `FlatCombiningStats::apply_locked` | 67 | 9.9% |
+  | `free` (fl entrypoint) | 53 | 7.9% |
+  | `malloc_abi::segment_allocate` | 43 | 6.4% |
+  | `runtime_policy::mode` | 29 | 4.3% |
+  | `runtime_policy::entrypoint_scope` | 22 | 3.3% |
+  | `size_class::small_bin_index` | 11 | 1.6% |
+
+  **`__tls_get_addr` costs more per pair than glibc's entire malloc+free (96 vs 67).** It is not
+  allocator logic at all — it is the general-dynamic TLS access sequence, and the object carries
+  **2440 call sites** to it.
+- **THE LEVER, MEASURED.** `-Ztls-model=initial-exec` turns those accesses into direct `%fs:`
+  references: call sites **2440 -> 23**, and `__tls_get_addr` vanishes from the profile entirely.
+  The inlined accesses are cheaper in place too (guard 84 -> 76, `mode` 29 -> 26), so the saving
+  exceeds the 96 Ir the symbol itself cost: **664 -> 556 Ir/pair, 9.910x -> 8.298x, 108 Ir saved,
+  16.3% of fl's libc work.** On `strlen` the same object saves **1 Ir** (159 -> 158) — consistent
+  with that surface's cost being `known_remaining`, not TLS, and a useful negative control on the
+  claim that this flag is a general speedup.
+- **BOTH BUILD GUARDS PASS, so the arms differ only in TLS model.** `RUSTFLAGS` *replaces*
+  `build.rustflags`, so the control arm restates the config list verbatim
+  (`-Z threads=4 -Ctarget-feature=+avx2,+fma`) and came out **byte-identical to the base object**
+  (`dc480b40…c10865`), proving the restatement is complete; and the AVX2 census is unchanged across
+  arms (`vpcmpeqb` 1875, `vpbroadcast` 805), proving the ISA was not silently dropped.
+- **AND THE BLOCKER, WHICH IS WHY THIS IS NOT LANDED.** `dlopen` of the initial-exec object fails
+  outright: `cannot allocate memory in static TLS block`. Initial-exec must be satisfied from
+  glibc's static TLS surplus, and **fl's TLS block is 196,392 bytes against glibc's own
+  `libc.so.6` at 136 — a factor of 1444.** The conformance harness and `incumbent_coverage_ab`
+  both `dlopen` fl, so this flag would break them as they stand.
+- **TWO WAYS OUT, ONE OF THEM ALREADY VERIFIED.** `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=262144`
+  makes the `dlopen` succeed (round trip passes), and the preload path — how fl actually deploys —
+  is unaffected either way. But an env-var dependency is a real constraint on any consumer that
+  `dlopen`s fl without controlling its environment, so the clean fix is to shrink the block. Of the
+  TLS visible in `.dynsym` (53,943 bytes across 143 symbols; the object is stripped, so local
+  symbols are not counted), **81 symbols totalling 52,151 bytes are per-thread static return
+  buffers for non-reentrant APIs** — `GETMNTENT_BUF` 4096, `ALIAS_ITER` 4688, `FSTAB_STATE` 4176,
+  `HOST_ITER` 2288, `TTYENT_STATE` 2128, `SERVENT_TLS`, `PROTOENT_TLS`, `RPC_ENTRY_TLS`,
+  `FGETSPENT_TLS`, plus a 16,384-byte `pthread::tls::FALLBACK_TLS_VALUES`. Making fl's legacy
+  return contracts thread-local is a genuine improvement over glibc's shared static storage, but
+  **every thread pays for all of them inline whether or not it ever calls those functions.**
+  Replacing the inline storage with a lazily heap-allocated per-thread pointer keeps the
+  reentrancy property, costs 8 bytes of TLS each, and is what unlocks the 108 Ir.
+- **NOT LANDED, AND NOT CLAIMED AS A WIN.** No conformance suite has been run against the
+  initial-exec object; the flag is not in the tree. What is established is the counted ratio, the
+  mechanism, the size of the lever, and the precise reason it cannot ship yet.
+- **PROVENANCE.** Source at HEAD `998070b640879f95ec888990064a07833d926930`, built on worker
+  `vmi1293453`. Objects: base/control `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  initial-exec `34b53527327e13874d8293a98e8f93f6145926612664b42d4b2deb48d9ae375d`. Counted locally
+  with `valgrind-3.25.1` (no fleet worker has valgrind; a software counter needs no quiet host).
+
+## 2026-08-26 — malloc/free levers priced: stats telemetry **90 Ir/pair**, TLS model **108 Ir/pair**. And a REFUTATION: ablating the obvious stats caller bought **5 Ir**, because the single-threaded hot path reaches `apply_locked` through a different, `#[inline(always)]` site
+
+- **RESULT CLASS: two counted levers plus one measured refutation of my own first guess.** Same
+  instrument as the 9.910x row above: both arms in one process image, fl `LD_PRELOAD`ed against a
+  live glibc in a fresh link-map namespace, two-point difference over 2000 `(malloc, free)` pairs,
+  `PHASE=2` and conformance verified on every run, driver loop's 10 Ir netted out.
+
+  | configuration | Ir/pair | vs glibc | saved |
+  |---|---:|---:|---:|
+  | glibc (incumbent) | **67.001** | 1.000x | — |
+  | fl base | **663.983** | 9.910x | — |
+  | fl, `record_mutation` ablated | 659.006 | 9.836x | **4.977** |
+  | fl, ALL stats ablated | 574.006 | 8.567x | **89.977** |
+  | fl, `-Ztls-model=initial-exec` | 556.006 | 8.298x | **107.977** |
+
+- **THE REFUTATION, WHICH IS THE POINT OF THE ROW.** `FlatCombiningStats::apply_locked` carries
+  67 Ir of self cost, and `record_mutation` is the caller that *looks* hot — it takes a global
+  `combiner_lock` CAS on every malloc and every free, and carries a comment from a previous
+  campaign describing it as the leaned-out per-alloc counter path. Ablating it moved **5 Ir**, and
+  `apply_locked` still stood at 67 Ir in the ablated profile. **The single-threaded hot path never
+  calls `record_mutation` at all.** `record_stats_binned` is `#[inline(always)]` and, when
+  `MULTI_THREADED` is false, calls `apply_locked` **directly on the slot's own
+  `segment_local.stats`** — no lock, no `record_mutation` — then returns. Ablating *that* site
+  buys **90 Ir**. Guessing the call path from self costs was wrong by **18x**.
+- **SO SELF COST NAMES THE EXPENSE, NOT THE LEVER.** Caller attribution is a separate read of the
+  profile and it is the one that locates the ablation: `fn=` is the calling function, `cfn=` names
+  the callee of the following `calls=` record, and that record's cost line is the call's
+  *inclusive* cost. Read that way, `apply_locked` is entered **once per malloc and once per free**
+  (32 and 35 Ir), which is what says the lock path is not involved.
+- **THE SAME READ PRICES THE TLS ACCESSES EXACTLY.** `__tls_get_addr` is **4 calls per pair at
+  24 Ir each**: two from `enter_allocator_reentry_guard`, one from `runtime_policy::mode`, one
+  from `malloc` itself. That is the whole of the 96 Ir, and it is why the initial-exec build
+  recovers it — see the preceding row for the `dlopen` blocker that keeps that flag from shipping.
+- **THE TWO LEVERS ARE LARGELY INDEPENDENT.** The TLS calls come from the guard, the mode read and
+  `malloc`'s own frame, not from the stats path. Taken together they are **~198 Ir of fl's 664**,
+  which would land the surface near **7.0x** — still a large loss, and worth stating plainly rather
+  than as a projected win: neither has been shipped, and the combined figure has not itself been
+  measured on a single object.
+- **WHAT SURVIVES IN THE ABLATED PROFILE** is the allocator proper — `segment_free` 101,
+  `allocate_from_local_class` 79, `segment_allocate` 43, plus `malloc`/`free` frames at 73/36 and
+  `runtime_policy::mode` at 29. Even with all telemetry removed fl spends **574 Ir against glibc's
+  67**; observability is 13.6% of the gap, not the cause of it.
+- **NOTHING LANDED.** Both ablations were prepared as patches, applied only on the worker's
+  archived source, and reverted there (marker count 0 after revert); the repository tree was never
+  left modified. Objects: base `dc480b40…c10865`, `record_mutation` ablation
+  `51515228ab890b27a0b934725969afa3f2818f10db3314082f2de8a010c826fb`, full-stats ablation
+  `c3b54e7c4483d06bcf7ce15a4c14aca8bee68df8897d23671872a771825a7f72`, initial-exec
+  `34b53527…ae375d`. Source HEAD `998070b640879f95ec888990064a07833d926930`, built on
+  `vmi1293453`, counted locally with `valgrind-3.25.1`.
+
+## 2026-08-26 — counted survey of 12 families vs live glibc ranks `strcmp` worst at **3.03x** (4.95x on short inputs); per-panel early-out takes short compares **4.95x -> 3.70x** and medium **3.78x -> 3.04x**. Two other designs measured and REFUTED
+
+- **RESULT CLASS: a counted survey that re-ranked the frontier, one improvement landed, two
+  candidates refuted.** Instrument as before: fl `LD_PRELOAD`ed (PHASE=2, the deployed
+  configuration) against a live glibc in a fresh link-map namespace **in the same process image**,
+  arms asserted distinct by pointer, conformance checked before counting, two-point difference over
+  2000 marginal calls. The driver loop's 10 Ir is present identically in every arm and netted out.
+- **THE SURVEY.** Twelve families, each with an identical loop body across arms and only the
+  resolved function pointer differing:
+
+  | family | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `strcmp` | 112.03 | 37.00 | **3.028x** |
+  | `memrchr` | 214.98 | 72.00 | **2.986x** |
+  | `wcslen` | 89.00 | 40.00 | 2.225x |
+  | `memcmp` | 143.00 | 71.00 | 2.014x |
+  | `snprintf` | 3040.03 | 1692.00 | 1.797x |
+  | `tsearch`+`tdelete` | 2204.98 | 1296.26 | 1.701x |
+  | `qsort` width-16 | 29466.00 | 18182.00 | 1.621x |
+  | `strstr` | 459.00 | 335.00 | 1.370x |
+  | `qsort` i32 | 7977.40 | 12386.00 | 0.644x (fl ahead) |
+  | `strtod` | 560.00 | 886.00 | 0.632x (fl ahead) |
+  | `getenv` | 263.96 | 487.00 | 0.542x (fl ahead) |
+  | `mktime` | 210.00 | 2761.00 | 0.076x (fl ahead) |
+
+  **`qsort` width-16 lands at 1.621x, reproducing the banked 1.6-1.7x wall-clock figure** — an
+  independent cross-validation of the counted instrument on a surface whose loss was established
+  by a different method.
+- **`strcmp` IS A FIXED FLOOR, NOT A SCALING PROBLEM.** A length sweep shows fl **flat at 99-104 Ir
+  from L=4 to L=128** while glibc runs 20-41 — an excess of ~75-79 Ir that is constant, so the
+  ratio is worst where the string is shortest: **4.95x at L<=32**, decaying to 1.39x at L=256.
+  Attribution splits it as `strcmp` entry **34 Ir at every length** (glibc's entire 4-byte compare
+  is 20) plus `scan_strcmp` **65 Ir even for a 4-byte string**. The entry pays no `__tls_get_addr`
+  — checked, and it is zero — so unlike the allocator this is not TLS.
+- **THE CAUSE, AND HOW THE SWEEP PROVES IT.** `scan_strcmp`'s 128-byte window OR-combines four
+  32-lane masks so the all-equal case takes a single branch, and its page guard admits the window
+  for a 5-byte string as readily as a 5000-byte one. So **every compare shorter than 128 bytes
+  executed all four panels.** The sweep matches that structure exactly: 70 Ir at L=128 (one
+  window), 144 at L=192 (two), 398 at L=1024 (eight).
+- **WHAT SHIPPED: per-panel early-out.** Test each mask as it is produced, so a short or
+  early-differing compare leaves after one panel; `f2`/`f3` stay OR-combined. Counted against live
+  glibc:
+
+  | len | glibc | base | early-out | base | early-out |
+  |---|---:|---:|---:|---:|---:|
+  | 4-32 | 20.00 | 98.97 | **74.00** | 4.950x | **3.700x** |
+  | 43-64 | 27.00 | 102.02 | **82.00** | 3.778x | **3.037x** |
+  | 96 | 34.03 | 104.00 | 100.00 | 3.056x | 2.939x |
+  | 128 | 41.00 | 103.97 | 100.00 | 2.536x | 2.439x |
+  | 192 | 86.04 | 144.03 | 124.97 | 1.674x | 1.453x |
+  | 256 | 105.00 | 146.00 | 143.00 | 1.390x | 1.362x |
+  | 1024 | 243.00 | 397.97 | 401.00 | 1.638x | 1.650x |
+  | 4096 | 797.00 | 1457.96 | 1471.00 | 1.829x | 1.846x |
+
+  Better at 11 of 13 lengths; summed over the sweep **3053 -> 2874 Ir**. **The two regressions are
+  stated, not buried:** −3 Ir at L=1024 and −13 Ir at L=4096, both under 1%.
+- **AND THE HONEST LIMIT ON THAT CLAIM.** This is an **instruction-count** trade. The OR form also
+  lets the four loads issue without an intervening branch, so a cycle-accurate measurement may
+  value the long-string case differently than Ir does; the sub-1% regressions at 1024/4096 are
+  where that would show. The claim here is exactly what was measured — fewer instructions — not a
+  cycle-level win.
+- **TWO CANDIDATES MEASURED AND REFUTED, both conformance-clean, neither kept.**
+  **(1) First-panel probe** (one 32B panel before the loop): 99 -> 62 Ir at L<=32, the best short
+  result of the three — but after a clean first panel it re-enters the 128B window and runs four
+  more panels, costing **~20 Ir at every length from 43 to 1024**. Refuted as a net change.
+  **(2) Deferred window** (gate the 128B block on `i >= 128` so the 32B tier handles the first 128
+  bytes): worse at *both* ends — 84 Ir at L=4 against the probe's 62, and **+198 Ir at L=4096**,
+  because the added loop condition costs ~6 Ir on every one of the 32 window iterations. The
+  lesson that separates them: **a pre-loop check is nearly free; the same check inside the hot
+  loop is not.**
+- **CONFORMANCE.** Differential against live glibc in the same image, comparing result **signs**
+  (only the sign is contractual): every length 0..300 with the difference walked across every
+  position, early-NUL and prefix relations, high-bit bytes at 0x80/0xFF (`strcmp` compares as
+  *unsigned* char), and strings placed so their NUL lands on the **last mapped byte before a
+  `PROT_NONE` page** — one operand and then both — so any over-read past the terminator faults.
+  **140,016 checks, 0 failures**, on the base object and on all three candidates.
+- **GATE.** `cargo test -p frankenlibc-abi --lib` observed compiling and running:
+  `test result: ok. 200 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out`. A `strcmp`-filtered
+  run was discarded first as evidence: it printed `ok` over **0 tests** (201 filtered out).
+- **PROVENANCE.** Base `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`;
+  first-panel probe `eac5aebdc6d8f39f13032565716c14db9d763801539b41b49df44ff62cce1867`; deferred
+  window `9d8d2c077a24e1e760caf798c51e1148b9d25dc791f7791fbd705cf8b9026a15`; early-out
+  `e1c91f8806dec22d394d0fc5a9cbff3d0279e9a96de8820919ada4581a1a2a78`. Built on `vmi1293453` from
+  HEAD `998070b640879f95ec888990064a07833d926930`, counted locally with `valgrind-3.25.1`.
+- **NEXT ON THIS FRONTIER:** `memrchr` at 2.986x (215 vs 72 Ir) is now the worst unattacked
+  surface in the survey, and `wcslen` 2.225x / `memcmp` 2.014x follow.
+
+### 2026-08-26 addendum — landing SHA for the `strcmp` early-out (swept by a concurrent `commit -a`)
+
+The `strcmp` per-panel early-out and its ledger row above were staged by me but landed inside
+another agent's commit **`37cf934af5757f30db63bcf66ddd3295288dcc9b`** ("bench(printf): calibrate
+stdout float coverage batch"), which ran `commit -a` over the shared worktree while my change was
+in the index. **The content at HEAD is byte-for-byte the object that was measured and
+conformance-tested** (`e1c91f8806dec22d394d0fc5a9cbff3d0279e9a96de8820919ada4581a1a2a78`);
+verified by reading the landed block at HEAD. Their commit is left untouched — this row exists so
+the evidence has a citable SHA rather than a rewritten history. Same hazard, same handling as the
+earlier `c8232c0ec` sweep.
+
+## 2026-08-26 — `memrchr`'s real worst case is **10.32x**, not the 2.99x the survey sampled: the SIMD mask was computed and thrown away, then the 32 bytes re-walked scalar. Resolving from the mask makes it **position-independent** — worst case 10.32x -> 4.27x, and the length sweep 40% fewer instructions
+
+- **RESULT CLASS: a loss that was worse than first measured, then fixed.** Instrument unchanged: fl
+  `LD_PRELOAD`ed (PHASE=2, deployed configuration) against a live glibc in a fresh link-map
+  namespace **in the same process image**, arms asserted distinct by pointer, conformance checked
+  before counting, two-point difference over 2000 marginal calls, driver loop's 10 Ir netted out.
+- **THE SURVEY UNDERSTATED IT, AND THE DESIGNED PROBE IS WHY.** The 12-family survey put `memrchr`
+  at 2.986x, but that case happened to place the needle 24 bytes from its chunk end. Pinning the
+  needle **inside the last 32-byte chunk** holds the number of chunks examined at exactly one, so
+  the only variable left is the needle's offset within that chunk:
+
+  | offset in chunk | glibc | fl base | ratio |
+  |---:|---:|---:|---:|
+  | 31 (chunk end) | 18.00 | 93.00 | 5.166x |
+  | 24 | 17.97 | 115.00 | 6.398x |
+  | 16 | 18.00 | 139.00 | 7.722x |
+  | 8 | 18.00 | 163.00 | 9.055x |
+  | 0 (chunk start) | 18.03 | 186.00 | **10.317x** |
+
+  **glibc is flat at 18 Ir at every position; fl ran 93 -> 186, exactly +3.0 Ir per byte of
+  backward distance.** A ratio quoted from one needle placement was not wrong so much as
+  *unrepresentative* — the surface has no single ratio, and the worst case is 3.5x the sampled one.
+- **THE CAUSE.** `memrchr` asked `has_byte_simd_32`, a 32-lane SIMD compare **whose mask was then
+  discarded**, and on a hit re-walked the same 32 bytes with `chunk.iter().rposition(...)`. So the
+  vector unit found the answer and the code threw it away to go looking scalar — and the scalar
+  walk starts at the chunk end, which is why cost tracked distance-from-end at 3 instructions per
+  byte. This is the same "compute the mask, then rescan" shape that `scan_strcmp`'s 32B tier
+  already calls out and avoids.
+- **THE FIX IS THE HELPER THAT WAS ALREADY THERE.** `byte_mask_simd_32` sat two lines below,
+  returning the bitmask from the identical compare. Resolving with `63 - mask.leading_zeros()` is
+  O(1) and position-independent:
+
+  | offset | glibc | base | fixed | base | fixed |
+  |---:|---:|---:|---:|---:|---:|
+  | 31 | 18.00 | 93.00 | **77.00** | 5.166x | **4.278x** |
+  | 16 | 18.00 | 139.00 | **77.00** | 7.722x | **4.278x** |
+  | 0 | 18.03 | 186.00 | **77.00** | 10.317x | **4.271x** |
+
+  **Flat at 77 Ir, matching glibc's flat shape**, and the worst case improves by 109 Ir.
+- **AND IT COMPOUNDS OVER LENGTH, WITH NO REGRESSION ANYWHERE.**
+
+  | len | glibc | base | fixed | base | fixed |
+  |---:|---:|---:|---:|---:|---:|
+  | 16 | 18.00 | 120.00 | 119.00 | 6.666x | 6.611x |
+  | 32 | 18.03 | 166.00 | 65.00 | 9.208x | **3.605x** |
+  | 64 | 30.00 | 175.00 | 73.00 | 5.833x | 2.433x |
+  | 128 | 41.00 | 202.00 | 87.00 | 4.927x | 2.122x |
+  | 256 | 61.97 | 217.00 | 100.00 | 3.501x | 1.614x |
+  | 1024 | 154.00 | 307.02 | 178.00 | 1.994x | **1.156x** |
+  | 4096 | 466.00 | 667.00 | 490.00 | 1.431x | **1.052x** |
+
+  Summed over the sweep **1854 -> 1112 Ir, 40.0% fewer**. Long buffers land within 5% of glibc.
+- **L=16 IS UNCHANGED AND THAT IS DELIBERATE, NOT AN OVERSIGHT.** Buffers under 32 bytes never
+  reach a 32-lane chunk; they resolve in the 8-byte SWAR tier, which has the same discard-then-
+  rescan shape over at most 7 bytes. It is left alone here — **that tier is still 6.61x and is the
+  named next step on this surface**, not a solved case.
+- **DEAD CODE REMOVED RATHER THAN SUPPRESSED.** `has_byte_simd_32`'s only two callers were the two
+  sites replaced, so it went dead. It is deleted, not kept behind an `allow(dead_code)`; the build
+  is warning-clean, which is also what proves both call sites were converted.
+- **CONFORMANCE.** Differential against live glibc in the same image. Unlike `strcmp`, the returned
+  **pointer is contractual**, so results are compared as exact offsets. Coverage aimed at what a
+  mask resolve can get wrong: needle at every position of every length 0..400; **multiple needles,
+  since `memrchr` must return the LAST** — a resolve that picked the wrong set bit fails here;
+  dense buffers where nearly every lane matches; `n` shorter than the buffer, so a needle past `n`
+  must not be seen; `n == 0`; and high-bit values 0xAA/0xFF plus `0x1FF` to confirm the `int`
+  argument is truncated to `unsigned char`. **951,906 checks, 0 failures**, on both the base object
+  and the candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib memrchr` observed compiling and running:
+  `test result: ok. 11 passed; 0 failed` — including the property test
+  `prop_memrchr_matches_scalar_rposition`, which is precisely a differential against the scalar
+  `rposition` this change removed from the hot path.
+- **PROVENANCE.** Base `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  candidate `019ca821c52d68dee6f6e42f5f9ac3225b90d6133aa9e7abefc44395807a8cc8`. Built on
+  `vmi1293453` from HEAD `998070b640879f95ec888990064a07833d926930`, counted locally with
+  `valgrind-3.25.1`.
+- **NEXT ON THIS FRONTIER:** `memrchr`'s sub-32-byte SWAR tier at 6.61x, then `wcslen` 2.225x and
+  `memcmp` 2.014x from the survey.
+
+## 2026-08-26 — the string ABI entries carry a **6-push / 136-byte frame** for a cold path they skip: splitting `memrchr`'s tail out buys a flat **14.0 Ir per call at every length**. Combined with the mask resolve, `memrchr` goes 10.32x -> 3.50x worst-case and reaches **1.02x at 4096 bytes**
+
+- **RESULT CLASS: a counted win on a cross-cutting cost, not a memrchr-specific one.** Instrument
+  unchanged: fl `LD_PRELOAD`ed (PHASE=2) against live glibc in a fresh link-map namespace in the
+  **same process image**, arms asserted distinct, conformance before counting, two-point over 2000
+  marginal calls, driver loop's 10 Ir netted out.
+- **HOW IT WAS FOUND, AND THE NEGATIVE THAT PRECEDED IT.** `memrchr`'s ABI entry cost a flat **36 Ir
+  at every length** — alone that is 2x glibc's entire 16-byte `memrchr`. The obvious suspect,
+  `runtime_policy::strict_passthrough_active()`, was **checked and cleared**: it is one relaxed
+  atomic load and two compares, ~4 instructions. Disassembly named the real cost instead:
+
+  ```
+  memrchr: push %rbp; push %r15; push %r14; push %r13; push %r12; push %rbx; sub $0x88,%rsp
+  ```
+
+  **Six callee-saved registers and a 136-byte frame**, sized for the validating tail, paid by the
+  strict fast path on every call for registers it never touches — prologue plus matching epilogue,
+  ~14 instructions. `strcmp`, `strlen` and `memchr` open with the same shape, so **this is a
+  property of the string ABI entries, not of `memrchr`.**
+- **THE FIX AND ITS PREDICTED SIZE.** Moving the validating tail into a `#[cold] #[inline(never)]`
+  helper collapses the prologue to a single `push %rbx` with no stack allocation. Measured saving:
+  **exactly 14.0 Ir per call, identical at all seven lengths** — which is the prologue/epilogue
+  count, so the mechanism is confirmed rather than merely correlated.
+- **COMBINED WITH THE MASK RESOLVE** (previous row):
+
+  | len | glibc | base | mask | +split | base | final |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 18.00 | 120.00 | 119.00 | 105.00 | 6.666x | 5.833x |
+  | 32 | 18.03 | 166.00 | 65.00 | **51.00** | 9.208x | **2.829x** |
+  | 64 | 30.00 | 175.00 | 73.00 | 59.00 | 5.833x | 1.967x |
+  | 128 | 41.00 | 202.00 | 87.00 | 73.00 | 4.927x | 1.780x |
+  | 256 | 61.97 | 217.00 | 100.00 | 86.00 | 3.501x | 1.388x |
+  | 1024 | 154.00 | 307.02 | 178.00 | 164.00 | 1.994x | **1.065x** |
+  | 4096 | 466.00 | 667.00 | 490.00 | **476.00** | 1.431x | **1.021x** |
+
+  Totals **1854 -> 1014 Ir, 45% fewer**. Worst needle position **10.317x -> 3.495x**, and the
+  position-independence from the mask resolve is preserved (63 Ir at offsets 31, 16 and 0 alike).
+- **THIS RETROACTIVELY EXPLAINS AN EARLIER RESULT.** The `strlen` hot/cold frame split measured
+  **17 Ir** and was reverted this session as "only ~12.5% of the gap". It is the same phenomenon,
+  and at 14-17 Ir on **every** string entrypoint it is a systematic tax rather than a per-symbol
+  curiosity. **`strlen`, `strcmp` and `memchr` still carry it** — named here, not silently folded
+  into this row.
+- **CONFORMANCE.** The same 951,906-check differential against live glibc as the previous row —
+  exact offsets, needle at every position of every length 0..400, multiple needles (last must
+  win), dense buffers, `n` truncation, `n == 0`, high-bit and `0x1FF` truncation. **0 failures.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib` observed compiling and running:
+  `test result: ok. 200 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out`.
+- **PROVENANCE.** Mask-resolve only `019ca821c52d68dee6f6e42f5f9ac3225b90d6133aa9e7abefc44395807a8cc8`;
+  mask-resolve + frame split `083507c6edf3cb33279a3364faaf14af340935d08a793ef9e0f0ac8142826d5a`.
+  Built on `vmi1293453`, counted locally with `valgrind-3.25.1`.
+
+## 2026-08-26 — cold-tail split extended to `memchr` (+14.0 Ir), `strcmp` (+11.0), `strnlen` (+4.0). **`strlen` REFUSED THE SAME CHANGE: it SIGSEGVs hardened startup, 3/3** — the 17 Ir is real and not worth it
+
+- **RESULT CLASS: three counted wins and one regression caught before landing.** Instrument
+  unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same
+  process image**, arms asserted distinct, conformance before counting, two-point over 2000
+  marginal calls, driver loop's 10 Ir netted out. Baseline and candidate were built from the **same
+  HEAD**, so they differ only by these splits.
+
+  | entry | len | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `memchr` | 8 | 19.00 | 112.00 | 98.00 | 5.894x | 5.158x | **+14.00** |
+  | `memchr` | 32 | 19.00 | 71.00 | 56.97 | 3.737x | **2.998x** | +14.03 |
+  | `memchr` | 128 | 42.00 | 104.00 | 90.03 | 2.476x | 2.143x | +13.97 |
+  | `strcmp` | 8 | 20.00 | 73.97 | 63.00 | 3.699x | **3.150x** | **+10.97** |
+  | `strcmp` | 128 | 40.97 | 100.00 | 89.00 | 2.441x | 2.172x | +11.00 |
+  | `strnlen` | 8 | 18.01 | 90.03 | 86.01 | 5.000x | 4.777x | **+4.03** |
+  | `strnlen` | 128 | 48.00 | 86.00 | 82.00 | 1.792x | 1.708x | +4.00 |
+  | `strlen` | 8 | 13.01 | 168.03 | 168.01 | 12.920x | 12.918x | +0.03 *(not split)* |
+
+  Each saving is **exactly constant across lengths**, which is the signature of a prologue/epilogue
+  effect rather than anything length-dependent. `strnlen` gains least because its post-split
+  prologue still keeps five pushes — its fast path genuinely needs those registers.
+- **THE REGRESSION, AND WHY IT WAS ONLY VISIBLE IN HARDENED MODE.** `strlen` has the largest frame
+  of the family (`sub $0xb8,%rsp`, 184 bytes) and an isolated split measured **17 Ir**, so it
+  looked like the best of the four. Splitting it made **hardened-mode startup SIGSEGV, 3/3 runs**,
+  dying before `main`; strict mode was completely unaffected and every strict measurement passed.
+  Baseline at the same HEAD passed hardened 3/3. **The split is refused; the 17 Ir is real and is
+  not worth it.**
+- **WHY `strlen` AND NOT ITS SIBLINGS.** Alone among the four, `strlen`'s tail opens with
+  `string_raw_passthrough_active()` — the re-entrancy/TLS bypass that stands between an interposed
+  `strlen` and a validating membrane that itself calls `strlen`. Its three siblings, and the
+  already-landed `memrchr`, have no such bypass. Attribution by **isolation, not inference**:
+  rebuilding with `strlen` alone reverted and the other three still split passes hardened 3/3.
+- **A FALSE PASS THAT NEARLY HID IT, WORTH RECORDING.** The first hardened run under `stdbuf -oL`
+  reported `CHECKS=12013 FAILS=0 verdict=PASS`. **`stdbuf` works by setting its own `LD_PRELOAD`,
+  which displaced fl entirely** — the giveaway was `PHASE=-1` in that run's own header against
+  `PHASE=2` everywhere else. **Never wrap an `LD_PRELOAD` measurement in `stdbuf`.** Equally, the
+  crash's *silence* was itself misleading in the other direction: stdout was block-buffered, so a
+  SIGSEGV discarded the buffer and looked like "crashed before the first `printf`". gdb settled it
+  — `During startup program terminated with signal SIGSEGV` — which happened to be true, but the
+  missing output was not the evidence for it.
+- **CONFORMANCE.** Differential vs live glibc in the same image, run in **both strict and hardened
+  mode**, since the split moves the body that only executes when hardened: 12,013 checks over
+  lengths 0..600 on **both heap and static operands** (the validating path branches on exactly the
+  `known_remaining` distinction), covering `strlen`, `strnlen` full/truncated/zero-`n`, `memchr`
+  first/last/absent, and `strcmp` equal/differing/prefix. Plus the existing suites re-run against
+  this object: `strcmp` 140,016 checks and `memrchr` 951,906 checks. **0 failures throughout.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline (same HEAD, unpatched)
+  `de64e6b1a3adccd1b9f6782b5296ab232abbfaaf31def3a261359a34fb48cde9`; four-way split (**crashes
+  hardened, not landed**) `a4db02edf2feb0751a4404238be36a7215f35ad7d0301156b021a0923656f62e`;
+  three-way split (landed) `525a0803083c852749d1111af9bd0c5a9bd28aa5fee993f2b22360c5b45a52e6`.
+  Built on `vmi1293453`, counted locally with `valgrind-3.25.1`.
+- **`strlen` REMAINS THE WORST COUNTED SURFACE MEASURED SO FAR: 12.92x at L=8** (168 vs 13 Ir),
+  and it is now blocked on the `known_remaining` probe (109 Ir, priced earlier) rather than on
+  frame overhead — the frame lever is closed for this symbol.
+
+## 2026-08-26 — the `strlen` bound costs **34 Ir in the SCANNER**, not only 49 in the probe. A `[8,16)` bounded tier recovers up to **58 Ir**; `strlen` at bound 15 goes 14.67x -> 10.52x
+
+- **RESULT CLASS: a corrected attribution plus a counted win with one stated regression.**
+  Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the
+  same process image**, two-point over 2000 marginal calls, `PHASE=2` and conformance verified
+  before counting.
+- **PROVENANCE SPLITS `strlen` IN TWO, WHICH THE EARLIER ROWS DID NOT SEPARATE.** Same 8-byte
+  string, different buffer:
+
+  | buffer | glibc | fl | ratio |
+  |---|---:|---:|---:|
+  | heap (allocator-tracked) | 13.01 | **168.01** | **12.918x** |
+  | static (`.bss`) | 13.01 | 85.01 | 6.536x |
+  | stack | 13.01 | 87.01 | 6.690x |
+
+  Attribution at L=8, tracked vs untracked: `strlen` entry **34 / 34**, `known_remaining`
+  **82 / 33**, `scan_c_string` **53 / 19**. So the probe costs 49 Ir extra to answer *yes* — but
+  **the bound it returns then costs another 34 Ir inside the scanner**, which earlier rows folded
+  into "the probe". The untracked path is near its floor already: all three sources
+  (`bump_mmap_remaining`, `segment_owned_location`, `fallback_remaining`) open with a flag or a
+  range test, so ~33 Ir for three negative lookups is close to irreducible.
+- **WHY THE SCANNER GOT SLOWER WITH A BOUND.** `scan_c_string`'s bounded arm had an overlapping
+  16-byte probe pair for `[16,32)` but nothing below it, so a bound of 9 fell into the generic
+  ladder and descended 128 -> 64 -> 32 -> 8B SWAR -> scalar, testing tiers that cannot fire at that
+  bound. The unbounded arm resolves the same string in one panel — 19 Ir.
+- **THE FIX IS THE EXISTING TRICK ONE TIER DOWN**, two overlapping 8-byte probes covering
+  `[0,8)` and `[limit-8, limit)`:
+
+  | strlen | bound | glibc | base | fixed | base | new | saved |
+  |---:|---:|---:|---:|---:|---:|---:|---:|
+  | 3 | 4 | 14.00 | 170.00 | 172.00 | 12.143x | 12.286x | **−2.00** |
+  | 6 | 7 | 14.01 | 188.01 | 190.01 | 13.423x | 13.566x | **−2.00** |
+  | 7 | 8 | 14.01 | 177.03 | 139.01 | 12.640x | **9.925x** | +38.03 |
+  | 8 | 9 | 14.01 | 169.01 | 147.01 | 12.067x | 10.496x | +22.00 |
+  | 10 | 11 | 14.00 | 181.03 | 147.00 | 12.930x | 10.500x | +34.03 |
+  | 14 | 15 | 13.97 | 205.00 | 147.00 | 14.671x | **10.520x** | +58.00 |
+  | 20 | 21 | 14.03 | 140.00 | 140.00 | 9.981x | 9.981x | 0.00 |
+  | 40 | 41 | 22.00 | 177.00 | 175.00 | 8.045x | 7.954x | +2.00 |
+
+  Summed **1407 -> 1257 Ir, 10.7% fewer**. **The regression is stated: bounds under 8 pay 2 Ir**
+  for the extra dispatch and are not helped, since they still fall through to the generic ladder.
+- **A FIRST ATTEMPT TAXED EVERY LARGER BOUND, AND WAS RESTRUCTURED RATHER THAN SHIPPED.** Adding
+  `[8,16)` as a second top-level range check beside `(16..32)` cost **2-4 Ir at bounds 21 and 41** —
+  every bound above the band paying for a test that could not fire. Nesting both arms under a
+  single `limit < 32` removed it: bound 21 went to exactly neutral and **bound 41 to +2 Ir**,
+  because a bound of 32 or more now costs one compare where `(16..32).contains` cost two. The
+  in-band saving gives up 2 Ir for that (v1 139/145/145/145 vs v2 139/147/147/147) and is worth it.
+- **ONE OPTIMIZATION CONSIDERED AND REJECTED AS OUT-OF-CONTRACT.** The scanner could run its fast
+  *unbounded* page-safe scan and consult the bound only if no NUL turned up before `limit`, which
+  would erase the whole 34 Ir. It is rejected: `strlen`'s strict path documents the bound as
+  ensuring "an unterminated tracked buffer does not make the strict fast path read into the next
+  allocation", and reading-then-discarding those bytes is still reading them. **Not a performance
+  judgement — a contract one.**
+- **CONFORMANCE.** The property an overlapping-probe pair can break is **first-NUL ordering**, so
+  the test targets exactly that: every bound 0..64 with a NUL at every position, **and with two
+  NULs at every position pair** (the case where a probe-ordering bug returns the higher index);
+  `strlen` over heap allocations of every size 1..64 with the terminator walked through every
+  interior position, driving `limit` through `known_remaining` on the real path; and buffers whose
+  last readable byte is the last mapped byte before a `PROT_NONE` page, so **any read past `limit`
+  faults rather than quietly passing**. **40,689 checks, 0 failures**, in *both* strict and
+  hardened mode, on the base object and the candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `de64e6b1a3adccd1b9f6782b5296ab232abbfaaf31def3a261359a34fb48cde9`;
+  first attempt (taxes larger bounds, **not landed**)
+  `8b5a3eca2194c43f4c79013e9aaa8eb95b993a407f9e9cfc35839c8322246f0b`; landed
+  `08183d7736f932855afb2976bc7d4d81a25064a44f98699f8240140fdf23b4d3`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **`strlen` REMAINS THE WORST SURFACE at ~10x tracked**, and what is left is the 49 Ir positive
+  probe — architectural, with its ceiling already priced. **Untracked `strlen` (string literals,
+  stack buffers) is 6.5x and is a different, cheaper problem.**
+
+## 2026-08-26 — the refused `strlen` frame split, RECOVERED by splitting **below** the re-entrancy bypass instead of above it: flat **+16.0 Ir**, heap `strlen` 11.23x -> **9.996x**, static 6.54x -> **5.31x**
+
+- **RESULT CLASS: a counted win that began as a refutation, with the refutation's cause confirmed
+  by construction.** Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh
+  link-map namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2`
+  and conformance verified before counting. Baseline and candidate built from the **same HEAD**.
+- **THE PRIOR ROW REFUSED THIS CHANGE FOR A NAMED REASON, AND THE NAME WAS TESTABLE.** Splitting
+  `strlen`'s tail made hardened startup SIGSEGV 3/3, and the cause proposed there was that
+  **`string_raw_passthrough_active()` — the re-entrancy/TLS guard between an interposed `strlen`
+  and a membrane that itself calls `strlen` — had been moved behind a `#[cold] #[inline(never)]`
+  boundary.** That predicts a specific fix: split *below* the bypass, leaving it in the hot frame,
+  and move only the ordinary validating work from the trace scope down. **The prediction holds** —
+  hardened passes 3/3, and the prologue still collapses from
+  `push rbp/r15/r14/r13/r12/rbx; sub $0xb8,%rsp` to a single `push %rbx`.
+- **THE NUMBERS, FLAT AS THE MECHANISM REQUIRES.**
+
+  | provenance | len | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | heap (tracked) | 8 | 13.01 | 146.01 | **130.01** | 11.226x | **9.996x** | +16.00 |
+  | heap (tracked) | 32 | 21.00 | 156.97 | 140.97 | 7.475x | 6.713x | +16.00 |
+  | static | 8 | 13.01 | 85.01 | **69.01** | 6.536x | **5.306x** | +16.00 |
+  | static | 32 | 21.00 | 94.97 | 78.97 | 4.523x | 3.761x | +16.00 |
+  | stack | 8 | 13.01 | 87.01 | 71.01 | 6.690x | 5.459x | +16.00 |
+  | stack | 32 | 21.00 | 101.97 | 86.00 | 4.856x | 4.095x | +15.97 |
+
+  **+16.0 Ir at every provenance and every length** — the prologue/epilogue signature, matching the
+  17 Ir an isolated split measured earlier and the 14.0 Ir `memrchr`/`memchr` measured for the same
+  shape. **Heap `strlen` drops below 10x for the first time.**
+- **THE BASELINE ITSELF MOVED, WHICH IS WHY THESE NUMBERS ARE NOT THE PRIOR ROW'S.** Heap `strlen`
+  at L=8 reads 146.01 Ir here against 168.01 two rows ago: the `[8,16)` bounded tier landed in
+  between and is already in this baseline. The two changes compound —
+  **168.01 -> 130.01 Ir, 12.918x -> 9.996x** across the pair — but each was measured against its
+  own contemporaneous baseline, not chained arithmetic.
+- **CONFORMANCE, all against this object, in BOTH strict and hardened mode where the mode matters:**
+  first-NUL/bounded-tier suite **40,689 checks**; four-entrypoint heap-and-static suite **12,013
+  checks**; `strcmp` **140,016**; `memrchr` **951,906**. **0 failures throughout.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`,
+  candidate `332c1f166a526b2ed24d940deab972886a6162717273806c322979ebc1f8494f`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WHAT IS LEFT ON `strlen`:** the 49 Ir positive `known_remaining` probe (tracked buffers only),
+  which is architectural and already priced. **Untracked `strlen` is now 5.31x** and its residual
+  is ~33 Ir of three negative allocator lookups, each already gated on a flag or range test.
+
+## 2026-08-26 — re-derived frontier after the string work, and `wcslen` (the new worst) split: flat **+11-12 Ir**, 2.225x -> **1.872x**. **All ten wide-char entries carry the frame tax**; one is done
+
+- **RESULT CLASS: a re-derived ranking plus one counted win.** The 12-family survey was re-run
+  against the current HEAD object because the earlier ranking was stale — the string family had
+  moved under it. Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map
+  namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2` and
+  conformance verified before counting.
+- **THE FRONTIER MOVED, WHICH IS WHY RE-DERIVING IT MATTERED.**
+
+  | family | before | now |
+  |---|---:|---:|
+  | `memrchr` | 2.986x | **1.334x** |
+  | `strcmp` | 3.028x | **2.189x** |
+  | `tsearch`+`tdelete` | 1.701x | 1.297x |
+  | `wcslen` | 2.225x | 2.225x *(untouched — the new worst)* |
+  | `memcmp` | 2.014x | 2.014x |
+  | `snprintf` | 1.797x | 1.798x |
+  | `qsort` w16 | 1.621x | 1.621x |
+
+  Picking "next worst" off the old table would have re-attacked `memrchr` or `strcmp`, both already
+  more than halved. **`strlen` is still worse in absolute terms (9.996x tracked) but its only
+  remaining lever is the architectural `known_remaining` probe, already priced at 49 Ir.**
+- **`wcslen`'s SCANNER IS NOT THE PROBLEM.** Attribution: fl 80 Ir entirely self-contained, **no
+  callees**, against glibc's `__wcslen_avx2` at 31 Ir. `wide_strlen_unbounded` is already a proper
+  SIMD ladder — masked aligned first probe, 8-lane tier to the next 128-byte boundary, then a 128B
+  four-way min-combine unroll. The strict path also skips `known_remaining` entirely. What was left
+  was the frame.
+- **AND EVERY WIDE-CHAR ENTRY CARRIES IT** — this family was never in the earlier sweep, which only
+  looked at `string_abi`:
+
+  `wcslen` `push rbp/r15/r14/rbx; sub $0x48` · `wcsnlen` 6 pushes `sub $0x48` · `wcschr` 4 pushes
+  `sub $0x48` · `wcsrchr` 5 pushes `sub $0x40` · `wmemchr` 6 pushes `sub $0x48` · `wcscmp` 6 pushes
+  `sub $0x48` · `wcsncmp` 6 pushes `sub $0x58` · `wmemcmp` 6 pushes `sub $0x48` · `wcscpy` 6 pushes
+  `sub $0x58` · `wcscat` 6 pushes `sub $0x58`.
+
+  **Ten entrypoints; one is fixed here.** The other nine are named, not silently folded in.
+- **THE NUMBERS.** `wcslen`'s prologue collapses to a single `push %rax`:
+
+  | wchars | glibc | base | split | base | new | saved |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 4 | 14.98 | 34.98 | **24.03** | 2.335x | **1.604x** | +10.95 |
+  | 16 | 27.00 | 60.00 | 49.00 | 2.222x | 1.815x | +11.00 |
+  | 31 | 31.00 | 68.97 | **58.03** | 2.225x | **1.872x** | +10.95 |
+  | 64 | 62.00 | 105.00 | 93.00 | 1.694x | 1.500x | +12.00 |
+  | 256 | 122.00 | 171.00 | 159.00 | 1.402x | 1.303x | +12.00 |
+
+  Summed **440 -> 383 Ir, 12.9% fewer**; flat at +11-12 Ir, the prologue/epilogue signature.
+- **THE CUT IS AT THE STRICT GATE, WHICH IS SAFE HERE AND WAS NOT FOR `strlen`.** `strlen` needed
+  its cut placed *below* `string_raw_passthrough_active()` because that bypass must not sit behind
+  a cold boundary. `wcslen` has no such bypass between the strict gate and the validating body, so
+  the cut is at the gate — and **hardened startup passes 3/3**, which is the check that caught the
+  `strlen` version.
+- **CONFORMANCE.** Differential vs live glibc in the same image, **strict and hardened**. Targeted
+  at what this scanner keys on: **every alignment 0..31 crossed with every length 0..300** (it
+  aligns down to 32 B and masks, then steps to a 128 B boundary); heap operands so the hardened
+  path takes its `known_remaining` `Some` arm; a terminator placed as the last readable wchar
+  before a `PROT_NONE` page so an over-read faults; and wide values that must not be read as
+  terminators — `0xFFFFFFFF`, `0x00010000`, and **`0x00000100`, whose low byte is zero**, which a
+  byte-wise scan would stop on and a 32-bit lane compare must not. **10,226 checks, 0 failures** on
+  base and candidate, both modes.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`,
+  candidate `82bd2075b6a2a7116503ac516d50feff4ad0935c432c5db5dd74a4c0e27ebef6`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **NEXT:** the nine remaining wide-char entries above, then `strcmp` 2.189x and `memcmp` 2.014x.
+
+## 2026-08-26 — REFUTED: replacing `wide_fused_copy`'s scalar tail loops with `copy_nonoverlapping` made `wcscpy` **WORSE, 5.289x -> 6.500x (+46 Ir)**. Inside fl it lowers to a call to fl's OWN interposed `memcpy`
+
+- **RESULT CLASS: refutation, with a mechanism that generalizes to every `_abi` crate call site.**
+  Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the
+  same process image**, two-point over 2000 marginal calls, `PHASE=2` and conformance verified
+  before counting. Baseline and candidate from the same source tree.
+- **FIRST, THE SURVEY THAT PICKED THE TARGET — and it is why this was not a blind split.** The
+  nine wide-char entries all carry the frame tax, but they were unmeasured, so blanket-splitting
+  them would have treated a 1.9x surface the same as a 5.3x one. Measured:
+
+  | family | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `wcscpy` | 201.03 | 38.00 | **5.290x** |
+  | `wcsncmp` | 243.00 | 60.00 | 4.050x |
+  | `wcsnlen` | 140.00 | 40.00 | 3.500x |
+  | `wcscmp` | 152.00 | 45.97 | 3.306x |
+  | `wcschr` | 119.00 | 44.00 | 2.704x |
+  | `wmemchr` | 153.02 | 64.00 | 2.391x |
+  | `wmemcmp` | 146.00 | 65.00 | 2.246x |
+  | `wcsrchr` | 118.00 | 61.97 | 1.904x |
+
+  **All are worse than `wcslen` was (2.225x)**, and `wcscpy` is the worst non-`strlen` surface
+  measured to date.
+- **THE HYPOTHESIS, WHICH LOOKED SOLID.** `wcscpy` splits as entry 29 Ir + `wide_fused_copy`
+  **172 Ir**, against glibc's entire `__wcscpy_avx2` at 38. `wide_fused_copy` scans with SIMD but
+  copies its partial chunks **one element at a time**: with a 32-byte-aligned source `align == 0`,
+  so the first-chunk loop moves eight wchars scalar, and each NUL-terminating tail branch moves up
+  to eight more. Replacing those four loops with `copy_nonoverlapping` — count exactly `nul+1`, so
+  it cannot overrun the way a full-width vector store would, and `wcscpy`'s contract already
+  forbids overlap — should have collapsed them to inline moves.
+- **IT DID THE OPPOSITE.** `wcscpy` **201.00 -> 247.00 Ir, 5.289x -> 6.500x, a 46 Ir regression.**
+  The other seven wide families moved by at most 0.04 Ir, confirming the change was isolated to
+  this function.
+- **THE MECHANISM, AND IT IS THE REUSABLE PART.** Attribution of the regressed object:
+  `wcscpy` 99 Ir self, **`memcpy` 80 Ir**, **`string_abi::raw_overlap_copy` 68 Ir**. Caller
+  attribution: **2 calls per pair into `memcpy`, 148 Ir inclusive.** `copy_nonoverlapping` did not
+  become an inline move — it became **a call to `memcpy`, which inside fl resolves to fl's own
+  interposed `memcpy` ABI entry**, membrane gate and all. **A scalar element loop is genuinely the
+  cheaper construct here**, and the existing code was right. This inverts the ordinary advice, and
+  it applies to every `ptr::copy`/`copy_nonoverlapping`/slice-copy site in the `_abi` crate, not
+  just this one.
+- **CONFORMANCE WAS CLEAN, WHICH IS WHY THE NUMBER IS THE ONLY REASON IT IS REVERTED.** The write
+  path was checked for three things — contents and return value against live glibc, terminator
+  written, and **not one element past the terminator touched** (destination pre-filled with a
+  `0xDEADBEEF` poison, every element after the NUL re-verified), across **source alignments 0..31
+  crossed with lengths 0..200** for `wcscpy`, plus `wcscat` over destination prefixes 0..40 so the
+  destination's alignment varies independently of the source's. **26,440 checks, 0 failures**, both
+  strict and hardened, on base and candidate.
+- **REVERTED.** Not committed; the tree is unchanged. Objects: baseline
+  `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`, candidate
+  `c0ded2c7166986dfe94c0b167b22cc872d68f8a6927c521db76ba91568091d9b`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **WHAT IS STILL AVAILABLE ON `wcscpy`:** its entry carries the frame tax
+  (`push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp`), worth ~11-12 Ir by the same measurement that
+  landed `wcslen`. The 172 Ir inside `wide_fused_copy` now has **no known lever** — the scalar
+  loops are load-bearing, and a full-width vector store is unsafe because `dst` is only guaranteed
+  `len+1` elements.
+
+## 2026-08-26 — `scan_wcscmp_simd` mask resolve: `wcscmp` **3.304x -> 2.413x (+40.96 Ir)**. `wcsncmp` gains only **+1 Ir** and the reason is diagnostic: at `bound=31` it never enters the 128B tier and dies in a **scalar tail**
+
+- **RESULT CLASS: one counted win, and a neutral result whose cause is identified rather than
+  shrugged at.** Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map
+  namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2` and
+  conformance verified before counting; baseline and candidate from one source tree.
+- **THE DEFECT WAS THE SAME ONE `memrchr` HAD.** `scan_wcscmp_simd` computes a
+  `(differs | s1-is-NUL)` lane mask, then **threw it away and walked a `for j in 0..WLANES` scalar
+  loop** to recover the index it already held — up to eight loads and compares per resolve, in
+  both the 128B tier and the 8-lane tier. Attribution: fl `wcsncmp` = entry 38 + **`scan_wcscmp_simd`
+  203 Ir**, against glibc's entire `__wcsncmp_avx2` at 58. Resolving with `trailing_zeros` and one
+  element re-read (needed only to separate "differs" from "both NUL", which the mask conflates) is
+  O(1).
+- **THE NUMBERS.**
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcscmp` | 46.00 | 151.96 | **111.00** | 3.304x | **2.413x** | **+40.96** |
+  | `wcsncmp` | 60.00 | 243.00 | 242.00 | 4.050x | 4.033x | +1.00 |
+  | `wcscpy` | 38.00 | 201.00 | 201.00 | 5.289x | 5.289x | 0.00 |
+  | others (5) | — | — | — | — | — | ≤0.04 |
+
+  The five untouched families move by at most 0.04 Ir, which is the isolation check.
+- **WHY `wcsncmp` BARELY MOVED, AND IT IS NOT THAT THE FIX FAILED.** The 128B tier is gated on
+  `i + 32 <= bound`. `wcsncmp(a, b, 31)` therefore **never enters it** — `32 <= 31` is false. It
+  runs three 8-lane panels (i=0,8,16) and then, at i=24, `24 + 8 <= 31` is also false, so the last
+  **seven elements are compared one at a time by the scalar fallback**, which is where this test's
+  difference (index 30) actually lies. The mask fix is real but lands in tiers this case skips.
+  **This is the same shape as the `scan_c_string` bound problem** — a bound just under a tier width
+  falls off the ladder — and the same overlapping-probe trick applies: resolve the tail with one
+  8-lane panel at `bound - 8`, masking lanes below `i`. **Named as the next step, not attempted
+  here**, so this row's number stays attributable to one change.
+- **CONFORMANCE.** What a `trailing_zeros` resolve can break is *which* element is reported first,
+  and therefore the sign — so the test aims there: difference at every position of every length;
+  **two differences, so a wrong bit-pick reports the later one**; a difference and a NUL in the same
+  lane window in both orders, since **the mask conflates them and only the element re-read separates
+  them**; `wcsncmp` with `n` before, at and after the difference and past the terminator; source
+  alignments 0..31 (the tiers key on 32B and 128B boundaries); both operands ending on the last
+  mapped wchar before a `PROT_NONE` page; and **signed extremes — `wchar_t` is signed on Linux and
+  the resolve compares as `i32`, so `0x7FFFFFFF` vs `0x80000000` and `0xFFFFFFFF` decide the
+  opposite way from an unsigned read.** **563,781 checks, 0 failures**, strict and hardened, on base
+  and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`,
+  candidate `d9259bc078912907d8618dde685f82126e530479aa25ca5cd6da7b360611aad8`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (no lever but its entry frame — the copy loops are
+  load-bearing, see the `copy_nonoverlapping` refutation), `wcsncmp` 4.033x (scalar tail, named
+  above), `wcsnlen` 3.500x, `wcschr` 2.704x, `wcscmp` 2.413x, `wmemchr` 2.391x, `wmemcmp` 2.246x,
+  `wcsrchr` 1.903x. **All ten wide entries still carry the frame tax except `wcslen`.**
+
+## 2026-08-26 — `wcsncmp` **4.033x -> 3.167x (+52 Ir)** and `wcscmp` **2.413x -> 1.957x (+21 Ir)**: an overlapping tail panel, plus a `const BOUNDED` specialization that turned a two-way trade into a gain on both. **Two wrong versions measured on the way.**
+
+**Counted result, not a timed one.** Every number here is a deterministic callgrind instruction
+count, so this row deliberately does **not** assert the ledger's positive-result class for timed
+campaigns — that one requires a timed same-invocation A/A plus null/effect bootstrap median CIs,
+and there is no wall-clock claim here to defend. (The heading originally used the reserved word
+"win"; the lint correctly flagged it as a timed positive lacking that bundle, and the heading was
+reworded rather than the gate touched.)
+
+- **RESULT CLASS: a counted win on two surfaces, reached through one correctness failure and one
+  performance regression, both caught by measurement rather than reasoning.** Instrument unchanged:
+  fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same process image**,
+  two-point over 2000 marginal calls, `PHASE=2` and conformance verified before counting; baseline
+  and every candidate built from one source tree.
+- **THE DEFECT, DIAGNOSED IN THE PREVIOUS ROW.** Both SIMD tiers are gated on a whole panel fitting
+  under `bound`, so a bound that is not a multiple of the tier width drops its remainder into a
+  scalar loop. `wcsncmp(a, b, 31)` fails `32 <= 31` and never enters the 128B tier, then fails
+  `24 + 8 <= 31` too — **seven of thirty-one elements compared one at a time.** The fix is one
+  8-lane panel ending exactly at `bound`, with lanes below `i` masked off.
+- **VERSION 1 WAS WRONG, AND THE CONFORMANCE SUITE CAUGHT IT: 114 failures.** All were `wcscmp`
+  page-edge cases, fl returning 0 where glibc returned −1. **The 8-lane tier declines for two
+  different reasons — a short remainder OR a failed page guard — and only the first makes
+  `bound - WLANES` meaningful.** An unbounded `wcscmp` (`bound == usize::MAX`) that declined on its
+  page guard computed `start = usize::MAX - 8` and read a wild address. Adding the missing
+  `i + WLANES > bound` term makes `start <= i` hold by construction. **The failure was in a case
+  the suite only covers because operands are deliberately placed against a `PROT_NONE` page.**
+- **VERSION 2 WAS CORRECT BUT TRADED ONE SURFACE FOR ANOTHER.** `wcsncmp` +45.96 Ir, but **`wcscmp`
+  −15 Ir (2.413x -> 2.739x)** — a surface improved two rows earlier. `wcscmp` can never execute the
+  new block, so the loss was codegen, not execution. **Outlining it `#[cold] #[inline(never)]`
+  recovered only part** (`wcsncmp` +53, `wcscmp` still −11), which ruled out pure code layout.
+- **VERSION 3, THE SPECIALIZATION, WON ON BOTH.** `scan_wcscmp_simd` takes a `const BOUNDED: bool`;
+  the one statically unbounded call site (`wcscmp`'s strict path) instantiates `false`, so **the
+  entire bounded tier compiles out of that instantiation**, not merely the new tail:
+
+  | family | glibc | base | v2 inline | v3 outlined | v4 const | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | `wcsncmp` | 60.00 | 242.00 | 196.04 | 189.00 | **190.00** | 4.033x | **3.167x** | **+52.00** |
+  | `wcscmp` | 46.00 | 111.00 | 126.00 | 122.03 | **90.00** | 2.413x | **1.957x** | **+21.00** |
+  | others (6) | — | — | — | — | — | — | — | ≤0.03 |
+
+  **`wcscmp` ends 21 Ir BELOW the baseline** — the specialization bought more than the tail cost,
+  and it now breaks below 2x. The six untouched families move by at most 0.03 Ir.
+- **CONFORMANCE.** The same 563,781-check differential as the previous row — difference at every
+  position of every length, two differences so a wrong bit-pick reports the later one, difference
+  and NUL in the same lane window in both orders, `n` swept before/at/after the difference,
+  alignments 0..31, **both operands ending on the last mapped wchar before a `PROT_NONE` page**, and
+  signed extremes (`wchar_t` is signed; the resolve compares as `i32`). **0 failures on v3/v4 in
+  both strict and hardened**; v1's 114 failures are recorded above rather than discarded.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `9d1ecf31c4623f3bdc40a4ec0d98f4d30fa6e2e5c53611e3c55ab61ed85a8640`;
+  v1 (**114 conformance failures, not landed**)
+  `078635a2bd639ac109cdf62a1d3a693fd1910531be25ca9e8ead02878c95bd5c` is the *corrected* v2 —
+  the failing v1 object was `073189ceecc5fd1d374ae476607ef80b4606e85d9d13608ad3454fe0fd56cda2`;
+  v3 outlined `583a7deb562c3f7eee898e2c18dd60c73da4e4fc8e69776426a12cbb11249c88`; **landed**
+  `83512d161487e66968919b45259e3561d97e931aadd40142b9633ca517502f68`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsnlen` 3.500x, `wcsncmp`
+  3.167x, `wcschr` 2.703x, `wmemchr` 2.390x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.903x.
+
+## 2026-08-26 — `wcsnlen` **3.500x -> 2.425x (+43 Ir)**: the same discard-the-mask defect, now in `frankenlibc-core`, where the folded 256-element block resolved with a **scalar walk over all 256**
+
+- **RESULT CLASS: counted improvement, isolated.** Instrument unchanged: fl `LD_PRELOAD`ed against
+  live glibc in a fresh link-map namespace **in the same process image**, two-point over 2000
+  marginal calls, `PHASE=2` and conformance verified before counting. Deterministic instruction
+  counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **THE DEFECT, FOURTH SIGHTING, AND THE WORST ONE YET.** `core::string::wide::wcsnlen` asks
+  `.any()` on a lane compare and then finds the index with a **scalar `.position()` or element
+  loop** — in all three overlapping-probe arms (`[4,8)`, `[8,16)`, `[16,32)`), in the 16-lane chunk
+  loop, and, worst, in the folded 256-element block, where a flagged fold walked
+  **`for (j, &ch) in block.iter().enumerate()` over up to 256 elements** to recover an index four
+  vector compares already held. Attribution: fl `wcsnlen` = entry 37 + **core scan 102 Ir** against
+  glibc's `__wcsnlen_avx2` at 39.
+- **THE FIX.** `to_bitmask().trailing_zeros()` at all five sites. The folded block loses per-panel
+  information, so it re-tests `p0..p3` in order and resolves from the first non-empty mask — the
+  same shape used for the `wcscmp` 128B tier.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcsnlen` | 40.00 | 140.00 | **97.00** | 3.500x | **2.425x** | **+43.00** |
+  | others (7) | — | — | — | — | — | ≤0.03 |
+
+- **A BASELINE MISTAKE, CAUGHT AND CORRECTED, WORTH RECORDING.** The first comparison showed
+  `wcsncmp` −52 Ir and `wcscmp` −21 Ir alongside the `wcsnlen` gain, which would have read as this
+  change wrecking two neighbours. It did not: **the candidate was built from a source tree shipped
+  before the `const BOUNDED` commit, while the comparison baseline was an object that had it**, so
+  those two columns were measuring the missing commit, not this patch. Re-measured against the
+  object built from the *same* tree, `wcsncmp` and `wcscmp` move **0.00 and +0.03 Ir**. **Re-ship
+  the worker source after every landed commit**, or an A/B silently compares two different trees.
+- **CONFORMANCE.** The tiers are selected by `limit = min(maxlen, len)`, so the test walks all of
+  them and the boundaries between them: `maxlen` 0..300 crossed with a NUL at every position
+  (including beyond `maxlen` and absent entirely); explicit probes at every tier edge
+  (0,1,3,4,7,8,15,16,31,32,63,64,127,128,255,256,257,271,272); **two NULs at spread positions,
+  where the lowest index must win** — the case a wrong bit-pick or a wrong panel order gets wrong;
+  and wide values that must not read as terminators, including **`0x00000100`, whose low byte is
+  zero**. **24,471 checks, 0 failures**, strict and hardened, on base and candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib wcsnlen`: `3 passed; 0 failed`. Full core suite:
+  `3294 passed; 3 failed` — **the same three (`locale` ×2, `stdio::printf` ×1) and the same counts
+  as the baseline established earlier today with this change stashed.** Pre-existing; not
+  attributed here.
+- **PROVENANCE.** Baseline `9d1ecf31c4623f3bdc40a4ec0d98f4d30fa6e2e5c53611e3c55ab61ed85a8640`,
+  candidate `b1286600d8dc59f3572afe284ef5366c3534d55de95a0ef96e340de9c1d98436`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only — its copy loops are load-bearing),
+  `wcsncmp` 3.167x, `wcschr` 2.703x, `wcsnlen` 2.425x, `wmemchr` 2.390x, `wmemcmp` 2.246x,
+  `wcscmp` 1.957x, `wcsrchr` 1.903x. **`wcschr`/`wmemchr`/`wmemcmp`/`wcsrchr` are the four still
+  unexamined**, and eight of the ten wide entries still carry the frame tax.
+
+## 2026-08-26 — `wcschr` **2.704x -> 1.886x (+36 Ir)**: fifth sighting of the discard-the-mask defect, in a function whose *head* was already mask-resolved and whose *loop body* was not
+
+- **RESULT CLASS: counted improvement, isolated, with a matched baseline.** fl `LD_PRELOAD`ed
+  against live glibc in a fresh link-map namespace **in the same process image**, two-point over
+  2000 marginal calls, `PHASE=2` and conformance verified before counting. Deterministic
+  instruction counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **FOUND BY GREP, NOT BY GUESSWORK.** The previous row generalised the defect into a search:
+  `.any()` / `has_byte` followed by a scalar `position` / `rposition` / `for j in 0..`. Running that
+  over the wide ABI put `wide_find_or_nul_simd`'s 8-lane loop at the top of the list.
+- **AND THE INTERESTING PART IS WHERE IT WASN'T.** This function's **head-mask path already resolved
+  correctly** — `m0.trailing_zeros()` plus one element re-read, added when narrow `strchr`'s
+  short-string floor was closed. The **loop body underneath it still ran `for j in 0..LANES`**, two
+  compares per element, to recover an index the same vector compare already held. A fix landed on
+  the prologue and never reached the steady state. Attribution: fl `wcschr` = entry 26 +
+  **`wide_find_or_nul_simd` 93 Ir** against glibc's entire `__wcschr_avx2` at 44.
+- **THE FIX MIRRORS THE HEAD EXACTLY**, including its subtlety: the scanner min-combines *two*
+  predicates — "equals `c`" and "equals NUL" — into one compare, so the mask says a lane fired but
+  not which. One element re-read separates them, **and preserves the old loop's precedence: when
+  `c == 0` both predicates fire and the match must win**, so `wcschr(s, 0)` still returns the
+  terminator rather than NULL.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcschr` | 44.00 | 119.00 | **82.97** | 2.704x | **1.886x** | **+36.03** |
+  | `wcsrchr` | 62.00 | 118.00 | 117.03 | 1.903x | 1.888x | +0.97 |
+  | others (6) | — | — | — | — | — | ≤0.03 |
+
+  `wcsrchr` gains a little because it shares the forward pass. **Baseline built from the same
+  source tree as the candidate**, per the correction recorded in the previous row.
+- **CONFORMANCE.** Aimed at what a combined-predicate mask resolve can get wrong: first-hit
+  ordering (a second occurrence later must not win); `c` confused with the terminator at the same
+  lane; **`c == 0`, where both predicates fire and the terminator pointer must be returned, not
+  NULL**; **`c` planted after the terminator, which must not be found**; alignments 0..31 (the head
+  masks lanes before `s`); wide values including `0x00000100`, whose low byte is zero; and a
+  terminator on the last mapped wchar before a `PROT_NONE` page. **847,391 checks, 0 failures**,
+  strict and hardened, on base and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `a8fb09600ea20dae2ad18c5c921fce81076c58dd525546991a89ea8d6252c2ee`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsncmp` 3.165x, `wcsnlen`
+  2.427x, `wmemchr` 2.390x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.888x, `wcschr` 1.886x.
+  **`wmemchr` and `wmemcmp` are the last two unexamined**; the grep above still flags
+  `wchar_abi.rs:257` (`for j in 0..32`) and `:6912` (the case-insensitive wide compare).
+
+## 2026-08-26 — `wmemchr` **2.390x -> 1.734x (+42 Ir)**: sixth sighting, same two sites as `wcsnlen` — folded 256-block walked scalar, 16-lane loop rescanned
+
+- **RESULT CLASS: counted improvement, isolated.** fl `LD_PRELOAD`ed against live glibc in a fresh
+  link-map namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2`
+  and conformance verified before counting. Deterministic instruction counts; no wall-clock claim,
+  so no timed positive-result class is asserted.
+- **THE DEFECT, IN THE SAME TWO PLACES AS `wcsnlen`.** `core::string::wide::wmemchr`'s small tiers
+  (`[8,16)`, `[16,32)`) **already resolved correctly** via `to_bitmask().trailing_zeros()`. Below
+  them, the folded 256-element block walked
+  `for (j, &x) in block.iter().enumerate()` — **up to 256 scalar iterations** — and the 16-lane
+  chunk loop asked `.any()` then rescanned its chunk. Attribution before: fl 153 Ir against glibc's
+  `__wmemchr_avx2` at 64.
+- **THE FIX.** Panels are already `panel ^ c`, so a **zero lane is a match**: re-test `p0..p3` in
+  order and resolve from the first non-empty mask; the chunk loop resolves directly from its own.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wmemchr` | 64.03 | 153.00 | **111.00** | 2.390x | **1.734x** | **+42.00** |
+  | others (7) | — | — | — | — | — | ≤0.03 |
+
+  The baseline object is built from the same source tree as the candidate. That tree predates the
+  `wcschr` commit, so `wcschr` reads 119 Ir in **both** columns — it is a constant here, not a
+  regression.
+- **CONFORMANCE.** `wmemchr` has **no terminator semantics** — it searches exactly `n` elements and
+  a zero element is ordinary data — so the test is shaped differently from `wcschr`'s: match at
+  every position against every tier boundary (0,1,3,4,7,8,15,16,31,32,63,64,127,128,255,256,257,
+  271,272); **`n == p` must not find a match at `p` while `n == p+1` must**, which is the
+  over-scan check; **two matches straddling panel edges, where the lower index must win** — the case
+  a wrong panel order in the folded block gets wrong; `n == 0` never matching even at position 0;
+  **zero as ordinary data, and an all-zero haystack**; and wide values including `0x00000100`,
+  whose low byte is zero. **4,287 checks, 0 failures**, strict and hardened, on base and candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib wmemchr`: `4 passed; 0 failed`. Full core suite:
+  `3294 passed; 3 failed` — the same three (`locale` ×2, `stdio::printf` ×1) and the same counts as
+  the baseline established earlier today with the change stashed. Pre-existing; not attributed here.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `18bad08055e9e4d3dfaaa54e0ee7cea9f6f3558384aff1958055008e9170bf8c`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsncmp` 3.165x, `wcsnlen`
+  2.427x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.888x, `wcschr` 1.886x, `wmemchr` 1.734x.
+  **`wmemcmp` is the last unexamined entry.** Two flagged sites remain from the grep:
+  `wchar_abi.rs` `wide_strlen_bounded` (`for j in 0..32`, hardened-only bounded path) and the
+  case-insensitive wide compare at `:6912`.
+
+## 2026-08-26 — `wmemcmp` **2.246x -> 1.646x (+39 Ir)**: seventh and last of the wide entries, same defect in its shared panel resolver. **Every wide-char entry is now examined.**
+
+- **RESULT CLASS: counted improvement, isolated.** fl `LD_PRELOAD`ed against live glibc in a fresh
+  link-map namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2`
+  and conformance verified before counting. Deterministic instruction counts; no wall-clock claim,
+  so no timed positive-result class is asserted.
+- **THE DEFECT, IN A SHARED HELPER THIS TIME.** `resolve_wmemcmp_panel` was a **scalar
+  `zip` loop** over a whole panel, and all three of its call sites reach it only *after* a `.all()`
+  on the same two vectors has already reported a mismatch — the compare had located the difference
+  and the helper walked the panel to find it again. Fixing the helper fixed the unrolled two-panel
+  loop and the single-panel loop at once. Attribution before: fl 146 Ir on a 64-element compare
+  differing at element 60, against glibc's `__wmemcmp_avx2` at 65.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wmemcmp` | 65.00 | 146.00 | **107.00** | 2.246x | **1.646x** | **+39.00** |
+  | others (7) | — | — | — | — | — | 0.00 |
+
+  Baseline built from the same source tree as the candidate. That tree predates the `wcschr` and
+  `wmemchr` commits, so those two read their pre-fix values (119 and 153 Ir) in **both** columns —
+  constants here, not regressions.
+- **CONFORMANCE.** Only the **sign** is contractual, and the sharp cases are signedness and
+  ordering: `wchar_t` is a **signed** int on Linux and the resolver compares `as i32`, so
+  `0x7FFFFFFF` vs `0x80000000`, `0xFFFFFFFF` vs a positive, and `0` vs `0xFFFFFFFF` all decide the
+  **opposite way** from an unsigned read — each swept across 120 positions in both directions.
+  Plus: equal buffers at every tier boundary; a single difference walked across 300 positions in
+  both directions; `n == p` excluding a difference at `p` while `n == p+1` includes it; and **two
+  differences with OPPOSITE signs**, so a wrong lane pick does not merely shift the index but
+  **flips the result** — including pairs straddling the two halves of one unroll iteration, where
+  the first panel must win. **5,683 checks, 0 failures**, strict and hardened, on base and
+  candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib wmemcmp`: `3 passed; 0 failed`. Full core suite:
+  `3294 passed; 3 failed` — the same three (`locale` ×2, `stdio::printf` ×1) and the same counts as
+  the baseline established earlier today with the change stashed. Pre-existing; not attributed here.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `0c754c59cf880e5ea440d12ae7f59e46e3aefe870552fd1894c34703def84178`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **THE WIDE-CHAR SWEEP IS COMPLETE — every entry measured, six of eight improved.**
+
+  | entry | first measured | now |
+  |---|---:|---:|
+  | `wcscpy` | 5.289x | 5.289x *(no lever but its entry frame)* |
+  | `wcsncmp` | 4.050x | **3.165x** |
+  | `wcsnlen` | 3.500x | **2.427x** |
+  | `wcscmp` | 3.306x | **1.957x** |
+  | `wcschr` | 2.704x | **1.886x** |
+  | `wmemchr` | 2.391x | **1.734x** |
+  | `wmemcmp` | 2.246x | **1.646x** |
+  | `wcsrchr` | 1.904x | 1.888x |
+  | `wcslen` | 2.225x | **1.872x** |
+
+  **Six of the nine now sit under 2x.** What remains: `wcscpy` at 5.289x, whose copy loops are
+  load-bearing (the `copy_nonoverlapping` refutation) leaving only its ~11 Ir entry frame; the
+  frame tax on eight of the ten entries; and two flagged sites the grep still lists —
+  `wide_strlen_bounded`'s `for j in 0..32` (hardened-only bounded path) and the case-insensitive
+  wide compare at `wchar_abi.rs:6912`.
+
+## 2026-08-26 — `wcscpy` **5.289x -> 3.026x (+86 Ir)** with overlapping power-of-two stores. **This CORRECTS my own "no known lever" verdict from two rows ago.**
+
+- **RESULT CLASS: counted improvement, isolated — and a self-correction.** fl `LD_PRELOAD`ed against
+  live glibc in a fresh link-map namespace **in the same process image**, two-point over 2000
+  marginal calls, `PHASE=2` and conformance verified before counting. Deterministic instruction
+  counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **THE VERDICT THIS OVERTURNS.** After `copy_nonoverlapping` regressed this function by 46 Ir, I
+  wrote that `wide_fused_copy`'s 172 Ir had **"no known lever — the scalar loops are load-bearing,
+  and a full-width vector store is unsafe because `dst` is only guaranteed `len+1` elements."** The
+  first half was right and the second half was too narrow: **a full-width store is unsafe, but a
+  bounded one is not.** I ruled out the whole class on the strength of one member of it.
+- **THE CONSTRUCT.** For `n` in `1..=8`, two **overlapping** power-of-two moves — `[0,4)` and
+  `[n-4,n)` (or 2-wide, or one scalar) — rewrite some of the same source data, which is harmless,
+  and together touch **exactly `[0, n)`**. That is what makes them legal where a fixed 8-lane store
+  is not. Applied at all four element-loop sites: the head-mask branch, the `8 - align` first
+  chunk, the 8-lane tail and the 128B-tier tail.
+- **AND IT AVOIDS THE TRAP THAT KILLED THE LAST ATTEMPT** by construction: plain `read`/`write` of
+  `[u32; 4]` are inline 16-byte moves, whereas `copy_nonoverlapping` lowered to a **call to fl's own
+  interposed `memcpy`**. Verified, not assumed — caller attribution on the candidate profile shows
+  **zero `memcpy` calls on the measured path** (the two `call memcpy` sites still in `wcscpy`'s
+  disassembly are in the cold validating path). The failed version had 2 calls/pair, 148 Ir
+  inclusive.
+
+  | family | glibc | base | small-copy | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcscpy` | 38.00 | 200.97 | **115.00** | 5.289x | **3.026x** | **+85.97** |
+  | others (7) | — | — | — | — | — | 0.00 |
+
+  `wide_fused_copy` itself: **172 -> 86 Ir**. Every other wide family moves exactly 0.00.
+- **CONFORMANCE.** The same write-path suite as the refuted attempt, which is the point — it checks
+  contents and return value against live glibc, that the terminator is written, and **that not one
+  element past the terminator is touched** (destination poison-filled with `0xDEADBEEF` and every
+  element after the NUL re-verified), across **source alignments 0..31 crossed with lengths
+  0..200**, plus `wcscat` over destination prefixes 0..40 so the destination's alignment varies
+  independently. The overwrite check is exactly what an overlapping-store bug would trip.
+  **26,440 checks, 0 failures**, strict and hardened, on base and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `2c9bbeaeb21ae07fc2af7923064334c40a1ecf1b510df079cae386a15f7f18ea`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 3.026x, `wcsncmp` 3.165x, `wcsnlen` 2.427x, `wcscmp` 1.957x,
+  `wcschr` 1.886x, `wcsrchr` 1.888x, `wcslen` 1.872x, `wmemchr` 1.734x, `wmemcmp` 1.646x. **The
+  worst wide entry is now 3.165x, down from 5.289x at the start of the sweep**, and the frame tax
+  (~11 Ir each) is still unclaimed on eight of the ten entries.
+
+## 2026-08-26 — cold-tail split for `wcsncmp` (**3.167x -> 2.850x, +19 Ir**) and `wcscpy` (**3.026x -> 2.631x, +15 Ir**). Both now under 3x; `wcscpy` is under 100 Ir
+
+- **RESULT CLASS: counted improvement on two surfaces, isolated.** fl `LD_PRELOAD`ed against live
+  glibc in a fresh link-map namespace **in the same process image**, two-point over 2000 marginal
+  calls, `PHASE=2` and conformance verified before counting. **Baseline built from current HEAD**,
+  so these ratios are the true present state of the family, not a stale tree. Deterministic
+  instruction counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **THE LEVER WAS ALREADY PROVEN; ONLY THESE TWO ENTRIES HAD NOT CLAIMED IT.** Both opened
+  `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` — six callee-saved registers and an 88-byte frame
+  sized for the validating path, rented by the strict fast path on every call. After the split
+  `wcsncmp` opens with **`sub $0x18,%rsp` alone** and `wcscpy` with **`push %rbx` alone**.
+- **THE CUT IS AT THE STRICT GATE**, which is safe here for the same reason it was for `wcslen` and
+  not for `strlen`: nothing between the gate and the validating body is a re-entrancy bypass.
+
+  | family | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcsncmp` | 60.00 | 190.00 | **171.00** | 3.167x | **2.850x** | **+19.00** |
+  | `wcscpy` | 38.00 | 115.00 | **99.97** | 3.026x | **2.631x** | **+15.03** |
+  | others (6) | — | — | — | — | — | ≤0.03 |
+
+  Both exceed the family's typical 11-14 Ir for this shape, consistent with the larger frame they
+  were carrying. The six untouched families move by at most 0.03 Ir.
+- **CONFORMANCE.** Both existing suites re-run against this object in **strict and hardened**: the
+  `wcscmp`/`wcsncmp` differential (**563,781 checks** — first-difference ordering, two differences
+  with opposite signs, `n` swept around the difference, alignments 0..31, page-edge operands, signed
+  extremes) and the `wcscpy`/`wcscat` write-path differential (**26,440 checks** — contents, return
+  value, terminator written, and **no element past the terminator touched**, poison-verified).
+  **0 failures throughout.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `36635a2759ce0b52bfe33d9fc89e1581566d66933b558a00fe48cd0370e978a6`,
+  candidate `e4775ed7dcbded67fd7719d92af24f4751e8e19024c4ea362aeb062096ee662a`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER, MEASURED AGAINST CURRENT HEAD:** `wcsncmp` 2.850x, `wcscpy` 2.631x,
+  `wcsnlen` 2.425x, `wcscmp` 1.957x, `wcsrchr` 1.887x, `wcschr` 1.886x, `wmemchr` 1.734x,
+  `wmemcmp` 1.646x. **Nothing in the family is above 3x any more** (it opened at 5.289x), and
+  **six of eight are under 2x**. The frame tax remains unclaimed on `wcsnlen`, `wcschr`, `wcsrchr`,
+  `wmemchr`, `wcscmp`, `wmemcmp` and `wcscat`.
+
+## 2026-08-26 — whole-library frontier re-derived; `strstr` **1.380x -> 1.291x (+29 Ir)** and `memcmp` **2.161x -> 2.080x (+5 Ir)**. **Nine more narrow entries carry the frame tax** — the earlier sweep had missed them
+
+- **RESULT CLASS: counted improvement on two surfaces, isolated, with one honest shortfall.** fl
+  `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same process image**,
+  two-point over 2000 marginal calls, `PHASE=2` and conformance verified before counting.
+  Deterministic instruction counts; no wall-clock claim, so no timed positive-result class is
+  asserted.
+- **THE FRONTIER, RE-DERIVED ACROSS THE WHOLE LIBRARY** after many turns inside `wchar`:
+
+  | surface | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `strlen` heap L=8 | 129.97 | 13.01 | **9.993x** |
+  | `strlen` stack / static L=8 | 71.01 / 69.01 | 13.03 | 5.448x / 5.295x |
+  | `strcmp` | 72.00 | 28.00 | 2.571x |
+  | `memcmp` | 134.00 | 62.00 | 2.161x |
+  | `wcslen` / `snprintf` / `qsort` w16 | — | — | 1.872x / 1.802x / 1.621x |
+  | `memrchr` / `strstr` / `tsearch`+`tdelete` | — | — | 1.381x / 1.380x / 1.290x |
+  | `qsort` i32 / `strtod` / `getenv` / `mktime` | — | — | fl ahead (0.644x … 0.073x) |
+
+  **`strlen` still dominates at ~10x tracked**, and its remaining cost is the architectural
+  `known_remaining` probe already priced at 49 Ir — not a lever that fits in one change.
+- **AND A SWEEP GAP THAT MATTERED.** The earlier frame-tax sweep checked only
+  `strlen`/`strcmp`/`memchr`/`strnlen`/`memrchr`. Re-running it across the narrow
+  comparison/search entries found **nine more still carrying it**: `memcmp` (`sub $0xa8`, 168 B),
+  `strspn`/`strcspn`/`strpbrk` (`sub $0xb8`, 184 B), `strcasecmp`/`memmem`/`strstr`/`strtok`
+  (`sub $0x98`), `strncmp` (`sub $0x88`) — all with the same six callee-saved pushes. Only
+  `strcmp` had been split. **A sweep is only as complete as its symbol list.**
+- **`memcmp`'s CUT HAD TO GO BELOW ITS BYPASS.** Like `strlen` and unlike `strstr`, `memcmp` has a
+  `string_raw_passthrough_active()` re-entrancy/TLS bypass between the strict gate and the
+  validating body. Cutting at the gate is what made `strlen` SIGSEGV hardened startup, so the cut
+  is placed below it; **the hardened conformance run completing at all is part of that evidence.**
+
+  | family | glibc | base | split | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `strstr` | 326.00 | 450.00 | **421.00** | 1.380x | **1.291x** | **+29.00** |
+  | `memcmp` | 62.00 | 134.00 | **128.97** | 2.161x | **2.080x** | **+5.03** |
+  | others (8) | — | — | — | — | — | ≤0.05 |
+
+- **`memcmp` GAINED FAR LESS THAN THE FAMILY AVERAGE, AND THE DISASSEMBLY SAYS WHY.** Every other
+  split collapsed its prologue to one or two instructions; `memcmp`'s went from
+  `push rbp/r15/r14/r13/r12/rbx; sub $0xa8,%rsp` to **`push rbp/r15/r14/rbx; push %rax`** — the
+  168-byte frame allocation is gone but **four callee-saved registers remain**, because the strict
+  fast path genuinely uses them. So the recoverable part here was the frame, not the saves, and
+  **+5 Ir is the whole lever for this symbol, not an underperforming version of a 14 Ir one.**
+- **CONFORMANCE.** Both entries, **strict and hardened** (the split moves the hardened-only body):
+  `memcmp` over lengths 0..260 with the difference at every position, **heap and static operands**
+  so the validating path's `known_remaining` branch takes both arms, `n` truncated before the
+  difference, and high-bit bytes (`memcmp` compares as **unsigned** char); `strstr` with the needle
+  at every position, absent, **empty**, longer than the remaining haystack, and **self-overlapping**
+  (`"aaa"` in a run of `a`). **44,700 checks, 0 failures** on base and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `36635a2759ce0b52bfe33d9fc89e1581566d66933b558a00fe48cd0370e978a6`,
+  candidate `db21f4649ce594caf57cbc23a7b2efdf8529a053486a3d2494eb7706269caf38`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`. Both objects predate the `wcsncmp`/`wcscpy` split
+  commit equally, so those two read pre-split values in **both** columns.
+- **STILL UNCLAIMED:** the frame tax on `strncmp`, `strcasecmp`, `memmem`, `strspn`, `strcspn`,
+  `strpbrk`, `strtok` (none yet measured for ratio), and on seven wide entries.
+
+## 2026-08-26 — `strcmp` **2.571x -> 1.750x (+23 Ir)** from a `const BOUNDED` specialization. **The overlapping tail panel that bought `wcsncmp` +52 Ir LOST 10 Ir here and was removed** — the same lever is not worth the same amount in two scanners with different tier ladders
+
+- **RESULT CLASS: counted improvement on one surface, with a measured refutation of the change's
+  other half.** fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same
+  process image**, two-point over 2000 marginal calls, `PHASE=2` and conformance verified before
+  counting. Baseline built from current HEAD. Deterministic instruction counts; no wall-clock claim,
+  so no timed positive-result class is asserted.
+- **SURVEYING FIRST CHANGED THE TARGET AGAIN.** Seven narrow entries carried the frame tax but had
+  **no measured ratio**, so splitting them blind would have been guesswork. Measured:
+
+  | family | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `strncmp` | 149.00 | 36.00 | **4.139x** |
+  | `strspn` | 167.00 | 48.97 | 3.410x |
+  | `strcasecmp` | 142.00 | 58.96 | 2.408x |
+  | `strpbrk` | 167.00 | 93.97 | 1.777x |
+  | `strcspn` | 164.00 | 102.00 | 1.608x |
+  | `memmem` | 417.97 | 1058.00 | **0.395x — fl is 2.5x FASTER** |
+
+  `strncmp` at 4.139x is far worse than `strcmp`'s 2.571x, and `memmem` needed no work at all.
+- **THE DIAGNOSIS WAS RIGHT AND THE FIX WAS WRONG.** `strncmp` shares `scan_strcmp` with `strcmp`
+  and spent **107 Ir bounded against 48 Ir unbounded on identical 43-byte operands** — the bound,
+  not the bytes. That is exactly the `wcsncmp` shape, where an overlapping final panel at
+  `bound - 32` was worth **+52 Ir**. Applied here it measured **-10 Ir (4.139x -> 4.417x)**.
+- **WHY IT DOES NOT TRANSFER, WHICH IS THE REUSABLE PART.** `scan_strcmp` has an **8-byte SWAR tier
+  that `scan_wcscmp_simd` does not**. At `bound = 43` the 32B tier clears once to `i = 32`, then
+  SWAR runs at 32 and again leaves `i = 40` — so the panel arrives with **three bytes left**, and
+  pays two 32-byte loads, a mask and a shift to replace about three scalar compares. **The
+  intermediate tier had already done the panel's job.** A lever is worth what the tiers *around* it
+  leave for it, not what it was worth in a differently-laddered scanner.
+- **THE HALF THAT PAYS.** `scan_strcmp` now takes `const BOUNDED: bool`; `strcmp`'s statically
+  unbounded call site instantiates `false`, so the whole bounded tier compiles out of that
+  instantiation:
+
+  | family | glibc | base | panel+specialization | **specialization only** | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `strcmp` | 28.00 | 72.00 | 49.00 | **49.00** | 2.571x | **1.750x** | **+23.00** |
+  | `strncmp` | 36.00 | 149.00 | 159.00 *(−10)* | **149.00** | 4.139x | 4.139x | 0.00 |
+  | others (9) | — | — | — | — | — | — | ≤0.03 |
+
+  **Removing the panel keeps the entire +23 and returns `strncmp` to neutral.** The panel and its
+  helper are deleted, not left behind an `if false`; the reason is recorded at the site.
+- **CONFORMANCE.** A `strncmp`/`strcmp` differential built around the failure mode the `wcsncmp`
+  version hit: **operands ending on the last mapped byte before a `PROT_NONE` page**, bounded and
+  unbounded, both operands and one-of-each; every `n` from 0 to L+2 against a difference walked
+  across every position; early-NUL; and high-bit bytes, since these compare as **unsigned** char.
+  **1,859,731 checks, 0 failures** in strict and hardened, plus the existing `strcmp` suite
+  (140,016) clean on the same object.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `d132f75d56e6f0f9972e3154fd127b50f3d6a4fb6637f26381f51a9c1673d33d`;
+  panel + specialization (**−10 Ir on `strncmp`, not landed**)
+  `2e57a446e39e38ef609c19a254c696ffe22b586f8a0d78822fe84b86b1002671`; **landed**
+  `76fbd3bda1eb2c47615cd7805e1c63de220651fdb35025a2f5243c258a760308`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **FRONTIER:** `strlen` heap 9.993x (architectural probe), `strncmp` **4.139x — now the worst
+  surface with an unexplored lever**, `strspn` 3.410x, `strcasecmp` 2.408x, `memcmp` 2.080x,
+  `wcsncmp` 2.850x, `wcscpy` 2.631x, `strcmp` 1.750x. `strncmp`'s 107 Ir bounded scan still has no
+  working fix; its frame tax (`sub $0x88`) is untouched.
