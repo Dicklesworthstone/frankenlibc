@@ -33532,3 +33532,56 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libm.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.22,0.15,0.14`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — `memrchr` AT 64 BYTES IS FINALLY CERTIFIED AT 2.934x: interleaving the arms INSIDE the batch fixes the A/A null that three previous instruments could not
+
+- **RESULT CLASS: loss/baseline, plus the instrument change that made it measurable.** The 64-byte
+  `memrchr` case had failed its FL/FL null on three independent attempts — the harness (0.963050),
+  my between-batch driver at warm-up depth 3 (0.925997) and the same driver at depth 40
+  (0.960980). It is where the gap is largest, so it mattered. **It is now measured with every null
+  holding.**
+- **THE CHANGE, and it is one line of structure rather than more samples.** All previous designs
+  ran a whole batch of one arm, then a whole batch of the other: `a b c d` = fl, glibc, glibc, fl,
+  with each slice 20,000 reps. Any drift across a sample — clock ramp, thermal, arena warming —
+  lands on whichever arm holds the first and last positions, and that is exactly what the A/A null
+  measures. The new driver **alternates the arms every ~1 microsecond**: 200 rounds of
+  [fl x micro][glibc x micro] with `micro` = 500/300/100 by length, accumulating each arm's time
+  separately. Both arms then experience the same drift, in the same proportions, within
+  microseconds of each other.
+- **IT WORKS, AND THE EVIDENCE IS THAT ALL NINE NULLS HOLD.** Deployed, fl by `LD_PRELOAD` at
+  phase **2 = ACTIVE**, live glibc by `dlmopen(LM_ID_NEWLM)`, arms distinct
+  (`fl=0x7190b2537c20`, `glibc=0x7190b1999200`), 25 samples:
+
+  | length | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control (both glibc) |
+  |---|---:|---:|---:|---:|---:|---:|
+  | **64 B** | 8.3788 | 2.8268 | **2.934129** | 0.984124 | 0.991928 | 1.017526 |
+  | 512 B | 8.9436 | 5.6071 | **1.657606** | 0.995829 | 1.001205 | 1.003511 |
+  | 4096 B | 32.1654 | 22.8955 | **1.373849** | 1.008729 | 0.992843 | 0.985057 |
+
+  Every null in the deployed run and every null in the control run is inside 1.6% of 1.0.
+- **THE INSTRUMENT BIAS COLLAPSED TOO.** The both-arms-glibc control reads **1.017526 / 1.003511 /
+  0.985057** — at most 1.8%, against 6% and 7% for the same control under the between-batch design.
+  Bias-corrected deployed ratios: **2.8836 at 64 B, 1.6518 at 512 B, 1.3947 at 4096 B.**
+- **THE 64-BYTE NUMBER IS BIGGER THAN EVERY EARLIER ESTIMATE, not smaller.** Prior readings were
+  2.301042 (depth 3, null failed), 2.495260 (depth 40, null failed), 2.706972 (harness, the one
+  variant whose nulls held). Certified: **2.934129 raw, 2.88 corrected.** The between-batch designs
+  were understating it, which is the opposite of what a "noisy case" intuition would predict.
+- **THIS REORDERS THE DEPLOYED FRONTIER.** `memrchr` at 64 B (2.88 corrected) is now the
+  **second-worst deployed surface**, above `tdelete` (2.60 corrected). Only `malloc_free` (~9.4x)
+  is worse. And the length curve — 2.93 / 1.66 / 1.37 — is the clean fixed-per-call-cost shape the
+  disassembly independently supports: six pushes, a 136-byte frame and a GOT-indirect call paid
+  before any scanning happens.
+- **IT ALSO SETTLES THE `memrchr` WARM-UP PUZZLE.** The between-batch driver gave 1.768632 at
+  512 B with 3 warm-up rounds and 1.325751 with 40, both with holding nulls, and I could not say
+  which was right. The interleaved value is **1.657606 with a 0.35% control** — between them and
+  measured by the design that removes the confound. The 33% swing was the position effect, not a
+  real warm-up dependence of `memrchr` itself.
+- **WHAT THIS OWES THE REST OF THE SESSION.** Every other deployed figure here — `tdelete`,
+  `sinhf`/`coshf`, `nl_langinfo`, `mtx_trylock`, `snprintf`, `malloc_free` — used the
+  between-batch shape. `tdelete` is probably safe (it moved 0.2% across warm-up depths, and its
+  per-call cost is hundreds of ns), but the small ones should be re-run interleaved before their
+  third digits are trusted.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.15`. Driver compiled on the worker with `cc -O2`.
