@@ -35386,3 +35386,63 @@ earlier `c8232c0ec` sweep.
   load-bearing, see the `copy_nonoverlapping` refutation), `wcsncmp` 4.033x (scalar tail, named
   above), `wcsnlen` 3.500x, `wcschr` 2.704x, `wcscmp` 2.413x, `wmemchr` 2.391x, `wmemcmp` 2.246x,
   `wcsrchr` 1.903x. **All ten wide entries still carry the frame tax except `wcslen`.**
+
+## 2026-08-26 — `wcsncmp` **4.033x -> 3.167x (+52 Ir)** and `wcscmp` **2.413x -> 1.957x (+21 Ir)**: an overlapping tail panel, plus a `const BOUNDED` specialization that turned a two-way trade into a gain on both. **Two wrong versions measured on the way.**
+
+**Counted result, not a timed one.** Every number here is a deterministic callgrind instruction
+count, so this row deliberately does **not** assert the ledger's positive-result class for timed
+campaigns — that one requires a timed same-invocation A/A plus null/effect bootstrap median CIs,
+and there is no wall-clock claim here to defend. (The heading originally used the reserved word
+"win"; the lint correctly flagged it as a timed positive lacking that bundle, and the heading was
+reworded rather than the gate touched.)
+
+- **RESULT CLASS: a counted win on two surfaces, reached through one correctness failure and one
+  performance regression, both caught by measurement rather than reasoning.** Instrument unchanged:
+  fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same process image**,
+  two-point over 2000 marginal calls, `PHASE=2` and conformance verified before counting; baseline
+  and every candidate built from one source tree.
+- **THE DEFECT, DIAGNOSED IN THE PREVIOUS ROW.** Both SIMD tiers are gated on a whole panel fitting
+  under `bound`, so a bound that is not a multiple of the tier width drops its remainder into a
+  scalar loop. `wcsncmp(a, b, 31)` fails `32 <= 31` and never enters the 128B tier, then fails
+  `24 + 8 <= 31` too — **seven of thirty-one elements compared one at a time.** The fix is one
+  8-lane panel ending exactly at `bound`, with lanes below `i` masked off.
+- **VERSION 1 WAS WRONG, AND THE CONFORMANCE SUITE CAUGHT IT: 114 failures.** All were `wcscmp`
+  page-edge cases, fl returning 0 where glibc returned −1. **The 8-lane tier declines for two
+  different reasons — a short remainder OR a failed page guard — and only the first makes
+  `bound - WLANES` meaningful.** An unbounded `wcscmp` (`bound == usize::MAX`) that declined on its
+  page guard computed `start = usize::MAX - 8` and read a wild address. Adding the missing
+  `i + WLANES > bound` term makes `start <= i` hold by construction. **The failure was in a case
+  the suite only covers because operands are deliberately placed against a `PROT_NONE` page.**
+- **VERSION 2 WAS CORRECT BUT TRADED ONE SURFACE FOR ANOTHER.** `wcsncmp` +45.96 Ir, but **`wcscmp`
+  −15 Ir (2.413x -> 2.739x)** — a surface improved two rows earlier. `wcscmp` can never execute the
+  new block, so the loss was codegen, not execution. **Outlining it `#[cold] #[inline(never)]`
+  recovered only part** (`wcsncmp` +53, `wcscmp` still −11), which ruled out pure code layout.
+- **VERSION 3, THE SPECIALIZATION, WON ON BOTH.** `scan_wcscmp_simd` takes a `const BOUNDED: bool`;
+  the one statically unbounded call site (`wcscmp`'s strict path) instantiates `false`, so **the
+  entire bounded tier compiles out of that instantiation**, not merely the new tail:
+
+  | family | glibc | base | v2 inline | v3 outlined | v4 const | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | `wcsncmp` | 60.00 | 242.00 | 196.04 | 189.00 | **190.00** | 4.033x | **3.167x** | **+52.00** |
+  | `wcscmp` | 46.00 | 111.00 | 126.00 | 122.03 | **90.00** | 2.413x | **1.957x** | **+21.00** |
+  | others (6) | — | — | — | — | — | — | — | ≤0.03 |
+
+  **`wcscmp` ends 21 Ir BELOW the baseline** — the specialization bought more than the tail cost,
+  and it now breaks below 2x. The six untouched families move by at most 0.03 Ir.
+- **CONFORMANCE.** The same 563,781-check differential as the previous row — difference at every
+  position of every length, two differences so a wrong bit-pick reports the later one, difference
+  and NUL in the same lane window in both orders, `n` swept before/at/after the difference,
+  alignments 0..31, **both operands ending on the last mapped wchar before a `PROT_NONE` page**, and
+  signed extremes (`wchar_t` is signed; the resolve compares as `i32`). **0 failures on v3/v4 in
+  both strict and hardened**; v1's 114 failures are recorded above rather than discarded.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `9d1ecf31c4623f3bdc40a4ec0d98f4d30fa6e2e5c53611e3c55ab61ed85a8640`;
+  v1 (**114 conformance failures, not landed**)
+  `078635a2bd639ac109cdf62a1d3a693fd1910531be25ca9e8ead02878c95bd5c` is the *corrected* v2 —
+  the failing v1 object was `073189ceecc5fd1d374ae476607ef80b4606e85d9d13608ad3454fe0fd56cda2`;
+  v3 outlined `583a7deb562c3f7eee898e2c18dd60c73da4e4fc8e69776426a12cbb11249c88`; **landed**
+  `83512d161487e66968919b45259e3561d97e931aadd40142b9633ca517502f68`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsnlen` 3.500x, `wcsncmp`
+  3.167x, `wcschr` 2.703x, `wmemchr` 2.390x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.903x.

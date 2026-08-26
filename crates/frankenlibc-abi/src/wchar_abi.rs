@@ -982,7 +982,11 @@ fn wide32_read_within_page(addr: usize) -> bool {
 /// others resolve element-wise (identical to the scalar loop). Wide reads are
 /// page-cross guarded (dual pointers can't be pre-aligned). 8 lanes per window
 /// amortise the guard cost — unlike a 2-lane u64-SWAR, which lost to scalar.
-unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_int, usize, bool) {
+unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
+    s1: *const u32,
+    s2: *const u32,
+    bound: usize,
+) -> (c_int, usize, bool) {
     const WLANES: usize = 8;
     let zv = Simd::<u32, WLANES>::splat(0);
     let mut i = 0usize;
@@ -1075,6 +1079,40 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
         if i >= bound {
             return (0, bound, true);
         }
+        // OVERLAPPING FINAL PANEL. Both tiers above are gated on a whole panel
+        // fitting under `bound`, so a bound that is not a multiple of the tier
+        // width drops its remainder here and compared it ONE ELEMENT AT A TIME.
+        // `wcsncmp(a, b, 31)` is the worst case and not a contrived one: `32 <= 31`
+        // keeps it out of the 128B tier entirely, then `24 + 8 <= 31` fails too, so
+        // seven of its thirty-one elements were scalar. Measured (callgrind
+        // two-point vs live glibc in the same process image) that left `wcsncmp` at
+        // 4.033x while the same mask fix took unbounded `wcscmp` to 2.413x.
+        //
+        // One panel ending exactly at `bound` covers the whole remainder; lanes
+        // below `i` are masked off because the overlap re-reads elements already
+        // compared. Same overlapping-probe shape as `scan_c_string`'s small-bound
+        // tiers, and page-guarded like every other read here.
+        // `i + WLANES > bound` is REQUIRED, not implied. The 8-lane tier declines
+        // for two different reasons -- a short remainder OR a failed page guard --
+        // and only the first makes `bound - WLANES` meaningful. Without this term,
+        // an unbounded `wcscmp` (`bound == usize::MAX`) that declined on its page
+        // guard computed `start = usize::MAX - 8` and read a wild address:
+        // 114 conformance failures, all `wcscmp` page-edge cases, fl returning 0
+        // where glibc returned -1. With it, `start <= i` holds by construction and
+        // the shift below is in range.
+        if BOUNDED
+            && bound >= WLANES
+            && i + WLANES > bound
+            && wide32_read_within_page(s1.wrapping_add(bound - WLANES) as usize)
+            && wide32_read_within_page(s2.wrapping_add(bound - WLANES) as usize)
+        {
+            // Outlined. Inlining this block cost unbounded `wcscmp` 15 Ir -- it never
+            // executes there (`bound == usize::MAX` can never satisfy
+            // `i + WLANES > bound`), so the loss was pure code layout in the hot loop.
+            // SAFETY: `start <= i < bound`, and [start, bound) is one 32-byte window
+            // page-guarded by the caller.
+            return unsafe { wcscmp_tail_panel(s1, s2, bound, i) };
+        }
         // SAFETY: i < bound.
         let a = unsafe { *s1.add(i) };
         let b = unsafe { *s2.add(i) };
@@ -1088,13 +1126,56 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
     }
 }
 
+/// Resolves the final partial panel of [`scan_wcscmp_simd`] when `bound` is not a
+/// multiple of the lane width.
+///
+/// Kept out of line: the caller's loop is the hot path for the unbounded
+/// (`wcscmp`) case, which can never reach here, and inlining this cost that case
+/// 15 Ir in pure code layout.
+///
+/// # Safety
+/// `start = bound - WLANES` must satisfy `start <= i < bound`, and the 32-byte
+/// window at `start` must be page-safe on both operands -- both established by the
+/// caller's guard.
+#[cold]
+#[inline(never)]
+unsafe fn wcscmp_tail_panel(
+    s1: *const u32,
+    s2: *const u32,
+    bound: usize,
+    i: usize,
+) -> (c_int, usize, bool) {
+    const WLANES: usize = 8;
+    let zv = Simd::<u32, WLANES>::splat(0);
+    let start = bound - WLANES;
+    let skip = i - start;
+    // SAFETY: caller guarantees the window is in-page on both operands.
+    let va =
+        Simd::<u32, WLANES>::from_array(unsafe { core::ptr::read(s1.add(start).cast::<[u32; WLANES]>()) });
+    let vb =
+        Simd::<u32, WLANES>::from_array(unsafe { core::ptr::read(s2.add(start).cast::<[u32; WLANES]>()) });
+    let m = (va.simd_ne(vb) | va.simd_eq(zv)).to_bitmask() & !((1u64 << skip) - 1);
+    if m == 0 {
+        // Every element in [i, bound) is equal and non-NUL: bound reached.
+        return (0, bound, true);
+    }
+    let idx = start + m.trailing_zeros() as usize;
+    // SAFETY: i <= idx < bound.
+    let a = unsafe { *s1.add(idx) };
+    let b = unsafe { *s2.add(idx) };
+    if a != b {
+        return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
+    }
+    (0, idx + 1, false)
+}
+
 /// Benchmark/test hook for [`scan_wcscmp_simd`]. Not part of the public ABI.
 ///
 /// # Safety
 /// `s1`/`s2` must be NUL-terminated, or valid for `bound` elements.
 #[doc(hidden)]
 pub unsafe fn bench_scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> c_int {
-    unsafe { scan_wcscmp_simd(s1, s2, bound).0 }
+    unsafe { scan_wcscmp_simd::<true>(s1, s2, bound).0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -1115,7 +1196,7 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
     // optimization, paying a flat ~9-10ns membrane tax per call. Hardened mode keeps
     // the full validating path below.
     if runtime_policy::strict_passthrough_active() {
-        let (r, _span, _hit) = unsafe { scan_wcscmp_simd(s1, s2, usize::MAX) };
+        let (r, _span, _hit) = unsafe { scan_wcscmp_simd::<false>(s1, s2, usize::MAX) };
         return r;
     }
 
@@ -1154,7 +1235,7 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
     // to the old scalar element loop. `cmp_bound == None` => no limit; any
     // hit-limit is the membrane bound, so it maps directly to `adverse`.
     let (result, adverse, span) = unsafe {
-        let (r, span, hit_limit) = scan_wcscmp_simd(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        let (r, span, hit_limit) = scan_wcscmp_simd::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
         (r, hit_limit, span)
     };
 
@@ -1184,7 +1265,7 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
     // clamp (`cmp_bound == Some(n)`, `adverse` false), byte-identical to the strict
     // full path (core compare bounded by `n`); skips the decide + observe tax.
     if runtime_policy::strict_passthrough_active() {
-        let (r, _span, _hit) = unsafe { scan_wcscmp_simd(s1, s2, n) };
+        let (r, _span, _hit) = unsafe { scan_wcscmp_simd::<true>(s1, s2, n) };
         return r;
     }
 
@@ -1224,7 +1305,7 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
     // (not n), matching the old scalar loop exactly.
     let limit = cmp_bound.expect("wcsncmp cmp_bound is always Some");
     let (result, adverse, span) = unsafe {
-        let (r, span, hit_limit) = scan_wcscmp_simd(s1, s2, limit);
+        let (r, span, hit_limit) = scan_wcscmp_simd::<true>(s1, s2, limit);
         let adverse_local =
             hit_limit && limit < n && (lhs_bound == Some(limit) || rhs_bound == Some(limit));
         (r, adverse_local, span)
