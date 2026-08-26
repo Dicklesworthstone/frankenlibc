@@ -4,8 +4,9 @@
 //! so numeric exceptional regimes (NaN/Inf/denormal patterns) participate
 //! in the same strict/hardened control loop as memory and concurrency paths.
 
-use std::ffi::c_int;
+use std::ffi::{c_char, c_int, c_void};
 use std::os::raw::c_long;
+use std::sync::OnceLock;
 
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -6362,8 +6363,51 @@ fn lgammaf128_large_positive(x: f128) -> f128 {
     (x - 0.5) * logl_f128(x) - x + HALF_LOG_TWO_PI + correction
 }
 
+type HostLgammaf128R = unsafe extern "C" fn(f128, *mut c_int) -> f128;
+
+/// Resolve libm's binary128 reentrant gamma entrypoint without passing through
+/// FrankenLibC's own dynamic-linker exports. This surface is explicitly
+/// classified as `WrapsHostLibc`; the fallback below keeps its previous,
+/// finite-result behavior on a host where libm has no binary128 entrypoint.
+fn host_lgammaf128_r() -> Option<HostLgammaf128R> {
+    static LGAMMAF128_R: OnceLock<Option<HostLgammaf128R>> = OnceLock::new();
+
+    *LGAMMAF128_R.get_or_init(|| unsafe {
+        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+
+        let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
+        let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
+        // SAFETY: host_resolve returns host-libc symbols with their C ABIs.
+        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
+        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
+        // SAFETY: these are static NUL-terminated symbol and library names.
+        let libm = dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if libm.is_null() {
+            return None;
+        }
+        let symbol = dlsym(libm, c"lgammaf128_r".as_ptr());
+        if symbol.is_null() {
+            return None;
+        }
+        // SAFETY: libm's `lgammaf128_r` has this exact binary128 C ABI.
+        Some(core::mem::transmute(symbol))
+    })
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
+    if let Some(host_lgamma) = host_lgammaf128_r() {
+        let mut local_sign = 1;
+        let sign_destination = if signgamp.is_null() {
+            &mut local_sign
+        } else {
+            signgamp
+        };
+        // SAFETY: `host_lgamma` was resolved from libm with its exact ABI, and
+        // `sign_destination` is either the caller's writable pointer or local storage.
+        return unsafe { host_lgamma(x, sign_destination) };
+    }
     if x.is_finite() && x > f64::MAX as f128 {
         if !signgamp.is_null() {
             // Gamma is positive for every positive argument.

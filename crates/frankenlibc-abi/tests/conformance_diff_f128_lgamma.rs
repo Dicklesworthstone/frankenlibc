@@ -107,6 +107,20 @@ fn lgammaf128_r_preserves_fractional_bits_below_f64_precision() {
 }
 
 #[test]
+fn lgammaf128_r_accepts_a_null_sign_pointer_without_losing_quad_precision() {
+    let host = host_lgammaf128();
+    let x = f128::from_bits((16_383u128 << 112) | (1u128 << 111) | (1u128 << 32));
+    let expected = unsafe { host(x) };
+    let actual = unsafe { ma::lgammaf128_r(x, std::ptr::null_mut()) };
+
+    assert_eq!(
+        actual.to_bits(),
+        expected.to_bits(),
+        "the optional sign pointer must not make the binary128 call unsafe or narrow x"
+    );
+}
+
+#[test]
 fn lgammaf128_r_large_positive_preserves_positive_gamma_sign() {
     let x = f128::from_bits((16_383u128 + 1_024) << 112);
     let mut sign = 0;
