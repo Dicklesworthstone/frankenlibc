@@ -33585,3 +33585,45 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.15`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — `malloc_free` DEPLOYED IS ~10.0x ON THE INTERLEAVED INSTRUMENT, and the glibc/glibc null that has failed four times is not noise — an A/A null is ill-defined for a STATEFUL surface
+
+- **RESULT CLASS: loss/baseline (best-instrumented figure for the worst surface, plus the reason
+  its null never held).** The interleaved design that certified `memrchr` at 64 B — arms
+  alternating every ~1 microsecond instead of a whole batch each — was applied to `malloc_free`.
+- **THE ROWS.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM)`, all four addresses distinct, **each arm allocating AND freeing through
+  its own provider**, conformance pass, 500-pair micro-slices x 200 rounds, 25 samples:
+  `small_64` fl **47.6177 ns** against glibc **4.7743 ns** = **10.057276**, FL/FL null
+  **1.001444** (holds), glibc/glibc null 0.970314. `small_1024` fl **44.2749** against **4.7095**
+  = **10.002410**, FL/FL null **0.997344** (holds), glibc/glibc 0.971568.
+- **THE RATIO IS THE MOST STABLE THING HERE.** 10.057276 and 10.002410 across a 16x size range,
+  against 9.16 / 9.25 / 9.51 / 9.93 from the between-batch design. Every deployed same-invocation
+  measurement now sits in **9.2-10.1**; the harness's `dlopen` figures were 12.03-13.25 and my
+  discarded cross-invocation minimum was 13.70. **Deployed `malloc_free` is about 10x**, and that
+  is as precise as this session can make it.
+- **NOW THE PART THAT MATTERS MORE THAN THE NUMBER: the glibc/glibc null has failed on every
+  instrument and every design, and it is not an instrument defect.** Four attempts: between-batch
+  depth 3 (1.088969, 1.070212), between-batch depth 40 (1.028850, 1.033741), interleaved
+  (0.970314, 0.971568). And in the interleaved CONTROL — fl absent, glibc serving both slots —
+  the nulls are **0.919848 / 0.911484 / 0.932885**, worse still. **An A/A null compares two slices
+  that are supposed to be independent. For an allocator they are not:** slot A's frees repopulate
+  the very free lists slot B then allocates from, so the second slice inherits a warmed tcache the
+  first one built. The "null" is measuring state coupling between the slices, not noise in the
+  timer. Interleaving makes this worse, not better, because it couples them more tightly.
+- **WHICH IS WHY THE FL/FL NULL HOLDS AND THE GLIBC/GLIBC ONE DOES NOT, in the deployed run.**
+  When fl is preloaded the two arms are DIFFERENT allocators with disjoint state, so the fl/fl
+  comparison (1.001444, 0.997344) is a clean A/A — and it is the one that certifies fl's own arm.
+  The glibc/glibc pair is two slices of the same glibc allocator and is structurally coupled. So
+  the deployed rows are better supported than a naive "one null failed" reading suggests: the arm
+  under test has a holding null, and the failing one is a known artifact of comparing an allocator
+  with itself.
+- **DO NOT CHASE THIS FURTHER.** Three designs and two warm-up depths have been spent on it. A
+  genuine A/A for an allocator needs two independent instances of the SAME implementation — two
+  `dlmopen` namespaces of glibc, not two slices of one — which is a different driver and is only
+  worth building if someone wants the third digit. The direction (fl ~10x slower) is not in doubt
+  at any instrument.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453`. Driver compiled on the worker with `cc -O2`.
