@@ -1396,17 +1396,22 @@ unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
         let v = Simd::<u32, LANES>::from_array(unsafe {
             core::ptr::read(s.add(i).cast::<[u32; LANES]>())
         });
-        if (v ^ cv).simd_min(v).simd_eq(zv).any() {
-            for j in 0..LANES {
-                // SAFETY: within the just-read window; a c-or-NUL exists at/ before j==7.
-                let ch = unsafe { *s.add(i + j) };
-                if ch == c {
-                    return (i + j, true);
-                }
-                if ch == 0 {
-                    return (i + j, false);
-                }
-            }
+        // Resolve exactly as the head-mask path above does, instead of asking
+        // `.any()` and then re-walking the panel. The head was already mask-resolved;
+        // this loop body still ran `for j in 0..LANES` — up to eight loads and two
+        // compares each to recover an index the same vector compare already held.
+        // Measured (callgrind two-point vs live glibc in the same process image):
+        // `wide_find_or_nul_simd` spent 93 Ir finding a `c` at element 30 against
+        // 44 Ir for glibc's entire `__wcschr_avx2` call.
+        let m = ((v ^ cv).simd_min(v)).simd_eq(zv).to_bitmask();
+        if m != 0 {
+            let j = m.trailing_zeros() as usize;
+            // SAFETY: `j < LANES` within the just-read window. One re-read separates
+            // "found c" from "hit the terminator", which the min-combine conflates —
+            // and it keeps the original precedence: when `c == 0` the lane matches
+            // `c` first, so `is_c` is true, exactly as the old loop returned.
+            let is_c = unsafe { *s.add(i + j) } == c;
+            return (i + j, is_c);
         }
         i += LANES;
     }

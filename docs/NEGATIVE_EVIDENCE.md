@@ -35494,3 +35494,49 @@ reworded rather than the gate touched.)
   `wcsncmp` 3.167x, `wcschr` 2.703x, `wcsnlen` 2.425x, `wmemchr` 2.390x, `wmemcmp` 2.246x,
   `wcscmp` 1.957x, `wcsrchr` 1.903x. **`wcschr`/`wmemchr`/`wmemcmp`/`wcsrchr` are the four still
   unexamined**, and eight of the ten wide entries still carry the frame tax.
+
+## 2026-08-26 — `wcschr` **2.704x -> 1.886x (+36 Ir)**: fifth sighting of the discard-the-mask defect, in a function whose *head* was already mask-resolved and whose *loop body* was not
+
+- **RESULT CLASS: counted improvement, isolated, with a matched baseline.** fl `LD_PRELOAD`ed
+  against live glibc in a fresh link-map namespace **in the same process image**, two-point over
+  2000 marginal calls, `PHASE=2` and conformance verified before counting. Deterministic
+  instruction counts; no wall-clock claim, so no timed positive-result class is asserted.
+- **FOUND BY GREP, NOT BY GUESSWORK.** The previous row generalised the defect into a search:
+  `.any()` / `has_byte` followed by a scalar `position` / `rposition` / `for j in 0..`. Running that
+  over the wide ABI put `wide_find_or_nul_simd`'s 8-lane loop at the top of the list.
+- **AND THE INTERESTING PART IS WHERE IT WASN'T.** This function's **head-mask path already resolved
+  correctly** — `m0.trailing_zeros()` plus one element re-read, added when narrow `strchr`'s
+  short-string floor was closed. The **loop body underneath it still ran `for j in 0..LANES`**, two
+  compares per element, to recover an index the same vector compare already held. A fix landed on
+  the prologue and never reached the steady state. Attribution: fl `wcschr` = entry 26 +
+  **`wide_find_or_nul_simd` 93 Ir** against glibc's entire `__wcschr_avx2` at 44.
+- **THE FIX MIRRORS THE HEAD EXACTLY**, including its subtlety: the scanner min-combines *two*
+  predicates — "equals `c`" and "equals NUL" — into one compare, so the mask says a lane fired but
+  not which. One element re-read separates them, **and preserves the old loop's precedence: when
+  `c == 0` both predicates fire and the match must win**, so `wcschr(s, 0)` still returns the
+  terminator rather than NULL.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcschr` | 44.00 | 119.00 | **82.97** | 2.704x | **1.886x** | **+36.03** |
+  | `wcsrchr` | 62.00 | 118.00 | 117.03 | 1.903x | 1.888x | +0.97 |
+  | others (6) | — | — | — | — | — | ≤0.03 |
+
+  `wcsrchr` gains a little because it shares the forward pass. **Baseline built from the same
+  source tree as the candidate**, per the correction recorded in the previous row.
+- **CONFORMANCE.** Aimed at what a combined-predicate mask resolve can get wrong: first-hit
+  ordering (a second occurrence later must not win); `c` confused with the terminator at the same
+  lane; **`c == 0`, where both predicates fire and the terminator pointer must be returned, not
+  NULL**; **`c` planted after the terminator, which must not be found**; alignments 0..31 (the head
+  masks lanes before `s`); wide values including `0x00000100`, whose low byte is zero; and a
+  terminator on the last mapped wchar before a `PROT_NONE` page. **847,391 checks, 0 failures**,
+  strict and hardened, on base and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `a8fb09600ea20dae2ad18c5c921fce81076c58dd525546991a89ea8d6252c2ee`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsncmp` 3.165x, `wcsnlen`
+  2.427x, `wmemchr` 2.390x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.888x, `wcschr` 1.886x.
+  **`wmemchr` and `wmemcmp` are the last two unexamined**; the grep above still flags
+  `wchar_abi.rs:257` (`for j in 0..32`) and `:6912` (the case-insensitive wide compare).
