@@ -5,24 +5,24 @@
   "description": "Mode-specific parity fixtures for process creation (posix_spawn, exec family). Strict: standard POSIX semantics. Hardened: launch surface validation + environment sanitization.",
   "cases": [
     {
-      "name": "posix_spawn_echo_strict",
+      "name": "posix_spawn_true_strict",
       "function": "posix_spawn",
       "spec_section": "POSIX posix_spawn(3)",
-      "inputs": { "path": "/bin/echo", "argv": ["echo", "hello"], "envp": "inherit" },
-      "expected_output": 0,
+      "inputs": { "path": "/bin/true", "argv": ["true"], "envp": [] },
+      "expected_output": "RC_0_EXIT_STATUS_0",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "posix_spawn successfully launches /bin/echo"
+      "note": "host and FrankenLibC each launch and reap /bin/true on the same empty environment; the no-output command keeps the harness JSON channel intact"
     },
     {
       "name": "posix_spawn_nonexistent_strict",
       "function": "posix_spawn",
       "spec_section": "POSIX posix_spawn(3)",
-      "inputs": { "path": "/nonexistent_binary", "argv": ["x"], "envp": "inherit" },
-      "expected_output": "ENOENT",
+      "inputs": { "path": "/nonexistent_binary", "argv": ["x"], "envp": [] },
+      "expected_output": "RC_2",
       "expected_errno": 2,
       "mode": "strict",
-      "note": "posix_spawn fails with ENOENT for nonexistent binary"
+      "note": "host and FrankenLibC each call posix_spawn on the same nonexistent path and return ENOENT as the POSIX return code"
     },
     {
       "name": "execve_replaces_process_strict",
@@ -55,14 +55,14 @@
       "note": "system() runs command and returns exit status"
     },
     {
-      "name": "posix_spawn_echo_hardened",
+      "name": "posix_spawn_true_hardened",
       "function": "posix_spawn",
       "spec_section": "POSIX posix_spawn(3)",
-      "inputs": { "path": "/bin/echo", "argv": ["echo", "hello"], "envp": "inherit" },
-      "expected_output": 0,
+      "inputs": { "path": "/bin/true", "argv": ["true"], "envp": [] },
+      "expected_output": "RC_0_EXIT_STATUS_0",
       "expected_errno": 0,
       "mode": "hardened",
-      "note": "Hardened: validates executable path and sanitizes environment before launch"
+      "note": "host and FrankenLibC each launch and reap /bin/true on the same empty environment; this verifies the hardened executor also reaches the real ABI path"
     },
     {
       "name": "system_returns_status_hardened",

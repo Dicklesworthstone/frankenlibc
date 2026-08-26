@@ -392,11 +392,11 @@ fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Resu
                         case.name
                     )
                 })?;
-            if case.function == "system" {
+            if matches!(case.function.as_str(), "system" | "posix_spawn") {
                 assert_ne!(
                     result.host_output, "SKIP",
-                    "system fixture {} ({mode}) must execute a host oracle, not a canned result",
-                    case.name
+                    "{} fixture {} ({mode}) must execute a host oracle, not a canned result",
+                    case.function, case.name
                 );
             }
             assert!(

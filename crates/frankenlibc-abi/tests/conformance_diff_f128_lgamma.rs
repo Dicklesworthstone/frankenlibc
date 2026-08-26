@@ -47,8 +47,19 @@ fn host_lgammaf128_r_finite() -> Lgammaf128R {
     }
 }
 
+fn host_lgammaf128_r() -> Lgammaf128R {
+    unsafe {
+        let libm = dlopen(c"libm.so.6".as_ptr(), RTLD_NOW);
+        assert!(!libm.is_null(), "dlopen(libm.so.6) failed");
+        let symbol = dlsym(libm, c"lgammaf128_r".as_ptr());
+        assert!(!symbol.is_null(), "dlsym(lgammaf128_r) failed");
+        // SAFETY: `lgammaf128_r` is resolved from libm with its exact C signature.
+        std::mem::transmute(symbol)
+    }
+}
+
 #[test]
-fn lgammaf128_large_positive_values_remain_finite_and_track_glibc() {
+fn lgammaf128_large_positive_values_match_glibc_bits() {
     let host = host_lgammaf128();
     let inputs = [
         f128::from_bits((16_383u128 + 1_024) << 112),
@@ -67,12 +78,32 @@ fn lgammaf128_large_positive_values_remain_finite_and_track_glibc() {
             actual.is_finite(),
             "fl lgammaf128({x:?}) narrowed to infinity"
         );
-        let relative_error = ((actual - expected) / expected).abs();
         assert!(
-            relative_error <= 32.0 * f128::EPSILON,
-            "lgammaf128({x:?}): fl={actual:?}, glibc={expected:?}, rel={relative_error:?}"
+            actual.to_bits() == expected.to_bits(),
+            "lgammaf128({x:?}) bits: fl={:#034x}, glibc={:#034x}",
+            actual.to_bits(),
+            expected.to_bits(),
         );
     }
+}
+
+#[test]
+fn lgammaf128_r_preserves_fractional_bits_below_f64_precision() {
+    let host = host_lgammaf128_r();
+    // This is 1.5 + 2^-80. A f64-backed implementation rounds it to 1.5
+    // before evaluating the function, so it cannot produce the host bits.
+    let x = f128::from_bits((16_383u128 << 112) | (1u128 << 111) | (1u128 << 32));
+    let mut host_sign = 0;
+    let expected = unsafe { host(x, &mut host_sign) };
+    let mut fl_sign = 0;
+    let actual = unsafe { ma::lgammaf128_r(x, &mut fl_sign) };
+
+    assert_eq!(
+        actual.to_bits(),
+        expected.to_bits(),
+        "binary128 result bits"
+    );
+    assert_eq!(fl_sign, host_sign, "binary128 gamma sign");
 }
 
 #[test]
@@ -93,12 +124,15 @@ fn lgammaf128_r_finite_alias_preserves_binary128_argument_and_sign() {
     let mut fl_sign = 0;
     let actual = unsafe { ma::__lgammaf128_r_finite(x, &mut fl_sign) };
 
-    assert!(expected.is_finite(), "host finite alias should not narrow x");
-    assert!(actual.is_finite(), "fl finite alias should not narrow x");
-    let relative_error = ((actual - expected) / expected).abs();
     assert!(
-        relative_error <= 32.0 * f128::EPSILON,
-        "__lgammaf128_r_finite({x:?}): fl={actual:?}, glibc={expected:?}, rel={relative_error:?}"
+        expected.is_finite(),
+        "host finite alias should not narrow x"
+    );
+    assert!(actual.is_finite(), "fl finite alias should not narrow x");
+    assert_eq!(
+        actual.to_bits(),
+        expected.to_bits(),
+        "__lgammaf128_r_finite binary128 result bits"
     );
     assert_eq!(fl_sign, host_sign, "gamma sign through finite alias");
 }

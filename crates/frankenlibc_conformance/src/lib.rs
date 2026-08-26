@@ -27543,19 +27543,124 @@ fn execute_execve_case(
     Ok(non_host_execution(verdict))
 }
 
+fn posix_spawn_outcome(
+    use_frankenlibc: bool,
+    path: &CString,
+    argv: &[*mut c_char],
+    envp: &[*mut c_char],
+) -> String {
+    let mut child = -1;
+    // SAFETY: `path`, `argv`, and `envp` are NUL-terminated C representations that
+    // live for the whole call; file actions and attributes are deliberately absent.
+    let rc = unsafe {
+        if use_frankenlibc {
+            frankenlibc_abi::process_abi::posix_spawn(
+                &mut child,
+                path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                argv.as_ptr(),
+                envp.as_ptr(),
+            )
+        } else {
+            libc::posix_spawn(
+                &mut child,
+                path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                argv.as_ptr(),
+                envp.as_ptr(),
+            )
+        }
+    };
+    if rc != 0 {
+        return format!("RC_{rc}");
+    }
+    if child <= 0 {
+        return format!("RC_0_INVALID_PID_{child}");
+    }
+
+    let mut wait_status = 0;
+    // SAFETY: `child` was returned from a successful posix_spawn call and
+    // `wait_status` is valid writable storage.
+    let waited = unsafe { libc::waitpid(child, &mut wait_status, 0) };
+    if waited != child {
+        return format!("RC_0_WAITPID_{waited}");
+    }
+    if libc::WIFEXITED(wait_status) {
+        return format!("RC_0_EXIT_STATUS_{}", libc::WEXITSTATUS(wait_status));
+    }
+    if libc::WIFSIGNALED(wait_status) {
+        return format!("RC_0_EXIT_SIGNAL_{}", libc::WTERMSIG(wait_status));
+    }
+    String::from("RC_0_EXIT_UNKNOWN")
+}
+
+/// Compare `posix_spawn` against the linked host implementation on the same arguments.
+///
+/// This arm used to infer `"0"` or `"ENOENT"` from a path prefix without spawning a
+/// process at all.  The fixture now drives a no-output success (`/bin/true`) and a real
+/// failing path, and each successful child is reaped before the next arm runs. bd-7t61h9.
 fn execute_posix_spawn_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let path = inputs.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    // posix_spawn would actually spawn a process - stub expected values
-    let result = if path.starts_with("/nonexistent") {
-        "ENOENT"
-    } else {
-        "0" // success
-    };
-    Ok(non_host_execution(result.to_string()))
+    let path = parse_string(inputs, "path")?;
+    let path = CString::new(path)
+        .map_err(|err| format!("posix_spawn fixture path has an interior NUL: {err}"))?;
+
+    let argv_owned: Vec<CString> = inputs
+        .get("argv")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| String::from("posix_spawn fixture missing array input `argv`"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| String::from("posix_spawn argv entry is not a string"))
+                .and_then(|value| {
+                    CString::new(value)
+                        .map_err(|err| format!("posix_spawn argv entry has an interior NUL: {err}"))
+                })
+        })
+        .collect::<Result<_, _>>()?;
+    let envp_owned: Vec<CString> = inputs
+        .get("envp")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| String::from("posix_spawn fixture missing array input `envp`"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| String::from("posix_spawn envp entry is not a string"))
+                .and_then(|value| {
+                    CString::new(value)
+                        .map_err(|err| format!("posix_spawn envp entry has an interior NUL: {err}"))
+                })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let mut argv: Vec<*mut c_char> = argv_owned
+        .iter()
+        .map(|value| value.as_ptr() as *mut c_char)
+        .collect();
+    argv.push(std::ptr::null_mut());
+    let mut envp: Vec<*mut c_char> = envp_owned
+        .iter()
+        .map(|value| value.as_ptr() as *mut c_char)
+        .collect();
+    envp.push(std::ptr::null_mut());
+
+    let host_output = posix_spawn_outcome(false, &path, &argv, &envp);
+    let impl_output = posix_spawn_outcome(true, &path, &argv, &envp);
+    let host_parity = host_output == impl_output;
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note: (!host_parity).then(|| String::from("posix_spawn host parity mismatch")),
+    })
 }
 
 fn execute_fortify_checked_wrapper_wave01_case(
