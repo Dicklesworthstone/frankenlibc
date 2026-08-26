@@ -33853,3 +33853,45 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.34,0.38,0.28`. Driver compiled with
   `cc -O2 -fno-builtin-strlen` so the call is never folded.
+
+## 2026-08-26 — CONFORMANCE DIVERGENCE, found by a SIGSEGV in my own benchmark: fl's `aligned_alloc` returns NULL where glibc returns memory, whenever size is not a multiple of alignment
+
+- **RESULT CLASS: conformance divergence (no performance claim).** Found accidentally: the
+  `strlen` sweep driver called `aligned_alloc(64, 71)` and then `memset`, and the deployed run
+  died with **rc=139 (SIGSEGV)** where the control run was fine. The crash was in my driver — but
+  the reason it crashed only under `LD_PRELOAD` is a real behavioural difference.
+- **MEASURED, both live, in one process.** fl reached by `LD_PRELOAD`, glibc by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`, both `aligned_alloc` pointers distinct:
+
+  | alignment | size | size % align == 0 | fl | glibc |
+  |---:|---:|---|---|---|
+  | 64 | 71 | no | **NULL** | non-null |
+  | 64 | 128 | yes | non-null | non-null |
+  | 64 | 64 | yes | non-null | non-null |
+  | 16 | 24 | no | **NULL** | non-null |
+
+  With fl absent, the same four cases return non-null in both slots — so this is fl's behaviour,
+  not an artifact of the namespace.
+- **WHO IS RIGHT: fl is defensible on the letter, glibc is the de-facto contract.** C11 7.22.3.1
+  says the value of `size` *shall* be an integral multiple of `alignment`; violating a "shall" in
+  a library description is undefined behaviour, so returning NULL is permitted. But glibc
+  deliberately does not enforce it — its `aligned_alloc` is `memalign` — and code built against
+  glibc relies on that. **A libc replacement that returns NULL here turns a working program into a
+  NULL-dereference**, which is exactly what happened to this benchmark, and the failure mode is a
+  crash at the call site rather than an error anyone can see.
+- **THIS IS THE `bd-80kppk` SHAPE.** A constant-strictness choice where the incumbent is lenient,
+  with agreement confined to the operating point everyone tests: any size that happens to be a
+  multiple of the alignment behaves identically, which is most deliberate uses of the function.
+  The divergence only appears when a caller passes an arbitrary size, which is the common
+  accidental use.
+- **NOT FIXED HERE, and the decision is not mine to make in one line.** Loosening fl to match
+  glibc is a two-line change but it interacts with the shipped `aligned-alloc strict fast-path`
+  work, whose speedup may depend on the size/alignment relationship it currently enforces. The
+  options are (a) accept glibc's leniency and re-measure that fast path, (b) keep the strictness
+  and document it as a deliberate incompatibility, or (c) return the memory but set `errno`.
+  Whichever is chosen, **the current state is an undocumented silent divergence on a
+  memory-allocation entry point**, and that is the part worth fixing first.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453`. Probe compiled on the worker with `cc -O2`.
