@@ -32900,3 +32900,40 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `ALLOCATOR_REENTRY_SLOT_COUNT` is no longer 4096 pre-initialised `.data` slots, or the per-thread
   state is moved to a lazily-allocated side table. The mechanism is right and the container is
   wrong; fix the container first.
+
+## 2026-08-26 — OPEN AND UNCERTIFIABLE: `thrd_current` reads 2.30-2.40x in three independent runs, against a banked 1.1109x, and its A/A null fails every time — including twice on an idle box
+
+- **RESULT CLASS: loss/baseline (open item).** No lever, nothing shipped, and deliberately NOT a
+  headline. The gate refuses all three measurements and so do I; this row exists so the discrepancy
+  is on the record with its evidence rather than sitting unremarked in a sweep log.
+- **THE THREE RUNS, all at HEAD `998070b640879f95ec888990064a07833d926930`, all on worker
+  `vmi1293453`, all against live glibc 2.42 in the same invocation, all `--family thrd_current`
+  case `current_identity`:** `ratio_median=2.401530` CI [2.336071, 2.505816];
+  `ratio_median=2.301545` CI [2.237968, 2.416583]; `ratio_median=2.370431` CI [2.240170, 2.529363].
+  Every one reports `clears_2x_null=true` **and `nulls_hold=false`, `comparison=NULL_VIOLATED`,
+  `verdict=INCOMPLETE`, exit status 2.** The ratios agree to within 4% of each other while the null
+  control fails in all three.
+- **THE NULL FAILURE IS NOT CONTENTION, and that is the part that took a quiet box to establish.**
+  The first run came out of a nine-family sweep. The second and third were run deliberately, back to
+  back, on a host measured idle immediately beforehand — `loadavg 0.46,0.47,1.07`, no process above
+  0.9% CPU, nothing of mine building. The null failed identically. A case whose A/A control
+  misbehaves on an idle machine has a case-design problem, not a scheduling problem.
+- **WHAT IT IS AGAINST.** The last ADMISSIBLE figure for this surface is **1.1109x** (2026-08-18,
+  D1 rank 8, both nulls holding, different worker). Today's central values sit a little over 2x
+  above that. **That is a discrepancy, not a certified regression, and it must not be quoted as
+  "thrd_current is 2.3x".** Cross-worker rows are not comparable in this file, and a ratio whose own
+  null control is broken is not comparable to anything.
+- **THE SHAPE IS ALREADY KNOWN HERE.** `tdelete`'s `tree1024` behaves the same way — a case that
+  reproduces its null failure across independent runs and artifacts while the neighbouring cases
+  hold. That row's conclusion applies verbatim: re-running does not fix it, so the fix is a larger
+  sample or a working-set-aware case, not another attempt. `thrd_current` runs 4,000,000 reps on a
+  call that is a handful of instructions, which is exactly the regime where a per-batch fixed cost
+  can dominate the ratio's variance.
+- **WHAT WOULD SETTLE IT**, in order of cost: raise `THRD_CURRENT_REPS` until the A/A half-width
+  lands below the effect and re-run; if the null still fails, the case is measuring something other
+  than the call and needs redesigning; only then is the 1.1109 -> ~2.3 question answerable, and only
+  then may either number be quoted as a comparison.
+- **PROVENANCE.** FL object `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`,
+  incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`, `samples=36`.
