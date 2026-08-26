@@ -34983,3 +34983,54 @@ earlier `c8232c0ec` sweep.
   `valgrind-3.25.1`.
 - **NEXT ON THIS FRONTIER:** `memrchr`'s sub-32-byte SWAR tier at 6.61x, then `wcslen` 2.225x and
   `memcmp` 2.014x from the survey.
+
+## 2026-08-26 — the string ABI entries carry a **6-push / 136-byte frame** for a cold path they skip: splitting `memrchr`'s tail out buys a flat **14.0 Ir per call at every length**. Combined with the mask resolve, `memrchr` goes 10.32x -> 3.50x worst-case and reaches **1.02x at 4096 bytes**
+
+- **RESULT CLASS: a counted win on a cross-cutting cost, not a memrchr-specific one.** Instrument
+  unchanged: fl `LD_PRELOAD`ed (PHASE=2) against live glibc in a fresh link-map namespace in the
+  **same process image**, arms asserted distinct, conformance before counting, two-point over 2000
+  marginal calls, driver loop's 10 Ir netted out.
+- **HOW IT WAS FOUND, AND THE NEGATIVE THAT PRECEDED IT.** `memrchr`'s ABI entry cost a flat **36 Ir
+  at every length** — alone that is 2x glibc's entire 16-byte `memrchr`. The obvious suspect,
+  `runtime_policy::strict_passthrough_active()`, was **checked and cleared**: it is one relaxed
+  atomic load and two compares, ~4 instructions. Disassembly named the real cost instead:
+
+  ```
+  memrchr: push %rbp; push %r15; push %r14; push %r13; push %r12; push %rbx; sub $0x88,%rsp
+  ```
+
+  **Six callee-saved registers and a 136-byte frame**, sized for the validating tail, paid by the
+  strict fast path on every call for registers it never touches — prologue plus matching epilogue,
+  ~14 instructions. `strcmp`, `strlen` and `memchr` open with the same shape, so **this is a
+  property of the string ABI entries, not of `memrchr`.**
+- **THE FIX AND ITS PREDICTED SIZE.** Moving the validating tail into a `#[cold] #[inline(never)]`
+  helper collapses the prologue to a single `push %rbx` with no stack allocation. Measured saving:
+  **exactly 14.0 Ir per call, identical at all seven lengths** — which is the prologue/epilogue
+  count, so the mechanism is confirmed rather than merely correlated.
+- **COMBINED WITH THE MASK RESOLVE** (previous row):
+
+  | len | glibc | base | mask | +split | base | final |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 18.00 | 120.00 | 119.00 | 105.00 | 6.666x | 5.833x |
+  | 32 | 18.03 | 166.00 | 65.00 | **51.00** | 9.208x | **2.829x** |
+  | 64 | 30.00 | 175.00 | 73.00 | 59.00 | 5.833x | 1.967x |
+  | 128 | 41.00 | 202.00 | 87.00 | 73.00 | 4.927x | 1.780x |
+  | 256 | 61.97 | 217.00 | 100.00 | 86.00 | 3.501x | 1.388x |
+  | 1024 | 154.00 | 307.02 | 178.00 | 164.00 | 1.994x | **1.065x** |
+  | 4096 | 466.00 | 667.00 | 490.00 | **476.00** | 1.431x | **1.021x** |
+
+  Totals **1854 -> 1014 Ir, 45% fewer**. Worst needle position **10.317x -> 3.495x**, and the
+  position-independence from the mask resolve is preserved (63 Ir at offsets 31, 16 and 0 alike).
+- **THIS RETROACTIVELY EXPLAINS AN EARLIER RESULT.** The `strlen` hot/cold frame split measured
+  **17 Ir** and was reverted this session as "only ~12.5% of the gap". It is the same phenomenon,
+  and at 14-17 Ir on **every** string entrypoint it is a systematic tax rather than a per-symbol
+  curiosity. **`strlen`, `strcmp` and `memchr` still carry it** — named here, not silently folded
+  into this row.
+- **CONFORMANCE.** The same 951,906-check differential against live glibc as the previous row —
+  exact offsets, needle at every position of every length 0..400, multiple needles (last must
+  win), dense buffers, `n` truncation, `n == 0`, high-bit and `0x1FF` truncation. **0 failures.**
+- **GATE.** `cargo test -p frankenlibc-abi --lib` observed compiling and running:
+  `test result: ok. 200 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out`.
+- **PROVENANCE.** Mask-resolve only `019ca821c52d68dee6f6e42f5f9ac3225b90d6133aa9e7abefc44395807a8cc8`;
+  mask-resolve + frame split `083507c6edf3cb33279a3364faaf14af340935d08a793ef9e0f0ac8142826d5a`.
+  Built on `vmi1293453`, counted locally with `valgrind-3.25.1`.

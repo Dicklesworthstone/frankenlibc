@@ -4298,6 +4298,20 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
         };
     }
 
+    // Cold tail lives in its own frame. The validating path below needs six
+    // callee-saved registers and a 136-byte frame (`push rbp/r15/r14/r13/r12/rbx;
+    // sub $0x88,%rsp`), and because it shared this function body the STRICT fast
+    // path above paid that prologue and its matching epilogue on every call --
+    // ~14 instructions of frame management for registers it never touches.
+    // Measured (callgrind two-point vs live glibc in the same process image):
+    // the ABI entry cost a flat 36 Ir at every length, which alone is 2x glibc's
+    // entire 16-byte memrchr. Splitting the tail out keeps the hot frame small.
+    unsafe { memrchr_validating(s, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
