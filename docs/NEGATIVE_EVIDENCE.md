@@ -34422,3 +34422,52 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.26,0.65,0.65`. Driver compiled `cc -O2 -fno-builtin-strlen`.
+
+## 2026-08-26 — SECOND HYPOTHESIS REFUTED: removing ALL FOUR header validity checks from the probe buys ~0.94 ns of its ~6.2 ns. The cost is pointer-chasing across cold cache lines, not validation logic
+
+- **RESULT CLASS: loss/baseline (rejected lever, second mechanism refuted in two rows).** The
+  previous row named the next ablation: `segment_remaining` needs only `requested - offset` yet
+  revalidates immutable, read-only-mapped header fields on every query, and `bin_size()` touches a
+  `SIZE_TABLE` line the path otherwise never reads. **Removed all four checks. It bought almost
+  nothing.**
+- **THE ABLATION.** In `segment_header_at`, delete the magic compare, the `class_index` bound, the
+  `class_size == bin_size(class_index)` cross-check and the non-zero `slot_count` test — return
+  the header unconditionally. Diff **+5/-7**. Unshippable by construction: it deletes a corruption
+  tripwire, and it affects `segment_free` too, so it was reverted immediately.
+- **THE RESULT**, same driver, same worker, back to back, fl by `LD_PRELOAD` at phase 2:
+
+  | buffer | base ratio | ablation ratio | base fl ns | ablation fl ns |
+  |---|---:|---:|---:|---:|
+  | stack | 3.297060 | 3.515160 | 7.1838 | 6.9900 |
+  | static | 3.228413 | 3.243817 | 6.6154 | 6.4654 |
+  | **fl heap** | 4.335846 | **4.171228** | 9.2325 | **8.2889** |
+
+  The heap path — the only one that reaches the header at all — improves by **0.94 ns**, about
+  **15% of the ~6.2 ns probe-hit cost**. Registered prediction was "toward 5-6 ns"; it reached
+  8.29. **Refuted.** The stack and static rows are unchanged, as they must be, which is the
+  internal check that the ablation did what it claimed.
+- **SO THE COST IS NOT INSTRUCTIONS, IT IS DEPENDENT LOADS.** What remains on the hit path is a
+  chain of reads that cannot be reordered because each address depends on the last:
+  `SEGMENT_ARENA_STATE` and `SEGMENT_ARENA_BASE`, then `SEGMENT_OWNED_BITMAP` (Acquire), then the
+  segment header line, then `SEGMENT_DESCRIPTORS` indexed with a **0x7e10-byte stride**, then the
+  `meta_base` sidecar, then `requested_size`. That is **four to six distinct, mostly cold cache
+  lines walked in sequence** to answer "how many bytes are left". Four dependent L2/L3 hits at
+  1-2 ns each accounts for the ~6 ns; four removed compare instructions accounting for 0.94 ns
+  fits the same picture from the other side.
+- **TWO HYPOTHESES ABOUT WHERE THIS COST LIVES HAVE NOW BEEN KILLED BY THEIR OWN PREDICTED TESTS**
+  — the 184-byte stack frame (worth 1.15 ns) and the header validation (worth 0.94 ns). Together
+  they are **2.1 ns of a 7.24 ns probe**. What is left is the pointer chase itself, and that is
+  not something an ablation can shave: it needs the bound to be reachable in **fewer dependent
+  loads**, which is a data-layout change — the bound stored where the payload already is, or a
+  per-thread one-entry cache keyed on the segment. This ledger already records that data-layout
+  changes in this allocator have gone badly twice (the per-class reciprocal table: +0.02%
+  instructions but +4.6% and +34% cycles; the magazine widening: 30 MB of `.data`), so the next
+  step here is a design proposal with a measured cache-line budget, not another quick edit.
+- **CAVEAT ON SIZE.** `loadavg` was 3.66, the highest of the session, and base's heap reading moved
+  9.78 -> 9.23 between runs (6%) independently of any change. The 0.94 ns delta is larger than
+  that but not by much, so it is reported as "roughly 1 ns, and certainly not the dominant term"
+  rather than as a precise figure. The conclusion does not depend on the third digit: the
+  prediction was a 3-4 ns improvement and nothing close to that happened.
+- **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  ablation `sha256=d629aada59373314f214bbfdaf146ba5b32a48ccf062fed611f2a86b5c4ddf3a`, both from
+  HEAD `998070b640879f95ec888990064a07833d926930` built on worker `vmi1293453`.

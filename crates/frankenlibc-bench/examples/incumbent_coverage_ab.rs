@@ -52,6 +52,7 @@ use std::hint::black_box;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
 
 use frankenlibc_bench::{DEPLOYED_PRELOAD_DLOPEN_FLAGS, HostWideBenchmarkGuard};
@@ -155,6 +156,7 @@ type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent
 /// two arms could diverge on register-save work that has nothing to do with the
 /// formatter under test. The variadic type makes both arms use the real ABI.
 type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type PrintfFn = unsafe extern "C" fn(*const c_char, ...) -> c_int;
 /// `vsscanf` is the shared engine every `sscanf`/`__isoc99_sscanf`/
 /// `__isoc23_sscanf` call reaches, and it takes an explicit `va_list` pointer —
 /// so both arms are called through one non-variadic signature with no register-
@@ -333,6 +335,8 @@ unsafe extern "C" {
     fn linked_host_snprintf(s: *mut c_char, n: usize, format: *const c_char, ...) -> c_int;
     #[link_name = "fprintf"]
     fn linked_host_fprintf(stream: *mut c_void, format: *const c_char, ...) -> c_int;
+    #[link_name = "printf"]
+    fn linked_host_printf(format: *const c_char, ...) -> c_int;
     #[link_name = "fopen"]
     fn linked_host_fopen(path: *const c_char, mode: *const c_char) -> *mut c_void;
     #[link_name = "fflush"]
@@ -590,6 +594,7 @@ enum Family {
     SnprintfFused,
     SnprintfFloat,
     FprintfFloat,
+    PrintfFloat,
     Sscanf,
     Wcsnrtombs,
 }
@@ -1083,6 +1088,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("snprintf_fused") => Family::SnprintfFused,
                 Some(value) if value == OsStr::new("snprintf_float") => Family::SnprintfFloat,
                 Some(value) if value == OsStr::new("fprintf_float") => Family::FprintfFloat,
+                Some(value) if value == OsStr::new("printf_float") => Family::PrintfFloat,
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
@@ -10297,6 +10303,7 @@ fn main() {
         Family::SnprintfFused => run_snprintf_fused(&config),
         Family::SnprintfFloat => run_snprintf_float(&config),
         Family::FprintfFloat => run_fprintf_float(&config),
+        Family::PrintfFloat => run_printf_float(&config),
         Family::Sscanf => run_sscanf(&config),
         // Peer-owned family (WildRaven): the variant and its batch helper have
         // landed but the top-level runner has not. This arm only keeps the
@@ -10903,4 +10910,314 @@ fn check_stream_float_conformance(host: StreamArm, fl: StreamArm) -> (usize, usi
     let _ = std::fs::remove_file(host_path.to_str().expect("ascii"));
     let _ = std::fs::remove_file(fl_path.to_str().expect("ascii"));
     (comparisons, mismatches)
+}
+
+// ---------------------------------------------------------------------------
+// printf_float family (bd-8dxjn5).
+//
+// `printf` has no destination argument. Each provider owns a distinct stdout
+// FILE object, but both objects write through process-global fd 1. The runner
+// therefore serializes redirects, captures conformance through a pipe, and
+// redirects fd 1 to /dev/null only outside timed batches. The timed body is
+// exactly printf plus that provider's fflush; descriptor switching is excluded.
+
+static STDOUT_REDIRECT: Mutex<()> = Mutex::new(());
+
+fn stdout_redirect_lock() -> MutexGuard<'static, ()> {
+    STDOUT_REDIRECT.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Clone, Copy)]
+struct StdoutArm {
+    printf: PrintfFn,
+    fflush: FflushFn,
+    stdout: *mut c_void,
+    sink_fd: c_int,
+}
+
+fn redirect_stdout_to(fd: c_int) -> c_int {
+    // SAFETY: fd 1 and `fd` are live descriptors; the saved descriptor is
+    // returned to the caller and restored before the helper returns.
+    unsafe {
+        let saved = libc::dup(libc::STDOUT_FILENO);
+        assert!(saved >= 0, "dup stdout before redirect failed");
+        assert!(
+            libc::dup2(fd, libc::STDOUT_FILENO) >= 0,
+            "dup2 stdout redirect failed"
+        );
+        saved
+    }
+}
+
+fn restore_stdout(saved: c_int) {
+    // SAFETY: `saved` came from redirect_stdout_to and is still live.
+    unsafe {
+        assert!(
+            libc::dup2(saved, libc::STDOUT_FILENO) >= 0,
+            "restore stdout after redirect failed"
+        );
+        assert_eq!(libc::close(saved), 0, "close saved stdout descriptor failed");
+    }
+}
+
+/// Capture one provider's stdout call without creating a filesystem artifact.
+/// The pipe is far larger than the longest checked `%.100f` output, and closing
+/// the temporary fd-1 writer before reading supplies a deterministic EOF.
+fn capture_stdout_float(arm: StdoutArm, format: &CStr, value: f64) -> (c_int, Vec<u8>) {
+    // Drain bytes from this provider's stdout before it is redirected. The
+    // providers own independent FILE buffers, so flushing only one would leave
+    // stale bytes in the other provider for its capture.
+    assert_eq!(
+        unsafe { (arm.fflush)(arm.stdout) },
+        0,
+        "flush stdout before capture failed"
+    );
+    let mut pipe = [-1; 2];
+    // SAFETY: `pipe` has exactly two descriptor slots.
+    assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0, "pipe capture failed");
+    let saved = redirect_stdout_to(pipe[1]);
+    // fd 1 is now the only writer endpoint needed by this capture.
+    assert_eq!(unsafe { libc::close(pipe[1]) }, 0, "close pipe writer failed");
+
+    // SAFETY: the format names one f64 and `stdout` belongs to this provider.
+    let returned = unsafe { (arm.printf)(format.as_ptr(), value) };
+    // SAFETY: flush this provider's FILE while fd 1 still names the pipe.
+    let flushed = unsafe { (arm.fflush)(arm.stdout) };
+    restore_stdout(saved);
+    assert_eq!(flushed, 0, "flush stdout capture failed");
+
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 512];
+    loop {
+        // SAFETY: the read endpoint remains open; buffer is writable for its
+        // full length.
+        let count = unsafe {
+            libc::read(
+                pipe[0],
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+            )
+        };
+        assert!(count >= 0, "read stdout capture failed");
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..count as usize]);
+    }
+    // SAFETY: this is the still-live read endpoint of `pipe`.
+    assert_eq!(unsafe { libc::close(pipe[0]) }, 0, "close pipe reader failed");
+    (returned, bytes)
+}
+
+fn check_stdout_float_conformance(host: StdoutArm, fl: StdoutArm) -> (usize, usize) {
+    let formats = [
+        c"%.2f",
+        c"%.4f",
+        c"%f",
+        c"%.0f",
+        c"%.9f",
+        c"%.10f",
+        c"%.99f",
+        c"%.100f",
+    ];
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+    for format in formats {
+        for &value in &FLOAT_VALUES {
+            let (host_return, host_bytes) = capture_stdout_float(host, format, value);
+            let (fl_return, fl_bytes) = capture_stdout_float(fl, format, value);
+            comparisons += 1;
+            if host_return != fl_return
+                || host_bytes != fl_bytes
+                || fl_return < 0
+                || fl_return as usize != fl_bytes.len()
+            {
+                mismatches += 1;
+            }
+        }
+    }
+    (comparisons, mismatches)
+}
+
+fn assert_timed_stdout_is_live(arm: StdoutArm, who: &str) {
+    let saved = redirect_stdout_to(arm.sink_fd);
+    // SAFETY: the format names one f64 and `stdout` belongs to this provider.
+    let returned = unsafe { (arm.printf)(c"%.2f".as_ptr(), 1234.56f64) };
+    // SAFETY: the matching provider flushes its own stdout before fd 1 is
+    // restored, so the tested write reaches the timed sink.
+    let flushed = unsafe { (arm.fflush)(arm.stdout) };
+    restore_stdout(saved);
+    assert_eq!(returned, 7, "{who} printf on the timed stdout returned {returned}, expected 7");
+    assert_eq!(flushed, 0, "{who} fflush on the timed stdout failed");
+}
+
+#[inline(never)]
+fn run_stdout_float_batch(arm: StdoutArm, format: &CStr) -> u64 {
+    let mut accumulator = 0xcbf2_9ce4_8422_2325u64;
+    for index in 0..SNPRINTF_REPS {
+        let value = FLOAT_TIMING[index & (FLOAT_TIMING.len() - 1)];
+        // SAFETY: `format` names one f64; fd 1 is redirected to this arm's
+        // sink for the whole batch by the timing wrapper.
+        let returned = unsafe { black_box(arm.printf)(black_box(format.as_ptr()), black_box(value)) };
+        accumulator ^= black_box(returned) as u64;
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // SAFETY: this provider owns `stdout`, and flushing is part of the stream
+    // work being compared rather than post-measurement cleanup.
+    assert_eq!(unsafe { black_box(arm.fflush)(black_box(arm.stdout)) }, 0, "timed stdout flush failed");
+    black_box(accumulator)
+}
+
+fn time_stdout_float_batch(arm: StdoutArm, format: &CStr) -> f64 {
+    let saved = redirect_stdout_to(arm.sink_fd);
+    let started = Instant::now();
+    black_box(run_stdout_float_batch(arm, format));
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64;
+    restore_stdout(saved);
+    elapsed
+}
+
+fn time_stdout_2f_batch(arm: StdoutArm) -> f64 {
+    time_stdout_float_batch(arm, c"%.2f")
+}
+
+fn time_stdout_4f_batch(arm: StdoutArm) -> f64 {
+    time_stdout_float_batch(arm, c"%.4f")
+}
+
+fn time_stdout_6f_batch(arm: StdoutArm) -> f64 {
+    time_stdout_float_batch(arm, c"%f")
+}
+
+fn run_printf_float(config: &Config) {
+    let _stdout_guard = stdout_redirect_lock();
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+
+    // SAFETY: `handle` remains live for the runner; all names are NUL-terminated.
+    let (fl_printf_symbol, fl_fflush_symbol, fl_stdout_slot) = unsafe {
+        (
+            libc::dlsym(handle, c"printf".as_ptr()),
+            libc::dlsym(handle, c"fflush".as_ptr()),
+            libc::dlsym(handle, c"stdout".as_ptr()),
+        )
+    };
+    for (symbol, name) in [
+        (fl_printf_symbol, "printf"),
+        (fl_fflush_symbol, "fflush"),
+        (fl_stdout_slot, "stdout"),
+    ] {
+        assert!(!symbol.is_null(), "{}", dl_error(&format!("dlsym FrankenLibC {name}")));
+    }
+    // SAFETY: RTLD_DEFAULT resolves the process-linked glibc `stdout`; the
+    // FrankenLibC object was loaded RTLD_LOCAL and cannot satisfy this lookup.
+    let host_stdout_slot = unsafe { libc::dlsym(std::ptr::null_mut(), c"stdout".as_ptr()) };
+    assert!(!host_stdout_slot.is_null(), "{}", dl_error("dlsym host stdout"));
+
+    // SAFETY: all resolved functions have their C signatures, and `stdout` is
+    // a FILE* variable in both providers.
+    let fl_printf: PrintfFn = unsafe { std::mem::transmute(fl_printf_symbol) };
+    let fl_fflush: FflushFn = unsafe { std::mem::transmute(fl_fflush_symbol) };
+    let fl_stdout = unsafe { *(fl_stdout_slot as *const *mut c_void) };
+    let host_stdout = unsafe { *(host_stdout_slot as *const *mut c_void) };
+    assert!(!fl_stdout.is_null(), "FrankenLibC stdout is null");
+    assert!(!host_stdout.is_null(), "host stdout is null");
+
+    let host_printf: PrintfFn = linked_host_printf;
+    let host_fflush: FflushFn = linked_host_fflush;
+    let incumbent_identity = symbol_object(host_printf as *const () as *const c_void)
+        .expect("identify host printf object");
+    let fl_identity =
+        symbol_object(fl_printf_symbol.cast_const()).expect("identify FrankenLibC printf object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=printf");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=printf");
+    assert_ne!(incumbent_identity.sha256, fl_identity.sha256, "both providers resolve to byte-identical objects");
+    assert_ne!(host_printf as usize, fl_printf as usize, "both printf arms resolve to the same function address");
+    println!(
+        "ARM_DISTINCT symbol=printf_float incumbent_address={:#x} fl_address={:#x}",
+        host_printf as usize, fl_printf as usize,
+    );
+
+    let host_base = StdoutArm {
+        printf: host_printf,
+        fflush: host_fflush,
+        stdout: host_stdout,
+        sink_fd: -1,
+    };
+    let fl_base = StdoutArm {
+        printf: fl_printf,
+        fflush: fl_fflush,
+        stdout: fl_stdout,
+        sink_fd: -1,
+    };
+    let (comparisons, mismatches) = check_stdout_float_conformance(host_base, fl_base);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=printf_float formats=8 values=16 comparisons={comparisons} mismatches={mismatches} compared=stdout_bytes_and_return_value verdict={conformance_verdict}"
+    );
+    if config.verify_only {
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(mismatches, 0, "printf float arms are not observationally equivalent; refusing to time them");
+
+    // SAFETY: each descriptor is a private write-only handle to the same
+    // discard sink. Opening is outside timed batches and avoids provider-owned
+    // FILE layout crossing.
+    let host_sink = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+    let fl_sink = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+    assert!(host_sink >= 0 && fl_sink >= 0, "open /dev/null sinks failed");
+    let host = StdoutArm { sink_fd: host_sink, ..host_base };
+    let fl = StdoutArm { sink_fd: fl_sink, ..fl_base };
+    assert_timed_stdout_is_live(host, "glibc");
+    assert_timed_stdout_is_live(fl, "FrankenLibC");
+    println!("TIMED_STDOUT_LIVE symbol=printf_float checked=return_byte_count_on_redirected_stdout verdict=pass");
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    let results = [
+        measure_arm_case("stdout_2dp", "printf \"%.2f\" through redirected stdout", host, fl, time_stdout_2f_batch),
+        measure_arm_case("stdout_4dp", "printf \"%.4f\" through redirected stdout", host, fl, time_stdout_4f_batch),
+        measure_arm_case("stdout_6dp", "printf bare \"%f\" through redirected stdout", host, fl, time_stdout_6f_batch),
+    ];
+    let threads_post = observed_threads();
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for result in &results {
+        result.print("printf_float", &incumbent_identity.path, threads_pre, threads_post);
+    }
+    let wins = results.iter().filter(|result| result.comparison == "FL_FASTER").count();
+    let losses = results.iter().filter(|result| result.comparison == "FL_SLOWER").count();
+    let headline = results.iter().find(|result| result.label == "stdout_2dp").expect("missing stdout_2dp result");
+    let verdict = if results.iter().all(CaseResult::decidable) { "DECIDABLE" } else { "INCOMPLETE" };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=printf_float verdict={verdict} cases={} wins={wins} losses={losses} undecidable={} headline_case=stdout_2dp headline_ratio_median={:.6} threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(), results.len() - wins - losses, headline.effect_median,
+    );
+    // SAFETY: these are the two private descriptors opened above.
+    unsafe {
+        assert_eq!(libc::close(host_sink), 0, "close host /dev/null sink failed");
+        assert_eq!(libc::close(fl_sink), 0, "close FrankenLibC /dev/null sink failed");
+    }
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
 }
