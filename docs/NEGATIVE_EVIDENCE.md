@@ -33448,3 +33448,42 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.16,0.10,0.14`. Driver compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — `tdelete` IS WARM-UP-INSENSITIVE: 2.534x at depth 2, 2.529x at depth 20 — a 0.2% move where `memrchr` moved 33%, and that contrast is the useful part
+
+- **RESULT CLASS: loss/baseline (confirmation of the #2 deployed surface).** The row above
+  established that warm-up depth is a hidden parameter that moved `memrchr`'s 512-byte figure 33%
+  while every A/A null held, and it explicitly flagged the other deployed rows as unverified at
+  depth. `tdelete` is the largest of those, so it was re-run first. **It holds.**
+- **THE ROW.** Same-invocation deployed: fl by `LD_PRELOAD` (phase **2 = ACTIVE**, `ready=1`
+  before and after), live glibc by `dlmopen(LM_ID_NEWLM)`, addresses distinct
+  (`fl=0x771f1e1907f0`, `glibc=0x771f1d535fa0`), 8192-key tree fully deleted per batch, 25
+  samples, ABBA, **warm-up raised from 2 rounds to 20** (~330,000 build+delete operations before
+  the first timed sample). fl **368.456 ns per deletion** against glibc **145.684 ns** =
+  **2.529143**. A/A nulls fl/fl **0.991145**, glibc/glibc **1.002931** — both hold.
+- **AGAINST 2.534195 AT DEPTH 2: a 0.2% move.** Compare `memrchr` at 512 B, same treatment,
+  which moved 1.768632 -> 1.325751. So warm-up sensitivity is **not** a property of the driver or
+  the technique — it is a property of the surface.
+- **THE RULE THAT FALLS OUT, and it is testable rather than a hunch.** `tdelete` times 8192
+  deletions over a ~400 KB tree per batch: the working set is far larger than L1/L2, every level
+  of the descent is a likely miss, and the per-call cost is hundreds of nanoseconds. `memrchr` at
+  512 B times a 5-9 ns call over a buffer that never leaves L1. **Warm-up depth moves the small,
+  hot, predictor-and-i-cache-bound cases and leaves the large, memory-bound ones alone.** The
+  practical consequence: `sinhf`/`coshf` (16 ns, tiny state) and `mtx_trylock` (8 ns) are in the
+  sensitive class and still owe a depth re-run; `nl_langinfo` (2.8 ns) likewise. `snprintf`
+  (5-40 ns) is borderline.
+- **THE CONTROL TIGHTENED TOO, which is consistent.** Both-arms-glibc at depth 20 reads
+  **0.971396** with nulls 0.992046 and 1.010719, against **0.938463** at depth 2 — the instrument
+  bias toward the fl slot halved from 6.2% to 2.9% once the arms were warm. Correcting the
+  deployed figure: **2.529143 / 0.971396 = 2.6036**, against 2.7003 by the same correction at
+  depth 2. The two corrected values agree to 3.6%.
+- **SO THE #2 SURFACE'S NUMBER IS SOLID.** `tdelete` is **~2.53x raw, ~2.60x bias-corrected**,
+  reproduced at two warm-up depths with all four nulls holding, and it agrees with the harness's
+  `dlopen` 2.725062 to within 7%. Nothing about `bd-z4k8bh`'s lever changes: LLRB deletion carries
+  a presence precondition, so fl walks the tree twice and rebalances at every level against
+  glibc's single classic red-black descent.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.15,0.16,0.15`. Driver compiled on the worker with `cc -O2`;
+  the tree is asserted empty after every batch.
