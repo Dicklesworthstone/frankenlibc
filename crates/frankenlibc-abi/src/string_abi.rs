@@ -3414,6 +3414,14 @@ fn wide_read_within_page(addr: usize) -> bool {
 /// byte step is taken. A flagged window (words unequal OR containing a NUL) is
 /// resolved byte-wise in scan order, so the exact first diff/NUL is returned —
 /// byte-identical to the scalar loop it replaces.
+/// `#[inline]`: this is called from exactly two strict fast paths (`strcmp` with
+/// `BOUNDED=false`, `strncmp`/`strncasecmp` with `true`), and as an out-of-line
+/// call each one paid four callee-saved pushes plus the matching pops. Line-level
+/// profiling (callgrind `--dump-line`, two-point) charged 25 of the bounded
+/// instantiation's 83 Ir to this signature line -- the pushes plus the guard
+/// arithmetic the compiler hoists to entry. Inlining lets each caller keep only
+/// the registers its own instantiation actually needs.
+#[inline(always)]
 unsafe fn scan_strcmp<const BOUNDED: bool>(
     s1: *const c_char,
     s2: *const c_char,
