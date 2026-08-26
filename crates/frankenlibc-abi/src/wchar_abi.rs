@@ -1016,32 +1016,32 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
                 i += 32;
                 continue;
             }
-            let base = if f0 != 0 {
-                i
+            // Resolve from the lane mask, not a scalar re-scan. Each `flag` is
+            // `(differs | s1-is-NUL)`, so its lowest set bit is exactly the element
+            // the old `for j in 0..WLANES` loop walked forward to find — up to eight
+            // loads and compares to recover an index the mask already held. Measured
+            // (callgrind two-point vs live glibc in the same process image):
+            // `scan_wcscmp_simd` spent 203 Ir comparing 31 wchars against 58 Ir for
+            // glibc's entire `__wcsncmp_avx2` call. Same fix, same reason, as the
+            // `memrchr` mask resolve.
+            let (base, m) = if f0 != 0 {
+                (i, f0)
             } else if f1 != 0 {
-                i + 8
+                (i + 8, f1)
             } else if f2 != 0 {
-                i + 16
+                (i + 16, f2)
             } else {
-                i + 24
+                (i + 24, f3)
             };
-            for j in 0..WLANES {
-                // SAFETY: base+j < i+32 <= bound; within the just-read in-page window.
-                let a = unsafe { *s1.add(base + j) };
-                let b = unsafe { *s2.add(base + j) };
-                if a != b {
-                    return (
-                        if (a as i32) < (b as i32) { -1 } else { 1 },
-                        base + j + 1,
-                        false,
-                    );
-                }
-                if a == 0 {
-                    return (0, base + j + 1, false);
-                }
+            let idx = base + m.trailing_zeros() as usize;
+            // SAFETY: idx < i+32 <= bound; within the just-read in-page window.
+            let a = unsafe { *s1.add(idx) };
+            let b = unsafe { *s2.add(idx) };
+            if a != b {
+                return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
             }
-            i += 32; // defensive: a flagged window always returns above.
-            continue;
+            // Equal at a flagged lane ⇒ the flag came from the NUL term ⇒ equal strings.
+            return (0, idx + 1, false);
         }
         if i + WLANES <= bound
             && wide32_read_within_page(s1.wrapping_add(i) as usize)
@@ -1055,27 +1055,22 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
             let vb = Simd::<u32, WLANES>::from_array(unsafe {
                 core::ptr::read(s2.add(i).cast::<[u32; WLANES]>())
             });
-            if va == vb && !va.simd_eq(zv).any() {
+            // One combined mask instead of an equality test plus a NUL test plus a
+            // scalar re-scan: same `(differs | s1-is-NUL)` predicate the 128B tier
+            // uses, resolved the same O(1) way.
+            let m = (va.simd_ne(vb) | va.simd_eq(zv)).to_bitmask();
+            if m == 0 {
                 i += WLANES;
                 continue;
             }
-            for j in 0..WLANES {
-                // SAFETY: i+j < bound.
-                let a = unsafe { *s1.add(i + j) };
-                let b = unsafe { *s2.add(i + j) };
-                if a != b {
-                    return (
-                        if (a as i32) < (b as i32) { -1 } else { 1 },
-                        i + j + 1,
-                        false,
-                    );
-                }
-                if a == 0 {
-                    return (0, i + j + 1, false);
-                }
+            let idx = i + m.trailing_zeros() as usize;
+            // SAFETY: idx < i+WLANES <= bound.
+            let a = unsafe { *s1.add(idx) };
+            let b = unsafe { *s2.add(idx) };
+            if a != b {
+                return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
             }
-            i += WLANES; // defensive: a flagged window always returns above.
-            continue;
+            return (0, idx + 1, false);
         }
         if i >= bound {
             return (0, bound, true);

@@ -35334,3 +35334,55 @@ earlier `c8232c0ec` sweep.
   landed `wcslen`. The 172 Ir inside `wide_fused_copy` now has **no known lever** — the scalar
   loops are load-bearing, and a full-width vector store is unsafe because `dst` is only guaranteed
   `len+1` elements.
+
+## 2026-08-26 — `scan_wcscmp_simd` mask resolve: `wcscmp` **3.304x -> 2.413x (+40.96 Ir)**. `wcsncmp` gains only **+1 Ir** and the reason is diagnostic: at `bound=31` it never enters the 128B tier and dies in a **scalar tail**
+
+- **RESULT CLASS: one counted win, and a neutral result whose cause is identified rather than
+  shrugged at.** Instrument unchanged: fl `LD_PRELOAD`ed against live glibc in a fresh link-map
+  namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2` and
+  conformance verified before counting; baseline and candidate from one source tree.
+- **THE DEFECT WAS THE SAME ONE `memrchr` HAD.** `scan_wcscmp_simd` computes a
+  `(differs | s1-is-NUL)` lane mask, then **threw it away and walked a `for j in 0..WLANES` scalar
+  loop** to recover the index it already held — up to eight loads and compares per resolve, in
+  both the 128B tier and the 8-lane tier. Attribution: fl `wcsncmp` = entry 38 + **`scan_wcscmp_simd`
+  203 Ir**, against glibc's entire `__wcsncmp_avx2` at 58. Resolving with `trailing_zeros` and one
+  element re-read (needed only to separate "differs" from "both NUL", which the mask conflates) is
+  O(1).
+- **THE NUMBERS.**
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wcscmp` | 46.00 | 151.96 | **111.00** | 3.304x | **2.413x** | **+40.96** |
+  | `wcsncmp` | 60.00 | 243.00 | 242.00 | 4.050x | 4.033x | +1.00 |
+  | `wcscpy` | 38.00 | 201.00 | 201.00 | 5.289x | 5.289x | 0.00 |
+  | others (5) | — | — | — | — | — | ≤0.04 |
+
+  The five untouched families move by at most 0.04 Ir, which is the isolation check.
+- **WHY `wcsncmp` BARELY MOVED, AND IT IS NOT THAT THE FIX FAILED.** The 128B tier is gated on
+  `i + 32 <= bound`. `wcsncmp(a, b, 31)` therefore **never enters it** — `32 <= 31` is false. It
+  runs three 8-lane panels (i=0,8,16) and then, at i=24, `24 + 8 <= 31` is also false, so the last
+  **seven elements are compared one at a time by the scalar fallback**, which is where this test's
+  difference (index 30) actually lies. The mask fix is real but lands in tiers this case skips.
+  **This is the same shape as the `scan_c_string` bound problem** — a bound just under a tier width
+  falls off the ladder — and the same overlapping-probe trick applies: resolve the tail with one
+  8-lane panel at `bound - 8`, masking lanes below `i`. **Named as the next step, not attempted
+  here**, so this row's number stays attributable to one change.
+- **CONFORMANCE.** What a `trailing_zeros` resolve can break is *which* element is reported first,
+  and therefore the sign — so the test aims there: difference at every position of every length;
+  **two differences, so a wrong bit-pick reports the later one**; a difference and a NUL in the same
+  lane window in both orders, since **the mask conflates them and only the element re-read separates
+  them**; `wcsncmp` with `n` before, at and after the difference and past the terminator; source
+  alignments 0..31 (the tiers key on 32B and 128B boundaries); both operands ending on the last
+  mapped wchar before a `PROT_NONE` page; and **signed extremes — `wchar_t` is signed on Linux and
+  the resolve compares as `i32`, so `0x7FFFFFFF` vs `0x80000000` and `0xFFFFFFFF` decide the
+  opposite way from an unsigned read.** **563,781 checks, 0 failures**, strict and hardened, on base
+  and candidate.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `e0e63de2d4e745915a1da18641fc69e4150d6787eac5925311780ce3f541b120`,
+  candidate `d9259bc078912907d8618dde685f82126e530479aa25ca5cd6da7b360611aad8`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (no lever but its entry frame — the copy loops are
+  load-bearing, see the `copy_nonoverlapping` refutation), `wcsncmp` 4.033x (scalar tail, named
+  above), `wcsnlen` 3.500x, `wcschr` 2.704x, `wcscmp` 2.413x, `wmemchr` 2.391x, `wmemcmp` 2.246x,
+  `wcsrchr` 1.903x. **All ten wide entries still carry the frame tax except `wcslen`.**
