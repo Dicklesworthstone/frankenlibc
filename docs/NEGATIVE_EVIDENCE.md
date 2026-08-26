@@ -34480,3 +34480,50 @@ both object hashes present); only the attribution is wrong. Anyone bisecting tha
 look at c8232c0ec, not for a commit whose subject mentions strlen. This is the shared-worktree
 hazard already recorded in this project's notes -- stage and commit in one shot and verify HEAD
 afterwards, which is how it was caught. -->
+
+## 2026-08-26 — CORRECTION: the probe's cost is NOT cache misses. Spreading 4096 heap buffers over 256 KiB leaves fl's `strlen` flat at ~9-10 ns. It is dependent-load LATENCY, and that changes the fix
+
+- **RESULT CLASS: loss/baseline (correction of my own mechanism claim, two rows back).** That row
+  concluded the probe walks "four to six distinct, **mostly cold** cache lines". That word was
+  wrong and I should have caught it when I wrote it: the driver calls `strlen` on the **same
+  pointer** 500 times in a row, so every metadata line it touches is L1-resident by the second
+  call. A cold-line explanation cannot survive its own benchmark.
+- **THE TEST, no rebuild needed.** Same 7-byte string, but cycled over 1, 64, 1024 and 4096
+  distinct `malloc`'d buffers. With 4096 the payloads alone span **262,080 bytes** and their
+  segment headers, descriptor entries and metadata sidecar slots are spread far past L1. If the
+  probe were miss-bound, fl should degrade sharply from left to right.
+
+  | distinct buffers | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 1 (metadata hot) | 10.2628 | 2.2834 | 4.445505 | 1.001783 | 0.987984 | 1.056953 |
+  | 64 | 10.0487 | 2.2386 | 4.463060 | 0.979784 | 0.995330 | 1.027860 |
+  | 1024 | 8.9749 | 1.9679 | 4.497875 | 0.992145 | 1.021634 | 1.020515 |
+  | 4096 (metadata cold) | 9.2261 | 1.9612 | **4.562190** | 0.998312 | 1.010928 | 0.978567 |
+
+  Conformance: all 4096 buffers return length 7. Controls 0.979-1.057, near 1.0 throughout.
+- **fl IS FLAT — 8.97 to 10.26 ns across a 4096x spread in working set, and the widest and
+  narrowest cases are within 10% of each other with no trend.** The ratio drifts up only because
+  glibc's arm gets marginally faster in the later rows (2.28 -> 1.96), not because fl slows down.
+  **Cache locality is not the variable.**
+- **SO IT IS SERIAL LATENCY, AND THE ARITHMETIC FITS.** The probe performs five to six loads whose
+  addresses each depend on the previous result: arena state, arena base, ownership bitmap, segment
+  header, descriptor `meta_base`, `requested_size`. At an L1 load-to-use latency of 4-5 cycles
+  that is **25-30 cycles, or 8-9 ns at 3.2 GHz** — which is the measured probe cost almost exactly,
+  and it is paid whether the lines are hot or cold because the chain cannot be overlapped.
+- **THIS CHANGES WHAT A FIX HAS TO DO, which is why the correction matters rather than being
+  pedantry.** "Cold lines" would point at locality work — packing metadata, prefetching, reordering
+  structures. **None of that can help**: the lines are already hot and the machine is already
+  waiting on latency it cannot hide. The only lever is to **shorten the chain** — make the bound
+  reachable in one or two dependent loads instead of six, e.g. by keeping it where the first load
+  already lands, or by not needing it at all for short scans. A prefetch-or-pack proposal would
+  have been built on my error.
+- **THREE MECHANISM CLAIMS OF MINE HAVE NOW BEEN TESTED AND TWO KILLED**, all within this
+  investigation: the stack frame (worth 1.15 ns, not the cause), the header validity checks (worth
+  0.94 ns, not the cause), and now cold cache lines (worth nothing measurable, not the cause).
+  What survives is the dependency chain itself, which is the one explanation that predicts all
+  three negative results and the flat curve above.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process by
+  `dlmopen(LM_ID_NEWLM)`, fl by `LD_PRELOAD` at phase **2 = ACTIVE**. Worker `vmi1293453` at
+  `loadavg 0.55,0.86,0.87`. Driver compiled `cc -O2 -fno-builtin-strlen`.
