@@ -34576,3 +34576,52 @@ afterwards, which is how it was caught. -->
 - **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
   memo `sha256=ae1fddedc8c3bdc783656648631969c17cd3b6f2027e5945ca9d59e9309a1175`, both from HEAD
   `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453` at `loadavg 0.53,0.61,0.75`.
+
+## 2026-08-26 — COUNTED, DEFINITIVE: the probe is **108.973 instructions per call**. fl's 7-byte `strlen` is 159.006 Ir against glibc's 23.006 — and without the probe it is 50.033, i.e. 2.18x instead of 6.91x
+
+- **RESULT CLASS: loss/baseline (counted mechanism; supersedes the wall-clock attributions in this
+  investigation).** The previous row showed wall-clock had been pushed past its limit — base moved
+  7.36 to 10.26 ns between runs on the identical object — and named the correct instrument.
+  Applied. **Instruction counts are software-counted, so they are layout-immune, load-independent,
+  and reproduce exactly.**
+- **THE MEASUREMENT.** `callgrind` on three configurations of one driver, two-point difference
+  (N=3000 minus N=1000, so 2000 marginal calls, startup fully cancelled), 7-byte string in an
+  fl-heap buffer, `LD_PRELOAD` giving **PHASE=2 (ACTIVE)** on both fl arms — verified in the
+  driver's own output — and conformance (`strlen` returns 7) checked before counting.
+
+  | configuration | Ir per call | vs glibc |
+  |---|---:|---:|
+  | fl base | **159.006** | **6.911x** |
+  | fl without the probe | **50.033** | **2.175x** |
+  | glibc | **23.006** | 1.000x |
+  | **the probe alone** | **108.973** | — |
+
+  `known_remaining`'s own marginal self-cost, read independently from the per-function annotation,
+  is **123.24 Ir/call** — consistent with the 108.97 difference to within the call-overhead the
+  ablation also removes.
+- **THE PROBE IS 69% OF fl's ENTIRE `strlen`.** One call to answer "how many bytes are left in
+  this allocation" costs **more than four times what glibc spends doing the whole job**.
+- **AND IT CORRECTS MY OWN MECHANISM STORY A THIRD TIME.** I described this cost as "five to six
+  dependent loads" and then as "serial load latency". **It is not a short pointer chase — it is
+  109 instructions of real work.** The flat-across-4096-buffers result stands (it is genuinely not
+  cache misses), but "a handful of dependent loads" understated it by an order of magnitude, and I
+  published that characterisation twice. At ~3.5 IPC, 109 instructions is ~31 cycles ~= 9.7 ns,
+  which reconciles with the ~7 ns wall measurement; a six-load chain would not have.
+- **THE TWO INSTRUMENTS AGREE ONCE BOTH ARE READ CORRECTLY.** Instruction ratio 6.911x against a
+  wall ratio of ~4.7x, and no-probe 2.175x against a wall 1.67x — fl runs its longer straight-line
+  code at better IPC than glibc runs its shorter code, which is exactly the expected direction and
+  is why the wall ratio is milder than the instruction ratio in both arms.
+- **WHAT THIS SETTLES FOR THE LEVER.** The target is now exact rather than atmospheric: **109
+  instructions**, in `known_remaining`, on every string and memory entry point that bounds its
+  access — and **50 Ir of unavoidable fl overhead** underneath it, against glibc's 23. Removing the
+  probe entirely would leave fl at 2.18x on instructions; that is the ceiling of any probe-focused
+  work, and it is a real ceiling rather than parity. Anything beyond it has to come from the 50.
+- **AND IT RETIRES THE WALL-CLOCK APPROACH FOR THIS QUESTION.** Every sub-2 ns attribution in this
+  investigation should be re-derived this way if anyone needs it: the frame split and the header
+  checks were each measured as ~1 ns against a 39% between-run band, whereas this instrument
+  resolves single instructions and cost four minutes to run on a machine nobody had to reserve.
+- **PROVENANCE.** fl base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  ablation `sha256=912ce1a849d9ebaf3395fa4efbd5560eb5e3e9934dadda273c7db3550ba39634`, both built
+  from HEAD `998070b640879f95ec888990064a07833d926930` on worker `vmi1293453`. Counted **locally**
+  with `valgrind-3.25.1` because no fleet worker has valgrind installed; a software counter needs
+  no quiet host, which is the whole point.
