@@ -1957,21 +1957,60 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
             // `limit` readable bytes). First-NUL ordering holds: probe 0 owns `[0,16)`;
             // if empty, every NUL position < 16 is ruled out so probe 1's lowest set bit
             // is the true first NUL ≥ 16. Benefits strnlen + every bounded scan caller.
-            if (16..32).contains(&limit) {
-                let v0 = Simd::<u8, 16>::from_slice(unsafe { core::slice::from_raw_parts(p, 16) });
-                let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
-                if m0 != 0 {
-                    return (m0.trailing_zeros() as usize, true);
+            // ...and the same trick one tier down for `[8, 16)`, which previously
+            // fell through to the generic ladder and descended 128 -> 64 -> 32 ->
+            // 8B SWAR -> scalar, testing tiers that cannot fire at that bound.
+            // Measured (callgrind two-point vs live glibc in the same process
+            // image): an 8-byte string in a 9-byte tracked allocation spent 53 Ir
+            // in this scanner against 19 Ir for the identical string scanned
+            // unbounded — the bound, not the bytes, was the cost.
+            //
+            // Both arms sit under ONE `limit < 32` test. Adding the `[8,16)` arm
+            // as a second top-level range check instead cost every larger bound
+            // an extra comparison, measured at 2-4 Ir for bounds 21 and 41; this
+            // shape charges a bound of 32 or more a single compare, which is one
+            // fewer than the original `(16..32).contains` did.
+            if limit < 32 {
+                if limit >= 16 {
+                    let v0 =
+                        Simd::<u8, 16>::from_slice(unsafe { core::slice::from_raw_parts(p, 16) });
+                    let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m0 != 0 {
+                        return (m0.trailing_zeros() as usize, true);
+                    }
+                    let off = limit - 16;
+                    let v1 = Simd::<u8, 16>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(off), 16)
+                    });
+                    let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m1 != 0 {
+                        return (off + m1.trailing_zeros() as usize, true);
+                    }
+                    return (limit, false);
                 }
-                let off = limit - 16;
-                let v1 = Simd::<u8, 16>::from_slice(unsafe {
-                    core::slice::from_raw_parts(p.add(off), 16)
-                });
-                let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
-                if m1 != 0 {
-                    return (off + m1.trailing_zeros() as usize, true);
+                if limit >= 8 {
+                    // `p[0..8]` and `p[limit-8..limit]` are both inside `[0, limit)`
+                    // because `limit >= 8`. First-NUL ordering holds for the same
+                    // reason as the 16-byte case: probe 0 owns `[0,8)`, so if it is
+                    // empty every NUL position below 8 is ruled out and probe 1's
+                    // lowest set bit is the true first NUL at or above 8.
+                    let v0 =
+                        Simd::<u8, 8>::from_slice(unsafe { core::slice::from_raw_parts(p, 8) });
+                    let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m0 != 0 {
+                        return (m0.trailing_zeros() as usize, true);
+                    }
+                    let off = limit - 8;
+                    let v1 = Simd::<u8, 8>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(off), 8)
+                    });
+                    let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m1 != 0 {
+                        return (off + m1.trailing_zeros() as usize, true);
+                    }
+                    return (limit, false);
                 }
-                return (limit, false);
+                // `limit < 8` falls through to the generic ladder below.
             }
             let mut i = 0usize;
             // 128-byte folded tier for large bounded scans: ONE combined NUL check per
@@ -3406,19 +3445,32 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
                 });
                 (a.simd_ne(b) | a.simd_eq(zero)).to_bitmask()
             };
+            // EARLY-OUT PER PANEL. OR-combining all four masks gives the
+            // all-equal case a single branch, but it also prices four panels
+            // when the answer is in the first one — and the page guard admits
+            // this window for a 5-byte string, so EVERY compare under 128 bytes
+            // paid all four. Measured (callgrind two-point vs live glibc in the
+            // same process image): a flat ~99 Ir from L=4 to L=32 against
+            // glibc's 20, a fixed ~79-instruction floor at 4.95x. Testing each
+            // mask as it is produced lets a short or early-differing compare
+            // leave after one panel; the all-equal case still executes the same
+            // four compares, trading its single branch for four predictable
+            // ones. NOTE: this is an INSTRUCTION-COUNT trade — the OR form also
+            // lets the four loads issue without an intervening branch, which a
+            // cycle-accurate measurement may value differently for long strings.
             let f0 = cmp(0);
-            let f1 = cmp(32);
-            let f2 = cmp(64);
-            let f3 = cmp(96);
-            if f0 | f1 | f2 | f3 == 0 {
-                i += 128;
-                continue;
-            }
             if f0 != 0 {
                 return (i + f0.trailing_zeros() as usize, false);
             }
+            let f1 = cmp(32);
             if f1 != 0 {
                 return (i + 32 + f1.trailing_zeros() as usize, false);
+            }
+            let f2 = cmp(64);
+            let f3 = cmp(96);
+            if f2 | f3 == 0 {
+                i += 128;
+                continue;
             }
             if f2 != 0 {
                 return (i + 64 + f2.trailing_zeros() as usize, false);
@@ -4163,6 +4215,17 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         };
     }
 
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` — the same six callee-saved
+    // registers and 136-byte frame `memrchr` had, rented by the strict fast path
+    // above on every call for registers it never touches. Measured there: a flat
+    // 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    unsafe { memchr_validating(s, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
@@ -4285,6 +4348,20 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
         };
     }
 
+    // Cold tail lives in its own frame. The validating path below needs six
+    // callee-saved registers and a 136-byte frame (`push rbp/r15/r14/r13/r12/rbx;
+    // sub $0x88,%rsp`), and because it shared this function body the STRICT fast
+    // path above paid that prologue and its matching epilogue on every call --
+    // ~14 instructions of frame management for registers it never touches.
+    // Measured (callgrind two-point vs live glibc in the same process image):
+    // the ABI entry cost a flat 36 Ir at every length, which alone is 2x glibc's
+    // entire 16-byte memrchr. Splitting the tail out keeps the hot frame small.
+    unsafe { memrchr_validating(s, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
@@ -4435,6 +4512,16 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return unsafe { scan_c_string(s, bound).0 };
     }
 
+    // NOT SPLIT, and this is load-bearing. `strlen`'s entry carries the largest
+    // frame of the string family (`sub $0xb8,%rsp`) so it looks like the best
+    // candidate, and an isolated split does measure 17 Ir. But unlike its
+    // siblings this tail opens with `string_raw_passthrough_active()` — the
+    // re-entrancy/TLS bypass that stands between an interposed `strlen` and the
+    // validating membrane that itself calls `strlen`. Putting it behind a
+    // `#[cold] #[inline(never)]` boundary made hardened-mode startup SIGSEGV
+    // deterministically (3/3 runs, dying before `main`; strict mode unaffected).
+    // The 17 Ir is real and is not worth this. See the 2026-08-26 ledger row.
+
     // Hardened mode only: the remaining reentry/TLS-access bypasses before the
     // validating membrane (the bootstrap term is harmlessly re-checked here).
     if string_raw_passthrough_active() {
@@ -4447,6 +4534,20 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         }
     }
 
+    // Cold tail in its own frame — but split BELOW the bypass above, not above it.
+    // An earlier attempt moved the whole tail starting at `string_raw_passthrough_active()`
+    // and made hardened startup SIGSEGV deterministically: that bypass is the
+    // re-entrancy/TLS guard standing between an interposed `strlen` and a membrane
+    // that itself calls `strlen`, and it must not sit behind a `#[cold]
+    // #[inline(never)]` boundary. Everything from the trace scope down is ordinary
+    // validating work and moves safely. Worth 17 Ir on the entry (measured on an
+    // isolated split; `memrchr`/`memchr` measured 14.0 Ir for the same shape).
+    unsafe { strlen_validating(s) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strlen_validating(s: *const c_char) -> usize {
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
     let rem = known_remaining(s as usize);
     if !runtime_policy::mode().heals_enabled() && rem.is_none() {
@@ -4573,6 +4674,17 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
         return unsafe { scan_c_string_nul_or_bound(s, n).0 };
     }
 
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` — six callee-saved registers
+    // and an 88-byte frame sized for the validating path below, rented by the
+    // strict fast path above on every call. Measured on `memrchr`, identical
+    // prologue shape: a flat 14.0 Ir per call.
+    unsafe { strnlen_validating(s, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     let aligned = (s as usize) & 0x7 == 0;
     let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
@@ -4672,6 +4784,18 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         return (a as c_int) - (b as c_int);
     }
 
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x78,%rsp` — six callee-saved
+    // registers and a 120-byte frame sized for the validating path below, which
+    // the strict fast path above rented on every call for registers it never
+    // touches. Measured on `memrchr`, whose entry had the identical shape: a
+    // flat 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    unsafe { strcmp_validating(s1, s2) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(

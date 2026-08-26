@@ -345,39 +345,49 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
     // retains left-to-right precedence, while the tail panel covers the whole
     // range without a scalar prologue. This is the common ABI `wcsnlen` shape
     // for fixed-size wide buffers.
+    // Every tier below resolves from the lane mask rather than asking `.any()` and
+    // then re-walking the panel with `.position()`. The compare already produced
+    // the answer; `trailing_zeros` on its bitmask reads it in O(1) where
+    // `.position()` is a scalar scan whose cost grows with the NUL's offset.
     if (16..32).contains(&limit) {
-        let first = Simd::<u32, 16>::from_slice(&scan[..16]);
-        if first.simd_eq(Simd::splat(0)).any() {
-            return scan[..16].iter().position(|&ch| ch == 0).unwrap();
+        let first = Simd::<u32, 16>::from_slice(&scan[..16]).simd_eq(Simd::splat(0)).to_bitmask();
+        if first != 0 {
+            return first.trailing_zeros() as usize;
         }
         let tail_start = limit - 16;
-        let tail = Simd::<u32, 16>::from_slice(&scan[tail_start..]);
-        if tail.simd_eq(Simd::splat(0)).any() {
-            return tail_start + scan[tail_start..].iter().position(|&ch| ch == 0).unwrap();
+        let tail = Simd::<u32, 16>::from_slice(&scan[tail_start..])
+            .simd_eq(Simd::splat(0))
+            .to_bitmask();
+        if tail != 0 {
+            return tail_start + tail.trailing_zeros() as usize;
         }
         return limit;
     }
     if (8..16).contains(&limit) {
-        let first = Simd::<u32, 8>::from_slice(&scan[..8]);
-        if first.simd_eq(Simd::splat(0)).any() {
-            return scan[..8].iter().position(|&ch| ch == 0).unwrap();
+        let first = Simd::<u32, 8>::from_slice(&scan[..8]).simd_eq(Simd::splat(0)).to_bitmask();
+        if first != 0 {
+            return first.trailing_zeros() as usize;
         }
         let tail_start = limit - 8;
-        let tail = Simd::<u32, 8>::from_slice(&scan[tail_start..]);
-        if tail.simd_eq(Simd::splat(0)).any() {
-            return tail_start + scan[tail_start..].iter().position(|&ch| ch == 0).unwrap();
+        let tail = Simd::<u32, 8>::from_slice(&scan[tail_start..])
+            .simd_eq(Simd::splat(0))
+            .to_bitmask();
+        if tail != 0 {
+            return tail_start + tail.trailing_zeros() as usize;
         }
         return limit;
     }
     if (4..8).contains(&limit) {
-        let first = Simd::<u32, 4>::from_slice(&scan[..4]);
-        if first.simd_eq(Simd::splat(0)).any() {
-            return scan[..4].iter().position(|&ch| ch == 0).unwrap();
+        let first = Simd::<u32, 4>::from_slice(&scan[..4]).simd_eq(Simd::splat(0)).to_bitmask();
+        if first != 0 {
+            return first.trailing_zeros() as usize;
         }
         let tail_start = limit - 4;
-        let tail = Simd::<u32, 4>::from_slice(&scan[tail_start..]);
-        if tail.simd_eq(Simd::splat(0)).any() {
-            return tail_start + scan[tail_start..].iter().position(|&ch| ch == 0).unwrap();
+        let tail = Simd::<u32, 4>::from_slice(&scan[tail_start..])
+            .simd_eq(Simd::splat(0))
+            .to_bitmask();
+        if tail != 0 {
+            return tail_start + tail.trailing_zeros() as usize;
         }
         return limit;
     }
@@ -393,24 +403,29 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
         let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
         let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
         if folded.simd_eq(zero).any() {
-            for (j, &ch) in block.iter().enumerate() {
-                if ch == 0 {
-                    return base + j;
+            // The fold says a NUL is somewhere in these 256 elements but not
+            // which panel, so re-test the four panels in order and resolve from
+            // the first non-empty mask. The old form walked the block ELEMENT BY
+            // ELEMENT -- up to 256 scalar iterations to recover an index four
+            // vector compares already hold.
+            for (k, panel) in [p0, p1, p2, p3].iter().enumerate() {
+                let m = panel.simd_eq(zero).to_bitmask();
+                if m != 0 {
+                    return base + k * PANEL + m.trailing_zeros() as usize;
                 }
             }
+            unreachable!("min-fold reported a NUL that no panel contained");
         }
         base += BLOCK;
     }
 
     let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
     for chunk in chunks.by_ref() {
-        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
-        if lanes.simd_eq(Simd::splat(0)).any() {
-            for (j, &ch) in chunk.iter().enumerate() {
-                if ch == 0 {
-                    return base + j;
-                }
-            }
+        let m = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk)
+            .simd_eq(Simd::splat(0))
+            .to_bitmask();
+        if m != 0 {
+            return base + m.trailing_zeros() as usize;
         }
         base += WIDE_NUL_SIMD_LANES;
     }

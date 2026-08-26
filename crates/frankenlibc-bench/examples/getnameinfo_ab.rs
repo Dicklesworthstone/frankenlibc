@@ -1,4 +1,5 @@
-//! Truly-interleaved paired A/B for the `getnameinfo` numeric-path `String` allocations (cc_fl).
+//! Truly-interleaved paired A/A + A/B for the `getnameinfo` numeric-path
+//! `String` allocations (cc_fl).
 //!
 //! The AF_INET numeric path did `ip.to_string()` + `port.to_string()` per call — two `String` heap
 //! allocations through the interposed allocator — purely to copy the bytes into the caller's C
@@ -6,9 +7,12 @@
 //! resolution-dominated `gethostbyname` needle, those allocations are a LARGE fraction of the total
 //! call cost. Now the path formats into two stack buffers (`write_ipv4_text` + `write_u16_dec`).
 //!
-//! Substrate v2: arms alternate WITHIN one measured routine, order swapped every sample. Every input
-//! goes through `black_box` and every result is consumed. `verify()` asserts fl agrees with host
-//! glibc (host + serv strings) before any timing, so a dead-code-eliminated arm cannot pass.
+//! The former version used a fresh `dlmopen` namespace for glibc and only timed
+//! it separately. That is not a campaign incumbent comparison: namespace-local
+//! state can distort a stateful libc API, and a separate timing cannot detect
+//! arm-order drift. The deployed comparison below resolves the already-live
+//! process libc with `dlopen`/`dlsym`, proves its object with `dladdr`, and
+//! interleaves host/Franken calls alongside both A/A controls.
 //!
 //! NULL CONTROL first: paired(cand, cand). Gate the deployed effect on the MEDIAN against that
 //! per-function floor — a paired median inside the null's spread is noise and must not be claimed.
@@ -16,11 +20,15 @@
 //! Run: `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release \
 //!       -p frankenlibc-bench --features abi-bench --example getnameinfo_ab`
 
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
+use std::fmt::Write as _;
 use std::hint::black_box;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use frankenlibc_abi::resolv_abi as fl;
+use sha2::{Digest, Sha256};
 
 const KERNEL_SAMPLES: usize = 400;
 const KERNEL_REPS: usize = 20_000;
@@ -30,6 +38,8 @@ const KERNEL_REPS: usize = 20_000;
 const DEPLOYED_SAMPLES: usize = 1200;
 const DEPLOYED_REPS: usize = 400;
 const WARMUP: usize = 80;
+const BOOTSTRAP_RESAMPLES: usize = 4096;
+const NULL_BIAS_TOLERANCE: f64 = 0.02;
 
 const NI_NUMERICHOST: c_int = 1;
 const NI_NUMERICSERV: c_int = 2;
@@ -58,6 +68,71 @@ fn cv_pct(xs: &[f64]) -> f64 {
     }
     let var = xs.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / xs.len() as f64;
     100.0 * var.sqrt() / m
+}
+
+fn bootstrap_median_ci95(xs: &[f64]) -> (f64, f64) {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ xs.len() as u64;
+    let mut medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
+    let mut resample = vec![0.0; xs.len()];
+    for _ in 0..BOOTSTRAP_RESAMPLES {
+        for value in &mut resample {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *value = xs[(state as usize) % xs.len()];
+        }
+        medians.push(median(&resample));
+    }
+    medians.sort_by(f64::total_cmp);
+    let low = (BOOTSTRAP_RESAMPLES * 25) / 1000;
+    let high = ((BOOTSTRAP_RESAMPLES * 975) / 1000).min(BOOTSTRAP_RESAMPLES - 1);
+    (medians[low], medians[high])
+}
+
+#[derive(Debug)]
+struct ObjectIdentity {
+    path: PathBuf,
+    bytes: u64,
+    sha256: String,
+}
+
+fn sha256_file(path: &Path) -> ObjectIdentity {
+    let path = std::fs::canonicalize(path)
+        .unwrap_or_else(|error| panic!("canonicalize {}: {error}", path.display()));
+    let bytes =
+        std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut sha256 = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut sha256, "{byte:02x}").expect("format SHA-256");
+    }
+    ObjectIdentity {
+        path,
+        bytes: bytes.len() as u64,
+        sha256,
+    }
+}
+
+fn symbol_object(symbol: *const c_void) -> ObjectIdentity {
+    // SAFETY: `symbol` is a non-null dynamic symbol address returned by dlsym.
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    assert!(
+        unsafe { libc::dladdr(symbol, &mut info) } != 0 && !info.dli_fname.is_null(),
+        "dladdr could not identify serving object"
+    );
+    // SAFETY: dladdr returned a non-null, NUL-terminated pathname.
+    let path = unsafe { CStr::from_ptr(info.dli_fname) };
+    sha256_file(Path::new(OsStr::from_bytes(path.to_bytes())))
+}
+
+fn print_identity(role: &str, identity: &ObjectIdentity) {
+    println!(
+        "{role}_ELF path={} bytes={} sha256={}",
+        identity.path.display(),
+        identity.bytes,
+        identity.sha256
+    );
 }
 
 /// Build a `sockaddr_in` for OCTETS:PORT (network byte order in memory).
@@ -156,17 +231,20 @@ fn deployed_orig(sin: &libc::sockaddr_in) -> u8 {
     black_box(acc)
 }
 
-fn host_getnameinfo() -> GetNameInfo {
+fn host_getnameinfo() -> (GetNameInfo, ObjectIdentity) {
+    // `dlopen` joins the process's live namespace; unlike a fresh `dlmopen`
+    // namespace it shares the incumbent's initialized libc state. dlsym scoped
+    // to this handle returns libc's definition rather than this benchmark's FL
+    // export, and `symbol_object` below proves the serving ELF.
     unsafe {
-        let handle = libc::dlmopen(
-            libc::LM_ID_NEWLM,
-            c"libc.so.6".as_ptr(),
-            libc::RTLD_LAZY | libc::RTLD_LOCAL,
-        );
-        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let handle = libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(!handle.is_null(), "dlopen libc.so.6 failed");
         let s = libc::dlsym(handle, c"getnameinfo".as_ptr());
         assert!(!s.is_null(), "dlsym getnameinfo failed");
-        std::mem::transmute::<*mut c_void, GetNameInfo>(s)
+        (
+            std::mem::transmute::<*mut c_void, GetNameInfo>(s),
+            symbol_object(s.cast_const()),
+        )
     }
 }
 
@@ -293,9 +371,84 @@ fn report(label: &str, per: f64, o: &[f64], c: &[f64], unit: &str) -> String {
     )
 }
 
+fn report_live_incumbent(
+    fl: &[f64],
+    host: &[f64],
+    fl_null_a: &[f64],
+    fl_null_b: &[f64],
+    host_null_a: &[f64],
+    host_null_b: &[f64],
+) {
+    let effect = fl
+        .iter()
+        .zip(host)
+        .map(|(fl_ns, host_ns)| fl_ns / host_ns)
+        .collect::<Vec<_>>();
+    let fl_null = fl_null_b
+        .iter()
+        .zip(fl_null_a)
+        .map(|(second, first)| second / first)
+        .collect::<Vec<_>>();
+    let host_null = host_null_b
+        .iter()
+        .zip(host_null_a)
+        .map(|(second, first)| second / first)
+        .collect::<Vec<_>>();
+
+    let effect_median = median(&effect);
+    let (effect_low, effect_high) = bootstrap_median_ci95(&effect);
+    let fl_null_median = median(&fl_null);
+    let (fl_null_low, fl_null_high) = bootstrap_median_ci95(&fl_null);
+    let host_null_median = median(&host_null);
+    let (host_null_low, host_null_high) = bootstrap_median_ci95(&host_null);
+    let fl_null_holds = (fl_null_median - 1.0).abs() <= NULL_BIAS_TOLERANCE;
+    let host_null_holds = (host_null_median - 1.0).abs() <= NULL_BIAS_TOLERANCE;
+    let null_half_width = (fl_null_low - 1.0)
+        .abs()
+        .max((fl_null_high - 1.0).abs())
+        .max((host_null_low - 1.0).abs())
+        .max((host_null_high - 1.0).abs());
+    let clears_2x_null = (effect_median - 1.0).abs() > 2.0 * null_half_width;
+    let effect_excludes_one = effect_high < 1.0 || effect_low > 1.0;
+    let verdict = if !(fl_null_holds && host_null_holds) {
+        "NULL_VIOLATED"
+    } else if clears_2x_null && effect_excludes_one && effect_median < 1.0 {
+        "FL_FASTER"
+    } else if clears_2x_null && effect_excludes_one {
+        "FL_SLOWER"
+    } else {
+        "UNDECIDABLE"
+    };
+
+    println!(
+        "LIVE_INCUMBENT_CONTRACT symbol=getnameinfo kind=null_fl_fl \
+         ratio_median={fl_null_median:.6} ratio_ci95=[{fl_null_low:.6},{fl_null_high:.6}] \
+         bias_tolerance={NULL_BIAS_TOLERANCE:.3} pass={fl_null_holds}"
+    );
+    println!(
+        "LIVE_INCUMBENT_CONTRACT symbol=getnameinfo kind=null_glibc_glibc \
+         ratio_median={host_null_median:.6} ratio_ci95=[{host_null_low:.6},{host_null_high:.6}] \
+         bias_tolerance={NULL_BIAS_TOLERANCE:.3} pass={host_null_holds}"
+    );
+    println!(
+        "LIVE_INCUMBENT_RESULT symbol=getnameinfo samples={} reps_per_arm={DEPLOYED_REPS} \
+         fl_median_ns={:.3} glibc_median_ns={:.3} ratio_fl_over_glibc={effect_median:.6} \
+         ratio_ci95=[{effect_low:.6},{effect_high:.6}] null_half_width={null_half_width:.6} \
+         clears_2x_null={clears_2x_null} verdict={verdict}",
+        fl.len(),
+        median(fl),
+        median(host),
+    );
+}
+
 fn main() {
     let sin = make_sockaddr();
-    let hf = host_getnameinfo();
+    let bench_identity =
+        sha256_file(&std::env::current_exe().expect("resolve benchmark executable"));
+    print_identity("BENCH", &bench_identity);
+    let (hf, incumbent_identity) = host_getnameinfo();
+    print_identity("INCUMBENT", &incumbent_identity);
+    println!("INCUMBENT_LINKAGE live_process_dlopen symbol=getnameinfo");
     verify(hf, &sin);
 
     let mut summary: Vec<String> = Vec::new();
@@ -344,20 +497,13 @@ fn main() {
         "(ns/call)",
     ));
 
-    // Host glibc reference, same loop shape.
-    let mut g = Vec::with_capacity(DEPLOYED_SAMPLES);
-    for i in 0..DEPLOYED_SAMPLES {
-        let s = Instant::now();
-        black_box(host(hf, &sin));
-        if i >= WARMUP {
-            g.push(s.elapsed().as_nanos() as f64 / DEPLOYED_REPS as f64);
-        }
-    }
-    summary.push(format!(
-        "HOST glibc getnameinfo: median {:.3} ns/call  cv={:.2}%",
-        median(&g),
-        cv_pct(&g)
-    ));
+    // The campaign row: both A/A controls and the live host/FL comparison are
+    // interleaved in this one invocation. `host_getnameinfo` is a handle-scoped
+    // lookup in the already-live process libc, not the benchmark's FL export.
+    let (host_null_a, host_null_b) = paired(DEPLOYED_SAMPLES, || host(hf, &sin), || host(hf, &sin));
+    let (host_times, fl_times) =
+        paired(DEPLOYED_SAMPLES, || host(hf, &sin), || deployed_cand(&sin));
+    report_live_incumbent(&fl_times, &host_times, &m1, &m2, &host_null_a, &host_null_b);
 
     println!("\n===== SUMMARY (getnameinfo numeric String elision) =====");
     for line in &summary {
