@@ -34323,3 +34323,54 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **PROVENANCE.** Base source at HEAD `998070b640879f95ec888990064a07833d926930`; candidate is
   that plus the split, built on worker `vmi1293453`, measured there against live glibc reached by
   `dlmopen(LM_ID_NEWLM)` with fl by `LD_PRELOAD` at phase **2 = ACTIVE**.
+
+## 2026-08-26 — FOUND IT: the `known_remaining` allocator-registry probe is **7.24 ns of fl's 10.80 ns seven-byte `strlen`**. Removing it alone takes the ratio 4.97x to 1.67x
+
+- **RESULT CLASS: loss/baseline (cost located by ablation; nothing shipped).** The hot/cold split
+  one row ago collapsed `strlen`'s 184-byte frame to nothing and bought only ~1 ns, refuting my
+  prologue-weight model and leaving ~7.7 ns unexplained. I named the successor hypothesis in that
+  row: the `known_remaining(s)` call, an allocator-registry probe performed on **every** `strlen`.
+  **It is the cost.**
+- **THE ABLATION, AND IT IS DELIBERATELY UNSHIPPABLE.** One edit in `strlen`'s strict fast path:
+  `let bound = known_remaining(s as usize); scan_c_string(s, bound)` becomes
+  `scan_c_string(s, None)`. Diff **+5/-4**. This removes the bounded-scan guarantee that stops an
+  unterminated allocator-tracked buffer reading into the next allocation, so it is not a candidate
+  and was reverted immediately. Its only job was to locate cost, and the frame was left in place
+  (`sub $0xb8` still emitted) so the probe is isolated from the previous experiment.
+- **THE RESULT.** Same driver, same worker, back to back, fl by `LD_PRELOAD` at phase 2, live
+  glibc by `dlmopen`:
+
+  | length | base fl ns | ablation fl ns | base ratio | ablation ratio |
+  |---|---:|---:|---:|---:|
+  | 7 B | 10.8046 | **3.5645** | 4.965167 | **1.670915** |
+  | 64 B | 10.3483 | **5.1957** | 4.377805 | **1.724943** |
+  | 256 KiB | 1590.297 | 1794.091 | 0.999238 | 1.048494 |
+
+  Registered prediction was "under ~6 ns and ratio under ~3". Measured **3.56 ns and 1.67x**.
+- **THE DECOMPOSITION IS NOW COMPLETE FOR THIS SURFACE**, using all three builds:
+  base (frame + probe) **10.80 ns**; split (no frame + probe) **9.65 ns**; ablation (frame, no
+  probe) **3.56 ns**; glibc **2.16 ns**. So the 184-byte frame is worth **~1.15 ns**, the registry
+  probe **~7.24 ns**, and everything else fl does — phase load, strict check, GOT-indirect call
+  into a vectorised scanner — comes to **~1.4 ns over glibc**. **One call is 84% of the gap.**
+- **AND IT EXPLAINS THE WHOLE FAMILY, INCLUDING THE EXCEPTIONS.** The short-length tax on
+  `memcpy`, `memcmp`, `memset`, `strcmp`, `strchr`, `memrchr` and `fputc` has been attributed all
+  session to "the wrapper". It is more specific than that: those are the entry points that consult
+  the allocator registry to bound their access. `ctype` does not — parity. `strtol` does not —
+  **1.85x faster than glibc**. The two functions that beat or match glibc are exactly the two that
+  skip the probe, which is the cross-check the frame model never had.
+- **WHAT A SHIPPABLE FIX WOULD LOOK LIKE, since deleting the probe is not one.** The guarantee it
+  buys only matters for a buffer that is BOTH allocator-tracked AND unterminated — and it is only
+  consulted to supply an upper bound. A scan could run unbounded up to some threshold and consult
+  the registry only if it passes that threshold, which preserves the property exactly where it
+  protects anything while making every short string free. That is a design change with a measured
+  ceiling of ~7 ns per call across the hottest entry points in the library, and nothing in this
+  ledger has tested it.
+- **CAVEATS, kept because the effect does not need them hidden.** Loadavg was 2.00, above the
+  session norm. At 7 bytes both runs' glibc/glibc nulls are marginal (0.931 base, 0.908 ablation)
+  — the 2 ns resolution floor already documented — but the effect is 3x, two orders above the
+  null. The 256 KiB row moved 4% the wrong way, which prediction 3 said should not happen; at that
+  length one probe is invisible against a 1.6 microsecond scan, so I read it as run noise and not
+  as evidence.
+- **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  ablation `sha256=912ce1a849d9ebaf3395fa4efbd5560eb5e3e9934dadda273c7db3550ba39634`, both from
+  HEAD `998070b640879f95ec888990064a07833d926930` built on worker `vmi1293453`.
