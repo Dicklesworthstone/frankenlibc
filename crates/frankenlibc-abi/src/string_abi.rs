@@ -7271,6 +7271,18 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
         };
     }
 
+    // Cold tail in its own frame. This entry rented the largest frame in the
+    // narrow family -- `push rbp/r15/r14/r13/r12/rbx; sub $0xb8,%rsp`, 184 bytes --
+    // from the validating path below, on every strict call. Line-level profiling
+    // (callgrind --dump-line, two-point) charged 8 Ir to the signature line alone
+    // out of a 44 Ir entry. Nothing between the strict gate and here is a
+    // re-entrancy bypass, so the cut is at the gate.
+    unsafe { strspn_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strspn_validating(s: *const c_char, accept: *const c_char) -> usize {
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
     if s.is_null() || accept.is_null() {
         record_string_stage_outcome(
