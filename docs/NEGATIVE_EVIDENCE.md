@@ -34471,3 +34471,12 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **PROVENANCE.** Base `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
   ablation `sha256=d629aada59373314f214bbfdaf146ba5b32a48ccf062fed611f2a86b5c4ddf3a`, both from
   HEAD `998070b640879f95ec888990064a07833d926930` built on worker `vmi1293453`.
+
+<!-- BOOKKEEPING, not evidence: the row immediately above ("SECOND HYPOTHESIS REFUTED: removing
+ALL FOUR header validity checks...") was authored as its own commit but was swept into
+c8232c0ec ("perf(bench): add printf_float coverage suite...") by a concurrent `git commit -a`
+from another agent working in this same worktree. The content is intact and verified (48 lines,
+both object hashes present); only the attribution is wrong. Anyone bisecting that row should
+look at c8232c0ec, not for a commit whose subject mentions strlen. This is the shared-worktree
+hazard already recorded in this project's notes -- stage and commit in one shot and verify HEAD
+afterwards, which is how it was caught. -->
