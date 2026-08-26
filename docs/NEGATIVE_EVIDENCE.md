@@ -33081,3 +33081,47 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   at the start of the discriminator. Drivers compiled on the worker with `cc -O2` (`-fno-builtin-strlen`
   for the preload probe so the call is not folded away); glibc baseline taken by running the same
   binary with no `LD_PRELOAD`.
+
+## 2026-08-26 — DEPLOYMENT-VERIFIED LOSS: `tdelete` is 2.534x at phase 2, the harness figure survives the model change, and a both-arms-glibc control exposes a 6% instrument bias
+
+- **RESULT CLASS: loss/baseline.** First measurement of the campaign's second-worst surface in the
+  model FrankenLibC actually ships in. The row above established that `incumbent_coverage_ab`
+  reaches fl by `dlopen` and therefore times it in `BootstrapPassthrough`; that invalidated the
+  `strlen` figure. This checks whether it also invalidates `tdelete`. **It does not.**
+- **THE ARMS, and they are same-invocation in the DEPLOYED configuration.** fl is reached by
+  `LD_PRELOAD`, so it interposes normally and the phase is ACTIVE; live glibc is reached in the
+  same process by `dlmopen(LM_ID_NEWLM, "libc.so.6")`, a fresh namespace the preload does not
+  touch. Both `tdelete` addresses printed and asserted distinct
+  (`fl=0x7d33b5b907f0`, `glibc=0x7d33b4f35fa0`). `__frankenlibc_runtime_phase()` read **2 = ACTIVE**
+  and `__frankenlibc_is_runtime_ready()` read **1** at process start, after warm-up, and after
+  timing — so this is not a bootstrap-phase measurement and it is checked rather than assumed.
+- **THE ROW.** 8192-key tree, every key deleted per batch, 25 samples, ABBA inside each sample:
+  **fl 357.084 ns per deletion against glibc 140.906 ns**, `ratio = 2.534195`. A/A nulls in the
+  same invocation: fl/fl **0.993573**, glibc/glibc **1.012800** — both inside 2% of 1.0.
+- **IT AGREES WITH THE HARNESS, which is the point of running it.** `incumbent_coverage_ab` under
+  `dlopen` reported `tree8192` at **2.725062**, CI [2.662667, 2.797426], both nulls holding. The
+  deployed model gives 2.534195. Two different loaders, two different instruments, ~7% apart. So
+  unlike `strlen` — where the two models differed by a factor of 39 — `tdelete` carries no phase
+  gate that changes its path, and **its banked number stands.**
+- **A CONTROL THE HARNESS DOES NOT RUN, AND IT FOUND A REAL BIAS.** The same driver with fl NOT
+  preloaded puts glibc in BOTH slots — the "fl" slot resolves through `RTLD_DEFAULT` to the host's
+  own `tdelete`, the comparison slot through `dlmopen`. Identical implementations should give 1.0.
+  Measured: 114.193 against 121.681 = **0.938463**. The instrument favours the fl slot by about
+  6%, presumably because the `dlmopen` namespace's copy runs colder. **Corrected for that bias the
+  deployed ratio is nearer 2.70 than 2.53**, which lands on the harness's 2.725062 rather than
+  away from it. The uncorrected 2.534195 is the conservative figure and is what this row quotes.
+- **THE ALLOCATOR IS INSIDE THIS NUMBER, disclosed rather than netted out.** Every `tdelete`
+  releases one node through the process allocator, which under `LD_PRELOAD` is fl's — and fl's
+  free is part of the 13.7x allocator gap measured in the row above. At roughly 19 ns per node
+  against glibc's, that is about 9% of the ~216 ns per-deletion gap. Real for a deployed fl
+  program, but it means `tdelete`'s own algorithm accounts for the other ~91%, not all of it.
+- **WHAT THIS DOES NOT CHANGE.** The lever filed as `bd-z4k8bh` — LLRB deletion carries a
+  presence precondition, so fl walks the tree twice and rebalances at every level, against glibc's
+  single classic red-black descent — is untouched by any of this and is still the target. What has
+  changed is that it is now backed by a number taken in the deployed configuration.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process by
+  `dlmopen`. Worker `vmi1293453` at `loadavg 0.11,0.16,0.44`. Driver compiled on the worker with
+  `cc -O2`; deterministic key shuffle, no `rand()`; the tree is asserted empty after every batch so
+  a short-circuiting delete cannot masquerade as a fast one.
