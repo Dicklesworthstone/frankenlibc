@@ -33999,3 +33999,47 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.49,0.74,0.49`. Driver compiled with `cc -O2 -fno-builtin`;
   source and destination 64-byte aligned, 1 MiB buffers.
+
+## 2026-08-26 — `strstr` IS A REAL ALGORITHMIC TRADE-OFF, NOT A FLAT LOSS: 3.58x slower on ordinary text, **204x faster** on adversarial input, both fully admissible
+
+- **RESULT CLASS: loss/baseline (a characterised trade-off).** `strstr` was picked as the next
+  target because it is the one hot string function where an algorithmic difference — rather than
+  the family's fixed entry cost — was plausible. It is, and it cuts both ways hard.
+- **THE ARMS.** Same-invocation deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM)`, arms distinct, interleaved, 25 samples. Conformance checked on both
+  cases before timing.
+
+  | case | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control |
+  |---|---:|---:|---:|---:|---:|---:|
+  | 16 KiB adversarial, needle absent | **286.663** | **57,951.714** | **0.004890** | 1.004392 | 1.000086 | 0.999297 |
+  | 16 KiB random text, needle at tail | 3,685.985 | 1,039.578 | **3.581083** | 0.994584 | 1.004415 | 1.009558 |
+
+  **Every null holds and both controls are clean** (0.9993 and 1.0096), so both rows are
+  admissible. Corrected: **0.00489** and **3.547**.
+- **THE ADVERSARIAL CASE IS A 204x WIN AND IT IS NOT A MEASUREMENT ERROR.** Haystack is 16,384
+  `'a'` bytes; needle is thirty-one `'a'`s followed by a `'b'`, so it never matches but every
+  position matches 31 characters before failing. Both implementations return NULL and agree.
+  glibc takes **58 microseconds** — that is naive `O(n*m)` behaviour, ~512K character comparisons.
+  fl takes **287 nanoseconds**, about 57 bytes per nanosecond, which is a SIMD scan rate. fl is
+  evidently searching for a rare needle byte with vector instructions rather than comparing
+  candidate positions.
+- **AND THAT IS EXACTLY WHY IT LOSES ON ORDINARY TEXT.** With a uniformly random alphabetic
+  haystack the strategy inverts: fl manages 4.4 bytes/ns against glibc's 15.8. Whatever fl scans
+  for occurs often in normal text, so the vector scan yields constant false candidates, while
+  glibc's approach handles the common case better. **3.58x slower on the input real programs
+  actually pass.**
+- **SO THE HONEST CHARACTERISATION IS A TRADE, NOT A DEFECT.** fl has chosen worst-case robustness
+  over average-case throughput. glibc's 58 microseconds on a 16 KiB adversarial input is a real
+  denial-of-service surface that fl does not have. Whether that is the right trade is a design
+  question, not a performance bug — but **the ordinary-text case is the one that runs billions of
+  times a day, and it is the one that is 3.58x slower.** Any future work here must report both
+  numbers or it is cherry-picking, in either direction.
+- **`memmove` FOLLOWS THE FAMILY PATTERN EXACTLY, confirming the entry-cost model on a sixth
+  function.** Overlapping 64-byte move: **1.311243** (nulls 1.006380 / 1.003988, control 0.987349,
+  corrected **1.33**). Overlapping 64 KiB move: **1.012028** (nulls 1.002270 / 1.005999, control
+  0.996818, corrected **1.02**) — parity. Fixed cost at short lengths, parity once real work
+  dominates, same as `memcpy`, `memset`, `memcmp`, `strcmp`, `strchr` and `strlen`.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.47,0.56,0.47`. Driver compiled with `cc -O2 -fno-builtin`.
