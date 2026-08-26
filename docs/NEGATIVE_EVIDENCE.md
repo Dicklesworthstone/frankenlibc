@@ -33895,3 +33895,55 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453`. Probe compiled on the worker with `cc -O2`.
+
+## 2026-08-26 — THE SHORT-LENGTH WRAPPER TAX IS FAMILY-WIDE: `memcpy` 3.30x, `memcmp` 3.00x, `memset` 1.94x, `strcmp` 1.67x, `strchr` 1.35x deployed
+
+- **RESULT CLASS: loss/baseline (a family, not a surface).** The `strlen` sweep found a fixed
+  ~9 ns per-call cost that makes fl 4.66x slower on 7-byte strings while reaching parity at
+  256 KiB. If that tax is in the wrapper rather than the kernel, every string/memory entry point
+  should show it. **They do.**
+- **THE ARMS.** Same-invocation deployed: fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc
+  by `dlmopen(LM_ID_NEWLM, "libc.so.6")`, all five symbol pairs printed and asserted distinct,
+  arms interleaved at 500-call granularity, 25 samples, driver compiled `-fno-builtin` so nothing
+  is folded away.
+- **DEPLOYED, WITH THE BOTH-ARMS-GLIBC CONTROL AND THE CORRECTION.**
+
+  | case | fl ns | glibc ns | ratio | nulls (fl/fl, glibc/glibc) | control | corrected |
+  |---|---:|---:|---:|---|---:|---:|
+  | `memcpy` n=64 | 7.1261 | 2.0450 | 3.311189 | 0.936886 **f** / 0.959616 **f** | 1.004999 | **3.30** |
+  | `memcmp` n=8 | 7.2570 | 2.2482 | 3.137413 | 0.986062 / 1.077472 **f** | 1.047010 | **3.00** |
+  | `memcmp` n=64 | 5.4347 | 2.2887 | **2.374334** | 1.015902 / 1.012561 | 1.039736 | **2.28** |
+  | `memset` n=64 | 4.9489 | 2.0572 | 2.277973 | 0.984490 / 1.025344 **f** | 1.005053 | **2.27** |
+  | `memcpy` n=8 | 5.4136 | 3.1079 | 1.811227 | 0.933801 **f** / 0.937348 **f** | 0.919517 | **1.97** |
+  | `memset` n=8 | 5.3006 | 2.7246 | **1.914286** | 0.984282 / 0.979909 | 0.985639 | **1.94** |
+  | `strcmp` 8 KiB equal | 141.6743 | 85.3684 | **1.676204** | 0.982444 / 1.007436 | 1.006314 | **1.67** |
+  | `strchr` 8 KiB absent | 106.0166 | 76.8854 | **1.378155** | 0.999840 / 1.000549 | 1.018645 | **1.35** |
+
+  Four cases are fully admissible (bold ratios): `memcmp` n=64, `memset` n=8, `strcmp`, `strchr`.
+  The rest have one or two nulls failing at 4-8% against effects of 81-231%.
+- **THE CONTROL IS CLEAN ACROSS THE WHOLE FAMILY**, which is what licenses reading the table as
+  one result: with fl absent, the eight control ratios are 0.9195, 0.9856, 1.0470, 1.0050, 1.0051,
+  1.0397, 1.0063, 1.0186 — every one inside 8% of 1.0, most inside 5%. No surface here has an
+  instrument problem of the kind that voided `getrandom`.
+- **THE SHAPE MATCHES THE `strlen` MECHANISM.** fl's absolute times cluster at **4.9-7.3 ns** for
+  every 8- and 64-byte case regardless of which function is called, while glibc's cluster at
+  **2.0-3.2 ns**. That is not five independent algorithmic gaps; it is **one fixed entry cost of
+  roughly 3-5 ns** appearing five times. The two long cases confirm it from the other side:
+  `strcmp` over 8 KiB and `strchr` over 8 KiB — where real scanning dominates — fall to 1.67x and
+  1.35x, and `strlen` at 256 KiB reaches parity.
+- **WHY THIS IS THE MOST CONSEQUENTIAL LOSS MEASURED THIS SESSION.** `malloc_free` is worse per
+  call (~10x) but is called far less often than `memcpy`, `memset`, `strlen` and `strcmp`, and
+  almost every real call to those is short. A uniform 2-3x on the five hottest entry points at the
+  sizes programs actually use is a larger aggregate cost than any single surface on the frontier,
+  and it has **one** cause and therefore potentially **one** fix.
+- **THE LEVER IS THE SAME ONE `strlen`'s DISASSEMBLY NAMED, and it is unrefuted.** Not the
+  kernels — `scan_c_string` is vectorised and wins at 256 KiB. The wrapper: a multi-`push`
+  prologue with a large frame, a runtime-phase load, a `MODE_STATE` compare, an allocator-registry
+  probe and a GOT-indirect call into core, all executed before the first byte is touched. That is
+  the hot/cold split shape, whose retry predicate — replicate on two quiet hosts before shipping —
+  still stands.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.91` (deployed) and 1.86 (control). Driver compiled on the
+  worker with `cc -O2 -fno-builtin`.
