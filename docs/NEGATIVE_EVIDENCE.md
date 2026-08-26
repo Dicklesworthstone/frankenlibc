@@ -35784,3 +35784,63 @@ reworded rather than the gate touched.)
   commit equally, so those two read pre-split values in **both** columns.
 - **STILL UNCLAIMED:** the frame tax on `strncmp`, `strcasecmp`, `memmem`, `strspn`, `strcspn`,
   `strpbrk`, `strtok` (none yet measured for ratio), and on seven wide entries.
+
+## 2026-08-26 — `strcmp` **2.571x -> 1.750x (+23 Ir)** from a `const BOUNDED` specialization. **The overlapping tail panel that bought `wcsncmp` +52 Ir LOST 10 Ir here and was removed** — the same lever is not worth the same amount in two scanners with different tier ladders
+
+- **RESULT CLASS: counted improvement on one surface, with a measured refutation of the change's
+  other half.** fl `LD_PRELOAD`ed against live glibc in a fresh link-map namespace **in the same
+  process image**, two-point over 2000 marginal calls, `PHASE=2` and conformance verified before
+  counting. Baseline built from current HEAD. Deterministic instruction counts; no wall-clock claim,
+  so no timed positive-result class is asserted.
+- **SURVEYING FIRST CHANGED THE TARGET AGAIN.** Seven narrow entries carried the frame tax but had
+  **no measured ratio**, so splitting them blind would have been guesswork. Measured:
+
+  | family | fl Ir | glibc Ir | ratio |
+  |---|---:|---:|---:|
+  | `strncmp` | 149.00 | 36.00 | **4.139x** |
+  | `strspn` | 167.00 | 48.97 | 3.410x |
+  | `strcasecmp` | 142.00 | 58.96 | 2.408x |
+  | `strpbrk` | 167.00 | 93.97 | 1.777x |
+  | `strcspn` | 164.00 | 102.00 | 1.608x |
+  | `memmem` | 417.97 | 1058.00 | **0.395x — fl is 2.5x FASTER** |
+
+  `strncmp` at 4.139x is far worse than `strcmp`'s 2.571x, and `memmem` needed no work at all.
+- **THE DIAGNOSIS WAS RIGHT AND THE FIX WAS WRONG.** `strncmp` shares `scan_strcmp` with `strcmp`
+  and spent **107 Ir bounded against 48 Ir unbounded on identical 43-byte operands** — the bound,
+  not the bytes. That is exactly the `wcsncmp` shape, where an overlapping final panel at
+  `bound - 32` was worth **+52 Ir**. Applied here it measured **-10 Ir (4.139x -> 4.417x)**.
+- **WHY IT DOES NOT TRANSFER, WHICH IS THE REUSABLE PART.** `scan_strcmp` has an **8-byte SWAR tier
+  that `scan_wcscmp_simd` does not**. At `bound = 43` the 32B tier clears once to `i = 32`, then
+  SWAR runs at 32 and again leaves `i = 40` — so the panel arrives with **three bytes left**, and
+  pays two 32-byte loads, a mask and a shift to replace about three scalar compares. **The
+  intermediate tier had already done the panel's job.** A lever is worth what the tiers *around* it
+  leave for it, not what it was worth in a differently-laddered scanner.
+- **THE HALF THAT PAYS.** `scan_strcmp` now takes `const BOUNDED: bool`; `strcmp`'s statically
+  unbounded call site instantiates `false`, so the whole bounded tier compiles out of that
+  instantiation:
+
+  | family | glibc | base | panel+specialization | **specialization only** | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `strcmp` | 28.00 | 72.00 | 49.00 | **49.00** | 2.571x | **1.750x** | **+23.00** |
+  | `strncmp` | 36.00 | 149.00 | 159.00 *(−10)* | **149.00** | 4.139x | 4.139x | 0.00 |
+  | others (9) | — | — | — | — | — | — | ≤0.03 |
+
+  **Removing the panel keeps the entire +23 and returns `strncmp` to neutral.** The panel and its
+  helper are deleted, not left behind an `if false`; the reason is recorded at the site.
+- **CONFORMANCE.** A `strncmp`/`strcmp` differential built around the failure mode the `wcsncmp`
+  version hit: **operands ending on the last mapped byte before a `PROT_NONE` page**, bounded and
+  unbounded, both operands and one-of-each; every `n` from 0 to L+2 against a difference walked
+  across every position; early-NUL; and high-bit bytes, since these compare as **unsigned** char.
+  **1,859,731 checks, 0 failures** in strict and hardened, plus the existing `strcmp` suite
+  (140,016) clean on the same object.
+- **GATE.** `cargo test -p frankenlibc-abi --lib`: `200 passed; 0 failed; 1 ignored; 0 measured;
+  0 filtered out`.
+- **PROVENANCE.** Baseline `d132f75d56e6f0f9972e3154fd127b50f3d6a4fb6637f26381f51a9c1673d33d`;
+  panel + specialization (**−10 Ir on `strncmp`, not landed**)
+  `2e57a446e39e38ef609c19a254c696ffe22b586f8a0d78822fe84b86b1002671`; **landed**
+  `76fbd3bda1eb2c47615cd7805e1c63de220651fdb35025a2f5243c258a760308`. Built on `vmi1293453`,
+  counted with `valgrind-3.25.1`.
+- **FRONTIER:** `strlen` heap 9.993x (architectural probe), `strncmp` **4.139x — now the worst
+  surface with an unexplored lever**, `strspn` 3.410x, `strcasecmp` 2.408x, `memcmp` 2.080x,
+  `wcsncmp` 2.850x, `wcscpy` 2.631x, `strcmp` 1.750x. `strncmp`'s 107 Ir bounded scan still has no
+  working fix; its frame tax (`sub $0x88`) is untouched.

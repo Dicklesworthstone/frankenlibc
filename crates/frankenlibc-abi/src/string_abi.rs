@@ -1369,7 +1369,7 @@ pub unsafe fn bench_scan_strcmp(
     s2: *const c_char,
     bound: usize,
 ) -> (usize, bool) {
-    unsafe { scan_strcmp(s1, s2, bound) }
+    unsafe { scan_strcmp::<true>(s1, s2, bound) }
 }
 
 /// Benchmark/test hook for the SWAR [`scan_c_string_last_byte`] scanner (behind
@@ -3414,7 +3414,11 @@ fn wide_read_within_page(addr: usize) -> bool {
 /// byte step is taken. A flagged window (words unequal OR containing a NUL) is
 /// resolved byte-wise in scan order, so the exact first diff/NUL is returned —
 /// byte-identical to the scalar loop it replaces.
-unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (usize, bool) {
+unsafe fn scan_strcmp<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
     let p1 = s1.cast::<u8>();
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
@@ -3530,6 +3534,15 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
         if i >= bound {
             return (bound, true);
         }
+        // NO OVERLAPPING TAIL PANEL HERE, and that is a measured decision. The
+        // equivalent panel in `scan_wcscmp_simd` is worth +52 Ir, but here it
+        // measured **-10 Ir on `strncmp(a, b, 43)`** and was removed. The reason is
+        // the 8-byte SWAR tier directly above: unlike the wide scanner, this one
+        // has an intermediate tier that already grinds the remainder down to a few
+        // bytes, so a 32-byte panel arrives with ~3 bytes left to resolve and pays
+        // two 32-byte loads, a mask and a shift to replace about three scalar
+        // compares. **The same lever is not worth the same amount in two scanners
+        // with different tier ladders.** See the 2026-08-26 ledger row.
         // SAFETY: i < bound.
         let a = unsafe { *p1.add(i) };
         let b = unsafe { *p2.add(i) };
@@ -3539,6 +3552,7 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
         i += 1;
     }
 }
+
 
 /// Branchless SWAR ASCII lowercase: folds bytes in `'A'..='Z'` to `'a'..='z'`
 /// and leaves every other byte (incl. non-ASCII `>= 0x80`) untouched — exactly C
@@ -4793,7 +4807,7 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         }
         // SAFETY: `scan_strcmp` with usize::MAX is the page-cross-guarded raw scan — the
         // identical call the strict full path makes (cmp_bound == None).
-        let (i, _hit_limit) = unsafe { scan_strcmp(s1, s2, usize::MAX) };
+        let (i, _hit_limit) = unsafe { scan_strcmp::<false>(s1, s2, usize::MAX) };
         let a = unsafe { *s1.add(i) } as u8;
         let b = unsafe { *s2.add(i) } as u8;
         return (a as c_int) - (b as c_int);
@@ -4863,7 +4877,7 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     // SWAR word-at-a-time compare (shared scan_strcmp, page-cross guarded),
     // byte-identical to the old scalar loop. `cmp_bound == None` => no limit.
     let (result, adverse, span) = unsafe {
-        let (i, hit_limit) = scan_strcmp(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
         if hit_limit {
             (0, true, i)
         } else {
@@ -4916,7 +4930,7 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
         if s1.is_null() || s2.is_null() {
             return 0;
         }
-        let (i, hit_limit) = unsafe { scan_strcmp(s1, s2, n) };
+        let (i, hit_limit) = unsafe { scan_strcmp::<true>(s1, s2, n) };
         if hit_limit {
             return 0;
         }
@@ -4978,7 +4992,7 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
     // SWAR word-at-a-time compare via the shared page-guarded scan_strcmp, bounded
     // by `cmp_limit`; byte-identical to the old scalar loop.
     let (result, span) = unsafe {
-        let (i, hit_limit) = scan_strcmp(s1, s2, cmp_limit);
+        let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
         if hit_limit {
             (0, i)
         } else {
