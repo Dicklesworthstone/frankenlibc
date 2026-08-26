@@ -32584,3 +32584,61 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   in one session: base `dc480b403e7623d4...`, baseflags control `dc480b403e7623d4...` (identical),
   candidate `34b53527327e1387...`, harness
   `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`.
+
+## 2026-08-26 — REJECTED on the number as well as on loadability: removing 2417 of 2458 `__tls_get_addr` sites moves `malloc_free` by ~2%, and `local-dynamic` removes none of them
+
+- **RESULT CLASS: loss/baseline (rejected lever).** Successor to the row above, which rejected
+  `-Ztls-model=initial-exec` because the object could not be `dlopen`ed. That blocker turns out to
+  be liftable, so the lever could be timed after all — and it does not pay. Nothing shipped;
+  nothing to revert.
+- **THE BLOCKER IS LIFTABLE, and this is the part worth keeping.** `GLIBC_TUNABLES=
+  glibc.rtld.optional_static_tls=1048576` raises the loader's per-module optional static-TLS
+  surplus past the cdylib's 196,392-byte `PT_TLS` segment, and the initial-exec object then loads
+  and runs to completion under the same harness. So "cannot allocate memory in static TLS block" is
+  a configuration bound, not a hard one, and the model CAN be measured.
+- **AND IT BUYS NOTHING MEASURABLE.** All five rows below are the same source, the same worker, the
+  same bench binary `bench_elf_sha256=
+  4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`, and every one carries two
+  same-invocation A/A nulls that hold inside the 0.020 tolerance with no straddle veto:
+
+  arm 1, base, global-dynamic, no tunable: fl 61.803 ns, glibc 4.752 ns, ratio 13.238297, bootstrap
+  median CI [12.322554, 13.581074], FL/FL null 0.996275 with bootstrap median CI
+  [0.990008, 1.007513] and glibc/glibc null 1.014506 with bootstrap median CI [0.958936, 1.066785].
+  arm 2, local-dynamic, no tunable: fl 68.093 ns, ratio 13.097536, bootstrap median CI
+  [12.485260, 13.233544], FL/FL null 0.996686 with bootstrap median CI [0.989892, 1.003856].
+  arm 3, initial-exec, tunable: fl 62.485 ns, ratio 12.966511, bootstrap median CI
+  [12.422705, 14.489315], FL/FL null 1.001249 with bootstrap median CI [0.992018, 1.015112].
+  arm 4, initial-exec, tunable, repeat: ratio 13.008845, bootstrap median CI [12.590833, 15.502964],
+  glibc/glibc null 0.997691 with bootstrap median CI [0.953070, 1.012610].
+  arm 5, base, global-dynamic, tunable — the control for the tunable itself: fl 64.963 ns, ratio
+  13.251836, bootstrap median CI [12.766324, 13.717693], FL/FL null 1.001911 with bootstrap median
+  CI [0.991897, 1.009202].
+- **THE COMPARISON THAT DECIDES IT** is arm 5 against arms 3 and 4 — same tunable, adjacent runs,
+  differing only in TLS model: 13.251836 against 12.966511 and 13.008845, about -1.9%. Their
+  intervals overlap almost entirely, and -1.9% sits well inside the 10% between-build spread
+  measured on this same family and worker in the row above. In absolute FrankenLibC nanoseconds the
+  two models are 61.803 and 62.485 — the initial-exec object is nominally the SLOWER of the two.
+  **UNDECIDABLE against noise, and therefore rejected.**
+- **`local-dynamic` IS DEAD ON A COUNT, BEFORE ANY TIMING.** It was proposed in the row above as the
+  dlopen-safe successor. Counted on the emitted object: `-Ztls-model=local-dynamic` leaves
+  **2458 instructions referencing `__tls_get_addr` -> 2458**, byte-for-byte the same population as
+  the default build, so rustc emits no different sequence for it here. Its 13.097536 is therefore a
+  repeat measurement of the base model, not a second data point about TLS.
+- **WHAT THIS ESTABLISHES, and it is worth more than the lever would have been.** The deployed
+  cdylib makes 2458 general-dynamic TLS accesses, the malloc hot path issues them before
+  `enter_allocator_reentry_guard`, `runtime_policy::mode`, `decide` and `observe` add theirs, and
+  removing 98.3% of them changes `malloc_free` by at most a couple of percent. **The TLS model is
+  not this allocator's cost.** That joins the guard-CAS refutation, the slot-retire elision, the
+  `entrypoint_scope` hoists and the address-derived slab: five independent mechanisms proposed for
+  this surface and five refuted. The 47% of the per-pair instruction budget that sits in the slab
+  itself remains the only unrefuted region.
+- **DO NOT RETRY** either TLS model on this surface without new evidence of a different kind —
+  a counted cycle or cache-miss attribution naming `__tls_get_addr`, not another wall-clock A/B.
+- **CONDITIONS.** Worker `vmi1293453`, 8 logical cores, `isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`,
+  quiet gate `verdict=clear` at both phases of every arm (observed busy 0.082-0.140 against a 0.200
+  ceiling), `cpu_mhz` min, median and max all 3195.2 on every arm, so no arm straddled a clock
+  ramp. `samples=36`, `reps_per_arm=100000`, `threads_observed=1` pre and post throughout.
+  Objects: base `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  local-dynamic `b564194dbc445e39aae2d86a1902929a194ca11e4598e490245c60a01364d820`,
+  initial-exec `34b53527327e13874d8293a98e8f93f6145926612664b42d4b2deb48d9ae375d`.
+  AVX2 instruction census 2680 in all three, so no arm differs in ISA.
