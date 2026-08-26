@@ -33125,3 +33125,44 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `dlmopen`. Worker `vmi1293453` at `loadavg 0.11,0.16,0.44`. Driver compiled on the worker with
   `cc -O2`; deterministic key shuffle, no `rand()`; the tree is asserted empty after every batch so
   a short-circuiting delete cannot masquerade as a fast one.
+
+## 2026-08-26 — DEPLOYMENT-VERIFIED LOSS: `memrchr` is 1.769x at 512 B and 1.498x at 4096 B at phase 2; no phase artifact, and the 64-byte point is unmeasurable by BOTH instruments
+
+- **RESULT CLASS: loss/baseline.** Third surface checked against the `dlopen`-vs-`LD_PRELOAD`
+  hazard established two rows above. `strlen` was destroyed by it (39x), `tdelete` survived it,
+  and `memrchr` survives it too — which is what its disassembly predicted, since its export begins
+  at `MODE_STATE` with no `bootstrap_passthrough_active()` read.
+- **THE ARMS.** Same-invocation in the deployed configuration: fl by `LD_PRELOAD` (phase read
+  **2 = ACTIVE**, `ready=1`, before and after timing), live glibc by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")` in the same process, addresses asserted distinct
+  (`fl=0x72e5d4d37c20`, `glibc=0x72e5d4199200`). 25 samples, ABBA inside each sample, absent
+  needle so every case is a full scan.
+- **THE ROWS.**
+
+  | length | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | admissible |
+  |---|---:|---:|---:|---:|---:|---|
+  | 512 B | 9.4554 | 5.3462 | **1.768632** | 0.985944 | 1.003173 | yes |
+  | 4096 B | 30.4183 | 20.3053 | **1.498049** | 0.998386 | 0.999062 | yes |
+  | 64 B | 5.5273 | 2.4021 | 2.301042 | **0.925997** | 1.000000 | **no — null fails** |
+
+- **THE INSTRUMENT IS CLEAN HERE, and that was measured, not assumed.** The same driver with fl
+  NOT preloaded puts glibc in both slots and should read 1.0: it reads **1.012182 / 0.983930 /
+  0.965105** across the three lengths. Unlike the `tdelete` driver — where the identical control
+  exposed a 6% bias toward the fl slot — this one needs no correction. **The control has to be run
+  per surface; it is not a property of the technique.**
+- **IT AGREES WITH THE HARNESS WHERE BOTH ARE ADMISSIBLE.** `incumbent_coverage_ab` under `dlopen`
+  gave `len512_absent` 1.779467 and 1.640366, and `len4096_absent` 1.388635 and 1.339900. Deployed:
+  1.768632 and 1.498049. The 512-byte figures agree to 0.6%. So `memrchr`'s banked numbers stand,
+  and the `dlopen` hazard did not touch this surface.
+- **THE 64-BYTE POINT IS WHERE THE GAP LIVES AND NEITHER INSTRUMENT CAN CERTIFY IT.** The harness's
+  `len64_absent_fl_malloc` failed its FL/FL null (0.963050) and my driver's fails too (0.925997) —
+  two unrelated instruments, both breaking down at the same case. At ~5.5 ns per call an A/A pair
+  is separated by two 20,000-rep batches, and ordering effects are the same size as the effect.
+  Only the harness's `len64_absent_incumbent_malloc` variant held its nulls, at 2.706972. **The
+  ratio is real and rises as length falls — 1.50 at 4096, 1.77 at 512, ~2.3-2.7 at 64 — which is
+  the fixed-per-call-cost signature, and it matches the prologue and GOT-indirect call the
+  disassembly found.** But a certified 64-byte number needs a case redesign, not another run.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.22,0.19,0.38`. Driver compiled on the worker with `cc -O2`.
