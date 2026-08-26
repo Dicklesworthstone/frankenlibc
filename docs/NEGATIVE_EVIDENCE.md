@@ -34905,3 +34905,81 @@ conformance-tested** (`e1c91f8806dec22d394d0fc5a9cbff3d0279e9a96de8820919ada4581
 verified by reading the landed block at HEAD. Their commit is left untouched — this row exists so
 the evidence has a citable SHA rather than a rewritten history. Same hazard, same handling as the
 earlier `c8232c0ec` sweep.
+
+## 2026-08-26 — `memrchr`'s real worst case is **10.32x**, not the 2.99x the survey sampled: the SIMD mask was computed and thrown away, then the 32 bytes re-walked scalar. Resolving from the mask makes it **position-independent** — worst case 10.32x -> 4.27x, and the length sweep 40% fewer instructions
+
+- **RESULT CLASS: a loss that was worse than first measured, then fixed.** Instrument unchanged: fl
+  `LD_PRELOAD`ed (PHASE=2, deployed configuration) against a live glibc in a fresh link-map
+  namespace **in the same process image**, arms asserted distinct by pointer, conformance checked
+  before counting, two-point difference over 2000 marginal calls, driver loop's 10 Ir netted out.
+- **THE SURVEY UNDERSTATED IT, AND THE DESIGNED PROBE IS WHY.** The 12-family survey put `memrchr`
+  at 2.986x, but that case happened to place the needle 24 bytes from its chunk end. Pinning the
+  needle **inside the last 32-byte chunk** holds the number of chunks examined at exactly one, so
+  the only variable left is the needle's offset within that chunk:
+
+  | offset in chunk | glibc | fl base | ratio |
+  |---:|---:|---:|---:|
+  | 31 (chunk end) | 18.00 | 93.00 | 5.166x |
+  | 24 | 17.97 | 115.00 | 6.398x |
+  | 16 | 18.00 | 139.00 | 7.722x |
+  | 8 | 18.00 | 163.00 | 9.055x |
+  | 0 (chunk start) | 18.03 | 186.00 | **10.317x** |
+
+  **glibc is flat at 18 Ir at every position; fl ran 93 -> 186, exactly +3.0 Ir per byte of
+  backward distance.** A ratio quoted from one needle placement was not wrong so much as
+  *unrepresentative* — the surface has no single ratio, and the worst case is 3.5x the sampled one.
+- **THE CAUSE.** `memrchr` asked `has_byte_simd_32`, a 32-lane SIMD compare **whose mask was then
+  discarded**, and on a hit re-walked the same 32 bytes with `chunk.iter().rposition(...)`. So the
+  vector unit found the answer and the code threw it away to go looking scalar — and the scalar
+  walk starts at the chunk end, which is why cost tracked distance-from-end at 3 instructions per
+  byte. This is the same "compute the mask, then rescan" shape that `scan_strcmp`'s 32B tier
+  already calls out and avoids.
+- **THE FIX IS THE HELPER THAT WAS ALREADY THERE.** `byte_mask_simd_32` sat two lines below,
+  returning the bitmask from the identical compare. Resolving with `63 - mask.leading_zeros()` is
+  O(1) and position-independent:
+
+  | offset | glibc | base | fixed | base | fixed |
+  |---:|---:|---:|---:|---:|---:|
+  | 31 | 18.00 | 93.00 | **77.00** | 5.166x | **4.278x** |
+  | 16 | 18.00 | 139.00 | **77.00** | 7.722x | **4.278x** |
+  | 0 | 18.03 | 186.00 | **77.00** | 10.317x | **4.271x** |
+
+  **Flat at 77 Ir, matching glibc's flat shape**, and the worst case improves by 109 Ir.
+- **AND IT COMPOUNDS OVER LENGTH, WITH NO REGRESSION ANYWHERE.**
+
+  | len | glibc | base | fixed | base | fixed |
+  |---:|---:|---:|---:|---:|---:|
+  | 16 | 18.00 | 120.00 | 119.00 | 6.666x | 6.611x |
+  | 32 | 18.03 | 166.00 | 65.00 | 9.208x | **3.605x** |
+  | 64 | 30.00 | 175.00 | 73.00 | 5.833x | 2.433x |
+  | 128 | 41.00 | 202.00 | 87.00 | 4.927x | 2.122x |
+  | 256 | 61.97 | 217.00 | 100.00 | 3.501x | 1.614x |
+  | 1024 | 154.00 | 307.02 | 178.00 | 1.994x | **1.156x** |
+  | 4096 | 466.00 | 667.00 | 490.00 | 1.431x | **1.052x** |
+
+  Summed over the sweep **1854 -> 1112 Ir, 40.0% fewer**. Long buffers land within 5% of glibc.
+- **L=16 IS UNCHANGED AND THAT IS DELIBERATE, NOT AN OVERSIGHT.** Buffers under 32 bytes never
+  reach a 32-lane chunk; they resolve in the 8-byte SWAR tier, which has the same discard-then-
+  rescan shape over at most 7 bytes. It is left alone here — **that tier is still 6.61x and is the
+  named next step on this surface**, not a solved case.
+- **DEAD CODE REMOVED RATHER THAN SUPPRESSED.** `has_byte_simd_32`'s only two callers were the two
+  sites replaced, so it went dead. It is deleted, not kept behind an `allow(dead_code)`; the build
+  is warning-clean, which is also what proves both call sites were converted.
+- **CONFORMANCE.** Differential against live glibc in the same image. Unlike `strcmp`, the returned
+  **pointer is contractual**, so results are compared as exact offsets. Coverage aimed at what a
+  mask resolve can get wrong: needle at every position of every length 0..400; **multiple needles,
+  since `memrchr` must return the LAST** — a resolve that picked the wrong set bit fails here;
+  dense buffers where nearly every lane matches; `n` shorter than the buffer, so a needle past `n`
+  must not be seen; `n == 0`; and high-bit values 0xAA/0xFF plus `0x1FF` to confirm the `int`
+  argument is truncated to `unsigned char`. **951,906 checks, 0 failures**, on both the base object
+  and the candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib memrchr` observed compiling and running:
+  `test result: ok. 11 passed; 0 failed` — including the property test
+  `prop_memrchr_matches_scalar_rposition`, which is precisely a differential against the scalar
+  `rposition` this change removed from the hot path.
+- **PROVENANCE.** Base `dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  candidate `019ca821c52d68dee6f6e42f5f9ac3225b90d6133aa9e7abefc44395807a8cc8`. Built on
+  `vmi1293453` from HEAD `998070b640879f95ec888990064a07833d926930`, counted locally with
+  `valgrind-3.25.1`.
+- **NEXT ON THIS FRONTIER:** `memrchr`'s sub-32-byte SWAR tier at 6.61x, then `wcslen` 2.225x and
+  `memcmp` 2.014x from the survey.
