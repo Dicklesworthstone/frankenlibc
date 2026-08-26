@@ -34129,3 +34129,44 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.45,0.58,0.52`. Driver compiled with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — STDIO MEASURED PROPERLY: giving each A/A slice its OWN stream takes the glibc/glibc null from 0.334 to 1.009. `fwrite(64)` is 1.94x slower, `fputc` ~2.74x, `fwrite(4096)` 10% FASTER
+
+- **RESULT CLASS: loss/baseline (admissible rows on a hot surface, and the instrument fix that
+  produced them).** The previous stdio row reported three ratios and declared none admissible
+  because the glibc/glibc A/A read **0.334535** — two slices of one buffered stream, one absorbing
+  the flush syscall. It named the fix: give each slice its own stream. **Applied, the null reads
+  1.008861.** The diagnosis is confirmed by repair, not by argument.
+- **THE ARMS.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM)`. **Four independent streams** are opened — two per provider — so an A/A
+  pair is two separate streams of the same implementation and buffering semantics are untouched:
+  `flA=0x10000010 flB=0x10000011 glA=0x7d4cd7810000 glB=0x7d4cd7810200`, all distinct. fl's
+  handles are synthetic ids and never cross to glibc. Conformance: `fputc` returns 120 on both.
+
+  | case | fl ns | glibc ns | ratio | FL/FL null | glibc/glibc null | control | corrected |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | `fwrite` 64 B | 15.3261 | 10.3801 | **1.485573** | 0.984146 | 1.002539 | 0.764058 | **1.94** |
+  | `fputc` | 6.1946 | 2.1807 | 2.825278 | 1.032104 | 1.008861 | 1.032989 | **2.74** |
+  | `fwrite` 4096 B | 161.7334 | 179.4059 | **0.876159** | 1.000084 | 0.997658 | 0.968226 | **0.905** |
+
+  `fwrite` at both sizes is **fully admissible** — all four nulls inside 1.6% of 1.0. `fputc`'s
+  FL/FL null is 1.032104, marginally outside the 0.020 tolerance, so its 2.74x is strongly
+  indicated rather than certified; note the control's own nulls are also ~1.03-1.04 at that speed,
+  so this is the 2-3 ns resolution limit again, not something fl does.
+- **THE SHAPE IS THE FAMILY SHAPE, ON A THIRD SUBSYSTEM.** 2.74x on a single character, 1.94x on a
+  64-byte write, **0.905 — fl faster — on a 4096-byte write.** Short loses, long wins, exactly as
+  `memcpy` (3.64x at 64 B, 0.81 at 1 MiB), `strlen` (4.66x at 7 B, parity at 256 KiB) and
+  `memmove` (1.33x at 64 B, 1.02 at 64 KiB). The fixed entry cost dominates until real work does.
+- **THE `fwrite` 64-BYTE CONTROL IS LARGE AND HOLDING, so the correction matters.** Both-arms-glibc
+  reads **0.764058** with both nulls holding: the `dlmopen` copy's `fwrite` is 31% slower than the
+  native one at 64 bytes. Uncorrected this surface looks like 1.49x; corrected it is **1.94x**. The
+  control is doing real work here and a run without it would have understated the loss by a third.
+- **WHAT THIS ADDS TO THE SESSION'S METHOD.** Three stateful surfaces have now broken a naive A/A:
+  the allocator (slices share free lists — unfixable without two independent instances), the stream
+  (slices share a buffer — **fixed here, by allocating one per slice**), and `getrandom` (the
+  incumbent copy is not representative — unfixable via `dlmopen` at all). The stream case is the
+  one that yielded, and it yielded to a change in the experiment rather than more samples.
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.52,0.54,0.53`. Driver compiled with `cc -O2 -fno-builtin`.
