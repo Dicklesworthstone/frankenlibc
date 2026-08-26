@@ -32488,3 +32488,99 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   refuted design and its own header says to delete it if segments turn out to be
   hit. They are, 100%. Flagged on the bead, not actioned — an unwired second
   ownership mechanism in an allocator is a liability.
+
+## 2026-08-26 — CERTIFIED LOSS AT HEAD: `malloc_free` is 12.03-13.24x against live glibc, it is still the worst surface by 3x, and the frontier table has been quoting the wrong harness for it
+
+- **RESULT CLASS: loss/baseline.** No lever, no improvement claimed. The number re-measured is the
+  campaign's headline: the worst FrankenLibC surface, timed at HEAD
+  `998070b640879f95ec888990064a07833d926930` — the first live-incumbent timing since three
+  allocator commits (`686ac82f2`, `f7c74141e`, `8d29a4526`) landed with an instruction-count
+  result and an explicit "NO WALL-CLOCK CLAIM".
+- **THE ROW, rch-built arm.** `incumbent_coverage_ab --family malloc_free --fl-deepbind
+  --pin-quietest 8`, case `small_64`; host glibc 2.42 linked directly into the timing process and
+  FrankenLibC loaded beside it by explicit `dlopen` with `RTLD_DEEPBIND`, both arms in the SAME
+  invocation. `fl_median_ns=61.902` against `glibc_median_ns=5.139`,
+  `ratio_median=12.029169`, bootstrap median CI `[11.541427, 12.978246]`,
+  `comparison=FL_SLOWER`, `verdict=DECIDABLE`, `samples=36`, `reps_per_arm=100000`,
+  `threads_observed=1` pre and post, conformance `comparisons=2 verdict=pass` before timing.
+  Same-invocation A/A nulls both hold: FL/FL `null_median_ratio: 0.998326`, bootstrap median CI
+  [0.985376, 1.017975] — `null_bootstrap_median_ci: [0.985376, 1.017975]`; glibc/glibc
+  `null_median_ratio: 0.987815`, bootstrap median CI [0.960768, 1.008962]. Tolerance 0.020, both
+  inside it, no straddle veto,
+  `null_half_width=0.039232`, `clears_2x_null=true`.
+  `bench_elf_sha256=d83e8a7a28d720912b8c4af847ef1ab1f805acd8aeeb33e894f49b879cb27194`,
+  FL object `sha256=841df4655fae27b70e31373454677a6415084d64c1f0b967d54d082dfa8bb9ad`
+  (`FL_ARTIFACT_FRESHNESS previous=absent rebuilt=true`, so the object timed is the object built),
+  incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6`
+  `sha256=6791cc9bdc08295aafcfae01a7d66d788ee5577cbe94db00ace5f1ee04ef2b09`.
+  Worker `vmi1293453`, `loadavg=2.26,1.24,0.96`, quiet gate `verdict=clear`, observed busy
+  fraction 0.163 against a 0.200 ceiling, `allowed_cpus=0:1:2:3:4:5:6:7`, `cpu_mhz` min, median
+  and max all 3195.2 — identical, so the run did not straddle a clock ramp.
+- **THE SAME ROW ON A SECOND, INDEPENDENTLY BUILT OBJECT, and it does not agree to better than
+  10%.** An ssh-direct build of the same source on the same worker gives
+  `fl_median_ns=79.545`-class timing at `ratio_median=13.238297`, bootstrap median CI
+  [12.322554, 13.581074], nulls 0.996275 (bootstrap median CI [0.990008, 1.007513]) and 1.014506
+  (bootstrap median CI [0.958936, 1.066785]), `clears_2x_null=true`,
+  FL object `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`,
+  `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`,
+  `loadavg=1.10,2.98,2.17`. Same source, same worker, same harness, two builds: 12.03 against
+  13.24. That is 10%, well above the ~4.6% layout-noise floor this file banked for `malloc_free`
+  on 2026-08-17, and it is **not attributed here** — it bounds what a single-build malloc
+  certification can claim, and it is the reason the lever below was run as a self-A/B inside one
+  process rather than as a difference between two runs.
+- **NOT A REGRESSION, and the appearance of one is a harness mix-up in this file's own frontier
+  table.** The 2026-08-16 ranking lists `malloc_free` at "6.5322-6.5704". Those figures are
+  `malloc_st_probe` rows (statically-linked probes, glibc reached through `dlmopen`). The
+  `incumbent_coverage_ab` readings for the same primitive are **12.385414x** (hz2, 2026-08-15) and
+  13.44-14.20x (hz1, same day). Today's 12.03/13.24 are the SAME harness as the 12.385 row. The
+  frontier column mixed two harnesses, which is precisely what the 2026-08-15 entry warned about
+  when it wrote that a bare "deployed malloc is Nx" is wrong. Malloc rows must name the harness.
+- **STILL THE WORST BY A WIDE MARGIN**: next-worst certified surfaces are `getrandom` 3.640x,
+  `tdelete` 3.05x, `snprintf_fused` 2.64-3.92x, `sscanf` up to 2.02x, `sinhf` 1.794x.
+
+## 2026-08-26 — REJECTED, with a deterministic mechanism and not a timing null: `-Ztls-model=initial-exec` removes 2417 of 2458 `__tls_get_addr` call sites from the deployed cdylib and then cannot be loaded at all
+
+- **RESULT CLASS: loss/baseline (rejected lever).** Nothing shipped, nothing to revert — the
+  candidate was a build flag that was never committed. The refutation is a counted, deterministic
+  loader failure, so no A/A null is needed to arbitrate it.
+- **THE OBSERVATION THAT OPENED IT.** Disassembling the deployed `malloc` export shows the hot
+  path issuing `call __tls_get_addr@plt` — the default **global-dynamic** TLS model — twice on the
+  measured path, before `enter_allocator_reentry_guard`, `runtime_policy::mode`,
+  `runtime_policy::decide` and `runtime_policy::observe` each add their own. Counted over the whole
+  object: **2458 `__tls_get_addr` call sites in `libfrankenlibc_abi.so`**. Every one is a PLT call
+  into `ld.so` for what `initial-exec` would compile to one `%fs:`-relative load. This file's only
+  prior mention of the model (2026-06) treats it as a CONFOUND for measuring `entrypoint_scope`
+  under LD_PRELOAD; it was never tested as a lever, and the assumption there that a "true-deployed"
+  fl would get initial-exec for free is wrong — the model is baked into the object at compile time,
+  so the shipped artifact pays `__tls_get_addr` under LD_PRELOAD too.
+- **THE FLAG DOES WHAT IT CLAIMS, COUNTED, NOT ASSUMED — and the count is the mechanism, so no
+  wall-clock arbitration is needed.** Disassembling both objects and counting references to the
+  loader entry point: **2458 instructions referencing `__tls_get_addr` -> 41** in the candidate, a
+  98.3% removal. The counting is `objdump -d` piped to `grep -c __tls_get_addr`, run on both arms
+  in the same script.
+- **AND THE OBJECT THEN CANNOT BE LOADED.** `dlopen FrankenLibC SO: fl_cand.so: cannot allocate
+  memory in static TLS block`, on both the self-A/B and the vs-glibc invocation. The quantity
+  behind that message was in the prediction registered before the run: the cdylib's `PT_TLS`
+  segment has `MemSiz 0x02ff28` = **196,392 bytes**, orders of magnitude above glibc's static-TLS
+  surplus. initial-exec requires the module to sit in static TLS; a 192 KiB block does not fit.
+- **TWO CONTROLS, because the flag was delivered through `RUSTFLAGS` and that is a trap.**
+  `.cargo/config.toml` sets `build.rustflags = ["-Z","threads=4","-Ctarget-feature=+avx2,+fma"]`,
+  and cargo's `RUSTFLAGS` environment variable **replaces** that list rather than merging with it.
+  A naive `RUSTFLAGS="-Ztls-model=initial-exec"` therefore builds the candidate without
+  `+avx2,+fma` — an ISA experiment wearing a TLS-model label. That first script was killed
+  mid-build and the flags restated. The two controls that prove it: (1) an AVX2 instruction census
+  is **2680 in every arm**, base and candidate alike; (2) a third object built with `RUSTFLAGS`
+  set to exactly the config list is **byte-identical to the base**, both
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865`, so passing the flags
+  through the environment is not itself a treatment.
+- **WHAT IS AND IS NOT REFUTED.** Refuted: `initial-exec` as a drop-in build flag for this cdylib.
+  NOT refuted, and left open with its quantity attached: that ~2458 general-dynamic TLS accesses
+  are a real deployed cost. The two successors this points at are (a) `-Ztls-model=local-dynamic`,
+  which is dlopen-safe because it keeps one `__tls_get_addr` per function instead of per access,
+  and (b) shrinking the 192 KiB thread-local block far enough that static TLS becomes reachable —
+  which is a data-layout question about fl's per-thread state, not a flag.
+- **PROVENANCE.** HEAD `998070b640879f95ec888990064a07833d926930`, worker `vmi1293453`
+  (`loadavg=1.10,2.98,2.17`), toolchain nightly-2026-04-28, all objects built from one source tree
+  in one session: base `dc480b403e7623d4...`, baseflags control `dc480b403e7623d4...` (identical),
+  candidate `34b53527327e1387...`, harness
+  `bench_elf_sha256=4dcc2e26163f5ebf9332249a951eda2b1fb5720bb5ee43ff12027077225f03c0`.
