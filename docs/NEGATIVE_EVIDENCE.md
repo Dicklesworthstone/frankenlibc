@@ -35540,3 +35540,46 @@ reworded rather than the gate touched.)
   2.427x, `wmemchr` 2.390x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.888x, `wcschr` 1.886x.
   **`wmemchr` and `wmemcmp` are the last two unexamined**; the grep above still flags
   `wchar_abi.rs:257` (`for j in 0..32`) and `:6912` (the case-insensitive wide compare).
+
+## 2026-08-26 — `wmemchr` **2.390x -> 1.734x (+42 Ir)**: sixth sighting, same two sites as `wcsnlen` — folded 256-block walked scalar, 16-lane loop rescanned
+
+- **RESULT CLASS: counted improvement, isolated.** fl `LD_PRELOAD`ed against live glibc in a fresh
+  link-map namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2`
+  and conformance verified before counting. Deterministic instruction counts; no wall-clock claim,
+  so no timed positive-result class is asserted.
+- **THE DEFECT, IN THE SAME TWO PLACES AS `wcsnlen`.** `core::string::wide::wmemchr`'s small tiers
+  (`[8,16)`, `[16,32)`) **already resolved correctly** via `to_bitmask().trailing_zeros()`. Below
+  them, the folded 256-element block walked
+  `for (j, &x) in block.iter().enumerate()` — **up to 256 scalar iterations** — and the 16-lane
+  chunk loop asked `.any()` then rescanned its chunk. Attribution before: fl 153 Ir against glibc's
+  `__wmemchr_avx2` at 64.
+- **THE FIX.** Panels are already `panel ^ c`, so a **zero lane is a match**: re-test `p0..p3` in
+  order and resolve from the first non-empty mask; the chunk loop resolves directly from its own.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wmemchr` | 64.03 | 153.00 | **111.00** | 2.390x | **1.734x** | **+42.00** |
+  | others (7) | — | — | — | — | — | ≤0.03 |
+
+  The baseline object is built from the same source tree as the candidate. That tree predates the
+  `wcschr` commit, so `wcschr` reads 119 Ir in **both** columns — it is a constant here, not a
+  regression.
+- **CONFORMANCE.** `wmemchr` has **no terminator semantics** — it searches exactly `n` elements and
+  a zero element is ordinary data — so the test is shaped differently from `wcschr`'s: match at
+  every position against every tier boundary (0,1,3,4,7,8,15,16,31,32,63,64,127,128,255,256,257,
+  271,272); **`n == p` must not find a match at `p` while `n == p+1` must**, which is the
+  over-scan check; **two matches straddling panel edges, where the lower index must win** — the case
+  a wrong panel order in the folded block gets wrong; `n == 0` never matching even at position 0;
+  **zero as ordinary data, and an all-zero haystack**; and wide values including `0x00000100`,
+  whose low byte is zero. **4,287 checks, 0 failures**, strict and hardened, on base and candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib wmemchr`: `4 passed; 0 failed`. Full core suite:
+  `3294 passed; 3 failed` — the same three (`locale` ×2, `stdio::printf` ×1) and the same counts as
+  the baseline established earlier today with the change stashed. Pre-existing; not attributed here.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `18bad08055e9e4d3dfaaa54e0ee7cea9f6f3558384aff1958055008e9170bf8c`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **WIDE-CHAR FRONTIER NOW:** `wcscpy` 5.289x (entry frame only), `wcsncmp` 3.165x, `wcsnlen`
+  2.427x, `wmemcmp` 2.246x, `wcscmp` 1.957x, `wcsrchr` 1.888x, `wcschr` 1.886x, `wmemchr` 1.734x.
+  **`wmemcmp` is the last unexamined entry.** Two flagged sites remain from the grep:
+  `wchar_abi.rs` `wide_strlen_bounded` (`for j in 0..32`, hardened-only bounded path) and the
+  case-insensitive wide compare at `:6912`.

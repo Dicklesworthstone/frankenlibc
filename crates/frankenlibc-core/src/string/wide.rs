@@ -1080,11 +1080,19 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
         let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]) ^ target;
         let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
         if folded.simd_eq(zero).any() {
-            for (j, &x) in block.iter().enumerate() {
-                if x == c {
-                    return Some(base + j);
+            // Resolve from the panel masks. The fold says `c` is somewhere in these
+            // 256 elements but not which panel, so re-test the four in order and
+            // take the first non-empty mask -- `p_k` is already `panel ^ c`, so a
+            // zero lane IS a match. The old form walked the block ELEMENT BY
+            // ELEMENT, up to 256 scalar iterations to recover an index four vector
+            // compares already held. Same fix as `wcsnlen`'s folded block.
+            for (k, panel) in [p0, p1, p2, p3].iter().enumerate() {
+                let m = panel.simd_eq(zero).to_bitmask();
+                if m != 0 {
+                    return Some(base + k * PANEL + m.trailing_zeros() as usize);
                 }
             }
+            unreachable!("min-fold reported a match that no panel contained");
         }
         base += BLOCK;
     }
@@ -1093,13 +1101,11 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let t16 = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
     let mut chunks = scan[base..].chunks_exact(WIDE_MEMCHR_SIMD_LANES);
     for chunk in chunks.by_ref() {
-        let lanes = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk);
-        if lanes.simd_eq(t16).any() {
-            for (j, &x) in chunk.iter().enumerate() {
-                if x == c {
-                    return Some(base + j);
-                }
-            }
+        let m = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk)
+            .simd_eq(t16)
+            .to_bitmask();
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
         }
         base += WIDE_MEMCHR_SIMD_LANES;
     }
