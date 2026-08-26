@@ -3596,6 +3596,16 @@ pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usiz
         return unsafe { wide_nul_or_bound(s as *const u32, maxlen) };
     }
 
+    // Cold tail in its own frame, as `wcslen`/`wcsncmp`/`wcscpy` already do. This
+    // entry rented `push rbp/r15/r14/r13/r12/rbx; sub $0x48,%rsp` from the
+    // validating path below on every strict call. Nothing between the strict gate
+    // and here is a re-entrancy bypass, so the cut is at the gate.
+    unsafe { wcsnlen_validating(s, maxlen) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcsnlen_validating(s: *const libc::wchar_t, maxlen: usize) -> usize {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
