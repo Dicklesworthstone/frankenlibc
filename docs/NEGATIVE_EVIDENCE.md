@@ -34270,3 +34270,56 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
   Worker `vmi1293453` at `loadavg 0.36,0.44,0.50`. Driver compiled with `cc -O2 -fno-builtin`.
+
+## 2026-08-26 — REFUTED, MY OWN PUBLISHED MODEL: `strlen`'s stack frame went 184 bytes to ZERO and the 7-byte ratio moved only 5.48 to 4.92. Frame size is a correlate, not the cause
+
+- **RESULT CLASS: loss/baseline (rejected lever, and a model of mine refuted by its own predicted
+  test).** One row ago I published that the deployed short-input ratio "tracks the export's
+  PROLOGUE WEIGHT", tabulated seven symbols, and named the direct test: split one export hot/cold,
+  the frame should collapse and the ratio should follow. **The frame collapsed completely. The
+  ratio barely moved.** Reverted; the change is stashed, not committed.
+- **THE LEVER.** Pure code motion in `string_abi.rs`: everything after `strlen`'s strict fast path
+  — the hardened-mode byte loop, `entrypoint_scope`, `known_remaining` for the membrane path,
+  `check_ordering`, `decide`/`observe`, the healing policy and both `raw_lane` dispatches — moved
+  into a `#[cold] #[inline(never)] strlen_cold`. Diff **+22/-1**. No check removed, no path
+  reordered, no semantics changed.
+- **PREDICTION 1, CONFIRMED AND THEN SOME.** Registered before the build: "the frame drops from
+  `sub $0xb8` (184 B) to something small — under ~48 B". Measured on the emitted objects:
+  base `sub $0xb8,%rsp`; candidate **no frame instruction at all**. Base
+  `sha256=dc480b40…c10865`, candidate `sha256=73c6a8361ee575b8858bda4b94b23983ed4ccae89a5065cee9aff4cbf39bf398`.
+- **PREDICTION 2, REFUTED.** Registered: "the deployed 7-byte ratio falls from ~5.24 raw toward
+  ~2.5 or below." Measured, same driver, same worker, back to back:
+
+  | length | base ratio | candidate ratio | fl ns base -> cand |
+  |---|---:|---:|---|
+  | 7 B | 5.479230 | **4.918577** | 10.6564 -> 9.6465 |
+  | 64 B | 4.260546 | 4.039602 | 12.5505 -> 10.4034 |
+  | 512 B | 2.549521 | 2.527315 | 12.5284 -> 13.1870 |
+  | 4096 B | 1.398565 | 1.520494 | 29.6759 -> 35.7188 |
+  | 256 KiB | 1.007472 | 1.018996 | 1630.32 -> 1717.33 |
+
+  A 10% improvement at 7 bytes where the model predicted better than 50%. **Eliminating the entire
+  184-byte frame bought about 0.95 ns of the 8.7 ns gap.** Prediction 3 held — 256 KiB is
+  unchanged within noise — so the change did what it was supposed to and nothing more.
+- **SO THE PUBLISHED MODEL IS WRONG IN ITS STRONG FORM, and I am retracting it rather than
+  reinterpreting it.** "The frame size predicts the loss" survives as a *correlation across seven
+  symbols*; "the frame is the cost" does not. A 184-byte frame costs about a nanosecond. The other
+  **~7.7 ns of fl's 9.65 ns seven-byte `strlen` is somewhere else**, and the ratio table I
+  published would have sent the next reader to shrink frames across the ABI for a tenth of the
+  payoff implied.
+- **WHERE THE COST ACTUALLY IS, as a hypothesis with the evidence that motivates it and no claim
+  of proof.** What survives on the hot path after the split: a null test, a GOT-indirect load of
+  the runtime phase, `strict_passthrough_active()`, **a call to `known_remaining(s)` — an
+  allocator-registry probe performed on every `strlen`** — and a GOT-indirect call into
+  `scan_c_string`. Two real calls and a registry lookup, against glibc's 1.9 ns total. The
+  registry probe is the candidate I would test next, because it is the only item on that list
+  whose cost plausibly scales into nanoseconds, and because `strtol` — 24-byte frame, 1.85x
+  FASTER than glibc — does not perform one.
+- **THE CAVEAT THAT KEEPS THIS HONEST.** This is one run per arm on a host at `loadavg 2.08`,
+  higher than the session's usual. The 4096-byte row moved the wrong way by 8.7%, which is almost
+  certainly noise rather than a regression, and I am not treating it as evidence in either
+  direction. What is robust is the direction and magnitude at 7 and 64 bytes, and the frame
+  measurement, which is a property of the object and needs no timing at all.
+- **PROVENANCE.** Base source at HEAD `998070b640879f95ec888990064a07833d926930`; candidate is
+  that plus the split, built on worker `vmi1293453`, measured there against live glibc reached by
+  `dlmopen(LM_ID_NEWLM)` with fl by `LD_PRELOAD` at phase **2 = ACTIVE**.
