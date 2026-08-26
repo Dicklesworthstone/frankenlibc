@@ -33661,3 +33661,34 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
   `998070b640879f95ec888990064a07833d926930`; incumbent `libm.so.6` resolved live in-process.
   Worker `vmi1293453`. Driver compiled on the worker with `cc -O2 -ldl -lm`.
+
+## 2026-08-26 — `mtx_trylock` certified interleaved at 1.487x, stable across both designs, and 20% worse than the harness's `dlopen` figure
+
+- **RESULT CLASS: loss/baseline (certification).** Second-to-last surface owing an interleaved
+  re-run. Unlike `coshf` — where between-batch and interleaved disagreed by 13% — this one is
+  stable.
+- **THE ROW.** Deployed, fl by `LD_PRELOAD` at phase **2 = ACTIVE**, live glibc by
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`, `trylock` arms distinct, each arm initialising, locking and
+  trylocking **its own** `mtx_t` on its own 256-byte aligned buffer, 500-call micro-slices x 200
+  rounds, 25 samples. Conformance first: fl returns **1**, glibc returns **1** (`thrd_busy`),
+  agree. fl **8.3175 ns** against glibc **5.6835 ns** = **1.486752**. A/A nulls fl/fl
+  **0.995091**, glibc/glibc **1.013374** — both hold.
+- **CONTROL AND CORRECTION.** Both-arms-glibc reads **1.010445** with nulls 1.011799 and 1.009311,
+  a 1.0% bias. Corrected: **1.4714**.
+- **STABLE ACROSS DESIGNS, unlike `coshf`.** Between-batch gave 1.447504 (control 1.003142,
+  corrected 1.4429); interleaved gives 1.486752 (control 1.010445, corrected 1.4714). The two
+  corrected values are **2.0% apart**. So `mtx_trylock`'s number is settled at **~1.45-1.49 raw,
+  ~1.44-1.47 corrected**, and it joins `sinhf`, `tdelete` and `malloc_free` in the
+  design-insensitive set. The design-sensitive set so far is `coshf` (13%) and `memrchr` at 512 B
+  (33% across warm-up depths, resolved by interleaving).
+- **AND IT CONFIRMS THE TWO-WAY ARTIFACT ON A SECOND INSTRUMENT.** `incumbent_coverage_ab` under
+  `dlopen` reported **1.233477**. Both deployed designs put it at 1.45-1.49 — **about 20% worse
+  than the banked figure**, and now that gap is backed by two independent instruments rather than
+  one. A bootstrap-phase measurement understates this surface because the deployed path runs the
+  policy work the bootstrap edge skips; the disassembly showed the branch
+  (`call __tls_get_addr@plt`, thread-local mode byte at `+0x46e8`, `call runtime_policy::mode`
+  only on the non-bootstrap edge).
+- **PROVENANCE.** FL object
+  `sha256=dc480b403e7623d457307a1f82201fd3990c845791a37713987167e7a6c10865` from HEAD
+  `998070b640879f95ec888990064a07833d926930`; incumbent `libc.so.6` resolved live in-process.
+  Worker `vmi1293453` at `loadavg 0.05,0.12,0.14`. Driver compiled on the worker with `cc -O2`.
