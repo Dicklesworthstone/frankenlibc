@@ -188,14 +188,24 @@ fn equal_prefix_wide(a: &[u32], b: &[u32], n: usize) -> bool {
 #[inline(always)]
 fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
     debug_assert_eq!(a_chunk.len(), b_chunk.len());
-    for (a, b) in a_chunk.iter().zip(b_chunk.iter()) {
-        let a = *a as i32;
-        let b = *b as i32;
-        if a != b {
-            return Some(if a < b { -1 } else { 1 });
-        }
+    debug_assert_eq!(a_chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    // Resolve from the lane mask instead of a scalar zip. Every caller reaches
+    // here only after a `.all()` on the same two vectors reported a mismatch --
+    // that compare already located it, and this walked the panel element by
+    // element to find it again. Measured (callgrind two-point vs live glibc in
+    // the same process image): `wmemcmp` spent 146 Ir on a 64-element compare
+    // differing at element 60, against 65 Ir for glibc's `__wmemcmp_avx2`.
+    // Comparison stays SIGNED (`as i32`), matching the scalar form it replaces.
+    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_chunk);
+    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_chunk);
+    let m = av.simd_ne(bv).to_bitmask();
+    if m == 0 {
+        return None;
     }
-    None
+    let j = m.trailing_zeros() as usize;
+    let a = a_chunk[j] as i32;
+    let b = b_chunk[j] as i32;
+    Some(if a < b { -1 } else { 1 })
 }
 
 /// Returns the index of the first element of `s` equal to `needle` or `0`

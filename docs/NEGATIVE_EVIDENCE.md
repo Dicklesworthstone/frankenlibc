@@ -35583,3 +35583,60 @@ reworded rather than the gate touched.)
   **`wmemcmp` is the last unexamined entry.** Two flagged sites remain from the grep:
   `wchar_abi.rs` `wide_strlen_bounded` (`for j in 0..32`, hardened-only bounded path) and the
   case-insensitive wide compare at `:6912`.
+
+## 2026-08-26 — `wmemcmp` **2.246x -> 1.646x (+39 Ir)**: seventh and last of the wide entries, same defect in its shared panel resolver. **Every wide-char entry is now examined.**
+
+- **RESULT CLASS: counted improvement, isolated.** fl `LD_PRELOAD`ed against live glibc in a fresh
+  link-map namespace **in the same process image**, two-point over 2000 marginal calls, `PHASE=2`
+  and conformance verified before counting. Deterministic instruction counts; no wall-clock claim,
+  so no timed positive-result class is asserted.
+- **THE DEFECT, IN A SHARED HELPER THIS TIME.** `resolve_wmemcmp_panel` was a **scalar
+  `zip` loop** over a whole panel, and all three of its call sites reach it only *after* a `.all()`
+  on the same two vectors has already reported a mismatch — the compare had located the difference
+  and the helper walked the panel to find it again. Fixing the helper fixed the unrolled two-panel
+  loop and the single-panel loop at once. Attribution before: fl 146 Ir on a 64-element compare
+  differing at element 60, against glibc's `__wmemcmp_avx2` at 65.
+
+  | family | glibc | base | mask | base | new | saved |
+  |---|---:|---:|---:|---:|---:|---:|
+  | `wmemcmp` | 65.00 | 146.00 | **107.00** | 2.246x | **1.646x** | **+39.00** |
+  | others (7) | — | — | — | — | — | 0.00 |
+
+  Baseline built from the same source tree as the candidate. That tree predates the `wcschr` and
+  `wmemchr` commits, so those two read their pre-fix values (119 and 153 Ir) in **both** columns —
+  constants here, not regressions.
+- **CONFORMANCE.** Only the **sign** is contractual, and the sharp cases are signedness and
+  ordering: `wchar_t` is a **signed** int on Linux and the resolver compares `as i32`, so
+  `0x7FFFFFFF` vs `0x80000000`, `0xFFFFFFFF` vs a positive, and `0` vs `0xFFFFFFFF` all decide the
+  **opposite way** from an unsigned read — each swept across 120 positions in both directions.
+  Plus: equal buffers at every tier boundary; a single difference walked across 300 positions in
+  both directions; `n == p` excluding a difference at `p` while `n == p+1` includes it; and **two
+  differences with OPPOSITE signs**, so a wrong lane pick does not merely shift the index but
+  **flips the result** — including pairs straddling the two halves of one unroll iteration, where
+  the first panel must win. **5,683 checks, 0 failures**, strict and hardened, on base and
+  candidate.
+- **GATES.** `cargo test -p frankenlibc-core --lib wmemcmp`: `3 passed; 0 failed`. Full core suite:
+  `3294 passed; 3 failed` — the same three (`locale` ×2, `stdio::printf` ×1) and the same counts as
+  the baseline established earlier today with the change stashed. Pre-existing; not attributed here.
+- **PROVENANCE.** Baseline `5fc0f9c85b360efa107a30aa61fdc9bdf42cafc67795087184b9f62dc2d75316`,
+  candidate `0c754c59cf880e5ea440d12ae7f59e46e3aefe870552fd1894c34703def84178`. Built on
+  `vmi1293453`, counted with `valgrind-3.25.1`.
+- **THE WIDE-CHAR SWEEP IS COMPLETE — every entry measured, six of eight improved.**
+
+  | entry | first measured | now |
+  |---|---:|---:|
+  | `wcscpy` | 5.289x | 5.289x *(no lever but its entry frame)* |
+  | `wcsncmp` | 4.050x | **3.165x** |
+  | `wcsnlen` | 3.500x | **2.427x** |
+  | `wcscmp` | 3.306x | **1.957x** |
+  | `wcschr` | 2.704x | **1.886x** |
+  | `wmemchr` | 2.391x | **1.734x** |
+  | `wmemcmp` | 2.246x | **1.646x** |
+  | `wcsrchr` | 1.904x | 1.888x |
+  | `wcslen` | 2.225x | **1.872x** |
+
+  **Six of the nine now sit under 2x.** What remains: `wcscpy` at 5.289x, whose copy loops are
+  load-bearing (the `copy_nonoverlapping` refutation) leaving only its ~11 Ir entry frame; the
+  frame tax on eight of the ten entries; and two flagged sites the grep still lists —
+  `wide_strlen_bounded`'s `for j in 0..32` (hardened-only bounded path) and the case-insensitive
+  wide compare at `wchar_abi.rs:6912`.
