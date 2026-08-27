@@ -35997,3 +35997,50 @@ reworded rather than the gate touched.)
   proven-exact division. Both are defence-in-depth against corrupted allocator metadata, so deleting
   them trades a documented safety property for ~19 Ir. NOT taken unilaterally; it needs an explicit
   owner decision.
+
+## 2026-08-26 — `strncmp` short bounds: three wide tiers re-tested every pass; one loop-invariant gate is worth up to 94 Ir
+
+- **Op.** `strncmp` at bound 31 — the suite's worst measured ratio, and the surface a same-day
+  overlapping-8-byte-panel attempt failed to fix (that reject stands; this is a different lever).
+- **What was actually wrong.** The earlier reject's diagnosis was incomplete. `scan_strcmp` DOES have
+  an 8-byte SWAR tier, so bound 31 was never a 31-iteration byte grind. The cost is that the `loop`
+  re-evaluates all three wide tiers — the 128B unrolled panel, the 32B panel, and the overlapping
+  final panel — on EVERY pass, and for `bound < 32` none of them can ever fire. That is two adds,
+  three compares and two page tests per pass, thrown away ten times before bound 31 finishes.
+- **The change.** One loop-invariant guard, `if !BOUNDED || bound >= 32 { ..three wide tiers.. }`.
+  It is logically redundant: each of the three blocks already carries a condition implying
+  `bound >= 32`. It is there purely for codegen — LLVM will not unswitch this loop on a runtime
+  `bound` because the body has too many exits. For `BOUNDED == false` (`strcmp`) the term is a const
+  `true` and the guard vanishes entirely.
+- **Counted mechanism:** at bound 31 the op runs **297 instructions -> 203 instructions**; at
+  bound 7, **207 instructions -> 137**. Ten passes x roughly nine dead instructions is the whole of it.
+
+| bound | glibc | HEAD | gated | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| 7 | 36.00 | 207.00 | 137.00 | 5.750x | 3.805x | +70.00 |
+| 15 | 36.00 | 237.03 | 158.97 | 6.584x | 4.416x | +78.05 |
+| 23 | 36.00 | 267.00 | 181.04 | 7.416x | 5.029x | +85.96 |
+| **31** | 36.00 | 297.00 | 203.00 | **8.250x** | **5.639x** | **+94.00** |
+| 32 | 35.97 | 81.00 | 80.03 | 2.252x | 2.223x | +0.97 |
+| 43 | 45.00 | 107.00 | 106.00 | 2.378x | 2.356x | +1.00 |
+| 128 | 61.00 | 107.00 | 106.03 | 1.754x | 1.738x | +0.97 |
+| 256 | 114.03 | 150.00 | 149.00 | 1.315x | 1.307x | +1.00 |
+
+- **No bound regresses.** Bounds at or above 32 gain ~1 Ir rather than paying for the extra test,
+  because the guard lets the three gates const-fold into one comparison on the entry pass.
+- These figures INCLUDE the driver loop (~9 Ir) in both arms. Netting it out for comparability with
+  the earlier row's numbers, bound 31 is **10.667x -> 7.185x** (288 Ir -> 194 Ir against glibc's 27).
+- **A/A null PASSES:** the glibc arm across both objects differs by at most 0.03 Ir at every bound.
+- **`strcmp` is untouched, and that was checked rather than assumed** — it shares `scan_strcmp` with
+  `BOUNDED == false`. L=4 49.00 -> 49.00, L=31 49.00 -> 48.96, L=200 119.00 -> 119.00. The guard
+  const-folds exactly as intended.
+- Conformance: `strncmp_conf` **1,859,731 checks, 0 failures** in BOTH strict and hardened mode.
+  Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `598bd1f6c713470da3f9f64912c518061cd87c92621e96b2c3ccfbe741c603f2`,
+  candidate `f6d55ff43dba41fe18c630c80248ef40736ef264a614ae5238f190b150cb1594`.
+- **Lesson.** The earlier panel attempt tried to give short bounds a tier they could use. The actual
+  defect was the cost of OFFERING them tiers they could not. Before adding a tier for a range that
+  falls between tiers, price what that range already pays to decline the ones above it.

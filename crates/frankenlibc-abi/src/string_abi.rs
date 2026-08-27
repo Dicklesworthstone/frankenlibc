@@ -3457,6 +3457,23 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
     loop {
+        // ONE GATE FOR THE THREE WIDE TIERS. Each of the three blocks below
+        // already carries a condition that implies `bound >= 32` (`i + 128 <=
+        // bound`, `i + 32 <= bound`, and the panel's explicit `bound >= 32`), so
+        // this guard is logically redundant and is here purely for codegen: it is
+        // a loop-invariant test LLVM will not synthesise on its own, because it
+        // cannot unswitch a loop with this many exits on a runtime `bound`.
+        //
+        // Without it a SHORT bounded compare re-evaluates all three gates on every
+        // pass -- two adds, three compares and two page tests that can never
+        // succeed -- and then falls to the 8-byte SWAR tier anyway. `strncmp` at
+        // bound 31 makes ten passes before it is done, which is where a bound the
+        // wide tiers cannot serve turns into the suite's worst measured ratio.
+        //
+        // For `BOUNDED == false` (`strcmp`) the term is a const `true` and the
+        // guard vanishes. Indentation inside the guard is deliberately left as it
+        // was; reflowing it would rewrite the whole body for no semantic change.
+        if !BOUNDED || bound >= 32 {
         // Wide 128-byte unrolled fast path: the plain 32B loop below re-ran the
         // dual page-guard (`&0xFFF <= 0x1000-32` on BOTH pointers) AND the `i+32<=bound`
         // check on EVERY 32 bytes — ~2.7x slower than glibc for long equal strings
@@ -3582,6 +3599,7 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
                 return (bound, true);
             }
             return (start + m.trailing_zeros() as usize, false);
+        }
         }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
