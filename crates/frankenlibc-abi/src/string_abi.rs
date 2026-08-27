@@ -3898,6 +3898,25 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         return dst;
     }
 
+
+    // COLD-TAIL SPLIT, cut BELOW the raw bypass — the `memcmp`/`strlen` shape, not the
+    // `wcschr` one. `string_raw_passthrough_active()` above is the re-entrancy/TLS guard
+    // standing between an interposed `memcpy` and a membrane that itself copies; putting
+    // it behind `#[cold] #[inline(never)]` is what made hardened startup SIGSEGV
+    // deterministically for `strlen`. Everything from the trace scope down is ordinary
+    // validating work and moves safely.
+    //
+    // `memcpy` is the hottest entry in any libc and it had never been measured here. It
+    // is the worst ratio in the suite: 92.00 Ir against live glibc's 22.00 at n=64
+    // (4.182x), 69.00 vs 21.03 at n=16 (3.281x). Its prologue was six callee-saved pushes
+    // plus `sub $0xe8,%rsp` — 232 bytes of stack — rented on every call by a deployed path
+    // that is two null tests, a mode test and a copy.
+    unsafe { memcpy_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
     if !runtime_policy::mode().heals_enabled() {
         if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {

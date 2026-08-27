@@ -38010,3 +38010,63 @@ reworded rather than the gate touched.)
   but both already beat glibc ~3x, so the table is not hurting them at the sizes measured. The
   narrow/wide asymmetry is now closed for `wcsspn` only. Worst standing ratios: `wcsrchr`
   short/unaligned ~2.5x, `memcmp` 1.944x, `wcsnlen` 1.919x, `strspn` 1.793x.
+
+## 2026-08-27 — bd-2g7oyh — `memcpy` was never measured and is the suite's worst ratio at 4.182x; cold-tail split takes it to 3.863x
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. The previous cycle's prologue survey flagged entries by
+  prologue cost but did not measure them. Adding driver arms for three of them:
+
+| family | glibc | fl | ratio | excess |
+|---|---|---|---|---|
+| **`memcpyL64`** | 22.00 | 92.00 | **4.182x** | +70.00 |
+| `memcpyL16` | 21.03 | 69.00 | 3.281x | +47.97 |
+| `strncatL64` | 58.00 | 152.00 | 2.621x | +94.00 |
+| `memcpyL256` | 40.00 | 101.00 | 2.525x | +61.00 |
+| `strncatL8` | 45.00 | 112.97 | 2.510x | +67.97 |
+| `strcasestr` | 3257.00 | 439.00 | **0.135x** | -2818.00 |
+
+  **`memcpy` — the single hottest entry in any libc — had never been measured in this suite, and at
+  4.182x it is the worst ratio in it.** `strcasestr` is the opposite discovery: fl is **7.4x faster**
+  than glibc there, so the 232-byte prologue that flagged it is not costing anything worth chasing.
+- **The change.** `memcpy` had no `_validating` split and entered on six callee-saved pushes plus
+  `sub $0xe8,%rsp` — 232 bytes of stack — for a deployed path that is two null tests, a mode test and
+  a copy. Cut **BELOW** the `string_raw_passthrough_active()` bypass, the `memcmp`/`strlen` shape:
+  that bypass is the re-entrancy guard between an interposed `memcpy` and a membrane that itself
+  copies, and putting it behind `#[cold]` is what made hardened startup SIGSEGV deterministically for
+  `strlen`. Prologue becomes three pushes plus `sub $0x30`.
+- **Counted mechanism:** **+7.00 Ir at every length measured** — 16, 64, 256 and 4096 — which is how
+  a fixed entry charge behaves when removed.
+
+| family | glibc | HEAD | split | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `memcpyL16` | 21.03 | 69.00 | 62.00 | 3.281x | **2.952x** | +7.00 |
+| `memcpyL64` | 22.00 | 92.00 | 85.00 | **4.182x** | **3.863x** | +7.00 |
+| `memcpyL256` | 40.00 | 101.00 | 94.05 | 2.525x | 2.351x | +6.95 |
+| `memcpyL4096` | 421.00 | 491.00 | 484.00 | 1.166x | 1.150x | +7.00 |
+| `strncatL8` | 45.00 | 112.97 | 113.03 | 2.510x | 2.512x | -0.05 |
+| `wcsspn` | 42.00 | 59.97 | 60.00 | 1.428x | 1.428x | -0.03 |
+| `wcschr` | 53.00 | 79.00 | 79.00 | 1.491x | 1.491x | +0.00 |
+| `memcmp` | 71.03 | 138.00 | 138.00 | 1.943x | 1.944x | +0.00 |
+| `strpbrk` | 103.00 | 158.00 | 158.00 | 1.534x | 1.534x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9994 .. 1.0013.** Objects self-reported via `dladdr`; incumbent
+  `/lib/x86_64-linux-gnu/libc.so.6`, `ARM_DISTINCT` printed per arm — not a self-compare.
+- **On host load:** this instrument is `valgrind --tool=callgrind` two-point instruction counting,
+  which is load-independent by construction — it counts executed instructions in a simulator, not
+  wall time. Host load average was 51 on 64 cores during this cycle; the A/A null above is the check
+  that matters and it holds to 0.13%.
+- **NO TRADE.** Every `memcpy` length gains the same 7 Ir; five controls flat.
+- Conformance: a new `mcpy_conf` differential against live glibc — dense lengths 0..160 at eight
+  source alignments, then 32 tier-boundary lengths (through the scalar/16/32/128/2048-`rep movsb`
+  tiers) at 22x10 source/destination alignment pairs, comparing **the whole 9000-byte destination**
+  so any overrun outside the copied range shows up, plus the returned pointer; and `memmove` on
+  genuinely overlapping regions in both directions since it shares `raw_overlap_copy`:
+  **8,473 checks, 0 failures** in BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+- Objects: baseline `cce2d57b95bb56c0eaa903b3295fe9ffefcd3b46998c91be968e99620fd17c4d`,
+  candidate `159fbfecdcdbdd40f3a03ed1660a4c2e71bfc8a21ca555bcda68e36ff028c67a`.
+- **STILL OPEN, and it is now the biggest item in the campaign.** `memcpy` remains **3.863x at
+  n=64** — 85 Ir against glibc's 22 — and the split only removed the frame. The remaining ~63 Ir of
+  excess is in `raw_overlap_copy`'s dispatch: it handles all sizes through one entry with an AVX2
+  feature test and a tier ladder, where glibc jumps straight to a size-class kernel. `strncat` at
+  2.5-2.6x is also untouched and has no split.
