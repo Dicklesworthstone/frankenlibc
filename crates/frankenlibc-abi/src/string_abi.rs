@@ -7565,6 +7565,26 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
         };
     }
 
+    // COLD-TAIL SPLIT. The strict fast path above needs `s`, `reject` and a couple of
+    // scratch registers; the validating body below needs the lot. Sharing one frame
+    // charged EVERY call for the validating path's needs -- the prologue was six
+    // callee-saved pushes plus `sub $0xc8,%rsp`, two hundred bytes of stack, on a
+    // function whose deployed path is a five-byte probe and a scan.
+    //
+    // That fixed charge is what makes SHORT spans lose: `strcspn` measured a flat
+    // 47 Ir of entry at BOTH haystack length 8 and length 100, while live glibc
+    // answers the whole length-8 call in 41.
+    //
+    // Split BELOW the strict block, so the bypass keeps its own small frame and only
+    // the validating path pays for the large one. Same shape as the `memrchr`,
+    // `memchr` and `strcmp` splits already in this file.
+    unsafe { strcspn_validating(s, reject) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strcspn_validating(s: *const c_char, reject: *const c_char) -> usize {
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, reject as usize);
     if s.is_null() || reject.is_null() {
         record_string_stage_outcome(
