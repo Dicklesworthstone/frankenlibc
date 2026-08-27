@@ -21,6 +21,54 @@ const MAX_FLOAT_PRECISION: usize = 65_535;
 // Format spec types
 // ---------------------------------------------------------------------------
 
+
+/// Short-append that stays out of the interposed `memcpy`.
+///
+/// `Vec::extend_from_slice` lowers to `copy_nonoverlapping`, which in a process
+/// running frankenlibc resolves to fl's OWN exported `memcpy` -- a full ABI entry
+/// with its membrane prologue, for a handful of bytes. Counted on the deployed
+/// `snprintf("%d %s %.3f")` against live glibc: after the same fix landed on the
+/// ABI side, FIVE `memcpy` calls still remained on the path, about 350 Ir, and
+/// every one of them is a digit run, a sign, a prefix or an exponent -- none of
+/// them long.
+///
+/// See the impl for why the cut is eight here and sixteen on the ABI side.
+///
+/// A trait rather than a free function so the call sites keep method syntax and
+/// work unchanged whether `buf` is a `Vec<u8>` or a `&mut Vec<u8>`.
+pub(crate) trait PushBytes {
+    fn push_bytes(&mut self, src: &[u8]);
+}
+
+impl PushBytes for Vec<u8> {
+    #[inline(always)]
+    fn push_bytes(&mut self, src: &[u8]) {
+        let n = src.len();
+        if n == 0 {
+            return;
+        }
+        // NO `unsafe` HERE, and that is a constraint rather than a preference:
+        // `frankenlibc-core` is the safe-implementations crate and denies it, so
+        // the ABI side's overlapping power-of-two moves cannot be reused. A
+        // reserved-then-pushed byte loop is the safe equivalent that still does
+        // not emit a `memcpy` call -- the per-iteration capacity check is what
+        // keeps LLVM's loop-idiom recogniser from rewriting it into one.
+        //
+        // That costs a few instructions per byte, so the cut is EIGHT, not the
+        // sixteen the ABI side uses: below it a digit run, sign, prefix or
+        // exponent beats a ~66 Ir interposed `memcpy` entry comfortably; above it
+        // the byte loop starts losing to a real block copy.
+        if n > 8 {
+            self.extend_from_slice(src);
+            return;
+        }
+        self.reserve(n);
+        for &b in src {
+            self.push(b);
+        }
+    }
+}
+
 /// Flags parsed from a printf format directive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FormatFlags {
@@ -1344,7 +1392,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         if negative {
             buf.push(b'-');
         }
-        buf.extend_from_slice(digit_slice);
+        buf.push_bytes(digit_slice);
         return;
     }
 
@@ -1394,13 +1442,13 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     if let Some(s) = sign {
         buf.push(s);
     }
-    buf.extend_from_slice(prefix);
+    buf.push_bytes(prefix);
     if !spec.flags.left_justify && zero_pad {
         pad(buf, b'0', pad_total);
     }
     if !suppress_zero {
         pad(buf, b'0', zero_prefix_count);
-        buf.extend_from_slice(digit_slice);
+        buf.push_bytes(digit_slice);
     }
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
@@ -1418,7 +1466,7 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // digits — base 10 has no alternate-form prefix, so there is nothing else
     // to compute. Skips the prefix/precision/width/justify pipeline below.
     if base == 10 && spec.is_bare_integer() {
-        buf.extend_from_slice(digit_slice);
+        buf.push_bytes(digit_slice);
         return;
     }
 
@@ -1466,13 +1514,13 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     if !spec.flags.left_justify && !zero_pad {
         pad(buf, b' ', pad_total);
     }
-    buf.extend_from_slice(prefix);
+    buf.push_bytes(prefix);
     if !spec.flags.left_justify && zero_pad {
         pad(buf, b'0', pad_total);
     }
     if !suppress_zero {
         pad(buf, b'0', zero_prefix_count);
-        buf.extend_from_slice(digit_slice);
+        buf.push_bytes(digit_slice);
     }
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
@@ -1538,8 +1586,8 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         if !spec.flags.left_justify {
             pad(buf, b' ', pad_total);
         }
-        buf.extend_from_slice(sign_prefix);
-        buf.extend_from_slice(label);
+        buf.push_bytes(sign_prefix);
+        buf.push_bytes(label);
         if spec.flags.left_justify {
             pad(buf, b' ', pad_total);
         }
@@ -1612,14 +1660,14 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
                 let ds = &tmp[i..];
                 if ds.len() > precision {
                     let point = ds.len() - precision;
-                    buf.extend_from_slice(&ds[..point]);
+                    buf.push_bytes(&ds[..point]);
                     buf.push(b'.');
-                    buf.extend_from_slice(&ds[point..]);
+                    buf.push_bytes(&ds[point..]);
                 } else {
                     buf.push(b'0');
                     buf.push(b'.');
                     buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
-                    buf.extend_from_slice(ds);
+                    buf.push_bytes(ds);
                 }
                 return;
             }
@@ -1775,12 +1823,12 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         buf.push(s);
     }
     if hex_zero_prefix_len > 0 {
-        buf.extend_from_slice(&body.as_bytes()[..hex_zero_prefix_len]);
+        buf.push_bytes(&body.as_bytes()[..hex_zero_prefix_len]);
     }
     if !spec.flags.left_justify && spec.flags.zero_pad {
         pad(buf, b'0', pad_total);
     }
-    buf.extend_from_slice(&body.as_bytes()[hex_zero_prefix_len..]);
+    buf.push_bytes(&body.as_bytes()[hex_zero_prefix_len..]);
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
     }
@@ -1802,7 +1850,7 @@ pub fn format_str(s: &[u8], spec: &FormatSpec, buf: &mut Vec<u8>) {
     if !spec.flags.left_justify {
         pad(buf, b' ', pad_total);
     }
-    buf.extend_from_slice(effective);
+    buf.push_bytes(effective);
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
     }
@@ -1831,7 +1879,7 @@ pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
         if !spec.flags.left_justify {
             pad(buf, b' ', pad_total);
         }
-        buf.extend_from_slice(s);
+        buf.push_bytes(s);
         if spec.flags.left_justify {
             pad(buf, b' ', pad_total);
         }
@@ -1865,7 +1913,7 @@ pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
         // Zero-pad: the sign sits at the front, then a zero-filled body whose
         // field width accounts for the sign.
         hexspec.width = Width::Fixed(width.saturating_sub(sign.len()));
-        buf.extend_from_slice(sign);
+        buf.push_bytes(sign);
         format_unsigned(addr as u64, &hexspec, buf);
     } else {
         // Space-pad / left-justify / precision: render the bare body, then place
@@ -1876,13 +1924,13 @@ pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
         format_unsigned(addr as u64, &hexspec, &mut body);
         let pad_total = width.saturating_sub(sign.len() + body.len());
         if spec.flags.left_justify {
-            buf.extend_from_slice(sign);
-            buf.extend_from_slice(&body);
+            buf.push_bytes(sign);
+            buf.push_bytes(&body);
             pad(buf, b' ', pad_total);
         } else {
             pad(buf, b' ', pad_total);
-            buf.extend_from_slice(sign);
-            buf.extend_from_slice(&body);
+            buf.push_bytes(sign);
+            buf.push_bytes(&body);
         }
     }
 }
@@ -2285,14 +2333,14 @@ fn push_fixed_scaled_u128(buf: &mut Vec<u8>, scaled: u128, precision: usize) {
 fn push_fixed_scaled_digits_vec(buf: &mut Vec<u8>, ds: &[u8], precision: usize) {
     if ds.len() > precision {
         let point = ds.len() - precision;
-        buf.extend_from_slice(&ds[..point]);
+        buf.push_bytes(&ds[..point]);
         buf.push(b'.');
-        buf.extend_from_slice(&ds[point..]);
+        buf.push_bytes(&ds[point..]);
     } else {
         buf.push(b'0');
         buf.push(b'.');
         buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
-        buf.extend_from_slice(ds);
+        buf.push_bytes(ds);
     }
 }
 
@@ -2581,7 +2629,7 @@ pub(crate) fn try_pct_e_fixed_scaled_into(value: f64, precision: usize, buf: &mu
     }
     buf.push(sig[0]);
     buf.push(b'.');
-    buf.extend_from_slice(&sig[1..]);
+    buf.push_bytes(&sig[1..]);
     // C `e±dd` tail (sign, >= 2 digits). `pre_exp` comes from decimal_exp_for_fixed_g
     // (range [-4, 8]) with an optional +1 carry, so `abs_exp` is always a single digit
     // here — the `< 10` pad emits exactly two exponent digits.
@@ -2602,7 +2650,7 @@ pub(crate) fn try_pct_e_fixed_scaled_into(value: f64, precision: usize, buf: &mu
             break;
         }
     }
-    buf.extend_from_slice(&etmp[ei..]);
+    buf.push_bytes(&etmp[ei..]);
     true
 }
 

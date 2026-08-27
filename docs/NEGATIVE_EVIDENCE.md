@@ -36410,3 +36410,49 @@ reworded rather than the gate touched.)
   lowering applies. Beyond the copies, `parse_format_spec` (307 Ir), `FormatSegments::push` (234)
   and `parse_format_string` (204) re-parse the format string on every call for a format that never
   changes; `__tls_get_addr` costs 72.
+
+## 2026-08-26 — `snprintf` core side: the same short-append, rewritten SAFE because `frankenlibc-core` denies `unsafe` — 1.705x -> 1.629x (+128 Ir)
+
+- **Op.** `snprintf("%d %s %.3f")`, still the highest-Ir losing op: **2885 Ir vs live glibc's 1692 =
+  1.705x**, +1193 Ir of excess after the ABI-side short-append landed.
+- **Target, by caller attribution.** Five interposed `memcpy` calls remained on the path, all in
+  `frankenlibc-core`: 2 from `format_float` (116 Ir), 1 from `parse_format_string` (123), 1 from
+  `format_signed` (60), 1 from `snprintf` itself (54). Every one is a digit run, sign, prefix or
+  exponent — none of them long.
+- **The change, and the constraint that shaped it.** The ABI-side fix used overlapping power-of-two
+  raw moves. **That does not port: `frankenlibc-core` is the safe-implementations crate and denies
+  `unsafe`** — the first build failed with `error: usage of an unsafe block`. The safe equivalent is
+  `reserve` then a byte-`push` loop, whose per-iteration capacity check is exactly what stops LLVM's
+  loop-idiom recogniser from rewriting it back into the `memcpy` call being avoided. Delivered as a
+  `PushBytes` trait so the 25 `buf.extend_from_slice(..)` sites keep method syntax and work whether
+  `buf` is `Vec<u8>` or `&mut Vec<u8>`.
+- **The threshold is 8 here, not the ABI side's 16, and that follows from the constraint.** A byte
+  loop costs a few instructions per byte instead of two overlapping accesses, so it beats a ~66 Ir
+  interposed `memcpy` entry comfortably below 8 and starts losing to a real block copy above it.
+  Same lever, different cut, because the implementations are not the same implementation.
+- **Counted mechanism:** the op runs **2885 instructions -> 2757 instructions**.
+
+| family | glibc | HEAD | core push_bytes | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `snprintf` | 1692.00 | 2884.97 | 2757.00 | 1.705x | **1.629x** | **+127.97** |
+| `strtod` | 885.98 | 560.00 | 559.97 | 0.632x | 0.632x | +0.03 |
+| `strstr` | 335.00 | 424.00 | 424.04 | 1.266x | 1.266x | -0.04 |
+| `memcmp` | 71.03 | 138.00 | 138.00 | 1.943x | 1.944x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst. The three control families are flat, including `strtod`,
+  which shares this crate.
+- Conformance: `snp_conf` against live glibc via `dlmopen`, comparing return value AND the full
+  512-byte output buffer byte-for-byte over every `%s` length 0..40 x second-argument length 0..20,
+  every literal-run length 0..40, plus `NULL` `%s`, width, precision and the float path —
+  **1767 checks, 0 failures** in BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `fc07b8d9f15dcf36fde1a77dbae5502aded245b4c8f01e5278c8727ad8be4350`,
+  candidate `9bca4206d5efe29d3d48441ec474e54be366f7efb6b2878c13c6a7b909a1f30d`.
+- **STILL OPEN and still the largest surface.** `snprintf` is 1.629x with **+1065 Ir of excess**.
+  The copies are now largely gone; what remains is parsing — `parse_format_spec` (307 Ir self),
+  `FormatSegments::push` (234), `parse_format_string` (204) re-derive a format string that is
+  identical on every call — plus `__tls_get_addr` at 72. Two `memcpy` calls are cheap enough to
+  have fallen below the threshold rather than been removed; they are in `format_float`.
