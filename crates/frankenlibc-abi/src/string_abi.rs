@@ -894,9 +894,14 @@ unsafe fn fused_strcpy_bytes(dst: *mut u8, src: *const u8) -> usize {
         let nul = m0.trailing_zeros() as usize - align;
         // Copy [0, nul] (the payload + NUL) with the fast overlapping-SIMD small-copy
         // rather than a scalar byte loop — the scalar tail made fused LOSE to the
-        // two-pass at n<32 (its bulk copy is SIMD). `raw_overlap_copy` touches exactly
-        // `nul+1` bytes, all within the string + its terminator.
-        unsafe { raw_overlap_copy(dst, src, nul + 1) };
+        // two-pass at n<32 (its bulk copy is SIMD). The copy touches exactly `nul+1`
+        // bytes, all within the string + its terminator.
+        //
+        // `raw_copy_under_128` (`#[inline(always)]`), not `raw_overlap_copy` (out of
+        // line): `nul` is a trailing-zero index in a 32-lane mask, so `nul + 1` is in
+        // 1..=32 and the dispatcher's AVX and `rep movsb` tests could never fire. Same
+        // bound argument as the four sites in `fused_strncpy_prefix`.
+        unsafe { raw_copy_under_128(dst, src, nul + 1) };
         return nul;
     }
     let first = 32 - align; // elements from src to the next 32-byte boundary
@@ -916,8 +921,9 @@ unsafe fn fused_strcpy_bytes(dst: *mut u8, src: *const u8) -> usize {
         let m = v.simd_eq(z).to_bitmask();
         if m != 0 {
             let nul = m.trailing_zeros() as usize;
-            // Overlapping-SIMD tail copy of [i, i+nul] (see the head-window note).
-            unsafe { raw_overlap_copy(dst.add(i), src.add(i), nul + 1) };
+            // Overlapping-SIMD tail copy of [i, i+nul] (see the head-window note);
+            // `nul + 1` is in 1..=32, so the inline sub-128 kernel again.
+            unsafe { raw_copy_under_128(dst.add(i), src.add(i), nul + 1) };
             return i + nul;
         }
         // No NUL: all 32 lanes are real bytes ⇒ dst has room for [i, i+32). SIMD store.
@@ -971,16 +977,29 @@ unsafe fn fused_strncpy_prefix(dst: *mut u8, src: *const u8, n: usize) -> usize 
         // NUL in the head window: copy min(nul, n) real bytes.
         let nul = m0.trailing_zeros() as usize - align;
         let take = nul.min(n);
-        // `raw_overlap_copy` assumes n>0 (its caller guards); guard the empty case
+        // `raw_copy_under_128` assumes n>0 (its caller guards); guard the empty case
         // (NUL at src[0], or n cap of 0).
+        //
+        // EVERY copy site in this function is bounded by 32 bytes, so all four call
+        // `raw_copy_under_128` (`#[inline(always)]`) rather than `raw_overlap_copy`
+        // (a real out-of-line call). The bound is structural, not incidental:
+        //   * here, `take = nul.min(n)` and `nul` is an index inside a 32-byte window;
+        //   * the head window, `head_take = first.min(n)` with `first = 32 - align` in 1..=32;
+        //   * the final partial window, `stop <= rem = n - i < 32` (that branch is
+        //     entered precisely when `i + 32 > n`);
+        //   * the NUL-containing window, `nul = m.trailing_zeros() < 32`.
+        // So the general dispatcher's AVX range test and `rep movsb` test can never fire
+        // from here, and paying an out-of-line call to reach them was pure overhead:
+        // copying a 40-byte source made TWO such calls (a 32-byte head, an 8-byte tail),
+        // measured at 35.00 Ir of the entry's 145.00.
         if take > 0 {
-            unsafe { raw_overlap_copy(dst, src, take) };
+            unsafe { raw_copy_under_128(dst, src, take) };
         }
         return take;
     }
     let first = 32 - align; // bytes from src to the next 32-byte boundary (all non-NUL)
     let head_take = first.min(n);
-    unsafe { raw_overlap_copy(dst, src, head_take) };
+    unsafe { raw_copy_under_128(dst, src, head_take) };
     if head_take == n {
         return n; // hit the n cap inside the head window
     }
@@ -1001,14 +1020,14 @@ unsafe fn fused_strncpy_prefix(dst: *mut u8, src: *const u8, n: usize) -> usize 
                 rem
             };
             if stop > 0 {
-                unsafe { raw_overlap_copy(dst.add(i), src.add(i), stop) };
+                unsafe { raw_copy_under_128(dst.add(i), src.add(i), stop) };
             }
             return i + stop;
         }
         if m != 0 {
             let nul = m.trailing_zeros() as usize; // < 32 <= n-i
             if nul > 0 {
-                unsafe { raw_overlap_copy(dst.add(i), src.add(i), nul) };
+                unsafe { raw_copy_under_128(dst.add(i), src.add(i), nul) };
             }
             return i + nul;
         }

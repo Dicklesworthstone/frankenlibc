@@ -38317,3 +38317,99 @@ candidate `e24f86ae6d5b07417ea4a897a7d40eea33eec1cf8a85dd27640a4fcaaabf431a`, bo
 `strncat` had, and it is likewise unsplit. That is the next lever in this family. Beyond it,
 `strncat` at 2.501x still spends its remaining excess on the dst-NUL scan, which glibc fuses with
 the append; fl scans `dst` to its end and only then starts copying.
+
+## 2026-08-27 — bd-2g7oyh — the fused kernels called a general dispatcher to copy 8 bytes: `strncat` 2.500x -> 2.069x
+
+**Target picked by survey, not by convenience.** After the previous split, `strncat` at 2.501x was
+the worst measured ratio, but that was an assumption until checked, so nine families were measured
+against live glibc first: `memmem` 427.00 vs 1075.00 (fl **wins** 2.5x), `mktime` 211.00 vs 2747.00
+(fl wins 13x), `getenv` 264.00 vs 479.97 (fl wins 1.8x), `strstr` 1.158x, `strcasecmp` 1.838x,
+`wcsnlen` 1.917x, `wcscpy` 1.916x, `wcsrchr` 2.233x short / 2.278x unaligned. The obvious next
+target, `strcat`, was **also measured and rejected**: it carries the same six-push prologue
+`strncat` had, but it runs at 2.000x/2.132x — better than `strncat`, so splitting it would have been
+the easy widen rather than the worst gap.
+
+**Where `strncat`'s 145 Ir actually went.** Per-function marginal attribution (callgrind self cost,
+same two-point difference), src len 40:
+
+| function | Ir | share |
+|---|---|---|
+| `fused_strncpy_prefix` | 60.00 | 41.4% |
+| `strncat` entry | 39.00 | 26.9% |
+| **`raw_overlap_copy`** | **35.00** | **24.1%** |
+| driver `main` | 11.00 | 7.6% |
+
+A quarter of the entry was spent in the general copy dispatcher — reached by a real out-of-line
+call. Copying a 40-byte source makes **two** of them: a 32-byte head window to the next alignment
+boundary, then an 8-byte tail.
+
+**The lever, and why it is sound rather than merely convenient.** Every copy site in both fused
+kernels is bounded by 32 bytes *structurally*, not incidentally, so all six can call
+`raw_copy_under_128` (`#[inline(always)]`, added two cycles ago) instead of `raw_overlap_copy`:
+
+- `fused_strncpy_prefix`, head-window NUL: `take = nul.min(n)`, `nul` an index inside a 32-byte window;
+- head peel: `head_take = first.min(n)` with `first = 32 - align` in `1..=32`;
+- final partial window: `stop <= rem = n - i < 32`, that branch being entered exactly when `i + 32 > n`;
+- NUL-containing window: `nul = m.trailing_zeros() < 32`;
+- fused strcpy kernel, both sites: `nul + 1` where `nul` is a trailing-zero index in a 32-lane mask, so `1..=32`.
+
+The dispatcher's AVX range test and `rep movsb` test therefore could never fire from any of them.
+The `n > 0` precondition is unchanged and still caller-guarded: `strncat` and `strncpy` both return
+early on `n == 0`, and the only other caller is a `#[doc(hidden)]` bench hook.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and self-reported by
+`dladdr`:
+
+| entry | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| `strncat` len 8 | 99.00 | 78.96 | 45.00 | 2.200x | 1.755x |
+| `strncat` len 40 | 145.02 | 120.00 | 58.00 | 2.500x | 2.069x |
+| `strcat` len 8 | 84.00 | 79.02 | 42.00 | 2.000x | 1.881x |
+| `strcat` len 40 | 96.00 | 95.00 | 44.97 | 2.134x | 2.112x |
+| `wcscpy` | 90.00 | 89.97 | 47.00 | 1.915x | 1.914x |
+
+**25 instructions -> removed at `strncat` len 40** (145.02 instructions -> 120.00), 20 at len 8. The
+`strcat` side is much smaller (−5.0 and −1.0) because that kernel makes one such call, not two;
+`wcscpy` is flat because the wide path does not use these kernels at all — reported because it was
+measured, not because it helps.
+
+Post-change attribution confirms the mechanism rather than inferring it: `raw_overlap_copy`
+**disappears entirely** from `strncat`'s profile (35.00 -> absent), `fused_strncpy_prefix` rises
+60.00 -> 70.00 having absorbed the inlined copies, and the entry is unchanged at 39.00. Thirty-five
+instructions of out-of-line dispatch became ten of inline copy.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 57.97 vs 58.00, ratio 1.0005.
+- **Untouched-family controls, exact:** `memcpy` at n=64 52.97 -> 53.00, `memcmp` 138.00 -> 138.00,
+  `wcsspn` 60.00 -> 60.00.
+- **Not bench-path-specific:** the swap is a call-site change guarded by a structural length bound;
+  it does not depend on alignment, content, or length beyond `< 128`, and the conformance sweep
+  below exercises every source alignment mod 32 and every 32-byte window edge.
+
+Conformance: a new `fused_conf` differential covering **every entry that can reach a changed site** —
+`strcpy`, `stpcpy`, `strcat` (fused strcpy kernel) and `strncpy`, `strncat` (fused strncpy prefix).
+Axes are the ones the sites key on: source alignment 0..63 (each kernel peels a head window to the
+next 32-byte boundary, and which site runs depends on where the terminator falls relative to it),
+source length 0..72 across every window edge, and for the bounded entries `n` straddling
+`strlen(src)` in both directions. Return values are checked per function (`stpcpy` by offset) and
+the **whole 8192-byte destination** is compared, so `strncpy`'s zero-padding and any write past a
+terminator both show up: **76,160 checks, 0 failures in BOTH strict and hardened mode.** Re-ran the
+two existing drivers on the same object: `ncat_conf` 21,441 and `mcpy_conf` 8,473, both modes, 0
+failures. **106,074 differential checks total.**
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing. `cargo test -p frankenlibc-abi --test string_abi_test` **200 passed, 1 failed, 8
+ignored — byte-identical to its pre-change baseline**; the one failure is the pre-existing
+`strlen_bounds_tracked_unterminated_input` regression from `e3a0b0883`, filed as **bd-k3skh6**.
+
+Objects: baseline `e24f86ae6d5b07417ea4a897a7d40eea33eec1cf8a85dd27640a4fcaaabf431a` (HEAD),
+intermediate `c8563f01e7e7abf0...` (strncpy-prefix sites only), candidate
+`535ff2d9b400bc32250fdeaac14cdffc...`, all built locally.
+
+**STILL OPEN at 2.069x**, and the remaining shape is now clean: 39.00 Ir in the `strncat` entry
+itself and 70.00 in `fused_strncpy_prefix` against glibc's 58.00 for the whole operation. The entry's
+39 is the null tests, the mode load, the `dst`-NUL scan and the terminator store; the kernel's 70 is
+one head window, one aligned SIMD window and the two inlined copies. There is no longer a single
+dominant line item, which usually means the next real gain is structural — fusing the `dst` scan
+with the append — rather than another tax removal.
