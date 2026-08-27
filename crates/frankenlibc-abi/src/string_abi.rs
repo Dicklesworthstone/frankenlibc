@@ -1400,7 +1400,7 @@ pub fn test_swar_ascii_lower(w: u64) -> u64 {
 /// `s1`/`s2` must be NUL-terminated, or valid for `bound` bytes.
 #[doc(hidden)]
 pub unsafe fn bench_scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) -> c_int {
-    unsafe { scan_strcasecmp(s1, s2, bound).0 }
+    unsafe { scan_strcasecmp::<true>(s1, s2, bound).0 }
 }
 
 #[inline]
@@ -3676,17 +3676,53 @@ fn swar_ascii_lower(w: u64) -> u64 {
 /// advance 8; any other window is resolved byte-wise with `to_ascii_lowercase`
 /// (byte-identical to the scalar loop). The same page-cross guard as
 /// [`scan_strcmp`] keeps the dual-pointer wide reads from faulting past a NUL.
-unsafe fn scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (c_int, usize) {
+unsafe fn scan_strcasecmp<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (c_int, usize) {
     let p1 = s1.cast::<u8>();
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
+    // PRECOMPUTED TIER THRESHOLDS. Both gates below tested `i + N <= bound` on
+    // every pass, recomputing an add against a value that never changes. The
+    // equivalent `i < bound - (N-1)` is one compare instead of an add and a
+    // compare, and -- because the subtraction saturates -- it is ALSO how a bound
+    // too small for a tier stops paying to be offered it: `bound <= 31` gives
+    // `wide_end == 0`, so `i < 0` is false on the first pass and every pass after.
+    //
+    // Exact, not approximate. Over the integers `i + N <= bound` iff `i <= bound - N`
+    // iff `i < bound - (N-1)`, and for `bound < N` both forms are false -- the
+    // saturating floor of 0 reproduces that rather than wrapping. Unbounded callers
+    // (`bound == usize::MAX`) get `usize::MAX - 31`, which no reachable `i` crosses.
+    //
+    // This matters here more than in the sibling scanners because
+    // `scan_strcasecmp` is NOT generic over a `const BOUNDED: bool`: unbounded
+    // `strcasecmp` arrives with `bound == usize::MAX`, so a plain `bound >= 32`
+    // guard cannot const-fold and taxes it on every pass. That variant was measured
+    // and REJECTED (-3 Ir on `strcasecmp`, -5 at bound 128); this one costs the
+    // unbounded case nothing because it REPLACES the test rather than adding one.
+    //
+    // The `BOUNDED` parameter earns its keep on exactly these two lines. Computing
+    // the saturating thresholds unconditionally cost unbounded `strcasecmp` 3 Ir --
+    // measured -- because a 43-byte compare makes about two passes and cannot
+    // amortise five instructions of setup. Under `BOUNDED == false` the thresholds
+    // are compile-time constants that no reachable `i` crosses, so the setup folds
+    // away and the compare is against an immediate. Same tiers, same order, same
+    // result; the const parameter only decides whether the bound is a value or a
+    // constant.
+    let (wide_end, swar_end) = if BOUNDED {
+        (bound.saturating_sub(31), bound.saturating_sub(7))
+    } else {
+        (usize::MAX, usize::MAX)
+    };
     loop {
         // Wide 32-byte portable-SIMD fast path: skip whole panels that are equal
         // after ASCII case-folding and NUL-free, at AVX width (glibc's strcasecmp
         // steps 16-32 bytes; the 8-byte SWAR below was the bottleneck). A flagged
         // panel falls through to the SWAR/scalar tail, which resolves the exact
         // first differing-or-NUL index — so the returned result is unchanged.
-        if i + 32 <= bound
+        if i < wide_end
             && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
             && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
         {
@@ -3724,7 +3760,7 @@ unsafe fn scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) ->
             }
             return (0, k + 1);
         }
-        if i + 8 <= bound
+        if i < swar_end
             && wide_read_within_page(p1 as usize + i)
             && wide_read_within_page(p2 as usize + i)
         {
@@ -7025,7 +7061,7 @@ pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_i
         if s1.is_null() || s2.is_null() {
             return 0;
         }
-        return unsafe { scan_strcasecmp(s1, s2, usize::MAX) }.0;
+        return unsafe { scan_strcasecmp::<false>(s1, s2, usize::MAX) }.0;
     }
 
     // Cold tail in its own frame. This entry rented
@@ -7085,7 +7121,7 @@ unsafe fn strcasecmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
         if lhs_bound.is_none() && rhs_bound.is_none() {
             // Common path: one fused SWAR case-compare with early exit, instead of
             // two full length scans plus a separate compare pass.
-            scan_strcasecmp(s1, s2, usize::MAX)
+            scan_strcasecmp::<false>(s1, s2, usize::MAX)
         } else {
             // Repair path: preserve the exact clamped-slice semantics (out-of-bound
             // bytes treated as NUL by the core comparator).
@@ -7137,7 +7173,7 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
         if s1.is_null() || s2.is_null() {
             return 0;
         }
-        return unsafe { scan_strcasecmp(s1, s2, n) }.0;
+        return unsafe { scan_strcasecmp::<true>(s1, s2, n) }.0;
     }
 
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
@@ -7192,7 +7228,7 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
     // SAFETY: bounded compare within cmp_limit.
     // Fused SWAR case-compare (shared scan_strcasecmp), byte-identical to the old
     // scalar tolower loop; bounded by cmp_limit and page-cross guarded.
-    let result = unsafe { scan_strcasecmp(s1, s2, cmp_limit).0 };
+    let result = unsafe { scan_strcasecmp::<true>(s1, s2, cmp_limit).0 };
 
     if adverse {
         record_truncation(n, cmp_limit);

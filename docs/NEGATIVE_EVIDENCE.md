@@ -36147,3 +36147,56 @@ reworded rather than the gate touched.)
   `strncasecmp` / `strcasecmp_l` / `strncasecmp_l`, not a one-line edit, and it was out of scope for a
   single-lever cycle. **`strncasecmp` at bounds under 32 remains the suite's highest-Ir losing
   surface at 8.000x.**
+
+## 2026-08-26 — `strncasecmp`: precomputed tier thresholds + a `BOUNDED` const parameter; bound 31 8.000x -> 7.585x, and unbounded `strcasecmp` gains too
+
+- **Op.** `strncasecmp` at bound 31 — 424 Ir against live glibc's 53 = **8.000x**, the highest
+  instruction count of any losing op in this suite, and the surface the plain `bound >= 32` guard
+  was REJECTED on earlier today for taxing the unbounded caller.
+- **The change, in two coupled parts that are one idea.** Both tier gates tested `i + N <= bound`
+  every pass, recomputing an add against a value that never changes.
+  1. Replace them with the exact equivalent `i < bound - (N-1)`, precomputed once. One compare
+     instead of an add and a compare — and because the subtraction saturates, `bound <= 31` gives
+     `wide_end == 0`, so a bound too small for a tier stops paying to be offered it, with no extra
+     guard to pay for. Over the integers `i + N <= bound` iff `i <= bound - N` iff
+     `i < bound - (N-1)`; for `bound < N` both forms are false, which the saturating floor of 0
+     reproduces rather than wrapping.
+  2. Make `scan_strcasecmp` generic over `const BOUNDED: bool`, like `scan_strcmp` and
+     `scan_wcscmp_simd` already are, so the unbounded caller gets compile-time thresholds. Computing
+     them unconditionally cost `strcasecmp` 3 Ir — measured, step v2 below — because a 43-byte
+     compare makes about two passes and cannot amortise five instructions of setup.
+- **Counted mechanism:** at bound 31 the op runs **424 instructions -> 402 instructions**; at
+  bound 7, **277 instructions -> 255**; unbounded `strcasecmp` runs **132 instructions -> 125**.
+
+| bound | glibc | HEAD | v2 thresholds | v3 shipped | HEAD x | v3 x | saved |
+|---|---|---|---|---|---|---|---|
+| 3 | 53.00 | 165.00 | 155.00 | 155.00 | 3.113x | 2.925x | +10.00 |
+| 7 | 53.00 | 277.00 | 255.00 | 254.97 | 5.226x | 4.811x | +22.03 |
+| 15 | 53.00 | 326.00 | 304.00 | 304.00 | 6.151x | 5.736x | +22.00 |
+| 23 | 53.00 | 374.97 | 353.03 | 352.97 | 7.075x | 6.660x | +22.00 |
+| **31** | 53.00 | 424.00 | 402.00 | 402.00 | **8.000x** | **7.585x** | +22.00 |
+| 32 | 53.00 | 112.97 | 111.02 | 111.00 | 2.132x | 2.094x | +1.97 |
+| 64 | 70.00 | 145.00 | 142.00 | 142.03 | 2.071x | 2.029x | +2.97 |
+| 128 | 104.00 | 208.97 | 204.03 | 204.00 | 2.009x | 1.962x | +4.97 |
+| `strcasecmp` unbounded (43 B) | 68.00 | 132.00 | 135.00 | **125.00** | 1.941x | **1.838x** | **+7.00** |
+
+- **Nothing regresses.** Every measured point improves, including the unbounded caller, which gains
+  7 Ir rather than merely breaking even: under `BOUNDED == false` the tier tests become `i < usize::MAX`,
+  which folds away entirely instead of being evaluated per pass.
+- **A/A null PASSES at exactly 0.00 Ir** across nine measurement points.
+- **This is what the rejected variant was missing, and the contrast is the lesson.** Adding a
+  `bound >= 32` guard made short bounds cheaper by paying every other caller. REPLACING the gate
+  expression made short bounds cheaper by paying nobody. When a loop-invariant test is already being
+  evaluated per pass, rewrite it rather than guard it.
+- Conformance: `scasecmp_conf` **247,482 checks, 0 failures** in BOTH strict and hardened mode.
+  Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls. Figures include the driver loop in both arms.
+- Objects: baseline (HEAD) `e36f6b03365823d87f93dadd22062081f9eb080c8bb0e138410d1f71e792089e`,
+  v2 `e00dd0f07184f71d9508f10b802d1a756e9dec44d7a556e337f087b6807e7a89`,
+  shipped v3 `bf2113d5ccf00679690a50cb311422f2f8ebd0d4493bd52a2b0ba3d6b287715b`.
+- **STILL OPEN:** `strncasecmp` at bound 31 is still 7.585x and still the suite's highest-Ir loser at
+  402 Ir. The remaining cost is the case-folding work itself, not the tier ladder — bounds 3..31 sit
+  at roughly 6 Ir per byte compared, and there is no overlapping final panel here of the kind
+  `scan_strcmp` and `scan_wcscmp_simd` both carry.
