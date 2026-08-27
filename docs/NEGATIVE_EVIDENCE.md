@@ -37315,3 +37315,53 @@ reworded rather than the gate touched.)
 - **Next cycle:** apply `scratchpad/set_width.patch`, build, and measure `strspn`, `strcspnL8/32/100`
   and `strpbrk` together — all three share the scanner, so all three must move or the change is
   mispriced. `memcmp` and `wcslen` make good untouched controls.
+
+## 2026-08-27 — bd-2g7oyh — the set scanner's PADDING compares cost NOTHING: LLVM had already merged them (REJECTED, 0.00 Ir) — measured LOCALLY
+
+- **Measurement was unblocked by building on THIS host, not the fleet.** The previous cycle called
+  this "fleet down"; that diagnosis was wrong. `rch` is healthy — its workers build against
+  glibc 2.43 while this host runs **2.42** (`ldd (Ubuntu GLIBC 2.42-0ubuntu3.1)`), so a
+  fleet-built harness ELF cannot load here. Building locally with
+  `RCH_CARGO_WRAPPER_BYPASS=1 env -u CARGO_TARGET_DIR cargo build --release -p frankenlibc-abi`
+  takes **22s cold, 10s incremental** — faster than every remote build this session — and the
+  resulting object loads and reports `PHASE=2`.
+- **The hypothesis.** `scan_c_string_for_set4` takes a fixed `[u8; 4]`, so callers with fewer
+  distinct bytes pad by repeating — `[a0, a1, a0, a1]` for a 2-byte set, `[a0, a1, a2, a2]` for a
+  3-byte one. Those repeats read as real `vpcmpeqb` + `vpor` on every 32-byte window. Threading the
+  true width as `const N: usize` and emitting only `N` compares should have removed one compare and
+  one OR per panel for `strspn`'s 3-byte set, and two of each for 2-byte sets, across `strspn`,
+  `strcspn`, `strpbrk`, `strsep` and `strtok`.
+- **Counted mechanism:** every family runs the SAME instruction count. `strspn`
+  **104 instructions -> 104**; `strpbrk` **169 -> 169**; `strcspnL100` **112 -> 112**.
+
+| family | glibc | HEAD | const-width | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strspn` | 58.00 | 104.00 | 104.00 | 1.793x | 1.792x | +0.00 |
+| `strcspnL8` | 41.01 | 64.98 | 65.01 | 1.585x | 1.585x | -0.03 |
+| `strcspnL32` | 67.00 | 82.00 | 82.00 | 1.224x | 1.223x | +0.00 |
+| `strcspnL100` | 111.00 | 111.97 | 112.00 | 1.009x | 1.009x | -0.03 |
+| `strpbrk` | 103.00 | 169.00 | 169.00 | 1.641x | 1.640x | +0.00 |
+| `memcmp` | 71.00 | 137.97 | 138.00 | 1.943x | 1.944x | -0.03 |
+| `wcslen` | 40.00 | 67.00 | 67.00 | 1.675x | 1.675x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9995 .. 1.0000** across all seven families — the tightest null of
+  the campaign.
+- **Objects self-reported by the process:** `FL_OBJECT=./fl_setn.so`,
+  `INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6` via `dladdr`, arms additionally asserted
+  distinct by pointer. Two different ELFs, one the system glibc — not a self-compare.
+- **WHY, confirmed in the object rather than argued.** `strspn` contains **110 `vpcmpeqb` in BOTH
+  binaries** — an identical count. The padded array is built at the call site (`[a0, a1, a2, a2]`),
+  the scanner inlines, and LLVM sees `set[2]` and `set[3]` as the same SSA value, so it had already
+  CSE'd the splat and the compare. The const-width version is 32 bytes LARGER (`strspn` 0xd56 vs
+  0xd36) from the extra monomorphisations.
+- **This is the THIRD time this session that source-level duplication turned out to be already
+  merged** — after the thirteen `exact_direct_*_format` probes (-3 Ir) and the doubled
+  `value_arg_kind()` classification (+10 against 57 attributed). The rule earned again:
+  **duplication visible in source is a hypothesis about codegen, not a measurement of it. Count the
+  instructions in the object before building the fix.** A 30-second `objdump | grep -c` would have
+  killed this before the patch was written.
+- Not landed; reverted, `crates/` clean of my changes.
+- Objects: baseline (local) `e4be617e6d63bd58524e24f4d3416e75f88692c88e22dc945cda07d36d0b9900`,
+  candidate (local) `5fabdbd705647c204dc7ceea525aec00ee97a30510b8f9b2078c667bec006164`.
+- **Standing losses are unchanged:** `memcmp` 1.943x, `strspn` 1.793x, `wcslen` 1.675x,
+  `strpbrk` 1.641x, `strcspnL8` 1.585x.
