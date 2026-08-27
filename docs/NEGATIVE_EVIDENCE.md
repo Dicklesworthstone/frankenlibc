@@ -36505,3 +36505,56 @@ reworded rather than the gate touched.)
   still the largest surface in the suite: 425 -> ~350 Ir in the entry (thirteen format scans),
   `format_float` 394, `render_segments` 336, `parse_format_spec` 307, `FormatSegments::push` 234,
   `parse_format_string` 204 — the last three re-deriving a format string identical on every call.
+
+## 2026-08-26 — `snprintf`: the "thirteen format scans" were ALREADY one scan — LLVM had CSE'd them (REJECTED, -3 to -7 Ir)
+
+- **Op.** `snprintf("%d %s %.3f")`, the highest-Ir losing op: **2682 Ir vs live glibc's 1692 =
+  1.585x**, +990 Ir of excess.
+- **The premise, taken from the previous cycle's own "still open" note.** The entry's thirteen
+  exact-format bypasses each call their own `exact_direct_*_format`, and a format matching none of
+  them was described as paying thirteen independent walks of the format string.
+- **The change.** One bounded pre-filter replacing them: every predicate opens with `*f == b'%'` and
+  then requires a NUL at offset five or less (`%d` checks `f[2]`, `%s\n` checks `f[3]`, the longest
+  `%.NNf` checks `f[5]`), so a format that is not a single short conversion cannot satisfy ANY of
+  them. Read at most six bytes once, stop at the first NUL, gate the twelve `%`-requiring rungs on
+  the result. The pure-literal rung stays ungated — it is the only one that accepts a format with
+  no `%`.
+- **Counted mechanism:** the op runs **2682 instructions -> 2685 instructions**; the exact-`%d`
+  shape runs **212 instructions -> 217**, and exact-`%.3f` **646 instructions -> 653**.
+
+| family | glibc | HEAD | pre-filter | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `snprintf` ("%d %s %.3f") | 1692.00 | 2682.00 | 2685.00 | 1.585x | 1.587x | **-3.00** |
+| `snprintf_d` (exact "%d") | 476.00 | 212.00 | 217.00 | 0.445x | 0.456x | **-5.00** |
+| `snprintf_f` (exact "%.3f") | 1140.01 | 646.01 | 653.01 | 0.567x | 0.573x | **-7.00** |
+| `strtod` | 886.00 | 560.00 | 559.97 | 0.632x | 0.632x | +0.03 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A null PASSES at exactly 0.00 Ir** across five families.
+- **WHY THE PREMISE WAS WRONG.** The thirteen predicates are `#[inline]` and all read the SAME first
+  few bytes of the same pointer, so LLVM had already common-subexpression-eliminated them into one
+  set of loads. The ladder was never thirteen scans; it was thirteen compares against bytes already
+  in registers. A pre-filter cannot remove work that was already merged — it can only add its own
+  loop. **"N callers each scanning X" is a claim about source, not about codegen; check the
+  disassembly before pricing it.** The previous cycle asserted this in a "still open" note and I
+  inherited it without re-deriving it.
+- **A finding worth keeping from the control families:** the exact-format bypass ladder is
+  extremely effective where it fires — `snprintf("%d")` is **0.445x** and `snprintf("%.3f")`
+  **0.567x**, i.e. fl is roughly twice as fast as glibc on single-conversion formats. The 1.585x
+  belongs entirely to multi-conversion formats, which fall past the whole ladder into the render
+  engine.
+- Not landed; reverted, working tree clean for `crates/`. Conformance ran clean anyway (`snp_conf`
+  **1767 checks, 0 failures**, strict AND hardened).
+- **GATE NOT RUN, and not owed — nothing landed.** `cargo test -p frankenlibc-abi --lib` could not
+  execute: the build host `vmi1293453` is at **100% disk (28 MB free on a 387 GB root)** and rustc
+  failed with `couldn't create a temp dir: No space left on device (os error 28)`. The release build
+  had already produced the measured object before the debug profile ran out of room. No files were
+  deleted to recover space — that needs explicit permission.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `5d36850d77b28f94017cc8492fc1883e2d0f36ca39fd68e684e22a00554d0e6d`,
+  candidate `39a7e4ed66bbdae486cb7aa865d71a1f9ee9a31cb03461170f151a9908f19216`.
+- **STILL OPEN:** `snprintf` on multi-conversion formats is 1.585x with +990 Ir of excess. The cost
+  is the render engine, not the bypass ladder: `format_float` 394, `render_segments` 336,
+  `parse_format_spec` 307, `FormatSegments::push` 234, `parse_format_string` 204.
