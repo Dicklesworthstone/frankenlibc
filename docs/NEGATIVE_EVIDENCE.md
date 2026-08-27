@@ -36839,3 +36839,41 @@ reworded rather than the gate touched.)
   two opposite shapes. A single bit of measured history picked per tree instead of guessing globally,
   and the choice disappeared. **When a lever is a trade, check whether the two sides can be told
   apart at runtime before handing the decision to someone else.**
+
+## 2026-08-27 — `tsearch_tdelete`: a real allocator-path lever, BUILT BUT UNMEASURED — the build fleet degraded mid-cycle
+
+- **Op.** `tsearch`/`tdelete` steady state, the highest-Ir op still losing after `snprintf` and the
+  excluded bound families: **1676.10 Ir vs live glibc's 1292.29 = 1.297x**, +384 Ir of excess, of
+  which roughly 406 is allocator work and 96 is four `__tls_get_addr` calls per pair.
+- **The lever, found and written but NOT measured.** `enter_allocator_reentry_guard` costs 66 Ir on
+  EACH of `malloc` and `free`. Reading it: `current_thread_key()` is already a direct `fs:[0]` load,
+  so the guard's `__tls_get_addr` is not the slot lookup — it is the post-CAS predicate chain. That
+  chain is `!pthread_tls_access_active() && in_threading_policy_context()`, and
+  `pthread_tls_access_active()` is a **`const fn` returning `false`** unless the `owned-tls-cache`
+  feature is on, so the `&&` never short-circuits and `in_threading_policy_context()` runs on every
+  allocation. It reads one `u32` depth counter out of
+  `thread_local! { static PTHREAD_TLS: RefCell<PthreadTlsState> = RefCell::new(..) }` — a
+  **non-`const` initialiser**, so every access pays a lazy-init state check on top of the `RefCell`
+  borrow flag.
+- **The change** moves `threading_policy_depth` out of `PthreadTlsState` into its own
+  `thread_local! { static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) } }` — `const`
+  init (no lazy-init word) and a plain `Cell` (no borrow flag). Two writers, two readers, same
+  values, same `unwrap_or(true)` conservative fallback. 94-line patch, saved at
+  `scratchpad/threading_policy_depth.patch`.
+- **NO NUMBERS, because there is no measured object.** The `rch` build on `hz4` — which had been
+  turning these around in 67-147s all session — went from a 560s timeout in its sync phase to still
+  sitting in dependency-sync prep after 9 minutes. Before that, `vmi1293453` had already gone to
+  **100% disk (0 bytes free)** and of 15 probed workers only `hz1`, `hz3`, `hz4` were healthy at all;
+  the other 12 report missing rustup components for the pinned toolchain. **Nothing was deleted to
+  recover any of it — that needs explicit permission.**
+- **Reverted, working tree clean for `crates/`, and the in-flight build was KILLED deliberately.**
+  An `rch` build completing after the revert would have written an artifact matching the reverted
+  source, which is precisely the stale-artifact trap this ledger has recorded before: an object whose
+  hash says "candidate" and whose bytes say "baseline".
+- **What the next cycle should do:** apply the saved patch, build, and measure `tsearch_tdelete`
+  against `tsearch_hit`, `snprintf` and `memcmp` as controls. The predicted effect is on every
+  `malloc` and `free` in the library, so the controls matter as much as the target; and note that
+  `tsearch_hit` no longer allocates at all after the hit-hint landed, which makes it a clean control
+  for exactly this change rather than a second target.
+- No candidate hash and no A/A null, because there is no candidate. Baseline (HEAD) is
+  `2568279356286a438f189fc8b455c2a5f54b0d6609eef75f60955d17bf6dc468`.
