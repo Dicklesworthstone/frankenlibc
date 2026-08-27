@@ -2733,7 +2733,14 @@ enum SpanProbe {
         all_ascii: bool,
     },
     /// The probe does not apply; use the existing path from `s`, unchanged.
-    Decline,
+    ///
+    /// `set_len` carries the accept/reject set's length when the probe had already
+    /// measured it before deciding not to apply -- which is the common case, because
+    /// the most frequent decline is "the set is shorter than 5 bytes" and that test
+    /// needs the length. Callers then skip their own `scan_c_string(set, None)`.
+    /// `None` means the probe bailed BEFORE measuring (a page-guard decline), and the
+    /// caller must scan for itself.
+    Decline { set_len: Option<usize> },
 }
 
 /// SSE4.2 `pcmpistr*` early-stop span probe for a 5..=64-byte accept/reject set —
@@ -2799,7 +2806,7 @@ unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -
         // handoff's `all_ascii` precondition. So the set is never walked — which is the
         // whole point, since walking it is the cost glibc does not pay.
         if (set as usize) & 0xFFF > 0xFF0 {
-            return SpanProbe::Decline;
+            return SpanProbe::Decline { set_len: None };
         }
         let setv = _mm_loadu_si128(set.cast());
         let set_nul = _mm_movemask_epi8(_mm_cmpeq_epi8(setv, zero)) as u32;
@@ -2815,7 +2822,7 @@ unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -
         let set_len = if set_nul != 0 {
             let l = set_nul.trailing_zeros() as usize;
             if l < 5 {
-                return SpanProbe::Decline;
+                return SpanProbe::Decline { set_len: Some(l) };
             }
             l
         } else if *set.add(16) == 0 {
@@ -2923,7 +2930,7 @@ unsafe fn span_probe_wide(
                 // held no NUL), hence mapped; a 16-byte load stays inside its page iff it
                 // starts at most 16 bytes before the page end.
                 if (p as usize) & 0xFFF > 0xFF0 {
-                    return SpanProbe::Decline;
+                    return SpanProbe::Decline { set_len: None };
                 }
                 let v = _mm_loadu_si128(p.cast());
                 let nul = _mm_movemask_epi8(_mm_cmpeq_epi8(v, zero)) as u32;
@@ -2971,7 +2978,7 @@ unsafe fn span_probe_wide(
         // needle is a valid set byte — the correct bank. That index is the string's own
         // NUL, hence readable. Anything wider declines to the LUT path.
         if *set.add(CMPISTRI_MAX_NEEDLES * 16) != 0 {
-            return SpanProbe::Decline;
+            return SpanProbe::Decline { set_len: None };
         }
         span_probe_scan_bank(
             s,
@@ -7646,6 +7653,13 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
             // stop index strcspn does — first member OR the NUL — so the member/NUL
             // discrimination is the identical `*s.add(idx) != 0` test the 2..=4 path
             // already uses.
+            // The probe measures the accept set on its way to deciding whether it
+            // applies, and the most common decline is "shorter than 5 bytes" -- which
+            // is exactly the case that then falls into the 1 / 2..=4 paths below and
+            // re-scanned the same set with `scan_c_string(accept, None)`. Carrying the
+            // measured length out of the decline removes that second walk.
+            #[allow(unused_mut)]
+            let mut known_accept_len: Option<usize> = None;
             #[cfg(target_arch = "x86_64")]
             {
                 let hit = match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), true) {
@@ -7658,6 +7672,10 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
                         let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len);
                         Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true))
                     }
+                    SpanProbe::Decline { set_len } => {
+                        known_accept_len = set_len;
+                        None
+                    }
                     _ => None,
                 };
                 if let Some(idx) = hit {
@@ -7668,7 +7686,12 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
                     };
                 }
             }
-            let (accept_len, accept_terminated) = scan_c_string(accept, None);
+            // A length from the probe came from a NUL found inside the set's first
+            // sixteen bytes, so the set is terminated by construction.
+            let (accept_len, accept_terminated) = match known_accept_len {
+                Some(len) => (len, true),
+                None => scan_c_string(accept, None),
+            };
             // Single-char accept: strpbrk(s, [c]) == strchr(s, c) — the page-safe
             // early-stopping scan stops at the first `c` (NO full-haystack pre-scan).
             // Byte-identical: c found → s+i, NUL/not-found → null.

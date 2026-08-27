@@ -36877,3 +36877,55 @@ reworded rather than the gate touched.)
   for exactly this change rather than a second target.
 - No candidate hash and no A/A null, because there is no candidate. Baseline (HEAD) is
   `2568279356286a438f189fc8b455c2a5f54b0d6609eef75f60955d17bf6dc468`.
+
+## 2026-08-27 — `strpbrk`: the SIMD probe measured the accept set, then declined and threw the length away — 1.709x -> 1.641x (+7 Ir)
+
+- **Op, picked by surveying ten never-measured families.** At HEAD: `strpbrk` **176.00 Ir vs live
+  glibc's 103.00 = 1.709x, +73 Ir of excess** — the highest-Ir loser among them. The rest, for the
+  record: `wcsrchr` 126.03/71.00 = 1.775x, `wcsnlen` 102.00/49.00 = **2.082x** (worst ratio),
+  `wmemchr` 120.00/73.00 = 1.644x, `strspn` 104.04/58.00 = 1.794x, `wmemcmp` 116.00/73.97 = 1.568x,
+  `wcschr` 91.97/53.00 = 1.735x, `strcspn` 148.00/111.00 = 1.333x, `wcslen` 67.00/40.03 = 1.674x,
+  `memrchr` 96.00/71.97 = 1.334x.
+- **The change.** `span_probe_cmpistri` measures the accept set on its way to deciding whether it
+  applies — its most common decline is literally `if l < 5 { return SpanProbe::Decline; }`, which
+  needs the length — and then discarded it. `strpbrk` fell through and called
+  `scan_c_string(accept, None)` to measure the same set a second time. `Decline` now carries
+  `set_len: Option<usize>`: `Some(l)` where the probe had measured it, `None` on the page-guard
+  decline that bails before measuring. The caller uses it when present and scans for itself when not.
+  A length from the probe came from a NUL inside the set's first sixteen bytes, so the set is
+  terminated by construction and `accept_terminated` is `true` without a check.
+- **Counted mechanism:** the op runs **176 instructions -> 169 instructions**.
+
+| family | glibc | HEAD | decline carries len | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strpbrk` | 103.00 | 176.00 | 169.00 | 1.709x | **1.641x** | **+7.00** |
+| `strspn` | 58.00 | 104.04 | 104.00 | 1.794x | 1.792x | +0.04 |
+| `strcspn` | 111.00 | 148.00 | 148.00 | 1.333x | 1.333x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 137.97 | 1.944x | 1.943x | +0.03 |
+| `wcslen` | 40.03 | 67.00 | 67.00 | 1.674x | 1.675x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst across five families.
+- **The flat controls do double duty here.** This candidate was built on `hz3` while the HEAD
+  baseline object came from `hz4` (the fleet rerouted mid-session after `hz4` degraded), so the two
+  binaries differ by build host as well as by the patch. Four unrelated families measuring
+  0.00–0.04 is the evidence that the host difference does not perturb anything outside the changed
+  path.
+- **Small, and the reason is worth recording.** The second scan was of a 3-byte accept set, so
+  removing it recovers 7 Ir, not the 20-30 a longer set would. The structural point stands for the
+  whole span family: `strspn` and `strcspn` share this probe and were NOT changed, because their
+  callers' shapes differ — measuring them is separate work.
+- Conformance: a new `pbrk_conf` differential against live glibc via `dlmopen` — every accept-set
+  length 0..64 (crossing the probe's `<5` decline boundary and its 16- and 64-byte limits) x 41 hit
+  positions, plus no-hit and empty-haystack cases, plus a page-edge accept set at lengths 1..20 that
+  forces the page-guard decline where the probe hands back NO length: **2835 checks, 0 failures** in
+  BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD, hz4) `2568279356286a438f189fc8b455c2a5f54b0d6609eef75f60955d17bf6dc468`,
+  candidate (hz3) `1bb7d9b599c836f48f16de8274c7e6dc1432fffd977525687c2c4eaabd2b6477`.
+- **STILL OPEN:** `wcsnlen` at **2.082x** is now the worst ratio standing anywhere in this suite, and
+  the wide-string family generally (`wcsrchr` 1.775x, `wcschr` 1.735x, `wcslen` 1.674x, `wmemchr`
+  1.644x, `wmemcmp` 1.568x) is uniformly worse than its narrow counterparts. None of them has been
+  attacked.
