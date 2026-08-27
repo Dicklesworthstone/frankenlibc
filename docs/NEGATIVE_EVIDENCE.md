@@ -37218,3 +37218,61 @@ reworded rather than the gate touched.)
 - Objects: baseline (HEAD) `b5818aca3c6855c848e6ce287ab3012ee2aeb5639284bbdfb378ec8228cccb2a`,
   v2 `011272c24c3b4f3a530259639e2d98e18a685a9f9e90e9c56426aca9850f4c6a`,
   v3 `71f2606ac9b87ab527f682852e860e60daf48b54575cd991bcd3e9b286c3db14`.
+
+## 2026-08-27 — bd-2g7oyh — `strncasecmp` bound 31 (7.585x): FOUR variants measured, the 16-lane panel is REJECTED — it pays only on bounds [16,32)
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target picked as the campaign's WORST vs-incumbent ratio,
+  not a widen: `strncasecmp` at bound 31, **402.00 Ir vs live glibc's 53.00 = 7.585x**.
+- **Incumbent identity is SELF-REPORTED by the process,** not assumed by the shell. The driver now
+  `dladdr`s an fl-owned symbol and the glibc arm's `strncasecmp`, printing both:
+  `FL_OBJECT=./fl_p16d.so`, `INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6`. **Two different ELF
+  files, one of them the system glibc — this is not and cannot be an fl-vs-fl self-compare.** The
+  arms are additionally asserted distinct by pointer (`ARM_DISTINCT`) and fl asserted at PHASE=2.
+- **The lever and its four variants.** An overlapping 16-lane final panel for bounds the 32-lane
+  tier cannot serve. v1 inline with gate `bound >= 16 && i + 16 > bound`; v2 outlined, same gate;
+  v3 inline plus `i < bound`; **v4 outlined plus `i < bound`** — the combination three earlier rows
+  left unmeasured.
+- **Counted mechanism:** at bound 31 the op runs **402 instructions -> 258 instructions**; at
+  bound 15, **304 instructions -> 340**.
+
+| bound | glibc | HEAD | v3 inline+`i<bound` | **v4 outlined+`i<bound`** | HEAD x | v4 x | saved |
+|---|---|---|---|---|---|---|---|
+| 3 | 53.00 | 154.96 | 176.03 | 171.02 | 2.924x | 3.227x | -16.06 |
+| 7 | 53.03 | 255.00 | 292.00 | 287.00 | 4.809x | 5.418x | -32.00 |
+| 15 | 53.00 | 304.00 | 351.00 | 340.00 | 5.736x | **6.415x** | -36.00 |
+| 23 | 52.97 | 353.00 | 183.97 | 202.00 | 6.664x | **3.813x** | **+151.00** |
+| 31 | 53.00 | 402.00 | 246.00 | 258.00 | **7.585x** | **4.868x** | **+144.00** |
+| 32 | 53.03 | 111.00 | 121.00 | 116.00 | 2.093x | 2.190x | -5.00 |
+| 64 | 70.00 | 142.00 | 152.97 | 148.00 | 2.029x | 2.114x | -6.00 |
+| 128 | 104.00 | 204.00 | 217.00 | 212.00 | 1.962x | 2.038x | -8.00 |
+| `strcasecmp` unbounded | 68.00 | 125.00 | 125.00 | 125.03 | 1.838x | 1.839x | -0.03 |
+
+- **A/A NULL: incumbent-arm ratio 1.0000 .. 1.0013 across all nine points** — the glibc arm is the
+  same to 0.13% between baseline and candidate invocations.
+- **Outlining IS the better half of the trade, reversing an earlier finding.** v2 (outlined, old
+  gate) measured worse than v1 everywhere and the row concluded outlining did not help. That was
+  confounded: with the old gate the panel still fired on the already-done case, so outlining added a
+  CALL to work that should not have happened at all. With `i < bound` in place, outlining cuts every
+  regression — -21/-37/-47/-10/-11/-13 becomes -16/-32/-36/-5/-6/-8 — at the price of 18 and 12 Ir
+  off the two wins. **The earlier conclusion was right about the numbers and wrong about the cause.**
+- **REJECTED. It pays on bounds [16, 32) and charges everything else.** Six of eight sampled bounds
+  regress. The panel cannot fire below 16 (`bound >= 16`) or at or above 32 (the 32-lane tier leaves
+  `i == bound`), so every regression is on a bound that never executes it — irreducible code layout,
+  now confirmed across four variants including two placements and two gates.
+- **Why not ship it anyway:** it would move the suite's deepest ratio from 7.585x (bound 31) to
+  6.415x (bound 15), which is real progress on the stated objective, but by making six of eight
+  inputs worse. Unlike `tsearch`'s hit/miss split there is **no runtime signal** distinguishing the
+  populations — bound is the only input and it is already the gate. Shipping would be choosing a
+  bound distribution on the library's behalf, which is not mine to choose.
+- **This is NOT a bench-input artifact, and that cuts against shipping too.** `[16, 32)` is a real
+  range, not the one benchmark point — but so is everything it costs.
+- Conformance: `scasecmp_conf` **247,482 checks, 0 failures** in BOTH strict and hardened mode on
+  v4, so the reject is purely on the numbers.
+- Not landed; reverted, working tree clean for `crates/`.
+- Objects: baseline (HEAD) `b5818aca3c6855c848e6ce287ab3012ee2aeb5639284bbdfb378ec8228cccb2a`,
+  v3 `71f2606ac9b87ab527f682852e860e60daf48b54575cd991bcd3e9b286c3db14`,
+  v4 `5be626e89b3dc38cbfcf989b9aacab9ea7fdbd8c1ec0849044978f13fc868367`.
+- **The question is now closed.** Four variants, two placements x two gates, all measured. The panel
+  is the right algorithm for `[16,32)` and there is no packaging of it that does not tax the rest.
+  Closing this gap needs the SWAR fold itself to get cheaper — it costs about 49 Ir per eight bytes
+  because it folds both operands — not a new tier around it.
