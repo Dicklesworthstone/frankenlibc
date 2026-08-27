@@ -36744,3 +36744,50 @@ reworded rather than the gate touched.)
 - **STILL OPEN:** `tsearch_tdelete` is 1.298x. Any lever here must target work the glibc arm does
   NOT share — the red-black tree itself (`insert_find` 402, `delete_rec` 175, `delete_min` 73), not
   the allocator or policy machinery underneath both arms.
+
+## 2026-08-26 — `tsearch`: a NEW driver arm exposes a 1.633x lookup surface; skipping `fix_up` fixes it and costs the same on inserts (REJECTED as a trade)
+
+- **A surface that was invisible.** `tsearch_tdelete` deletes before every insert, so its `tsearch`
+  call ALWAYS allocates and the find-or-insert contract's dominant real shape — looking up a key
+  already in the tree — was never measured. A new `tsearch_hit` arm (128-node tree, every call a hit,
+  no allocation, tree unmodified) measures **455.02 Ir vs live glibc's 278.70 = 1.633x, +176 Ir of
+  excess** — a worse ratio than `tsearch_tdelete`'s 1.298x and previously unrecorded.
+- **The change.** `RbTree::insert_find_rec` ran `fix_up` on every node from the found node back to
+  the root even when nothing was inserted. `*len` increments only where a node is created, so
+  `*len == before` after the recursive call is an exact test for "this subtree is unchanged", and
+  `fix_up` on a subtree that still satisfies the LLRB invariant is a no-op by construction. Skipping
+  it is behaviour-preserving, not an approximation. The `Ordering::Equal` arm returns without
+  rebalancing for the same reason.
+- **Counted mechanism:** the lookup runs **455 instructions -> 402 instructions**; the
+  insert/delete pair runs **1678 instructions -> 1730**.
+
+| family | glibc | HEAD | skip `fix_up` | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `tsearch_hit` (lookup) | 278.70 | 455.02 | 402.30 | 1.633x | **1.443x** | **+52.72** |
+| `tsearch_tdelete` (insert+delete) | 1292.29 | 1677.74 | 1729.72 | 1.298x | **1.338x** | **-51.99** |
+| `snprintf` | 1692.00 | 2585.00 | 2584.97 | 1.528x | 1.528x | +0.03 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A null PASSES at exactly 0.00 Ir on all four families** — the cleanest null of the session, and
+  it matters here because the previous cycle's candidate was rejected precisely for moving the glibc
+  arm. This change touches only fl's tree code, which the glibc arm does not share, and the numbers
+  confirm it.
+- **REJECTED, because it is a trade and not a win.** It buys 52.72 Ir on the lookup shape and gives
+  back 51.99 on the insert shape — nearly one for one. The guard itself is about 3 instructions per
+  level (roughly 21 for a 128-node tree); the rest of the insert-path loss is codegen, since the
+  early `return` in the `Equal` arm changes how the recursive function is compiled. Improving a
+  1.633x surface by regressing a 1.298x one is not obviously correct, and it is not my call to make
+  on the library's behalf.
+- **The durable result is the arm, not the patch.** `tsearch` at 1.633x on pure lookups is now
+  measured and on record; it was not before, and it is a worse ratio than anything else standing in
+  this suite outside the excluded bound families.
+- **The real fix is structural, and is NOT this.** `tsearch` is find-or-insert; the hit path should
+  not run the insert machinery at all. A read-only `find` descent tried before `insert_find` would
+  make the hit path free of `take()`/reassign and `fix_up` entirely, at the cost of one extra descent
+  on a miss. That is a different change, and it should be measured on BOTH arms.
+- Not landed; reverted, working tree clean for `crates/`.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer
+  (the driver prints `ARM_DISTINCT` with both addresses), two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `3ed3a25fdf98920752260cbd5c75e77629d93cf3bf11d1f3384eb8ee5745b746`,
+  candidate `bbd3ce65c9f4984496ce718f399a7414c2b3d9af36f2e20813edc7e6af01b373`.
