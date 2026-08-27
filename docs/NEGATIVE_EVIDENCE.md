@@ -37170,3 +37170,51 @@ reworded rather than the gate touched.)
   a flagged window (inherent to the fold), the rest spread across the entry's bypass chain and the
   head-peel. Closing it needs a different kernel structure — e.g. resolving the flagged window from
   retained masks while keeping the steady state fold-only — not another look for redundancy.
+
+## 2026-08-27 — `strncasecmp` bound 31 (7.585x, the campaign's chronic deep loss): the `i < bound` fix WORKS and the panel is still REJECTED — the cost is layout, not gating
+
+- **Op.** `strncasecmp` at bound 31 — **402.00 Ir vs live glibc's 53.00 = 7.585x**, the deepest
+  standing ratio in this suite and the surface the campaign keeps returning to.
+- **The named fix from 2026-08-26 was tested and it is CORRECT.** That row rejected a 16-lane
+  overlapping final panel because its gate `bound >= 16 && i + 16 > bound` is TRUE when the 32-lane
+  tier has already consumed the whole bound and left `i == bound` — so it ran a full window, folded
+  both operands, masked every lane off, and concluded "bound reached", a result the `i >= bound`
+  test three lines below returns for free. It predicted adding `i < bound` would recover the
+  -44/-45/-47 at bounds 32/64/128. **Measured: -44/-45/-47 became -10/-11/-13.** The prediction
+  accounted for roughly 34 of the 44.
+- **A third variant hoisted the panel's invariant `bound >= 16` half** into the precomputed
+  thresholds, the other lever that row named. **It changed nothing: 0.00 to 0.07 Ir at every bound.**
+- **Counted mechanism:** at bound 31 the op runs **402 instructions -> 246 instructions**; at
+  bound 15, **304 instructions -> 351**.
+
+| bound | glibc | HEAD | v2 `i < bound` | v3 + hoist | HEAD x | v3 x | saved |
+|---|---|---|---|---|---|---|---|
+| 3 | 53.00 | 154.96 | 175.97 | 176.03 | 2.924x | 3.321x | -21.07 |
+| 7 | 53.03 | 255.00 | 292.00 | 292.00 | 4.809x | 5.509x | -37.00 |
+| 15 | 53.00 | 304.00 | 351.00 | 351.00 | 5.736x | **6.623x** | -47.00 |
+| 23 | 52.97 | 353.00 | 184.00 | 183.97 | 6.664x | **3.471x** | **+169.03** |
+| 31 | 53.00 | 402.00 | 246.02 | 246.00 | **7.585x** | **4.642x** | **+156.00** |
+| 32 | 53.03 | 111.00 | 121.00 | 121.00 | 2.093x | 2.283x | -10.00 |
+| 64 | 70.00 | 142.00 | 153.00 | 152.97 | 2.029x | 2.185x | -10.97 |
+| 128 | 104.00 | 204.00 | 216.97 | 217.00 | 1.962x | 2.087x | -13.00 |
+| `strcasecmp` unbounded | 68.00 | 125.00 | 125.00 | 125.00 | 1.838x | 1.838x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst across nine measurement points.
+- **REJECTED, and the reason is now precise.** Every remaining loss is on a bound that NEVER
+  EXECUTES the panel: bounds 3/7/15 fail `bound >= 16`, and bounds 32/64/128 fail `i < bound`
+  because the 32-lane tier consumed everything. Gating them out (v2) and hoisting the invariant
+  (v3) both leave the loss intact. **The cost is the block's presence in the loop body — code
+  layout — not any test it performs.** Outlining behind `#[cold] #[inline(never)]` was measured on
+  2026-08-26 with the OLD gate and came out slightly worse at every bound; **outlining combined
+  with `i < bound` is the one combination not yet measured**, and it is the only remaining candidate.
+- **It would not be a clean win even so.** Shipping v3 as-is moves the suite's deepest ratio from
+  7.585x (bound 31) to 6.623x (bound 15) — real progress on the worst point — while regressing six
+  of eight sampled bounds. That is a trade across a bound distribution nobody has characterised, and
+  unlike `tsearch`'s hit/miss split there is no runtime signal to tell the two populations apart.
+- Not landed; reverted, working tree clean for `crates/`.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `b5818aca3c6855c848e6ce287ab3012ee2aeb5639284bbdfb378ec8228cccb2a`,
+  v2 `011272c24c3b4f3a530259639e2d98e18a685a9f9e90e9c56426aca9850f4c6a`,
+  v3 `71f2606ac9b87ab527f682852e860e60daf48b54575cd991bcd3e9b286c3db14`.
