@@ -36358,3 +36358,55 @@ reworded rather than the gate touched.)
   botched v1 `f352f409b3147f5efc5c6cf36f52907c59c4f2f4465dd61078a3c72af616c610` (do not cite),
   corrected v2 `496c3767ec1870fd0e45ef2827f45cba6f430b68994f3ecfbf1222ea1d851d17`.
 - **The shipped `wcsncmp` guard stands.** Bound 7 remains 2.886x and bound 31 remains 2.478x.
+
+## 2026-08-26 — `snprintf`: eight interposed `memcpy` calls to move twelve bytes; a short-append fast path is worth +155 Ir
+
+- **Op, found by surveying families that had never been counted.** Ten untouched driver families
+  measured against live glibc at HEAD put `snprintf("%d %s %.3f")` at **3040 Ir vs 1692 = 1.797x**,
+  **+1348 Ir of excess** — an order of magnitude more excess than the string/wide-string surfaces
+  this campaign had been grinding on (`strlen` heap +97, `wcsncmp` bound 31 +102). Runners-up:
+  `tsearch_tdelete` +385, `strstr` +89, `strpbrk` +73, `memcmp` +67. Four families are FASTER than
+  glibc (`mktime` 0.076x, `memmem` 0.400x, `strtod` 0.632x, `getenv` 0.540x).
+- **Attribution, callers not self-costs.** `memcpy` self is 320 Ir and `raw_overlap_copy` another
+  205, together 17% of the op. Caller attribution shows **eight `memcpy` calls per format**, 525 Ir
+  inclusive — about 66 Ir per call — to assemble a twelve-byte result: 3 from `render_segments`
+  (172 Ir), 2 from `format_float` (116), 1 each from `parse_format_string` (123), `format_signed`
+  (60) and `snprintf` itself (54). `Vec::extend_from_slice` lowers to `copy_nonoverlapping`, which
+  in this crate resolves to fl's OWN exported `memcpy` — a full ABI entry with its membrane
+  prologue, per append.
+- **The change.** A `#[inline(always)] fn push_bytes(&mut Vec<u8>, &[u8])` that appends `n <= 16`
+  with overlapping power-of-two moves inside the caller's frame, falling back to
+  `extend_from_slice` above that. Routed the three `render_segments` append sites through it
+  (literal runs, `%s` bodies, and the `(null)` substitution). `u64` and not `u128` deliberately: a
+  16-byte unaligned access is the shape LLVM turns back into `@llvm.memcpy`, which would re-enter
+  the very symbol this avoids.
+- **Counted mechanism:** the op runs **3040 instructions -> 2885 instructions**.
+
+| family | glibc | HEAD | push_bytes | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `snprintf` | 1692.00 | 3040.00 | 2884.97 | 1.797x | **1.705x** | **+155.03** |
+| `strstr` | 335.00 | 424.00 | 424.00 | 1.266x | 1.266x | +0.00 |
+| `strpbrk` | 103.00 | 176.00 | 176.00 | 1.709x | 1.709x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.943x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst; the three unrelated families are exactly flat, which is the
+  control this change needs since it touches a shared buffer type.
+- Conformance: a new `snp_conf` differential against live glibc via `dlmopen`, comparing return
+  value AND the full 512-byte output buffer byte-for-byte, over **every `%s` body length 0..40 x
+  every second-argument length 0..20**, every **literal-run length 0..40**, plus `NULL` `%s`, width,
+  precision and the float path — **1767 checks, 0 failures** in BOTH strict and hardened mode. The
+  length sweep is the point: the new ladder branches at 0, 2, 4, 8 and 16, and `set_len` publishes
+  whatever those branches wrote.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `bf2113d5ccf00679690a50cb311422f2f8ebd0d4493bd52a2b0ba3d6b287715b`,
+  candidate `fc07b8d9f15dcf36fde1a77dbae5502aded245b4c8f01e5278c8727ad8be4350`.
+- **STILL OPEN, and it is now the largest known surface by a wide margin.** `snprintf` is still
+  1.705x with **+1193 Ir of excess**. FIVE `memcpy` calls remain on the path — 2 in `format_float`,
+  1 each in `parse_format_string`, `format_signed` and `snprintf` — worth roughly 350 Ir together,
+  and they live in `frankenlibc-core`, where the same `copy_nonoverlapping`-to-interposed-`memcpy`
+  lowering applies. Beyond the copies, `parse_format_spec` (307 Ir), `FormatSegments::push` (234)
+  and `parse_format_string` (204) re-parse the format string on every call for a format that never
+  changes; `__tls_get_addr` costs 72.

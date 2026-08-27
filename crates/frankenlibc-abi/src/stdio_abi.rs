@@ -5561,6 +5561,63 @@ unsafe fn render_printf_impl(
     unsafe { render_segments(&segments, args, max_args, wide_output).into_vec() }
 }
 
+/// Append `src`, keeping a SHORT append out of the interposed `memcpy`.
+///
+/// `Vec::extend_from_slice` lowers to `copy_nonoverlapping`, which in this
+/// crate resolves to fl's OWN exported `memcpy` -- a full ABI entry with its
+/// membrane prologue, for a handful of bytes. Counted on the deployed
+/// `snprintf("%d %s %.3f")`: EIGHT `memcpy` calls per format, 525 Ir inclusive,
+/// to move a twelve-byte result. Three of those come from `render_segments`
+/// appending literals and `%s` bodies.
+///
+/// Short appends are therefore done with overlapping power-of-two moves that
+/// stay in this frame. Sixteen is the cut: two overlapping `u64` accesses cover
+/// every length in `[8, 16]` exactly, and anything longer is where a real
+/// `memcpy` starts earning its entry cost. Deliberately `u64` and not `u128` --
+/// a 16-byte unaligned access is exactly the shape LLVM likes to turn back into
+/// `@llvm.memcpy`, which would re-enter the symbol this is avoiding.
+#[inline(always)]
+fn push_bytes(v: &mut Vec<u8>, src: &[u8]) {
+        let n = src.len();
+        if n == 0 {
+            return;
+        }
+        if n > 16 {
+            v.extend_from_slice(src);
+            return;
+        }
+        v.reserve(n);
+        let len = v.len();
+        // SAFETY: `reserve(n)` guarantees `n` writable bytes at `len`; `src` is a
+        // live slice of `n` bytes and cannot alias the vector's spare capacity.
+        // Every branch writes exactly the bytes in `[0, n)`, with overlap where the
+        // two accesses meet, before `set_len` publishes them.
+        unsafe {
+            let d = v.as_mut_ptr().add(len);
+            let p = src.as_ptr();
+            if n >= 8 {
+                let a = core::ptr::read_unaligned(p.cast::<u64>());
+                let b = core::ptr::read_unaligned(p.add(n - 8).cast::<u64>());
+                core::ptr::write_unaligned(d.cast::<u64>(), a);
+                core::ptr::write_unaligned(d.add(n - 8).cast::<u64>(), b);
+            } else if n >= 4 {
+                let a = core::ptr::read_unaligned(p.cast::<u32>());
+                let b = core::ptr::read_unaligned(p.add(n - 4).cast::<u32>());
+                core::ptr::write_unaligned(d.cast::<u32>(), a);
+                core::ptr::write_unaligned(d.add(n - 4).cast::<u32>(), b);
+            } else if n >= 2 {
+                let a = core::ptr::read_unaligned(p.cast::<u16>());
+                let b = core::ptr::read_unaligned(p.add(n - 2).cast::<u16>());
+                core::ptr::write_unaligned(d.cast::<u16>(), a);
+                core::ptr::write_unaligned(d.add(n - 2).cast::<u16>(), b);
+            } else {
+                *d = *p;
+            }
+            v.set_len(len + n);
+        }
+}
+
+
 /// Render already-parsed `segments` into a fresh buffer. Split out from
 /// [`render_printf_impl`] so the printf-family entry points can reuse the
 /// `FormatSegments` they parsed for argument counting instead of re-parsing the
@@ -5591,7 +5648,7 @@ pub(crate) unsafe fn render_segments(
 
     for seg in segments.iter() {
         match seg {
-            FormatSegment::Literal(lit) => buf.extend_from_slice(lit),
+            FormatSegment::Literal(lit) => push_bytes(&mut buf, lit),
             FormatSegment::Percent => buf.push(b'%'),
             FormatSegment::Spec(spec) => {
                 // FAST PATH: plain narrow `%s` — no width, no precision, no
@@ -5635,13 +5692,13 @@ pub(crate) unsafe fn render_segments(
                 {
                     if let Some(raw_ptr) = read_arg(None, &mut arg_idx) {
                         if raw_ptr == 0 {
-                            buf.extend_from_slice(b"(null)");
+                            push_bytes(&mut buf, b"(null)");
                         } else {
                             // SAFETY: the caller's `%s` argument is a
                             // NUL-terminated C string, read through the same
                             // bounded helper the general path uses.
                             let s_bytes = unsafe { c_str_bytes(raw_ptr as usize as *const c_char) };
-                            buf.extend_from_slice(s_bytes);
+                            push_bytes(&mut buf, s_bytes);
                         }
                     }
                     continue;
