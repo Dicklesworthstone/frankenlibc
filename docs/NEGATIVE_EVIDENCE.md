@@ -37074,3 +37074,67 @@ reworded rather than the gate touched.)
   had always used (100) hid a 2.315x short-span surface behind a 1.333x average. **A ratio measured
   at one input size is a point, not a curve** — the same lesson `strncmp` bound 31 and `wcsncmp`
   bound 7 each taught earlier in this campaign.
+
+## 2026-08-27 — `wcsnlen`: the missing [32, 256) tier — 2.080x -> 1.877x (+10 Ir); plus a SHARED-TREE INCIDENT
+
+- **Op.** `wcsnlen`, the worst measured loss standing: **102.00 Ir vs live glibc's 49.03 = 2.080x**
+  (31-wchar string, bound 64). Its entry is ALREADY cold-tail split, so that lever was spent; the
+  cost is the core scan at 59 Ir with a 33 Ir entry.
+- **The defect: another tier-ladder gap.** `core::string::wide::wcsnlen` has overlapping-ends tiers
+  at `(4..8)`, `(8..16)` and `(16..32)`, then jumps straight to a **256-element** folded block. A
+  bound of 64 satisfies none of them and fell through to the 64-LANE panel loop — and
+  `Simd::<u32, 64>` is eight ymm registers, so finding a NUL at element 31 of a 64-element bound
+  loaded eight vectors to answer what two can.
+- **The change.** Stepped 16-lane panels with early exit for `(32..256)`, then one overlapping panel
+  ending exactly at `limit` for bounds that are not a multiple of 16.
+- **Counted mechanism:** the op runs **102 instructions -> 92 instructions**.
+
+| family | glibc | HEAD | medium tier | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcsnlen` | 49.03 | 102.00 | 91.97 | **2.080x** | **1.877x** | **+10.03** |
+| `wcslen` | 40.00 | 67.00 | 67.00 | 1.675x | 1.675x | +0.00 |
+| `wcschr` | 53.00 | 92.00 | 92.00 | 1.736x | 1.736x | +0.00 |
+| `wmemchr` | 73.00 | 120.00 | 120.00 | 1.644x | 1.644x | +0.00 |
+| `strcspnL100` | 111.00 | 112.00 | 112.00 | 1.009x | 1.009x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst; four controls flat, including `wcslen`, which shares the
+  folded-block scanner.
+- **THE FIRST VERSION WAS WRONG AND CONFORMANCE CAUGHT IT.** The tier was gated `limit < BLOCK`,
+  but the tiers above cover only `4..32`, so bounds `0..=3` also entered — where `limit - 16`
+  underflows and the overlapping tail indexes a slice at `usize::MAX - 14`. It **panicked**:
+  `range start index 18446744073709551601 out of range for slice of length 1`. The gate is now
+  `(32..BLOCK).contains(&limit)`, the range the comment had claimed all along.
+  **The unit gate passed 200/200 against the broken object** — it has no `wcsnlen` bound sweep.
+  Only the differential found it, which is the argument for writing one per change rather than
+  leaning on the suite.
+- **MEASUREMENT CAVEAT, stated because it matters:** the counted object
+  `febc70a5aaffd8653c8405f7c1444d8efdbadeada543c06f07115cc8bc87f45e` carries the PRE-FIX gate. The
+  two differ only for bounds `0..=3`, which this benchmark (bound 64) never takes, so the numbers
+  above describe the shipped code path — but they were not taken on the shipped object, and the
+  corrected object could not be built (see below).
+- Conformance on the corrected source: `wnlen_conf` — NUL positions 0..300 x 32 bounds spanning
+  every tier edge (4/8/16/32/256) and both multiples and non-multiples of 16, plus no-NUL-in-range
+  and page-edge cases where the bound reaches past the mapping. Written and run; it is what produced
+  the panic above.
+- Objects: baseline `052d09a1f4967943678f966580ac061db1f843531cec95706b20ced159a962e7`,
+  candidate (pre-fix gate) `febc70a5aaffd8653c8405f7c1444d8efdbadeada543c06f07115cc8bc87f45e`.
+
+### SHARED-TREE INCIDENT — HEAD does not compile, and it is not from this work
+
+- **`crates/frankenlibc-abi/src/string_abi.rs` is brace-unbalanced (+1) at HEAD.** Bisected by
+  counting delimiters per commit: balance is 0 at `99499647c` and `2f017ce67`, and **1 from
+  `8778de975` onward** (`perf(string_abi): add 4-byte SIMD probe for [4, 8) bounds and split
+  strcasecmp cold tail`), persisting through `ff40a6fec` and `70e9f6254`. `cargo build` fails with
+  `error: this file contains an unclosed delimiter`. **Every agent in this tree is blocked.**
+- **NOT REPAIRED HERE, deliberately.** The compiler points at `scan_strcmp`'s tier guard, but that
+  is where the imbalance surfaces, not necessarily where the brace belongs. Guessing a placement is
+  exactly the failure this ledger already records from earlier today: a hand-placed brace that
+  compiled, passed 563,781 conformance checks, and silently nested one SIMD tier inside another,
+  destroying a fast path. The author knows where it goes; I do not.
+- **My commit `ec5c8b503` (strcspn cold-tail split) is no longer in history.** An equivalent change
+  by another agent (`2f017ce67`, later `ff40a6fec` under my commit's exact title) is present, so the
+  work is not lost — but history was rewritten under this session. `44a98f76d`, `99499647c` and
+  `182eb376b` survive.
+- **My uncommitted `wide.rs` edit was swept into another agent's commit** (`70e9f6254`). It happens
+  to carry the CORRECTED gate, so no underflow is live — verified by reading that commit's blob
+  rather than assuming.
