@@ -36044,3 +36044,55 @@ reworded rather than the gate touched.)
 - **Lesson.** The earlier panel attempt tried to give short bounds a tier they could use. The actual
   defect was the cost of OFFERING them tiers they could not. Before adding a tier for a range that
   falls between tiers, price what that range already pays to decline the ones above it.
+
+## 2026-08-26 — `wcsncmp` bound 7: 6.227x came from re-testing tiers that cannot fire; one hoist takes it to 2.886x
+
+- **Op picked by measurement.** Sweeping `wcsncmp` bounds on HEAD put bound 7 at **274 Ir against
+  live glibc's 44 = 6.227x** — higher Ir AND a worse ratio than `strlen` heap (120 Ir, 5.217x), so it
+  is the standing worst outside the `strncmp` short-bound surface. The shape is diagnostic: 158 /
+  216 / 274 Ir at bounds 3 / 5 / 7, roughly 29 Ir per element compared.
+- **Why.** `scan_wcscmp_simd`'s two wide tiers are gated on a whole panel fitting under `bound`
+  (`i + 32 <= bound`, `i + WLANES <= bound`). For `bound < WLANES` **neither can ever fire**, yet the
+  loop re-tested both on each of the up-to-seven scalar passes that do the actual work.
+- **The change.** One loop-invariant hoist, `if !BOUNDED || bound >= WLANES { ..both wide tiers.. }`.
+  LLVM will not unswitch this loop on a runtime `bound` — too many exits — so it has to be written.
+- **Counted mechanism:** at bound 7 the op runs **274 instructions -> 127 instructions**; at bound 3,
+  **158 instructions -> 91**.
+
+| bound | glibc | HEAD | v1 both guards | v2 outer only | HEAD x | v2 x | saved |
+|---|---|---|---|---|---|---|---|
+| 3 | 44.00 | 158.00 | 100.96 | 91.00 | 3.591x | 2.067x | +67.00 |
+| 5 | 44.00 | 215.97 | 119.00 | 109.00 | 4.908x | 2.477x | +106.97 |
+| **7** | 44.00 | 274.00 | 137.00 | 127.00 | **6.227x** | **2.886x** | **+147.00** |
+| 9 | 53.00 | 138.00 | 125.00 | 137.03 | 2.604x | 2.585x | +0.97 |
+| 15 | 53.04 | 138.00 | 124.97 | 137.00 | 2.602x | 2.586x | +1.00 |
+| 23 | 61.00 | 155.00 | 138.00 | 154.02 | 2.541x | 2.524x | +0.98 |
+| 31 | 69.00 | 172.00 | 151.00 | 171.00 | 2.493x | 2.478x | +1.00 |
+| 32 | 69.00 | 135.00 | 144.03 | 137.00 | 1.957x | 1.985x | **-2.00** |
+| 64 | 120.00 | 177.00 | 186.00 | 179.00 | 1.475x | 1.492x | **-2.00** |
+
+- **TWO BOUNDS REGRESS and that is the shipped trade.** Bounds 32 and 64 pay 2 Ir (1.4% and 1.7%)
+  for a test that cannot be hoisted out of the range where the tiers do fire. They are the op's best
+  ratios; bound 7 was its worst.
+- **The variant NOT taken, and why it is on record.** Nesting a second guard, `bound >= 32`, around
+  the 128B tier alone buys a further **+13 to +21 Ir on bounds in [8, 32)** — a real 8-12% on four
+  bounds — but costs **-9 Ir at bounds 32 and 64** instead of -2, and is 10 Ir WORSE at bounds 3/5/7.
+  Rejected because the lever's target is the op's worst point and the nested form gives up 10 Ir
+  there while quadrupling the regression elsewhere. If the workload is known to be bound-9-to-31
+  heavy, v1 is the better object; object hash below.
+- **A/A null PASSES:** the glibc arm across both objects differs by at most 0.07 Ir over nine bounds.
+- **Unbounded `wcscmp` is byte-for-byte unaffected, and that was verified not assumed:** `wcscmp`
+  disassembles to **234 instructions in both objects**, because `!BOUNDED` is a const `true` and the
+  guard folds away.
+- Conformance: `wcscmp_conf` **563,781 checks, 0 failures** in BOTH strict and hardened mode on both
+  variants. Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls. Figures include the driver loop in both arms.
+- Objects: baseline (HEAD) `f6d55ff43dba41fe18c630c80248ef40736ef264a614ae5238f190b150cb1594`,
+  v1 `54975babb1146d673511bf7c94b2eeb1dbc9e15dad05178bdbd349170b911446`,
+  shipped v2 `e36f6b03365823d87f93dadd22062081f9eb080c8bb0e138410d1f71e792089e`.
+- **This is the second sighting of the same defect in one day** (`strncmp`, +94 Ir, earlier today).
+  Both scanners were built by adding tiers upward and nobody priced what the bounds BELOW the
+  lowest tier pay to decline the ones above them. `scan_strcasecmp` has the ladder too but only one
+  wide tier, so less to recover; `scan_c_string`'s small-bound tiers already cover its short range.

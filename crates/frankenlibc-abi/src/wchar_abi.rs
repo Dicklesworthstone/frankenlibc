@@ -1054,6 +1054,26 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
         && (s2 as usize & 0xFFF) + bound * 4 <= 0x1000;
     let mut i = 0usize;
     loop {
+        // HOIST THE DEAD TIER GATES. Both wide tiers below are gated on a whole
+        // panel fitting under `bound`, so for `bound < WLANES` NEITHER can ever
+        // fire -- and yet the loop re-tested both, plus their page guards, on
+        // every one of the up-to-seven scalar passes that actually do the work.
+        // `wcsncmp` at bound 7 measured 274 Ir against live glibc's 44 (6.227x),
+        // the worst wide-string ratio in the suite, for seven element compares.
+        //
+        // The gates are loop-invariant and LLVM will not unswitch this loop on a
+        // runtime `bound` -- too many exits -- so the hoist has to be written.
+        // A NESTED `bound >= 32` around the 128B tier alone was measured too. It
+        // buys a further +13 to +21 Ir on bounds in [WLANES, 32), which pay for a
+        // 128B tier they can never reach -- but it costs -9 Ir at bounds 32 and 64,
+        // where that tier DOES fire, and those are the op's best ratios already.
+        // Not taken: this guard is free everywhere. For `BOUNDED == false`
+        // (`wcscmp`) both terms are const `true` and the guards vanish, which is
+        // what keeps the unbounded hot loop byte-identical.
+        //
+        // Indentation inside the guards is deliberately left as it was; reflowing
+        // would rewrite the whole body for no semantic change.
+        if !BOUNDED || bound >= WLANES {
         // 128-byte (32-wchar) unrolled fast path: the 32B/iter loop below re-ran the dual
         // page-guard + bounds check every 8 wchars — ~2.2x slower than glibc for long equal
         // wide strings (measured wcscmp_sweep, grows with n ⇒ per-element throughput, not
@@ -1141,6 +1161,7 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
                 return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
             }
             return (0, idx + 1, false);
+        }
         }
         if i >= bound {
             return (0, bound, true);
