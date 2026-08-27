@@ -36096,3 +36096,54 @@ reworded rather than the gate touched.)
   Both scanners were built by adding tiers upward and nobody priced what the bounds BELOW the
   lowest tier pay to decline the ones above them. `scan_strcasecmp` has the ladder too but only one
   wide tier, so less to recover; `scan_c_string`'s small-bound tiers already cover its short range.
+
+## 2026-08-26 — `strncasecmp` bound 31 is the suite's highest-Ir loser (8.000x); the tier hoist that paid twice does NOT pay here (REJECTED)
+
+- **Op, found by adding a bounded family to the counted driver.** `strncasecmp` had never been swept
+  under a bound — only unbounded `strcasecmp` was in the driver. Sweeping it puts bound 31 at
+  **424 Ir against live glibc's 53 = 8.000x**, the highest instruction count of any losing op
+  measured in this suite (vs `strncmp` 203 and `wcsncmp` 179 after their fixes), with the same
+  signature as both: 165 / 277 / 326 / 375 / 424 Ir climbing across bounds 3..31, then collapsing to
+  113 at bound 32.
+- **The change.** The same hoist that paid +94 Ir on `strncmp` and +147 on `wcsncmp` today:
+  `if bound >= 32 { ..the 32B wide tier.. }`, so a short bounded compare stops re-testing a tier that
+  cannot fire.
+- **Counted mechanism:** at bound 31 the op runs **424 instructions -> 412 instructions**; at
+  bound 128 it runs **209 instructions -> 214**, and unbounded `strcasecmp` runs
+  **132 instructions -> 135**.
+
+| bound | glibc | HEAD | gated | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| 3 | 53.00 | 165.00 | 160.00 | 3.113x | 3.017x | +5.00 |
+| 7 | 53.00 | 277.00 | 268.00 | 5.226x | 5.057x | +9.00 |
+| 15 | 53.00 | 326.00 | 315.97 | 6.151x | 5.962x | +10.03 |
+| 23 | 53.00 | 374.97 | 364.00 | 7.075x | 6.868x | +10.97 |
+| 31 | 53.00 | 424.00 | 412.00 | 8.000x | 7.774x | +12.00 |
+| 32 | 53.00 | 112.97 | 115.00 | 2.132x | 2.171x | -2.03 |
+| 64 | 70.00 | 145.00 | 148.00 | 2.071x | 2.114x | -3.00 |
+| 128 | 104.00 | 208.97 | 214.00 | 2.009x | 2.058x | -5.03 |
+| unbounded `strcasecmp` (43 B) | 68.00 | 132.00 | 135.00 | 1.941x | 1.986x | -3.00 |
+
+- **WHY IT DOES NOT TRANSFER, which is the point of the row.** `scan_strcmp` and
+  `scan_wcscmp_simd` are generic over a `const BOUNDED: bool`, so their guards were written
+  `!BOUNDED || bound >= N` and **const-fold to nothing** for the unbounded caller — verified there by
+  disassembly (`wcscmp`: 234 instructions in both objects). `scan_strcasecmp` has **no such
+  parameter**: unbounded `strcasecmp` reaches it with `bound == usize::MAX`, so the test is a live
+  runtime compare on every pass. The loss therefore GROWS with length (-2.03, -3.00, -5.03 at bounds
+  32, 64, 128) while the gain is capped at +12 on the short bounds.
+- **A/A null PASSES:** worst drift 0.04 Ir across nine measurement points.
+- Not landed; reverted, working tree clean for `crates/`. Conformance ran clean anyway
+  (`scasecmp_conf` **247,482 checks, 0 failures**, strict AND hardened) and the gate was green
+  (`cargo test -p frankenlibc-abi --lib`, **200 passed, 0 failed**, compilation observed), so the
+  reject is purely on the numbers.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `e36f6b03365823d87f93dadd22062081f9eb080c8bb0e138410d1f71e792089e`,
+  candidate `be006d1ca8c65329f87538ff6f76d80f2188e202474e4e56a4addc93bedf0446`.
+- **NAMED FOLLOW-UP, not attempted here.** Make `scan_strcasecmp` generic over `const BOUNDED: bool`
+  the way its two siblings already are, then this exact guard const-folds for `strcasecmp` and the
+  short-bound gain lands with no tax at all. That is a call-site change across `strcasecmp` /
+  `strncasecmp` / `strcasecmp_l` / `strncasecmp_l`, not a one-line edit, and it was out of scope for a
+  single-lever cycle. **`strncasecmp` at bounds under 32 remains the suite's highest-Ir losing
+  surface at 8.000x.**
