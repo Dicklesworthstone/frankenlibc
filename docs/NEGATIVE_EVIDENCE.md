@@ -36456,3 +36456,52 @@ reworded rather than the gate touched.)
   `FormatSegments::push` (234), `parse_format_string` (204) re-derive a format string that is
   identical on every call — plus `__tls_get_addr` at 72. Two `memcpy` calls are cheap enough to
   have fallen below the threshold rather than been removed; they are in `format_float`.
+
+## 2026-08-26 — `snprintf`: the direct-format chain read the mode atomic THIRTEEN times — 1.629x -> 1.585x (+75 Ir)
+
+- **Op.** `snprintf("%d %s %.3f")`, still the highest-Ir losing op: **2757 Ir vs live glibc's 1692 =
+  1.629x**, +1065 Ir of excess. Self-cost attribution puts the largest single item in `snprintf`'s
+  OWN ABI entry at 425 Ir — ahead of `format_float` (394), `render_segments` (336) and
+  `parse_format_spec` (307).
+- **What the entry spends it on.** A ladder of thirteen exact-format bypasses
+  (`%s`, `%c`, `%u`, `%d`, `%x`, `%ld`, `%lu`, `%zu`, `%zd`, `%lx`, `%p`, `%f`, plus the pure-literal
+  probe), each written `if runtime_policy::strict_passthrough_active() && exact_direct_X_format(..)`.
+  The mode test is re-evaluated on every rung, so a format matching none of them — which is any
+  format with more than one conversion, i.e. most real ones — re-read the `MODE_STATE` atomic
+  **thirteen times** on its way to the render engine.
+- **The change.** Hoist it: one `let strict_direct = runtime_policy::strict_passthrough_active();`
+  before the ladder, and each rung tests the local. The value cannot change inside the function, so
+  the reads after the first were pure repetition. Done as a substitution within the ladder's line
+  range, with no brace restructuring — a lesson from the `wcsncmp` splice that silently nested one
+  tier inside another earlier today.
+- **Counted mechanism:** the op runs **2757 instructions -> 2682 instructions**. Twelve removed
+  atomic reads at roughly six instructions each accounts for the whole of it.
+
+| family | glibc | HEAD | hoisted | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `snprintf` | 1692.00 | 2757.00 | 2681.97 | 1.629x | **1.585x** | **+75.03** |
+| `strtod` | 886.00 | 559.97 | 560.03 | 0.632x | 0.632x | -0.05 |
+| `strstr` | 335.00 | 424.04 | 424.00 | 1.266x | 1.266x | +0.04 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst; the three control families are flat.
+- **NOT addressed, and deliberately so:** each rung still calls its own `exact_direct_*_format`,
+  which walks the format string. Thirteen format scans remain for a format that matches none of
+  them. That is the larger half of this entry's cost and wants a single dispatch on the format's
+  first bytes, not thirteen independent scans — a different change, measured separately.
+- Conformance: `snp_conf` against live glibc via `dlmopen`, comparing return value AND the full
+  512-byte output buffer byte-for-byte over every `%s` length 0..40 x second-argument length 0..20,
+  every literal-run length 0..40, plus `NULL` `%s`, width, precision and the float path —
+  **1767 checks, 0 failures** in BOTH strict and hardened mode. Hardened matters here: the hoisted
+  value gates every bypass, so a wrong hoist would silently route hardened traffic down the strict
+  path.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `9bca4206d5efe29d3d48441ec474e54be366f7efb6b2878c13c6a7b909a1f30d`,
+  candidate `5d36850d77b28f94017cc8492fc1883e2d0f36ca39fd68e684e22a00554d0e6d`.
+- **STILL OPEN.** `snprintf` is 1.585x with **+990 Ir of excess**, three cycles into this op and
+  still the largest surface in the suite: 425 -> ~350 Ir in the entry (thirteen format scans),
+  `format_float` 394, `render_segments` 336, `parse_format_spec` 307, `FormatSegments::push` 234,
+  `parse_format_string` 204 — the last three re-deriving a format string identical on every call.

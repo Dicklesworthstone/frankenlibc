@@ -7445,68 +7445,78 @@ pub unsafe extern "C" fn snprintf(
     if format.is_null() {
         return -1;
     }
-    if runtime_policy::strict_passthrough_active()
+    // ONE mode read for the whole direct-format chain. Every rung below used to
+    // call `strict_passthrough_active()` itself -- THIRTEEN of them -- so a format
+    // that matches none of them (any format with more than one conversion, which
+    // is most real ones) re-read the `MODE_STATE` atomic thirteen times on its way
+    // to the render engine. The value cannot change inside this function, so the
+    // reads after the first were pure repetition.
+    //
+    // The per-rung format scans are NOT addressed here; each `exact_direct_*_format`
+    // still walks the format. This removes only the repeated mode test.
+    let strict_direct = runtime_policy::strict_passthrough_active();
+    if strict_direct
         && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
     {
         return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
     }
-    if runtime_policy::strict_passthrough_active()
+    if strict_direct
         && let Some(append_newline) = unsafe { exact_direct_s_format(format) }
     {
         let arg = unsafe { args.next_arg::<*const c_char>() };
         return unsafe { strict_direct_snprintf_s(str_buf, size, arg, append_newline) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_c_format(format) } {
+    if strict_direct && unsafe { exact_direct_c_format(format) } {
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_snprintf_c(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_u_format(format) } {
+    if strict_direct && unsafe { exact_direct_u_format(format) } {
         // SAFETY: exact `%u` consumes one promoted `unsigned int` argument.
         let arg = unsafe { args.next_arg::<c_uint>() };
         // SAFETY: snprintf's caller provides `size` writable bytes whenever
         // `size > 0`; the helper bounds every write and appends the terminator.
         return unsafe { strict_direct_snprintf_u(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+    if strict_direct && unsafe { exact_direct_d_format(format) } {
         // SAFETY: exact `%d` consumes one promoted `int` argument. `%d` is the most common
         // integer format and previously fell through to the full membrane decide + render
         // path (the `%u`/`%c`/`%p` bypass omitted it); the helper bounds every write.
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_snprintf_d(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+    if strict_direct && unsafe { exact_direct_x_format(format) } {
         // SAFETY: exact `%x` consumes one promoted `unsigned int`; the helper bounds writes.
         let arg = unsafe { args.next_arg::<c_uint>() };
         return unsafe { strict_direct_snprintf_x(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_ld_format(format) } {
+    if strict_direct && unsafe { exact_direct_ld_format(format) } {
         // SAFETY: exact `%ld` consumes one `long` (64-bit on LP64); helper bounds writes.
         let arg = unsafe { args.next_arg::<i64>() };
         return unsafe { strict_direct_snprintf_ld(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_lu_format(format) } {
+    if strict_direct && unsafe { exact_direct_lu_format(format) } {
         // SAFETY: exact `%lu` consumes one `unsigned long` (64-bit on LP64).
         let arg = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_snprintf_lu(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zu_format(format) } {
+    if strict_direct && unsafe { exact_direct_zu_format(format) } {
         // SAFETY: exact `%zu` consumes one `size_t` (u64 on LP64) — same render as `%lu`.
         let arg = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_snprintf_lu(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zd_format(format) } {
+    if strict_direct && unsafe { exact_direct_zd_format(format) } {
         // SAFETY: exact `%zd` consumes one `ssize_t` (i64 on LP64) — same render as `%ld`.
         let arg = unsafe { args.next_arg::<i64>() };
         return unsafe { strict_direct_snprintf_ld(str_buf, size, arg) };
     }
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_lx_format(format) } {
+    if strict_direct && unsafe { exact_direct_lx_format(format) } {
         // SAFETY: exact `%lx` consumes one `unsigned long` (64-bit on LP64).
         let arg = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_snprintf_lx(str_buf, size, arg) };
     }
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_p_format`.
-    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+    if strict_direct && unsafe { exact_direct_p_format(format) } {
         // SAFETY: exact `%p` consumes one promoted `void *` variadic argument.
         let arg = unsafe { args.next_arg::<*mut c_void>() };
         // SAFETY: snprintf's C contract supplies `size` writable bytes when
@@ -7520,7 +7530,7 @@ pub unsafe extern "C" fn snprintf(
     // fixed cost at 87.5 ns, which is the whole of the 1.56-1.78x float loss.
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_f_format`.
-    if runtime_policy::strict_passthrough_active()
+    if strict_direct
         && let Some(precision) = unsafe { exact_direct_f_format(format) }
     {
         // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
