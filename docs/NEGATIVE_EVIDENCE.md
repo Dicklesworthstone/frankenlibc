@@ -37022,3 +37022,55 @@ reworded rather than the gate touched.)
 - **STILL OPEN:** `strcspn` at short haystacks is 2.315x and its cost is a fixed entry charge, not
   the scan — that is the shape the cold-frame and gate-ordering levers in this ledger were built
   for, and none has been tried on the span family.
+
+## 2026-08-27 — `strcspn`: a cold-tail split takes it 2.315x -> 1.585x at short spans and to PARITY at long ones
+
+- **Op.** `strcspn`, the highest-Ir fresh loser and — at short haystacks, a surface exposed by last
+  cycle's new driver arm — the worst ratio standing anywhere in this suite: **95.01 Ir vs live
+  glibc's 41.04 = 2.315x** at haystack length 8, **148.00 vs 111.00 = 1.333x** at length 100.
+- **The diagnosis is in the prologue.** Attribution puts the entry at a FLAT 47 Ir at BOTH lengths,
+  while the scan scales (38 Ir at L=8, 91 at L=100). glibc answers the entire length-8 call in 41.
+  Disassembly names the fixed charge: `push %rbp; push %r15; push %r14; push %r13; push %r12;
+  push %rbx; sub $0xc8,%rsp` — six callee-saved registers and **two hundred bytes of stack**, on a
+  function whose deployed path is a five-byte reject probe and a scan.
+- **The change.** Move the validating body — everything below the strict fast path, from
+  `stage_context_two` down — behind `#[cold] #[inline(never)]`. The strict bypass keeps its own
+  small frame; only the validating path pays for the large one. The same split `memrchr`, `memchr`
+  and `strcmp` already carry in this file; the span family never got one.
+- **Counted mechanism:** the prologue drops to `push %r14; push %rbx; sub $0x48,%rsp` — two saves
+  and 72 bytes. The op runs **95 instructions -> 65** at L=8, **114 -> 82** at L=32, and
+  **148 -> 112** at L=100.
+
+| family | glibc | HEAD | cold-tail split | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strcspnL8` | 41.04 | 95.01 | 65.01 | **2.315x** | **1.585x** | **+30.00** |
+| `strcspnL32` | 67.00 | 114.00 | 82.00 | 1.701x | **1.224x** | **+32.00** |
+| `strcspnL100` | 111.00 | 148.00 | 112.00 | 1.333x | **1.009x** | **+36.00** |
+| `strspn` | 58.00 | 104.00 | 104.00 | 1.793x | 1.792x | +0.00 |
+| `strpbrk` | 103.00 | 168.97 | 169.00 | 1.641x | 1.641x | -0.03 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst. The three control families are flat, which also confirms the
+  split did not disturb the shared scanners.
+- **`strcspn` at length 100 is now 1.009x — parity with live glibc**, from 1.333x. The saving is a
+  near-constant 30-36 Ir at every length, exactly as a fixed entry charge should behave when removed.
+- Conformance: a new `cspn_conf` differential against live glibc via `dlmopen`, covering `strcspn`
+  AND `strspn` (which shares the scanners and must not move) — reject-set lengths 0..70 crossing the
+  1/2/3/4/5 direct-probe boundaries and the probe's 16- and 64-byte limits, x haystack lengths 0..130,
+  x four stop positions (absent, start, middle, end), plus page-edge operands for BOTH arguments at
+  80 x 20 length combinations: **31392 checks, 0 failures** in BOTH strict and hardened mode.
+  Hardened is not optional here — it is the only mode that executes the body that was moved.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `82686145d882aee91df6e29eb6a3d57da86697bfa0a9deea7da6f85e20a99c3c`,
+  candidate `052d09a1f4967943678f966580ac061db1f843531cec95706b20ced159a962e7`.
+- **DIRECTLY ACTIONABLE:** `strspn` is 1.793x and shares this entry shape — it did NOT move here,
+  because only `strcspn` was split. `strpbrk` at 1.641x is the third. Both want the same treatment,
+  measured per entry.
+- **METHOD NOTE.** Last cycle's rejected experiment is what produced this. Lowering the probe floor
+  bought nothing, but the `strcspnL<n>` arm added to measure it revealed that the length the suite
+  had always used (100) hid a 2.315x short-span surface behind a 1.333x average. **A ratio measured
+  at one input size is a point, not a curve** — the same lesson `strncmp` bound 31 and `wcsncmp`
+  bound 7 each taught earlier in this campaign.
