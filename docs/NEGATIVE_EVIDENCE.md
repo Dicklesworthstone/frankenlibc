@@ -36976,3 +36976,49 @@ reworded rather than the gate touched.)
   that is what was measured; the sweep should be measured per entry, not assumed.
 - **STILL OPEN:** `wcsnlen` 2.082x remains the worst ratio in the suite; `memcmp` 1.944x and the
   wide-string family (1.57-1.78x) are untouched.
+
+## 2026-08-27 — `strcspn`: the `pcmpistri` probe's `l < 5` floor is CORRECT — lowering it to 2 leaves strcspn untouched and costs `strpbrk` 14 Ir (REJECTED)
+
+- **Op.** `strcspn`, the highest-Ir fresh loser: **148.00 Ir vs live glibc's 111.00 = 1.333x**,
+  +37 Ir of excess (100-byte haystack, 3-byte reject set). Attribution: `scan_c_string_for_set4`
+  91 Ir (61.5%), the entry 47. **Note the proven `known_remaining_strict` substitution from the
+  previous cycle does NOT apply here — `strcspn`'s path never calls it.** That was checked, not
+  assumed.
+- **The hypothesis.** `pcmpistri` does set membership in hardware at sixteen bytes per instruction
+  regardless of set size, so `span_probe_cmpistri`'s `if l < 5 { Decline }` floor looked arbitrary:
+  it sends 2..=4-byte sets to the fused SWAR `scan_c_string_for_set4` instead, which costs about a
+  byte per instruction — 91 Ir to walk 100 bytes, against glibc's 101 for the entire call. Lowered
+  the floor to 2, keeping the dedicated 0- and 1-byte paths.
+- **Counted mechanism:** `strcspn` runs **148 instructions -> 148 instructions** at every haystack
+  length measured; `strpbrk` runs **169 instructions -> 183**.
+
+| family | glibc | HEAD | floor lowered to 2 | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strcspnL8` | 41.04 | 95.01 | 94.98 | 2.315x | 2.316x | +0.03 |
+| `strcspnL32` | 67.00 | 114.00 | 114.00 | 1.701x | 1.701x | +0.00 |
+| `strcspnL100` | 111.00 | 148.00 | 147.96 | 1.333x | 1.333x | +0.04 |
+| `strspn` | 58.00 | 104.00 | 104.00 | 1.793x | 1.793x | +0.00 |
+| `strpbrk` | 103.00 | 168.97 | 182.97 | 1.641x | **1.776x** | **-14.00** |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A null PASSES** at 0.03 Ir worst.
+- **TWO findings, both from the same run.** First: `strcspn` and `strspn` **do not call
+  `span_probe_cmpistri` at all** — the floor is irrelevant to them, which the flat rows at three
+  separate haystack lengths establish. I had assumed the span family shared the probe because it
+  shares the name; it does not. Second: for the one caller that does use it, `strpbrk`, admitting a
+  3-byte set makes it **14 Ir WORSE** — the probe's setup does not amortise against the fused
+  `set4` path at that set size. **The `l < 5` floor is a measured boundary, not an arbitrary one**,
+  and it is now re-measured.
+- **A new short-haystack surface, recorded while measuring:** `strcspn` at haystack length 8 is
+  **2.315x** (95.01 vs 41.04) — worse than `wcsnlen`'s 2.082x and therefore the worst ratio now
+  standing anywhere in this suite. The driver only ever exercised length 100 (1.333x); the fixed
+  entry cost dominates below ~32 and was invisible.
+- Not landed; reverted, working tree clean for `crates/`. The new `strcspnL<n>` driver arm is kept.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `82686145d882aee91df6e29eb6a3d57da86697bfa0a9deea7da6f85e20a99c3c`,
+  candidate `72436c1f9ddfb0c57567390d7bf7587f56b416f858b8af4b9e1a6bc9bb218c6f`.
+- **STILL OPEN:** `strcspn` at short haystacks is 2.315x and its cost is a fixed entry charge, not
+  the scan — that is the shape the cold-frame and gate-ordering levers in this ledger were built
+  for, and none has been tried on the span family.
