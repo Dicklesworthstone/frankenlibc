@@ -85,6 +85,54 @@ const CASES: &[(&str, c_int)] = &[
     ("\"$(echo hi)\"", WRDE_NOCMD),
 ];
 
+/// Command substitution is a capability path, not a comparison of two copies
+/// of the same implementation: `fl::wordexp` is called directly while the
+/// incumbent is the host process's linked glibc symbol.
+#[test]
+fn wordexp_command_substitution_matches_live_glibc() {
+    for (input, expected) in [
+        ("$(printf cmd)", vec!["cmd"]),
+        ("x$(printf cmd)y", vec!["xcmdy"]),
+        ("$(($(printf 41)+1))", vec!["42"]),
+        ("$((`printf 41`+1))", vec!["42"]),
+    ] {
+        let c_input = CString::new(input).unwrap();
+        let mut fl_we = WordexpT {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
+        let mut lc_we = WordexpT {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
+        let fl_r =
+            unsafe { fl::wordexp(c_input.as_ptr(), (&mut fl_we as *mut WordexpT).cast(), 0) };
+        let lc_r = unsafe { wordexp(c_input.as_ptr(), (&mut lc_we as *mut WordexpT).cast(), 0) };
+        let expected: Vec<Vec<u8>> = expected
+            .into_iter()
+            .map(|word| word.as_bytes().to_vec())
+            .collect();
+
+        assert_eq!(lc_r, 0, "glibc rejected command substitution {input:?}");
+        assert_eq!(
+            unsafe { collect_words(&lc_we) },
+            expected,
+            "glibc changed for {input:?}"
+        );
+        assert_eq!(fl_r, lc_r, "return-code mismatch for {input:?}");
+        assert_eq!(
+            unsafe { collect_words(&fl_we) },
+            unsafe { collect_words(&lc_we) },
+            "word mismatch for {input:?}"
+        );
+
+        unsafe { fl::wordfree((&mut fl_we as *mut WordexpT).cast()) };
+        unsafe { wordfree((&mut lc_we as *mut WordexpT).cast()) };
+    }
+}
+
 #[test]
 fn diff_wordexp_simple_cases() {
     let mut divs = Vec::new();

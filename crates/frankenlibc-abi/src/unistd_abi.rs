@@ -8014,6 +8014,41 @@ fn scan_braced_parameter_end(s: &[u8], open_brace: usize) -> Option<usize> {
     None
 }
 
+/// Arithmetic expansion can itself contain command substitution.  It must be
+/// recognized separately because `scan_arith_end` otherwise skips the whole
+/// arithmetic body while the outer scanner is deciding whether WRDE_NOCMD
+/// applies.
+fn arithmetic_contains_command_substitution(s: &[u8]) -> bool {
+    let mut i = 0;
+    let mut escaped = false;
+    let mut in_single_quote = false;
+
+    while i < s.len() {
+        let byte = s[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if byte == b'\\' && !in_single_quote {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if byte == b'\'' {
+            in_single_quote = !in_single_quote;
+            i += 1;
+            continue;
+        }
+        if !in_single_quote && (byte == b'`' || (byte == b'$' && s.get(i + 1) == Some(&b'('))) {
+            return true;
+        }
+        i += 1;
+    }
+
+    false
+}
+
 /// Scan `wordexp` input while honoring shell quoting and escaping context.
 fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
     let mut scan = WordexpSyntaxScan {
@@ -8070,7 +8105,11 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
                         // word glibc expands to "3". bd-yb9f9r.
                         if s.get(i + 2) == Some(&b'(') {
                             match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
-                                Some((_, next)) => {
+                                Some((expr, next)) => {
+                                    if arithmetic_contains_command_substitution(expr) {
+                                        scan.has_command_substitution = true;
+                                        return scan;
+                                    }
                                     i = next;
                                     continue;
                                 }
@@ -8115,7 +8154,11 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
                     // double-quoted branch above (bd-yb9f9r).
                     if s.get(i + 2) == Some(&b'(') {
                         match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
-                            Some((_, next)) => {
+                            Some((expr, next)) => {
+                                if arithmetic_contains_command_substitution(expr) {
+                                    scan.has_command_substitution = true;
+                                    return scan;
+                                }
                                 i = next;
                                 continue;
                             }
@@ -8528,6 +8571,46 @@ fn push_wordexp_masked_fields(
     }
 }
 
+/// Execute the POSIX shell expansion for command-substitution input and return
+/// its resulting words.  The full input remains runtime-selected: this does
+/// not recognize or special-case any benchmark command.
+fn expand_command_substitution_with_shell(input: &str) -> Result<Vec<CString>, c_int> {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Process, input.len(), 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
+        return Err(WRDE_CMDSUB);
+    }
+
+    // `$1` is passed as one argument, so the shell only parses it at the
+    // explicit `eval` point, exactly where wordexp must perform shell syntax.
+    // NUL framing preserves empty words and avoids whitespace-based decoding.
+    let output = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#"eval "set -- $1" || exit $?; printf '%s\0' "$@""#)
+        .arg("wordexp")
+        .arg(input)
+        .output();
+
+    let Ok(output) = output else {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
+        return Err(WRDE_NOSPACE);
+    };
+    if !output.status.success() || (!output.stdout.is_empty() && output.stdout.last() != Some(&0)) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
+        return Err(WRDE_SYNTAX);
+    }
+
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 40, false);
+    if output.stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    output.stdout[..output.stdout.len() - 1]
+        .split(|byte| *byte == 0)
+        .map(|word| CString::new(word).map_err(|_| WRDE_SYNTAX))
+        .collect()
+}
+
 /// POSIX `wordexp` — perform shell-like word expansion.
 ///
 /// Native implementation supporting tilde, variable, and pathname (glob) expansion.
@@ -8562,15 +8645,17 @@ pub unsafe extern "C" fn wordexp(
         return WRDE_SYNTAX;
     }
 
-    // Check for command substitution
-    if syntax_scan.has_command_substitution {
+    let command_words = if syntax_scan.has_command_substitution {
         if (flags & WRDE_NOCMD) != 0 {
             return WRDE_CMDSUB;
         }
-        // For safety, reject command substitution entirely in our implementation.
-        // A full implementation would fork /bin/sh -c "echo $words".
-        return WRDE_CMDSUB;
-    }
+        match expand_command_substitution_with_shell(input) {
+            Ok(words) => Some(words),
+            Err(rc) => return rc,
+        }
+    } else {
+        None
+    };
 
     // Split on IFS (whitespace by default)
     let ifs = std::env::var("IFS").unwrap_or_else(|_| " \t\n".to_string());
@@ -8645,34 +8730,36 @@ pub unsafe extern "C" fn wordexp(
     }
 
     // Unclosed quotes
-    if in_single_quote || in_double_quote {
+    if command_words.is_none() && (in_single_quote || in_double_quote) {
         return WRDE_SYNTAX;
     }
     // An unterminated `$((` is a syntax error, as it is for an unclosed quote.
-    if arith_depth > 0 {
+    if command_words.is_none() && arith_depth > 0 {
         return WRDE_SYNTAX;
     }
 
     // Expand each word: tilde → variables → glob
-    let mut final_words: Vec<CString> = Vec::new();
+    let mut final_words = command_words.unwrap_or_default();
 
-    for word in &result_words {
-        let split_fields = has_unquoted_parameter_expansion(word);
-        // Tilde expansion
-        let expanded = expand_tilde(word);
-        if split_fields {
-            let (expanded, split_mask) = match expand_vars_with_split_mask(&expanded, flags) {
-                Ok(s) => s,
-                Err(e) => return e,
-            };
-            push_wordexp_masked_fields(&mut final_words, &expanded, &split_mask, &ifs);
-        } else {
-            // Variable expansion
-            let expanded = match expand_vars(&expanded, flags) {
-                Ok(s) => s,
-                Err(e) => return e,
-            };
-            push_wordexp_word(&mut final_words, &expanded);
+    if !syntax_scan.has_command_substitution {
+        for word in &result_words {
+            let split_fields = has_unquoted_parameter_expansion(word);
+            // Tilde expansion
+            let expanded = expand_tilde(word);
+            if split_fields {
+                let (expanded, split_mask) = match expand_vars_with_split_mask(&expanded, flags) {
+                    Ok(s) => s,
+                    Err(e) => return e,
+                };
+                push_wordexp_masked_fields(&mut final_words, &expanded, &split_mask, &ifs);
+            } else {
+                // Variable expansion
+                let expanded = match expand_vars(&expanded, flags) {
+                    Ok(s) => s,
+                    Err(e) => return e,
+                };
+                push_wordexp_word(&mut final_words, &expanded);
+            }
         }
     }
 
