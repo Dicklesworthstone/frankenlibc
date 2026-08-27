@@ -37276,3 +37276,42 @@ reworded rather than the gate touched.)
   is the right algorithm for `[16,32)` and there is no packaging of it that does not tax the rest.
   Closing this gap needs the SWAR fold itself to get cheaper — it costs about 49 Ir per eight bytes
   because it folds both operands — not a new tier around it.
+
+## 2026-08-27 — bd-2g7oyh — `strspn`/`strcspn`/`strpbrk`: the shared set scanner compares PADDING lanes — written, NOT MEASURED (fleet down)
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target chosen as an articulation point rather than a widen:
+  one scanner shared by three ops that all lose — `strspn` **104.00 Ir vs live glibc's 58.00 =
+  1.793x**, `strpbrk` 1.641x, `strcspn` 1.009x after its split.
+- **Two hypotheses tested and DISCARDED before writing anything.** (1) `strspn` "shares the entry
+  shape" that took `strcspn` to parity — **false**: its prologue is already `push %r14; push %rbx;
+  sub $0x38` and its 94 Ir is all inline, so the cold-tail split does not apply. My own previous
+  ledger row asserted this as directly actionable; checking cost thirty seconds and it was wrong.
+  (2) Rewriting `swar_ascii_lower` to avoid folding BOTH operands (the articulation point the
+  `strncasecmp` row named): the case-insensitive identity `fold(a)==fold(b)` iff
+  `(a^b)==0 || ((a^b)==0x20 && is_alpha(a))` needs a SWAR alphabetic range check that costs about
+  what the second fold does — ~17 ops against ~21. Priced on paper at ~4 ops per pass, ~12 Ir on a
+  402 Ir op, and dropped as not worth a build.
+- **The defect actually found.** `scan_c_string_for_set4` takes a fixed `[u8; 4]`, so callers with
+  fewer distinct bytes PAD by repeating: `[a0, a1, a0, a1]` for a 2-byte set, `[a0, a1, a2, a2]` for
+  a 3-byte one. Those repeats are real `vpcmpeqb` + `vpor` instructions executed on EVERY 32-byte
+  window — a 2-byte set pays four compares and three ORs to answer what two compares and one OR
+  settle. It affects `strspn`, `strcspn`, `strpbrk`, `strsep` and `strtok`.
+- **The change:** thread the true width as `const N: usize` and emit only `N` compares. `N == 4` is
+  byte-identical to the old body; `N < 4` drops exactly the duplicated lanes, so no window can
+  change its verdict.
+- **NOT COMPILED, NOT MEASURED. No ratio, no A/A null, no candidate sha, because there is no
+  candidate object.** Three consecutive `rch` builds failed: `[RCH] remote hz4 failed [RCH-E104]
+  SSH command timed out (no local fallback)`, then a 560s timeout in the sync phase, then a retry
+  killed at SIGTERM — across roughly 50 minutes, while `rch queue` reported 12 workers available.
+  The 162-line patch is saved at `scratchpad/set_width.patch`.
+- **What IS established:** the call-site coverage. A scripted assertion over the edited source caught
+  **five call sites I had missed** (`strcspn`'s `[r0,r1,r2,r2]` and `[r0,r1,r2,r3]` probes and three
+  others) before anything was written to disk. Eleven sites total now carry an explicit width.
+  Without that assertion the file would have gone to the compiler with mixed call forms.
+- **Reverted; `crates/` clean of my changes.** NOTE: `crates/frankenlibc-abi/src/unistd_abi.rs` and
+  `crates/frankenlibc-abi/tests/conformance_diff_wordexp.rs` are STAGED AND DIRTY from a peer. They
+  are not mine, were not touched, and this commit uses `git commit --only` on the ledger path so
+  they are not swept in.
+- **Next cycle:** apply `scratchpad/set_width.patch`, build, and measure `strspn`, `strcspnL8/32/100`
+  and `strpbrk` together — all three share the scanner, so all three must move or the change is
+  mispriced. `memcmp` and `wcslen` make good untouched controls.
