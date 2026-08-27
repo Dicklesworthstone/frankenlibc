@@ -38584,3 +38584,94 @@ cycle is unchanged: nine instructions of register-save machinery on a leaf path 
 GOT-indirect HTM gate. The remaining structural item at these larger sizes is that the AVX loop's
 head-peel decision — nine instructions to decide whether to align — is still evaluated for every
 size from 256 up.
+
+## 2026-08-27 — bd-2g7oyh — `memchr` computed the answer, threw it away, and rescanned for it: 4.276x -> 3.345x, 3.722x -> 2.723x
+
+**Found by survey, and it was hiding.** Six families were measured against live glibc before picking
+a target, and three of them were fl wins — `strtod` 561.00 vs 887.00, `qsort_i32` 7872.39 vs
+12389.02, `strcspn` at parity 112.00 vs 111.00. Then `memchr` at len 8 came back **107.97 vs 29.00 =
+3.722x**, and at len 16 **124.00 vs 29.00 = 4.276x** — far worse than anything else in the suite and
+never previously measured. `strlen` short (2.606x) and `wcsncmp` (2.478x) also surfaced and are
+recorded here as the next candidates.
+
+**The defect.** Per-function attribution put 76.00 of `memchr`'s 108.00 Ir inside
+`frankenlibc_core::string::mem::memchr` — 76 instructions to scan **eight bytes**. The word loop was:
+
+```rust
+if has_byte_u64(u64_from_chunk(chunk), needle) {
+    // The SWAR probe is exact, so this lookup always resolves.
+    if let Some(j) = chunk.iter().position(|&b| b == needle) { return Some(base + j); }
+}
+```
+
+`has_byte_u64` computes the Mycroft mask, whose high bit is set in exactly the matching byte lanes —
+it already knows *where* the match is — and then reduces it to a bool. The caller, told only "yes",
+walks the eight bytes scalar to recompute the position it had just been handed. That scalar walk was
+the entry.
+
+This is the **discard-the-mask** defect, and it was already named in this very file: a comment above
+`byte_mask_simd_32` records removing `has_byte_simd_32` for doing exactly this in `memrchr`'s SIMD
+panel. The word loop underneath it kept the shape. `memrchr`'s word loop had it too, with
+`.rposition()`, directly below a SIMD panel that resolves correctly from its mask — both fixed here.
+
+**The lever.** `first_byte_u64` / `last_byte_u64` return the index straight from the mask
+(`trailing_zeros() / 8`, and `(63 - leading_zeros()) / 8`), replacing a loop with one instruction.
+Both are built on a shared `zero_byte_mask_u64`, which replaces `zero_byte_u64` — that bool-returning
+primitive was the shape that invited the defect, and once both callers resolved from the mask it and
+`has_byte_u64` were dead. Removed rather than kept behind an `allow(dead_code)`, matching the
+convention the file's own comment sets; the build is checked to emit no dead-code warning for any of
+them. Endianness handling is preserved: the word comes from `from_ne_bytes`, so `to_le()` normalises
+the lane order before the bit scan on either endianness.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and `dladdr`-reported:
+
+| entry | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| `memchr` len 16 | 124.00 | **97.02** | 29.00 | **4.276x** | 3.345x |
+| `memchr` len 8 | 108.00 | **79.00** | 29.02 | 3.722x | 2.723x |
+| `memchr` len 64 | 78.00 | 73.00 | 42.96 | 1.816x | 1.699x |
+| `memrchr` len 8 | 102.00 | 80.00 | 28.00 | 3.643x | 2.857x |
+| `memrchr` (long) | 96.00 | 96.00 | 72.00 | 1.333x | 1.333x | 
+
+**29 instructions removed at `memchr` len 8** (108.00 instructions -> 79.00), 27 at len 16, 22 at
+`memrchr` len 8. The long `memrchr` arm is flat at 96.00 because it resolves in the SIMD panel and
+never reaches the word loop — the change is confined to exactly the tier that had the defect.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 29.00 vs 29.00, ratio 1.000 exactly.
+- **Untouched-family controls:** `memcpy` n=64 49.97 -> 50.00, `memcpy` n=128 64.00 -> 64.02,
+  `strncat` len 40 116.00 -> 116.00, `memcmp` 138.00 -> 138.00, `strlen` short 60.00 -> 59.97,
+  `wcsspn` 60.02 -> 60.00.
+- **Not bench-path-specific:** the resolve is arithmetic on the mask, independent of where in the
+  word the needle sits — which axis A of the driver below sweeps exhaustively.
+
+**The driver was proved able to fail, on the axis that matters.** A new `mchr_conf` differential
+covers both functions on the same haystack, across: the needle's position within the 8-byte word
+(every position of every length 1..80 at eight alignments); **two needles**, so first and last differ
+and a wrong-end resolve is visible at all; all-needle haystacks; the absent-needle `None` path across
+tier boundaries; needle at the very first and very last byte at every tier length; `needle == 0`,
+where the XOR fold is the identity; `0xFF`, the high-bit lane; and `int` needles outside 0..255.
+**125,898 checks, 0 failures, both strict and hardened.**
+
+To show that coverage is real, `first_byte_u64` was deliberately changed to return the LAST match
+instead of the first — a bug invisible on any single-needle haystack — rebuilt, and re-run:
+**1,296 failures, every one on the `double` axis**. The break was reverted and the object rebuilt
+**byte-identical to the measured candidate** (`cmp` verified) before the real runs. `mcpy_conf`
+(15,955) and `fused_conf` (76,160) were also re-run on the same object, both modes, 0 failures —
+**218,013 differential checks total**.
+
+Gate: `cargo test -p frankenlibc-core --lib -- string::mem` **56 passed, 0 failed, 1 ignored**, and
+`cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, both observed compiling and
+executing.
+
+Objects: baseline `ff8a321a70849e3a...` (HEAD), candidate `d908900b2af3cdd4e635fb8ee7bab248...`,
+built locally.
+
+**STILL OPEN, and `memchr` is still the worst entry in the suite at 3.345x.** 97 Ir to find a byte in
+16, against glibc's 29. The remaining shape: 22 Ir in the ABI entry, ~65 in the core scan, 10 in the
+driver. The core scan evaluates three loop guards (fold-256, SIMD-32, word) before a 16-byte input
+reaches the tier that can serve it, then runs the word loop twice; and the ABI entry reaches core
+through a **GOT-indirect cross-crate call** rather than inlining a short-input path the way the other
+string entries do. Either is a real lever; the second is the one the rest of this file already
+solved for its neighbours.
