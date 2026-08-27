@@ -5835,6 +5835,23 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
         return dst;
     }
 
+    // COLD-TAIL SPLIT. Everything below runs only in hardened mode, but its frame was
+    // rented by every deployed call: `strncat`'s entry was six callee-saved pushes plus
+    // `sub $0xa8,%rsp` — 168 bytes of stack — for a strict path that is a NUL scan, a
+    // fused bounded copy and a terminator store. The tail needs that frame (stage
+    // context, an ordering array, decide/observe bookkeeping); the fast path does not.
+    //
+    // Safe to cut here, unlike `strlen`: this tail opens on `stage_context_two`, not on
+    // `string_raw_passthrough_active()`. That bypass is the re-entrancy guard standing
+    // between an interposed entry and a membrane that itself calls back into the same
+    // family, and putting it behind a cold boundary made hardened startup SIGSEGV
+    // deterministically. `strncat` has no such bypass anywhere in this tail.
+    unsafe { strncat_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {

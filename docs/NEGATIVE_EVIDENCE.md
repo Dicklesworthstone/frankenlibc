@@ -38250,3 +38250,70 @@ and could be made hidden for 1 Ir), and three pushes/pops that survive because o
 function still need callee-saved registers. Getting the rest means making the hot path its own
 frameless function, and the `strlen` precedent says that must not be done by pushing
 `string_raw_passthrough_active()` behind a cold boundary.
+
+## 2026-08-27 — bd-2g7oyh — `strncat` rented 168 bytes of stack per call for a branch it never took: 2.743x -> 2.501x
+
+`strncat` was the worst remaining measured ratio once `memcpy` came down, and unlike its
+neighbours it had never been split. Its entry was **six callee-saved pushes plus `sub $0xa8,%rsp`
+— 168 bytes of stack** — set up before anything else on a deployed path that is a NUL scan of
+`dst`, one fused bounded prefix copy, and a terminator store. The frame belongs to the hardened
+tail below it, which builds a stage context, an ordering array, and `decide`/`observe`
+bookkeeping. Every strict-mode call paid for it and then jumped over it.
+
+**The lever.** Cold-tail split: everything from `stage_context_two` down moves into
+`#[cold] #[inline(never)] strncat_validating`, leaving the strict fast path in the entry.
+
+Safe to cut here in a way `strlen` was not, and the distinction is the whole reason that split is
+still refused: `strlen`'s tail opens on `string_raw_passthrough_active()`, the re-entrancy guard
+between an interposed entry and a membrane that itself calls back into the same family, and putting
+*that* behind a cold boundary made hardened startup SIGSEGV deterministically. `strncat`'s tail
+opens on `stage_context_two` and contains no such bypass anywhere — checked before cutting, not
+assumed.
+
+Prologue after the split: `push %r14; push %rbx; push %rax` — the six pushes and the 168-byte
+`sub` are gone.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and self-reported by
+`dladdr` (`INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6`):
+
+| src len | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| 8 | 113.00 | 99.06 | 45.00 | 2.511x | 2.201x |
+| 40 | 159.00 | 145.00 | 57.97 | 2.743x | 2.501x |
+
+**14 instructions -> removed, flat** (159.00 instructions -> 145.00 at len 40, 113.00 -> 99.06 at
+len 8). Flat is the signature of a frame tax rather than a kernel change: the cost was per-call,
+not per-byte, so both lengths move by the same amount.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 57.97 vs 58.00, ratio 1.0005. The
+  incumbent did not move.
+- **Untouched-family controls, exact:** `memcpy` at n=64 53.00 -> 53.00, `wcsspn` 60.00 -> 60.00,
+  `memcmp` 137.97 -> 138.00.
+- **Not bench-path-specific:** the split moves a frame; it does not touch the copy kernel, and the
+  gain is identical at two different source lengths and independent of the input bytes.
+
+Conformance: a new `ncat_conf` differential against live glibc. `strncat`'s contract is "append at
+most `n` bytes, stop at `src`'s NUL, always terminate, return `dst`", so the axes are destination
+length (driving the internal dst-NUL scan across its SIMD panel boundaries), source length, and `n`
+straddling `strlen(src)` in BOTH directions — `n < slen` truncates, `n >= slen` copies whole — swept
+over destination and source alignments 0..63, plus long destinations (255..2048) so the dst scan
+runs many panels before appending. The **whole 8192-byte destination** is compared, not just the
+appended range, so any write past the terminator shows up, along with the returned pointer:
+**21,441 checks, 0 failures in BOTH strict and hardened mode.**
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing. `cargo test -p frankenlibc-abi --test string_abi_test` is **200 passed, 1 failed, 8
+ignored — byte-identical to its pre-change baseline**; the single failure is
+`strlen_bounds_tracked_unterminated_input`, the pre-existing regression from `e3a0b0883` filed this
+session as **bd-k3skh6**, and this change adds no new failures.
+
+Objects: baseline `7f37737993855b3cf724228a5d59b259dff4746dd51dbc60d1c07c273daa8d81` (HEAD),
+candidate `e24f86ae6d5b07417ea4a897a7d40eea33eec1cf8a85dd27640a4fcaaabf431a`, both built locally.
+
+**The identical gap next door, named by disassembly rather than guessed.** `strcat` opens
+`push %rbp; push %r15; push %r14; push %r13; push %r12; push %rbx` — the same six-push shape
+`strncat` had, and it is likewise unsplit. That is the next lever in this family. Beyond it,
+`strncat` at 2.501x still spends its remaining excess on the dst-NUL scan, which glibc fuses with
+the append; fl scans `dst` to its end and only then starts copying.
