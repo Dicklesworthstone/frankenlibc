@@ -20,18 +20,15 @@
 //! Run: `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release \
 //!       -p frankenlibc-bench --features abi-bench --example getnameinfo_ab`
 
-use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use frankenlibc_abi::resolv_abi as fl;
 use sha2::{Digest, Sha256};
 
-const KERNEL_SAMPLES: usize = 400;
-const KERNEL_REPS: usize = 20_000;
 // DEPLOYED_REPS raised 20 -> 400 so each paired sample times ~560us of work instead of ~30us: the
 // null-control cv on the first run was 77% (an A/A arm beat itself by 16%), which is Instant::now()
 // jitter on too-short samples, not a real effect. Longer samples crush that relative jitter.
@@ -145,31 +142,6 @@ fn make_sockaddr() -> libc::sockaddr_in {
     sin
 }
 
-// --- kernel arms: the two String allocations themselves ---------------------------
-
-#[inline(never)]
-fn kernel_orig() -> u64 {
-    let mut acc = 0u64;
-    for _ in 0..KERNEL_REPS {
-        fl::bench_legacy_getnameinfo_numeric_alloc(black_box(OCTETS), black_box(PORT));
-        acc = acc.wrapping_add(1);
-    }
-    black_box(acc)
-}
-
-/// CAND kernel: what the deployed path now does — format into stack buffers, no allocation.
-#[inline(never)]
-fn kernel_cand() -> u64 {
-    let mut acc = 0u64;
-    for _ in 0..KERNEL_REPS {
-        acc = acc.wrapping_add(black_box(fl::bench_getnameinfo_numeric_stack(
-            black_box(OCTETS),
-            black_box(PORT),
-        )) as u64);
-    }
-    black_box(acc)
-}
-
 // --- deployed arms ----------------------------------------------------------------
 
 type GetNameInfo = unsafe extern "C" fn(
@@ -183,13 +155,13 @@ type GetNameInfo = unsafe extern "C" fn(
 ) -> c_int;
 
 #[inline(never)]
-fn deployed_cand(sin: &libc::sockaddr_in) -> u8 {
+fn deployed_cand(f: GetNameInfo, sin: &libc::sockaddr_in) -> u8 {
     let mut acc = 0u8;
     let mut host = [0 as c_char; 64];
     let mut serv = [0 as c_char; 32];
     for _ in 0..DEPLOYED_REPS {
         let rc = unsafe {
-            fl::getnameinfo(
+            f(
                 black_box(sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
                 black_box(size_of::<libc::sockaddr_in>() as libc::socklen_t),
                 host.as_mut_ptr(),
@@ -200,32 +172,6 @@ fn deployed_cand(sin: &libc::sockaddr_in) -> u8 {
             )
         };
         assert_eq!(rc, 0, "fl getnameinfo failed");
-        acc = acc.wrapping_add(host[0] as u8).wrapping_add(serv[0] as u8);
-    }
-    black_box(acc)
-}
-
-#[inline(never)]
-fn deployed_orig(sin: &libc::sockaddr_in) -> u8 {
-    let mut acc = 0u8;
-    let mut host = [0 as c_char; 64];
-    let mut serv = [0 as c_char; 32];
-    for _ in 0..DEPLOYED_REPS {
-        // ORIG = the full membrane path (adaptive check-ordering bookkeeping) the deployed strict
-        // fast path now skips. CAND (deployed_cand) is `fl::getnameinfo`, which takes the strict
-        // fast path in this non-test binary (MODE_UNRESOLVED => strict_passthrough_active()).
-        let rc = unsafe {
-            fl::bench_getnameinfo_full(
-                black_box(sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
-                black_box(size_of::<libc::sockaddr_in>() as libc::socklen_t),
-                host.as_mut_ptr(),
-                host.len() as libc::socklen_t,
-                serv.as_mut_ptr(),
-                serv.len() as libc::socklen_t,
-                black_box(NI_NUMERICHOST | NI_NUMERICSERV),
-            )
-        };
-        assert_eq!(rc, 0, "fl getnameinfo_full failed");
         acc = acc.wrapping_add(host[0] as u8).wrapping_add(serv[0] as u8);
     }
     black_box(acc)
@@ -246,6 +192,59 @@ fn host_getnameinfo() -> (GetNameInfo, ObjectIdentity) {
             symbol_object(s.cast_const()),
         )
     }
+}
+
+fn dl_error(context: &str) -> String {
+    // SAFETY: dlerror returns either null or a NUL-terminated loader message.
+    let error = unsafe { libc::dlerror() };
+    if error.is_null() {
+        format!("{context}: unknown dynamic-loader error")
+    } else {
+        // SAFETY: non-null dlerror results are NUL-terminated strings.
+        format!("{context}: {}", unsafe { CStr::from_ptr(error) }.to_string_lossy())
+    }
+}
+
+fn fl_getnameinfo() -> (GetNameInfo, ObjectIdentity) {
+    let explicit = std::env::var_os("FRANKENLIBC_ABI_SO")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let executable = std::env::current_exe().expect("resolve benchmark executable");
+            executable
+                .parent()
+                .and_then(Path::parent)
+                .expect("benchmark executable has target/release/examples parent")
+                .join("libfrankenlibc_abi.so")
+    });
+    let supplied = sha256_file(&explicit);
+    // This example deliberately has no static FrankenLibC calls.  A static ABI
+    // dependency exports its own dlopen/dlsym and turns this into a benchmark
+    // of that loader implementation, which rejects RTLD_DEEPBIND.  Resolving
+    // only the explicit candidate keeps libc's dynamic loader live and makes
+    // the reported candidate object the one that actually serves the calls.
+    print_identity("FL_ARTIFACT", &supplied);
+    let path = CString::new(supplied.path.as_os_str().as_bytes())
+        .expect("FrankenLibC artifact path has no NUL");
+    // SAFETY: the verified artifact stays loaded through the process lifetime;
+    // DEEPBIND models the deployed replacement rather than resolving its calls
+    // through the host libc already linked into this benchmark.
+    let handle = unsafe {
+        libc::dlopen(
+            path.as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
+        )
+    };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC ABI artifact"));
+    // SAFETY: `handle` is live and the symbol name is NUL-terminated.
+    let symbol = unsafe { libc::dlsym(handle, c"getnameinfo".as_ptr()) };
+    assert!( !symbol.is_null(), "{}", dl_error("dlsym FrankenLibC getnameinfo"));
+    let loaded = symbol_object(symbol.cast_const());
+    assert_eq!(
+        loaded.sha256, supplied.sha256,
+        "loaded FrankenLibC getnameinfo differs from the supplied artifact"
+    );
+    // SAFETY: the exported getnameinfo symbol has the C signature in GetNameInfo.
+    (unsafe { std::mem::transmute(symbol) }, loaded)
 }
 
 #[inline(never)]
@@ -271,7 +270,7 @@ fn host(f: GetNameInfo, sin: &libc::sockaddr_in) -> u8 {
     black_box(acc)
 }
 
-fn verify(hf: GetNameInfo, sin: &libc::sockaddr_in) {
+fn verify(ff: GetNameInfo, hf: GetNameInfo, sin: &libc::sockaddr_in) {
     let sa = (sin as *const libc::sockaddr_in).cast::<libc::sockaddr>();
     let salen = size_of::<libc::sockaddr_in>() as libc::socklen_t;
     let flags = NI_NUMERICHOST | NI_NUMERICSERV;
@@ -279,7 +278,7 @@ fn verify(hf: GetNameInfo, sin: &libc::sockaddr_in) {
     let mut fh = [0 as c_char; 64];
     let mut fs = [0 as c_char; 32];
     let frc = unsafe {
-        fl::getnameinfo(
+        ff(
             sa,
             salen,
             fh.as_mut_ptr(),
@@ -447,66 +446,48 @@ fn main() {
         sha256_file(&std::env::current_exe().expect("resolve benchmark executable"));
     print_identity("BENCH", &bench_identity);
     let (hf, incumbent_identity) = host_getnameinfo();
+    let (ff, fl_identity) = fl_getnameinfo();
     print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
     println!("INCUMBENT_LINKAGE live_process_dlopen symbol=getnameinfo");
-    verify(hf, &sin);
+    println!("FL_LINKAGE explicit_dlopen_local_deepbind symbol=getnameinfo");
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "incumbent and candidate objects are byte-identical"
+    );
+    assert_ne!(
+        hf as usize, ff as usize,
+        "incumbent and candidate getnameinfo addresses are identical"
+    );
+    println!(
+        "ARM_DISTINCT symbol=getnameinfo incumbent_address={:#x} fl_address={:#x}",
+        hf as usize, ff as usize
+    );
+    verify(ff, hf, &sin);
 
-    let mut summary: Vec<String> = Vec::new();
-
-    // NULL CONTROL FIRST — identical arm twice, per function.
-    let (n1, n2) = paired(KERNEL_SAMPLES, kernel_cand, kernel_cand);
-    summary.push(report(
-        "NULL CONTROL kernel (cand vs cand)",
-        KERNEL_REPS as f64,
-        &n1,
-        &n2,
-        "(ns/op)",
-    ));
+    // NULL CONTROL FIRST — identical candidate arm twice.
     let (m1, m2) = paired(
         DEPLOYED_SAMPLES,
-        || deployed_cand(&sin),
-        || deployed_cand(&sin),
+        || deployed_cand(ff, &sin),
+        || deployed_cand(ff, &sin),
     );
-    summary.push(report(
+    report(
         "NULL CONTROL deployed (cand vs cand)",
         DEPLOYED_REPS as f64,
         &m1,
         &m2,
         "(ns/call)",
-    ));
-
-    let (ko, kc) = paired(KERNEL_SAMPLES, kernel_orig, kernel_cand);
-    summary.push(report(
-        "KERNEL numeric alloc",
-        KERNEL_REPS as f64,
-        &ko,
-        &kc,
-        "(ns/op)",
-    ));
-
-    let (dpo, dpc) = paired(
-        DEPLOYED_SAMPLES,
-        || deployed_orig(&sin),
-        || deployed_cand(&sin),
     );
-    summary.push(report(
-        "DEPLOYED getnameinfo",
-        DEPLOYED_REPS as f64,
-        &dpo,
-        &dpc,
-        "(ns/call)",
-    ));
 
     // The campaign row: both A/A controls and the live host/FL comparison are
     // interleaved in this one invocation. `host_getnameinfo` is a handle-scoped
     // lookup in the already-live process libc, not the benchmark's FL export.
     let (host_null_a, host_null_b) = paired(DEPLOYED_SAMPLES, || host(hf, &sin), || host(hf, &sin));
-    let (host_times, fl_times) =
-        paired(DEPLOYED_SAMPLES, || host(hf, &sin), || deployed_cand(&sin));
+    let (host_times, fl_times) = paired(
+        DEPLOYED_SAMPLES,
+        || host(hf, &sin),
+        || deployed_cand(ff, &sin),
+    );
     report_live_incumbent(&fl_times, &host_times, &m1, &m2, &host_null_a, &host_null_b);
 
-    println!("\n===== SUMMARY (getnameinfo numeric String elision) =====");
-    for line in &summary {
-        println!("  {line}");
-    }
 }
