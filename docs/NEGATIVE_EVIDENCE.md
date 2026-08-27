@@ -38413,3 +38413,89 @@ itself and 70.00 in `fused_strncpy_prefix` against glibc's 58.00 for the whole o
 one head window, one aligned SIMD window and the two inlined copies. There is no longer a single
 dominant line item, which usually means the next real gain is structural — fusing the `dst` scan
 with the append — rather than another tax removal.
+
+## 2026-08-27 — bd-2g7oyh — `memcpy` was moving 64 bytes through half-width registers; widening wins 32..127 and costs +1 everywhere else
+
+**This row records a TRADE, not a clean win.** The lever is favourable but not free, and the sizes
+that pay are named below rather than averaged away.
+
+**How the target was found.** `memcpy` at 2.409x was the worst measured ratio after the previous
+cycle. Instruction-level attribution (callgrind `--dump-instr`, same two-point difference) of the
+executed path at n=64 gave all 43 self instructions, and reading them against the disassembly split
+the cost three ways: 9 instructions of register save/shuffle (three pushes, three `mov`s into
+`%rbx`/`%r14`/`%r15`, three pops), 5 for the HTM test-mode gate, and — the item worth attacking —
+**eight `vmovups` on 16-byte `xmm` registers to move sixty-four bytes**, because `copy_unaligned_32`
+was two `u128` halves. glibc moves the same 64 bytes in four.
+
+**The lever.** Make `copy_unaligned_32` one 32-byte `Simd<u8, 32>` move. This is unconditionally
+legal here: the crate builds with `-Ctarget-feature=+avx2,+fma` (`.cargo/config.toml`), which is also
+why the halves were already VEX-encoded `vmovups` rather than SSE `movups` — the 256-bit form needs
+no wider guarantee than the 128-bit one already being emitted. `Simd<u8, 32>` and not a `[u8; 32]`
+aggregate, because an aggregate copy is what LLVM lowers back to `@llvm.memcpy`, which in this cdylib
+resolves to our own interposed `memcpy` and self-recurses; the emitted `memcpy` was disassembled
+after the change and contains no call back into itself and no panic path.
+
+**The cost, found by measurement not prediction.** Using `ymm` anywhere in the function makes LLVM
+insert `vzeroupper` before every return it can reach. The first version let the sub-32 classes fall
+through to a shared epilogue, so they paid for a register width they never used: n=16 went
+**48.00 -> 50.00** and n=8 **46.97 -> 48.00**. Restructuring so `[16,32)` is tested first and returns
+directly recovered n=16 to exactly neutral, at the price of ~1 Ir back at the wider sizes. That
+second version is what shipped; the first is recorded here because the +2 at n=16 is the kind of
+regression an unmeasured "obviously wider is better" change ships silently.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and `dladdr`-reported:
+
+| entry | fl before | fl after | live glibc | ratio before | ratio after | delta |
+|---|---|---|---|---|---|---|
+| `memcpy` n=8 | 47.00 | 48.00 | 23.00 | 2.043x | 2.087x | **+1.00 LOSS** |
+| `memcpy` n=16 | 48.00 | 48.00 | 21.02 | 2.283x | 2.283x | 0 |
+| `memcpy` n=32 | 53.00 | 50.02 | 22.00 | 2.409x | 2.274x | −2.98 |
+| `memcpy` n=64 | 53.00 | 50.02 | 22.02 | 2.407x | 2.272x | −2.98 |
+| `memcpy` n=96 | 58.00 | 54.00 | 32.00 | 1.813x | 1.688x | −4.00 |
+| `memcpy` n=128 | 80.97 | 81.97 | 31.97 | 2.532x | 2.564x | **+1.00 LOSS** |
+| `memcpy` n=256 | 94.00 | 95.00 | — | — | — | **+1.00 LOSS** |
+| `strncat` len 40 | 120.00 | 115.97 | 58.00 | 2.069x | 2.000x | −4.03 |
+
+**Read the losses honestly.** `vzeroupper` is a flat +1 on every `memcpy` return. Sizes below 16 get
+nothing back, because those classes move 4 or 8 bytes. Sizes at or above 128 get nothing back either,
+and this is the sharper point: those paths are inline `rep movsb` and a hand-written AVX asm loop, so
+they never touch `copy_unaligned_32` at all, yet they pay the tax because it is the *function* that
+uses `ymm`, not the branch. n=16 is neutral only because the restructure bought it back.
+
+The trade is favourable — −3 to −4 across `[32,128)`, plus a −4.03 co-win on `strncat`, against +1 at
+three points — and `vzeroupper` is the ordinary price of 256-bit registers that glibc's own AVX
+memcpy variants also pay. But it is a trade, and a workload consisting only of sub-16-byte copies
+would be very slightly worse off after this commit.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 22.00 vs 22.00, ratio 1.000 exactly.
+- **Kernel-sharing entries, all measured rather than assumed** (`raw_copy_under_128` is
+  `#[inline(always)]`, so widening it reaches every entry that inlines it): `strncat` len 8
+  79.00 -> 79.02, `strcat` len 8 79.00 -> 79.00, `strcat` len 40 95.00 -> 95.02 — neutral; only
+  `strncat` len 40, which copies a full 32-byte window, actually moved.
+- **Untouched-family controls:** `memcmp` 138.00 -> 138.00, `wcsspn` 60.00 -> 60.02.
+- **Not bench-path-specific:** the change is a register width inside a size class keyed on `n`; it
+  has no alignment or content dependence, and the conformance sweep exercises both.
+
+Conformance, all three drivers on the candidate object, **both strict and hardened**: `mcpy_conf`
+8,473; `ncat_conf` 21,441; `fused_conf` 76,160 — **106,074 checks, 0 failures**. The width change is
+exactly the kind that shows up as an overrun past a copy's end, which is why every driver compares
+the whole destination buffer rather than the copied range.
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing. `cargo test -p frankenlibc-abi --test string_abi_test` **200 passed, 1 failed, 8
+ignored — byte-identical to its pre-change baseline**; the one failure is the pre-existing
+`strlen_bounds_tracked_unterminated_input` regression from `e3a0b0883`, filed as **bd-k3skh6**.
+
+Objects: baseline `535ff2d9b400bc32...` (HEAD), first version (shared epilogue, +2 at n=16)
+`fl_ymm.so`, candidate `fl_ymm2.so`, all built locally.
+
+**STILL OPEN at 2.272x**, and what is left is no longer the copy. Of the 39 executed instructions at
+n=64, four are the copy itself. The rest: three pushes, three pops and three `mov`s of the arguments
+into callee-saved registers — **9 instructions of register-save machinery on what is now a leaf
+path** — plus 5 for the HTM gate, whose `HTM_TEST_MODE` flag is still GOT-indirect (`mov` a GOT slot
+then `movzbl` through it, where the adjacent `MODE_STATE` is a single rip-relative `movzbl`). The
+register machinery exists because the cold branches still inline into the same function, and the
+`strlen` precedent says the `string_raw_passthrough_active()` bypass among them must not be pushed
+behind a cold boundary.

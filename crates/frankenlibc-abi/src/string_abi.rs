@@ -774,14 +774,19 @@ unsafe fn raw_copy_under_128(dst: *mut u8, src: *const u8, n: usize) {
             }
             return;
         }
+        // [16,32) FIRST, and returning directly, so the whole sub-32 range reaches a return
+        // without any 256-bit register being live on the path. `vzeroupper` is inserted per
+        // return block that a `ymm` def can reach, so when the small classes fell through to
+        // a shared epilogue below they paid for a register width they never used: n=16 went
+        // 48.00 -> 50.00 and n=8 46.97 -> 48.00 purely from that merge.
+        if n < 32 {
+            copy_unaligned_16(dst, src);
+            copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
+            return;
+        }
         if n <= 64 {
-            if n < 32 {
-                copy_unaligned_16(dst, src);
-                copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
-            } else {
-                copy_unaligned_32(dst, src);
-                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
-            }
+            copy_unaligned_32(dst, src);
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
         } else {
             copy_unaligned_32(dst, src);
             copy_unaligned_32(dst.add(32), src.add(32));
@@ -1481,10 +1486,27 @@ unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
 
 #[inline]
 unsafe fn copy_unaligned_32(dst: *mut u8, src: *const u8) {
-    // SAFETY: caller guarantees 32 readable/writable bytes.
+    // ONE 32-byte `ymm` move, not two `u128` halves. As two halves this emitted four
+    // `vmovups` on `xmm`, so a 64-byte `memcpy` — the commonest size there is — issued
+    // EIGHT of them to move sixty-four bytes, using half of each register. glibc moves
+    // the same 64 bytes in four.
+    //
+    // Unconditionally legal here: the crate builds with `-Ctarget-feature=+avx2,+fma`
+    // (`.cargo/config.toml`), which is also why the halves were already VEX-encoded
+    // `vmovups` rather than SSE `movups` — the 256-bit form needs no wider guarantee
+    // than the 128-bit one already being emitted.
+    //
+    // `Simd<u8, 32>` rather than a `[u8; 32]` aggregate: an aggregate copy is what LLVM
+    // lowers back to `@llvm.memcpy`, which in this cdylib resolves to our own interposed
+    // `memcpy` and self-recurses. This is the same `from_slice`/`copy_to_slice` pattern
+    // the fused strcpy/strncpy kernels in this file already rely on, and the emitted code
+    // is checked for a `call` back into `memcpy` after every change here.
+    //
+    // SAFETY: caller guarantees 32 readable/writable bytes; the slices are exactly 32
+    // long, so `from_slice`/`copy_to_slice` cannot panic.
     unsafe {
-        copy_unaligned_16(dst, src);
-        copy_unaligned_16(dst.add(16), src.add(16));
+        let v = core::simd::Simd::<u8, 32>::from_slice(core::slice::from_raw_parts(src, 32));
+        v.copy_to_slice(core::slice::from_raw_parts_mut(dst, 32));
     }
 }
 
