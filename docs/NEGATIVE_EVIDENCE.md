@@ -36791,3 +36791,51 @@ reworded rather than the gate touched.)
   (the driver prints `ARM_DISTINCT` with both addresses), two-point over 2000 marginal calls.
 - Objects: baseline (HEAD) `3ed3a25fdf98920752260cbd5c75e77629d93cf3bf11d1f3384eb8ee5745b746`,
   candidate `bbd3ce65c9f4984496ce718f399a7414c2b3d9af36f2e20813edc7e6af01b373`.
+
+## 2026-08-26 — `tsearch` lookups: 1.633x -> 0.666x (+269 Ir) via a read-only descent behind a one-bit per-tree hint, with NO cost to inserts
+
+- **Op.** `tsearch` on keys already present — the surface a new driver arm exposed last cycle at
+  **455.02 Ir vs live glibc's 278.70 = 1.633x**, the worst ratio standing in the suite outside the
+  excluded bound families. It was invisible before because `tsearch_tdelete` deletes before every
+  insert, so its `tsearch` always misses.
+- **The change, in two parts.** (1) `tsearch` is find-OR-insert, and the find half never modifies
+  the tree, yet `insert_find` walked it with the full insert machinery — `Option<Box<Node>>`
+  `take()` and write-back at every level, plus `fix_up` from the match back to the root. `RbTree::find`
+  is an iterative descent that does none of that. (2) An unconditional read-only-first form is a
+  TRADE, not a win: a miss then descends twice, doubling the C `compar` callbacks. So the descent
+  sits behind **one bit of per-tree history**: after a hit, try `find` first; after a miss, go
+  straight to `insert_find`. A fresh tree starts `false`, so bulk construction never pays the extra
+  descent, and `len` being unchanged after `insert_find` is an exact "it was a hit" signal that
+  costs two loads.
+- **Counted mechanism:** the lookup runs **455 instructions -> 186 instructions**; the
+  insert/delete pair runs **1678 instructions -> 1676**.
+
+| family | glibc | HEAD | always-find | **hint (shipped)** | HEAD x | hint x | saved |
+|---|---|---|---|---|---|---|---|
+| `tsearch_hit` (lookup) | 278.70 | 455.02 | 181.56 | **185.56** | 1.633x | **0.666x** | **+269.46** |
+| `tsearch_tdelete` (insert+delete) | 1292.29 | 1677.74 | 1829.10 | **1676.10** | 1.298x | 1.297x | **+1.64** |
+| `snprintf` | 1692.00 | 2585.00 | 2585.00 | 2585.00 | 1.528x | 1.528x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A null PASSES at exactly 0.00 Ir on all four families.**
+- **fl now BEATS live glibc on `tsearch` lookups, 0.666x**, having lost at 1.633x, and the insert
+  shape does not pay for it — it improves by 1.64 Ir. The `always-find` column is the variant that
+  was measured and NOT shipped: +273 on hits but **-151 on misses** (1.298x -> 1.415x). The hint
+  keeps 269 of that 273 and gives back none of it.
+- Conformance: a new `tsearch_conf` differential against live glibc via `dlmopen` — six rounds over
+  a 256-key space, each key searched, immediately re-searched (so the hint is "hit"), `tfind`-probed,
+  and every fourth key deleted and re-probed (so the hint flips back), comparing presence and the
+  dereferenced stored key against glibc every time: **4992 checks, 0 failures** in BOTH strict and
+  hardened mode. The hint flipping in both directions is the specific thing under test.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `3ed3a25fdf98920752260cbd5c75e77629d93cf3bf11d1f3384eb8ee5745b746`,
+  always-find variant `90560be5a1f6d758a05350922c9c5fd1e59846060eb41dbd4b0b9db75d0b565b`,
+  shipped hint `2568279356286a438f189fc8b455c2a5f54b0d6609eef75f60955d17bf6dc468`.
+- **Lesson.** Two cycles ago the same op produced a near one-for-one trade (+52.72 / -51.99) and was
+  rejected as "not my call". The trade was not inherent — it was the cost of applying one strategy to
+  two opposite shapes. A single bit of measured history picked per tree instead of guessing globally,
+  and the choice disappeared. **When a lever is a trade, check whether the two sides can be told
+  apart at runtime before handing the decision to someone else.**
