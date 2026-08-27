@@ -402,6 +402,49 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
         return limit;
     }
 
+    // MEDIUM BOUNDS [32, 256): the tier that was missing. Below this the
+    // overlapping-ends probes above resolve in one or two 16-lane compares; at 256
+    // and above the folded block amortises. In between, a bound fell past every
+    // tier into the 64-LANE panel loop below -- and `Simd::<u32, 64>` is eight ymm
+    // registers, so finding a NUL at element 31 of a 64-element bound loaded eight
+    // vectors to answer what two can.
+    //
+    // Stepped 16-lane panels with early exit instead, then one overlapping panel
+    // ending exactly at `limit` for a bound that is not a multiple of 16. Left-to-
+    // right precedence is preserved: each panel is tested in order and resolved
+    // from its own mask, and the overlapping tail can only report an index at or
+    // after the last full panel it follows.
+    // The RANGE, not just the upper end. The tiers above cover 4..32, so a bare
+    // `limit < BLOCK` also admits 0..=3 -- where `limit - 16` underflows and the
+    // overlapping tail indexes a slice at `usize::MAX - 14`. Caught by the bound
+    // sweep in `wnlen_conf`, which is why that driver exists.
+    if (32..BLOCK).contains(&limit) {
+        let z16 = Simd::<u32, 16>::splat(0);
+        let mut i = 0usize;
+        while i + 16 <= limit {
+            let m = Simd::<u32, 16>::from_slice(&scan[i..i + 16])
+                .simd_eq(z16)
+                .to_bitmask();
+            if m != 0 {
+                return i + m.trailing_zeros() as usize;
+            }
+            i += 16;
+        }
+        if i < limit {
+            // `limit >= 32` here, so `limit - 16` is a valid start and lies at or
+            // before `i`; lanes below `i` re-test elements already proven non-NUL,
+            // which cannot change the answer.
+            let start = limit - 16;
+            let m = Simd::<u32, 16>::from_slice(&scan[start..])
+                .simd_eq(z16)
+                .to_bitmask();
+            if m != 0 {
+                return start + m.trailing_zeros() as usize;
+            }
+        }
+        return limit;
+    }
+
     let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
