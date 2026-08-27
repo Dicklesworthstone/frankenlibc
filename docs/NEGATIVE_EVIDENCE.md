@@ -37365,3 +37365,65 @@ reworded rather than the gate touched.)
   candidate (local) `5fabdbd705647c204dc7ceea525aec00ee97a30510b8f9b2078c667bec006164`.
 - **Standing losses are unchanged:** `memcmp` 1.943x, `strspn` 1.793x, `wcslen` 1.675x,
   `strpbrk` 1.641x, `strcspnL8` 1.585x.
+
+## 2026-08-27 — bd-2g7oyh — `wcsrchr` at length 8 is 2.930x, the suite's new worst; peeling the first fold block wins +18 there and costs 2 Ir everywhere else (REJECTED as a trade)
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Two ops were examined and dismissed on evidence before this
+  one, which is the point of recording them: **`memcmp`** (1.943x) is at its documented floor, and
+  **`strspn`** (1.793x) now has a complete instruction-level accounting — 94 Ir = 38 in a
+  13-instruction 32-byte loop that already emits only THREE `vpcmpeqb` (the compiler having merged
+  the padded fourth), ~41 in necessary setup, ~15 in the tail. Neither has a lever.
+- **A new worst surface, found by sweeping a length the suite never ran.**
+  `wide_last_before_nul_simd`'s own A/B is documented as covering **n=256..65536**; the driver only
+  ever ran n=31. Adding a `wcsrchrL<n>` arm:
+
+| length | glibc | fl | ratio | excess |
+|---|---|---|---|---|
+| **8** | 43.00 | 126.00 | **2.930x** | +83.00 |
+| 31 | 69.00 | 126.03 | 1.826x | +57.03 |
+| 64 | 108.00 | 199.00 | 1.843x | +91.00 |
+| 127 | 144.00 | 225.03 | 1.563x | +81.03 |
+| 256 | 252.00 | 355.00 | 1.409x | +103.00 |
+| 1024 | 828.00 | 979.00 | 1.182x | +151.00 |
+
+  **126 Ir at length 8 and 126 at length 31 — a FLAT fixed charge.** 2.930x is now the worst ratio
+  standing anywhere in this suite.
+- **The change.** The 128-byte fold loads four panels and runs eight compares before looking at
+  anything — right once a string is long, wrong for one ending inside the first block. Peel ONE
+  block and check each panel as it loads, leaving the steady-state fold's deferred extraction
+  untouched. The peel must be a whole 128-byte block: a 2-panel peel would leave `i` 64-byte aligned
+  and break the fold's page-safety-by-alignment argument.
+- **Counted mechanism:** length 8 runs **126 instructions -> 108**; length 1024 runs
+  **979 instructions -> 981**.
+
+| family | glibc | HEAD | peel | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcsrchrL8` | 43.00 | 126.00 | 108.00 | **2.930x** | **2.510x** | **+18.00** |
+| `wcsrchrL31` | 69.00 | 126.03 | 122.00 | 1.826x | 1.768x | +4.03 |
+| `wcsrchrL64` | 108.00 | 199.00 | 201.00 | 1.843x | 1.861x | -2.00 |
+| `wcsrchrL127` | 144.00 | 225.03 | 227.00 | 1.563x | 1.576x | -1.97 |
+| `wcsrchrL256` | 252.00 | 355.00 | 357.00 | 1.409x | 1.416x | -2.00 |
+| `wcsrchrL1024` | 828.00 | 979.00 | 981.00 | 1.182x | 1.185x | -2.00 |
+| `wcschr` | 53.00 | 92.00 | 92.00 | 1.736x | 1.735x | +0.00 |
+| `wcslen` | 39.97 | 67.00 | 67.00 | 1.676x | 1.675x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9994 .. 1.0000.** Objects self-reported by the process:
+  `FL_OBJECT=./fl_wrpeel.so`, `INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6` via `dladdr`, arms
+  distinct by pointer — two ELFs, one the system glibc, not a self-compare. Both objects built
+  LOCALLY (`RCH_CARGO_WRAPPER_BYPASS=1 env -u CARGO_TARGET_DIR`, 10s incremental) because
+  fleet-built ELFs target glibc 2.43 and this host is 2.42.
+- **REJECTED, and it is the CLOSEST call of the campaign.** The asymmetry is 18:2, not the 169:47 of
+  the `strncasecmp` panel — the cost is a flat 2 Ir, under 1% at every length above 32, and the win
+  is 14% on the suite's worst ratio. But four of six lengths still regress and there is no runtime
+  signal to separate them: the peel commits before the length is known, which is exactly what makes
+  it cheap. I am not choosing a length distribution on the library's behalf; the numbers above make
+  that call trivial for an owner who knows one.
+- **Not a bench-input artifact:** it pays for every string ending within 32 wide chars, not for the
+  one benchmark point, and it was measured across six lengths precisely to establish that.
+- Not landed; reverted, `crates/` clean of my changes. Patch kept at
+  `scratchpad/wcsrchr_peel.patch`.
+- Objects: baseline `e4be617e6d63bd58524e24f4d3416e75f88692c88e22dc945cda07d36d0b9900`,
+  candidate `b66ac189f7d0f884a0b89931a85f5e3a99b4502263c31c673d02e62819928ecb`.
+- **STILL OPEN:** `wcsrchr` at short lengths is 2.930x and its cost is fixed, not per-element —
+  108 Ir even with the peel, against glibc's 43. The remaining charge is the entry (31 Ir) plus a
+  scanner prologue that assumes a long string.
