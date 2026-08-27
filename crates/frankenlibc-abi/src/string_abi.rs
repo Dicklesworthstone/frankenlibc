@@ -3607,7 +3607,7 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
             }
             return (start + m.trailing_zeros() as usize, false);
         }
-        }
+
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
             && wide_read_within_page(p2 as usize + i)
