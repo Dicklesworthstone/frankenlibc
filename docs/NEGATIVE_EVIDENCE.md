@@ -37956,3 +37956,57 @@ reworded rather than the gate touched.)
   `strfmon` (280), `strcasestr` (232), `strtok_r`/`strncat` (216) — none measured yet.
 - **STILL OPEN:** `wcsspn` 2.357x is now the worst standing ratio, `wcsrchr` short/unaligned ~2.5x,
   `memcmp` 1.944x, `wcsnlen` 1.919x, `strspn` 1.793x.
+
+## 2026-08-27 — bd-2g7oyh — `wcsspn` built a 128-bool table to answer three comparisons: 2.357x -> 1.429x, and the first two versions were WRONG then SLOWER
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target is the suite's worst standing ratio, `wcsspn`:
+  **99.00 Ir vs live glibc's 42.00 = 2.357x**. Its bench stops at element 0, so essentially all of
+  that is fixed cost.
+- **The gap.** `wcsspn`'s strict path intercepts `accept_len == 1` with a direct compare and sends
+  everything larger to `WideCharSet::new`, which zeroes and fills a 128-bool table — the reason the
+  entry still carried `sub $0x118` (280 bytes of stack) after last cycle's split. The narrow side
+  does not have this gap: `strspn` and `strcspn` both intercept sets of 1..=4 with splat compares
+  before building anything.
+- **VERSION 1 WAS INCORRECT AND CONFORMANCE CAUGHT IT.** Gating on `accept_len <= 4` also admits the
+  EMPTY set, where `a0` is the terminator itself: `*accept.add(1)` reads past the end of the set, and
+  a NUL in `s` then matches `a0`, so the span runs off the string. **4 failures, strict mode only** —
+  hardened never takes this path. `WideCharSet` had handled length 0 correctly by having no members.
+  Fixed to `(2..=4)`.
+- **VERSION 2 WAS CORRECT AND PARTLY SLOWER.** The direct chain costs one comparison per member per
+  element, so at four members it loses to a single table lookup once the span is long: **-56.00 Ir**
+  on a 4-member set over a 100-element span, against +332 and +333 at two and three. Narrowed to
+  `(2..=3)`, which is where the crossover sits.
+- **Counted mechanism:** `wcsspn` runs **99 instructions -> 60**; the 2-member spanning call runs
+  **794 -> 459**.
+
+| family | glibc | HEAD | v2 `(2..=4)` | **v3 shipped `(2..=3)`** | HEAD x | v3 x | saved |
+|---|---|---|---|---|---|---|---|
+| `wcsspn` (3-member, stops at 0) | 42.00 | 99.00 | 66.00 | 60.00 | **2.357x** | **1.429x** | **+39.00** |
+| `wcsspnRun2` (spans 100) | 1036.00 | 794.00 | 461.97 | 459.00 | 0.766x | **0.443x** | **+335.00** |
+| `wcsspnRun3` (spans 100) | 1042.03 | 799.00 | 466.00 | 660.00 | 0.767x | 0.633x | +139.00 |
+| `wcsspnRun4` (spans 100) | 1048.00 | 811.00 | 867.00 | 812.00 | 0.774x | 0.775x | -1.00 |
+| `wcscspn` | 3157.98 | 1001.97 | 1002.00 | 1002.03 | 0.317x | 0.317x | -0.05 |
+| `wcspbrk` | 3152.00 | 1005.03 | 1005.00 | 1005.00 | 0.319x | 0.319x | +0.03 |
+| `wcschr` | 52.96 | 79.00 | 78.97 | 79.00 | 1.492x | 1.490x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9987 .. 1.0000.** Objects self-reported via `dladdr`; incumbent
+  `/lib/x86_64-linux-gnu/libc.so.6`, `ARM_DISTINCT` printed per arm — not a self-compare.
+- **A SPANNING arm was added BEFORE judging this.** The existing `wcsspn` bench stops at element 0,
+  so a lever that only helped the setup would have looked like a clean win. `wcsspnRun<n>` makes the
+  scan actually run the full 100 elements, and it is what exposed the 4-member regression that killed
+  version 2. Without it this would have shipped with a -56.
+- **Shipped: three shapes gain 39-335 Ir, one pays 1.00 (0.12%, at the A/A null's edge), four
+  controls flat.** The suite's worst ratio moves from 2.357x to 1.429x.
+- Conformance: `wspan_conf` **20,451 checks, 0 failures** in BOTH strict and hardened mode — set
+  sizes 0..40 across the 1/2/3/4 and >=5 boundaries, string lengths 0..120, four stop positions,
+  empty set and string, and a set containing U+1F600.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+- Objects: baseline `15f1f5a1c02c0ecfd61dd6826a00a9033fcc6be2e1b48228e2ba14260a96024e`,
+  v1 buggy `5f62c3d7e14b2eee9d953666c6765264abd84454897404c03039ac6f177010eb` (do not cite),
+  v2 `fa231f45f3f8cf31de9bb5e7d3ef8858246a1e0f8570cc2188f37a1470bd4398`,
+  shipped v3 `cce2d57b95bb56c0eaa903b3295fe9ffefcd3b46998c91be968e99620fd17c4d`.
+- **STILL OPEN:** `wcscspn` and `wcspbrk` have the SAME `WideCharSet` shape and were not touched —
+  but both already beat glibc ~3x, so the table is not hurting them at the sizes measured. The
+  narrow/wide asymmetry is now closed for `wcsspn` only. Worst standing ratios: `wcsrchr`
+  short/unaligned ~2.5x, `memcmp` 1.944x, `wcsnlen` 1.919x, `strspn` 1.793x.

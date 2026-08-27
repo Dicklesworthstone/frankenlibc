@@ -2858,6 +2858,45 @@ pub unsafe extern "C" fn wcsspn(s: *const u32, accept: *const u32) -> usize {
                 }
                 return i;
             }
+            // DIRECT COMPARE for 2..=4 members, the gap the narrow side does not have.
+            // `strspn` and `strcspn` both intercept accept sets of 1..=4 with splat
+            // compares before any set structure is built; the wide side stopped at 1 and
+            // sent everything larger to `WideCharSet::new`, which zeroes and fills a
+            // 128-bool table. That table is why this entry carried `sub $0x118` -- 280
+            // bytes of stack -- and it was being built to answer a question four
+            // comparisons settle.
+            //
+            // Measured against live glibc before this change: `wcsspn` with a 3-member set
+            // was 112.97 Ir against 42.00 (2.690x), the worst ratio in the suite, on a call
+            // that stops at the FIRST element -- so nearly all of it was table build.
+            //
+            // Padding with `a0` when the set is shorter is safe: `accept_len >= 2` here and
+            // `accept` is NUL-terminated, so `a0` is never 0 and a NUL in `s` still fails
+            // every comparison and ends the span, exactly as the table did.
+            // `(2..=4)`, NOT `<= 4`. An EMPTY accept set also satisfies `<= 4`, and then
+            // `a0` is the terminator itself: `*accept.add(1)` reads past the end of the
+            // set, and a NUL in `s` matches `a0`, so the span runs off the string. The
+            // `WideCharSet` path handled length 0 correctly by having no members at all.
+            // Caught by the empty-set case in `wspan_conf` -- 4 failures, strict mode only,
+            // because hardened never takes this fast path.
+            // `(2..=3)`, not `(2..=4)`. Four members were measured and REJECTED: the
+            // direct chain costs one comparison per member per element, so at four it
+            // loses to a single table lookup once the span is long -- `wcsspn` with a
+            // 4-member set over a 100-element span measured -56 Ir, while two and three
+            // members won +332 and +333. Three is where the crossover sits on this shape.
+            if (2..=3).contains(&accept_len) {
+                let a0 = *accept;
+                let a1 = *accept.add(1);
+                let a2 = if accept_len > 2 { *accept.add(2) } else { a0 };
+                let mut i = 0usize;
+                loop {
+                    let ch = *s.add(i);
+                    if ch != a0 && ch != a1 && ch != a2 {
+                        return i;
+                    }
+                    i += 1;
+                }
+            }
             let set = WideCharSet::new(accept, accept_len);
             let mut i = 0usize;
             while set.contains(*s.add(i)) {
