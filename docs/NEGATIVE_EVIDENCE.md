@@ -37481,3 +37481,58 @@ reworded rather than the gate touched.)
   charge is still fixed — the scanner prologue assumes a long string. The rejected peel
   (`scratchpad/wcsrchr_peel.patch`) would take it to ~2.3x for 2 Ir elsewhere; that trade is still
   on the table and still an owner's call.
+
+## 2026-08-27 — bd-2g7oyh — `wcsrchr`: the fold's terminal resolve narrowed EIGHT masks when two suffice — 2.673x -> 2.233x, and the array form that first tried it LOST
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target is the suite's worst vs-incumbent ratio, `wcsrchr`
+  at length 8: **115.00 Ir vs live glibc's 43.03 = 2.673x** after this session's cold-tail split.
+  Instruction counting showed the scanner runs **86 STRAIGHT-LINE instructions with no loop
+  iterations at all** for an 8-wide-char string — so the cost is the terminal block's resolve, not
+  scanning.
+- **The defect.** When the 128-byte fold finds the NUL, it built two 32-lane bitmasks by shifting
+  four `to_bitmask()` results together — eight calls, unconditionally. On a `Mask<i32, 8>` that call
+  is not one instruction: 32-bit lanes must be narrowed to bytes before a movemask, so it lowers to
+  `vextracti128` + `vpackssdw` + `vpacksswb` + `vpmovmskb`. The NUL lives in exactly ONE panel and
+  panels after it cannot matter, so most of that narrowing is discarded work.
+- **THE FIRST FIX LOST, and the reason is worth more than the fix.** Resolving panel-by-panel via
+  `[c0, c1, c2, c3]` indexed by the NUL's panel measured **-10.02 Ir at length 8 and -27.00 at
+  length 31**. A dynamic index into an array of `Mask<i32, 8>` forces all four 256-bit masks to the
+  stack. **Rewritten with constant indices only — an `if/else` ladder for the NUL panel and a `match`
+  with `.or_else()` chains for `c` — the same algorithm wins.** Nothing about the idea changed; only
+  whether the masks stayed in registers.
+- **Counted mechanism:** length 8 runs **115 instructions -> 96**; length 64, **188 -> 164**.
+
+| family | glibc | HEAD | v1 array-indexed | **v2 shipped** | HEAD x | v2 x | saved |
+|---|---|---|---|---|---|---|---|
+| `wcsrchrL8` | 43.03 | 115.00 | 125.02 | 96.00 | **2.673x** | **2.233x** | **+19.00** |
+| `wcsrchrL31` | 69.00 | 115.00 | 142.00 | 107.97 | 1.667x | 1.565x | +7.03 |
+| `wcsrchrL64` | 108.00 | 188.00 | 185.00 | 164.00 | 1.741x | **1.519x** | **+24.00** |
+| `wcsrchrL256` | 251.97 | 344.00 | 341.00 | 325.97 | 1.365x | 1.294x | +18.03 |
+| `wcsrchrL1024` | 828.00 | 968.00 | 965.00 | 974.00 | 1.169x | 1.176x | **-6.00** |
+| `wcschr` | 53.00 | 92.00 | 92.00 | 92.00 | 1.736x | 1.736x | +0.00 |
+| `wcslen` | 40.00 | 67.03 | 67.00 | 67.03 | 1.676x | 1.676x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9999 .. 1.0006.** Objects self-reported by the process:
+  `FL_OBJECT=./fl_wrres2.so`, `INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6` via `dladdr`, arms
+  distinct by pointer — two ELFs, one the system glibc, not a self-compare.
+- **SHIPPED despite one regression, and here is the line I am drawing.** The `wcsrchr` peel rejected
+  earlier today was +18/+4 against **-2 at four of six lengths** — a minority of points improving.
+  This is +19/+7/+24/+18 against **-6 at one length out of five**, a 0.6% cost at the length where
+  fl is already closest to glibc (1.169x), to take the WORST point from 2.673x to 2.233x. Four of
+  five measured lengths improve and both controls are flat. That is a different shape of result, not
+  a different standard.
+- **Not a bench-input lever:** the resolve runs once per call for every string, and the gain appears
+  across a 128x length range rather than at one point.
+- Conformance: `wrchr_conf` — 32 buffer alignments x lengths 0..160 x target absent / spread
+  positions / two targets (last must win) / at the final element / `c == 0`, plus page-edge strings
+  1..100: **152,268 checks, 0 failures** in BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally. The
+  `--release` profile of that suite fails at `locale_abi::tests::catopen_empty_name_sets_enoent`,
+  confirmed PRE-EXISTING on unmodified HEAD earlier today.
+- Objects: baseline `ea321778a1a11e015a1f334d75265a37fdb0b2c20860e870bbac52b1e1ff9cb3`,
+  v1 `536fd89e30bfa539f8753ce07ae9d68596edc4bfdae0239620377fd982975f48`,
+  shipped v2 `adbe08aab6dcf1571eb541cfed732a70a2ff59348057077a14db74be5478baaa`.
+- **STILL OPEN:** `wcsrchr` at length 8 is 2.233x — 96 Ir against glibc's 43 — and remains the
+  suite's worst ratio. The four NUL bitmasks are still computed eagerly; resolving them lazily
+  (`if z0b != 0 ... else compute z1b`) is the obvious next step and is likely where the -6 at
+  length 1024 also lives.

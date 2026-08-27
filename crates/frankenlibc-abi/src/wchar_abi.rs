@@ -1631,23 +1631,71 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
             i += 32;
             continue;
         }
-        // NUL is in this block. Resolve the exact answer now (combined 32-bit masks).
-        let zm = z0.to_bitmask()
-            | (z1.to_bitmask() << 8)
-            | (z2.to_bitmask() << 16)
-            | (z3.to_bitmask() << 24);
-        let cm = c0.to_bitmask()
-            | (c1.to_bitmask() << 8)
-            | (c2.to_bitmask() << 16)
-            | (c3.to_bitmask() << 24);
-        let p = zm.trailing_zeros() as usize;
-        let cm_before = cm & ((1u64 << p) - 1);
-        if cm_before != 0 {
+        // NUL is in this block. Resolve PANEL BY PANEL, not by combining all eight masks.
+        //
+        // The old form built two 32-lane bitmasks by shifting four `to_bitmask()` results
+        // together -- eight of them. On a `Mask<i32, 8>` that call is not one instruction:
+        // it lowers to `vextracti128` + `vpackssdw` + `vpacksswb` + `vpmovmskb`, because
+        // 32-bit lanes have to be narrowed to bytes before a movemask. Eight of those
+        // chains is most of the terminal block's cost, and instruction-level counting put
+        // the whole scanner at 86 STRAIGHT-LINE instructions for an 8-wide-char string --
+        // no loop iterations at all -- against live glibc's 43 for the entire call.
+        //
+        // The NUL lives in exactly ONE panel, and panels after it cannot matter. So find
+        // that panel first, then walk backwards for the last `c` at or before it. Panels
+        // past the NUL are never narrowed, and in the common short-string case only two or
+        // three masks are extracted instead of eight.
+        //
+        // Byte-identical by construction: `zm.trailing_zeros()` is the first NUL lane in
+        // panel order, which is what the panel scan finds; and the last `c` strictly before
+        // it is the highest set `c` bit below that lane, which the backward walk finds in
+        // the same order the combined mask's `leading_zeros` did.
+        // NO ARRAYS. A first attempt indexed `[c0, c1, c2, c3]` by the NUL's panel; that
+        // dynamic index forced all four 256-bit masks to the stack and measured -10 Ir at
+        // length 8 and -27 at length 31. Everything below uses constant indices only, so
+        // the masks stay in registers.
+        //
+        // The four NUL bitmasks are needed either way to locate the terminator. What this
+        // avoids is narrowing the `c` masks of panels that cannot matter: `to_bitmask()` on
+        // a `Mask<i32, 8>` lowers to `vextracti128` + `vpackssdw` + `vpacksswb` +
+        // `vpmovmskb`, and the old form ran eight of those chains unconditionally.
+        let z0b = z0.to_bitmask();
+        let z1b = z1.to_bitmask();
+        let z2b = z2.to_bitmask();
+        let z3b = z3.to_bitmask();
+        let (nul_panel, nul_off) = if z0b != 0 {
+            (0usize, z0b.trailing_zeros() as usize)
+        } else if z1b != 0 {
+            (1usize, z1b.trailing_zeros() as usize)
+        } else if z2b != 0 {
+            (2usize, z2b.trailing_zeros() as usize)
+        } else {
+            (3usize, z3b.trailing_zeros() as usize)
+        };
+        let p = nul_panel * LANES + nul_off;
+        // Highest `c` lane strictly below `nul_off` within the NUL's own panel.
+        let before = |m: u64, panel: usize| -> Option<usize> {
+            let m = m & ((1u64 << nul_off) - 1);
+            (m != 0).then(|| panel * LANES + (63 - m.leading_zeros() as usize))
+        };
+        // Highest `c` lane anywhere in an earlier panel.
+        let whole = |m: u64, panel: usize| -> Option<usize> {
+            (m != 0).then(|| panel * LANES + (63 - m.leading_zeros() as usize))
+        };
+        let hit = match nul_panel {
+            0 => before(c0.to_bitmask(), 0),
+            1 => before(c1.to_bitmask(), 1).or_else(|| whole(c0.to_bitmask(), 0)),
+            2 => before(c2.to_bitmask(), 2)
+                .or_else(|| whole(c1.to_bitmask(), 1))
+                .or_else(|| whole(c0.to_bitmask(), 0)),
+            _ => before(c3.to_bitmask(), 3)
+                .or_else(|| whole(c2.to_bitmask(), 2))
+                .or_else(|| whole(c1.to_bitmask(), 1))
+                .or_else(|| whole(c0.to_bitmask(), 0)),
+        };
+        if let Some(off) = hit {
             // A `c` before the NUL in THIS block dominates any earlier block.
-            return (
-                Some(i + (63 - cm_before.leading_zeros() as usize)),
-                i + p + 1,
-            );
+            return (Some(i + off), i + p + 1);
         }
         // No `c` before the NUL here: the answer is the last `c` in the last remembered nul-free
         // block (later than the ramp `last`), else the head/ramp `last`.
