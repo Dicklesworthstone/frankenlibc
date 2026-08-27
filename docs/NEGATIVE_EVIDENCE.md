@@ -35892,3 +35892,48 @@ reworded rather than the gate touched.)
   + 140,016, 0 failures strict and hardened on all three — the reject is purely on the numbers.
 - **STILL OPEN:** `strncmp` at bounds under 32 is the suite's worst surface and has no fix that pays.
   Any future attempt must be measured across bounds, not at one.
+
+## 2026-08-26 — `strlen` heap: the arena readiness probe read two globals to answer one question (KEPT, +3.00 Ir on every allocator-metadata probe)
+
+- **Op and why it was picked.** Instruction-level callgrind (`--dump-instr=yes`, two-point over 2000
+  marginal calls) of deployed `strlen` on a heap pointer: the entry executes **81 straight-line
+  instructions**, no loop, of which ~74 are the allocator bound probe reached through
+  `known_remaining_strict` -> `segment_remaining` -> `segment_slot_view` -> `segment_owned_location`.
+  `scan_c_string` is a further 33. The frame tax is already gone — the entry opens `push %rbx`, not
+  the `sub $0xb8,%rsp` an older comment in `string_abi.rs` still describes.
+- **The change.** `segment_arena_base_if_ready` tested `SEGMENT_ARENA_STATE == READY` and *then*
+  loaded `SEGMENT_ARENA_BASE` and null-checked it. `SEGMENT_ARENA_BASE` is stored exactly once, at
+  the end of `initialize_segment_arena` immediately before the READY publish, and every failure edge
+  there returns without storing it — so `base != 0` **is** READY, exactly, not approximately. The
+  state test was re-deriving a fact the base already carries, at the cost of a load, a compare and a
+  branch off a second global cache line. Reader collapsed to a single `Acquire` load of the base;
+  the store side moved `Relaxed` -> `Release` so that one load reproduces the same happens-before
+  (an observer seeing a nonzero base also sees the arena mapping written before it).
+- **Counted mechanism:** at L=4 the op runs **123 instructions -> 120 instructions**; at L=16,
+  **114 instructions -> 111**. Three instructions removed, which is exactly the `movzbl`/`cmp`/`jne`
+  triple the disassembly attributes to the state test. Uniform at every length measured, as a fixed
+  entry cost must be.
+
+| L (heap) | glibc | base | single-global | base x | new x | saved |
+|---|---|---|---|---|---|---|
+| 4 | 22.98 | 123.01 | 120.03 | 5.353x | 5.217x | +2.97 |
+| 8 | 23.03 | 121.01 | 118.01 | 5.254x | 5.129x | +3.00 |
+| 16 | 23.00 | 114.00 | 111.00 | 4.957x | 4.832x | +3.00 |
+| 64 | 35.00 | 134.97 | 132.00 | 3.856x | 3.771x | +2.97 |
+
+- **A/A null PASSES.** The glibc arm, measured in both objects' invocations at each length, drifts
+  by at most 0.03 Ir (0.13%): 22.98/23.01, 23.03/23.01, 23.00/22.97, 35.00/35.00.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` **in the same invocation**, arms distinct by pointer,
+  conformance checked before counting. Ratios include the driver loop (~9 Ir) in BOTH arms; netting
+  it out, L=4 is 8.14x -> 7.93x.
+- **Scope is wider than `strlen`.** Every allocator-metadata probe opens here — `free`, `realloc`,
+  `malloc_usable_size`, and every bounded string scan that consults `known_remaining`. Only `strlen`
+  was counted.
+- **Honest size.** +3 Ir against a ~74-instruction probe. This does not move `strlen` toward parity;
+  the probe itself is the standing loss and needs a design change, not an instruction.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed** with the patch applied,
+  compilation observed. NOTE: the same suite under `--profile release` SIGSEGVs — confirmed
+  **pre-existing**, reproduced identically on the unpatched tree in the same invocation shape.
+- Objects: baseline `0e6609233741c12da6f7acf059a6d217690562a5449b7ef1887b608468cee1f0`,
+  candidate `598bd1f6c713470da3f9f64912c518061cd87c92621e96b2c3ccfbe741c603f2`.

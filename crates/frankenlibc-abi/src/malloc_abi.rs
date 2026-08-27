@@ -674,10 +674,23 @@ fn segment_arena_base_if_ready() -> Option<usize> {
     // instructions to reach an unconditional jump. Measured on the
     // callgrind profile of the deployed malloc/free pair, which is straight-line
     // code with no loop to amortise it.
-    if SEGMENT_ARENA_STATE.load(Ordering::Acquire) != SEGMENT_ARENA_READY {
-        return None;
-    }
-    let base = SEGMENT_ARENA_BASE.load(Ordering::Relaxed);
+    //
+    // ONE global, not two. `SEGMENT_ARENA_BASE` is stored exactly once -- at the
+    // end of `initialize_segment_arena`, immediately before the READY publish --
+    // and every failure edge there returns without storing it, so it is nonzero
+    // if and only if the state is READY. Testing the state byte first was
+    // therefore re-deriving a fact the base already carries, at the price of a
+    // load, a compare and a branch off a second global cache line on EVERY
+    // allocator-metadata probe: not just malloc/free, but every bounded string
+    // scan, since `known_remaining` opens here. Instruction-level callgrind of
+    // deployed `strlen` on a heap pointer put the pair at 3 of the entry's 81
+    // straight-line instructions.
+    //
+    // The store side now carries `Release` (it was `Relaxed`, with the READY
+    // publish providing the fence), so this single `Acquire` load reproduces the
+    // exact happens-before the state byte used to: an observer that sees a
+    // nonzero base also sees the arena mapping that was written before it.
+    let base = SEGMENT_ARENA_BASE.load(Ordering::Acquire);
     if base == 0 {
         return None;
     }
@@ -744,7 +757,10 @@ fn initialize_segment_arena() -> Option<usize> {
                     return None;
                 }
 
-                SEGMENT_ARENA_BASE.store(aligned_base, Ordering::Relaxed);
+                // `Release`, not `Relaxed`: `segment_arena_base_if_ready` now
+                // reads THIS global alone, so this store is the publication
+                // point for the arena mapping written above it.
+                SEGMENT_ARENA_BASE.store(aligned_base, Ordering::Release);
                 SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_READY, Ordering::Release);
                 return Some(aligned_base);
             }
