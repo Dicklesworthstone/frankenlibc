@@ -113,3 +113,43 @@ fn admin_syscall_invalid_failures_match_host_syscall() {
     );
     assert_eq!(fl.0, -1);
 }
+
+/// Valid C strings must reach the kernel's command/privilege checks rather
+/// than being treated like the null-pointer cases above.  A wrapper that
+/// returns a fixed `EFAULT` for every administrative call would pass the
+/// null-only gate but fails this live host comparison.
+#[test]
+fn admin_syscall_non_null_invalid_failures_match_host_syscall() {
+    // These paths cannot name a usable swap or root directory, so every call
+    // fails before it can change system state even if the test runs privileged.
+    let missing = c"/frankenlibc-no-such-admin-syscall-target".as_ptr();
+
+    let host = host_pivot_root(missing, missing);
+    let fl = fl_pivot_root(missing, missing);
+    assert_eq!(
+        fl, host,
+        "pivot_root(missing, missing): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(fl.0, -1);
+
+    let host = host_swapon(missing, 0);
+    let fl = fl_swapon(missing, 0);
+    assert_eq!(fl, host, "swapon(missing, 0): fl={fl:?} host={host:?}");
+    assert_eq!(fl.0, -1);
+
+    let host = host_swapoff(missing);
+    let fl = fl_swapoff(missing);
+    assert_eq!(fl, host, "swapoff(missing): fl={fl:?} host={host:?}");
+    assert_eq!(fl.0, -1);
+
+    // An invalid quotactl command is rejected before pathname or quota state
+    // is consulted.  This distinguishes command propagation from the null
+    // pointer `EFAULT` case in the original gate.
+    let host = host_quotactl(-1, c"/".as_ptr(), 0, ptr::null_mut());
+    let fl = fl_quotactl(-1, c"/".as_ptr(), 0, ptr::null_mut());
+    assert_eq!(
+        fl, host,
+        "quotactl(-1, /, 0, NULL): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(fl.0, -1);
+}
