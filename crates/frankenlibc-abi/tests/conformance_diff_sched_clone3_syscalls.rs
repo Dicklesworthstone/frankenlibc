@@ -17,6 +17,14 @@ use std::ptr;
 const SYS_CLONE3: c_long = libc::SYS_clone3 as c_long;
 const SYS_SCHED_SETATTR: c_long = libc::SYS_sched_setattr as c_long;
 const SYS_SCHED_GETATTR: c_long = libc::SYS_sched_getattr as c_long;
+const SCHED_ATTR_SIZE: usize = 56;
+const UNSUPPORTED_SCHED_SETATTR_FLAG: c_uint = 1 << 31;
+
+#[repr(C)]
+struct SchedAttrInput {
+    size: u32,
+    rest: [u8; SCHED_ATTR_SIZE - std::mem::size_of::<u32>()],
+}
 
 fn host_errno() -> c_int {
     unsafe { *libc::__errno_location() }
@@ -99,6 +107,24 @@ fn sched_and_clone3_invalid_failures_match_host_syscall() {
         "sched_setattr(NULL attr): fl={fl:?} host={host:?}"
     );
     assert_eq!(fl.0, -1);
+
+    // The attr block is structurally valid, but the syscall flags contain a
+    // bit Linux does not define.  This must be rejected before scheduler
+    // state can change; comparing it separately from the NULL case prevents
+    // an ABI wrapper from collapsing every failure to EFAULT.
+    let mut attr = SchedAttrInput {
+        size: SCHED_ATTR_SIZE as u32,
+        rest: [0; SCHED_ATTR_SIZE - std::mem::size_of::<u32>()],
+    };
+    let attr = ptr::addr_of_mut!(attr).cast::<c_void>();
+    let host = host_sched_setattr(0, attr, UNSUPPORTED_SCHED_SETATTR_FLAG);
+    let fl = fl_sched_setattr(0, attr, UNSUPPORTED_SCHED_SETATTR_FLAG);
+    assert_eq!(
+        fl, host,
+        "sched_setattr(unsupported flags): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(fl.0, -1);
+    assert_eq!(fl.1, libc::EINVAL);
 
     let host = host_sched_getattr(0, ptr::null_mut(), 0, 0);
     let fl = fl_sched_getattr(0, ptr::null_mut(), 0, 0);
