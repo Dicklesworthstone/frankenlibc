@@ -2001,9 +2001,19 @@ const TDELETE_CASES: &[TdeleteCase] = &[
         note: "shallow tree; per-call overhead dominates the walk",
     },
     TdeleteCase {
+        label: "tree512",
+        count: 512,
+        note: "lower cache-boundary probe for the tree1024 A/A diagnosis",
+    },
+    TdeleteCase {
         label: "tree1024",
         count: 1024,
         note: "the shape the redundant-lookup claim is about",
+    },
+    TdeleteCase {
+        label: "tree2048",
+        count: 2048,
+        note: "upper cache-boundary probe for the tree1024 A/A diagnosis",
     },
     TdeleteCase {
         label: "tree8192",
