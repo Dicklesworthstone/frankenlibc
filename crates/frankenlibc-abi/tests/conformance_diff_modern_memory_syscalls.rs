@@ -17,6 +17,7 @@ use std::ptr;
 const SYS_MEMFD_SECRET: c_long = 447;
 const SYS_MAP_SHADOW_STACK: c_long = 453;
 const SYS_MSEAL: c_long = 462;
+const SYS_PROCESS_MADVISE: c_long = libc::SYS_process_madvise as c_long;
 
 fn host_errno() -> c_int {
     unsafe { *libc::__errno_location() }
@@ -70,6 +71,30 @@ fn fl_mseal(addr: *mut c_void, len: usize, flags: c_uint) -> (c_int, c_int) {
     (rc, fl_errno())
 }
 
+fn host_process_madvise(
+    pidfd: c_int,
+    iovec: *const libc::iovec,
+    vlen: usize,
+    advice: c_int,
+    flags: c_uint,
+) -> (isize, c_int) {
+    set_host_errno(0);
+    let rc = unsafe { libc::syscall(SYS_PROCESS_MADVISE, pidfd, iovec, vlen, advice, flags) };
+    (rc as isize, host_errno())
+}
+
+fn fl_process_madvise(
+    pidfd: c_int,
+    iovec: *const libc::iovec,
+    vlen: usize,
+    advice: c_int,
+    flags: c_uint,
+) -> (isize, c_int) {
+    set_fl_errno(0);
+    let rc = unsafe { fl::process_madvise(pidfd, iovec, vlen, advice, flags) };
+    (rc, fl_errno())
+}
+
 #[test]
 fn modern_memory_invalid_flags_match_host_syscall() {
     let host = host_memfd_secret(c_uint::MAX);
@@ -92,4 +117,19 @@ fn modern_memory_invalid_flags_match_host_syscall() {
     let fl = fl_mseal(ptr::null_mut(), 0, c_uint::MAX);
     assert_eq!(fl, host, "mseal(invalid flags): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
+
+    // A real iovec makes this distinct from a null-payload failure.  The
+    // unsupported flags must reject before the invalid pidfd can resolve to a
+    // process and before the kernel can apply the requested memory advice.
+    let iovec = libc::iovec {
+        iov_base: ptr::null_mut(),
+        iov_len: 0,
+    };
+    let host = host_process_madvise(-1, &iovec, 1, libc::MADV_NORMAL, c_uint::MAX);
+    let fl = fl_process_madvise(-1, &iovec, 1, libc::MADV_NORMAL, c_uint::MAX);
+    assert_eq!(
+        fl, host,
+        "process_madvise(invalid flags): fl={fl:?} host={host:?}"
+    );
+    assert_eq!(fl, (-1, libc::EINVAL));
 }
