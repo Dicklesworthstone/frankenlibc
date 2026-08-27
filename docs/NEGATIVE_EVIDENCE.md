@@ -37695,3 +37695,54 @@ reworded rather than the gate touched.)
   two-panel structure (head to 32-byte alignment, ramp to 128-byte alignment) is the cost, and it is
   there to serve a 128-byte fold that a short string never reaches. Collapsing the ramp for strings
   that terminate inside it — rather than probing ahead of it — is the shape that has not been tried.
+
+## 2026-08-27 — bd-2g7oyh — `strpbrk` length-ladder-first: +32 Ir on small accept sets, -14 on large, and the WORST point gets worse (REJECTED)
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Picked by re-surveying the standing set on current HEAD
+  rather than continuing on `wcsrchr`, which has had five cycles. By excess over the incumbent:
+  `memcmp` +66.97 (documented no-lever), **`strpbrk` +66.00 at 1.641x**, `wcsrchrA5_8` +59.03.
+- **The articulation-point gap.** `strpbrk` calls `span_probe_cmpistri` FIRST, and that probe
+  declines every accept set under five bytes — but declining is not free: attribution puts it at
+  **18 Ir of the op's 169**, spent to learn a three-byte set is three bytes. `strspn` and `strcspn`
+  put a direct byte ladder ahead of the probe for exactly this reason; `strpbrk` was left
+  inconsistent with its own family.
+- **The change.** Read up to five accept bytes (each only after the previous proved non-NUL) to get
+  the length directly, and enter the probe only when the set is five or longer.
+- **Counted mechanism:** the 3-byte-set call runs **169 instructions -> 137**; the 8-byte-set call
+  runs **183 -> 197**.
+
+| family | glibc | HEAD | ladder first | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strpbrk` (3-byte set) | 102.97 | 169.00 | 137.00 | 1.641x | **1.330x** | **+32.00** |
+| `strpbrkS2` | 96.00 | 165.00 | 134.00 | 1.719x | 1.396x | +31.00 |
+| `strpbrkS4` | 95.97 | 169.00 | 137.00 | 1.761x | 1.427x | +32.00 |
+| `strpbrkS8` | 96.00 | 183.00 | 197.00 | **1.906x** | **2.051x** | -14.00 |
+| `strpbrkS16` | 97.97 | 182.00 | 196.00 | 1.858x | 2.000x | -14.00 |
+| `strpbrkS32` | 638.00 | 252.00 | 266.00 | 0.395x | 0.417x | -14.00 |
+| `strspn` | 57.97 | 104.00 | 104.00 | 1.794x | 1.793x | +0.00 |
+| `strcspnL100` | 111.00 | 112.00 | 112.00 | 1.009x | 1.009x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9995 .. 1.0000.** Objects self-reported via `dladdr`; incumbent
+  `/lib/x86_64-linux-gnu/libc.so.6`, arms distinct by pointer — not a self-compare.
+- **REJECTED on the criterion this campaign runs on: the WORST point gets worse.** Before, the worst
+  `strpbrk` shape was the 8-byte set at 1.906x. After, it is the same shape at **2.051x**. The change
+  moves the loss from small sets to medium ones rather than removing it — three sizes gain 31-32 Ir,
+  three pay 14, and the biggest set (`S32`, where fl already beats glibc 2.5x at 0.395x) is not where
+  the gain is needed.
+- **The -14 is not removable by being cleverer about the ladder.** It is five loads and five tests to
+  learn a length the probe would otherwise learn itself; a SWAR alternative (one 8-byte load plus
+  zero-detect, page-guarded) prices out at about the same ten instructions. Getting the length before
+  deciding costs something, and for a set of five or more that something is wasted.
+- **Measured on BOTH sides deliberately.** A `strpbrkS<n>` arm was added specifically to price the
+  sizes the lever charges, not only the size it pays. Without it this would have read as a clean
+  +32 win on the one accept set the suite happened to use.
+- Conformance: `pbrk_conf` **2,835 checks, 0 failures** in BOTH strict and hardened mode, so the
+  reject is purely on the numbers.
+- Not landed; reverted, `crates/` clean of my changes. Patch kept at
+  `scratchpad/pbrk_ladder.patch`.
+- Objects: baseline `40198eaa7eb00e5cc5d72a5ede58e07c7249de66b131a5e5dcf9bb4b4003174b`,
+  candidate `7aaf6e322e3db718641f47a3f7292c5d64aeba8a5e7430cf1cc7affcfe61ce28`.
+- **STILL OPEN, and now better characterised:** `strpbrk` is 1.33x-attainable on sets under five
+  bytes and 1.86-1.91x on sets of 8-16. The real fix is a probe whose decline is cheap — the 18 Ir
+  is its own setup (page guard, 16-byte set load, NUL search), not the comparison — so making
+  `span_probe_cmpistri` bail earlier for short sets would win on both sides instead of trading.
