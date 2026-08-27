@@ -38499,3 +38499,88 @@ then `movzbl` through it, where the adjacent `MODE_STATE` is a single rip-relati
 register machinery exists because the cold branches still inline into the same function, and the
 `strlen` precedent says the `string_raw_passthrough_active()` bypass among them must not be pushed
 behind a cold boundary.
+
+## 2026-08-27 — bd-2g7oyh — at n=128 only 8 of 39 instructions were the copy: 2.563x -> 2.000x, and −20 Ir across [128,256)
+
+`memcpy` at n=128 became the suite's worst ratio (2.563x) after the previous cycle, and the reason
+is structural rather than incidental: **128 is the smallest size that reached the AVX loop**, so it
+paid that loop's entire fixed setup for a single iteration.
+
+**What the 39 instructions were.** Per-function attribution put 39.00 Ir in `raw_overlap_copy` and
+33.00 in the `memcpy` entry (10.00 is driver `main`, present in both arms). Instruction-level
+attribution of `raw_overlap_copy`, read against the disassembly, accounts for all 39:
+
+| what | instructions |
+|---|---|
+| the copy — four `vmovdqu` loads + four stores | **8** |
+| head-peel decision (`neg`/`and $0x1f`/`setne`/`lea`/`cmp`/`setbe`/`test`/`je`) computing "align the destination first?" and answering **no** | 9 |
+| remainder tier ladder (`cmp $0x40`, `cmp $0x20`, `test`) evaluated before any byte moves | 6 |
+| loop bookkeeping (`add`, `add`, `sub`, `cmp`, `jae`) for a loop that runs exactly once | 5 |
+| register setup for the loop | 3 |
+| range check, remainder re-check, `ret` | 6 |
+| **`vzeroupper` — twice** | 2 |
+
+Eight instructions of work behind thirty-one of machinery.
+
+**The lever.** A straight-line `[128,256)` class ahead of the AVX loop, whose gate moves to
+`[256,131072)`. Overlapping 32-byte windows again, in two sub-classes so no window is wasted:
+`n <= 192` copies `[0,128)` as four windows then `n-64` and `n-32` (union `[0,128) ∪ [n-64,n)`, and
+`n - 64 <= 128`, so `[0,n)`) — six windows; `n > 192` adds `n-128` and `n-96` (union `[0,128) ∪
+[n-128,n)`, and `n - 128 < 128` since `n < 256`) — eight windows.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and `dladdr`-reported:
+
+| n | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| 128 | 82.00 | **64.00** | 32.00 | 2.563x | **2.000x** |
+| 160 | 84.00 | 64.02 | 40.00 | 2.100x | 1.601x |
+| 192 | 84.00 | 64.00 | 39.97 | 2.102x | 1.601x |
+| 224 | 84.00 | 67.02 | 40.00 | 2.100x | 1.676x |
+| 255 | 84.00 | 67.00 | 40.00 | 2.100x | 1.675x |
+
+**18 to 20 instructions removed across the whole class** (84.00 instructions -> 64.00 at n=160/192),
+and the worst ratio in the suite drops from 2.563x to 2.000x. The two sub-classes are visible in the
+result: `n <= 192` needs six windows and lands at 64.00, `n > 192` needs eight and lands at 67.00.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 32.00 vs 31.97, ratio 1.001.
+- **Boundary controls, exact:** n=256 is the first length on the AVX path and is **95.00 -> 95.00**;
+  n=4096 is **484.97 -> 485.00**. The AVX loop and the `rep movsb` path are untouched, so the change
+  is confined to exactly the range it claims.
+- **Unchanged smaller classes:** `memcpy` n=64 50.00 -> 50.00, `strncat` len 40 116.00 -> 116.00,
+  `memcmp` 138.00 -> 138.00.
+- **Not bench-path-specific:** windows are chosen from `n` alone, with no alignment or content
+  dependence — which the alignment sweep below exercises directly.
+
+**The conformance driver was proved able to fail before its pass was believed.** `mcpy_conf` was
+extended to a dense length sweep 0..264 (from 0..160) plus every length 126..258 at 10x5
+source/destination alignment pairs, because an overlapping-window kernel fails by leaving a *hole in
+the middle* of a range, and only a dense sweep finds a one-length hole. To confirm the driver
+actually covers the new class, the `n > 192` sub-branch was deliberately disabled (`if n > 100000`),
+rebuilt, and re-run: **3,874 failures, the first at len=193** — exactly the sub-branch boundary. The
+break was then reverted and the object rebuilt **byte-identical to the measured candidate** (`cmp`
+verified) before the real runs.
+
+Conformance on the restored object, all three drivers, **both strict and hardened**: `mcpy_conf`
+15,955; `ncat_conf` 21,441; `fused_conf` 76,160 — **113,556 checks, 0 failures**.
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing. `cargo test -p frankenlibc-abi --test string_abi_test` **200 passed, 1 failed, 8
+ignored — byte-identical to its pre-change baseline**; the one failure is the pre-existing
+`strlen_bounds_tracked_unterminated_input` regression from `e3a0b0883`, filed as **bd-k3skh6**.
+
+Objects: baseline `535ff2d9b400bc32...`/`fl_ymm2.so` (HEAD), candidate
+`ff8a321a70849e3a627e8d4a67034913...`, built locally.
+
+**One assumption made explicit.** The new class uses `copy_unaligned_32`, i.e. 256-bit moves, and
+sits *ahead* of the `is_x86_feature_detected!("avx")` gate, so `[128,256)` no longer consults it.
+That is not a new hazard: the crate builds with `-Ctarget-feature=+avx2,+fma`, so `ymm` is already
+emitted unconditionally throughout this file and a non-AVX machine would fault long before reaching
+here. The runtime detect was already vestigial; this simply stops paying for it in one range.
+
+**STILL OPEN.** `memcpy`'s worst point is now n=16 at 2.283x, and the entry overhead named last
+cycle is unchanged: nine instructions of register-save machinery on a leaf path plus five for the
+GOT-indirect HTM gate. The remaining structural item at these larger sizes is that the AVX loop's
+head-peel decision — nine instructions to decide whether to align — is still evaluated for every
+size from 256 up.

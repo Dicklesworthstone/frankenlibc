@@ -796,10 +796,52 @@ unsafe fn raw_copy_under_128(dst: *mut u8, src: *const u8, n: usize) {
     }
 }
 
+/// Straight-line `[128,256)` forward copy: overlapping 32-byte windows, no loop, no
+/// alignment head-peel.
+///
+/// `n=128` is the smallest size that reached the AVX loop, and it was the worst ratio in
+/// the suite at 2.564x for a reason that instruction-level attribution made plain: of the
+/// 39 instructions `raw_overlap_copy` executed there, only EIGHT were the copy. The other
+/// 31 were a nine-instruction head-peel decision that computes "should I align the
+/// destination first?" and answers no; a six-instruction remainder tier ladder evaluated
+/// before any bytes move; three register moves; five of loop bookkeeping for a loop that
+/// runs exactly once; and two `vzeroupper`s. That is a kernel designed for large copies,
+/// charged in full to the smallest input that reaches it.
+///
+/// Overlapping windows make the move count fixed and drop all of it. Two sub-classes so
+/// that no window is wasted:
+///   * `n <= 192`: `[0,128)` as four windows, then `n-64` and `n-32` — the union is
+///     `[0,128) ∪ [n-64,n)`, and `n - 64 <= 128` here, so it is `[0,n)`. Six windows.
+///   * `n > 192`: `[0,128)` then `n-128, n-96, n-64, n-32` — union `[0,128) ∪ [n-128,n)`,
+///     and `n - 128 < 128` since `n < 256`, so again `[0,n)`. Eight windows.
+///
+/// SAFETY: caller guarantees `dst`/`src` valid and disjoint for `n` bytes, and `128 <= n < 256`.
+#[inline]
+unsafe fn raw_copy_128_to_256(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        copy_unaligned_32(dst, src);
+        copy_unaligned_32(dst.add(32), src.add(32));
+        copy_unaligned_32(dst.add(64), src.add(64));
+        copy_unaligned_32(dst.add(96), src.add(96));
+        if n > 192 {
+            copy_unaligned_32(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+        }
+        copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+        copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+    }
+}
+
 #[inline]
 pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
-        // Medium copies [128,131072): AVX vmovdqu loop. Measured DIRECT dlmopen A/B
+        // [128,256): straight-line overlapping windows, ahead of the AVX loop below. See
+        // `raw_copy_128_to_256` — the loop's fixed setup dwarfed the copy at these sizes.
+        if (128..256).contains(&n) {
+            raw_copy_128_to_256(dst, src, n);
+            return;
+        }
+        // Medium copies [256,131072): AVX vmovdqu loop. Measured DIRECT dlmopen A/B
         // (memcpy_direct_ab / memcpy_xover) OVERTURNED the old "rep movsb beats glibc for
         // [4096,32768)" claim — rep movsb actually LOST 1.6-1.7x across [2048,8192] and a
         // catastrophic 3.87x at 16 KiB (ERMS 4K-aliasing store-forward stall), while the AVX
@@ -808,8 +850,8 @@ pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
         // for huge copies past L2) stays only for >=128 KiB. Gated on runtime AVX; non-AVX
         // machines fall through to the rep movsb / u128-pair paths below unchanged.
         #[cfg(target_arch = "x86_64")]
-        if (128..131072).contains(&n) && std::is_x86_feature_detected!("avx") {
-            // SAFETY: n in [128,131072) and AVX confirmed available.
+        if (256..131072).contains(&n) && std::is_x86_feature_detected!("avx") {
+            // SAFETY: n in [256,131072) and AVX confirmed available.
             raw_avx_copy(dst, src, n);
             return;
         }
