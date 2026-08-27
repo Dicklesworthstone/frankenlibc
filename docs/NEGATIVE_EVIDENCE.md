@@ -37427,3 +37427,57 @@ reworded rather than the gate touched.)
 - **STILL OPEN:** `wcsrchr` at short lengths is 2.930x and its cost is fixed, not per-element —
   108 Ir even with the peel, against glibc's 43. The remaining charge is the entry (31 Ir) plus a
   scanner prologue that assumes a long string.
+
+## 2026-08-27 — bd-2g7oyh — `wcsrchr` cold-tail split: +11 Ir at EVERY length, 2.930x -> 2.673x at the worst point
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target is the suite's worst vs-incumbent ratio, `wcsrchr`
+  at length 8: **126.00 Ir vs live glibc's 43.00 = 2.930x**. The previous row established the cost
+  is FIXED (126 Ir at both length 8 and length 31) and named the remainder as "the entry (31 Ir)
+  plus a scanner prologue" — this attacks the entry half, not the peel that row rejected.
+- **The defect.** `wcsrchr` had **no cold-tail split**: `grep -c 'fn wcsrchr_validating'` returned 0,
+  and its prologue was `push %rbp; push %r15; push %r14; push %r12; push %rbx; sub $0x40,%rsp` —
+  five callee-saved registers and sixty-four bytes of stack, rented on every call by a deployed path
+  that is a null test, a mode test and one call. `strcspn` had the identical shape and this same
+  split took it from 1.333x to parity.
+- **The change.** Move everything from `runtime_policy::decide` down into
+  `#[cold] #[inline(never)] unsafe fn wcsrchr_validating(s, c)`. Prologue becomes
+  `push %rbx; sub $0x20,%rsp`.
+- **Counted mechanism:** length 8 runs **126 instructions -> 115**; length 1024 runs
+  **979 instructions -> 968**. The saving is +11.00 at every length measured, which is how a fixed
+  entry charge behaves when removed.
+
+| family | glibc | HEAD | split | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcsrchrL8` | 43.00 | 126.00 | 115.00 | **2.930x** | **2.673x** | **+11.00** |
+| `wcsrchrL31` | 69.00 | 126.03 | 115.00 | 1.826x | **1.667x** | +11.03 |
+| `wcsrchrL64` | 108.00 | 199.00 | 188.00 | 1.843x | 1.741x | +11.00 |
+| `wcsrchrL256` | 252.00 | 355.00 | 344.00 | 1.409x | 1.365x | +11.00 |
+| `wcsrchrL1024` | 828.00 | 979.00 | 968.00 | 1.182x | 1.169x | +11.00 |
+| `wcschr` | 53.00 | 92.00 | 92.00 | 1.736x | 1.736x | +0.00 |
+| `wcslen` | 39.97 | 67.00 | 67.03 | 1.676x | 1.676x | -0.03 |
+
+- **A/A NULL: incumbent-arm ratio 0.9993 .. 1.0001.** Objects self-reported by the process:
+  `FL_OBJECT=./fl_wrsp.so`, `INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6` via `dladdr`, arms
+  distinct by pointer — two ELFs, one the system glibc, not a self-compare.
+- **NO TRADE.** Every `wcsrchr` length gains the same 11 Ir and the two control families are flat.
+  This is the opposite of the peel the previous row rejected, which bought 18 at length 8 by
+  charging 2 everywhere else. **It is also not a bench-input lever:** a fixed entry charge is paid by
+  every call at every length, which is exactly what the flat +11 across a 128x length range shows.
+- Conformance: a new `wrchr_conf` differential against live glibc via `dlmopen` — 32 buffer
+  alignments x lengths 0..160 x target absent / at a spread of positions / two targets (last must
+  win) / at the very last element / `c == 0` (returns the terminator), plus page-edge strings at
+  lengths 1..100 with the target first, last and absent: **152,268 checks, 0 failures** in BOTH
+  strict and hardened mode. Hardened is not optional — it is the only mode that runs the body that
+  moved.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+  NOTE: the `--release` profile of that same suite fails at
+  `locale_abi::tests::catopen_empty_name_sets_enoent` — **confirmed PRE-EXISTING**, reproduced
+  identically on unmodified HEAD before this change was applied.
+- Both objects built LOCALLY (`RCH_CARGO_WRAPPER_BYPASS=1 env -u CARGO_TARGET_DIR`, ~10s
+  incremental); fleet-built ELFs target glibc 2.43 and cannot load on this 2.42 host.
+- Objects: baseline `e4be617e6d63bd58524e24f4d3416e75f88692c88e22dc945cda07d36d0b9900`,
+  candidate `ea321778a1a11e015a1f334d75265a37fdb0b2c20860e870bbac52b1e1ff9cb3`.
+- **STILL OPEN:** `wcsrchr` at length 8 remains 2.673x with 115 Ir against glibc's 43, and the
+  charge is still fixed — the scanner prologue assumes a long string. The rejected peel
+  (`scratchpad/wcsrchr_peel.patch`) would take it to ~2.3x for 2 Ir elsewhere; that trade is still
+  on the table and still an owner's call.

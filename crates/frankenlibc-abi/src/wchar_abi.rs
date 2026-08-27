@@ -1791,6 +1791,23 @@ pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
         });
     }
 
+    // COLD-TAIL SPLIT. The strict fast path needs `s`, `c` and one call; the validating
+    // body below needs the lot. Sharing one frame charged EVERY call for the validating
+    // path's registers -- the prologue was `push %rbp; push %r15; push %r14; push %r12;
+    // push %rbx; sub $0x40,%rsp`, five callee-saved registers and sixty-four bytes of
+    // stack, on a function whose deployed path is a null test, a mode test and a call.
+    //
+    // That fixed charge is what makes SHORT wide strings lose: `wcsrchr` measured a flat
+    // 126 Ir at BOTH length 8 and length 31 against live glibc's 43 and 69 -- 2.930x at
+    // length 8, the worst ratio standing in the suite. `strcspn` had the identical shape
+    // and this same split took it from 1.333x to parity.
+    unsafe { wcsrchr_validating(s, c) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcsrchr_validating(s: *const u32, c: u32) -> *mut u32 {
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
