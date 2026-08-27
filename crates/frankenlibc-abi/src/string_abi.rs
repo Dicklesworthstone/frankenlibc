@@ -782,8 +782,44 @@ pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
             }
             return;
         }
-        // n >= 16: 32-byte explicit copies for the bulk, then an overlapping 16-byte
-        // copy for the [0,32) remainder (covers all of [i,n) without a volatile tail).
+        // STRAIGHT-LINE SIZE CLASSES for [16,128): no loop, no trip count.
+        //
+        // The counted loop below owned everything from 16 bytes to 128, and at n=64 the
+        // disassembly of this function is eleven instructions of loop setup — trip count,
+        // unroll remainder, `and $3`, `cmp $0x60` — wrapped around two iterations that move
+        // 16 bytes each, then five more to compute the overlapping tail. Thirty-two
+        // instructions to move sixty-four bytes. glibc jumps straight to a size-class kernel
+        // and issues four.
+        //
+        // Measured against live glibc (dlmopen LM_ID_NEWLM) before this change: `memcpy` at
+        // n=64 was 85.00 Ir against 22.00 (3.863x) — the worst ratio in the suite — and n=16
+        // was 62.00 vs 21.03 (2.952x). None of that excess was the copy; it was dispatch.
+        //
+        // Overlapping power-of-two windows cover any length in a class with a FIXED number of
+        // moves, so the trip count disappears. dst/src are disjoint here (this is the forward
+        // memcpy primitive — `memmove`'s backward path is a separate function), so the windows
+        // may overlap each other freely. Classes are cut so the common power-of-two lengths
+        // land exactly: n=32 and n=64 tile with no duplicated move.
+        if n < 128 {
+            if n <= 64 {
+                if n < 32 {
+                    copy_unaligned_16(dst, src);
+                    copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
+                } else {
+                    copy_unaligned_32(dst, src);
+                    copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+                }
+            } else {
+                copy_unaligned_32(dst, src);
+                copy_unaligned_32(dst.add(32), src.add(32));
+                copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+            }
+            return;
+        }
+        // n >= 128 on the non-AVX fallback path: 32-byte explicit copies for the bulk, then
+        // an overlapping 16-byte copy for the [0,32) remainder (covers all of [i,n) without
+        // a volatile tail).
         let mut i = 0usize;
         while i + 32 <= n {
             copy_unaligned_32(dst.add(i), src.add(i));

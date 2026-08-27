@@ -38070,3 +38070,77 @@ reworded rather than the gate touched.)
   excess is in `raw_overlap_copy`'s dispatch: it handles all sizes through one entry with an AVX2
   feature test and a tier ladder, where glibc jumps straight to a size-class kernel. `strncat` at
   2.5-2.6x is also untouched and has no split.
+
+## 2026-08-27 — bd-2g7oyh — `memcpy` spent its instructions on a trip count, not on the copy: 3.869x -> 2.913x at n=64
+
+The previous cycle split `memcpy`'s cold tail and said so plainly: the split removed the frame and
+nothing else, `memcpy` was still **3.863x at n=64**, and the remaining excess was in
+`raw_overlap_copy`'s dispatch. This cycle went after that dispatch.
+
+**The gap.** `raw_overlap_copy` had a size class for `n < 16` (overlapping 8/4/1-3 byte windows), an
+AVX loop for `[128,131072)`, and `rep movsb` at `>= 2048`. Everything from **16 to 128 bytes** — the
+range a `memcpy` call actually lands in most often — fell through all of them into a generic counted
+loop, `while i + 32 <= n`. Disassembling the executed path at n=64 gave the shape of the loss:
+three instructions of AVX range check, six of tier ladder, then **eleven instructions of trip-count
+and unroll setup** (`lea`, `shr`, `inc`, `and $3`, `cmp $0x60`, `jae`, `mov`, `xor`, `jmp`) wrapped
+around **two** iterations that move 16 bytes each, then five more to compute the overlapping tail.
+Thirty-two instructions to move sixty-four bytes. glibc jumps straight to a size-class kernel and
+issues four. Almost none of fl's cost was the copy; it was deciding how to copy.
+
+**The lever.** Straight-line overlapping size classes for `[16,128)`, cut so the common power-of-two
+lengths tile exactly with no duplicated move: `[16,32)` = two 16-byte windows at 0 and `n-16`;
+`[32,64]` = two 32-byte windows at 0 and `n-32` (n=32 and n=64 tile perfectly); `(64,128)` = four
+32-byte windows at 0, 32, `n-64`, `n-32`. Fixed move count per class, so the trip count disappears
+entirely. dst/src are disjoint on this path — it is the forward `memcpy` primitive, and `memmove`'s
+backward path is a separate function — so the windows may overlap each other freely.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and self-reported by
+`dladdr` (`FL_OBJECT=` the candidate `.so`, `INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6`):
+
+| n | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| 16 | 62.00 | 59.00 | 21.00 | 2.952x | 2.810x |
+| 32 | 77.00 | 64.00 | 22.00 | 3.500x | 2.909x |
+| 48 | 81.00 | 64.00 | 22.00 | 3.682x | 2.909x |
+| 64 | 85.00 | **64.00** | 21.97 | **3.869x** | **2.913x** |
+| 96 | 93.02 | 70.00 | 31.97 | 2.910x | 2.190x |
+| 127 | 99.00 | 70.00 | 32.00 | 3.094x | 2.188x |
+| 128 | 80.97 | 81.00 | 31.97 | — | unchanged |
+
+**21 instructions -> removed at n=64** (85.00 instructions -> 64.00), 29 at n=127, 17 at n=48. The
+suite's worst standing ratio drops from 3.869x to 2.913x.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 22.00 vs 22.02, ratio 1.001. The
+  incumbent did not move, so the delta is fl's alone and not a harness artifact.
+- **Class-boundary control:** n=128 is the first length on the AVX path, outside the new classes:
+  **80.97 -> 81.00**, unchanged. The change is confined to exactly the range it claims.
+- **Untouched-family controls:** `wcsspn` 60.00 -> 60.00, `memcmp` 138.00 -> 138.00, `strpbrk`
+  172.00 -> 172.00 — all pinned to the instruction.
+- **Co-win, measured not assumed:** `strncat` shares `raw_overlap_copy`. At length 40 (a 41-byte
+  copy, inside the new `[32,64]` class) it went **172.02 -> 159.00** against glibc's 58.00; at
+  length 8 (a 9-byte copy, below the class) it is unchanged at 113.00. Only lengths in the claimed
+  range moved.
+- **Not bench-path-specific:** the classes key on `n` alone — no alignment assumption, no property
+  of the driver's buffers. The conformance driver exercises them at 22x10 source/destination
+  alignment pairs and finds the same bytes.
+
+Conformance: `mcpy_conf` differential against live glibc — dense lengths 0..160 at eight source
+alignments, 32 tier-boundary lengths at 22x10 source/destination alignment pairs, comparing **the
+whole 9000-byte destination** so any write outside the copied range shows up, plus the returned
+pointer; and `memmove` on genuinely overlapping regions in both directions since it shares the
+primitive: **8,473 checks, 0 failures in BOTH strict and hardened mode.**
+
+Objects: baseline `159fbfecdcdbdd40f3a03ed1660a4c2e71bfc8a21ca555bcda68e36ff028c67a` (the previous
+cycle's split), candidate `76a86b3a09092308d03b3c9a3262a5b3e124dcce4dae4cfc4d6ca2dc468f1f63`, built
+locally and byte-identical to `target/release/libfrankenlibc_abi.so`.
+
+**STILL OPEN, with the next lever now named by disassembly rather than guessed.** `memcpy` is still
+2.913x — 64 Ir against glibc's 22 — and essentially none of the remainder is the copy. Disassembling
+the entry shows that in strict mode, for `n < 0x101`, `memcpy` does not call `raw_overlap_copy` at
+all until it has first gone through `MEMCPY_HTM_SITE`: three argument spills to stack, three `lea`s
+building a pointer triple, and an indirect `call` into `HtmSite::run` with a closure, whose result is
+compared against `-1` before the real copy path is even reached. That is the next ~15-20 Ir, and it
+is a transactional-memory probe standing in front of a nine-instruction copy. `strncat` at 2.7x
+(159.00 vs 58.00) also still has no cold-tail split.
