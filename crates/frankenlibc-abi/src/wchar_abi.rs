@@ -1287,6 +1287,23 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
         return r;
     }
 
+    // COLD-TAIL SPLIT. The strict fast path needs its arguments and one call; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers -- the prologue carried four to six callee-saved pushes
+    // plus `sub $0x48,%rsp`. `wcsrchr` had the identical shape and this same split was
+    // worth +11.00 Ir at every measured length; `wcslen` and `wcscpy` already carry it and
+    // enter on a single push. These four were left without it.
+    //
+    // Cut at the strict gate: unlike `strlen` and `memcmp` there is no
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating body
+    // here, so nothing that must stay inline is being moved behind `#[cold]`.
+    unsafe { wcscmp_validating(s1, s2) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcscmp_validating(s1: *const u32, s2: *const u32) -> c_int {
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -1808,6 +1825,23 @@ pub unsafe extern "C" fn wcschr(s: *const u32, c: u32) -> *mut u32 {
             std::ptr::null_mut()
         };
     }
+
+    // COLD-TAIL SPLIT. The strict fast path needs its arguments and one call; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers -- the prologue carried four to six callee-saved pushes
+    // plus `sub $0x48,%rsp`. `wcsrchr` had the identical shape and this same split was
+    // worth +11.00 Ir at every measured length; `wcslen` and `wcscpy` already carry it and
+    // enter on a single push. These four were left without it.
+    //
+    // Cut at the strict gate: unlike `strlen` and `memcmp` there is no
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating body
+    // here, so nothing that must stay inline is being moved behind `#[cold]`.
+    unsafe { wcschr_validating(s, c) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcschr_validating(s: *const u32, c: u32) -> *mut u32 {
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
@@ -2407,6 +2441,23 @@ pub unsafe extern "C" fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         };
     }
 
+    // COLD-TAIL SPLIT. The strict fast path needs its arguments and one call; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers -- the prologue carried four to six callee-saved pushes
+    // plus `sub $0x48,%rsp`. `wcsrchr` had the identical shape and this same split was
+    // worth +11.00 Ir at every measured length; `wcslen` and `wcscpy` already carry it and
+    // enter on a single push. These four were left without it.
+    //
+    // Cut at the strict gate: unlike `strlen` and `memcmp` there is no
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating body
+    // here, so nothing that must stay inline is being moved behind `#[cold]`.
+    unsafe { wmemcmp_validating(s1, s2, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int {
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -2485,6 +2536,23 @@ pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
             }
         };
     }
+
+    // COLD-TAIL SPLIT. The strict fast path needs its arguments and one call; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers -- the prologue carried four to six callee-saved pushes
+    // plus `sub $0x48,%rsp`. `wcsrchr` had the identical shape and this same split was
+    // worth +11.00 Ir at every measured length; `wcslen` and `wcscpy` already carry it and
+    // enter on a single push. These four were left without it.
+    //
+    // Cut at the strict gate: unlike `strlen` and `memcmp` there is no
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating body
+    // here, so nothing that must stay inline is being moved behind `#[cold]`.
+    unsafe { wmemchr_validating(s, c, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wmemchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,

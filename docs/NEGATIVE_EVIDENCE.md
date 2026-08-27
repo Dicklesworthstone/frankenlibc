@@ -37847,3 +37847,60 @@ reworded rather than the gate touched.)
   (rejected). Enum shrink: **+1**. What none of them touched is that the probe re-derives the set's
   length on every call; a caller that already knows it — `strspn` and `strcspn` compute it in their
   own ladders before ever reaching the probe — could pass it in and skip the load entirely.
+
+## 2026-08-27 — bd-2g7oyh — FOUR wide-char entries were missing the cold-tail split: +13 to +17 Ir each, no trade
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. The previous row's named lever — pass the already-known set
+  length into `span_probe_cmpistri` — **was checked first and is a dead end**: callers reach that
+  probe only for sets of five or more, and their own ladders stop at four, so no caller knows the
+  length at that point. The probe's 16-byte load is also needed for the comparison itself, not just
+  the NUL search. Discarded without a build.
+- **The articulation-point gap, found by reading prologues rather than guessing.** `wcslen` and
+  `wcscpy` carry `_validating` splits and enter on a single push. Four siblings did not:
+
+| entry | split? | prologue |
+|---|---|---|
+| `wcschr` | no | `push %rbp/%r15/%r14/%rbx; sub $0x48` |
+| `wmemchr` | no | `push %rbp/%r15/%r14/%r13/%r12/%rbx; sub $0x48` |
+| `wmemcmp` | no | `push %rbp/%r15/%r14/%r13/%r12/%rbx; sub $0x48` |
+| `wcscmp` | no | `push %rbp/%r15/%r14/%r13/%r12/%rbx; sub $0x48` |
+
+  Every call was renting four to six callee-saved registers and 72 bytes of stack for a validating
+  body it does not enter. `wcsrchr` had the identical shape and the same split was worth +11.00 Ir at
+  every measured length.
+- **Safe cut point verified per entry.** All four have null checks, then
+  `if runtime_policy::strict_passthrough_active() { return .. }`, then `runtime_policy::decide` —
+  with NO `raw_passthrough`-style re-entrancy bypass in between. That distinction is load-bearing:
+  `strlen` and `memcmp` must cut BELOW their bypass, because putting it behind `#[cold]` made
+  hardened startup SIGSEGV deterministically. These four have nothing to protect.
+- **Counted mechanism:** all four prologues collapse to a single push. `wcschr` runs
+  **92 instructions -> 79**; `wmemchr` **120 -> 105**; `wmemcmp` **116 -> 99**; `wcscmp` **99 -> 84**.
+
+| family | glibc | HEAD | split | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcschr` | 53.00 | 92.00 | 79.00 | 1.736x | **1.490x** | **+13.00** |
+| `wmemchr` | 73.00 | 120.00 | 105.00 | 1.644x | **1.438x** | **+15.00** |
+| `wmemcmp` | 74.00 | 116.04 | 98.97 | 1.568x | **1.337x** | **+17.07** |
+| `wcscmp` | 55.00 | 99.00 | 84.00 | 1.800x | **1.527x** | **+15.00** |
+| `wcslen` | 40.00 | 67.00 | 67.00 | 1.675x | 1.675x | +0.00 |
+| `wcsnlen` | 48.97 | 94.00 | 94.03 | 1.919x | 1.919x | -0.03 |
+| `strpbrk` | 103.03 | 168.00 | 168.00 | 1.631x | 1.631x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9994 .. 1.0003.** Objects self-reported via `dladdr`; incumbent
+  `/lib/x86_64-linux-gnu/libc.so.6`, arms distinct by pointer — not a self-compare.
+- **NO TRADE, and four ops move at once.** Every changed entry gains 13-17 Ir and all four controls
+  are flat — including `wcslen` and `wcscpy`'s neighbours, which already had the split. A fixed entry
+  charge is paid by every call regardless of input, so this cannot be a bench-input lever; the
+  identical `wcsrchr` change was confirmed flat across a 128x length range.
+- Conformance, all in BOTH strict and hardened mode: `wcschr_conf` **847,391**, `wcscmp_conf`
+  **563,781**, `wmemcmp_conf` **5,683**, `wmemchr_conf` **4,287** — **1,421,142 checks, 0 failures**.
+  Hardened is not optional here: it is the only mode that executes the bodies that moved.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+- Objects: baseline `b1004ba8bdce80ef8667312bef04492c0a4295892ae2728fcb41c412542442d5`,
+  candidate `5b5ce7330d8697a22234511c05533cb925f6ac29f296619a1662cc63ef7b52bf`.
+- **The cold-frame sweep is now complete for `wchar_abi`.** `wcsrchr`, `wcschr`, `wmemchr`,
+  `wmemcmp`, `wcscmp` split this session; `wcslen`, `wcscpy`, `wcsnlen`, `wcsncmp` already had it.
+  `wcsnlen` keeps five pushes and that is documented as load-bearing for its bypass.
+- **STILL OPEN:** `memcmp` 1.944x (documented no-lever), `wcsnlen` 1.919x, `strspn` 1.793x,
+  `wcsrchr` short/unaligned 2.5x. The wide-char family has moved from 1.57-1.80x to 1.34-1.53x.
