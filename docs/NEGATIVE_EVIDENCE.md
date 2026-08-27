@@ -36256,3 +36256,53 @@ reworded rather than the gate touched.)
   they still make and which never satisfy `bound >= 16`; a `bound >= 16` term hoisted into the
   precomputed thresholds alongside `wide_end`/`swar_end` is the candidate for that. Both must be
   measured, not assumed — every hypothesis in this row that was not measured turned out wrong.
+
+## 2026-08-26 — `strlen` heap: the phase read's GOT indirection is LINKAGE, not inlining (REJECTED, 0.00 Ir)
+
+- **Op.** `strlen` on a heap pointer, the highest remaining excess over live glibc outside the
+  `strncmp`/`strncasecmp` short-bound surfaces: **120 Ir vs 23 = 5.216x** at L=4, i.e. 97 Ir of
+  excess, ~74 of it the allocator bound probe.
+- **The observation.** The probe's first act is reading the runtime phase, and instruction-level
+  callgrind plus disassembly show it costs two instructions and a DEPENDENT load:
+  `mov 0x2e00d4(%rip),%rax ; movzbl (%rax),%ecx` — a GOT slot. The byte immediately after it in the
+  same `.bss`, `MODE_STATE`, is read one line later on the same path and compiles to a single
+  RIP-relative `movzbl`. Same type (`AtomicU8`), same module, same section, adjacent addresses
+  (`0x138c231` vs `0x138c232`), different addressing.
+- **The change.** `#[inline(always)]` on the three-function accessor chain
+  `bootstrap_passthrough_active` -> `abi_runtime_phase` -> `is_runtime_ready`, all previously
+  `#[inline]`.
+- **Counted mechanism:** the op runs **120 instructions -> 120 instructions** at L=4 and
+  **111 instructions -> 111** at L=16. Zero at every length, against an instrument that resolves
+  0.05 and that measured +3.00, +94 and +147 on other changes this same day.
+
+| L (heap) | glibc | HEAD | inline(always) | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| 4 | 23.01 | 120.01 | 120.01 | 5.216x | 5.216x | +0.00 |
+| 8 | 23.01 | 118.03 | 118.01 | 5.131x | 5.129x | +0.03 |
+| 16 | 22.97 | 111.00 | 111.00 | 4.832x | 4.820x | +0.00 |
+| 64 | 35.03 | 132.00 | 132.00 | 3.768x | 3.771x | +0.00 |
+
+- **A/A null PASSES** at 0.05 Ir worst.
+- **WHY, checked in the object rather than argued.** Disassembling both binaries at `strlen`, the
+  `movzbl (%rax)` is still there in the candidate — the accessors were ALREADY being inlined at
+  `#[inline]`, so the attribute changed nothing about the addressing. The indirection is not an
+  inlining decision. `RUNTIME_READY` is a **local** symbol (`nm` shows lowercase `b`, absent from
+  `.dynsym`), its address is never taken anywhere in the tree, and its relocation is
+  `R_X86_64_RELATIVE` — resolved at load time, not preemptible. Nothing about it is semantically
+  indirect; the GOT slot is a codegen/visibility artifact of how this cdylib is linked.
+- **What this rules out, which is the value of the row.** No source-level attribute on the reader
+  reaches this. Anything that does would be a LINK-level change — visibility defaults or codegen-unit
+  partitioning for the whole crate — which is a different class of change with its own blast radius,
+  and it is NOT established here that it would help; it is only established that inlining does not.
+- Not landed; reverted, working tree clean for `crates/`. Gate green anyway
+  (`cargo test -p frankenlibc-abi --lib`, **200 passed, 0 failed**, compilation observed).
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `bf2113d5ccf00679690a50cb311422f2f8ebd0d4493bd52a2b0ba3d6b287715b`,
+  candidate `600e1d449fafaef90f888d78c0a8931eba878c3d6833a60266060b1668825714`.
+- **STILL OPEN:** `strlen` heap is 5.216x and its ~74-instruction probe is the standing cost. Of that,
+  19 instructions are `segment_header_at`'s four validity checks plus a provably-unreachable
+  `addr < user_base + class_size`, re-proving invariants of a header that is written once, `mprotect`ed
+  `PROT_READ`, and published behind an `Acquire` ownership bit. Deleting them is a SAFETY-POSTURE
+  decision for the owner, not a perf call, and remains untaken.
