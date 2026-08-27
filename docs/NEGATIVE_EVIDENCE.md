@@ -36606,3 +36606,51 @@ reworded rather than the gate touched.)
   render engine is the remainder: `format_float` 394, `render_segments` 336, `parse_format_spec`
   307, `FormatSegments::push` 234, `parse_format_string` 204. Single-conversion formats remain far
   ahead of glibc (`%d` 0.445x, `%.3f` 0.567x) — the loss is entirely multi-conversion.
+
+## 2026-08-26 — `snprintf`: one arg classification instead of two — 1.534x -> 1.528x (+10 Ir, and the attribution overstated it by 5x)
+
+- **Op.** `snprintf("%d %s %.3f")`, the highest-Ir losing op: **2595 Ir vs live glibc's 1692 =
+  1.534x**, +903 Ir of excess.
+- **The change.** `value_arg_is_float()` and `value_arg_is_gp()` are both
+  `matches!(self.value_arg_kind(), ..)`, so the extract loop's `if float .. else if gp ..` chain
+  computed the SAME conversion-plus-length classification twice for every spec that is not a float.
+  Replaced with one `match spec.value_arg_kind()` at both extract sites (the register-path macro and
+  the raw `va_list` path). The guards reproduce the chain exactly, including the already-full-buffer
+  case where the original fell through to a test that could not match.
+- **Counted mechanism:** the op runs **2595 instructions -> 2585 instructions**.
+
+| family | glibc | HEAD | one classification | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `snprintf` ("%d %s %.3f") | 1692.00 | 2595.00 | 2585.00 | 1.534x | **1.528x** | **+10.00** |
+| `snprintf_d` (exact "%d") | 476.00 | 212.03 | 212.00 | 0.445x | 0.445x | +0.03 |
+| `snprintf_f` (exact "%.3f") | 1139.98 | 645.01 | 645.01 | 0.566x | 0.566x | +0.00 |
+| `strtod` | 886.00 | 560.00 | 559.97 | 0.632x | 0.632x | +0.03 |
+| `memcmp` | 71.00 | 138.03 | 138.00 | 1.944x | 1.944x | +0.03 |
+
+- **A/A null PASSES** at 0.03 Ir worst; the four controls are flat.
+- **THE ATTRIBUTION OVERSTATED THIS BY 5x, and that is the point of the row.** Caller attribution
+  charged 57 Ir to these predicates — 30 across two `value_arg_is_gp` calls and 27 across three
+  `value_arg_is_float` calls. Removing one of every two classifications recovered **10**, not ~28.
+  LLVM had already partially CSE'd the repeated `value_arg_kind()` within each iteration, exactly as
+  it had already merged the thirteen `exact_direct_*_format` probes that a pre-filter tried and
+  failed to skip earlier today. **Callgrind's per-function call counts describe the SOURCE call
+  graph; the machine code has already merged some of it. Treat an attributed figure as an upper
+  bound on what removing the source-level duplication can return.**
+- Conformance: `snp_conf` against live glibc via `dlmopen`, return value AND the full 512-byte
+  output buffer byte-for-byte over every `%s` length 0..40 x second-argument length 0..20, every
+  literal-run length 0..40, plus `NULL` `%s`, width, precision and the float path — **1767 checks,
+  0 failures** in BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed (hz4
+  via `rch`; `vmi1293453` remains at 100% disk and nothing was deleted to recover it).
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `c1b68fd3018f3f7c1b23bade265c4815b473ff5b7a67d53d9b92a31f077dc300`,
+  candidate `3ed3a25fdf98920752260cbd5c75e77629d93cf3bf11d1f3384eb8ee5745b746`.
+- **STILL OPEN, and the cheap redundancies are now exhausted.** `snprintf` is 1.528x with **+893 Ir
+  of excess**, and what remains is genuine work rather than repetition: `render_value_arg` is 602 Ir
+  INCLUSIVE (of which `format_float` is 394), the parse side is 438 (`parse_format_string` 204 +
+  `FormatSegments::push` 234), and the entry is ~350. Notably `snprintf("%.3f")` through the direct
+  bypass costs 645 Ir TOTAL and beats glibc at 0.566x, while `format_float` alone costs 394 on the
+  general path — the two float routes are worth comparing directly before assuming the general one
+  is near-optimal.

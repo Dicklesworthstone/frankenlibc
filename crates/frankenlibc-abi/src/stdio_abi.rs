@@ -5432,12 +5432,26 @@ macro_rules! extract_va_args_registers {
                         $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
-                    if spec.value_arg_is_float() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
-                        _idx += 1;
-                    } else if spec.value_arg_is_gp() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
-                        _idx += 1;
+                    // ONE classification, not two. `value_arg_is_float()` and
+                    // `value_arg_is_gp()` are both `matches!(self.value_arg_kind(), ..)`,
+                    // so an else-if chain over them computed the SAME
+                    // conversion-plus-length classification twice for every spec that
+                    // is not a float. Counted on the deployed `snprintf("%d %s %.3f")`
+                    // against live glibc: 30 Ir across two `value_arg_is_gp` calls and
+                    // 27 across three `value_arg_is_float` calls, all from this loop.
+                    // Matching on the kind once is byte-identical -- the guards
+                    // reproduce the chain's behaviour when the buffer is already full,
+                    // where the original fell through to a test that could not match.
+                    match spec.value_arg_kind() {
+                        Some(ValueArgKind::Fp | ValueArgKind::X87) if _idx < $extract_count => {
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                        Some(ValueArgKind::Gp) if _idx < $extract_count => {
+                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _idx += 1;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -8523,21 +8537,26 @@ pub(crate) unsafe fn vprintf_extract_args(
                         unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                     idx += 1;
                 }
-                if spec.value_arg_is_float() && idx < extract_count {
-                    // `%Lf` is class X87 and lives on the stack, not in an SSE
-                    // register. Reading it as a double both returns nonsense and
-                    // leaves its sixteen stack bytes unconsumed, which shifts
-                    // every later argument.
-                    buf[idx] = if spec.length == LengthMod::BigL {
-                        unsafe { vprintf_read_x87(overflow_ptr) }
-                    } else {
-                        unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) }
-                    };
-                    idx += 1;
-                } else if spec.value_arg_is_gp() && idx < extract_count {
-                    buf[idx] =
-                        unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
-                    idx += 1;
+                // Same single classification as the register-path macro above.
+                match spec.value_arg_kind() {
+                    Some(ValueArgKind::Fp | ValueArgKind::X87) if idx < extract_count => {
+                        // `%Lf` is class X87 and lives on the stack, not in an SSE
+                        // register. Reading it as a double both returns nonsense and
+                        // leaves its sixteen stack bytes unconsumed, which shifts
+                        // every later argument.
+                        buf[idx] = if spec.length == LengthMod::BigL {
+                            unsafe { vprintf_read_x87(overflow_ptr) }
+                        } else {
+                            unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) }
+                        };
+                        idx += 1;
+                    }
+                    Some(ValueArgKind::Gp) if idx < extract_count => {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                    _ => {}
                 }
             }
         }
