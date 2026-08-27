@@ -37904,3 +37904,55 @@ reworded rather than the gate touched.)
   `wcsnlen` keeps five pushes and that is documented as load-bearing for its bypass.
 - **STILL OPEN:** `memcmp` 1.944x (documented no-lever), `wcsnlen` 1.919x, `strspn` 1.793x,
   `wcsrchr` short/unaligned 2.5x. The wide-char family has moved from 1.57-1.80x to 1.34-1.53x.
+
+## 2026-08-27 — bd-2g7oyh — a prologue survey found FOUR more unsplit span entries, and exposed `wcsspn` at 2.690x as the suite's real worst
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Rather than guess the next target, the deployed object was
+  surveyed: every exported `str*`/`mem*`/`wcs*`/`wmem*` entry ranked by prologue cost (callee-saved
+  pushes x 8 + stack frame). The most expensive tractable group was the span family —
+  `wcsspn`/`wcspbrk`/`wcscspn` at **six pushes plus `sub $0x128`, 344 bytes each**, and `strpbrk` at
+  six pushes plus `sub $0xb8`. `strspn` and `strcspn` already carried `_validating` splits; these
+  four did not.
+- **`wcsspn` had never been measured, and it was the worst ratio in the suite: 112.97 Ir vs live
+  glibc's 42.00 = 2.690x**, worse than `wcsrchr`'s 2.515x. A driver arm for the wide span family did
+  not exist until this cycle.
+- **The change.** The same cold-tail split, cut at the strict gate. Verified per entry that none has
+  a `raw_passthrough`-style re-entrancy bypass between the gate and `runtime_policy::decide` — the
+  thing that forces `strlen` and `memcmp` to cut lower.
+- **Counted mechanism:** `wcsspn` and `wcscspn` lose all six pushes (frame remains: their strict path
+  builds a stack LUT); `wcspbrk` drops to one push; `strpbrk` drops from six pushes + `sub $0xb8` to
+  two pushes + `sub $0x28`. `wcsspn` runs **113 instructions -> 99**; `strpbrk` **168 -> 158**.
+
+| family | glibc | HEAD | split | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcsspn` | 42.00 | 112.97 | 99.00 | **2.690x** | **2.357x** | **+13.97** |
+| `strpbrk` | 103.00 | 168.00 | 158.00 | 1.631x | **1.534x** | **+10.00** |
+| `wcscspn` | 3158.00 | 1017.03 | 1002.00 | 0.322x | 0.317x | +15.03 |
+| `wcspbrk` | 3152.00 | 1021.00 | 1005.00 | 0.324x | 0.319x | +16.00 |
+| `strspn` | 58.00 | 104.00 | 103.96 | 1.793x | 1.792x | +0.04 |
+| `strcspnL100` | 111.00 | 112.00 | 112.00 | 1.009x | 1.009x | +0.00 |
+| `wcschr` | 53.00 | 79.00 | 78.97 | 1.491x | 1.490x | +0.03 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 1.0000 .. 1.0000** — exact across all eight families. Objects
+  self-reported via `dladdr`; incumbent `/lib/x86_64-linux-gnu/libc.so.6`, arms distinct by pointer
+  (`ARM_DISTINCT` printed per arm) — not a self-compare.
+- **NO TRADE.** Four entries gain 10-16 Ir, four controls flat. A fixed entry charge is paid by every
+  call regardless of input, so this cannot be a bench-input lever.
+- **A second finding worth more than the fix: `wcscspn` and `wcspbrk` BEAT glibc by ~3x** (1002 vs
+  3158, 1005 vs 3152). glibc's wide span walks the reject set per element; fl does not. Those two
+  were never at risk and are recorded so nobody spends a cycle on them.
+- Conformance: a new `wspan_conf` differential — set sizes 0..40 across the entries' 1/2/3/4 and >=5
+  probe boundaries x string lengths 0..120 x four stop positions, plus empty set/string and a set
+  containing U+1F600 (which a byte-oriented shortcut would mishandle), plus narrow `strpbrk` on the
+  same shapes: **20,451 checks, 0 failures** in BOTH strict and hardened mode. Existing
+  `pbrk_conf` (2,835) and `cspn_conf` (31,392) also clean in both modes.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+- Objects: baseline `5b5ce7330d8697a22234511c05533cb925f6ac29f296619a1662cc63ef7b52bf`,
+  candidate `15f1f5a1c02c0ecfd61dd6826a00a9033fcc6be2e1b48228e2ba14260a96024e`.
+- **The prologue survey is the reusable part.** It found four unsplit entries in one pass, having
+  previously found five in `wchar_abi`. Remaining high-prologue entries it flagged and this cycle did
+  NOT touch: `wcsftime` (1704 bytes), `wcstod` (648), `wcstof` (632), `wcstok` (344), `memcpy` (280),
+  `strfmon` (280), `strcasestr` (232), `strtok_r`/`strncat` (216) — none measured yet.
+- **STILL OPEN:** `wcsspn` 2.357x is now the worst standing ratio, `wcsrchr` short/unaligned ~2.5x,
+  `memcmp` 1.944x, `wcsnlen` 1.919x, `strspn` 1.793x.

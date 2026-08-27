@@ -2867,6 +2867,25 @@ pub unsafe extern "C" fn wcsspn(s: *const u32, accept: *const u32) -> usize {
         };
     }
 
+    // COLD-TAIL SPLIT. The strict fast path needs its two pointers and a scan; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers. Prologue survey of the deployed object put these four
+    // among the most expensive entries in the library: `wcsspn`, `wcspbrk` and `wcscspn`
+    // each entered on six callee-saved pushes plus `sub $0x128,%rsp` -- 296 bytes of
+    // stack -- and `strpbrk` on six pushes plus `sub $0xb8`.
+    //
+    // Their siblings already had it: `strspn` and `strcspn` carry `_validating` splits,
+    // and the same cut was worth +13 to +17 Ir on `wcschr`/`wmemchr`/`wmemcmp`/`wcscmp`
+    // and +11 on `wcsrchr`. Cut at the strict gate: none of these four has a
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating
+    // body, which is the thing that forces `strlen` and `memcmp` to cut lower.
+    unsafe { wcsspn_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcsspn_validating(s: *const u32, accept: *const u32) -> usize {
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -2959,6 +2978,25 @@ pub unsafe extern "C" fn wcscspn(s: *const u32, reject: *const u32) -> usize {
             i
         };
     }
+
+    // COLD-TAIL SPLIT. The strict fast path needs its two pointers and a scan; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers. Prologue survey of the deployed object put these four
+    // among the most expensive entries in the library: `wcsspn`, `wcspbrk` and `wcscspn`
+    // each entered on six callee-saved pushes plus `sub $0x128,%rsp` -- 296 bytes of
+    // stack -- and `strpbrk` on six pushes plus `sub $0xb8`.
+    //
+    // Their siblings already had it: `strspn` and `strcspn` carry `_validating` splits,
+    // and the same cut was worth +13 to +17 Ir on `wcschr`/`wmemchr`/`wmemcmp`/`wcscmp`
+    // and +11 on `wcsrchr`. Cut at the strict gate: none of these four has a
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating
+    // body, which is the thing that forces `strlen` and `memcmp` to cut lower.
+    unsafe { wcscspn_validating(s, reject) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcscspn_validating(s: *const u32, reject: *const u32) -> usize {
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
@@ -3054,6 +3092,25 @@ pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 
             }
         };
     }
+
+    // COLD-TAIL SPLIT. The strict fast path needs its two pointers and a scan; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers. Prologue survey of the deployed object put these four
+    // among the most expensive entries in the library: `wcsspn`, `wcspbrk` and `wcscspn`
+    // each entered on six callee-saved pushes plus `sub $0x128,%rsp` -- 296 bytes of
+    // stack -- and `strpbrk` on six pushes plus `sub $0xb8`.
+    //
+    // Their siblings already had it: `strspn` and `strcspn` carry `_validating` splits,
+    // and the same cut was worth +13 to +17 Ir on `wcschr`/`wmemchr`/`wmemcmp`/`wcscmp`
+    // and +11 on `wcsrchr`. Cut at the strict gate: none of these four has a
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating
+    // body, which is the thing that forces `strlen` and `memcmp` to cut lower.
+    unsafe { wcspbrk_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn wcspbrk_validating(s: *const u32, accept: *const u32) -> *mut u32 {
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,

@@ -7783,6 +7783,25 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
         };
     }
 
+    // COLD-TAIL SPLIT. The strict fast path needs its two pointers and a scan; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers. Prologue survey of the deployed object put these four
+    // among the most expensive entries in the library: `wcsspn`, `wcspbrk` and `wcscspn`
+    // each entered on six callee-saved pushes plus `sub $0x128,%rsp` -- 296 bytes of
+    // stack -- and `strpbrk` on six pushes plus `sub $0xb8`.
+    //
+    // Their siblings already had it: `strspn` and `strcspn` carry `_validating` splits,
+    // and the same cut was worth +13 to +17 Ir on `wcschr`/`wmemchr`/`wmemcmp`/`wcscmp`
+    // and +11 on `wcsrchr`. Cut at the strict gate: none of these four has a
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating
+    // body, which is the thing that forces `strlen` and `memcmp` to cut lower.
+    unsafe { strpbrk_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strpbrk_validating(s: *const c_char, accept: *const c_char) -> *mut c_char {
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
     if s.is_null() || accept.is_null() {
         record_string_stage_outcome(
