@@ -1555,18 +1555,70 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
     let pb = s as usize;
     let mut i = 0usize;
 
-    // Head: scalar to 32-byte alignment.
-    let head = ((32 - (pb & 31)) & 31) / 4;
-    while i < head {
-        // SAFETY: caller guarantees a valid NUL-terminated string.
-        let ch = unsafe { *s.add(i) };
-        if ch == c {
-            last = Some(i);
+    // Head: ONE MASKED PANEL to 32-byte alignment, not a scalar loop.
+    //
+    // The old loop stepped one wide char at a time until `s + i` was 32-byte aligned --
+    // up to seven iterations of an eleven-instruction body. That never showed up in this
+    // suite because the `wcsrchr` benchmark used an `_Alignas(128)` buffer, which skips
+    // the head AND the ramp entirely: the most favourable alignment there is. Pricing the
+    // other offsets shows what it hid -- at wchar offset 1, length 31, fl is 201 Ir
+    // against live glibc's 84 (2.393x) versus 108/69 (1.565x) at offset 0, and the scanner
+    // alone doubles from 86 Ir to 172. glibc pays +15 for the same misalignment; fl pays
+    // +93.
+    //
+    // Load the 32-byte-aligned block CONTAINING `s` and mask off the lanes before it. That
+    // read is page-safe for the same reason the narrow `scan_c_string_for_set4` head is:
+    // aligning DOWN stays inside the 32-byte block that holds `s`, which the caller has
+    // already promised is readable. Lane `k` of the panel is `s` index `k - skip`.
+    // ...but only when the head is long enough to be worth a panel. The masked load,
+    // its two compares and the mask arithmetic cost about what THREE scalar iterations
+    // do, so a start that is already one or two wide chars from 32-byte alignment is
+    // cheaper the old way. Measured: at wchar offsets 1 and 3 (seven and five scalar
+    // steps) the panel is +45 and +27 Ir, and at offsets 7 and 15 (one step each) it is
+    // -11. `head_lanes` is `LANES - align_lanes` by construction, so this is a compile-
+    // time-shaped comparison on a value already in hand.
+    let align_lanes = (pb & 31) / 4;
+    let head_lanes = LANES - align_lanes;
+    if align_lanes != 0 && head_lanes >= 3 {
+        let skip = align_lanes;
+        // SAFETY: `base` is the 32-byte-aligned start of the block containing `s`, so the
+        // 32-byte read stays within one page and within a block the caller can read.
+        let base = unsafe { s.sub(skip) };
+        let v = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(base.cast::<[u32; LANES]>())
+        });
+        let keep = !((1u64 << skip) - 1);
+        let zm = v.simd_eq(zv).to_bitmask() & keep;
+        let cm = v.simd_eq(cv).to_bitmask() & keep;
+        if zm != 0 {
+            // NUL inside the head block. `p` is its lane; translate to an `s` index.
+            let p = zm.trailing_zeros() as usize;
+            let cb = cm & ((1u64 << p) - 1);
+            if cb != 0 {
+                let k = 63 - cb.leading_zeros() as usize;
+                return (Some(k - skip), p - skip + 1);
+            }
+            return (last, p - skip + 1);
         }
-        if ch == 0 {
-            return (last, i.saturating_add(1));
+        if cm != 0 {
+            let k = 63 - cm.leading_zeros() as usize;
+            last = Some(k - skip);
         }
-        i += 1;
+        i = LANES - skip;
+    } else if align_lanes != 0 {
+        // Short head (one or two wide chars): the original scalar walk, which beats the
+        // panel at this length.
+        while i < head_lanes {
+            // SAFETY: caller guarantees a valid NUL-terminated string.
+            let ch = unsafe { *s.add(i) };
+            if ch == c {
+                last = Some(i);
+            }
+            if ch == 0 {
+                return (last, i.saturating_add(1));
+            }
+            i += 1;
+        }
     }
 
     // Ramp: 8-lane (32-byte, in-page) resolve into `last` until `s + i` is 128-byte aligned.

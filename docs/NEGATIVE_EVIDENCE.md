@@ -37584,3 +37584,65 @@ reworded rather than the gate touched.)
   2.233x with 96 Ir against glibc's 43. Since the resolve's narrowing is already minimal, the
   remaining fixed cost is elsewhere — the scanner's head/ramp prologue, which computes 32- and
   128-byte alignment adjustments that a 128-byte-aligned buffer never uses.
+
+## 2026-08-27 — bd-2g7oyh — the `wcsrchr` BENCHMARK was hiding the gap: unaligned starts are 2.393x, and a masked head takes them to 1.881x
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. The previous row named the scanner's head/ramp prologue as
+  the next target. **Checking whether that path was even representative came first, and it was not.**
+- **THE HARNESS WAS FLATTERING fl.** Every `wcsrchr` arm in this suite used an `_Alignas(128)`
+  buffer, which skips the scanner's head AND ramp entirely — the single most favourable alignment
+  there is. A new `wcsrchrA<off>_<len>` arm prices the other starting offsets:
+
+| start | glibc | fl | ratio | excess |
+|---|---|---|---|---|
+| offset 0, len 31 | 69.00 | 108.00 | 1.565x | +39.00 |
+| **offset 1, len 31** | 84.00 | 201.00 | **2.393x** | **+117.00** |
+| offset 3, len 31 | 84.00 | 183.00 | 2.179x | +99.00 |
+| offset 7, len 31 | 84.00 | 145.00 | 1.726x | +61.00 |
+| offset 15, len 31 | 84.00 | 143.00 | 1.702x | +59.00 |
+| offset 5, len 8 | 39.00 | 102.03 | **2.616x** | +63.03 |
+
+  Misalignment costs glibc **+15 Ir**; it cost fl **+93**. Instruction counting confirms it: the
+  scanner runs 86 Ir aligned and **172 unaligned**, of which 33 is an eleven-instruction SCALAR head
+  loop. Every `wcsrchr` number in this ledger before today was measured on the best case.
+- **The change.** Replace the scalar walk to 32-byte alignment with ONE masked panel: load the
+  32-byte-aligned block containing `s` and mask off the lanes before it — the same aligned-down trick
+  the narrow `scan_c_string_for_set4` head already uses, page-safe because aligning down stays inside
+  a block the caller has promised is readable.
+- **Gated on head length, because the first version was a trade.** Applied unconditionally the panel
+  is +45 and +27 at offsets 1 and 3 but **-11** at offsets 7 and 15, where only ONE scalar step
+  remained: the masked load, two compares and the mask arithmetic cost about three scalar iterations.
+  Gating on `head_lanes >= 3` keeps the wins and recovers 9 of those 11 Ir.
+- **Counted mechanism:** offset 1 runs **201 instructions -> 158**; offset 3, **183 -> 158**.
+
+| family | glibc | HEAD | v1 always | **v2 gated** | HEAD x | v2 x | saved |
+|---|---|---|---|---|---|---|---|
+| `wcsrchrA0_31` | 69.00 | 108.00 | 108.00 | 108.00 | 1.565x | 1.565x | +0.00 |
+| `wcsrchrA1_31` | 84.00 | 201.00 | 156.00 | 157.97 | **2.393x** | **1.881x** | **+43.03** |
+| `wcsrchrA3_31` | 84.00 | 183.00 | 155.96 | 158.00 | 2.179x | **1.881x** | **+25.00** |
+| `wcsrchrA7_31` | 84.00 | 145.00 | 156.00 | 147.00 | 1.726x | 1.750x | -2.00 |
+| `wcsrchrA15_31` | 84.00 | 143.00 | 154.00 | 145.04 | 1.702x | 1.727x | -2.04 |
+| `wcsrchrA0_8` | 42.97 | 95.97 | 96.03 | 96.00 | 2.233x | 2.233x | -0.03 |
+| `wcsrchrA5_8` | 39.00 | 102.03 | 96.00 | 98.03 | **2.616x** | 2.513x | +4.00 |
+| `wcsrchrL1024` | 828.00 | 974.00 | 974.00 | 974.00 | 1.176x | 1.176x | +0.00 |
+| `wcschr` | 53.03 | 92.00 | 92.00 | 92.00 | 1.735x | 1.736x | +0.00 |
+| `wcslen` | 40.00 | 67.00 | 67.00 | 67.00 | 1.675x | 1.676x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9994 .. 1.0007.** Objects self-reported by the process via
+  `dladdr`; incumbent `/lib/x86_64-linux-gnu/libc.so.6`, arms distinct by pointer — two ELFs, one the
+  system glibc, not a self-compare.
+- **This is the OPPOSITE of a bench-input lever, which is why it is worth landing.** It pays nothing
+  on the shape the benchmark used (offset 0: +0.00) and everything on the shapes it never ran. Three
+  offsets improve by 4 to 43 Ir, two pay 2, and five points including all three controls are flat.
+- Conformance: `wrchr_conf` — **32 buffer alignments** x lengths 0..160 x target absent / spread
+  positions / two targets (last must win) / final element / `c == 0`, plus page-edge strings 1..100:
+  **152,268 checks, 0 failures** in BOTH strict and hardened mode. The alignment sweep is what makes
+  this credible: the change is index arithmetic against a masked panel, and every one of the 32
+  offsets is exercised.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+- Objects: baseline `adbe08aab6dcf1571eb541cfed732a70a2ff59348057077a14db74be5478baaa`,
+  v1 ungated `937d06af6c347ea76afff4be7b0161e70e961d3591a030b0a11b0e3c90233e75`,
+  shipped v2 `40198eaa7eb00e5cc5d72a5ede58e07c7249de66b131a5e5dcf9bb4b4003174b`.
+- **STILL OPEN:** the ramp is untouched — it walks 8-lane panels from 32-byte to 128-byte alignment,
+  up to three of them, and every unaligned start still pays it. `wcsrchr` at offset 5 length 8 is
+  2.513x and remains the suite's worst measured point.
