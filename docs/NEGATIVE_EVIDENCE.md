@@ -38155,3 +38155,98 @@ building a pointer triple, and an indirect `call` into `HtmSite::run` with a clo
 compared against `-1` before the real copy path is even reached. That is the next ~15-20 Ir, and it
 is a transactional-memory probe standing in front of a nine-instruction copy. `strncat` at 2.7x
 (159.00 vs 58.00) also still has no cold-tail split.
+
+## 2026-08-27 — bd-2g7oyh — `memcpy`'s deployed path paid a function call and a 48-byte frame to copy 8 bytes: 2.909x -> 2.409x
+
+Last cycle's row named the next lever from disassembly and got it **half wrong**, which is worth
+recording before the win. It claimed the residual was `MEMCPY_HTM_SITE` costing "~15-20 Ir" on the
+deployed path. Reading the entry properly shows the forced-mode test short-circuits *before* the
+spills: `mov` a GOT slot, `movzbl`, `dec`, `cmp`, `jae` — **5** instructions, and the HTM call is
+never reached in deployment. The 15-20 Ir figure counted instructions on a branch no deployed call
+takes. The real mass was somewhere else, and only counting the executed path found it.
+
+**The gap.** The deployed strict path ended in `call raw_overlap_copy`. That call is why `memcpy`'s
+entry looked the way it did: keeping `dst`/`src`/`n` live across it forced three callee-saved pushes,
+six instructions shuffling them into `%rbx`/`%r14`/`%r15` and back out into the argument registers,
+and a `call`/`ret` pair — to reach a copy that, for n=8, is four `mov`s. Separately, the *test-only*
+HTM branch spilled a pointer triple to the stack, which forced `sub $0x30,%rsp` into the entry block:
+a 48-byte frame allocated and freed by every deployed call for a branch none of them take.
+
+**The lever, in two parts, each measured.** (1) Factor the whole sub-128 size-class ladder into
+`#[inline(always)] unsafe fn raw_copy_under_128` — shared with `raw_overlap_copy`, so no duplication
+— and take `n < 128` inline in `memcpy`'s strict path, leaving everything in argument registers.
+Placed deliberately AFTER the forced-mode test, so a small `memcpy` under a forced HTM test mode
+still takes the transactional path. (2) Mark `try_memcpy_htm` `#[cold] #[inline(never)]` so its
+spill no longer allocates a frame for everyone else.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and self-reported by
+`dladdr`:
+
+| n | HEAD | +inline leaf | +HTM outlined | live glibc | before | after |
+|---|---|---|---|---|---|---|
+| 8 | 57.00 | 49.00 | **47.00** | 22.97 | 2.481x | 2.046x |
+| 16 | 59.00 | 50.00 | **48.00** | 21.00 | 2.810x | 2.286x |
+| 32 | 64.00 | 55.00 | **53.02** | 22.00 | 2.909x | 2.410x |
+| 64 | 64.00 | 55.00 | **53.00** | 22.00 | 2.909x | 2.409x |
+| 96 | 70.00 | 60.00 | **58.00** | 32.00 | 2.188x | 1.813x |
+
+**11 instructions -> removed at n=64** (64.00 instructions -> 53.00): 9 from the call and its
+register dance, 2 from the frame. `sub $0x30,%rsp` is gone from the prologue; the three pushes
+remain, because the hardened and validating branches still need callee-saved registers.
+
+- **A/A null:** glibc arm under the new object 21.97 against 22.00 under HEAD, ratio 1.001. The
+  incumbent did not move.
+- **Boundary control:** n=128 and n=256 take the out-of-line branch by construction. 80.97 -> 81.00
+  and 93.97 -> 94.00 — unchanged, confirming the win is exactly the inlined range and not a
+  measurement drift.
+- **Untouched-family controls:** `wcsspn` 60.00 -> 60.00, `memcmp` 138.00 -> 138.04, `strpbrk`
+  172.02 -> 172.00.
+- **Refactor is codegen-neutral for other callers:** `raw_overlap_copy` is shared with
+  `strcpy`/`strcat`/`strncat`. `strncat` measures 113.00 -> 113.00 at length 8 and 159.00 -> 159.00
+  at length 40 — pulling the ladder into an `#[inline(always)]` helper changed nothing for them.
+- **Not bench-path-specific:** the classes key on `n` alone, with no alignment assumption.
+
+Measured under host load of 150 on 64 cores. That does not void these numbers and this is worth
+being explicit about: callgrind is a simulator that counts instructions rather than timing them, so
+the figures are load-independent by construction — demonstrated here by the glibc arm returning
+21.00/22.00/32.00 at n=16/32/96, identical to the values it produced in the previous cycle at a load
+of 15. No wall-clock number is claimed anywhere in this row.
+
+Conformance: `mcpy_conf` differential against live glibc — dense lengths 0..160 at eight source
+alignments, 32 tier-boundary lengths at 22x10 source/destination alignment pairs comparing the whole
+9000-byte destination plus the returned pointer, and `memmove` on genuinely overlapping regions:
+**8,473 checks, 0 failures in BOTH strict and hardened mode.**
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing.
+
+**A red gate that is NOT this change, run down rather than waved off.**
+`cargo test -p frankenlibc-abi --test string_abi_test` reports 200 passed, 1 failed:
+`strlen_bounds_tracked_unterminated_input` (`string_abi_test.rs:329`, `left: 6  right: 5`),
+deterministic and reproducing in isolation, so not an ordering flake. It is **pre-existing** and
+independent of this cycle: `git log -S` names `e3a0b0883` (2026-08-26, "perf(strlen):
+known_remaining_strict"), which predates today's first commit. That commit swapped
+`known_remaining(s as usize)` for `known_remaining_strict(s as usize)` in `strlen`'s strict fast
+path; the comment from the original fix (`8e12c9f9c`, bd-m8muis, "retain tracked strlen bounds")
+still sits above it claiming the bound is retained, but the behaviour is gone — the test allocates 5
+unterminated bytes, `malloc_known_remaining_for_tests` still reports `Some(5)` (that assert passes),
+and `strlen` then returns 6, reading past the tracked allocation. Exactly the AGENTS.md failure
+shape: the function survived while the rule inside it was deleted. Filed as **bd-k3skh6** (P1 bug),
+including the note that `e3a0b0883`'s own perf claim was measured against a `strlen` that had
+stopped doing the bounds work and needs re-measuring alongside the fix. Not fixed here, because
+fixing it means re-measuring another agent's perf lever inside this cycle.
+
+Objects: baseline `76a86b3a09092308d03b3c9a3262a5b3e124dcce4dae4cfc4d6ca2dc468f1f63` (HEAD),
+intermediate `7f40dca8b72f09938f949b8d2750ed4b7eefc1b44fe2563bf5389adae83d2a3f` (inline only),
+candidate built locally from this tree.
+
+**STILL OPEN at 2.409x.** What remains on the deployed path is now almost entirely entry overhead,
+not copying: three null tests, a `MODE_STATE` load, the five-instruction forced-mode HTM gate whose
+flag `HTM_TEST_MODE` is **GOT-indirect** (`mov` a GOT slot then `movzbl` through it, where
+`MODE_STATE` next to it is a single rip-relative `movzbl` — so the static is exported/interposable
+and could be made hidden for 1 Ir), and three pushes/pops that survive because other branches in the
+function still need callee-saved registers. Getting the rest means making the hot path its own
+frameless function, and the `strlen` precedent says that must not be done by pushing
+`string_raw_passthrough_active()` behind a cold boundary.

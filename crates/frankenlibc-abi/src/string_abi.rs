@@ -719,6 +719,78 @@ unsafe fn raw_avx_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
     }
 }
 
+/// Straight-line sub-128-byte forward copy: the whole small-`n` size-class ladder, with no
+/// loop and a fixed move count per class.
+///
+/// `#[inline(always)]` and factored out of `raw_overlap_copy` on purpose. It is the body a
+/// hot ABI entry wants to *inline*, not `call`: on the deployed strict `memcpy` path the
+/// call to `raw_overlap_copy` was costing far more than the copy — three callee-saved
+/// pushes and `sub $0x30,%rsp` to keep `dst`/`src`/`n` alive across it, six instructions
+/// shuffling them into and back out of `%rbx`/`%r14`/`%r15`, then the `call`/`ret` pair.
+/// Inlined here, the hot path holds everything in argument registers and needs no frame.
+///
+/// Classes are cut so the common power-of-two lengths tile exactly, and every class uses
+/// overlapping power-of-two windows so the move count is fixed and the trip count vanishes:
+/// `[8,16)` two u64 windows, `[4,8)` two u32, `[1,4)` three bytes, `[16,32)` two 16-byte,
+/// `[32,64]` two 32-byte (n=32 and n=64 tile with no duplicated move), `(64,128)` four
+/// 32-byte. dst/src are disjoint on this path — it is the forward `memcpy` primitive, and
+/// `memmove`'s backward path is a separate function — so the windows may overlap each other.
+///
+/// The explicit `read_unaligned`/`write_unaligned` (rather than a slice copy or a `[u8; N]`
+/// aggregate) is load-bearing: an aggregate copy is exactly what LLVM lowers back to
+/// `@llvm.memcpy`, which in this cdylib resolves to our own interposed `memcpy` and
+/// self-recurses.
+///
+/// SAFETY: caller guarantees `dst`/`src` are valid and disjoint for `n` bytes, and `n < 128`.
+#[inline(always)]
+unsafe fn raw_copy_under_128(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        if n < 16 {
+            if n >= 8 {
+                std::ptr::write_unaligned(
+                    dst.cast::<u64>(),
+                    std::ptr::read_unaligned(src.cast::<u64>()),
+                );
+                std::ptr::write_unaligned(
+                    dst.add(n - 8).cast::<u64>(),
+                    std::ptr::read_unaligned(src.add(n - 8).cast::<u64>()),
+                );
+            } else if n >= 4 {
+                std::ptr::write_unaligned(
+                    dst.cast::<u32>(),
+                    std::ptr::read_unaligned(src.cast::<u32>()),
+                );
+                std::ptr::write_unaligned(
+                    dst.add(n - 4).cast::<u32>(),
+                    std::ptr::read_unaligned(src.add(n - 4).cast::<u32>()),
+                );
+            } else {
+                // n ∈ [1,3]: straight-line byte copies (no loop ⇒ not an @llvm.memcpy).
+                *dst = *src;
+                if n > 1 {
+                    *dst.add(n - 1) = *src.add(n - 1);
+                    *dst.add(n / 2) = *src.add(n / 2);
+                }
+            }
+            return;
+        }
+        if n <= 64 {
+            if n < 32 {
+                copy_unaligned_16(dst, src);
+                copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
+            } else {
+                copy_unaligned_32(dst, src);
+                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+            }
+        } else {
+            copy_unaligned_32(dst, src);
+            copy_unaligned_32(dst.add(32), src.add(32));
+            copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        }
+    }
+}
+
 #[inline]
 pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
@@ -753,68 +825,8 @@ pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
             );
             return;
         }
-        if n < 16 {
-            if n >= 8 {
-                std::ptr::write_unaligned(
-                    dst.cast::<u64>(),
-                    std::ptr::read_unaligned(src.cast::<u64>()),
-                );
-                std::ptr::write_unaligned(
-                    dst.add(n - 8).cast::<u64>(),
-                    std::ptr::read_unaligned(src.add(n - 8).cast::<u64>()),
-                );
-            } else if n >= 4 {
-                std::ptr::write_unaligned(
-                    dst.cast::<u32>(),
-                    std::ptr::read_unaligned(src.cast::<u32>()),
-                );
-                std::ptr::write_unaligned(
-                    dst.add(n - 4).cast::<u32>(),
-                    std::ptr::read_unaligned(src.add(n - 4).cast::<u32>()),
-                );
-            } else {
-                // n ∈ [1,3]: straight-line byte copies (no loop ⇒ not an @llvm.memcpy).
-                *dst = *src;
-                if n > 1 {
-                    *dst.add(n - 1) = *src.add(n - 1);
-                    *dst.add(n / 2) = *src.add(n / 2);
-                }
-            }
-            return;
-        }
-        // STRAIGHT-LINE SIZE CLASSES for [16,128): no loop, no trip count.
-        //
-        // The counted loop below owned everything from 16 bytes to 128, and at n=64 the
-        // disassembly of this function is eleven instructions of loop setup — trip count,
-        // unroll remainder, `and $3`, `cmp $0x60` — wrapped around two iterations that move
-        // 16 bytes each, then five more to compute the overlapping tail. Thirty-two
-        // instructions to move sixty-four bytes. glibc jumps straight to a size-class kernel
-        // and issues four.
-        //
-        // Measured against live glibc (dlmopen LM_ID_NEWLM) before this change: `memcpy` at
-        // n=64 was 85.00 Ir against 22.00 (3.863x) — the worst ratio in the suite — and n=16
-        // was 62.00 vs 21.03 (2.952x). None of that excess was the copy; it was dispatch.
-        //
-        // Overlapping power-of-two windows cover any length in a class with a FIXED number of
-        // moves, so the trip count disappears. dst/src are disjoint here (this is the forward
-        // memcpy primitive — `memmove`'s backward path is a separate function), so the windows
-        // may overlap each other freely. Classes are cut so the common power-of-two lengths
-        // land exactly: n=32 and n=64 tile with no duplicated move.
         if n < 128 {
-            if n <= 64 {
-                if n < 32 {
-                    copy_unaligned_16(dst, src);
-                    copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
-                } else {
-                    copy_unaligned_32(dst, src);
-                    copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
-                }
-            } else {
-                copy_unaligned_32(dst, src);
-                copy_unaligned_32(dst.add(32), src.add(32));
-                copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
-                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
-            }
+            raw_copy_under_128(dst, src, n);
             return;
         }
         // n >= 128 on the non-AVX fallback path: 32-byte explicit copies for the bulk, then
@@ -1822,6 +1834,11 @@ unsafe fn raw_lane_strnlen_bytes(
     unsafe { scan_c_string(s, Some(max)) }
 }
 
+// `#[cold] #[inline(never)]`: reachable only under a forced HTM test mode, but when it was
+// inlined its pointer-triple spill was what forced `sub $0x30,%rsp` into `memcpy`'s entry
+// block — a 48-byte frame rented by every deployed call for a branch none of them take.
+#[cold]
+#[inline(never)]
 fn try_memcpy_htm(dst: *mut u8, src: *const u8, n: usize) -> bool {
     if n > MEMCPY_HTM_MAX_BYTES {
         return false;
@@ -3919,7 +3936,22 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
         {
-            unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            // LEAF SUB-128 PATH. `raw_overlap_copy` is a real out-of-line `call`, and for a
+            // small copy the call convention cost more than the copy: keeping dst/src/n live
+            // across it forced three callee-saved pushes and `sub $0x30,%rsp`, six moves
+            // shuffling them into `%rbx`/`%r14`/`%r15` and back, plus `call`/`ret`. Taking
+            // n < 128 inline here leaves everything in argument registers, so the deployed
+            // strict path becomes a frameless leaf. Sizes >= 128 still go out of line, where
+            // the AVX/`rep movsb` kernels dwarf the call.
+            //
+            // Placed AFTER the forced-mode test on purpose: under a forced HTM test mode a
+            // small `memcpy` must still take the transactional path, so this must not
+            // short-circuit ahead of it.
+            if n < 128 {
+                unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            } else {
+                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            }
         }
         return dst;
     }
