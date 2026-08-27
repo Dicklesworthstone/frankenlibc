@@ -1557,7 +1557,7 @@ def main():
 
 
 def run_self_test():
-    """Minimal self-test."""
+    """Exercise the loader and the taxonomy checks that protect native claims."""
     print("Self-test: loading matrix...")
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
@@ -1591,6 +1591,68 @@ def run_self_test():
             print(f"  {mark} {sym} ({entry['status']}): {details}")
         else:
             print(f"  ? {sym}: source not found")
+
+    # A partial-native crypt implementation is still host-wrapping when an
+    # unsupported setting reaches libxcrypt.  This is deliberately tested by
+    # asking the validator to evaluate the wrong taxonomy: a future edit that
+    # calls the host fallback but labels any of these entrypoints Implemented
+    # must make this control fail rather than quietly inflate native coverage.
+    print("Self-test: crypt host-delegation negative control...")
+    crypt_symbols = (
+        "crypt",
+        "crypt_r",
+        "crypt_ra",
+        "crypt_rn",
+        "fcrypt",
+        "xcrypt",
+        "xcrypt_r",
+    )
+    rows_by_symbol = {
+        symbol: [row for row in symbols if row.get("symbol") == symbol]
+        for symbol in crypt_symbols
+    }
+    crypt_source = read_module_source("unistd_abi")
+    if not crypt_source:
+        raise RuntimeError("crypt host-delegation self-test could not load unistd_abi")
+    crypt_analysis = analyze_module_source(crypt_source)
+    for symbol, rows in rows_by_symbol.items():
+        if len(rows) != 1:
+            raise RuntimeError(
+                f"crypt host-delegation self-test expected one {symbol} row, got {len(rows)}"
+            )
+        row = rows[0]
+        if row.get("status") != "WrapsHostLibc":
+            raise RuntimeError(
+                f"crypt host-delegation self-test requires {symbol} to be WrapsHostLibc"
+            )
+        is_valid, findings, _warnings = validate_status(
+            symbol,
+            "WrapsHostLibc",
+            "unistd_abi",
+            crypt_source,
+            crypt_analysis,
+            None,
+            None,
+        )
+        if not is_valid:
+            raise RuntimeError(
+                f"crypt host-delegation self-test rejected current {symbol}: {findings}"
+            )
+        _is_valid, wrong_findings, _warnings = validate_status(
+            symbol,
+            "Implemented",
+            "unistd_abi",
+            crypt_source,
+            crypt_analysis,
+            None,
+            None,
+        )
+        if "Implemented but host delegation detected" not in wrong_findings:
+            raise RuntimeError(
+                f"crypt host-delegation negative control did not reject {symbol}: "
+                f"{wrong_findings}"
+            )
+    print(f"  pass: {len(crypt_symbols)} partial-native entrypoints reject Implemented")
 
     print("Self-test: PASS")
 

@@ -2457,11 +2457,11 @@
     },
     {
       "symbol": "crypt",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Native Rust crypt implementation for $1$ MD5, $5$ SHA-256, and $6$ SHA-512 salts; invalid inputs return NULL with EINVAL",
-      "hardened_semantics": "Same native implementation with pointer null guards and deterministic invalid-salt rejection",
+      "strict_semantics": "Native Rust crypt implementation for supported hash schemes, with unsupported settings delegated to libxcrypt when available; invalid inputs return NULL with EINVAL",
+      "hardened_semantics": "Same native-first implementation with pointer null guards, libxcrypt fallback, and deterministic invalid-salt rejection",
       "default_stub": false
     },
     {
@@ -2520,29 +2520,29 @@
     },
     {
       "symbol": "crypt_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Reentrant crypt variant copying the native crypt result into the caller's crypt_data output buffer",
-      "hardened_semantics": "Same reentrant copy path with null data rejection",
+      "strict_semantics": "Reentrant crypt variant copying the native-first or libxcrypt-fallback result into the caller's crypt_data output buffer",
+      "hardened_semantics": "Same reentrant copy path with null data rejection and inherited libxcrypt fallback",
       "default_stub": false
     },
     {
       "symbol": "crypt_ra",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Auto-allocating reentrant crypt variant that malloc/reallocs caller storage before copying the native crypt result",
-      "hardened_semantics": "Same auto-allocation path with null pointer and allocation-failure checks",
+      "strict_semantics": "Auto-allocating reentrant crypt variant that malloc/reallocs caller storage before copying the native-first or libxcrypt-fallback result",
+      "hardened_semantics": "Same auto-allocation path with null pointer and allocation-failure checks and inherited libxcrypt fallback",
       "default_stub": false
     },
     {
       "symbol": "crypt_rn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Size-checked reentrant crypt variant copying into caller storage or returning ERANGE when too small",
-      "hardened_semantics": "Same size-checked copy path",
+      "strict_semantics": "Size-checked reentrant crypt variant copying the native-first or libxcrypt-fallback result into caller storage or returning ERANGE when too small",
+      "hardened_semantics": "Same size-checked copy path with inherited libxcrypt fallback",
       "default_stub": false
     },
     {
@@ -2565,11 +2565,11 @@
     },
     {
       "symbol": "fcrypt",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Historical libcrypt alias of crypt using the native Rust crypt implementation",
-      "hardened_semantics": "Same alias behavior as crypt",
+      "strict_semantics": "Historical libcrypt alias of crypt using the native-first implementation and its libxcrypt fallback",
+      "hardened_semantics": "Same alias behavior as crypt, including fallback",
       "default_stub": false
     },
     {
@@ -2592,11 +2592,11 @@
     },
     {
       "symbol": "xcrypt",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Historical libcrypt alias of crypt using the native Rust crypt implementation",
-      "hardened_semantics": "Same alias behavior as crypt",
+      "strict_semantics": "Historical libcrypt alias of crypt using the native-first implementation and its libxcrypt fallback",
+      "hardened_semantics": "Same alias behavior as crypt, including fallback",
       "default_stub": false
     },
     {
@@ -2619,11 +2619,11 @@
     },
     {
       "symbol": "xcrypt_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Historical alias of crypt_r using the native reentrant crypt implementation",
-      "hardened_semantics": "Same alias behavior as crypt_r",
+      "strict_semantics": "Historical alias of crypt_r using its native-first implementation and libxcrypt fallback",
+      "hardened_semantics": "Same alias behavior as crypt_r, including fallback",
       "default_stub": false
     },
     {
