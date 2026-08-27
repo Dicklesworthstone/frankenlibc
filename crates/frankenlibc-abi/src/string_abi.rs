@@ -6297,8 +6297,14 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             return haystack as *mut c_char;
         }
         return unsafe {
-            let needle_bound = known_remaining(needle as usize);
-            let hay_bound = known_remaining(haystack as usize);
+            // `known_remaining_strict`, not `known_remaining`: the mode was established
+            // by the `strict_passthrough_active()` test that opens this block, and the
+            // general entry point re-tests it on entry -- twice here, once per operand.
+            // Same three sources probed in the same order, same answer; only the
+            // redundant mode check goes. This is the identical substitution `strlen`'s
+            // strict path already carries; this site was simply missed.
+            let needle_bound = known_remaining_strict(needle as usize);
+            let hay_bound = known_remaining_strict(haystack as usize);
             let (needle_len, _) = scan_c_string(needle, needle_bound);
             if needle_len == 0 {
                 haystack as *mut c_char

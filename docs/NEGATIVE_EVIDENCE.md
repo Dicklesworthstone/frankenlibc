@@ -36929,3 +36929,50 @@ reworded rather than the gate touched.)
   the wide-string family generally (`wcsrchr` 1.775x, `wcschr` 1.735x, `wcslen` 1.674x, `wmemchr`
   1.644x, `wmemcmp` 1.568x) is uniformly worse than its narrow counterparts. None of them has been
   attacked.
+
+## 2026-08-27 — `strstr`: the strict fast path re-tested the mode it had just established, twice — 1.266x -> 1.158x (+36 Ir)
+
+- **Op.** `strstr`, the highest-Ir fresh loser: **423.97 Ir vs live glibc's 335.00 = 1.266x**,
+  +89 Ir of excess (512-byte haystack, 6-byte needle at offset 400).
+- **Attribution.** 117 Ir of the op is allocator/policy probing rather than searching:
+  `known_remaining` 60 (TWO calls per `strstr`, one per operand), `in_allocator_reentry_context` 25,
+  `__tls_get_addr` 24, `in_validation_context` 8. The actual search — `scan_c_string_for_byte` at
+  172 Ir for ~400 bytes — is already faster per byte than glibc's whole call.
+- **The change.** The strict fast path opens with `if runtime_policy::strict_passthrough_active()`,
+  then calls the GENERAL `known_remaining`, which re-tests exactly that on entry — once per operand.
+  `known_remaining_strict` exists for this and is already used by `strlen`'s strict path; this site
+  was simply missed. Same three sources probed in the same order, same answer, one redundant mode
+  check removed per operand.
+- **Counted mechanism:** the op runs **424 instructions -> 388 instructions**.
+
+| family | glibc | HEAD | strict probe | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strstr` | 335.00 | 423.97 | 388.00 | 1.266x | **1.158x** | **+35.97** |
+| `strpbrk` | 103.00 | 169.00 | 168.97 | 1.641x | 1.641x | +0.03 |
+| `memmem` | 1067.00 | 427.00 | 427.00 | 0.400x | 0.400x | +0.00 |
+| `strcspn` | 111.00 | 148.00 | 147.97 | 1.333x | 1.333x | +0.03 |
+| `memcmp` | 71.00 | 137.97 | 138.00 | 1.943x | 1.944x | -0.03 |
+
+- **A/A null PASSES at exactly 0.00 Ir** across five families.
+- **The estimate was 4x low, in the useful direction for once.** The redundant mode check looked
+  like ~5 Ir per call from the source; it measured ~18. `known_remaining`'s strict branch is not a
+  single byte load — it re-enters the mode resolution path, and the two call sites together were
+  worth 36 Ir of a 424 Ir op. Where earlier cycles found attribution OVERSTATING a lever (LLVM had
+  already merged the duplication), this one had understated it.
+- Conformance: a new `sstr_conf` differential against live glibc via `dlmopen` — needle lengths
+  0..40 x haystack lengths 0..120 x four embed positions (absent, start, middle, end), each run with
+  the haystack and needle **independently static or heap-allocated**, plus an exact-size heap
+  allocation where the bound equals the string length. Tracked-vs-untracked is the axis that matters,
+  because the bound these probes produce is what clamps the scan: **14148 checks, 0 failures** in
+  BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `1bb7d9b599c836f48f16de8274c7e6dc1432fffd977525687c2c4eaabd2b6477`,
+  candidate `82686145d882aee91df6e29eb6a3d57da86697bfa0a9deea7da6f85e20a99c3c`.
+- **WORTH SWEEPING:** `known_remaining` is called from the strict fast path of other entries too.
+  Every such site is the same free substitution. This cycle changed only `strstr`'s two, because
+  that is what was measured; the sweep should be measured per entry, not assumed.
+- **STILL OPEN:** `wcsnlen` 2.082x remains the worst ratio in the suite; `memcmp` 1.944x and the
+  wide-string family (1.57-1.78x) are untouched.
