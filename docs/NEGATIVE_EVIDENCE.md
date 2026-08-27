@@ -36698,3 +36698,49 @@ reworded rather than the gate touched.)
   conclusion for `snprintf` is that **the redundancy-hunting method is exhausted on this op**; what
   is left is genuine formatting work, and closing it needs an algorithmic change to the render
   engine, not another look for repeated calls.
+
+## 2026-08-26 — `mode()` consulted a TLS cache ahead of the global it caches: REJECTED, the A/A null caught it moving BOTH arms
+
+- **Op.** `tsearch`/`tdelete` steady state, the second-largest surface: **1677.74 Ir vs live glibc's
+  1292.29 = 1.298x**, +385 Ir of excess, of which caller attribution puts ~406 in allocator work and
+  96 in four `__tls_get_addr` calls per pair at 24 Ir each.
+- **The change.** `runtime_policy::mode()` consulted `load_thread_local_mode_cache()` BEFORE reading
+  `MODE_STATE`. That is backwards: the cached thing is a single relaxed byte at a RIP-relative
+  address, while reading the cache costs a `__tls_get_addr` **call**. Reordered to check the global
+  first; the fast path also stops writing the cache, since nothing reads it first any more.
+  Equivalence is exact — all four writers of that cache store the value the global path just
+  resolved, so it is a pure cache and never a per-thread override, and it stays reachable (unset) on
+  the only paths that can still read it.
+- **Counted mechanism:** fl runs **1678 instructions -> 1674 instructions** on the pair. The change
+  is real; it removes one TLS call from every `mode()`.
+- **AND IT IS NOT A WIN, because the live incumbent got exactly the same discount.**
+
+| family | glibc HEAD-run | glibc cand-run | A/A delta | fl HEAD | fl cand | ratio HEAD | ratio new |
+|---|---|---|---|---|---|---|---|
+| `tsearch_tdelete` | 1292.29 | 1288.29 | **+4.00** | 1677.74 | 1673.76 | 1.298x | **1.299x** |
+| `getenv` | 489.00 | 480.00 | **+9.00** | 264.00 | 264.00 | 0.540x | 0.550x |
+| `snprintf` | 1692.00 | 1692.00 | +0.00 | 2585.00 | 2585.00 | 1.528x | 1.528x |
+| `strtod` | 885.98 | 886.00 | -0.02 | 560.00 | 560.00 | 0.632x | 0.632x |
+| `memcmp` | 71.00 | 71.00 | +0.00 | 138.00 | 138.00 | 1.944x | 1.944x |
+
+- **A/A NULL FAILS: worst |delta| 9.00 Ir**, and the failure is the result rather than an obstacle to
+  it. fl stays `LD_PRELOAD`ed while the glibc arm runs — glibc is reached through
+  `dlmopen(LM_ID_NEWLM)` in the SAME process — so the driver's own allocations and environment
+  access still go through fl. Making fl's `mode()` cheaper therefore discounts BOTH arms. On
+  `tsearch` the two moved by 3.98 and 4.00: the entire apparent saving. **The ratio is unchanged to
+  three decimals, so there is no competitive gain here.**
+- **This is a SELF-SPEEDUP, i.e. maintenance, not a win** — the repo's standard is explicit that a
+  win requires the incumbent live in the same invocation to *not* move with it. Not landed; reverted,
+  working tree clean for `crates/`.
+- **What the row is worth.** Without the A/A null this would have been published as "+3.97 Ir on
+  `tsearch`". The null is the only thing separating a shared-overhead reduction from a competitive
+  one, and this is the first time this session it has fired on a real change rather than confirming
+  a clean bench.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `3ed3a25fdf98920752260cbd5c75e77629d93cf3bf11d1f3384eb8ee5745b746`,
+  candidate `95b8a84c268479d72aa0db3df7d342bc908cf2e0a99a1995b910b62cc2929473`.
+- **STILL OPEN:** `tsearch_tdelete` is 1.298x. Any lever here must target work the glibc arm does
+  NOT share — the red-black tree itself (`insert_find` 402, `delete_rec` 175, `delete_min` 73), not
+  the allocator or policy machinery underneath both arms.
