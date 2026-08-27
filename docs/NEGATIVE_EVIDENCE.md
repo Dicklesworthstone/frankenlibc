@@ -37746,3 +37746,55 @@ reworded rather than the gate touched.)
   bytes and 1.86-1.91x on sets of 8-16. The real fix is a probe whose decline is cheap — the 18 Ir
   is its own setup (page guard, 16-byte set load, NUL search), not the comparison — so making
   `span_probe_cmpistri` bail earlier for short sets would win on both sides instead of trading.
+
+## 2026-08-27 — bd-2g7oyh — `span_probe_cmpistri`'s 18 Ir decline is an sret return that will NOT inline (REJECTED, two variants, 0.00 Ir)
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target named by the previous row's own conclusion: the fix
+  that would win on BOTH sides of the `strpbrk` trade is a probe whose DECLINE is cheap. `strpbrk`
+  is **169.00 Ir vs live glibc's 102.97 = 1.641x**, and 18 of that is a probe that only says "this
+  set is too short for me".
+- **Object read FIRST, and it named the cost exactly.** The whole decline path is eighteen
+  instructions: a 4-instruction page guard on the set, a 5-instruction 16-byte load and NUL search,
+  2 to test it, 3 to extract the length and compare against 5 — and **4 to write the answer into an
+  sret buffer**: `movq $1, 8(%rdi)` / `mov %rdx, 0x10(%rdi)` / `movb $2, (%rdi)` / `ret`.
+  `SpanProbe::Resume` carries three fields, so the enum exceeds the two-register return limit and
+  comes back through memory that the caller immediately destructures and discards. One instruction
+  (`vpmovmskb %xmm0, %eax`, the `all_ascii` mask) is also computed eagerly and unused on this path.
+- **Variant 1: `#[inline]` on the probe.** **0.00 Ir at every family.** The symbol survives in the
+  object and caller attribution still shows `calls/pair 1.00, incl 18.000 from strpbrk`.
+- **Variant 2: `#[inline]` AND removing `#[target_feature(enable = "sse4.2")]`,** on the theory that
+  the attribute was blocking inlining — it conservatively can. **Also 0.00 Ir, symbol still present.**
+  So the attribute was NOT the blocker; LLVM declines the hint on cost grounds because the function
+  carries the full `pcmpistri` loop.
+- **That result is worth more than the fix would have been.** The doc comment says SSE4.2 is implied
+  by the crate-wide `-Ctarget-feature=+avx2`, and `.cargo/config.toml` confirms it, so the attribute
+  looked removable. But ten functions in this file carry `#[target_feature]`, and `memcmp_avx2` is
+  reached only behind a RUNTIME `active_string_simd_feature_mask()` check — the attribute is
+  load-bearing for runtime dispatch, not decoration. **Measuring showed the trade does not even
+  exist**: removing it buys nothing, so the portability property never had to be weighed.
+
+| family | glibc | HEAD | `#[inline]` | + no `target_feature` | HEAD x | saved |
+|---|---|---|---|---|---|---|
+| `strpbrk` | 102.97 | 169.00 | 169.00 | 169.00 | 1.641x | +0.00 |
+| `strpbrkS2` | 96.00 | 165.00 | 165.00 | 165.04 | 1.719x | -0.04 |
+| `strpbrkS8` | 96.00 | 183.00 | 183.04 | 183.00 | 1.906x | +0.00 |
+| `strpbrkS16` | 97.97 | 182.00 | 182.00 | 182.04 | 1.858x | -0.04 |
+| `strspn` | 57.97 | 104.00 | 104.00 | 104.00 | 1.794x | +0.00 |
+| `strcspnL8` | 41.01 | 65.01 | 65.04 | 65.04 | 1.585x | -0.03 |
+| `memcmp` | 71.00 | 138.00 | 138.03 | 138.00 | 1.944x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9995 .. 1.0000** on both variants. Objects self-reported via
+  `dladdr`; incumbent `/lib/x86_64-linux-gnu/libc.so.6`, arms distinct by pointer.
+- Conformance clean throughout: `pbrk_conf` **2,835 checks** and `cspn_conf` **31,392 checks**, 0
+  failures, strict AND hardened.
+- Not landed; reverted, `crates/` clean of my changes.
+- Objects: baseline `40198eaa7eb00e5cc5d72a5ede58e07c7249de66b131a5e5dcf9bb4b4003174b`,
+  v1 `ea1b7574f9d18841ca795dafcc919d08db27d28a378cd2e06d74060ec2026830`,
+  v2 `eb5fceec9b0679c6f7e46f49ecc39ed038cd82ed4d259fcd513f5365ccedae8e`.
+- **THE 18 Ir IS STRUCTURAL, and that now has a proof rather than a guess.** It is an out-of-line
+  call whose body is too large to inline, returning an enum too large for registers. The two ways
+  out both have measured prices: a caller-side length ladder costs large sets 14 Ir (rejected last
+  cycle, the worst point got worse), and inlining is refused. **What has NOT been tried is shrinking
+  `SpanProbe` to fit in two registers** — `Resume`'s `consumed`/`set_len`/`all_ascii` can pack into
+  a single `u64` (set_len ≤ 64 needs 7 bits, `all_ascii` 1) — which would delete the sret stores
+  without touching the inlining question or the runtime-dispatch convention.
