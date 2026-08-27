@@ -35937,3 +35937,63 @@ reworded rather than the gate touched.)
   **pre-existing**, reproduced identically on the unpatched tree in the same invocation shape.
 - Objects: baseline `0e6609233741c12da6f7acf059a6d217690562a5449b7ef1887b608468cee1f0`,
   candidate `598bd1f6c713470da3f9f64912c518061cd87c92621e96b2c3ccfbe741c603f2`.
+
+## 2026-08-26 — `strlen` heap: the segment-meta null test is an `Option` NICHE, not a check you can delete (REJECTED, two variants, 0.00 Ir)
+
+- **Op and lever.** `strlen` on a heap pointer, HEAD after the single-global arena change: 120 Ir
+  at L=4 vs live glibc's 23 (5.217x). Instruction-level callgrind attributes ~74 of the entry's
+  straight-line instructions to the allocator bound probe. Five of them are the slot-meta lookup,
+  ending in `test %rcx,%rcx` / `je`. `SegmentDescriptor::meta_base` is stored with `Release`
+  in `initialize_segment` on the statement BEFORE `SEGMENT_OWNED_BITMAP.fetch_or` publishes the
+  segment, and `segment_owned_location` returns nothing for a segment whose bit it did not observe
+  with `Acquire` — so on the owned path a zero `meta_base` is unreachable, by exactly the
+  publication argument that the single-global arena change used the same day.
+- **Variant 1** — `segment_slot_meta_in_owned_segment` returning `Option<&SegmentSlotMeta>` with the
+  explicit `meta_base == 0` test replaced by a `debug_assert!`. **0.00 Ir.**
+- **Variant 2** — the same function returning a BARE `&'static SegmentSlotMeta`, so the return type
+  cannot represent absence at all, with the redundant `slot_index < slot_count` test (the caller's
+  own precondition) also dropped to a `debug_assert!`. **0.00 Ir.**
+- **Counted mechanism:** the op runs **120 instructions -> 120 instructions** at L=4 and
+  **111 instructions -> 111** at L=16 — no change at any length, against an instrument that resolves
+  0.03. Disassembly of both objects confirms why: the `test %rcx,%rcx` / `je` pair is **byte-identical
+  and still present** at the same offset from the descriptor load in the rejected object.
+
+| L (heap) | glibc | HEAD | v1 `Option` | v2 bare ref | HEAD x | v2 x | saved |
+|---|---|---|---|---|---|---|---|
+| 4 | 23.01 | 120.03 | 120.01 | 120.01 | 5.217x | 5.222x | +0.03 |
+| 8 | 23.01 | 118.01 | 118.01 | 118.01 | 5.129x | 5.129x | +0.00 |
+| 16 | 22.97 | 111.00 | 111.03 | 111.00 | 4.832x | 4.831x | +0.00 |
+| 64 | 35.00 | 132.00 | 132.00 | 132.00 | 3.771x | 3.774x | +0.00 |
+
+- **A/A null PASSES**, and it is what makes the zero readable: the glibc arm across both objects
+  drifts at most 0.03 Ir (22.98/23.01, 23.01/23.01, 22.97/22.98, 35.00/34.97). The instrument
+  resolved +3.00 Ir on the previous change in this same harness, so it is not blind to two.
+- **THE MECHANISM, which is the durable part.** The null test does not belong to
+  `segment_slot_meta`. The enclosing `segment_slot_view_in_owned_segment` returns
+  `Option<SegmentSlotView>`, and `SegmentSlotView` holds `meta: &'static SegmentSlotMeta` — so the
+  **`Option`'s niche IS that reference**. Every `return None` on that function materialises a null
+  meta pointer, and the caller's `?` tests it. The branch is the enum discriminant. Removing it
+  requires the view's `Option` to stop being niche-encoded through `meta` (which costs a separate
+  discriminant word, i.e. more) or the whole probe chain to stop returning `Option`. No accessor-level
+  edit reaches it, which is precisely what both variants demonstrated.
+- **Generalisation:** on any `Option<T>` whose niche is a reference or non-null pointer field, a
+  "redundant" null check on the path that produces `T` is not redundant — it is the discriminant.
+  Check the ENCLOSING return type before attributing a `test/je` to the accessor that loads the
+  pointer.
+- Not landed; reverted, working tree clean for `crates/`. Gate ran green on both variants anyway
+  (`cargo test -p frankenlibc-abi --lib`, **200 passed, 0 failed**, compilation observed), so the
+  reject is purely on the numbers.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls. Ratios include the driver loop (~9 Ir) in BOTH arms.
+- Objects: baseline (HEAD) `598bd1f6c713470da3f9f64912c518061cd87c92621e96b2c3ccfbe741c603f2`,
+  v1 `47d13640aad16c4cc936ba03eb2716881fb4f91204cf7eb328d3a9b626eb943e`,
+  v2 `2f18df8a3a0aaea3f8f83106cc110bc53d9ba6042adafd41232e798040768df2`.
+- **STILL OPEN, and it is a POSTURE question, not a perf one.** 14 of the probe's ~74 instructions
+  are `segment_header_at` re-validating magic, class-index range, `class_size == bin_size(class_index)`
+  and `slot_count != 0` on every call — against a header written once at init, `mprotect`ed
+  `PROT_READ` before publication, and reached only through an `Acquire` ownership bit. A further 5
+  are `addr < user_base + class_size`, which is provably unreachable given the slot reciprocal's
+  proven-exact division. Both are defence-in-depth against corrupted allocator metadata, so deleting
+  them trades a documented safety property for ~19 Ir. NOT taken unilaterally; it needs an explicit
+  owner decision.
