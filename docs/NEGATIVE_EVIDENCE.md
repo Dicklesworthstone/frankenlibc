@@ -37646,3 +37646,52 @@ reworded rather than the gate touched.)
 - **STILL OPEN:** the ramp is untouched — it walks 8-lane panels from 32-byte to 128-byte alignment,
   up to three of them, and every unaligned start still pays it. `wcsrchr` at offset 5 length 8 is
   2.513x and remains the suite's worst measured point.
+
+## 2026-08-27 — bd-2g7oyh — `wcsrchr` short-string probe: -10 Ir at EVERY length, it never fired once (REJECTED)
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target named by the previous row: the head/ramp machinery
+  reaches 128-byte alignment for the fold, and a string that ends early pays it for nothing. The
+  suite's worst measured point is `wcsrchr` at wchar offset 5, length 8: **98.03 Ir vs live glibc's
+  39.00 = 2.513x**, where instruction counting shows 69 straight-line scanner instructions running a
+  head panel AND a ramp panel with no loop at all.
+- **Object checked FIRST this time.** The head panel's masks already lower to a single `vmovmskps`
+  per compare, not the four-instruction `vextracti128`/`vpackssdw`/`vpacksswb`/`vpmovmskb` chain —
+  so the masks were not the target. What remained structural is that fl reads TWO panels where glibc
+  reads one.
+- **The change.** One unaligned 8-lane probe at `s` before any alignment work, page-guarded by
+  `(pb & 0xFFF) <= 0x1000 - 32`, falling through with no state carried when it declines or finds no
+  NUL.
+- **Counted mechanism:** every length runs **+10 instructions**. Length 8 goes **96 -> 106**;
+  length 1024, **974 -> 984**.
+
+| family | glibc | HEAD | probe | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcsrchrA0_31` | 69.00 | 108.00 | 118.00 | 1.565x | 1.710x | -10.00 |
+| `wcsrchrA1_31` | 84.00 | 157.97 | 168.00 | 1.881x | 1.999x | -10.03 |
+| `wcsrchrA5_8` | 39.00 | 98.03 | 108.00 | 2.513x | 2.769x | -9.97 |
+| `wcsrchrA0_8` | 43.00 | 96.00 | 106.00 | 2.233x | 2.465x | -10.00 |
+| `wcsrchrL64` | 108.00 | 164.00 | 174.00 | 1.519x | 1.612x | -10.00 |
+| `wcsrchrL256` | 251.97 | 326.00 | 336.00 | 1.294x | 1.333x | -10.00 |
+| `wcsrchrL1024` | 828.00 | 974.00 | 984.00 | 1.176x | 1.188x | -10.00 |
+| `wcschr` | 53.00 | 92.00 | 92.00 | 1.736x | 1.736x | +0.00 |
+| `wcslen` | 39.97 | 67.00 | 67.00 | 1.676x | 1.676x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9995 .. 1.0003.**
+- **WHY: an N-lane probe covers strings of length STRICTLY LESS than N.** A length-8 string has its
+  terminator at index 8 — lane 8, one past the eight lanes the probe reads. So the probe missed on
+  every arm in the suite, including the two it was written for, and the cost is the same flat +10
+  everywhere. The design error is off-by-one in the covered range, not in the code.
+- **AND I AM NOT GOING TO FIX IT BY MOVING THE BENCHMARK.** A length-7 arm would make this look like
+  a win, and a 16-lane probe would cover length 8 while roughly doubling the miss cost that every
+  longer string already pays. Either move optimises for the input rather than the library: the probe
+  helps only strings shorter than the probe, and there is no evidence that shape dominates `wcsrchr`
+  traffic. Rejected on the numbers as measured.
+- Conformance ran clean anyway: `wrchr_conf` **152,268 checks, 0 failures** in BOTH strict and
+  hardened mode across 32 alignments, so this is purely a cost question.
+- Not landed; reverted, `crates/` clean of my changes.
+- Objects: baseline `40198eaa7eb00e5cc5d72a5ede58e07c7249de66b131a5e5dcf9bb4b4003174b`,
+  candidate `70fb2c4b03bb1e66c194c5991a4418a19a3b8d6e9a12a80dfa684ac42d25245d`.
+- **STILL OPEN:** `wcsrchr` at offset 5 length 8 is 2.513x and remains the suite's worst point. The
+  two-panel structure (head to 32-byte alignment, ramp to 128-byte alignment) is the cost, and it is
+  there to serve a 128-byte fold that a short string never reaches. Collapsing the ramp for strings
+  that terminate inside it — rather than probing ahead of it — is the shape that has not been tried.
