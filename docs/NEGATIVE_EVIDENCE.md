@@ -36558,3 +36558,51 @@ reworded rather than the gate touched.)
 - **STILL OPEN:** `snprintf` on multi-conversion formats is 1.585x with +990 Ir of excess. The cost
   is the render engine, not the bypass ladder: `format_float` 394, `render_segments` 336,
   `parse_format_spec` 307, `FormatSegments::push` 234, `parse_format_string` 204.
+
+## 2026-08-26 — `snprintf`: the positional-arg plan re-derived a flag `FormatSegments` already stores — 1.585x -> 1.534x (+87 Ir)
+
+- **Op.** `snprintf("%d %s %.3f")`, the highest-Ir losing op: **2682 Ir vs live glibc's 1692 =
+  1.585x**, +990 Ir of excess.
+- **The change.** `positional_printf_arg_plan` opens with `any_positional_spec(segments)`, which
+  iterates every segment testing three `Option`s each. `FormatSegments::push` **already records
+  exactly that predicate as a field** — byte-for-byte the same three tests — and exposes it as
+  `any_positional()`. The ABI's arg-extraction macro passed the slice, throwing the field away and
+  making the callee re-derive it. Caller attribution: **75 Ir per call, entirely to return `None`**,
+  since a non-positional format is the common case and the plan is never built. Guarded the call on
+  the field.
+- **Counted mechanism:** the op runs **2682 instructions -> 2595 instructions**.
+
+| family | glibc | HEAD | field-read | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `snprintf` ("%d %s %.3f") | 1692.00 | 2682.00 | 2595.00 | 1.585x | **1.534x** | **+87.00** |
+| `snprintf_d` (exact "%d") | 476.00 | 212.00 | 212.03 | 0.445x | 0.445x | -0.03 |
+| `snprintf_f` (exact "%.3f") | 1140.04 | 646.01 | 645.01 | 0.567x | 0.566x | +1.00 |
+| `strtod` | 886.00 | 560.00 | 560.00 | 0.632x | 0.632x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 138.03 | 1.944x | 1.944x | -0.03 |
+
+- **A/A null PASSES** at 0.05 Ir worst across five families; the four controls are flat.
+- **Equivalence is exact, not approximate.** `any_positional_spec` tests
+  `value_position.is_some() || width.position().is_some() || precision.position().is_some()` per
+  Spec segment; `push` sets its field on the identical expression. The guard cannot change which
+  formats build a plan.
+- Conformance: `snp_conf` against live glibc via `dlmopen`, return value AND the full 512-byte
+  output buffer byte-for-byte over every `%s` length 0..40 x second-argument length 0..20, every
+  literal-run length 0..40, plus `NULL` `%s`, width, precision and the float path — **1767 checks,
+  0 failures** in BOTH strict and hardened mode.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, compilation observed.
+- **BUILD HOST CHANGED, and the baseline was rebuilt because of it.** `vmi1293453` is at **100%
+  disk (0 bytes free on a 387 GB root)** and rustc there fails with
+  `couldn't create a temp dir: No space left on device`. Nothing was deleted to recover it — that
+  needs explicit permission. This cycle built on **hz4** via `rch`, and HEAD was rebuilt there
+  rather than reusing the `vmi1293453` object, since two hosts produce different binaries. The hz4
+  HEAD measures snprintf at 2682.00 Ir, identical to the `vmi1293453` HEAD, which is a useful
+  cross-host check on the instrument.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD, hz4) `07a1dbd09cb850f4b6c9dfbbb95173f02e7f8bc3aecca4c2f0b3fbb0b177e89c`,
+  candidate `c1b68fd3018f3f7c1b23bade265c4815b473ff5b7a67d53d9b92a31f077dc300`.
+- **STILL OPEN:** `snprintf` on multi-conversion formats is 1.534x with **+903 Ir of excess**. The
+  render engine is the remainder: `format_float` 394, `render_segments` 336, `parse_format_spec`
+  307, `FormatSegments::push` 234, `parse_format_string` 204. Single-conversion formats remain far
+  ahead of glibc (`%d` 0.445x, `%.3f` 0.567x) — the loss is entirely multi-conversion.

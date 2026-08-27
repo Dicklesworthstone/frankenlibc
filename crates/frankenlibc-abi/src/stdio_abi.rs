@@ -5363,7 +5363,23 @@ macro_rules! extract_va_args {
 macro_rules! extract_va_args_registers {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
-        if let Some(_plan) = core_positional_printf_arg_plan($segments) {
+        // FIELD READ, NOT A WALK. `positional_printf_arg_plan` opens with
+        // `any_positional_spec(segments)`, which iterates every segment testing
+        // three `Option`s each -- and `FormatSegments` ALREADY recorded exactly
+        // that predicate as a field during `push`. Passing the slice threw the
+        // field away and made the callee re-derive it. Counted on the deployed
+        // `snprintf("%d %s %.3f")` against live glibc: 75 Ir per call, entirely
+        // to return `None`, because a non-positional format is the common case
+        // and the plan is never built.
+        //
+        // `$segments` is the `&FormatSegments` itself here (it coerces to a slice
+        // for the callee), so the inherent method resolves before the deref and
+        // the guard costs one load and one branch.
+        if let Some(_plan) = if $segments.any_positional() {
+            core_positional_printf_arg_plan($segments)
+        } else {
+            None
+        } {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
                     ValueArgKind::Gp => {
