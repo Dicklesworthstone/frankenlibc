@@ -38132,6 +38132,17 @@ whole 9000-byte destination** so any write outside the copied range shows up, pl
 pointer; and `memmove` on genuinely overlapping regions in both directions since it shares the
 primitive: **8,473 checks, 0 failures in BOTH strict and hardened mode.**
 
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored, 0 filtered out**,
+observed compiling and executing. Two earlier attempts at this gate ran **zero tests** and must not
+be mistaken for passes: the PreToolUse hook re-quotes the command for `sh` on the worker, which
+chokes on a leading env assignment (`sh: 1: RCH_CARGO_WRAPPER_BYPASS=1: not found`, exit 127) — and
+because the failure was wrapped in a pipeline the task still reported exit 0 with an empty log. An
+empty gate log is silence, not green. `rch exec -- cargo test ...` with no env prefix is the form
+that actually runs. `cargo check --workspace --all-targets --keep-going` is clean apart from one
+pre-existing, unrelated failure: `tests/conformance_diff_ns_parse.rs` passes a `u32` ttl to
+`resolv_abi::ns_sprintrrf`, which takes `u64` — both files are committed and untouched by this
+change.
+
 Objects: baseline `159fbfecdcdbdd40f3a03ed1660a4c2e71bfc8a21ca555bcda68e36ff028c67a` (the previous
 cycle's split), candidate `76a86b3a09092308d03b3c9a3262a5b3e124dcce4dae4cfc4d6ca2dc468f1f63`, built
 locally and byte-identical to `target/release/libfrankenlibc_abi.so`.
