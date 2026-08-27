@@ -36200,3 +36200,59 @@ reworded rather than the gate touched.)
   402 Ir. The remaining cost is the case-folding work itself, not the tier ladder — bounds 3..31 sit
   at roughly 6 Ir per byte compared, and there is no overlapping final panel here of the kind
   `scan_strcmp` and `scan_wcscmp_simd` both carry.
+
+## 2026-08-26 — `strncasecmp`: an overlapping 16-lane final panel wins +167 at bound 23 and loses 44 at bound 32 (REJECTED, 2 variants) — the gate admits `i == bound`
+
+- **Op.** `strncasecmp` at bound 31 — 402 Ir against live glibc's 53 = **7.585x** after this
+  morning's threshold rewrite, still the suite's highest-Ir loser. The remaining cost is the fold
+  itself: the 8-byte SWAR tier folds BOTH words (two range compares, two selects, two adds) plus a
+  zero test, about **49 Ir per eight bytes**, while the 32-lane tier covers thirty-two bytes inside
+  a 111 Ir call. `scan_strcmp` and `scan_wcscmp_simd` both carry an overlapping final panel for
+  exactly this; `scan_strcasecmp` does not.
+- **The change.** Add one, at 16 lanes rather than 32 so it can serve the `[16, 32)` bounds the wide
+  tier cannot: one window ending exactly at `bound`, lanes below `i` masked, gated
+  `BOUNDED && bound >= 16 && i + 16 > bound` plus dual page checks.
+- **Counted mechanism:** at bound 23 the op runs **353 instructions -> 180 instructions**, and at
+  bound 32 it runs **111 instructions -> 152**.
+
+| bound | glibc | HEAD | v1 inline | v2 outlined | HEAD x | v2 x | saved |
+|---|---|---|---|---|---|---|---|
+| 3 | 53.00 | 155.00 | 170.00 | 171.00 | 2.925x | 3.226x | -16.00 |
+| 7 | 53.00 | 254.97 | 278.00 | 275.00 | 4.811x | 5.189x | -20.03 |
+| 15 | 53.00 | 304.00 | 335.00 | 335.04 | 5.736x | 6.321x | -31.04 |
+| 23 | 53.00 | 352.97 | 180.00 | 186.00 | 6.660x | 3.509x | **+166.97** |
+| 31 | 53.00 | 402.00 | 240.00 | 249.03 | 7.585x | 4.699x | **+152.97** |
+| 32 | 53.00 | 111.00 | 152.00 | 155.00 | 2.094x | 2.927x | **-44.00** |
+| 64 | 70.00 | 142.03 | 184.00 | 187.00 | 2.029x | 2.671x | -44.97 |
+| 128 | 104.00 | 204.00 | 248.00 | 251.00 | 1.962x | 2.414x | -47.00 |
+| `strcasecmp` unbounded (43 B) | 68.00 | 125.00 | 125.00 | 125.00 | 1.838x | 1.838x | +0.00 |
+
+- **A/A null PASSES** at 0.04 Ir worst across nine points. Unbounded `strcasecmp` is exactly
+  unchanged, so the `BOUNDED &&` term const-folds as intended.
+- **The outlining hypothesis was WRONG, and testing it is what produced the real diagnosis.** The
+  `-44` looked like the code-layout tax that sank the `scan_strcmp` panel, so v2 moved the body
+  behind `#[cold] #[inline(never)]`, the shape `scan_wcscmp_simd` uses. It came out **slightly worse
+  at every bound**. So the cost is not the block sitting in the loop.
+- **WHAT IT ACTUALLY IS.** At bounds 32, 64 and 128 the 32-lane tier consumes the whole bound and
+  leaves `i == bound`. The panel's gate `i + 16 > bound` is TRUE there, so it runs a full 16-byte
+  SIMD window, folds both operands, masks every lane off, and concludes "bound reached" — a result
+  the `if i >= bound` check three lines below returns for free. **The gate admits the already-done
+  case.** `scan_strcmp`'s 32-lane panel has the identical hole (`i + 32 > bound` with `i == bound`);
+  it is simply less visible there because that panel is not on the measured path.
+- Not landed; reverted, working tree clean for `crates/`. Conformance ran clean on both variants
+  (`scasecmp_conf` **247,482 checks, 0 failures**, strict AND hardened) and the gate was green
+  (`cargo test -p frankenlibc-abi --lib`, **200 passed, 0 failed**, compilation observed), so the
+  reject is purely on the numbers.
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `bf2113d5ccf00679690a50cb311422f2f8ebd0d4493bd52a2b0ba3d6b287715b`,
+  v1 inline `e2a8e8f30675b27c73c286010b3cb2dbe2eba59cf524c724ccea6d9834b5a817`,
+  v2 outlined `4ff61c93e83bd1ec439904b00a664831166cfd30772a3a505a853e6c51c1d6b0`.
+- **NAMED FIX, not attempted here — this is a THIRD variant and the cycle is one lever.** Add
+  `i < bound` to the panel gate so the already-done case falls through to the free check. That should
+  recover the whole -44/-45/-47 at bounds 32/64/128 while keeping +167/+153 at 23/31. It does NOT
+  address bounds 3/7/15, which lose 16-31 Ir to the extra gate test on the up-to-eight scalar passes
+  they still make and which never satisfy `bound >= 16`; a `bound >= 16` term hoisted into the
+  precomputed thresholds alongside `wide_end`/`swar_end` is the candidate for that. Both must be
+  measured, not assumed — every hypothesis in this row that was not measured turned out wrong.
