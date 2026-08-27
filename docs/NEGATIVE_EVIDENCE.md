@@ -36654,3 +36654,47 @@ reworded rather than the gate touched.)
   bypass costs 645 Ir TOTAL and beats glibc at 0.566x, while `format_float` alone costs 394 on the
   general path — the two float routes are worth comparing directly before assuming the general one
   is near-optimal.
+
+## 2026-08-26 — `snprintf`: FOUR lever hypotheses refuted at source level, NO measurement, no change (cycle produced no number)
+
+- **Op.** `snprintf("%d %s %.3f")`, still the highest-Ir losing op after five cycles on it:
+  **2585 Ir vs live glibc's 1692 = 1.528x**, +893 Ir of excess. This row records a cycle that
+  produced **no measurement**, and why that was the right stopping point rather than a fifth
+  build.
+- **Hypothesis 1 — the general float path lacks the direct bypass's fast route. REFUTED at source.**
+  The bypass (`strict_direct_snprintf_f` -> `render_direct_fixed`) reaches
+  `rounded_scaled_fixed`; so does `format_float`, at printf.rs:1675 and :2176, with
+  `push_fixed_scaled_u128` after it. Both routes already use the same integer-scaling kernel. The
+  645-vs-394 gap between `snprintf("%.3f")` total and `format_float` self is the surrounding
+  machinery (parse, segments, render dispatch), not the float math.
+- **Hypothesis 2 — `format_float` is where the multi-conversion loss lives. REFUTED by arithmetic.**
+  It is 394 Ir of 2585. Even eliminating it entirely leaves 1.30x.
+- **Hypothesis 3 — `printf_out_pool`'s TLS is fixable per-static.** The pool is a
+  `thread_local!` with `const` init (so no lazy-init check), costing two `__tls_get_addr` calls per
+  format, 72 Ir. Making one static initial-exec is not available: fl's `PT_TLS` is 196392 bytes and
+  an initial-exec model blocks `dlopen`, which is a documented global constraint, not a per-site
+  choice.
+- **Hypothesis 4 — `RbTree::insert_find_rec` calls `fix_up` on the way back up even when the key was
+  ALREADY PRESENT and the tree is unmodified.** This one is REAL and unmeasured. `*len` is
+  incremented only on actual insertion, so `*len == before` after the recursive call is an exact test
+  for "nothing was inserted", and on an unmodified LLRB subtree `fix_up` is a no-op by invariant.
+  **But the `tsearch_tdelete` driver deletes and re-inserts the same key every iteration, so it
+  always inserts and the skip would never fire — measuring 0 by construction.** Pricing it needs a
+  driver arm that searches keys already in the tree, which is the dominant real-world `tsearch`
+  shape and is simply not covered today. Adding that arm is the next cycle's work; optimising against
+  the arm that exists would be measuring the benchmark rather than the library.
+- **Fresh attribution recorded for the next target** (`tsearch_tdelete`, 1678 Ir vs 1292 = 1.298x,
+  +385 Ir excess, the second-largest surface): `insert_find` 402 (24%), `delete_rec` 175, `cmp_i32`
+  98 (the caller's own callback, irreducible), `segment_free` 98, `__tls_get_addr` 96,
+  `enter_allocator_reentry_guard` 84, `malloc` 79, `allocate_from_local_class` 78, `delete_min` 73,
+  `FlatCombiningStats::apply_locked` 67. Roughly 406 Ir of that is allocator work and 96 is TLS —
+  the tree itself is under half the cost.
+- **Nothing built, nothing measured, nothing landed; working tree clean for `crates/`.** No A/A null
+  and no candidate hash, because there is no candidate. Recorded so the next cycle does not re-derive
+  these four.
+- **METHOD NOTE.** Three of today's four levers on this op were priced from callgrind's per-function
+  attribution and two of those came back at a fifth or less of the attributed figure, because LLVM
+  had already merged the source-level duplication. Combined with the four hypotheses above, the
+  conclusion for `snprintf` is that **the redundancy-hunting method is exhausted on this op**; what
+  is left is genuine formatting work, and closing it needs an algorithmic change to the render
+  engine, not another look for repeated calls.
