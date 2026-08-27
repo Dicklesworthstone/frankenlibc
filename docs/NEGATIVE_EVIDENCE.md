@@ -36306,3 +36306,55 @@ reworded rather than the gate touched.)
   `addr < user_base + class_size`, re-proving invariants of a header that is written once, `mprotect`ed
   `PROT_READ`, and published behind an `Acquire` ownership bit. Deleting them is a SAFETY-POSTURE
   decision for the owner, not a perf call, and remains untaken.
+
+## 2026-08-26 — `wcsncmp`: the threshold rewrite that cleaned up `strncasecmp` does NOT transfer (REJECTED); the outer guard it replaces is worth more than it saves
+
+- **Op.** `wcsncmp` at bound 31 — 171 Ir against live glibc's 69 = **2.478x**, 102 Ir of excess, the
+  largest remaining outside the `strncmp`/`strncasecmp` bound family.
+- **The change.** Exactly the rewrite that took `strncasecmp` from 8.000x to 7.585x with nothing
+  regressing: replace both per-pass gates `i + N <= bound` with `i < bound - (N-1)` precomputed once
+  (saturating, so a bound too small for a tier fails it on the first pass), const-folded under
+  `BOUNDED == false`. Because the thresholds subsume it, this also REMOVES the
+  `!BOUNDED || bound >= WLANES` outer guard shipped earlier today.
+- **Counted mechanism:** at bound 7 the op runs **127 instructions -> 268 instructions**; at bound 31,
+  **171 instructions -> 175**. Only bound 64 improves, by 1 Ir.
+
+| bound | glibc | HEAD | threshold rewrite | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| 3 | 44.00 | 90.97 | 160.00 | 2.068x | 3.636x | -69.03 |
+| 5 | 44.00 | 109.03 | 214.00 | 2.478x | 4.864x | -104.97 |
+| 7 | 44.00 | 127.00 | 268.03 | 2.886x | 6.091x | -141.03 |
+| 9 | 53.03 | 137.00 | 143.00 | 2.584x | 2.698x | -6.00 |
+| 15 | 53.00 | 137.00 | 143.03 | 2.585x | 2.699x | -6.03 |
+| 23 | 61.00 | 153.97 | 159.00 | 2.524x | 2.608x | -5.03 |
+| 31 | 69.00 | 171.00 | 175.00 | 2.478x | 2.536x | -4.00 |
+| 32 | 69.00 | 137.00 | 142.00 | 1.985x | 2.058x | -5.00 |
+| 64 | 122.00 | 179.03 | 178.00 | 1.467x | 1.459x | +1.03 |
+
+- **A/A null PASSES** at 0.03 Ir worst across nine bounds.
+- **WHY IT DOES NOT TRANSFER.** With `bound < 8` the precomputed `wide_end` and `lane_end` are both
+  0, so each tier is rejected in a single compare — arithmetically the same work the removed guard
+  did in one compare. Yet bounds 3/5/7 cost 69 to 141 Ir MORE. The difference is not the test, it is
+  that the guard also kept both tier BODIES out of the short-bound path's code region; at loop level
+  they sit between the entry and the scalar tail. This is the same placement sensitivity that made
+  the 16-lane panel cost 44 Ir at bounds it never executed, in a different scanner, earlier today.
+  **`scan_strcasecmp` has no such guard and no 128-byte tier, which is why the identical rewrite was
+  a clean win there.** Two scanners, same edit, opposite sign.
+- **PROCESS NOTE, recorded because it nearly became a false result.** The first candidate measured
+  -535 Ir at bound 31. That was not the lever: a hand-written brace removal deleted the 128B tier's
+  closing brace instead of the guard's, nesting the 8-lane tier inside the 128B tier so short bounds
+  never reached it. It COMPILED and passed all 563,781 conformance checks in both modes, because the
+  scalar tail still produced correct answers. A brace-depth trace of the two gates caught it; the
+  numbers above are from the corrected candidate, re-spliced with a depth-aware pass that asserts
+  both gates end at the same loop depth. **Conformance does not detect a control-flow change that
+  only removes a fast path.**
+- Not landed; reverted, working tree clean for `crates/`. Conformance clean on the corrected
+  candidate (`wcscmp_conf` **563,781 checks, 0 failures**, strict AND hardened); gate green
+  (`cargo test -p frankenlibc-abi --lib`, **200 passed, 0 failed**, compilation observed).
+- fl `LD_PRELOAD`ed at PHASE=2 (asserted on every fl arm) against live glibc via
+  `dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW)` in the SAME invocation, arms distinct by pointer,
+  two-point over 2000 marginal calls.
+- Objects: baseline (HEAD) `bf2113d5ccf00679690a50cb311422f2f8ebd0d4493bd52a2b0ba3d6b287715b`,
+  botched v1 `f352f409b3147f5efc5c6cf36f52907c59c4f2f4465dd61078a3c72af616c610` (do not cite),
+  corrected v2 `496c3767ec1870fd0e45ef2827f45cba6f430b68994f3ecfbf1222ea1d851d17`.
+- **The shipped `wcsncmp` guard stands.** Bound 7 remains 2.886x and bound 31 remains 2.478x.
