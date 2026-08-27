@@ -89,6 +89,13 @@ const TDELETE_DELETIONS_PER_BATCH: usize = 8192;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
 const MALLOC_FREE_REPS: usize = 100_000;
+// A 4 KiB memory stream drained as 64 64-byte reads mirrors the legacy
+// `stdio_fread_mem_mt_ab` workload while keeping this incumbent harness fully
+// in-memory.  The batch keeps stream setup in the measured unit: fmemopen,
+// fread, and fclose are the deployed lifecycle users actually pay for.
+const FREAD_MEM_BYTES: usize = 4 * 1024;
+const FREAD_MEM_CHUNK: usize = 64;
+const FREAD_MEM_REPS: usize = 2_000;
 const MTX_TRYLOCK_REPS: usize = 1_000_000;
 const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 // Raised from 200_000 on 2026-07-31: at 200k the A/A null half-width was 7.7%,
@@ -127,6 +134,8 @@ type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type ThrdCurrentFn = unsafe extern "C" fn() -> libc::pthread_t;
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
+type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
+type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type MtxInitFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t, c_int) -> c_int;
 type MtxTrylockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
 type MtxUnlockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
@@ -265,6 +274,19 @@ unsafe extern "C" {
     fn linked_host_malloc(size: usize) -> *mut c_void;
     #[link_name = "free"]
     fn linked_host_free(ptr: *mut c_void);
+    #[link_name = "fmemopen"]
+    fn linked_host_fmemopen(
+        buffer: *mut c_void,
+        size: usize,
+        mode: *const c_char,
+    ) -> *mut c_void;
+    #[link_name = "fread"]
+    fn linked_host_fread(
+        buffer: *mut c_void,
+        size: usize,
+        count: usize,
+        stream: *mut c_void,
+    ) -> usize;
     #[link_name = "mtx_init"]
     fn linked_host_mtx_init(mtx: *mut libc::pthread_mutex_t, typ: c_int) -> c_int;
     #[link_name = "mtx_trylock"]
@@ -587,6 +609,7 @@ enum Family {
     SemPost,
     ThrdCurrent,
     MallocFree,
+    FreadMem,
     MtxTrylock,
     GetaddrinfoHosts,
     SinhfCoshf,
@@ -1081,6 +1104,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
                 Some(value) if value == OsStr::new("malloc_free") => Family::MallocFree,
+                Some(value) if value == OsStr::new("fread_mem") => Family::FreadMem,
                 Some(value) if value == OsStr::new("mtx_trylock") => Family::MtxTrylock,
                 Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
@@ -1097,7 +1121,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
-                     sem_post, thrd_current, malloc_free, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
+                     sem_post, thrd_current, malloc_free, fread_mem, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
                 ),
             };
@@ -1107,7 +1131,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs]"
@@ -6577,6 +6601,226 @@ fn run_malloc_free(config: &Config) {
     }
 }
 
+#[derive(Clone, Copy)]
+struct FreadMemArm {
+    fmemopen: FmemopenFn,
+    fread: FreadFn,
+    fclose: FcloseFn,
+    data: *mut u8,
+}
+
+#[inline(never)]
+fn run_fread_mem_batch(arm: FreadMemArm) -> usize {
+    let mut accumulator = 0usize;
+    for _ in 0..FREAD_MEM_REPS {
+        // SAFETY: `data` names the arm's initialized 4 KiB backing buffer. It
+        // remains live for the full benchmark and fmemopen only reads it in r mode.
+        let stream = unsafe { (arm.fmemopen)(arm.data.cast(), FREAD_MEM_BYTES, c"r".as_ptr()) };
+        assert!(!stream.is_null(), "fmemopen failed during timing");
+        let mut buffer = [0u8; FREAD_MEM_CHUNK];
+        let mut read = 0usize;
+        for _ in 0..(FREAD_MEM_BYTES / FREAD_MEM_CHUNK) {
+            // SAFETY: `buffer` holds one requested chunk and `stream` is live.
+            read += unsafe {
+                black_box(arm.fread)(
+                    black_box(buffer.as_mut_ptr().cast()),
+                    black_box(1),
+                    black_box(FREAD_MEM_CHUNK),
+                    black_box(stream),
+                )
+            };
+            accumulator ^= black_box(buffer[0]) as usize;
+        }
+        assert_eq!(read, FREAD_MEM_BYTES, "short fread drain during timing");
+        // SAFETY: the stream was returned by fmemopen and is closed exactly once.
+        assert_eq!(unsafe { (arm.fclose)(stream) }, 0, "fclose failed during timing");
+    }
+    black_box(accumulator)
+}
+
+fn time_fread_mem_batch(arm: FreadMemArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_fread_mem_batch(arm));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / FREAD_MEM_REPS as f64
+}
+
+/// Verify byte identity and the partial-element contract before timing.  The
+/// latter is a negative case: a byte-count implementation would report two for
+/// the final `fread(buffer, 4, 1, stream)`, whereas libc must return zero
+/// complete four-byte elements while still copying the two available bytes.
+fn check_fread_mem_conformance(host: FreadMemArm, fl: FreadMemArm) -> (usize, usize) {
+    let source: Vec<u8> = (0..130).map(|index| index as u8).collect();
+    let mut host_data = source.clone();
+    let mut fl_data = source;
+    // SAFETY: both buffers remain live for their matching streams through fclose.
+    let host_stream = unsafe {
+        (host.fmemopen)(host_data.as_mut_ptr().cast(), host_data.len(), c"r".as_ptr())
+    };
+    let fl_stream = unsafe { (fl.fmemopen)(fl_data.as_mut_ptr().cast(), fl_data.len(), c"r".as_ptr()) };
+    assert!(!host_stream.is_null() && !fl_stream.is_null(), "fmemopen conformance setup failed");
+
+    let mut comparisons = 0usize;
+    let mut mismatches = 0usize;
+    let mut host_buffer = [0xa5u8; 128];
+    let mut fl_buffer = [0xa5u8; 128];
+    // SAFETY: both output buffers hold 128 bytes and both streams have enough input.
+    let host_full = unsafe { (host.fread)(host_buffer.as_mut_ptr().cast(), 1, 128, host_stream) };
+    let fl_full = unsafe { (fl.fread)(fl_buffer.as_mut_ptr().cast(), 1, 128, fl_stream) };
+    comparisons += 1;
+    if host_full != 128 || fl_full != host_full || host_buffer != fl_buffer {
+        mismatches += 1;
+    }
+
+    let mut host_tail = [0xa5u8; 4];
+    let mut fl_tail = [0xa5u8; 4];
+    // SAFETY: each stream has exactly two bytes left; the 4-byte destination is valid.
+    let host_partial = unsafe { (host.fread)(host_tail.as_mut_ptr().cast(), 4, 1, host_stream) };
+    let fl_partial = unsafe { (fl.fread)(fl_tail.as_mut_ptr().cast(), 4, 1, fl_stream) };
+    comparisons += 1;
+    if host_partial != 0
+        || fl_partial != host_partial
+        || host_tail[..2] != [128, 129]
+        || fl_tail != host_tail
+    {
+        mismatches += 1;
+    }
+
+    let mut host_eof = [0xa5u8; 1];
+    let mut fl_eof = [0xa5u8; 1];
+    // SAFETY: both streams are at EOF and each output buffer holds one byte.
+    let host_eof_read = unsafe { (host.fread)(host_eof.as_mut_ptr().cast(), 1, 1, host_stream) };
+    let fl_eof_read = unsafe { (fl.fread)(fl_eof.as_mut_ptr().cast(), 1, 1, fl_stream) };
+    comparisons += 1;
+    if host_eof_read != 0 || fl_eof_read != host_eof_read || host_eof != fl_eof {
+        mismatches += 1;
+    }
+    // SAFETY: both streams were opened above and closed exactly once.
+    assert_eq!(unsafe { (host.fclose)(host_stream) }, 0, "host fclose conformance failed");
+    assert_eq!(unsafe { (fl.fclose)(fl_stream) }, 0, "FrankenLibC fclose conformance failed");
+    (comparisons, mismatches)
+}
+
+fn run_fread_mem(config: &Config) {
+    assert!(
+        config.fl_deepbind,
+        "fread_mem requires --fl-deepbind so the FrankenLibC stream lifecycle models LD_PRELOAD deployment"
+    );
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path = CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    // SAFETY: the explicit artifact is kept loaded until process exit.
+    let handle = unsafe {
+        libc::dlopen(
+            fl_path.as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
+        )
+    };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    // SAFETY: `handle` is live and all names are NUL-terminated constants.
+    let fl_fmemopen_symbol = unsafe { libc::dlsym(handle, c"fmemopen".as_ptr()) };
+    let fl_fread_symbol = unsafe { libc::dlsym(handle, c"fread".as_ptr()) };
+    let fl_fclose_symbol = unsafe { libc::dlsym(handle, c"fclose".as_ptr()) };
+    assert!(!fl_fmemopen_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC fmemopen"));
+    assert!(!fl_fread_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC fread"));
+    assert!(!fl_fclose_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC fclose"));
+
+    let mut host_data = [0u8; FREAD_MEM_BYTES];
+    let mut fl_data = [0u8; FREAD_MEM_BYTES];
+    for (index, byte) in host_data.iter_mut().enumerate() {
+        *byte = (index % 251) as u8;
+    }
+    fl_data.copy_from_slice(&host_data);
+    let host = FreadMemArm {
+        fmemopen: linked_host_fmemopen,
+        fread: linked_host_fread,
+        fclose: linked_host_fclose,
+        data: host_data.as_mut_ptr(),
+    };
+    let fl = FreadMemArm {
+        // SAFETY: each exported symbol has the C signature named by its field.
+        fmemopen: unsafe { std::mem::transmute(fl_fmemopen_symbol) },
+        fread: unsafe { std::mem::transmute(fl_fread_symbol) },
+        fclose: unsafe { std::mem::transmute(fl_fclose_symbol) },
+        data: fl_data.as_mut_ptr(),
+    };
+    let incumbent_identity = symbol_object(host.fread as *const () as *const c_void)
+        .expect("identify host fread object");
+    let fl_identity = symbol_object(fl_fread_symbol.cast_const())
+        .expect("identify FrankenLibC fread object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbols=fmemopen,fread,fclose");
+    println!("FL_LINKAGE explicit_dlopen_local_deepbind symbols=fmemopen,fread,fclose");
+    assert_incumbent_is_host_libc(&incumbent_identity, "fread");
+    assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FrankenLibC object differs from supplied object");
+    assert_ne!(incumbent_identity.sha256, fl_identity.sha256, "both providers resolve to byte-identical objects");
+    assert_ne!(host.fmemopen as usize, fl.fmemopen as usize, "fmemopen arms resolve to the same function address");
+    assert_ne!(host.fread as usize, fl.fread as usize, "fread arms resolve to the same function address");
+    assert_ne!(host.fclose as usize, fl.fclose as usize, "fclose arms resolve to the same function address");
+    println!(
+        "ARM_DISTINCT symbol=fread_mem incumbent_fmemopen_address={:#x} fl_fmemopen_address={:#x} incumbent_fread_address={:#x} fl_fread_address={:#x} incumbent_fclose_address={:#x} fl_fclose_address={:#x}",
+        host.fmemopen as usize,
+        fl.fmemopen as usize,
+        host.fread as usize,
+        fl.fread as usize,
+        host.fclose as usize,
+        fl.fclose as usize,
+    );
+    let (comparisons, mismatches) = check_fread_mem_conformance(host, fl);
+    let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=fread_mem comparisons={comparisons} mismatches={mismatches} contract=full_drain+partial_element_returns_zero+eof_returns_zero verdict={conformance_verdict}"
+    );
+    let threads_pre_guard = observed_threads();
+    println!("THREADS_OBSERVED symbol=fread_mem phase=pre_guard count={threads_pre_guard}");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY symbol=fread_mem verdict={conformance_verdict}");
+        if mismatches > 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
+    assert_eq!(mismatches, 0, "fread memory-stream arms diverged; refusing to time them");
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(threads_pre, threads_pre_guard, "fread_mem thread count changed between conformance and measurement");
+    let result = measure_arm_case_with_reps(
+        "fmemopen_4k_fread_64b",
+        "4 KiB memory stream: fmemopen, 64 x 64-byte fread, fclose",
+        FREAD_MEM_REPS,
+        host,
+        fl,
+        time_fread_mem_batch,
+    );
+    let threads_post = observed_threads();
+    assert_eq!(threads_post, threads_pre, "fread_mem thread count changed during measurement");
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print("fread_mem", &incumbent_identity.path, threads_pre, threads_post);
+    let verdict = if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=fread_mem verdict={verdict} cases=1 wins={} losses={} undecidable={} headline_case=fmemopen_4k_fread_64b headline_ratio_median={:.6} headline_comparison={} threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        usize::from(result.comparison == "FL_FASTER"),
+        usize::from(result.comparison == "FL_SLOWER"),
+        usize::from(!result.decidable()),
+        result.effect_median,
+        result.comparison,
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn verify_mtx_provider(
     provider: &str,
     init: MtxInitFn,
@@ -10296,6 +10540,7 @@ fn main() {
         Family::SemPost => run_sem_post(&config),
         Family::ThrdCurrent => run_thrd_current(&config),
         Family::MallocFree => run_malloc_free(&config),
+        Family::FreadMem => run_fread_mem(&config),
         Family::MtxTrylock => run_mtx_trylock(&config),
         Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
         Family::SinhfCoshf => run_sinhf_coshf(&config),
