@@ -37536,3 +37536,51 @@ reworded rather than the gate touched.)
   suite's worst ratio. The four NUL bitmasks are still computed eagerly; resolving them lazily
   (`if z0b != 0 ... else compute z1b`) is the obvious next step and is likely where the -6 at
   length 1024 also lives.
+
+## 2026-08-27 — bd-2g7oyh — `wcsrchr` lazy NUL narrowing: 0.00 Ir, LLVM had already sunk it (REJECTED) — and I skipped the check that would have said so
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target named by the previous row's own "still open": the
+  terminal resolve computes four NUL bitmasks eagerly, `z0b..z3b`, then picks one. `wcsrchr` at
+  length 8 is **96.00 Ir vs live glibc's 43.00 = 2.233x**, still the suite's worst ratio.
+- **The change.** Narrow lazily — test `z0.to_bitmask()`, and only if it is empty narrow `z1`, and
+  so on; the last panel needs no test at all, since `z0 | z1 | z2 | z3` has already proven a NUL is
+  in this block. Predicted to save two of four `vextracti128`/`vpackssdw`/`vpacksswb`/`vpmovmskb`
+  chains on the common short-string path, and to be where the previous row's -6 Ir at length 1024
+  lived.
+- **Counted mechanism:** every length runs the SAME instruction count. Length 8
+  **96 instructions -> 96**; length 64 **164 -> 164**; length 1024 **974 -> 974**.
+
+| family | glibc | HEAD | lazy | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `wcsrchrL8` | 43.00 | 96.00 | 96.00 | 2.233x | 2.231x | +0.00 |
+| `wcsrchrL31` | 69.00 | 107.97 | 109.00 | 1.565x | 1.580x | -1.03 |
+| `wcsrchrL64` | 108.00 | 164.00 | 164.00 | 1.519x | 1.519x | +0.00 |
+| `wcsrchrL256` | 252.00 | 325.97 | 326.00 | 1.294x | 1.294x | -0.03 |
+| `wcsrchrL1024` | 828.00 | 974.00 | 973.97 | 1.176x | 1.176x | +0.03 |
+| `wcschr` | 53.00 | 92.00 | 92.00 | 1.736x | 1.736x | +0.00 |
+| `wcslen` | 40.00 | 67.03 | 66.97 | 1.676x | 1.674x | +0.05 |
+
+- **A/A NULL: incumbent-arm ratio 0.9994 .. 1.0000.**
+- **WHY, confirmed in the object:** `wide_last_before_nul_simd` contains **2 pack chains in BOTH
+  binaries** — identical. The eager form was never eager in the emitted code; LLVM had already sunk
+  each `to_bitmask()` into the branch that uses it. The source read as four unconditional
+  narrowings and the machine code was already doing what the patch asked for.
+- **I HAD THE RULE AND DID NOT FOLLOW IT.** The previous cycle's row ends: "duplication visible in
+  SOURCE is a hypothesis about codegen, not a measurement of it. Count the instructions in the
+  object first — a 30-second `objdump | grep -c` would have killed this before the patch was
+  written." That is exactly the check that settled this one, and I ran it AFTER building and
+  measuring instead of before. Local builds are ~11s so the cost was small, but the rule exists
+  because the cost is not always small.
+- **FOURTH occurrence this session** of source-level redundancy already handled by codegen, after
+  the thirteen `exact_direct_*_format` probes (-3 Ir), the doubled `value_arg_kind()` (+10 against
+  57 attributed), and the padded `set4` compares (0.00). The pattern is now unambiguous: on this
+  codebase, "the source does X redundantly" predicts a win only after the object confirms X survives.
+- Conformance ran clean anyway: `wrchr_conf` **152,268 checks, 0 failures** in BOTH strict and
+  hardened mode, so the reject is purely on the numbers.
+- Not landed; reverted, `crates/` clean of my changes.
+- Objects: baseline `adbe08aab6dcf1571eb541cfed732a70a2ff59348057077a14db74be5478baaa`,
+  candidate `a6f94769b5a88ec2a612b22f4d93aa959b4be27e86ca44d93c19eba1c5730cc5`.
+- **STILL OPEN, and the -6 at length 1024 is NOT explained by this.** `wcsrchr` at length 8 remains
+  2.233x with 96 Ir against glibc's 43. Since the resolve's narrowing is already minimal, the
+  remaining fixed cost is elsewhere — the scanner's head/ramp prologue, which computes 32- and
+  128-byte alignment adjustments that a 128-byte-aligned buffer never uses.
