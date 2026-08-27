@@ -37138,3 +37138,35 @@ reworded rather than the gate touched.)
 - **My uncommitted `wide.rs` edit was swept into another agent's commit** (`70e9f6254`). It happens
   to carry the CORRECTED gate, so no underflow is live — verified by reading that commit's blob
   rather than assuming.
+
+## 2026-08-27 — `memcmp` 1.944x: NO LEVER FOUND — the kernel and the entry are both already at their documented floors
+
+- **Op.** `memcmp`, the worst measured loss standing after `wcsnlen` fell to 1.877x:
+  **138.00 Ir vs live glibc's 71.00 = 1.944x** (256 bytes, first difference at byte 200).
+  Split: `raw_dispatch_memcmp_bytes` 96 Ir, the `memcmp` entry 31, driver loop 11.
+- **Instruction-level attribution** (`--dump-instr=yes`, two-point): 64 distinct instructions
+  execute, and the hottest run **3.00 times per call** — the `while i + 32 <= n` resolve loop making
+  three `block_mask` calls after the 128-byte asm loop flags a window.
+- **That looked like the discard-the-mask defect and is NOT.** The asm loop folds four
+  `vpcmpeqb` results with `vpand` and keeps only the combined mask, so on a flagged window it exits
+  with `i` at the window START and the Rust loop re-compares. But retaining the four masks costs
+  four extra `vpmovmskb` on EVERY iteration of the all-equal steady state, which is the case the
+  fold exists to make cheap. It is the same deliberate trade `wcsnlen`'s folded 256-block documents,
+  and re-testing panels in order on the one flagged window is the cheaper side of it.
+- **The loads are already optimal.** Disassembly shows `vmovdqu (%rdi),%ymm0` followed by
+  `vpcmpeqb (%r8),%ymm0,%ymm0` — one load with the second operand folded into the compare, which is
+  the form glibc uses. There is no extra `vmovdqu` to remove.
+- **The entry is already split, and split at the right place.** `memcmp` tests
+  `strict_passthrough_active()` BEFORE `string_raw_passthrough_active()` (documented as worth
+  ~3-5ns of TLS-context reads per call), and `memcmp_validating` is cut BELOW the bypass — the same
+  shape `strlen` uses, because putting that bypass behind `#[cold]` is what made hardened startup
+  SIGSEGV deterministically. The four callee-saved pushes remaining are rented by the bypass path,
+  which cannot move for that reason.
+- **NOTHING BUILT, NOTHING MEASURED for this op** — no candidate, so no ratio, no A/A null, no
+  candidate hash. Every hypothesis was refuted by reading the object and the existing evidence,
+  which is cheaper than building four rejects. Baseline object
+  `b5818aca3c6855c848e6ce287ab3012ee2aeb5639284bbdfb378ec8228cccb2a`.
+- **Where `memcmp`'s remaining 67 Ir of excess actually sits:** ~24 in the three-panel resolve after
+  a flagged window (inherent to the fold), the rest spread across the entry's bypass chain and the
+  head-peel. Closing it needs a different kernel structure — e.g. resolving the flagged window from
+  retained masks while keeping the steady state fold-only — not another look for redundancy.
