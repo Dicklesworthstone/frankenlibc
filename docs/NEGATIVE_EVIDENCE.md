@@ -37798,3 +37798,52 @@ reworded rather than the gate touched.)
   `SpanProbe` to fit in two registers** — `Resume`'s `consumed`/`set_len`/`all_ascii` can pack into
   a single `u64` (set_len ≤ 64 needs 7 bits, `all_ascii` 1) — which would delete the sret stores
   without touching the inlining question or the runtime-dispatch convention.
+
+## 2026-08-27 — bd-2g7oyh — `SpanProbe` narrowed to 16 bytes: +1.00 Ir, and the sret it was meant to delete SURVIVED
+
+- **Bead.** bd-2g7oyh `[perf][no-gaps]`. Target named by the previous row: the probe's 18 Ir decline
+  is an out-of-line call returning an enum too large for registers, and shrinking `SpanProbe` was the
+  one exit not yet tried. `strpbrk` is **169.00 Ir vs live glibc's 102.97 = 1.641x**.
+- **The change.** `Resume`'s `set_len: usize -> u8` (the probe's own upper bound is 64, so this
+  narrows nothing in practice) and `Decline`'s `Option<usize> -> Option<u8>`. Largest variant goes
+  from 8+8+1 to 8+1+1 bytes, taking the enum from 24 to 16 — the two-register return limit.
+- **THE PREDICTION WAS WRONG AND THE OBJECT SAYS SO.** The previous row predicted this would delete
+  the four sret stores. It deleted ONE. The decline path still returns through `%rdi`:
+  `mov %dl, 0x2(%rdi)` / `movw $0x102, (%rdi)` / `ret` where it was
+  `movq $1, 0x8(%rdi)` / `mov %rdx, 0x10(%rdi)` / `movb $2, (%rdi)` / `ret`. **Rust returns this
+  enum indirectly even at exactly 16 bytes**, so hitting the limit was necessary but not sufficient;
+  the stores got smaller rather than disappearing.
+- **Counted mechanism:** the decline-path callers run **169 instructions -> 168** and
+  **165 -> 164**. One instruction, exactly the one the disassembly shows removed.
+
+| family | glibc | HEAD | 16-byte enum | HEAD x | new x | saved |
+|---|---|---|---|---|---|---|
+| `strpbrk` (3-byte set) | 102.97 | 169.00 | 168.00 | 1.641x | 1.631x | +1.00 |
+| `strpbrkS2` | 96.00 | 165.00 | 164.00 | 1.719x | 1.708x | +1.00 |
+| `strpbrkS8` | 96.00 | 183.00 | 183.00 | 1.906x | 1.907x | +0.00 |
+| `strpbrkS16` | 97.97 | 182.00 | 182.00 | 1.858x | 1.857x | +0.00 |
+| `strpbrkS32` | 638.00 | 252.00 | 252.00 | 0.395x | 0.395x | +0.00 |
+| `strspn` | 57.97 | 104.00 | 103.97 | 1.794x | 1.793x | +0.03 |
+| `strcspnL100` | 111.00 | 112.00 | 111.97 | 1.009x | 1.009x | +0.03 |
+| `strcspnL8` | 41.01 | 65.01 | 65.01 | 1.585x | 1.585x | +0.00 |
+| `memcmp` | 71.00 | 138.00 | 138.00 | 1.944x | 1.944x | +0.00 |
+
+- **A/A NULL: incumbent-arm ratio 0.9995 .. 1.0003.** Objects self-reported via `dladdr`; incumbent
+  `/lib/x86_64-linux-gnu/libc.so.6`, arms distinct by pointer — not a self-compare.
+- **LANDED, and it is a small win — 0.6% on `strpbrk`, nothing anywhere else.** It is kept because
+  there are no regressions, conformance is clean, and the narrowing is independently correct: the
+  probe's contract already bounds `set_len` at 64, so `u8` states a fact the type was hiding. It is
+  NOT kept because the hypothesis worked — that part failed.
+- **Not a bench-input lever:** it fires on every accept set under five bytes, which is where the
+  decline path runs at all, and the three larger-set arms confirm it costs them nothing.
+- Conformance: `pbrk_conf` **2,835 checks** and `cspn_conf` **31,392 checks**, 0 failures, BOTH
+  strict and hardened.
+- Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**, built and run locally.
+- Objects: baseline `40198eaa7eb00e5cc5d72a5ede58e07c7249de66b131a5e5dcf9bb4b4003174b`,
+  candidate `b1004ba8bdce80ef8667312bef04492c0a4295892ae2728fcb41c412542442d5`.
+- **STILL OPEN — three exits now measured and priced.** `strpbrk` remains 1.631x with an 18-Ir
+  decline that is now 17. Caller-side length ladder: **+32 small / -14 large, worst point worsens**
+  (rejected). `#[inline]`, with and without `#[target_feature]`: **0.00, refused on cost**
+  (rejected). Enum shrink: **+1**. What none of them touched is that the probe re-derives the set's
+  length on every call; a caller that already knows it — `strspn` and `strcspn` compute it in their
+  own ladders before ever reaching the probe — could pass it in and skip the load entirely.

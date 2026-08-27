@@ -2729,7 +2729,14 @@ enum SpanProbe {
     /// resolved path, where it is never read.
     Resume {
         consumed: usize,
-        set_len: usize,
+        /// `u8`, not `usize`, and that is the point: this enum is RETURNED, and at
+        /// 24 bytes it exceeded the two-register limit and came back through an sret
+        /// pointer -- four of the eighteen instructions on the deployed `strpbrk`
+        /// decline path were writing that buffer. The probe only ever reports
+        /// `set_len <= 64` (its own upper bound), so `u8` narrows nothing in practice,
+        /// and with `Decline` carrying `Option<u8>` the largest variant becomes
+        /// 8 + 1 + 1 bytes and the enum fits in `rax:rdx`.
+        set_len: u8,
         all_ascii: bool,
     },
     /// The probe does not apply; use the existing path from `s`, unchanged.
@@ -2740,7 +2747,7 @@ enum SpanProbe {
     /// needs the length. Callers then skip their own `scan_c_string(set, None)`.
     /// `None` means the probe bailed BEFORE measuring (a page-guard decline), and the
     /// caller must scan for itself.
-    Decline { set_len: Option<usize> },
+    Decline { set_len: Option<u8> },
 }
 
 /// SSE4.2 `pcmpistr*` early-stop span probe for a 5..=64-byte accept/reject set —
@@ -2822,7 +2829,7 @@ unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -
         let set_len = if set_nul != 0 {
             let l = set_nul.trailing_zeros() as usize;
             if l < 5 {
-                return SpanProbe::Decline { set_len: Some(l) };
+                return SpanProbe::Decline { set_len: Some(l as u8) };
             }
             l
         } else if *set.add(16) == 0 {
@@ -2846,7 +2853,7 @@ unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -
                 // The prefix already cleared is still sound to hand over.
                 return SpanProbe::Resume {
                     consumed: base,
-                    set_len,
+                    set_len: set_len as u8,
                     all_ascii,
                 };
             }
@@ -2883,7 +2890,7 @@ unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -
         }
         SpanProbe::Resume {
             consumed: base,
-            set_len,
+            set_len: set_len as u8,
             all_ascii,
         }
     }
@@ -3025,7 +3032,7 @@ unsafe fn span_probe_scan_bank<const N: usize>(
             if (cur as usize) & 0xFFF > 0xFF0 {
                 return SpanProbe::Resume {
                     consumed: base,
-                    set_len,
+                    set_len: set_len as u8,
                     all_ascii,
                 };
             }
@@ -3049,7 +3056,7 @@ unsafe fn span_probe_scan_bank<const N: usize>(
         }
         SpanProbe::Resume {
             consumed: base,
-            set_len,
+            set_len: set_len as u8,
             all_ascii,
         }
     }
@@ -3079,7 +3086,7 @@ unsafe fn span_scan_cmpistri(
                 set_len,
                 all_ascii: true,
             } => {
-                let (lo16, hi16) = build_pshufb_lut(set.cast::<u8>(), set_len);
+                let (lo16, hi16) = build_pshufb_lut(set.cast::<u8>(), set_len as usize);
                 Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, stop_in_set))
             }
             _ => None,
@@ -7330,7 +7337,7 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
                         set_len,
                         all_ascii: true,
                     } => {
-                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len);
+                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len as usize);
                         return consumed
                             + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, false);
                     }
@@ -7515,7 +7522,7 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
                         set_len,
                         all_ascii: true,
                     } => {
-                        let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), set_len);
+                        let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), set_len as usize);
                         return consumed
                             + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true);
                     }
@@ -7695,11 +7702,11 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
                         set_len,
                         all_ascii: true,
                     } => {
-                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len);
+                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len as usize);
                         Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true))
                     }
                     SpanProbe::Decline { set_len } => {
-                        known_accept_len = set_len;
+                        known_accept_len = set_len.map(usize::from);
                         None
                     }
                     _ => None,
