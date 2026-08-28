@@ -39372,3 +39372,65 @@ that should be fixed rather than routed around.
 residual `bcmp` is 87 Ir, and the remaining 48 Ir in the symbol lookup is the byte-at-a-time key
 loop, which an unaligned 8-byte load would collapse at the cost of page-safety care near the end of
 a mapping.
+
+## 2026-08-28 — bd-k3skh6 — BLOCKED on rch: the remaining half of the strlen bound gap, narrowed to one branch and one refuted premise
+
+**No code change this cycle, and no measurement — rch refused every job.** Five consecutive
+`rch exec` invocations (three builds, two filtered tests) returned
+`remote required; refusing local fallback (no admissible workers: critical_pressure=1,
+insufficient_slots=1, insufficient_total_slots=11) — retryable`. `rch status` reports posture
+**degraded**, 13/14 workers healthy, 23/52 slots, with `vmi1156319` offline on a failed health
+probe. Local building is not an option for this campaign, so this row carries analysis only and
+explicitly claims no number.
+
+**Where the bead stands.** bd-k3skh6 was filed as a strict-path bug, corrected once already (the
+strict path was fine; **hardened** was the broken one, fixed in `45a912c56`). What remains is the
+third configuration: the unit test `strlen_bounds_tracked_unterminated_input` still fails
+in-process, where fl is linked as an rlib rather than loaded as the process libc.
+
+**The branch, identified by reading.** `strlen` has four exits, and the in-process case takes the
+first:
+
+```rust
+if runtime_policy::bootstrap_passthrough_active() { /* raw scalar scan, NO bound */ }
+```
+
+`bootstrap_passthrough_active()` is `!is_runtime_ready()`, and a process that never loaded fl as its
+libc never arms the runtime — so every `strlen` in that configuration takes a deliberately unbounded
+scan. That is consistent with the test's symptom (5-byte tracked allocation, `strlen` returns 6)
+and with `malloc_known_remaining_for_tests` still answering `Some(5)`, since the allocator tracks
+independently of the runtime-ready bit.
+
+**The premise that would block a fix, and it does not hold.** The comment on that branch is
+explicit about why it must stay raw: *"Keep the scalar scan the dl-linker bootstrap chain
+(dlvsym → strlen) relies on, BEFORE any TLS-touching probe."* That is a real hazard — putting
+`string_raw_passthrough_active()` behind a cold boundary made hardened startup SIGSEGV
+deterministically, 3/3, dying before `main`. So the question is whether consulting the bound during
+bootstrap would touch TLS.
+
+Traced the full call set of `known_remaining_strict`: `segment_remaining` → `segment_slot_view` →
+`segment_owned_location` → `segment_arena_base_if_ready`, plus `segment_live_requested`,
+`bump_mmap_remaining` and `fallback_remaining`. **Every one is TLS-free** — they read process-global
+atomics (`SEGMENT_OWNED_BITMAP`, `BUMP_OVERFLOW_ACTIVE`, `FALLBACK_ALLOC_MIN_ADDR` /
+`MAX_ADDR`, and a `requested_size` field) and index a segment arena. Grepping the transitive set for
+`thread_local` / `OwnedTlsCache` / `__tls` returns zero hits at every level. The stated blocker does
+not apply to this probe.
+
+It also degrades correctly by construction: during genuine early bootstrap
+`segment_arena_base_if_ready()` returns `None`, so the probe yields `None` and the scan stays
+unbounded — the same behaviour as today, reached without a TLS access.
+
+**What is NOT being done, and why.** The apparent fix is one line — give the bootstrap branch the
+same `known_remaining_strict` bound the strict branch already uses. It is deliberately **not**
+landed here. This is the exact branch with a documented, reproducible startup-SIGSEGV history, and
+with rch refusing there is no build, no conformance run and no gate available. Landing an unverified
+edit to a startup-critical path on the strength of a grep would be the kind of change this ledger
+exists to prevent. The analysis is recorded so the next cycle can go straight to the edit with the
+premise already refuted and the hazard already scoped.
+
+**To close this bead, the next cycle needs, in order:** the one-line bound on the bootstrap branch;
+`string_abi_test`'s `strlen_bounds_tracked_unterminated_input` passing in-process; the deployed
+capability probe still reporting 0 of 40 over-reads in BOTH modes; real programs starting 10/10
+under `LD_PRELOAD` in hardened (the SIGSEGV check); and a counted-Ir measurement of strict `strlen`,
+which currently sits at 60.00 instructions against live glibc's 23.00 and would absorb the probe's
+cost on a path that previously skipped it.
