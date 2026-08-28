@@ -39434,3 +39434,83 @@ capability probe still reporting 0 of 40 over-reads in BOTH modes; real programs
 under `LD_PRELOAD` in hardened (the SIGSEGV check); and a counted-Ir measurement of strict `strlen`,
 which currently sits at 60.00 instructions against live glibc's 23.00 and would absorb the probe's
 cost on a path that previously skipped it.
+
+## 2026-08-28 — bd-5cbz3r — pthread attr setters: 124 of 125 at parity, and the one that is not rejects a valid glibc mutex type
+
+rch refused every build again this cycle (`critical_pressure=1, insufficient_slots=1,
+insufficient_total_slots=10, hard_preflight=1`; posture **degraded**, 13/14 workers, `vmi1156319`
+offline), and local builds are prohibited. So rather than idle on a bead that needs a rebuild, this
+cycle took one that does **not**: a differential gate runs against the already-built object.
+
+Provenance, checked rather than assumed: the object under test is
+`399d9cc3cf62d1517261268c4347fead...`, and `git log` shows the only commit touching `crates/` since
+it was built is `c2b2714d2` — which *is* the change in it. So the object matches current HEAD source
+exactly.
+
+**The gate.** A new `pattr_conf` differential over the twelve attr setters this bead names —
+`pthread_attr_` `setinheritsched` / `setschedpolicy` / `setscope` / `setdetachstate`,
+`pthread_mutexattr_` `settype` / `setpshared` / `setprotocol` / `setrobust`, `pthread_condattr_`
+`setpshared` / `setclock`, `pthread_rwlockattr_` `setpshared` / `setkind_np`. These return their
+error code rather than setting `errno`, so the returned `int` is the whole contract. Each is swept
+over an invalid spread (`-1, -2, 4, 7, 99, 1000, INT_MAX, INT_MIN`) **and every valid constant** —
+the second half matters, because a gate that only checks rejection would pass an implementation that
+rejects everything. Both arms initialise and destroy their attr objects with their **own**
+init/destroy, so neither side is asked to interpret the other's representation, and every call gets
+a fresh attr so a rejection cannot leave state that changes the next result.
+
+fl via `LD_PRELOAD` at asserted PHASE=2, live glibc opened `dlmopen(LM_ID_NEWLM)` **in the same
+invocation**, arms asserted distinct by pointer and self-reported by `dladdr`
+(`INCUMBENT_OBJECT=/lib/x86_64-linux-gnu/libc.so.6`).
+
+**Result: 125 checks, 1 divergence — identical in strict and hardened.**
+
+```
+DIVERGENCE pthread_mutexattr_settype   valid   value=3   fl=22   glibc=0
+```
+
+**The divergence is a capability gap, and my first run mislabelled it.** I had listed 3 in the
+invalid spread, so the first run reported it as an "invalid" case where fl was the stricter one —
+which reads like fl being *more* correct. It is the opposite: **3 is `PTHREAD_MUTEX_ADAPTIVE_NP`**, a
+valid glibc mutex type (`NORMAL=0, RECURSIVE=1, ERRORCHECK=2, ADAPTIVE_NP=3`, confirmed by compiling
+the headers). glibc accepts it and returns 0; fl returns `EINVAL`. Any program requesting an adaptive
+mutex — common in performance-sensitive code — fails against fl where it succeeds against glibc. The
+driver has been corrected to probe 3 as valid, and the re-run is the 125/1 above.
+
+The other **124 checks are at parity**, including every invalid value on all twelve setters and every
+valid constant on eleven of them. That is the regression armor this bead asked for, and it holds
+everywhere except this one value.
+
+**Counted mechanism for the diverging entry.** `valgrind --tool=callgrind`, marginal Ir/call =
+(Ir at N=3000 - Ir at N=1000)/2000, fl via LD_PRELOAD at asserted PHASE=2 against live glibc opened
+dlmopen(LM_ID_NEWLM) in the SAME invocation, arms asserted distinct by pointer: hardened
+`pthread_mutexattr_settype` costs 45.00 instructions against glibc's 23.00 instructions, a ratio of
+1.957x, measured on a VALID type (`ERRORCHECK`) so both arms walk the accepted path — measuring it
+with the divergent value 3 would put fl on an early-return error path and flatter it. The
+same-invocation A/A null is 23.00 instructions vs 23.03 instructions on the glibc arm, ratio 1.001.
+So this entry is both wrong on one input and about twice the cost on the inputs it gets right.
+
+**Root cause, and the fix is one character.** `crates/frankenlibc-abi/src/pthread_abi.rs`,
+`encode_mutexattr`:
+
+```rust
+if !(0..=2).contains(&type_kind) { return None; }
+```
+
+The surrounding machinery already supports the value it is rejecting:
+`MUTEXATTR_TYPE_MASK` is `0b11`, so the encoded word already has room for 3;
+`decode_mutexattr_type` is `word & 0b11`, so `gettype` would round-trip it unchanged; and
+`frankenlibc-core/src/pthread/mutex.rs` already implements a bounded adaptive spin path, so treating
+type 3 as a normal mutex matches glibc's observable semantics — an adaptive mutex is non-recursive
+and non-errorchecking, and the adaptivity is a performance hint rather than a semantic difference.
+
+**Not fixed here, and not because it is hard.** With rch refusing there is no build, no gate, and no
+way to confirm the round-trip or that a mutex created with type 3 actually locks. A one-character
+edit to a synchronisation primitive is exactly the kind of change that should not land unverified.
+
+**To close bd-5cbz3r the next cycle needs:** the `(0..=2)` -> `(0..=3)` change;
+`pthread_mutexattr_gettype` returning 3 after `settype(3)`; a mutex created with type 3
+locking/unlocking; and this differential re-run at **125 checks / 0 divergences in both modes**. The
+bead for the gap itself could not be filed — `br create` fails with `database disk image is
+malformed: table comments rowid 7409` plus a duplicate issue id `bd-stale-win-silent-revert-audit-xezk5d`
+at line 7410 of the JSONL, which is a peer's record. This row and the commit message are the durable
+record instead.
