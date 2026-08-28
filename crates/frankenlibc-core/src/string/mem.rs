@@ -353,16 +353,22 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         base = block_end;
     }
 
-    while count - base >= SIMD_LANES {
-        let chunk = &hs[base..base + SIMD_LANES];
+    // `chunks_exact` rather than `&hs[base..base + LANES]`, matching how `memrchr` below
+    // already walks its tail. Manual slicing makes each iteration re-prove that the slice
+    // is in bounds: the emitted word loop carried `lea 0x8(%r8); mov; or $0x7; cmp; jae`
+    // — five instructions and a panic edge per iteration, on top of three more recomputing
+    // `count - base` — around seven instructions of actual SWAR. The iterator carries that
+    // proof once, in its own construction.
+    let mut simd_chunks = hs[base..].chunks_exact(SIMD_LANES);
+    for chunk in simd_chunks.by_ref() {
         if let Some(j) = first_byte_simd_32(chunk, needle) {
             return Some(base + j);
         }
         base += SIMD_LANES;
     }
 
-    while count - base >= WORD {
-        let chunk = &hs[base..base + WORD];
+    let mut word_chunks = simd_chunks.remainder().chunks_exact(WORD);
+    for chunk in word_chunks.by_ref() {
         // Resolve straight from the SWAR mask. This used to probe with `has_byte_u64` and
         // then re-walk the eight bytes with `.position()` to find what the mask already
         // encoded — an entire scalar loop to recompute a known answer, and it dominated
@@ -373,7 +379,10 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         base += WORD;
     }
 
-    hs[base..]
+    // The scalar tail is `word_chunks.remainder()`, but `base` is what the callers of this
+    // arm index from, so keep resolving against it rather than re-slicing `hs`.
+    word_chunks
+        .remainder()
         .iter()
         .position(|&b| b == needle)
         .map(|j| base + j)
