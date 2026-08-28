@@ -4959,8 +4959,28 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
 #[cold]
 #[inline(never)]
 unsafe fn strlen_validating(s: *const c_char) -> usize {
-    let _trace_scope = runtime_policy::entrypoint_scope("strlen");
+    // BOUND LOOKUP BEFORE THE TRACE SCOPE, and the order is the whole fix (bd-k3skh6).
+    //
+    // `entrypoint_scope` sets the policy-reentry flag for as long as it is alive, and
+    // `known_remaining` branches on exactly that flag: inside a reentry context it consults
+    // only `bump_mmap` / `segment` / `fallback` and deliberately SKIPS `validate_ptr`, to
+    // avoid recursing through a validator that itself calls string functions. In HARDENED
+    // mode a `malloc`ed span is discoverable only through `validate_ptr` — `segment_remaining`
+    // answers `None` for it, which is why the strict fast path (whose `known_remaining_strict`
+    // consults the same three sources) is unaffected. So building the scope first made this
+    // lookup return `None` for every tracked allocation, `rem` was `None`, and the code fell
+    // past the `if let Some(limit) = rem` bounded scan into the unbounded one.
+    //
+    // Measured before this change, LD_PRELOAD at PHASE=2, `malloc` of n bytes filled with
+    // non-NUL and a poisoned neighbour: **38 of 40 sizes over-read**, e.g. a 5-byte tracked
+    // allocation reporting length 13. Strict mode was correct at 0 of 40 — hardened, the mode
+    // whose entire purpose is bounds enforcement, was the one not enforcing them.
+    //
+    // Hoisting the lookup restores the full source list. It runs at the same point every
+    // other ABI entry queries it from — outside any scope — so `validate_ptr` is entered
+    // exactly as it is from `memchr`/`memrchr`, not from a nested context.
     let rem = known_remaining(s as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strlen");
     if !runtime_policy::mode().heals_enabled() && rem.is_none() {
         // Same dead-dispatch elision as the strict path above (byte-identical).
         return unsafe { scan_c_string(s, None).0 };
