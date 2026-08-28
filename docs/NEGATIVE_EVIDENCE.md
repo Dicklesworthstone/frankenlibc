@@ -39034,3 +39034,92 @@ Objects: baseline `0dc5add6795b51c0...` (HEAD), rejected candidate
 `1cc87818b6ec8c24b1cbfa3c12ffe8c8...`, both built locally. No conformance or gate run was needed:
 the change was reverted on the measurement, and the restored object is bit-identical to the one HEAD
 already ships.
+
+## 2026-08-27 — bd-2g7oyh — the page oracle hashed a page number with SipHash: hardened `strlen` 2178.00 instructions -> 2048.46, `memcpy` 3233.07 -> 2970.48
+
+The lever the previous row named and left on the table, now taken. It is the clean half of that
+attribution: unlike the FFI-PCC symbol compare, it touches **no membrane invariant**.
+
+**The gap.** `PageOracle::l2_maps` is a `BravoRwLock<ArtifactHashMap<usize, Arc<L2Bitmap>>>` — the
+two-level page bitmap behind the "is this pointer ours?" O(1) pre-check. `ArtifactHashMap` selects
+its hasher by feature:
+
+```rust
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) type ArtifactHashMap<K, V> = HashMap<K, V, ArtifactBuildHasher>;   // FNV
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) type ArtifactHashMap<K, V> = HashMap<K, V>;                        // RandomState/SipHash
+```
+
+The deployed build does not enable `owned-tls-cache`, so it got **SipHash — to hash a page number**.
+Attribution of hardened `strlen` put `RandomState::hash_one::<&usize>` at 84 Ir, `Sip13Rounds::write`
+at 56 and the map access at 81: **~221 of 2,178 Ir, about 10% of the entry.**
+
+**Why dropping SipHash is sound here rather than a weakening.** SipHash's job is HashDoS resistance
+against attacker-chosen keys. The only hot user of this map is the page oracle, whose keys are
+internally derived page addresses — not attacker-supplied. The crate had already sanctioned this
+exact hasher behind a feature flag, so the design question was settled; what was left was a build
+configuration that quietly reverted it. Making it unconditional also makes the maps' iteration order
+**deterministic**, which is what the `Artifact` / `Deterministic` naming was reaching for and which
+`RandomState` (randomly seeded per process) actively prevents. The other user, the evidence ledger's
+`String`-keyed index, is cold offline reporting and keeps the unchanged byte path.
+
+**Second half of the lever: `usize` keys stop going through the byte loop.** `usize`'s `Hash` calls
+`write_usize`, whose default forwards to `write(&i.to_ne_bytes())` — so even FNV would spend eight
+xor-multiply iterations hashing one word. Added `write_usize` / `write_u64` / `write_u32` overrides
+using the splitmix64 finalizer: two multiplies and three xor-shifts, no loop. The byte `write` is
+retained verbatim for `String` keys.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, hardened mode:
+
+| entry | before | after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| `strlen` short | 2178.00 | **2048.46** | 23.00 | 94.7x | 89.1x |
+| `memcpy` n=64 | 3233.07 | **2970.48** | 22.00 | 146.9x | 135.0x |
+| `strlen` len 64 | 1869.00 | 1869.44 | 35.00 | 53.4x | 53.4x |
+| `memcmp` | 2284.46 | 2284.00 | 71.00 | 32.2x | 32.2x |
+
+Counted mechanism, stated outside the table because the lint splits on pipes: hardened short
+`strlen` went 2178.00 instructions -> 2048.46 instructions and hardened `memcpy` at n=64 went
+3233.07 instructions -> 2970.48 instructions. **129.54 and 262.59 instructions removed.** Two entries
+are flat to within half an instruction — `strlen` at len 64 and `memcmp` do not reach the l2 map
+lookup on their path, so the win lands exactly where the map is queried and nowhere else, which is
+the shape a hashing fix should have.
+
+- **A/A null:** the glibc arm measured under BOTH objects, hardened — 23.00 vs 23.02, ratio 1.001.
+- **Strict untouched:** `strlen` 60.00 -> 60.00 and 132.00 -> 132.00, `memcpy` n=64 50.00 -> 49.97,
+  `memchr` n=16 63.00 -> 63.00, `memcmp` 138.02 -> 138.00.
+- **Not bench-path-specific:** the change is which hash function a map uses; it has no dependence on
+  input content, length or alignment.
+
+Conformance, **both strict and hardened**, on the candidate object: `slen_conf` 20,007; `mchr_conf`
+125,898; `mcpy_conf` 15,955; `fused_conf` 76,160; `ncat_conf` 21,441 — **259,461 checks, 0 failures
+in each mode**. The capability probe for the hardened bound fix still reports **0 of 40 over-reads in
+both modes**, which matters here specifically: a wrong hash would corrupt page-ownership lookups, and
+that probe is the one that exercises them.
+
+Gates: `cargo test --release -p frankenlibc-membrane --lib` **1,400 passed, 0 failed** — the whole
+crate, including `page_oracle`, `evidence_ledger` and `bravo`, which is the coverage that matters for
+a hasher swap since iteration order changes with it. `cargo test -p frankenlibc-abi --lib`
+**200 passed, 0 failed, 1 ignored**. Both observed compiling and executing.
+
+**A pre-existing failure the standard gate cannot see.** Running the abi lib suite in **release**
+(`cargo test --release -p frankenlibc-abi --lib`) fails at
+`locale_abi::tests::catopen_empty_name_sets_enoent` (`locale_abi.rs:1418`). This is **not** this
+change: the same test was run with `util.rs` reverted to HEAD and panics identically at the same
+line, so it is pre-existing. It is worth recording on its own account — the gate everyone runs
+(`cargo test -p frankenlibc-abi --lib`, and everything routed through `rch`) builds **debug**, where
+the suite reports 200 passed / 0 failed, so a release-only failure in the shipped profile is
+invisible to it. The deployed artifact is a release build. Nothing in the ledger names this gap.
+
+Objects: baseline `0dc5add6795b51c0...` (HEAD), candidate `5d8bae2ae71414ba4603216b47629051...`,
+built locally.
+
+**STILL OPEN.** Hardened `strlen` is 89.1x and still ~10x past the AGENTS.md `<200ns/call` budget.
+The remaining profile after this change is `__tls_get_addr` (336 Ir, the largest single item),
+`bcmp` (291, whose only clean fix is the membrane-invariant decision recorded in the previous row as
+rejected-pending-owner), `certify_simd_string_operation` (156, now just the memo lookup),
+`record_last_explainability` (140) and `strlen_validating` (134 — the actual string work). The TLS
+item is the next target and is the one the previous rows have not touched.

@@ -1,20 +1,28 @@
 //! Shared utilities for the membrane crate.
 
 use std::collections::HashMap;
-#[cfg(feature = "owned-tls-cache")]
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{
     Mutex as StdMutex, MutexGuard as StdMutexGuard, RwLock as StdRwLock,
     RwLockReadGuard as StdRwLockReadGuard, RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
 };
 
-#[cfg(feature = "owned-tls-cache")]
+/// Deterministic, integer-fast hasher for the crate's internal maps.
+///
+/// Was `#[cfg(feature = "owned-tls-cache")]`, so the DEPLOYED build (which does not enable
+/// that feature) fell back to `RandomState`/SipHash. Attribution of hardened `strlen` put
+/// `RandomState::hash_one::<&usize>` at 84 Ir plus `Sip13Rounds::write` at 56 and the map
+/// access at 81 — ~221 of 2,178 Ir, about 10% of the entry — to hash a page number. SipHash
+/// buys HashDoS resistance against attacker-chosen keys; the only hot user is
+/// `PageOracle::l2_maps`, whose keys are internally derived page addresses, so that
+/// resistance is not doing anything here. The crate already sanctioned this hasher behind a
+/// feature flag; making it unconditional also makes the maps' iteration order deterministic,
+/// which is what the `Artifact`/`Deterministic` naming was after in the first place.
 #[derive(Clone)]
 pub(crate) struct DeterministicHasher {
     state: u64,
 }
 
-#[cfg(feature = "owned-tls-cache")]
 impl Default for DeterministicHasher {
     fn default() -> Self {
         Self {
@@ -23,8 +31,30 @@ impl Default for DeterministicHasher {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 impl Hasher for DeterministicHasher {
+    /// Integer keys take a closed-form mix instead of the byte loop below. `usize`'s `Hash`
+    /// calls `write_usize`, which by default forwards to `write(&i.to_ne_bytes())` — eight
+    /// iterations of xor-multiply to hash one word. This is the splitmix64 finalizer: two
+    /// multiplies and three xor-shifts, no loop.
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.write_u64(i as u64);
+    }
+
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        let mut z = i ^ self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        self.state = z ^ (z >> 31);
+    }
+
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.write_u64(u64::from(i));
+    }
+
+    /// Byte path, retained unchanged for the `String`-keyed evidence-ledger map.
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
         const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -40,13 +70,9 @@ impl Hasher for DeterministicHasher {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 type ArtifactBuildHasher = BuildHasherDefault<DeterministicHasher>;
 
-#[cfg(feature = "owned-tls-cache")]
 pub(crate) type ArtifactHashMap<K, V> = HashMap<K, V, ArtifactBuildHasher>;
-#[cfg(not(feature = "owned-tls-cache"))]
-pub(crate) type ArtifactHashMap<K, V> = HashMap<K, V>;
 
 #[inline]
 pub(crate) fn artifact_hash_map<K, V>() -> ArtifactHashMap<K, V> {
