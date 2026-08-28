@@ -39583,3 +39583,90 @@ the *encode* path and the code validates on *both* the encode and decode paths. 
 only checks the function named in the bug report will confirm whatever that function now returns; it
 took a probe aimed at the invariants (round-trip, then use the result) to find that the object had
 been left in a state no caller could use. Write the probe for the property, not for the symptom.
+
+## 2026-08-28 — bd-2g7oyh — `memcmp` found the differing panel with SIMD then rescanned it byte-by-byte: 4.707x -> 1.941x at n=64
+
+First cycle on the **worker-side h2h method**: the whole comparison — both arms, the conformance
+sweep and the timing — runs in one process on the worker via
+`rch exec -- cargo run --release --example mem_kernel_h2h`, so no ELF is retrieved and nothing is
+built locally. The incumbent is the real shipped glibc opened `dlmopen(LM_ID_NEWLM, "libc.so.6")`,
+asserted distinct from the fl arm by pointer, and the harness prints its own
+`SELF_ELF_SHA256` read from `/proc/self/exe` inside the running process.
+
+**Two method decisions the first run forced.** The initial harness took a ratio of medians and
+reported A/A nulls from **0.784 to 1.474** — a shared worker drifting under the measurement. Ratios
+are now taken **per round** from an interleaved `[fl, glibc, glibc]` triple and the median of the
+per-round ratios is reported, which makes clock drift common-mode; the A/A null is the median of
+per-round glibc-vs-glibc ratios. Rows whose null falls outside 0.97..1.03 are printed **SUSPECT**
+rather than standing silently beside the trustworthy ones. The harness also states
+`RUNTIME_PHASE=-1` explicitly: an example links fl as an rlib, so the ABI entrypoints are **not** at
+PHASE=2 and these figures are for the **core kernels**, not the deployed ABI path.
+
+**The gap.** `memcmp`'s ratio was not flat — 1.475x at n=16, **5.200x at n=64**, 3.422x at n=256,
+1.757x at n=1024. That shape is a tier defect, not a uniform slowness, and n=16 being the *good*
+case named the cause: n=16 has a dedicated `memcmp_exact_16_mask` that resolves the answer from the
+SIMD control mask, while every other size goes through a panel loop that asks `eq_simd_32` for a
+**bool** and then hands the whole 32-byte panel to `compare_bytes`, which walks it a byte at a time
+to recover the position the mask had just discarded. n=64 is worst because it has the least SIMD
+work to amortise that scalar walk against.
+
+Same defect class as the `has_byte_u64` probe-then-rescan removed from `memchr`/`memrchr` earlier in
+this campaign — third sighting in this file.
+
+**The lever.** `first_diff_simd_32` returns the first differing lane straight from the `simd_ne`
+mask (`trailing_zeros`), and both panel resolvers — the one inside the 128-byte fold block and the
+standalone remainder loop — now compare exactly the two bytes the mask names.
+
+**Paired measurement, both arms in one process on one worker CPU**, before and after built from the
+same tree with only this change between them:
+
+| n | fl/glibc before | A/A | fl/glibc after | A/A | fl ns before -> after |
+|---|---|---|---|---|---|
+| 64 | **4.707x** | 1.028 | **1.941x** | 1.003 | 21.39 -> 10.29 |
+| 256 | 3.422x | 1.003 | 1.738x | 0.983 | 22.59 -> 15.97 |
+| 1024 | 1.757x | 0.983 | 1.201x | 0.988 | 28.82 -> 23.03 |
+| 16 | 1.475x | 1.031 | 1.352x | 0.946 | unchanged path |
+| 8 | 2.578x | 1.031 | 2.648x | 1.038 | unchanged path |
+
+Every before/after pair above has both A/A nulls inside the admissible band. n=8 and n=16 do not go
+through the panel loop and are **unchanged** — the ±3% wobble there is the noise floor, not an
+effect, and it is reported rather than trimmed. Absolute nanoseconds drift between runs because the
+worker is shared; the ratio is the reported quantity and the A/A null is what qualifies it.
+
+A separate paired run measured n=64 at 5.200x before and 2.103x after with the A/A null at
+**1.053 on both sides** — outside the band, but identically so on each arm, so that pair is
+like-for-like even though neither figure is quotable on its own. The n=64 ratio reproduced across
+four runs at 1.941/2.066/2.096/2.103, i.e. within 2%, against an effect of >2x.
+
+**Correctness proved directly, because the unit suite could not be trusted here.** `memcmp` returns
+an *order*, so a resolver that picks the right panel but the wrong byte inside it still returns the
+right sign most of the time — it only breaks when the two candidate bytes order oppositely. The
+harness therefore sweeps **every length 0..=300 x every difference position x four byte pairs
+including (0,255) and (255,0)** — the pairs where a signed/unsigned confusion shows up — and checks
+the sign against live glibc: **180,600 checks, 0 mismatches**.
+
+The sweep was then proved capable of failing: replacing `trailing_zeros` with `31 - trailing_zeros`
+(right panel, wrong byte) produced **162,432 mismatches**, first at len=32 pos=0. Break reverted and
+the object rebuilt before the real runs.
+
+That mattered, because the filtered unit gate `cargo test -p frankenlibc-core --lib -- string::mem`
+was **intermittent** immediately after a `git stash pop`: two runs reported 55 passed / 1 failed and
+six reported 56 / 0. An intermittent failure in a pure function's test cannot come from this change
+— libtest feeds identical inputs every run — and it points at rch syncing a partially written tree.
+The exhaustive sweep is the evidence this row rests on; the unit gate is corroboration.
+
+Gates: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**.
+`cargo test -p frankenlibc-core --lib` **3294 passed, 3 failed** — and those three
+(`locale::tests::category_constants_have_expected_values`,
+`locale::tests::valid_category_rejects_out_of_range`,
+`stdio::printf::tests::test_parse_invalid_length_modifier_rejects_printf_spec`) are **pre-existing**:
+reverting `mem.rs` to HEAD and re-running reproduces the identical three names and the identical
+3294/3 counts. None is in `string::mem`, the only module touched.
+
+Also confirmed by the same harness and unchanged by this work: `memmem` is a large fl **win** —
+0.524x at n=256 and **0.103x at n=4096** (63.83ns against glibc's 616.27ns), both with A/A nulls of
+1.000.
+
+**STILL OPEN.** `memcmp` at n=8 remains ~2.6x: that length never reaches the panel loop, taking the
+word-then-byte tail, and it is the next thing to look at in this function. `memchr` at n=8/16 sits
+at ~2.1x/2.5x with SUSPECT nulls that need a quieter worker before they are worth acting on.

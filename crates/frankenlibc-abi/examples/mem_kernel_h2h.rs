@@ -22,7 +22,14 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-const ROUNDS: usize = 9;
+const ROUNDS: usize = 25;
+
+/// A paired round is [fl, glibc, glibc]; the ratio is taken PER ROUND and the median of the
+/// per-round ratios is reported. Taking a ratio of medians instead lets a clock ramp that
+/// happened between the two medians masquerade as a speed difference, which is exactly what
+/// the first run of this harness showed: A/A nulls from 0.78 to 1.47 on a shared worker.
+/// Pairing inside the round makes drift common-mode, and the reported A/A null is then the
+/// median of per-round glibc-vs-glibc ratios -- a real noise floor for the same loop.
 
 type MemchrFn = unsafe extern "C" fn(*const u8, i32, usize) -> *const u8;
 type MemrchrFn = unsafe extern "C" fn(*const u8, i32, usize) -> *const u8;
@@ -36,7 +43,7 @@ fn sha256_self() -> String {
         Ok(bytes) => {
             let mut h = Sha256::new();
             h.update(&bytes);
-            format!("{:x}", h.finalize())
+            h.finalize().iter().map(|b| format!("{b:02x}")).collect()
         }
         Err(_) => "<unreadable>".to_string(),
     }
@@ -48,11 +55,26 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
-fn report(op: &str, n: usize, fl: f64, gl: f64, aa: f64) {
+/// Reports the median of the PER-ROUND ratios, and the A/A null the same way.
+///
+/// `ADMISSIBLE` is the band the A/A null must fall inside for the paired figure to mean
+/// anything; outside it the row is printed with a `SUSPECT` marker rather than quietly
+/// standing next to the trustworthy ones.
+const ADMISSIBLE: (f64, f64) = (0.97, 1.03);
+
+fn report(op: &str, n: usize, fls: &[f64], gls: &[f64], aas: &[f64]) {
+    let ratios: Vec<f64> = fls.iter().zip(gls).map(|(f, g)| f / g).collect();
+    let nulls: Vec<f64> = aas.iter().zip(gls).map(|(a, g)| a / g).collect();
+    let (r, null) = (median(ratios), median(nulls));
+    let mark = if (ADMISSIBLE.0..=ADMISSIBLE.1).contains(&null) {
+        "        "
+    } else {
+        " SUSPECT"
+    };
     println!(
-        "{op:<16} n={n:<6} fl={fl:8.2}ns glibc={gl:8.2}ns  fl/glibc={:6.3}x   A/A_null={:.3}",
-        fl / gl,
-        aa
+        "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3}{mark}",
+        median(fls.to_vec()),
+        median(gls.to_vec()),
     );
 }
 
@@ -91,6 +113,45 @@ fn main() {
             gl_memchr as usize != frankenlibc_core::string::mem::memchr as usize,
             "arms identical"
         );
+
+        // EXHAUSTIVE ORDERING SWEEP before any timing. `memcmp` returns an ORDER, not a
+        // bool, so a resolver that finds the right panel but the wrong byte within it still
+        // returns the right sign most of the time -- it only breaks when the two differing
+        // bytes order oppositely to the first one. This sweeps every length 0..=300 and every
+        // difference position within it, in BOTH directions (a<b and a>b), and checks the
+        // sign against live glibc. 
+        {
+            let mut checks = 0usize;
+            let mut bad = 0usize;
+            for len in 0..=300usize {
+                for pos in 0..len {
+                    for &(x, y) in &[(b'a', b'b'), (b'b', b'a'), (0u8, 255u8), (255u8, 0u8)] {
+                        let mut p = vec![b'k'; len];
+                        let mut q = vec![b'k'; len];
+                        p[pos] = x;
+                        q[pos] = y;
+                        let fl = frankenlibc_core::string::mem::memcmp(&p, &q, len);
+                        let gl = gl_memcmp(p.as_ptr(), q.as_ptr(), len).signum();
+                        let fl_sign = match fl {
+                            core::cmp::Ordering::Less => -1,
+                            core::cmp::Ordering::Equal => 0,
+                            core::cmp::Ordering::Greater => 1,
+                        };
+                        checks += 1;
+                        if fl_sign != gl {
+                            bad += 1;
+                            if bad <= 5 {
+                                println!(
+                                    "MEMCMP ORDER MISMATCH len={len} pos={pos} bytes=({x},{y}) fl={fl_sign} glibc={gl}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            println!("MEMCMP_ORDER_SWEEP checks={checks} mismatches={bad} verdict={}\n",
+                     if bad == 0 { "PASS" } else { "FAIL" });
+        }
 
         // buffers: needle at the very end so both arms scan the whole length
         for &n in &[8usize, 16, 32, 64, 128, 256, 1024] {
@@ -135,8 +196,7 @@ fn main() {
                 }
                 aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
             }
-            let (fl, gl) = (median(fls), median(gls.clone()));
-            report("memchr", n, fl, gl, median(aas) / gl);
+            report("memchr", n, &fls, &gls, &aas);
         }
         println!();
 
@@ -175,8 +235,7 @@ fn main() {
                 }
                 aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
             }
-            let (fl, gl) = (median(fls), median(gls.clone()));
-            report("memrchr", n, fl, gl, median(aas) / gl);
+            report("memrchr", n, &fls, &gls, &aas);
         }
         println!();
 
@@ -217,8 +276,7 @@ fn main() {
                 }
                 aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
             }
-            let (fl, gl) = (median(fls), median(gls.clone()));
-            report("memcmp", n, fl, gl, median(aas) / gl);
+            report("memcmp", n, &fls, &gls, &aas);
         }
         println!();
 
@@ -265,8 +323,7 @@ fn main() {
                 }
                 aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
             }
-            let (fl, gl) = (median(fls), median(gls.clone()));
-            report("memmem", n, fl, gl, median(aas) / gl);
+            report("memmem", n, &fls, &gls, &aas);
         }
     }
 }

@@ -77,8 +77,9 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     while i + SIMD_FOLD_BYTES <= count {
         if ne_simd_folded_128(&a[i..i + SIMD_FOLD_BYTES], &b[i..i + SIMD_FOLD_BYTES]) {
             while i + SIMD_LANES <= count {
-                if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
-                    return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
+                // Resolve from the mask; see `first_diff_simd_32`.
+                if let Some(j) = first_diff_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
+                    return a[i + j].cmp(&b[i + j]);
                 }
                 i += SIMD_LANES;
             }
@@ -86,10 +87,10 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
         i += SIMD_FOLD_BYTES;
     }
 
-    // Remaining 32-byte panels.
+    // Remaining 32-byte panels, resolved from the mask rather than rescanned.
     while i + SIMD_LANES <= count {
-        if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
-            return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
+        if let Some(j) = first_diff_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
+            return a[i + j].cmp(&b[i + j]);
         }
         i += SIMD_LANES;
     }
@@ -131,6 +132,32 @@ fn memcmp_exact_16_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 /// True iff the two 32-byte panels are byte-for-byte equal. Safe portable SIMD
 /// equality probe; both inputs must be exactly [`SIMD_LANES`] bytes long.
 #[inline(always)]
+/// First differing byte of a 32-byte panel, or `None` if the panels are equal.
+///
+/// The `simd_ne` control mask already names the differing lanes, so the ordering answer is
+/// one `trailing_zeros` away. `memcmp`'s panel resolver previously asked `eq_simd_32` for a
+/// bool and then handed the whole 32-byte panel to `compare_bytes`, which re-walks it a byte
+/// at a time to recover the position the mask had just discarded. That scalar walk dominated
+/// short comparisons: `memcmp` at n=64 measured 21.39ns against live glibc's 4.46ns
+/// (4.707x), while n=16 -- which already resolves from a mask via `memcmp_exact_16_mask` --
+/// was only 1.540x. Same defect class as the probe-then-rescan removed from
+/// `memchr`/`memrchr`.
+#[inline(always)]
+fn first_diff_simd_32(a: &[u8], b: &[u8]) -> Option<usize> {
+    debug_assert_eq!(a.len(), SIMD_LANES);
+    debug_assert_eq!(b.len(), SIMD_LANES);
+    let mask = Simd::<u8, SIMD_LANES>::from_slice(a)
+        .simd_ne(Simd::<u8, SIMD_LANES>::from_slice(b))
+        .to_bitmask();
+    if mask == 0 {
+        None
+    } else {
+        Some(mask.trailing_zeros() as usize)
+    }
+}
+
+#[inline(always)]
+#[allow(dead_code)]
 fn eq_simd_32(a: &[u8], b: &[u8]) -> bool {
     debug_assert_eq!(a.len(), SIMD_LANES);
     debug_assert_eq!(b.len(), SIMD_LANES);
