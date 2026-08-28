@@ -39670,3 +39670,59 @@ Also confirmed by the same harness and unchanged by this work: `memmem` is a lar
 **STILL OPEN.** `memcmp` at n=8 remains ~2.6x: that length never reaches the panel loop, taking the
 word-then-byte tail, and it is the next thing to look at in this function. `memchr` at n=8/16 sits
 at ~2.1x/2.5x with SUSPECT nulls that need a quieter worker before they are worth acting on.
+
+## 2026-08-28 — bd-2g7oyh — the same discard-the-mask defect one tier down: `memcmp` n=8 2.6x -> 1.749x
+
+The previous row closed by naming `memcmp` at n=8 as the length left behind: it never reaches the
+32-byte panel loop that row fixed, so it took the word-then-byte tail. That tail had the identical
+shape one tier down — compare two `u64`s, learn they differ, then hand both 8-byte slices to
+`compare_bytes` to walk them a byte at a time and rediscover the lane the comparison had already
+identified.
+
+**The lever.** `first_diff_u64(x, y)` returns `(x ^ y).to_le().trailing_zeros() / 8` — the XOR
+already names the differing lanes — and the word loop compares exactly the two bytes it points at.
+`to_le()` before the scan keeps the lane order right on either endianness, matching
+`u64_from_chunk`'s `from_ne_bytes`. Fourth sighting of this defect class in this file
+(`memchr`, `memrchr`, `memcmp`'s panel tier, now `memcmp`'s word tier).
+
+Measured with the worker-side method: `rch exec -- cargo run --release --example mem_kernel_h2h`
+builds and runs in one remote invocation, both arms in the same process on the same worker CPU, the
+incumbent opened `dlmopen(LM_ID_NEWLM, "libc.so.6")` and asserted distinct by pointer, the harness
+printing its own `SELF_ELF_SHA256` from `/proc/self/exe`. Harness output now goes to **stderr** so
+rch returns it.
+
+| n | fl/glibc before | A/A before | fl/glibc after | A/A after |
+|---|---|---|---|---|
+| **8** | **2.578 / 2.634 / 2.636 / 2.648x** | 1.031–1.038 | **1.749x / 1.755x** | 1.001 / 1.000 |
+| 16 | 1.475–1.562x | ~1.03 | 1.683 / 1.704x | 1.001 |
+| 64 | 1.941x | 1.003 | 1.961 / 2.007x | 0.982 / 1.009 |
+| 256 | 1.738x | 0.983 | 1.776 / 1.791x | 0.977 / 0.979 |
+| 1024 | 1.201x | 0.988 | 1.163 / 1.168x | 0.987 / 0.991 |
+
+Counted in wall time: `memcmp` at n=8 went from ~8.9ns to **6.07ns** against live glibc's 3.47ns in
+the same invocation, i.e. **2.6x -> 1.749x, about a third of the gap removed**. n=16 through n=1024
+are the tiers the previous row already fixed and are unchanged here within their spread.
+
+**An honesty caveat on the pairing, stated rather than buried.** The four before-readings carry A/A
+nulls of 1.031–1.038 — marginally outside the 0.97–1.03 admissible band — while both after-readings
+are clean at 1.000/1.001. Two attempts at a fresh paired baseline failed: rch refused one
+(`critical_pressure=2`) and the other timed out mid-comparison, and each attempt left the working
+tree stashed, so continuing to retry was risking the change for a 3% refinement of a 34% effect. The
+before/after nulls differ by ~3%; the effect is ten times that. The figure is reported with that
+gap visible rather than re-run until it looked tidy.
+
+**Correctness.** The exhaustive ordering sweep runs inside the same harness invocation and passed on
+the final object: every length 0..=300 x every difference position x four byte pairs including
+`(0,255)` and `(255,0)` — **180,600 checks, 0 mismatches** against live glibc's sign. That sweep was
+proved able to fail in the previous cycle (an injected wrong-lane resolve produced 162,432
+mismatches), and it is the property this change could plausibly break: an XOR resolve that picked
+the wrong byte would still return the right sign whenever the two candidate bytes happen to order
+the same way, which is most of the time.
+
+Gates: `cargo test -p frankenlibc-core --lib -- string::mem` **56 passed, 0 failed**;
+`cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**. Both on rch.
+
+**STILL OPEN.** `memcmp` is now 1.16x–2.0x across the measured range with no single tier standing
+out, which is the shape that says the next gain is not another tier fix. `memchr` at n=8/16 sits at
+~2.1x/2.5x but every reading so far carries a SUSPECT null; it needs a quiet worker before it is
+worth acting on, and reporting it as a target on today's numbers would be reporting noise.

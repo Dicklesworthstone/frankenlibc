@@ -71,7 +71,7 @@ fn report(op: &str, n: usize, fls: &[f64], gls: &[f64], aas: &[f64]) {
     } else {
         " SUSPECT"
     };
-    println!(
+    eprintln!(
         "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3}{mark}",
         median(fls.to_vec()),
         median(gls.to_vec()),
@@ -87,7 +87,7 @@ fn main() {
         );
         assert!(!h.is_null(), "dlmopen libc failed");
 
-        println!("SELF_ELF_SHA256={}", sha256_self());
+        eprintln!("SELF_ELF_SHA256={}", sha256_self());
         let phase: Option<unsafe extern "C" fn() -> i32> = {
             let p = libc::dlsym(libc::RTLD_DEFAULT, c"__frankenlibc_runtime_phase".as_ptr());
             if p.is_null() { None } else { Some(std::mem::transmute(p)) }
@@ -95,11 +95,11 @@ fn main() {
         // Stated, not assumed: an example links fl as an rlib rather than loading it as the
         // process libc, so the ABI entrypoints are NOT at PHASE=2 here. These figures are for
         // the CORE kernels, which is what this harness compares.
-        println!(
+        eprintln!(
             "RUNTIME_PHASE={} (example links fl as an rlib; core kernels under test)",
             phase.map_or(-1, |f| f())
         );
-        println!("INCUMBENT=libc.so.6 via dlmopen(LM_ID_NEWLM)\n");
+        eprintln!("INCUMBENT=libc.so.6 via dlmopen(LM_ID_NEWLM)\n");
 
         let gl_memchr: MemchrFn =
             std::mem::transmute(libc::dlsym(h, c"memchr".as_ptr()));
@@ -141,7 +141,7 @@ fn main() {
                         if fl_sign != gl {
                             bad += 1;
                             if bad <= 5 {
-                                println!(
+                                eprintln!(
                                     "MEMCMP ORDER MISMATCH len={len} pos={pos} bytes=({x},{y}) fl={fl_sign} glibc={gl}"
                                 );
                             }
@@ -149,7 +149,7 @@ fn main() {
                     }
                 }
             }
-            println!("MEMCMP_ORDER_SWEEP checks={checks} mismatches={bad} verdict={}\n",
+            eprintln!("MEMCMP_ORDER_SWEEP checks={checks} mismatches={bad} verdict={}\n",
                      if bad == 0 { "PASS" } else { "FAIL" });
         }
 
@@ -167,7 +167,7 @@ fn main() {
                 Some(gl_hit as usize - buf.as_ptr() as usize)
             };
             if fl_hit != gl_idx {
-                println!("memchr          n={n:<6} MISMATCH fl={fl_hit:?} glibc={gl_idx:?}");
+                eprintln!("memchr          n={n:<6} MISMATCH fl={fl_hit:?} glibc={gl_idx:?}");
                 continue;
             }
 
@@ -198,7 +198,7 @@ fn main() {
             }
             report("memchr", n, &fls, &gls, &aas);
         }
-        println!();
+        eprintln!();
 
         for &n in &[8usize, 16, 64, 256, 1024] {
             let mut buf = vec![b'a'; n];
@@ -211,7 +211,7 @@ fn main() {
                 Some(gl_hit as usize - buf.as_ptr() as usize)
             };
             if fl_hit != gl_idx {
-                println!("memrchr         n={n:<6} MISMATCH fl={fl_hit:?} glibc={gl_idx:?}");
+                eprintln!("memrchr         n={n:<6} MISMATCH fl={fl_hit:?} glibc={gl_idx:?}");
                 continue;
             }
             let iters = (1 << 22) / n.max(8);
@@ -237,7 +237,7 @@ fn main() {
             }
             report("memrchr", n, &fls, &gls, &aas);
         }
-        println!();
+        eprintln!();
 
         for &n in &[8usize, 16, 64, 256, 1024] {
             let a = vec![b'q'; n];
@@ -252,7 +252,7 @@ fn main() {
                     | (core::cmp::Ordering::Greater, 1)
             );
             if !agree {
-                println!("memcmp          n={n:<6} MISMATCH fl={fl_ord:?} glibc={gl_ord}");
+                eprintln!("memcmp          n={n:<6} MISMATCH fl={fl_ord:?} glibc={gl_ord}");
                 continue;
             }
             let iters = (1 << 22) / n.max(8);
@@ -278,7 +278,7 @@ fn main() {
             }
             report("memcmp", n, &fls, &gls, &aas);
         }
-        println!();
+        eprintln!();
 
         // memmem: fl already measured far ahead on Ir; confirm on wall time
         for &n in &[256usize, 4096] {
@@ -293,7 +293,7 @@ fn main() {
                 Some(gl_hit as usize - hay.as_ptr() as usize)
             };
             if fl_hit != gl_idx {
-                println!("memmem          n={n:<6} MISMATCH fl={fl_hit:?} glibc={gl_idx:?}");
+                eprintln!("memmem          n={n:<6} MISMATCH fl={fl_hit:?} glibc={gl_idx:?}");
                 continue;
             }
             let iters = (1 << 20) / n.max(8);

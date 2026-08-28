@@ -95,10 +95,14 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
         i += SIMD_LANES;
     }
 
-    // Tail: the sub-32B remainder, scanned 8 bytes at a time then byte-wise.
+    // Tail: the sub-32B remainder, 8 bytes at a time then byte-wise. The differing word is
+    // resolved from its XOR rather than rescanned; see `first_diff_u64`.
     while i + WORD <= count {
-        if u64_from_chunk(&a[i..i + WORD]) != u64_from_chunk(&b[i..i + WORD]) {
-            return compare_bytes(&a[i..i + WORD], &b[i..i + WORD]);
+        let x = u64_from_chunk(&a[i..i + WORD]);
+        let y = u64_from_chunk(&b[i..i + WORD]);
+        if x != y {
+            let j = first_diff_u64(x, y);
+            return a[i + j].cmp(&b[i + j]);
         }
         i += WORD;
     }
@@ -154,6 +158,23 @@ fn first_diff_simd_32(a: &[u8], b: &[u8]) -> Option<usize> {
     } else {
         Some(mask.trailing_zeros() as usize)
     }
+}
+
+/// First differing byte of two 8-byte words, resolved from their XOR.
+///
+/// The word tier had the same shape the panel tier did: it compared two `u64`s, learned they
+/// differed, then handed both 8-byte slices to `compare_bytes` to walk them a byte at a time
+/// and rediscover which lane it was. `x ^ y` already names the differing lanes, so the index
+/// is one `trailing_zeros` away. This is the tier `memcmp` at n=8 takes -- it never reaches
+/// the 32-byte panel loop -- and it was the length left at 2.6x when the panel fix took
+/// n=64 from 4.707x to 1.941x.
+///
+/// `to_le()` before the scan keeps the lane order right on either endianness, matching
+/// `u64_from_chunk`'s `from_ne_bytes`.
+#[inline(always)]
+fn first_diff_u64(x: u64, y: u64) -> usize {
+    debug_assert_ne!(x, y);
+    ((x ^ y).to_le().trailing_zeros() / 8) as usize
 }
 
 #[inline(always)]
