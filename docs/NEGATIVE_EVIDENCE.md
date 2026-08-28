@@ -39514,3 +39514,72 @@ bead for the gap itself could not be filed — `br create` fails with `database 
 malformed: table comments rowid 7409` plus a duplicate issue id `bd-stale-win-silent-revert-audit-xezk5d`
 at line 7410 of the JSONL, which is a peer's record. This row and the commit message are the durable
 record instead.
+
+## 2026-08-28 — bd-5cbz3r — `PTHREAD_MUTEX_ADAPTIVE_NP` accepted: 125/125 and 44/44 parity, and the "one-character fix" was wrong
+
+rch admission recovered, so the gap the previous row could only measure is now fixed and gated.
+**The interesting part is that the fix the previous row prescribed was incomplete, and the shallow
+differential said it had worked.**
+
+**The gap.** `pthread_mutexattr_settype(attr, PTHREAD_MUTEX_ADAPTIVE_NP)` returned `EINVAL` where
+live glibc returns 0. Type 3 is a valid glibc mutex type; any program requesting an adaptive mutex
+failed against fl.
+
+**What the previous row prescribed, and why it was not enough.** It named
+`encode_mutexattr`'s `if !(0..=2).contains(&type_kind)` as the root cause and called the fix "one
+character", on the reasoning that `MUTEXATTR_TYPE_MASK` is `0b11` so the encoding already had room.
+That reasoning was right about the encoding and wrong about the validation. Making only that change
+and re-running the setter differential gave **125 checks, 0 divergences — apparent success**.
+
+It was not success. A deeper probe written specifically to check the two things the previous row had
+itself listed as closure conditions — that `gettype` round-trips the value, and that a mutex built
+from the attr actually works — reported:
+
+```
+FAIL gettype round-trip   type=3  fl=-999  glibc=3     (fl's gettype returned EINVAL, leaving the out-param unwritten)
+FAIL mutex_init rc        type=3  fl=22    glibc=0
+```
+
+So `settype(3)` now reported success while `gettype` refused to read it back and `pthread_mutex_init`
+refused the attr: **an attribute object that says OK but cannot build a mutex — strictly worse than
+the honest `EINVAL` it replaced.** The setter differential could not see this, because it only
+inspects the `settype` return code.
+
+**The actual fix is two sites.** `mutexattr_word_valid` carries the same `(0..=2)` range on the
+decoded type, and *both* `pthread_mutexattr_gettype` and `pthread_mutex_init` validate through it.
+Widening `encode_mutexattr` alone lets the value in and then rejects every subsequent read of it.
+Both ranges are now `0..=3`.
+
+**Verification, both modes, fl via `LD_PRELOAD` at asserted PHASE=2 against live glibc opened
+`dlmopen(LM_ID_NEWLM)` in the SAME invocation, arms distinct by pointer and `dladdr`-reported:**
+
+- `adaptive_conf` — the round-trip and lifecycle probe, over **all four** types (NORMAL, RECURSIVE,
+  ERRORCHECK, ADAPTIVE_NP) so a fix that special-cased 3 while breaking 0/1/2 could not pass:
+  `settype` rc, `gettype` rc, `gettype` round-trip, `gettype == set value`, `mutex_init` rc, lock,
+  **trylock-while-held** (which distinguishes RECURSIVE from the rest), unlock, relock, final unlock,
+  `mutex_destroy` rc — **44 checks, 0 failures** in strict and hardened. Against the pre-fix object
+  the same probe reports 3 failures, and against the one-site fix, 4.
+- `pattr_conf` — the twelve-setter differential from the previous row: **125 checks, 0 divergences**
+  in both modes, up from 125/1.
+
+Counted mechanism, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+same invocation: `pthread_mutexattr_settype` went 45.00 instructions -> 42.00 instructions against
+live glibc's 23.00 instructions, so the ratio improves 1.957x -> 1.826x. The fix is 3 instructions
+*cheaper* as well as correct — one fewer bound to fail. Same-invocation A/A null on the glibc arm:
+23.00 instructions vs 23.03 instructions, ratio 1.001.
+
+Gates, all on rch: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**;
+`conformance_diff_pthread` **7 passed**; `conformance_diff_pthread_attr` **7 passed**;
+`conformance_diff_pthread_attr_errno` **1 passed**; `conformance_diff_pthread_attr_pshared`
+**2 passed** — 17 pre-existing pthread differential tests, 0 failures.
+
+Objects: pre-fix `399d9cc3cf62d151...`, one-site (rejected) `1a88dca5f7f8dec4...`, final
+`1f339e77849c880d179eb1aeafa619c1...`, all built on rch.
+
+**The transferable lesson, which is the reason this row is long.** The previous row derived the fix
+by reading — mask width, decode path, core's spin behaviour — and every one of those observations was
+correct. The conclusion "one character" still did not survive contact, because the reasoning covered
+the *encode* path and the code validates on *both* the encode and decode paths. A differential that
+only checks the function named in the bug report will confirm whatever that function now returns; it
+took a probe aimed at the invariants (round-trip, then use the result) to find that the object had
+been left in a state no caller could use. Write the probe for the property, not for the symptom.

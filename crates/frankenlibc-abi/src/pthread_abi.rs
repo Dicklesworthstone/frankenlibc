@@ -3830,7 +3830,19 @@ fn encode_mutexattr(
     robust: c_int,
     prioceiling: c_int,
 ) -> Option<c_int> {
-    if !(0..=2).contains(&type_kind) {
+    // 0..=3, not 0..=2. Type 3 is `PTHREAD_MUTEX_ADAPTIVE_NP`, a valid glibc mutex type
+    // (NORMAL=0, RECURSIVE=1, ERRORCHECK=2, ADAPTIVE_NP=3). Rejecting it made
+    // `pthread_mutexattr_settype(attr, PTHREAD_MUTEX_ADAPTIVE_NP)` return EINVAL where live
+    // glibc returns 0, so any program asking for an adaptive mutex failed against fl —
+    // measured as the single divergence in a 125-check differential over the twelve attr
+    // setters (bd-5cbz3r).
+    //
+    // Nothing else has to change to accept it: `MUTEXATTR_TYPE_MASK` is `0b11`, so the
+    // encoded word already has room for 3, and `decode_mutexattr_type` is `word & 0b11`, so
+    // `gettype` round-trips it. Treating an adaptive mutex as a normal one matches glibc's
+    // observable semantics — it is non-recursive and non-errorchecking, and the adaptivity
+    // is a spin hint, which `frankenlibc-core`'s mutex already applies on its own.
+    if !(0..=3).contains(&type_kind) {
         return None;
     }
     let protocol_bits = match protocol {
@@ -3873,7 +3885,16 @@ fn mutexattr_word_valid(word: c_int) -> bool {
     let type_kind = word & MUTEXATTR_TYPE_MASK;
     let protocol_bits = (word & MUTEXATTR_PROTOCOL_MASK) >> MUTEXATTR_PROTOCOL_SHIFT;
     let prioceiling = decode_mutexattr_prioceiling(word);
-    (0..=2).contains(&type_kind)
+    // Type range must match `encode_mutexattr`'s: 0..=3, including
+    // `PTHREAD_MUTEX_ADAPTIVE_NP` (3). This is the SECOND gate on the type and the one that
+    // makes the first insufficient on its own — `pthread_mutexattr_gettype` and
+    // `pthread_mutex_init` both validate through here, so widening only `encode_mutexattr`
+    // produced a strictly worse state than the original bug: `settype(3)` returned success
+    // while `gettype` then failed with EINVAL and `pthread_mutex_init` refused the attr,
+    // i.e. an attr that reported OK but could not build a mutex. Caught by the round-trip
+    // and lock probe, not by the setter differential, which saw only the `settype` return
+    // code and read 125/125 parity (bd-5cbz3r).
+    (0..=3).contains(&type_kind)
         && (0..=2).contains(&protocol_bits)
         && (MUTEXATTR_MIN_PRIOCEILING..=MUTEXATTR_MAX_PRIOCEILING).contains(&prioceiling)
 }
