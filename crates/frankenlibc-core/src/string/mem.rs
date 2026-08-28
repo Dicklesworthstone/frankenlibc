@@ -488,7 +488,30 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         end -= SIMD_LANES;
     }
 
-    let hs = simd_chunks.remainder();
+    // 16-byte tier between the 32-lane panels and the 8-byte words.
+    //
+    // A 16..=31 byte reverse scan took two SWAR word steps where one SIMD compare answers
+    // it. `memcmp` has had this tier since it was written (`memcmp_exact_16_mask`); the
+    // reverse scanner did not. Resolves from the mask's HIGH set bit, matching the 32-lane
+    // panels directly above, because this is a last-occurrence search.
+    //
+    // The reslice lives INSIDE the branch on purpose: a first version put
+    // `&hs[..end.min(hs.len())]` on the shared path, which n=8 pays without ever reaching
+    // this tier.
+    let mut hs = simd_chunks.remainder();
+    if hs.len() >= MEMCMP_EXACT_16_BYTES {
+        let chunk = &hs[hs.len() - MEMCMP_EXACT_16_BYTES..];
+        let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(chunk)
+            .simd_eq(Simd::splat(needle))
+            .to_bitmask();
+        if mask != 0 {
+            let j = 63 - mask.leading_zeros() as usize;
+            return Some(end - MEMCMP_EXACT_16_BYTES + j);
+        }
+        end -= MEMCMP_EXACT_16_BYTES;
+        hs = &hs[..hs.len() - MEMCMP_EXACT_16_BYTES];
+    }
+
     let mut chunks = hs.rchunks_exact(WORD);
 
     for chunk in chunks.by_ref() {

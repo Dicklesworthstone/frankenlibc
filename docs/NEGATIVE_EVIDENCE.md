@@ -39918,3 +39918,73 @@ tier is the obvious lever for both. What blocks it is not analysis but measureme
 harness resolves those sizes only on a quiet worker, and today it managed one clean run out of five.
 The next step is a quieter slot or a design that needs fewer clean rounds — not another attempt to
 argue the number through.
+
+## 2026-08-28 — bd-2g7oyh — `memrchr` 16-byte tier: n=16 3.099x -> 2.063x, n=8 2.761x -> 2.983x, and a revert I had to undo
+
+Two changes: the harness estimator, and the kernel change it finally made measurable. The kernel
+change is a **trade**, and the route to establishing that included a wrong call I reversed.
+
+**Estimator: fastest-of-rounds.** The previous design took a median of per-round ratios and resolved
+n <= 64 on roughly one run in five. Interference on a shared worker — another tenant, a migration,
+an interrupt, a clock not yet at its ceiling — can only ADD time to a loop; nothing makes code
+faster than it is. So the minimum over rounds approximates the uncontended cost while the median
+drags in whatever the machine was doing in the middle rounds. Switching to it took the survey from
+about half the rows resolving to **16 of 19**, with nulls at 0.997–1.001 instead of the old 0.90
+cluster. This is what "a design that needs fewer clean rounds" meant.
+
+**Kernel: a 16-byte tier for `memrchr`**, between the 32-lane panels and the 8-byte words, resolving
+from the mask's HIGH set bit because this is a last-occurrence search. `memcmp` has had this tier
+since it was written; the reverse scanner did not, so a 16..=31 byte scan took two SWAR word steps
+where one SIMD compare answers it.
+
+**Measured, order-balanced, fastest-of-rounds, both arms in one process on one worker:**
+
+| n | without tier | with tier | verdict |
+|---|---|---|---|
+| 16 | 2.756x, 3.099x | **2.060x, 2.062x, 2.063x** | **win, ~25–33%** |
+| 8 | 2.443x, 2.761x | 2.983x, 3.014x, 2.987x | **loss, ~8–20%** |
+| 64 | 1.500x, 1.761x | 1.538x, 1.762x, 1.762x | indistinguishable |
+| 256 | 1.167x, 1.238x | 1.238x, 1.243x, 1.277x | indistinguishable |
+
+All rows above carry A/A nulls inside 0.97–1.03. The n=16 with-tier readings are stable to three
+decimal places across three runs; the n=8 with-tier readings cluster at 2.98–3.01 and sit entirely
+above both without-tier readings, so that regression is real rather than spread. n=8 never reaches
+the new tier — it pays only the length test and whatever the added branch does to code layout.
+
+**The trade is landed** because n=16 was the campaign's worst confirmed memory-scan ratio and the
+win there is three to four times the size of the loss at n=8, but the loss is stated here rather
+than averaged away: a workload of exclusively 8..15-byte reverse scans is worse off after this
+commit.
+
+**The part worth recording is the near-miss.** On the first pass I read the same data as a net
+regression — n=8 up, and n=64 apparently up from 1.500x to 1.762x — and **reverted the change**. The
+post-revert baseline is what corrected me: with the tier gone, n=64 read **1.761x**, matching the
+with-tier 1.762x almost exactly, and n=16 read 3.099x where the pre-change run had read 2.756x. So
+the "n=64 regression" was an outlier in the baseline, not an effect, and identical code varies by
+about 12% run to run at these sizes even with clean nulls. I re-applied the change.
+
+That is the second time in two cycles that a clean A/A null proved **necessary but not sufficient**:
+it certifies that a single run's two arms were comparable, and says nothing about comparing a number
+from one run to a number from another. Any before/after claim at these sizes needs several readings
+per side, which is what the table above now carries. A single pre/post pair would have gone either
+way depending on which run it caught — and did, for one revert.
+
+**Correctness.** `MEMRCHR_INDEX_SWEEP`, added this cycle because reverse index arithmetic is exactly
+where an off-by-one hides: every length 1..=200 x every needle position, with a **second needle
+planted at index 0** so a resolver returning the first match instead of the last cannot pass —
+**20,100 checks, 0 mismatches** against live glibc. `MEMCMP_ORDER_SWEEP` continues to pass at
+180,600 / 0.
+
+An earlier version of the tier also regressed n=8 harder (3.141x) by putting the reslice
+`&hs[..end.min(hs.len())]` on the shared path, where n=8 paid for it without using the tier. Moving
+it inside the branch recovered part of that; the residue is the branch itself.
+
+Gates: `cargo test -p frankenlibc-core --lib -- string::mem` **56 passed, 0 failed**;
+`cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed**.
+
+**STILL OPEN.** `memrchr` n=8 at ~2.98x is now the worst confirmed memory-scan ratio, and this
+commit made it worse. The 8..15 range takes a single SWAR word step plus a scalar remainder; whether
+the added branch can be moved off that path, or the two tiers merged into one length-dispatched
+block, is the next thing to try. `memchr` n=8/16/32 still fail to resolve even under the new
+estimator (nulls pinned at 0.952) because memchr is measured first and absorbs the process-start
+ramp; measuring it later in the run, or after a longer spin-up, is the fix.
