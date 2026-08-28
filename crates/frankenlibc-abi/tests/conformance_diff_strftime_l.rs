@@ -69,6 +69,20 @@ fn host_newlocale() -> NewlocaleFn {
     }
 }
 
+/// Adapt FrankenLibC's ABI-facing `void *` time pointer to the typed oracle
+/// signature used by this test.  The cast is exactly the one at the C boundary;
+/// it keeps the host and FL calls interchangeable in capacity probes.
+unsafe extern "C" fn fl_strftime_l(
+    dest: *mut c_char,
+    max: usize,
+    format: *const c_char,
+    tm: *const libc::tm,
+    locale: *mut c_void,
+) -> usize {
+    // SAFETY: the caller supplies the same valid `tm` used by the host oracle.
+    unsafe { frankenlibc_abi::unistd_abi::strftime_l(dest, max, format, tm.cast(), locale) }
+}
+
 /// 2026-08-18 14:52:17, a Tuesday. `tm_yday` is 229 while `%j` prints 230 —
 /// glibc adds one, and a fixture that "corrected" that would hide the bug.
 fn fixture() -> libc::tm {
@@ -151,6 +165,24 @@ fn render(f: StrftimeLFn, fmt: &CStr, tm: &libc::tm, loc: *mut c_void) -> String
         .collect()
 }
 
+/// Call a `strftime_l` implementation into a sentinel-filled destination.
+///
+/// The returned bytes deliberately include the whole allocation, not only the
+/// reported output.  `strftime_l`'s capacity contract is observable: a failed
+/// conversion must not turn an undersized destination into a partial string.
+fn render_with_capacity(
+    f: StrftimeLFn,
+    fmt: &CStr,
+    tm: &libc::tm,
+    loc: *mut c_void,
+    capacity: usize,
+) -> (usize, Vec<u8>) {
+    let mut buf = [0xa5u8 as c_char; 16];
+    // SAFETY: `buf` is live for all 16 bytes; `capacity` only limits the callee.
+    let written = unsafe { f(buf.as_mut_ptr(), capacity, fmt.as_ptr(), tm, loc) };
+    (written, buf.iter().map(|&byte| byte as u8).collect())
+}
+
 #[test]
 fn strftime_l_matches_glibc_across_the_c_locale_specifier_set() {
     pin_utc();
@@ -225,6 +257,36 @@ fn the_locale_handle_does_not_change_c_locale_output() {
             "{spec} differs between C and C.UTF-8 on the HOST — fl's strftime_l \
              ignores its locale_t, which stops being safe the moment this fails"
         );
+    }
+}
+
+/// A 512-byte destination proves formatting, but not `strftime_l`'s most
+/// important memory-facing rule.  These rows reject a naïve implementation
+/// which renders first and only then notices that `maxsize` was too small.
+#[test]
+fn strftime_l_capacity_boundaries_match_glibc_without_partial_output() {
+    pin_utc();
+    let tm = fixture();
+    let host = host_strftime_l();
+    // SAFETY: LC_ALL_MASK with a NUL-terminated name and no base locale.
+    let loc = unsafe { host_newlocale()(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut()) };
+    assert!(!loc.is_null(), "host newlocale(C) must succeed");
+    for fmt in [c"%A", c"%b", c"%B"] {
+        let full = render_with_capacity(host, fmt, &tm, loc, 16);
+        assert_ne!(full.0, 0, "host must render {}", fmt.to_string_lossy());
+
+        // `full.0` leaves room for no terminator.  That is the negative case:
+        // a naïve direct write can return success or leave a prefix, whereas
+        // glibc returns zero and preserves the sentinel bytes.
+        for capacity in [0usize, 1, full.0, full.0 + 1, full.0 + 2] {
+            let host_result = render_with_capacity(host, fmt, &tm, loc, capacity);
+            let fl_result = render_with_capacity(fl_strftime_l, fmt, &tm, loc, capacity);
+            assert_eq!(
+                fl_result, host_result,
+                "strftime_l({}, capacity={capacity}) differs: fl={fl_result:?} host={host_result:?}",
+                fmt.to_string_lossy(),
+            );
+        }
     }
 }
 

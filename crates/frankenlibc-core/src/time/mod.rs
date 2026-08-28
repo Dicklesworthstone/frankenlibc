@@ -1449,10 +1449,9 @@ pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
         b"?"
     };
     if name.len() >= buf.len() {
-        // Preserve the general path's observable partial-write behavior even
-        // though POSIX leaves the buffer unspecified when strftime returns zero.
-        let prefix_len = buf.len().saturating_sub(1);
-        buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
+        // glibc leaves the destination unchanged when the exact leaf cannot
+        // fit.  Returning before the first store makes this fast path failure
+        // atomic, rather than exposing a partial weekday prefix.
         return 0;
     }
     buf[..name.len()].copy_from_slice(name);
@@ -1472,9 +1471,8 @@ pub fn format_strftime_abbrev_month(month: i32, buf: &mut [u8]) -> usize {
         b"?"
     };
     if name.len() >= buf.len() {
-        // Match the generic path's partial-prefix behavior on zero return.
-        let prefix_len = buf.len().saturating_sub(1);
-        buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
+        // Keep the observable failure contract shared with `%A`: no partial
+        // C-locale month prefix when there is no room for its terminator.
         return 0;
     }
     buf[..name.len()].copy_from_slice(name);
@@ -1494,10 +1492,7 @@ pub fn format_strftime_full_month(month: i32, buf: &mut [u8]) -> usize {
         b"?"
     };
     if name.len() >= buf.len() {
-        // Preserve the general path's observable partial-write behavior even
-        // though POSIX leaves the buffer unspecified when strftime returns zero.
-        let prefix_len = buf.len().saturating_sub(1);
-        buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
+        // As above, preserve the caller buffer on the zero-return path.
         return 0;
     }
     buf[..name.len()].copy_from_slice(name);
@@ -2346,7 +2341,7 @@ mod tests {
     }
 
     #[test]
-    fn strftime_full_weekday_preserves_malformed_and_short_buffer_behavior() {
+    fn strftime_full_weekday_preserves_malformed_and_short_buffer_atomicity() {
         let mut bd = epoch_to_broken_down(1_704_067_200);
         bd.tm_wday = -1;
         let mut malformed = [0x55u8; 2];
@@ -2356,7 +2351,7 @@ mod tests {
         bd.tm_wday = 3;
         let mut short = [0x55u8; 5];
         assert_eq!(format_strftime(b"%A", &bd, &mut short), 0);
-        assert_eq!(&short, b"WednU");
+        assert_eq!(&short, b"UUUUU");
     }
 
     #[test]
@@ -2393,7 +2388,7 @@ mod tests {
         bd.tm_mon = 8;
         let mut short = [0x55u8; 5];
         assert_eq!(format_strftime(b"%B", &bd, &mut short), 0);
-        assert_eq!(&short, b"SeptU");
+        assert_eq!(&short, b"UUUUU");
     }
 
     #[test]
@@ -2430,7 +2425,7 @@ mod tests {
         bd.tm_mon = 8;
         let mut short = [0x55u8; 3];
         assert_eq!(format_strftime(b"%b", &bd, &mut short), 0);
-        assert_eq!(&short, b"SeU");
+        assert_eq!(&short, b"UUU");
     }
 
     #[test]
