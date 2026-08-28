@@ -39851,3 +39851,70 @@ quieter execution slot or an order-balanced design — alternating which arm occ
 across rounds, so position cancels for both arms instead of being absorbed by whichever runs first.
 That is the next piece of measurement work, and until it exists no `memchr` small-n figure should be
 quoted from this campaign, including the 2.097x and 2.478x that appear in earlier rows.
+
+## 2026-08-28 — bd-2g7oyh — order-balanced rounds resolve the small-n nulls for the first time; the memchr tier they revealed is REVERTED as unconfirmable
+
+Two results, one positive and one negative, and the negative one is the reason the positive one
+matters.
+
+**The instrument fix.** Every previous version timed a fixed `[fl, glibc, glibc]` triple, which put
+`fl` permanently in the coldest slot. Two mitigations had already been tried and recorded as
+refuted — per-round warmup (nulls unchanged at 0.900–0.929) and a 400 ms clock spin-up (helped once,
+did not reproduce). Rounds now **alternate** `[fl, glibc, glibc]` and `[glibc, fl, glibc]`, so across
+a round pair `fl` and the denominator each average position 1.5 and the slot advantage cancels
+rather than being absorbed by whichever arm always ran first.
+
+It worked, on a quiet worker. For the first time in this campaign the short sizes came back
+**admissible**:
+
+| op | n | fl | glibc | fl/glibc | A/A |
+|---|---|---|---|---|---|
+| **memrchr** | **16** | 9.21ns | 3.26ns | **2.801x** | 1.011 |
+| **memchr** | **16** | 7.90ns | 2.86ns | **2.768x** | 1.001 |
+| memchr | 8 | 6.63ns | 2.85ns | 2.327x | 1.002 |
+| memrchr | 8 | 7.73ns | 3.60ns | 2.123x | 0.998 |
+| memchr | 32 | 5.10ns | 3.22ns | 1.683x | 0.976 |
+| memcmp | 64 | 7.33ns | 3.47ns | 2.108x | 0.991 |
+| memmem | 4096 | 66.02ns | 625.74ns | **0.106x** | 1.007 |
+
+Note these are **higher** than the biased readings they replace — memchr n=16 was previously
+reported at 2.478–2.504x — which is the direction the earlier analysis predicted: the old schedule
+inflated the denominator, understating fl's disadvantage. The retraction stands and the corrected
+figures are above.
+
+**The change those numbers motivated, and why it is not being landed.** n=16 was the worst
+resolvable ratio in the survey, and the cause looked clear: a 16..=31 byte scan takes two or three
+SWAR word steps where one SIMD compare answers it, and `memcmp` already has exactly that tier as
+`memcmp_exact_16_mask` while the scanners do not. A 16-byte tier was added to `memchr` between the
+32-lane panels and the word loop.
+
+**It could not be confirmed, so it was reverted.** Across four post-change runs, `memchr` n=16 —
+the size the change targets — **never once returned an admissible null**. The withheld readings
+cluster at 1.612 / 1.646 / 1.647 / 1.764 against a clean pre-change 2.768x, which looks like a large
+win, and that is exactly why it is dangerous: the rule this campaign adopted last cycle says a ratio
+whose null is out of band is not a result, and that rule cannot apply only to numbers I dislike.
+
+Two further observations argued for reverting rather than landing on suggestive evidence:
+
+- `memchr` n=32 does not reach the new tier at all, yet its clean-null readings moved from 1.683x
+  before to 1.760x and 1.810x after. Either the change has an effect it should not have, or
+  clean-null readings on this worker are not reproducible to better than ~8%. Both readings passed
+  the admissibility gate, so the gate is necessary but **not sufficient** — passing it does not make
+  two numbers from different runs comparable.
+- `memchr` n=8 does not reach the tier either and read 2.312x after against 2.327x before, i.e.
+  unchanged, which is the one prediction the change did satisfy.
+
+The tier is a good idea on its face and the code was correctness-clean (`MEMCMP_ORDER_SWEEP`
+180,600 checks / 0 mismatches on every run). It is reverted anyway, because landing a perf change on
+evidence the instrument has formally refused to certify is the same error as publishing the ratio
+would have been. It should return when a quiet execution slot can confirm it.
+
+**What is landed:** the order-balanced harness only. It is verified to build and run, it is strictly
+better behaved than what it replaces, and it is the first version able to resolve n <= 64 at all.
+
+**STILL OPEN, now with trustworthy targets for the first time.** `memrchr` at n=16 (**2.801x**) and
+`memchr` at n=16 (**2.768x**) are the campaign's worst confirmed memory-scan ratios, and the 16-byte
+tier is the obvious lever for both. What blocks it is not analysis but measurement capacity: the
+harness resolves those sizes only on a quiet worker, and today it managed one clean run out of five.
+The next step is a quieter slot or a design that needs fewer clean rounds — not another attempt to
+argue the number through.
