@@ -18,7 +18,27 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
-const MAX_TRACKED_SIGNAL: usize = 128;
+/// Highest signal number this ABI tracks per thread.
+///
+/// 64 = `SIGRTMAX` on Linux. It was 128, and the upper half was unreachable: the kernel
+/// cannot deliver a signal above `SIGRTMAX`, and `sigaction` on one already fails — a
+/// differential against live glibc confirms both reject 65, 100, 128 and 129 identically.
+///
+/// The cost of tracking them was not small. `DEFERRED_SIGNALS` is
+/// `[DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1]` and each slot embeds a whole
+/// `libc::ucontext_t` (with its 512-byte fpregs area) plus a `siginfo_t`, so the array was
+/// **142,416 bytes of per-thread TLS — 72% of this library's entire 197,688-byte `PT_TLS`
+/// block**, against glibc's 136 bytes total. Halving the bound removes ~70 KB per thread.
+///
+/// That block is what stands between fl and initial-exec TLS: attribution of hardened
+/// `strlen` puts `__tls_get_addr` at 336 Ir, 18.4% of the entry, and initial-exec would
+/// remove it — but a dlopen'd object using initial-exec must fit the loader's surplus
+/// static TLS, which 197 KB cannot. (Note `dlopen` itself works today precisely BECAUSE fl
+/// uses global-dynamic TLS; the blocker is the model switch, not `dlopen` as such.)
+///
+/// `take_deferred_signals` also scans `1..=MAX_TRACKED_SIGNAL` on every flush, so this
+/// halves that loop as well.
+const MAX_TRACKED_SIGNAL: usize = 64;
 const HJI_WARMUP_OBSERVATIONS: usize = 64;
 const SIGNAL_ABBREVS: [&[u8]; 32] = [
     b"\0",       // 0 (not returned by sigabbrev_np)

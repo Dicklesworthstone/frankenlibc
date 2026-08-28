@@ -39209,3 +39209,79 @@ at 336 Ir (18.4%) and has no local fix: it is ~28 separate TLS resolutions sprea
 callers at ~12 Ir each, with no dominant site. The global fix — initial-exec TLS — is blocked by
 bd-sgzm0u (fl's `PT_TLS` is 196,392 bytes against glibc's 136, which breaks `dlopen`), so this one
 needs the TLS-block size addressed first rather than another call-site edit.
+
+## 2026-08-27 — bd-sgzm0u — one array was 72% of fl's TLS block: `PT_TLS` 197,688 -> 127,032 bytes
+
+The previous row ended by naming `__tls_get_addr` (336 Ir, 18.4% of hardened `strlen`) as the next
+target and calling it blocked: fl's `PT_TLS` is too large for initial-exec TLS. This row goes after
+the blocker itself, and corrects two things the campaign believed about it.
+
+**Correction 1: `dlopen` is not broken.** The standing note said the 196 KB TLS block "blocks
+dlopen". Tested directly — `dlopen("libfrankenlibc_abi.so", RTLD_NOW)` **succeeds** and `dlsym`
+resolves `strlen`. It succeeds *because* fl uses global-dynamic TLS, which is exactly what makes
+`__tls_get_addr` appear in the profile. The block is on the **model switch**: a dlopen'd object using
+initial-exec must fit the loader's surplus static TLS area, which 197 KB cannot. Same conclusion for
+the perf lever, but the capability claim was wrong and worth fixing in the record.
+
+**Correction 2: my own tooling hid the cause.** A first pass summed the TLS symbols at 55,207 bytes
+against a `PT_TLS` MemSiz of 197,688 and concluded ~142 KB was untracked padding or stripped local
+symbols. It was neither, and an unstripped rebuild showed the identical 139 symbols. The gap analysis
+found **one gap of 142,416 bytes** — and the symbol sitting in it was there all along:
+`readelf` printed that one size in **hex** (`0x22c50`) while every other size is decimal, so the
+parser's `int(p[2])` threw and skipped it. Seventy-two percent of the block was invisible to a
+"total TLS bytes" number that looked authoritative.
+
+**The gap, once visible.** `signal_abi::DEFERRED_SIGNALS` is
+`[DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1]` with `MAX_TRACKED_SIGNAL = 128`, and each slot embeds
+a whole `libc::ucontext_t` (including its 512-byte fpregs area) plus a `siginfo_t`. 129 slots x
+~1,104 bytes = **142,416 bytes of per-thread TLS**, against glibc's 136-byte block for everything.
+The `ucontext` is load-bearing — captured in the trampoline and replayed to the user handler — so it
+cannot simply be dropped.
+
+**The lever.** `MAX_TRACKED_SIGNAL` 128 -> 64. On Linux `SIGRTMAX` is 64: the kernel cannot deliver
+a signal above it, so slots 65..128 were unreachable storage.
+
+| | before | after |
+|---|---|---|
+| `PT_TLS` MemSiz | 197,688 bytes | **127,032 bytes** |
+
+**70,656 bytes removed per thread, −35.7%**, plus `take_deferred_signals` now scans 64 slots instead
+of 128 on every flush.
+
+**Behaviour proved identical rather than argued.** A differential against live glibc
+(`dlmopen(LM_ID_NEWLM)`) over signals 1, 31, 34, 64, 65, 100, 128, 129: fl accepts 1..64 and rejects
+65+ with `-1`/`EINVAL`, and the results are **byte-identical before and after the change, in both
+strict and hardened**. (The probe's `errno` column shows an apparent divergence on the glibc arm for
+every rejected signal, before and after alike — that is the probe reading the main namespace's
+`errno` while the `dlmopen`'d glibc writes its own, not a real difference.) A delivery test then
+registered `SA_SIGINFO` handlers for `SIGUSR1`, `SIGUSR2`, `SIGCHLD`, `SIGRTMIN`, `SIGRTMIN+5` and
+`SIGRTMAX` and raised each: **all delivered exactly once**, in both modes, including `SIGRTMAX` — the
+new boundary — and matching the baseline object.
+
+Counted instrument, hardened and strict, fl via `LD_PRELOAD` at asserted PHASE=2: per-call cost is
+**unchanged**, which is the expected result since this is a footprint change and not a hot-path one —
+hardened `strlen` 1823.46 instructions -> 1823.46 instructions against live glibc's 23.00 in the same
+invocation, strict `strlen` 60.00 -> 60.00, `memcpy` n=64 49.97 -> 50.00, `memcmp` 140.00 -> 140.02.
+No regression anywhere.
+
+Conformance, **both strict and hardened**: `slen_conf` 20,007; `mchr_conf` 125,898; `mcpy_conf`
+15,955; `fused_conf` 76,160; `ncat_conf` 21,441 — **259,461 checks, 0 failures in each mode**, and
+the hardened bound probe still reports 0 of 40 over-reads.
+
+Gates: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed
+compiling and executing. `dlopen` of the candidate still succeeds and `dlsym` resolves `strlen`,
+and real programs run 5/5 in both modes.
+
+Objects: baseline `5420d32763ee1716...` (HEAD), candidate `f85a32cab0eb9422ef525b988571d6f1...`,
+built locally.
+
+**STILL OPEN, with the remaining budget now itemised.** 127,032 bytes is still three orders of
+magnitude past glibc's 136, so initial-exec remains out of reach and the 336 Ir stays on the table.
+What is left, from the (now correct) attribution: `DEFERRED_SIGNALS` still costs **71,760 bytes**
+even halved, because every one of the 65 slots reserves a full `ucontext_t` for a signal that is
+almost never deferred — a small shared pool indexed from the per-signal slot would take that to
+near-zero, and that is the next lever and a genuine design change rather than a constant edit.
+After it, `frankenlibc_core::pthread::tls::FALLBACK_TLS_VALUES` at 16,384 bytes and
+`frankenlibc_abi::unistd_abi` at 26,029 across 30 symbols are the next tiers. Also worth noting
+against my own account: the Clifford memo I added two rows ago contributes 1,288 bytes of this
+block.
