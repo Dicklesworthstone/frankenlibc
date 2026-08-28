@@ -39778,3 +39778,76 @@ measurements depend on. Reverted; the design is recorded here so re-applying it 
 n=8..64 move to within 0.97..1.03, and only then decide whether `memchr`'s small-n gap is real
 enough to attack. If the nulls do not converge, the harness is measuring position rather than code
 at those sizes and the sizes should be dropped from it rather than reported with a caveat.
+
+## 2026-08-28 — bd-2g7oyh — two hypotheses for the SUSPECT nulls, both REFUTED; the harness now refuses to report what it cannot resolve
+
+This cycle was going to attack `memchr` at small n. It did not, because the measurement could not be
+made trustworthy, and the honest outcome is a refutation plus a tooling change that stops the
+numbers being quotable.
+
+**Hypothesis 1 — per-round warmup. REFUTED.** The previous row argued the nulls clustering at
+0.887–0.927 were branch-history/i-cache warmup within each round's `[fl, glibc, glibc]` triple, and
+prescribed untimed warmup rounds. Implemented (`WARMUP = 3`, three untimed rounds per arm) and
+measured: nulls came back at **0.901 / 0.901 / 0.900 / 0.929** for memchr n=8/16/32/64 —
+indistinguishable from before. The mechanism was wrong.
+
+**Hypothesis 2 — CPU frequency ramp at process start. PARTIALLY EFFECTIVE, NOT SUFFICIENT.** The
+data pointed somewhere more specific: memchr is measured **first** in the run, its nulls are worst
+at the sizes with the **most iterations**, and every op measured later comes back at 1.000. That is
+the core ramping to its steady clock during the opening block, which makes each successive loop
+faster and drags the null below 1. A 400 ms spin-up before any timing moved n=16 from 0.901 to
+**1.026** and n=64 from 0.929 to **0.988** — but n=8 (0.908) and n=32 (0.928) stayed out of band,
+and on repeat runs the improvement did not hold: 0.905 / 0.904 / 0.905 / 0.948, then
+0.904 / 0.916 / 0.886 / 0.929.
+
+**What the data actually says.** The null at these sizes is not noise — it reproduces at ~0.90 run
+after run, across two different mitigations. A stable offset is a **calibration property of the
+instrument**, not a property of the code under test. At n <= 64 this harness is resolving arm
+*position* rather than arm *implementation*, and the `fl` ratio it prints there is unusable in
+either direction: `fl` sits in position 1 (coldest, inflating the numerator) while `glibc` sits in
+position 2 (also not steady, inflating the denominator).
+
+**The change: the harness now withholds ratios it cannot resolve.** A row whose A/A null falls
+outside 0.97..1.03 prints
+
+```
+memchr     n=8      UNRESOLVED on this host: A/A_null=0.839 outside 0.97..1.03 (would have read 1.840x)
+```
+
+instead of a number with a SUSPECT tag beside it. The previous row promised exactly this — *"if the
+nulls do not converge, the harness is measuring position rather than code at those sizes and the
+sizes should be dropped rather than reported with a caveat"* — and the reason to honour it is that a
+figure on the page gets quoted downstream while the caveat does not travel with it. The withheld
+value is still printed in parentheses so nobody re-derives it by accident, but it is not formatted
+as a result. This **strengthens** the gate: fewer rows now qualify as claimable than before.
+
+**What survives the stricter rule**, from the run immediately after the change (fl via the linked
+core kernels, live glibc via `dlmopen(LM_ID_NEWLM)`, both arms in one process on one worker CPU,
+`SELF_ELF_SHA256` printed from `/proc/self/exe`, all output on stderr so rch returns it):
+
+| op | n | fl | glibc | fl/glibc | A/A |
+|---|---|---|---|---|---|
+| memcmp | 8 | 8.37ns | 4.40ns | 1.813x | 1.000 |
+| memcmp | 64 | 9.57ns | 5.26ns | 1.852x | 0.986 |
+| memcmp | 256 | 14.87ns | 8.51ns | 1.687x | 1.000 |
+| memcmp | 1024 | 25.12ns | 20.32ns | 1.221x | 1.001 |
+| memrchr | 64 | 8.09ns | 5.11ns | 1.658x | 1.008 |
+| memrchr | 1024 | 17.57ns | 11.91ns | 1.416x | 0.991 |
+| memmem | 256 | 36.01ns | 68.65ns | **0.548x** | 1.014 |
+| memmem | 4096 | 81.60ns | 874.33ns | **0.097x** | 0.972 |
+
+`memcmp` at n=8 reading 1.813x here independently corroborates the previous cycle's 1.749x/1.755x
+for the word-tier XOR fix, measured on a different day under different worker load. `memmem` remains
+fl's largest measured win at roughly **10x** on a 4 KiB haystack.
+
+Note this run is noisier than earlier ones — more rows went UNRESOLVED, including sizes that were
+clean before (memchr n=128 at 1.036, memcmp n=16 at 0.957). That variability is the point: worker
+contention moves run to run, so which sizes are measurable is a property of the moment, and the
+harness now decides that per run instead of leaving it to whoever reads the output.
+
+**STILL OPEN, and now explicitly out of reach rather than merely unattempted.** `memchr` at
+n <= 64 cannot be measured on this shared worker with this harness. Closing that needs either a
+quieter execution slot or an order-balanced design — alternating which arm occupies position 1
+across rounds, so position cancels for both arms instead of being absorbed by whichever runs first.
+That is the next piece of measurement work, and until it exists no `memchr` small-n figure should be
+quoted from this campaign, including the 2.097x and 2.478x that appear in earlier rows.

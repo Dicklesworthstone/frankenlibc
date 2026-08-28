@@ -24,6 +24,19 @@ use std::time::Instant;
 
 const ROUNDS: usize = 25;
 
+/// Untimed rounds per arm before the first timed one.
+///
+/// Without this the harness reported memchr A/A nulls clustered at 0.887-0.927 -- always
+/// below 1.0, never above, across every small size and several runs. Random noise has no
+/// sign. Each round is an interleaved triple `[fl, glibc, glibc]` and the null is the second
+/// glibc over the first, so 0.90 means the REPEAT loop is ~10% faster than the one right
+/// before it: a position effect (branch history, i-cache) that recurs every round, so a
+/// median over 25 rounds does not remove it. It biases in both directions at once -- `fl`
+/// runs first and coldest, inflating the numerator; `glibc` runs second and still not warm,
+/// inflating the denominator -- which is why the affected sizes had to be withheld rather
+/// than corrected. Warming both arms first moves that cost out of the measurement.
+const WARMUP: usize = 3;
+
 /// A paired round is [fl, glibc, glibc]; the ratio is taken PER ROUND and the median of the
 /// per-round ratios is reported. Taking a ratio of medians instead lets a clock ramp that
 /// happened between the two medians masquerade as a speed difference, which is exactly what
@@ -66,16 +79,26 @@ fn report(op: &str, n: usize, fls: &[f64], gls: &[f64], aas: &[f64]) {
     let ratios: Vec<f64> = fls.iter().zip(gls).map(|(f, g)| f / g).collect();
     let nulls: Vec<f64> = aas.iter().zip(gls).map(|(a, g)| a / g).collect();
     let (r, null) = (median(ratios), median(nulls));
-    let mark = if (ADMISSIBLE.0..=ADMISSIBLE.1).contains(&null) {
-        "        "
+    // A ratio is only printed when the null says the instrument could resolve it. Outside the
+    // band the row prints UNRESOLVED and withholds the number entirely, rather than printing
+    // it next to a caveat -- a figure on the page gets quoted, a caveat does not travel with
+    // it. Two hypotheses for the out-of-band nulls were tested and neither fixed them (see
+    // WARMUP and the spin-up block), and the offset reproduces at ~0.90 run after run, so at
+    // those sizes this harness is resolving arm POSITION rather than code and has no business
+    // reporting a speed.
+    if (ADMISSIBLE.0..=ADMISSIBLE.1).contains(&null) {
+        eprintln!(
+            "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3}",
+            median(fls.to_vec()),
+            median(gls.to_vec()),
+        );
     } else {
-        " SUSPECT"
-    };
-    eprintln!(
-        "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3}{mark}",
-        median(fls.to_vec()),
-        median(gls.to_vec()),
-    );
+        eprintln!(
+            "{op:<10} n={n:<6} UNRESOLVED on this host: A/A_null={null:.3} outside {:.2}..{:.2} \
+             (would have read {r:.3}x)",
+            ADMISSIBLE.0, ADMISSIBLE.1,
+        );
+    }
 }
 
 fn main() {
@@ -99,7 +122,29 @@ fn main() {
             "RUNTIME_PHASE={} (example links fl as an rlib; core kernels under test)",
             phase.map_or(-1, |f| f())
         );
-        eprintln!("INCUMBENT=libc.so.6 via dlmopen(LM_ID_NEWLM)\n");
+        eprintln!("INCUMBENT=libc.so.6 via dlmopen(LM_ID_NEWLM)");
+
+        // GLOBAL SPIN-UP before any timing.
+        //
+        // Per-round warmup did NOT fix the memchr A/A nulls -- they stayed at 0.900/0.901/
+        // 0.900/0.929, refuting the branch-history explanation. What the data actually shows
+        // is positional in the RUN, not the round: memchr is measured first and its nulls are
+        // worst at the sizes with the most iterations, while every op measured later comes
+        // back at 1.000. That is the CPU ramping its clock during the opening block, which
+        // makes each successive loop faster and drives the null BELOW 1. Burning a fixed
+        // slice of wall time here lets the core reach its steady frequency before the first
+        // timed loop, so the ramp stops landing on whichever op happens to go first.
+        {
+            let spin = Instant::now();
+            let mut acc = 0u64;
+            while spin.elapsed().as_millis() < 400 {
+                for i in 0..10_000u64 {
+                    acc = acc.wrapping_mul(6364136223846793005).wrapping_add(i);
+                }
+            }
+            black_box(acc);
+            eprintln!("SPINUP_MS=400 (clock allowed to reach steady state before timing)\n");
+        }
 
         let gl_memchr: MemchrFn =
             std::mem::transmute(libc::dlsym(h, c"memchr".as_ptr()));
@@ -173,7 +218,8 @@ fn main() {
 
             let iters = (1 << 22) / n.max(8);
             let (mut fls, mut gls, mut aas) = (vec![], vec![], vec![]);
-            for _ in 0..ROUNDS {
+            for round in 0..(ROUNDS + WARMUP) {
+                let warm = round < WARMUP;
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(frankenlibc_core::string::mem::memchr(
@@ -182,19 +228,19 @@ fn main() {
                         black_box(n),
                     ));
                 }
-                fls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { fls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
 
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memchr(black_box(buf.as_ptr()), black_box(b'z' as i32), black_box(n)));
                 }
-                gls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { gls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
 
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memchr(black_box(buf.as_ptr()), black_box(b'z' as i32), black_box(n)));
                 }
-                aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { aas.push(t.elapsed().as_nanos() as f64 / iters as f64); }
             }
             report("memchr", n, &fls, &gls, &aas);
         }
@@ -216,24 +262,25 @@ fn main() {
             }
             let iters = (1 << 22) / n.max(8);
             let (mut fls, mut gls, mut aas) = (vec![], vec![], vec![]);
-            for _ in 0..ROUNDS {
+            for round in 0..(ROUNDS + WARMUP) {
+                let warm = round < WARMUP;
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(frankenlibc_core::string::mem::memrchr(
                         black_box(&buf), black_box(b'z'), black_box(n),
                     ));
                 }
-                fls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { fls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memrchr(black_box(buf.as_ptr()), black_box(b'z' as i32), black_box(n)));
                 }
-                gls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { gls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memrchr(black_box(buf.as_ptr()), black_box(b'z' as i32), black_box(n)));
                 }
-                aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { aas.push(t.elapsed().as_nanos() as f64 / iters as f64); }
             }
             report("memrchr", n, &fls, &gls, &aas);
         }
@@ -257,24 +304,25 @@ fn main() {
             }
             let iters = (1 << 22) / n.max(8);
             let (mut fls, mut gls, mut aas) = (vec![], vec![], vec![]);
-            for _ in 0..ROUNDS {
+            for round in 0..(ROUNDS + WARMUP) {
+                let warm = round < WARMUP;
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(frankenlibc_core::string::mem::memcmp(
                         black_box(&a), black_box(&b), black_box(n),
                     ));
                 }
-                fls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { fls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memcmp(black_box(a.as_ptr()), black_box(b.as_ptr()), black_box(n)));
                 }
-                gls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { gls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memcmp(black_box(a.as_ptr()), black_box(b.as_ptr()), black_box(n)));
                 }
-                aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { aas.push(t.elapsed().as_nanos() as f64 / iters as f64); }
             }
             report("memcmp", n, &fls, &gls, &aas);
         }
@@ -298,14 +346,15 @@ fn main() {
             }
             let iters = (1 << 20) / n.max(8);
             let (mut fls, mut gls, mut aas) = (vec![], vec![], vec![]);
-            for _ in 0..ROUNDS {
+            for round in 0..(ROUNDS + WARMUP) {
+                let warm = round < WARMUP;
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(frankenlibc_core::string::mem::memmem(
                         black_box(&hay), black_box(n), black_box(needle), black_box(needle.len()),
                     ));
                 }
-                fls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { fls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memmem(
@@ -313,7 +362,7 @@ fn main() {
                         black_box(needle.as_ptr()), black_box(needle.len()),
                     ));
                 }
-                gls.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { gls.push(t.elapsed().as_nanos() as f64 / iters as f64); }
                 let t = Instant::now();
                 for _ in 0..iters {
                     black_box(gl_memmem(
@@ -321,7 +370,7 @@ fn main() {
                         black_box(needle.as_ptr()), black_box(needle.len()),
                     ));
                 }
-                aas.push(t.elapsed().as_nanos() as f64 / iters as f64);
+                if !warm { aas.push(t.elapsed().as_nanos() as f64 / iters as f64); }
             }
             report("memmem", n, &fls, &gls, &aas);
         }
