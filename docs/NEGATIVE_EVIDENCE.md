@@ -38675,3 +38675,88 @@ reaches the tier that can serve it, then runs the word loop twice; and the ABI e
 through a **GOT-indirect cross-crate call** rather than inlining a short-input path the way the other
 string entries do. Either is a real lever; the second is the one the rest of this file already
 solved for its neighbours.
+
+## 2026-08-27 — bd-2g7oyh — `memchr` left the crate to find a byte in eight: 4.897x -> 3.103x at n=31, and 2.309x -> 1.069x at n=1
+
+`memchr` was the suite's worst entry, and sweeping its length axis found the true worst point was
+one nobody had measured: **n=31 at 4.897x** (142.00 Ir against live glibc's 29.00), worse than the
+n=16 figure the previous row named.
+
+**The gap.** The ABI entry did no scanning at all. It built a slice and made a **GOT-indirect
+cross-crate call** into `frankenlibc_core::string::mem::memchr`, which opens by evaluating three
+loop guards — the 256-byte fold tier, the 32-byte SIMD tier, the 8-byte word tier — before an input
+of 8 or 16 bytes can reach the tier that serves it. Attribution measured **65.00 of 97.00 Ir inside
+core for a sixteen-byte scan**. Every other hot string entry in this file already carries a
+short-input path; `memchr` was the one without.
+
+**The lever, in two parts.**
+
+1. A short-input inline scan for `n < 32` in the ABI entry: the same SWAR fold core uses — XOR the
+   broadcast needle to zero, then Mycroft's mask, whose high bit marks exactly the matching lanes —
+   resolved with `to_le().trailing_zeros() / 8` so the lane order is right on either endianness. No
+   call, no slice, no tier ladder.
+2. An **overlapping final word** instead of a byte tail. The word loop leaves `n - i < 8`, so
+   `n - 8 <= i` and one read at `n - 8` covers all of `[i, n)`. It re-reads `[n-8, i)`, which is
+   both harmless and still correct: control only reaches the tail because that region held no
+   match, so its lanes are zero in the mask and `trailing_zeros` still names the first match at or
+   after `i`. At n=31 the byte tail had been running seven times.
+
+`n < 8` is handled first on its own straight path, because an 8-byte read there could cross the end
+of the object. Testing for that *inside* the tail instead — the first version — cost n=7 three
+instructions it need not pay (74.00 -> 76.97); hoisting it took n=7 to 60.00 instead.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, arms asserted distinct by pointer and `dladdr`-reported:
+
+| n | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| 1 | 67.00 | **31.00** | 29.02 | 2.309x | **1.069x** |
+| 7 | 96.00 | 60.00 | 28.97 | 3.314x | 2.071x |
+| 8 | 79.00 | 49.97 | 29.00 | 2.724x | 1.723x |
+| 16 | 91.02 | 63.00 | 29.00 | 3.139x | 2.172x |
+| 24 | 103.00 | 75.97 | 29.00 | 3.552x | 2.620x |
+| 31 | 142.00 | **90.00** | 29.00 | **4.897x** | 3.103x |
+| 32 | 65.02 | 66.00 | 29.00 | 2.242x | 2.276x |
+| 64 | 73.00 | 73.97 | 43.00 | 1.698x | 1.720x |
+
+**27 to 52 instructions removed across `[1,32)`** (142.00 instructions -> 90.00 at n=31), and n=1
+reaches parity with glibc at 1.069x. **The cost is +1 Ir at n >= 32**, the new range test on the way
+to the core call — stated here rather than averaged away.
+
+- **A/A null:** the glibc arm measured under BOTH objects — 29.00 vs 28.97, ratio 1.001.
+- **Untouched controls:** `memrchr` len 8 80.00 -> 79.96, `memcpy` n=64 50.00 -> 50.00, `memcmp`
+  138.00 -> 138.00, `strncat` len 40 116.00 -> 116.00, `strlen` short 60.02 -> 60.00.
+- **Not bench-path-specific:** the scan is SWAR arithmetic over the caller's `n`, with no alignment
+  or content assumption, and the driver sweeps needle position exhaustively.
+
+**The driver was proved able to fail on the new code's specific failure mode.** The overlapping
+window is the risky part, so `first_byte`'s resolve was deliberately changed to index from the loop
+cursor `i` instead of the window origin `n - 8` — the exact off-by-one that technique invites:
+**817 failures**, first at len=10 where the window origin and cursor first diverge. Reverted and
+rebuilt **byte-identical to the measured candidate** (`cmp` verified) before the real runs.
+Conformance on the restored object, all three drivers, **both strict and hardened**: `mchr_conf`
+125,898; `mcpy_conf` 15,955; `fused_conf` 76,160 — **218,013 checks, 0 failures**.
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing.
+
+Objects: baseline `cd6b9fcccf9f9a24c15126b9fb94e6b5...` (HEAD `c56a5a433`), candidate
+`9b479f981fed07e0ec65b8e6a57cbe57...`, built locally.
+
+**A note on `c56a5a433`, and a measurement it should have carried.** That commit —
+"use chunks_exact in memchr to eliminate per-iteration slice bounds checks" — is this session's
+work, swept up and committed by another agent's blanket commit before it had been evaluated. It is
+now measured, and the result is **mixed**: `memchr` len 16 97.00 -> 91.00, but len 256
+**96.00 -> 99.02**, with len 8 and len 64 unchanged. The bounds-check removal is real at one length
+and a 3-instruction regression at another, because the iterator construction perturbs the fold
+tier's codegen. Recorded rather than reverted: it is on `main`, the net at the suite's worst point
+is favourable, and silently reverting another agent's commit is worse than documenting it. The
+measurement now exists for whoever wants to revisit it.
+
+**STILL OPEN.** `memchr`'s worst point is now n=31 at 3.103x, and the shape is clean: three SWAR
+word iterations plus one overlapping window, against glibc's 29 for the whole call. What remains is
+entry overhead shared with the rest of the family, not scanning. `memchr` at n >= 32 is untouched at
+2.276x and still pays the cross-crate call plus the three tier guards; extending the inline path
+upward, or giving core's scan a cheap dispatch on small `n`, is the next lever. `strlen` short
+(2.606x) and `wcsncmp` (2.478x) surfaced in the same survey and remain unattacked.
