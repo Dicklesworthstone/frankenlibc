@@ -38858,3 +38858,100 @@ hardened path measured here is necessarily the one taken. The bead's original di
 established: the strict path is correct in deployment, the hardened path was broken and is fixed
 here, and the in-process configuration remains unexplained. Closing it on this commit would be
 closing on a gate that is still red.
+
+## 2026-08-27 — bd-2g7oyh — hardened `strlen` spent 99.9% of itself outside the scan: 97,884 -> 2,178 Ir, 4,261x -> 94.8x
+
+The largest gap this campaign has measured was not in a kernel and was not in the ledger. The
+previous row noted in passing that hardened `strlen` costs ~97,400 Ir against live glibc's 23. This
+row attacks it. It is also a **documented budget violation**, not merely a ratio: AGENTS.md sets
+hardened membrane overhead at **<200ns/call**, and ~97,900 instructions is roughly two orders of
+magnitude past that, so the target is fl's own stated requirement rather than an incumbent that
+offers no equivalent guarantee.
+
+**Where it went.** Per-function marginal attribution (callgrind self cost, two-point difference),
+hardened `strlen` on a short string:
+
+| function | Ir | share |
+|---|---|---|
+| `runtime_policy::record_last_explainability` | 17,926 | 18.3% |
+| `CliffordController::observe` | 16,423 | 16.8% |
+| `runtime_policy::decide` | 11,907 | 12.2% |
+| **`exp`** | 11,328 | 11.6% |
+| `CliffordController::state` | 10,707 | 10.9% |
+| `__tls_get_addr` | 9,456 | 9.7% |
+| `bcmp` (two sites) | 8,306 | 8.5% |
+| `certify_simd_string_operation` | 2,285 | 2.3% |
+| **`strlen_validating` — the actual string work** | **134** | **0.1%** |
+
+Re-running with `--separate-callers=1` attributed `exp` to `CliffordController::observe`. The
+Clifford SIMD-certification path — `certify` + `observe` + `state` + its `exp` calls — is **~40,700
+Ir, 42% of the entry**, against 134 Ir for the scan.
+
+**Why it was that expensive.** `certify_simd_string_operation` constructs a **fresh**
+`CliffordController` on every call and then runs *two* calibration loops over it —
+`CALIBRATION_THRESHOLD` is **64** — so every certified dispatch performed **128 controller
+observations, each evaluating `exp`**, and threw the controller away. Strict mode already skips
+certification entirely (`select_string_simd_dispatch` returns early), which is why only hardened pays.
+
+**The lever, and why it is exact rather than an approximation.** The certificate is a pure function
+of a tiny key: the raw addresses reach the computation *only* through `AlignmentRegime::classify`, a
+four-valued enum, and (for overlapping operations) `overlap_fraction`; length enters only as a
+saturated `length_regime` ratio. The controller is fresh each call and fed a fixed number of copies
+of two `AlignmentObservation`s, so identical observations give a bit-identical certificate. A memo
+keyed on those exact inputs — enum discriminants plus `f64::to_bits`, so the key is exact and not
+tolerance-based — returns the same value the recomputation would. **The mandated runtime module
+still executes**; it stops recomputing an answer it has already produced for the same regime.
+
+Per-thread (a 16-slot direct-mapped `thread_local!`) rather than a shared table, so a global lock is
+not introduced onto the hardened string path; the entries are `Copy` and own nothing, so the TLS
+entry registers no destructor.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**:
+
+| mode / entry | fl before | fl after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| hardened `strlen` short | 97884.13 | **2178.00** | 22.97 | **4,261x** | **94.8x** |
+| hardened `strlen` len 64 | 97575.17 | **1869.03** | 35.00 | 2,788x | 53.4x |
+| hardened `memcmp` | 2284.46 | 2284.46 | 71.02 | 32.2x | 32.2x |
+
+**95,706 instructions removed** at hardened short `strlen` — a 44.9x reduction on that entry, and
+52.2x at len 64. `memcmp` is unchanged to two decimals because its dispatch does not reach
+certification at that length: the win is confined to the path that actually certified.
+
+- **A/A null:** the glibc arm measured under BOTH objects, hardened — 23.00 vs 23.00, exactly 1.000.
+- **Strict untouched, as it must be** (certification is skipped there): `strlen` short 60.00 ->
+  60.02, `strlen` len 64 132.00 -> 132.00, `memcpy` n=64 50.00 -> 50.00, `memchr` n=16 63.00 ->
+  63.00, `memcmp` 137.97 -> 138.00.
+- **The bound fix from the previous row still holds:** capability probe 0 of 40 over-reads in BOTH
+  modes.
+
+**The memo was verified against recomputation, not merely assumed exact.** A temporary instrumented
+build recomputed the full certificate on *every cache hit* and compared `equivalent`, `state`,
+`lane_bytes`, `grade2_energy`, `parity_imbalance` and `overlap_fraction` bit-for-bit against the
+cached value. Run across the whole hardened conformance corpus: **18,000 hits checked on the `strlen`
+driver alone, 0 mismatches**, and 0 across every driver. The counter was deliberately made to print
+its running total so the zero could be distinguished from an instrument that never executed — the
+first threshold was too high to print, which is exactly how a silent zero looks. The instrumentation
+was then removed and the object rebuilt **byte-identical to the measured candidate** (`cmp` verified).
+
+Conformance on the restored object, **both strict and hardened**: `slen_conf` 20,007; `mchr_conf`
+125,898; `mcpy_conf` 15,955; `fused_conf` 76,160; `ncat_conf` 21,441 — **259,461 checks, 0 failures**.
+
+Gates: `cargo test -p frankenlibc-membrane --lib -- clifford` **12 passed, 0 failed** — including
+`simd_certificates_cover_memcpy_memcmp_and_strlen`, `memcpy_certificate_rejects_overlap` and
+`strlen_certificate_keeps_zero_sentinel_contract`, which are the certification semantics being
+memoized. `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**. Both observed
+compiling and executing.
+
+Objects: baseline `5c7462d97b49ebe8...` (HEAD), candidate `0dc5add6795b51c0349ee6f6f5723241...`,
+built locally.
+
+**STILL OPEN, and hardened mode is now worth attacking directly.** At 2,178 Ir it is 94.8x glibc and
+still ~10x past the <200ns/call budget, and the remaining profile is the same shape one level down:
+`record_last_explainability` at 17,926 was the single largest item before this change and is
+untouched — it is explicitly diagnostic ("only useful for debugging", per its own comment) yet runs
+the decision-contract state machine, so skipping it changes TSM state tracking and is not a free
+deletion. `decide`, `__tls_get_addr` and two `bcmp` sites follow. None of that is the string scan,
+which remains 134 Ir.

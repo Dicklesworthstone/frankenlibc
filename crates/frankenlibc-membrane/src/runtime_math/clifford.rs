@@ -367,6 +367,60 @@ fn overlap_fraction(src_addr: usize, dst_addr: usize, len: usize) -> f64 {
     }
 }
 
+/// Exact memo for [`certify_simd_string_operation`].
+///
+/// The certificate is a PURE function of a very small key. The raw addresses reach the
+/// computation only through `AlignmentRegime::classify` (a four-valued enum) and, when the
+/// operation can overlap, through `overlap_fraction`; length enters only as a saturated
+/// `length_regime` ratio. The controller is constructed FRESH on every call and fed a fixed
+/// number of copies of two observations, so identical observations produce a bit-identical
+/// certificate. Caching one is therefore exact, not an approximation, and the mandated
+/// runtime module still executes — it just stops recomputing an answer it has already
+/// produced for the same regime.
+///
+/// This matters because the recomputation is not cheap: `CALIBRATION_THRESHOLD` is 64 and
+/// the function runs TWO calibration loops, so every certified dispatch performed 128
+/// controller observations, each evaluating `exp`. Attribution of hardened `strlen` put
+/// `CliffordController::observe` + `::state` + `certify` + their `exp` calls at ~40,700 of
+/// 97,884 Ir per call — 42% — against 134 Ir for the string scan itself.
+///
+/// Per-thread rather than a shared table: a global lock on the hardened string dispatch
+/// path would trade computation for contention, and the entries are tiny and pure so
+/// duplicating them per thread costs nothing but a few hundred bytes.
+const CERT_CACHE_SLOTS: usize = 16;
+
+thread_local! {
+    /// Direct-mapped, `None` until filled. `CliffordIsomorphismCertificate` is `Copy` and
+    /// holds no owned allocation, so this TLS entry registers no destructor.
+    static CERT_CACHE: core::cell::RefCell<
+        [Option<(u64, CliffordIsomorphismCertificate)>; CERT_CACHE_SLOTS],
+    > = const { core::cell::RefCell::new([None; CERT_CACHE_SLOTS]) };
+}
+
+/// FNV-1a over the exact inputs that determine the certificate.
+fn cert_cache_key(
+    operation: SimdStringOperation,
+    candidate_isa: SimdIsa,
+    reference: AlignmentObservation,
+    candidate: AlignmentObservation,
+) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |v: u64| {
+        h ^= v;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    mix(operation as u64);
+    mix(candidate_isa as u64);
+    for obs in [reference, candidate] {
+        mix(obs.src_alignment as u64);
+        mix(obs.dst_alignment as u64);
+        // bit patterns, so the key is exact for the f64 fields rather than tolerance-based
+        mix(obs.overlap_fraction.to_bits());
+        mix(obs.length_regime.to_bits());
+    }
+    h
+}
+
 /// Build an algebraic equivalence certificate for a SIMD string kernel.
 #[must_use]
 pub fn certify_simd_string_operation(
@@ -385,23 +439,38 @@ pub fn certify_simd_string_operation(
         0.0
     };
 
-    let mut controller = CliffordController::new();
     let reference_obs = reference.observation(
         src_addr,
         if dst_addr == 0 { src_addr } else { dst_addr },
         len,
         0.0,
     );
-    for _ in 0..CALIBRATION_THRESHOLD {
-        controller.observe(reference_obs);
-    }
-
     let candidate_obs = candidate.observation(
         src_addr,
         if dst_addr == 0 { src_addr } else { dst_addr },
         len,
         overlap_fraction,
     );
+
+    // Memo lookup on the exact determining inputs — see `CERT_CACHE`. Everything below is a
+    // pure function of these two observations plus `operation`/`candidate_isa`, so a key
+    // match means the certificate is bit-identical to the one that would be recomputed.
+    let cache_key = cert_cache_key(operation, candidate_isa, reference_obs, candidate_obs);
+    if let Some(hit) = CERT_CACHE.with(|c| {
+        c.try_borrow().ok().and_then(|slots| {
+            match slots[(cache_key as usize) % CERT_CACHE_SLOTS] {
+                Some((k, cert)) if k == cache_key => Some(cert),
+                _ => None,
+            }
+        })
+    }) {
+        return hit;
+    }
+
+    let mut controller = CliffordController::new();
+    for _ in 0..CALIBRATION_THRESHOLD {
+        controller.observe(reference_obs);
+    }
     for _ in 0..CALIBRATION_THRESHOLD {
         controller.observe_and_update(candidate_obs);
     }
@@ -432,7 +501,7 @@ pub fn certify_simd_string_operation(
         )
     };
 
-    CliffordIsomorphismCertificate {
+    let certificate = CliffordIsomorphismCertificate {
         operation,
         reference_isa: SimdIsa::Scalar,
         candidate_isa,
@@ -444,7 +513,18 @@ pub fn certify_simd_string_operation(
         parity_imbalance: summary.parity_imbalance,
         overlap_fraction,
         rationale,
-    }
+    };
+
+    // Publish for the next call in this regime. `try_borrow_mut` rather than `borrow_mut`:
+    // a failure here must degrade to "recompute next time", never panic on a hot membrane
+    // path if this thread is somehow already inside the cell.
+    CERT_CACHE.with(|c| {
+        if let Ok(mut slots) = c.try_borrow_mut() {
+            slots[(cache_key as usize) % CERT_CACHE_SLOTS] = Some((cache_key, certificate));
+        }
+    });
+
+    certificate
 }
 
 /// Compact multivector in Cl(4,0) — 16 coefficients.
