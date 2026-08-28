@@ -38760,3 +38760,101 @@ entry overhead shared with the rest of the family, not scanning. `memchr` at n >
 2.276x and still pays the cross-crate call plus the three tier guards; extending the inline path
 upward, or giving core's scan a cheap dispatch on small `n`, is the next lever. `strlen` short
 (2.606x) and `wcsncmp` (2.478x) surfaced in the same survey and remain unattacked.
+
+## 2026-08-27 — bd-k3skh6 — hardened `strlen` did not enforce the bound hardened mode exists to enforce: 38 of 40 -> 0 of 40 over-reads, for +0.45%
+
+**This row corrects its own bead.** bd-k3skh6 was filed earlier today from commit archaeology:
+`e3a0b0883` swapped `known_remaining` for `known_remaining_strict` in `strlen`'s strict fast path,
+and a red unit test plus that diff looked like a sufficient explanation. Reproducing in the
+**deployed** configuration says otherwise, and in the more serious direction.
+
+A capability probe — `malloc` n bytes through fl's own allocator, fill with non-NUL so the buffer is
+UNTERMINATED, poison a neighbouring allocation so an over-read is visible, then ask fl's `strlen`:
+
+| mode | before |
+|---|---|
+| strict | **0 of 40** sizes over-read — bound retained |
+| hardened | **38 of 40** sizes over-read — e.g. a 5-byte tracked allocation reporting length 13 |
+
+The strict fast path, the one the bead accused, was correct. **Hardened — the mode whose entire
+purpose is bounds enforcement — was the one not enforcing them.**
+
+**Root cause, isolated by instrument rather than inference.** Three successive temporary
+diagnostics, each reverted:
+
+1. A bitmask export of the five `string_raw_passthrough_active()` terms: all **false** in hardened,
+   so the unbounded scalar bypass is *not* what runs (an earlier `__frankenlibc_decision_count`
+   reading had suggested it was — that hook does not track `decide()` the way I assumed, and the
+   direct bit probe overturned it).
+2. Branch counters on all four `strlen` exits: hardened takes **`strlen_validating`**, strict takes
+   the bounded fast path.
+3. A probe returning both bound lookups for one address: in hardened, `known_remaining` = **5** but
+   `known_remaining_strict` = **NONE**; in strict, both = 5.
+
+`strlen_validating` opened with `let _trace_scope = runtime_policy::entrypoint_scope("strlen")` and
+looked the bound up *after* it. That scope sets the policy-reentry flag for its lifetime, and
+`known_remaining` branches on exactly that flag: inside a reentry context it consults only
+`bump_mmap` / `segment` / `fallback` and deliberately **skips `validate_ptr`**, to avoid recursing
+through a validator that itself calls string functions. In hardened mode a `malloc`ed span is
+discoverable *only* through `validate_ptr` — `segment_remaining` answers `None` for it, which is
+exactly why the strict path (whose `known_remaining_strict` consults those same three sources) was
+unaffected. So `rem` was always `None`, and control fell past the `if let Some(limit) = rem` bounded
+scan into the unbounded one. **The validating path's bounds logic was correct and unreachable.**
+
+**The fix is the order of two lines**: look the bound up *before* creating the trace scope, so the
+lookup runs at the same point every other ABI entry queries it from — outside any scope, entering
+`validate_ptr` exactly as `memchr`/`memrchr` do, not from a nested context.
+
+| mode | before | after |
+|---|---|---|
+| strict | 0 of 40 over-read | **0 of 40** |
+| hardened | 38 of 40 over-read | **0 of 40** |
+
+**The price, measured, and it is not free.** Counted instrument, `valgrind --tool=callgrind`,
+marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000, fl via `LD_PRELOAD` at asserted PHASE=2:
+
+| mode / input | before | after | delta |
+|---|---|---|---|
+| strict, short | 60.00 | 60.00 | **0** |
+| strict, len 64 | 132.00 | 132.00 | **0** |
+| hardened, short | 97441.13 | 97884.13 | **+443.00 (+0.45%)** |
+
+Strict is untouched to the instruction, because the fast path is not on this code path at all.
+Hardened pays 443 instructions — and that delta is real rather than noise: three repeat runs of each
+object returned **bit-identical** totals (97441.13 three times, 97884.13 three times), so the
+instrument's spread here is zero and a 443 Ir difference is resolvable.
+
+Also recorded because it is the more striking number: **hardened `strlen` costs ~97,400 Ir/call
+against live glibc's 23.00** — a 4,236x ratio. That is the full TSM validation pipeline rather than
+a scan, and it is not this row's target, but it is by far the largest standing ratio the campaign
+has measured and nothing in the ledger names it.
+
+- **Startup hazard checked, not assumed.** `strlen` is the entry with a documented hardened-startup
+  SIGSEGV history (an earlier cold-split died before `main`, 3/3). Real programs under `LD_PRELOAD`,
+  10 invocations per mode per object: **10/10 exit 0** for both the baseline and the candidate, in
+  both strict and hardened.
+- **Over-application checked**, since the risk a bound fix introduces is truncating strings that are
+  properly terminated: a new `slen_conf` differential against live glibc covers static buffers at
+  every alignment 0..63 and every length 0..300, heap strings terminated exactly at the allocation
+  end for every length 0..400, and heap strings terminated well *inside* a larger allocation across
+  capacities 8..512 — **20,007 checks, 0 failures, in BOTH strict and hardened**.
+
+Gate: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, observed compiling
+and executing.
+
+The code fix itself landed as `45a912c56`, committed by another agent's blanket commit while this
+evidence was still being gathered — the second time in this session. The commit is correct and
+carries the right bead id, so it stands; this row is the measurement record it was made without.
+
+Objects: baseline `9b479f981fed07e0...` (parent commit), candidate `5c7462d97b49ebe891eb6a305d416744...`,
+built locally.
+
+**bd-k3skh6 STAYS OPEN, and its description needs correcting.** The unit test
+`strlen_bounds_tracked_unterminated_input` **still fails** after this fix, at 200 passed / 1 failed /
+8 ignored — unchanged from baseline. That test runs a THIRD configuration this row did not address:
+in-process against the rlib, not `LD_PRELOAD` at PHASE=2, where neither the strict fast path nor the
+hardened path measured here is necessarily the one taken. The bead's original diagnosis (blaming
+`e3a0b0883`'s `known_remaining_strict` swap) is **wrong** and should be replaced with what is now
+established: the strict path is correct in deployment, the hardened path was broken and is fixed
+here, and the in-process configuration remains unexplained. Closing it on this commit would be
+closing on a gate that is still red.
