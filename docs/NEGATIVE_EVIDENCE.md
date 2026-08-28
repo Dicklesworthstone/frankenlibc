@@ -39304,3 +39304,71 @@ After it, `frankenlibc_core::pthread::tls::FALLBACK_TLS_VALUES` at 16,384 bytes 
 `frankenlibc_abi::unistd_abi` at 26,029 across 30 symbols are the next tiers. Also worth noting
 against my own account: the Clifford memo I added two rows ago contributes 1,288 bytes of this
 block.
+
+## 2026-08-28 — bd-2g7oyh — the FFI-PCC symbol lookup matched string literals: hardened `strlen` 1823.46 instructions -> 1722.46
+
+`ffi_pcc_certificate_index_for_symbol` ran on **every hardened ABI entry** from `entrypoint_scope`
+and was a `match` over 24 string literals. That lowers to a chain of length tests and out-of-line
+calls into fl's OWN interposed `bcmp`, walked in table order — so `strlen`, at index 8, paid eight
+failed six-byte comparisons before reaching its arm, and `strncpy` at 23 paid twenty-three.
+Attribution of hardened `strlen` put this function at 43 Ir of self cost with `bcmp` at 193 Ir
+overall.
+
+**The lever.** Key on `(first-eight-bytes-as-u64, len)` instead of on string content. A `const fn`
+computes the key, so all 24 `K_*` constants fold at compile time and the runtime side never leaves
+the crate. The pair is injective over this table: the names are distinct, and any two sharing all
+eight leading bytes would also have to share a length, which none do.
+
+Deliberately **not** reordered by hotness. Putting the string/memory symbols first would shorten the
+old chain too, but it would only pay on whichever workload the benchmark happens to exercise; keying
+is order-independent, which is the difference between a fix and a bench-fit.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, hardened, **both objects built on rch from the same source
+tree**:
+
+| entry | HEAD | candidate | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| `strlen` short | 1823.46 | **1722.46** | 23.00 | 79.3x | **74.9x** |
+| `memcmp` | 1650.00 | **1572.97** | 71.00 | 23.2x | **22.1x** |
+
+Counted mechanism, outside the table because the lint splits on pipes: hardened short `strlen` went
+1823.46 instructions -> 1722.46 instructions and hardened `memcmp` went 1650.00 instructions ->
+1572.97 instructions. **101.00 and 77.03 instructions removed.**
+
+Attribution confirms the mechanism rather than inferring it: `bcmp` falls **193.00 -> 87.00**
+(−106), while the lookup itself rises **43.00 -> 48.00** (+5) — it now does the byte-key work
+in-line instead of calling out. Net −101, which is the measured delta.
+
+- **A/A null:** the glibc arm under BOTH objects, hardened — 23.00 vs 23.00, exactly 1.000.
+- **PCC path proved still live, not silently disabled.** This is the specific hazard here: the
+  startup assertion in `ffi_pcc_verify_and_hash` now exercises the new key, and if it failed,
+  `active_ffi_pcc_symbol_certificate` would return `None` and `note_check_order_outcome` would stop
+  taking its `PASSTHROUGH_ORDERING` early return and **grow**. It is **unchanged at 41.00**.
+- **Strict untouched:** `strlen` 60.02 -> 60.00, `memcpy` n=64 50.00 -> 50.00, `memcmp` 140.00 ->
+  140.02.
+
+Conformance, **both strict and hardened**: `slen_conf` 20,007; `mchr_conf` 125,898; `mcpy_conf`
+15,955; `fused_conf` 76,160; `ncat_conf` 21,441 — **259,461 checks, 0 failures in each mode**, and
+the hardened bound probe still reports 0 of 40 over-reads.
+
+Gate: `rch exec -- cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**.
+
+Object provenance: baseline `6e61b5a2f2a66ab2724426a050a0e29f...` (HEAD) and candidate
+`399d9cc3cf62d1517261268c4347fead...`, **both built on rch**, and the candidate rebuilt
+byte-identical from the restored source (`cmp` verified) after the baseline build. Local builds are
+no longer used for this campaign.
+
+**BLOCKED, surfaced not worked around.** `rch exec -- cargo test -p frankenlibc-abi --test
+signal_abi_test` wedges: it produced no output for 10 minutes and was killed, which matches the
+earlier 63-minute hang on the same target. It is not the relevant gate for a `runtime_policy` change
+and the `--lib` gate covers this code, but the target is effectively unrunnable on rch right now and
+that should be fixed rather than routed around.
+
+**STILL OPEN.** Hardened `strlen` is 74.9x. `__tls_get_addr` remains the largest single item at
+336 Ir (19.5% now that the total has fallen) and is gated behind the TLS-block work in bd-sgzm0u —
+`DEFERRED_SIGNALS` still reserves 71,760 bytes because all 65 slots hold a full `ucontext_t`. The
+residual `bcmp` is 87 Ir, and the remaining 48 Ir in the symbol lookup is the byte-at-a-time key
+loop, which an unaligned 8-byte load would collapse at the cost of page-safety care near the end of
+a mapping.

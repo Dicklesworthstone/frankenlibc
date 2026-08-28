@@ -555,34 +555,92 @@ const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 24] = [
     ),
 ];
 
+/// First eight bytes of a symbol name as a little-endian `u64`, zero-padded.
+///
+/// `const fn`, so every `K_*` constant below is folded at compile time; only the caller's
+/// side runs at all, and it runs over at most eight bytes with no call out of the crate.
+#[inline]
+const fn ffi_pcc_symbol_key(s: &str) -> u64 {
+    let b = s.as_bytes();
+    let mut key = 0u64;
+    let mut i = 0;
+    while i < 8 && i < b.len() {
+        key |= (b[i] as u64) << (8 * i);
+        i += 1;
+    }
+    key
+}
+
+const K_MALLOC: u64 = ffi_pcc_symbol_key("malloc");
+const K_CALLOC: u64 = ffi_pcc_symbol_key("calloc");
+const K_REALLOC: u64 = ffi_pcc_symbol_key("realloc");
+const K_POSIX_MEMALIGN: u64 = ffi_pcc_symbol_key("posix_memalign");
+const K_MEMALIGN: u64 = ffi_pcc_symbol_key("memalign");
+const K_ALIGNED_ALLOC: u64 = ffi_pcc_symbol_key("aligned_alloc");
+const K_FREE: u64 = ffi_pcc_symbol_key("free");
+const K_MEMCMP: u64 = ffi_pcc_symbol_key("memcmp");
+const K_STRLEN: u64 = ffi_pcc_symbol_key("strlen");
+const K_MEMCPY: u64 = ffi_pcc_symbol_key("memcpy");
+const K_SNPRINTF: u64 = ffi_pcc_symbol_key("snprintf");
+const K_VSNPRINTF: u64 = ffi_pcc_symbol_key("vsnprintf");
+const K_STRCMP: u64 = ffi_pcc_symbol_key("strcmp");
+const K_STRNCMP: u64 = ffi_pcc_symbol_key("strncmp");
+const K_STRCHR: u64 = ffi_pcc_symbol_key("strchr");
+const K_STRRCHR: u64 = ffi_pcc_symbol_key("strrchr");
+const K_STRSTR: u64 = ffi_pcc_symbol_key("strstr");
+const K_MEMCHR: u64 = ffi_pcc_symbol_key("memchr");
+const K_MEMRCHR: u64 = ffi_pcc_symbol_key("memrchr");
+const K_STRNLEN: u64 = ffi_pcc_symbol_key("strnlen");
+const K_MEMMOVE: u64 = ffi_pcc_symbol_key("memmove");
+const K_MEMSET: u64 = ffi_pcc_symbol_key("memset");
+const K_STRCPY: u64 = ffi_pcc_symbol_key("strcpy");
+const K_STRNCPY: u64 = ffi_pcc_symbol_key("strncpy");
+
 #[inline]
 fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
-    match symbol {
-        "malloc" => 0,
-        "calloc" => 1,
-        "realloc" => 2,
-        "posix_memalign" => 3,
-        "memalign" => 4,
-        "aligned_alloc" => 5,
-        "free" => 6,
-        "memcmp" => 7,
-        "strlen" => 8,
-        "memcpy" => 9,
-        "snprintf" => 10,
-        "vsnprintf" => 11,
+    // Keyed on `(first-eight-bytes, len)` instead of matching string literals. The literal
+    // `match` this replaces lowered to a chain of length tests and out-of-line calls into
+    // our OWN interposed `bcmp`, walked in table order — so `strlen`, at index 8, paid eight
+    // failed six-byte comparisons before reaching its arm, and `strncpy` at 23 paid
+    // twenty-three. This runs once per hardened ABI entry from `entrypoint_scope`;
+    // attribution of hardened `strlen` put this function at 43 Ir of self cost with `bcmp` at
+    // 193 Ir overall.
+    //
+    // The pair is injective over this table: the 24 names are distinct, and the only ones
+    // sharing all of their first eight bytes would have to share a length too, which none do
+    // (`strncmp`/`strncpy` already differ at byte 4). `ffi_pcc_verify_and_hash` proves it at
+    // startup for every row — it asserts `index_for_symbol(row.symbol) == idx`, which now
+    // exercises this key rather than the literal match.
+    //
+    // Deliberately NOT reordered by hotness. Putting the string/memory symbols first would
+    // shorten the old chain too, but it would only pay on whichever workload the benchmark
+    // happens to exercise; keying is order-independent.
+    match (ffi_pcc_symbol_key(symbol), symbol.len()) {
+        (K_MALLOC, 6) => 0,
+        (K_CALLOC, 6) => 1,
+        (K_REALLOC, 7) => 2,
+        (K_POSIX_MEMALIGN, 14) => 3,
+        (K_MEMALIGN, 8) => 4,
+        (K_ALIGNED_ALLOC, 13) => 5,
+        (K_FREE, 4) => 6,
+        (K_MEMCMP, 6) => 7,
+        (K_STRLEN, 6) => 8,
+        (K_MEMCPY, 6) => 9,
+        (K_SNPRINTF, 8) => 10,
+        (K_VSNPRINTF, 9) => 11,
         // bd-14baix: expanded coverage
-        "strcmp" => 12,
-        "strncmp" => 13,
-        "strchr" => 14,
-        "strrchr" => 15,
-        "strstr" => 16,
-        "memchr" => 17,
-        "memrchr" => 18,
-        "strnlen" => 19,
-        "memmove" => 20,
-        "memset" => 21,
-        "strcpy" => 22,
-        "strncpy" => 23,
+        (K_STRCMP, 6) => 12,
+        (K_STRNCMP, 7) => 13,
+        (K_STRCHR, 6) => 14,
+        (K_STRRCHR, 7) => 15,
+        (K_STRSTR, 6) => 16,
+        (K_MEMCHR, 6) => 17,
+        (K_MEMRCHR, 7) => 18,
+        (K_STRNLEN, 7) => 19,
+        (K_MEMMOVE, 7) => 20,
+        (K_MEMSET, 6) => 21,
+        (K_STRCPY, 6) => 22,
+        (K_STRNCPY, 7) => 23,
         _ => FFI_PCC_NO_INDEX,
     }
 }
