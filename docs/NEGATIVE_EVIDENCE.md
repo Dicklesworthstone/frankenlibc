@@ -39123,3 +39123,89 @@ The remaining profile after this change is `__tls_get_addr` (336 Ir, the largest
 rejected-pending-owner), `certify_simd_string_operation` (156, now just the memo lookup),
 `record_last_explainability` (140) and `strlen_validating` (134 — the actual string work). The TLS
 item is the next target and is the one the previous rows have not touched.
+
+## 2026-08-27 — bd-2g7oyh — the FFI-PCC symbol check moved from three-times-per-call to once-at-startup: hardened `memcmp` 2284.00 instructions -> 1650.00
+
+The previous row rejected a fix for this and said the real one "needs an owner's decision about
+whether the (index, symbol) pair can ever disagree". That framing was too narrow — it assumed the
+only options were *keep the per-call check* or *delete it*. There is a third: **prove the invariant
+once, for every row, at startup**, which is strictly more coverage than the per-call check ever had.
+
+**The gap.** `ffi_pcc_certificate_by_index` ended with `(row.symbol == symbol).then_some(row)`. `==`
+on `&str` lowers to an out-of-line call into our own interposed `bcmp` to compare six bytes, and the
+function is reached **three times per hardened ABI call** — `check_ordering`,
+`note_check_order_outcome` and `decide` all go through `active_ffi_pcc_symbol_certificate`.
+Attribution put `bcmp` at 291 of 2,048 Ir (14.2%), concentrated in exactly those sites.
+
+**Why the check was redundant per call.** `index` is produced by
+`ffi_pcc_certificate_index_for_symbol`, a `match` over distinct string literals mapping to distinct
+indices. If every row satisfies `index_for_symbol(row.symbol) == its own index`, then an index
+derived from a symbol necessarily selects the row whose symbol *is* that symbol — the runtime
+compare cannot fail. That is a **table/match consistency invariant**, not a per-call property, so
+checking it per call was testing the build, once per libc call, forever.
+
+**The lever.** `ffi_pcc_verify_and_hash` — which already validates the table at init and is gated by
+`ensure_ffi_pcc_verified()` — now also asserts `index_for_symbol(row.symbol) == idx` for **every**
+row, returning `Err("ffi_pcc: symbol index match disagrees with certificate table")` on
+disagreement. `ffi_pcc_certificate_by_index` drops the `symbol` parameter and becomes a plain slice
+index. The check is **moved and widened**, not removed: it covers all 24 rows once instead of one
+row per call, and a disagreement now fails verification at init rather than silently returning
+`None` for that symbol at runtime.
+
+Verified statically before measuring, because this is exactly the change that could "win" by
+silently disabling a feature: the table's 24 entries and the match's 24 indices were printed side by
+side and agree position-for-position, so the new assertion passes and the PCC path stays enabled.
+
+Counted instrument, `valgrind --tool=callgrind`, marginal Ir/call = (Ir at N=3000 − Ir at N=1000)/2000,
+fl via `LD_PRELOAD` at asserted PHASE=2 against **live glibc opened `dlmopen(LM_ID_NEWLM,
+"libc.so.6")` in the SAME invocation**, hardened:
+
+| entry | before | after | live glibc | ratio before | ratio after |
+|---|---|---|---|---|---|
+| `memcmp` | 2284.00 | **1650.00** | 71.02 | 32.2x | **23.2x** |
+| `memcpy` n=64 | 2970.51 | **2672.51** | 22.00 | 135.0x | 121.5x |
+| `strlen` len 64 | 1869.46 | **1643.44** | 35.00 | 53.4x | 47.0x |
+| `strlen` short | 2048.46 | **1823.46** | 23.00 | 89.1x | 79.3x |
+
+Counted mechanism, outside the table because the lint splits on pipes: hardened `memcmp` went
+2284.00 instructions -> 1650.00 instructions, hardened short `strlen` went 2048.46 instructions ->
+1823.46 instructions. **634, 298, 226 and 225 instructions removed** across the four.
+
+**Proof the PCC path is still live, not silently switched off.** If the new startup assertion had
+failed, `active_ffi_pcc_symbol_certificate` would return `None` and `check_ordering` /
+`note_check_order_outcome` would stop taking their `PASSTHROUGH_ORDERING` early return — they would
+**grow**. Measured across the change they *shrank*: `note_check_order_outcome` 53.00 -> 41.00 and
+`check_ordering` 47.00 -> below the top-40 cut. `bcmp` fell 291.00 -> 193.00, the residue being the
+symbol match still performed once per entry inside `entrypoint_scope`
+(`ffi_pcc_certificate_index_for_symbol`, now visible at 43.00 Ir).
+
+- **A/A null:** the glibc arm under BOTH objects, hardened — 23.00 vs 22.97, ratio 1.001.
+- **Strict, and this is where the cost lands:** `strlen` 60.00 -> 60.00, `memcpy` n=64 50.00 ->
+  50.00, `memchr` n=16 63.00 -> 63.00 — but **`memcmp` 138.04 -> 140.00, a +1.96 instruction
+  regression**. Small, but the instrument is deterministic here, so it is real and not rounding.
+  Reported rather than absorbed: strict `memcmp` pays about 1.4% for a change whose gains are all in
+  hardened.
+
+Conformance, **both strict and hardened**: `slen_conf` 20,007; `mchr_conf` 125,898; `mcpy_conf`
+15,955; `fused_conf` 76,160; `ncat_conf` 21,441 — **259,461 checks, 0 failures in each mode**. The
+hardened bound-fix capability probe still reports **0 of 40 over-reads in both modes**.
+
+Gates: `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**.
+`cargo test --release -p frankenlibc-membrane --lib` **1,400 passed, 0 failed**.
+
+That membrane run is reported after chasing down a flake rather than accepting a convenient
+number: the first execution came back **1,399 passed / 1 failed**, which would have been alarming
+since this change is in the `abi` crate and touches no membrane code. Four consecutive re-runs all
+returned 1,400 / 0, and the suite's concurrency tests (`left_right`, `bravo`) are the plausible
+source. Recorded because a 1-in-5 flake in a 1,400-test safety-crate gate is worth knowing about
+independently of this commit — the next agent who sees it should not spend the cycle I nearly did
+attributing it to their own change.
+
+Objects: baseline `5d8bae2ae71414ba...` (HEAD), candidate `5420d32763ee17160cc7dff3c93ae0f8...`,
+built locally.
+
+**STILL OPEN.** Hardened `strlen` is 79.3x. `__tls_get_addr` is now unambiguously the largest item
+at 336 Ir (18.4%) and has no local fix: it is ~28 separate TLS resolutions spread over a dozen
+callers at ~12 Ir each, with no dominant site. The global fix — initial-exec TLS — is blocked by
+bd-sgzm0u (fl's `PT_TLS` is 196,392 bytes against glibc's 136, which breaks `dlopen`), so this one
+needs the TLS-block size addressed first rather than another call-site edit.

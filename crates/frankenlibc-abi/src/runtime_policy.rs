@@ -587,13 +587,23 @@ fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
     }
 }
 
+/// Row lookup by the index `ffi_pcc_certificate_index_for_symbol` produced.
+///
+/// No string compare. This used to end with `(row.symbol == symbol).then_some(row)`, which
+/// lowered to an out-of-line call into our own interposed `bcmp` to compare six bytes --
+/// and this function is reached THREE times per hardened ABI call, via
+/// `active_ffi_pcc_symbol_certificate` from `check_ordering`, `note_check_order_outcome`
+/// and `decide`. Attribution of hardened `strlen` put `bcmp` at 291 of 2,048 Ir (14.2%),
+/// concentrated in exactly those sites.
+///
+/// The check is not weakened, it is MOVED: `ffi_pcc_verify_and_hash` now proves at startup,
+/// for every row, that the symbol match and this table agree, so an index derived from a
+/// symbol cannot select a row with a different symbol. That covers all rows once instead of
+/// one row per call, and a disagreement now fails verification at init rather than silently
+/// returning `None` for that symbol at runtime.
 #[inline]
-fn ffi_pcc_certificate_by_index(
-    index: u8,
-    symbol: &'static str,
-) -> Option<&'static FfiPccCertificate> {
-    let row = FFI_PCC_CERTIFICATES.get(usize::from(index))?;
-    (row.symbol == symbol).then_some(row)
+fn ffi_pcc_certificate_by_index(index: u8) -> Option<&'static FfiPccCertificate> {
+    FFI_PCC_CERTIFICATES.get(usize::from(index))
 }
 
 fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
@@ -611,6 +621,18 @@ fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
         }
         if row.skip_pointer_validation && (!row.skip_stage_ordering || row.allow_write) {
             return Err("ffi_pcc: pointer-validation bypass must be read-only and stage-skipping");
+        }
+        // STARTUP PROOF that `ffi_pcc_certificate_index_for_symbol` and this table agree.
+        //
+        // This is what lets `ffi_pcc_certificate_by_index` drop its per-call
+        // `row.symbol == symbol` re-verification. The match arms are distinct literals mapped
+        // to distinct indices, so once every row satisfies `index_for_symbol(row.symbol) ==
+        // its own index`, an index obtained from a symbol necessarily selects the row whose
+        // symbol IS that symbol -- the per-call compare could not fail. Checked here for
+        // EVERY row, which is strictly more coverage than the old check gave: that one only
+        // ever examined the single row a call happened to hit.
+        if usize::from(ffi_pcc_certificate_index_for_symbol(row.symbol)) != idx {
+            return Err("ffi_pcc: symbol index match disagrees with certificate table");
         }
         for prior in &FFI_PCC_CERTIFICATES[..idx] {
             if prior.symbol == row.symbol && prior.family == row.family {
@@ -733,7 +755,7 @@ fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
         return None;
     }
     let trace = active_trace_context();
-    ffi_pcc_certificate_by_index(trace.pcc_index, trace.symbol)
+    ffi_pcc_certificate_by_index(trace.pcc_index)
 }
 
 fn ffi_pcc_decision(cert: &FfiPccCertificate) -> RuntimeDecision {
