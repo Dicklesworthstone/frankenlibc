@@ -39726,3 +39726,55 @@ Gates: `cargo test -p frankenlibc-core --lib -- string::mem` **56 passed, 0 fail
 out, which is the shape that says the next gain is not another tier fix. `memchr` at n=8/16 sits at
 ~2.1x/2.5x but every reading so far carries a SUSPECT null; it needs a quiet worker before it is
 worth acting on, and reporting it as a target on today's numbers would be reporting noise.
+
+## 2026-08-28 — bd-2g7oyh — BLOCKED on rch; and why `memchr`'s small-n figures were right to be withheld
+
+**No measurement and no code landed this cycle.** rch refused six consecutive `rch exec`
+invocations with
+`remote required; refusing local fallback (no admissible workers: critical_pressure=2,
+insufficient_slots=2, insufficient_total_slots=10) — retryable`. `rch status`: posture **degraded**,
+14/15 workers healthy, 21/56 slots, `wsurf` offline and unreachable. Local building is prohibited,
+so nothing could be compiled or run.
+
+**What this cycle was going to attack, and the analysis that survives the block.** The previous row
+left `memchr` at n=8/16 (~2.1x/2.5x) named but explicitly not acted on, because every reading
+carried a SUSPECT A/A null. Looking at *why* those nulls were suspect turns out to matter more than
+the ratios did.
+
+The nulls were not scattered — across every small size, both objects and several runs, they
+clustered tightly at **0.887–0.927**, always below 1.0, never above. Random noise does not have a
+sign. The harness times each round as an interleaved triple `[fl, glibc, glibc]`, and the A/A null
+is the second glibc divided by the first, so a null of 0.90 says the **repeat** glibc loop is
+consistently ~10% faster than the one immediately before it. That is a position effect — the second
+identical loop inherits branch history and i-cache state from the first — and it persists in every
+round, so taking a median over 25 rounds does not remove it.
+
+The consequence is not a simple bias in one direction, which is exactly why the figures had to be
+withheld rather than corrected:
+
+- `fl` runs **first** in the triple, coldest, so its time is inflated — pushing the ratio **up**;
+- `glibc` runs **second**, also not fully warm, so the denominator is inflated — pushing the ratio
+  **down**.
+
+Both effects are present at once and cannot be separated from the data already collected. So
+`memchr` at small n carries roughly ±10% of position uncertainty in an **undetermined direction**,
+and the honest reading of "2.097x" is "somewhere near 2x, with a systematic error comparable to the
+difference between the sizes I was proposing to compare". Withholding those numbers last cycle was
+correct, and this row records the mechanism so the next attempt starts from it.
+
+Worth noting against the rest of the ledger: the ops whose nulls were clean (`memcmp` at every size
+after the panel and word fixes, `memrchr` at n>=256, `memmem`) are unaffected by this. The position
+effect is largest exactly where the per-call work is smallest, which is why it dominates memchr at
+n=8..64 and disappears by n=128 (null 1.000).
+
+**The fix, written and deliberately not landed.** A `WARMUP` constant running three untimed rounds
+per arm before the first timed one moves the position cost out of the measurement. It was written,
+but rch went down before it could be compiled even once. Landing an example that has never built
+would break `--all-targets` for every other agent, and this repo's rule about not closing on a gate
+whose compilation was not observed applies with more force to tooling that other people's
+measurements depend on. Reverted; the design is recorded here so re-applying it is mechanical.
+
+**Next cycle, in order:** re-apply the warmup, confirm it compiles and that the A/A nulls at
+n=8..64 move to within 0.97..1.03, and only then decide whether `memchr`'s small-n gap is real
+enough to attack. If the nulls do not converge, the harness is measuring position rather than code
+at those sizes and the sizes should be dropped from it rather than reported with a caveat.
