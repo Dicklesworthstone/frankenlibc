@@ -38955,3 +38955,82 @@ untouched — it is explicitly diagnostic ("only useful for debugging", per its 
 the decision-contract state machine, so skipping it changes TSM state tracking and is not a free
 deletion. `decide`, `__tls_get_addr` and two `bcmp` sites follow. None of that is the string scan,
 which remains 134 Ir.
+
+## 2026-08-27 — bd-2g7oyh — REJECT: pointer-first symbol compare in the FFI-PCC lookup — 2178.00 instructions -> 2208.00, a measured regression
+
+**Rejected and reverted.** The lever was reasonable, the mechanism was real, and the measurement
+says it costs rather than pays. Recorded so nobody re-derives it.
+
+**How it was chosen.** With the Clifford certification memoized, hardened `strlen` is 2,178 Ir and
+the profile is flat. Per-function attribution put `frankenlibc_core::string::mem::bcmp` at **291 Ir,
+13.4%** — the largest item after `__tls_get_addr` — and `--separate-callers=2` spread it across five
+sites, four of them in `runtime_policy`: `entrypoint_scope` (57), `check_ordering` (49),
+`note_check_order_outcome` (49), `decide` (49), plus `select_string_simd_dispatch` (87).
+
+The common root is genuine and worth recording even though the fix failed.
+`ffi_pcc_certificate_by_index` is reached three times per hardened call — `check_ordering`,
+`note_check_order_outcome` and `decide` each go through `active_ffi_pcc_symbol_certificate` — and its
+body is:
+
+```rust
+let row = FFI_PCC_CERTIFICATES.get(usize::from(index))?;
+(row.symbol == symbol).then_some(row)
+```
+
+`index` was *already derived from* `symbol` by `ffi_pcc_certificate_index_for_symbol`, so this is a
+re-verification of a value the caller just computed — and `==` on `&str` lowers to an **out-of-line
+call into our own interposed `bcmp` to compare six bytes**. Three of those per call.
+
+**The lever, and why it was expected to work.** Since `index` comes from `symbol`, `row.symbol` and
+`symbol` should be the same `&'static str`, so a pointer comparison should settle it:
+`(std::ptr::eq(row.symbol, symbol) || row.symbol == symbol)`. The content compare is retained as the
+fallback, so the result cannot change — only get cheaper.
+
+**Measured, hardened, `LD_PRELOAD` at asserted PHASE=2, counted instrument (callgrind, marginal
+Ir/call over N=1000 vs N=3000):**
+
+| entry | before | after | delta |
+|---|---|---|---|
+| `strlen` short | 2178.00 | 2208.00 instructions | **+30.00** |
+| `strlen` len 64 | 1869.00 | 1899.00 instructions | **+30.00** |
+| `memcmp` | 2284.46 | 2368.49 instructions | **+84.03** |
+
+Counted mechanism, stated outside the table because the lint splits on pipes: hardened short
+`strlen` went 2178.00 instructions -> 2208.00 instructions, and hardened `strlen` at len 64 went
+1869.00 instructions -> 1899.00 instructions, both by callgrind marginal Ir/call (N=3000 minus
+N=1000, divided by 2000) with fl under LD_PRELOAD at asserted PHASE=2. The A/A null for this
+instrument in the same invocation is exact: the glibc arm measured 23.00 instructions under both
+objects, ratio 1.000, and three repeat runs of each object returned bit-identical totals, so a
+30-instruction difference is resolvable and is not noise.
+
+Uniformly worse. **+30 is almost exactly three failed pointer compares**, which is the tell: the
+short-circuit never fires, so the cost is the new test *plus* the `bcmp` it was meant to replace.
+
+**Why, confirmed directly rather than inferred.** The two literals are not merged by the linker:
+`objdump -s -j .rodata` finds the byte sequence `strlen` at **two distinct addresses** in the shipped
+object — one for the call site in `string_abi.rs`, one for the `FFI_PCC_CERTIFICATES` row in
+`runtime_policy.rs`. `std::ptr::eq` between them is false by construction, on every call, forever.
+The premise "same literal ⇒ same pointer" is simply not true across codegen units here even under
+LTO.
+
+Reverted; the object rebuilt **byte-identical to HEAD** (`cmp` verified) and hardened `strlen`
+re-measured back at 2178.00.
+
+**What would actually work, and why I did not do it.** The content compare is redundant on its face:
+the index uniquely selects the row and was derived from the symbol, so the string check can only fail
+if a caller passes a mismatched (index, symbol) pair — i.e. it is a **defensive consistency check
+inside the safety membrane**, not a lookup step. Deleting it, or demoting it to `debug_assert`, would
+remove the 291 Ir outright. That is a deliberate weakening of a membrane invariant, and it is not a
+call to make unilaterally inside a perf cycle: it needs an owner's decision about whether the
+(index, symbol) pair can ever disagree in a non-buggy build. Recorded here as the named lever with
+its price attached rather than taken quietly.
+
+The other candidate the same attribution surfaced, also untaken: a `HashMap<usize, _>` behind
+`BravoRwLock` hashed with the **default SipHash** — `RandomState::hash_one::<&usize>` 84 Ir plus
+`Sip13Rounds::write` 56 Ir plus the map access 81 Ir, ~221 of 2,178 (10%), to hash a pointer. A
+cheap integer hasher is the obvious fix and does not touch any invariant.
+
+Objects: baseline `0dc5add6795b51c0...` (HEAD), rejected candidate
+`1cc87818b6ec8c24b1cbfa3c12ffe8c8...`, both built locally. No conformance or gate run was needed:
+the change was reverted on the measurement, and the restored object is bit-identical to the one HEAD
+already ships.
