@@ -39275,6 +39275,25 @@ and real programs run 5/5 in both modes.
 Objects: baseline `5420d32763ee1716...` (HEAD), candidate `f85a32cab0eb9422ef525b988571d6f1...`,
 built locally.
 
+**ADDENDUM — the dedicated signal suite, and why it was initially invisible.** The commit landed
+citing `abi --lib` (200 passed) plus the behavioural probes, but not
+`crates/frankenlibc-abi/tests/signal_abi_test.rs` — 51 KB of signal-specific tests, which is the
+suite that most directly covers this change. Three attempts to run it produced **empty logs**: two
+`rch exec` runs returned exit 0 in ~20 s with no cargo output whatsoever, and a local run hit the
+known `sh: 1: RCH_CARGO_WRAPPER_BYPASS=1: not found` env-prefix trap. Building the test binary
+locally and executing it directly settles it: **59 passed, 0 failed**, including
+`under_raise_invalid_signal_returns_minus_one`, which is exactly the out-of-range path this change
+narrows.
+
+Two things worth carrying forward from that detour. First, `cargo build --tests` **stops at the
+first failing target**, so `signal_abi_test` never linked and genuinely looked absent until
+`--keep-going` was passed — the same trap AGENTS.md records for `cargo check --all-targets`, but it
+bites `--tests` identically. Second, with `--keep-going` the abi crate has **three test targets that
+do not compile at all**, all pre-existing and unrelated to this change:
+`conformance_diff_ns_parse.rs` (passes a `u32` ttl to `resolv_abi::ns_sprintrrf`, which takes `u64`)
+and `stdio_abi_test.rs` (unresolved imports `IO_2_1_STDERR` / `IO_2_1_STDIN` / `IO_2_1_STDOUT`).
+Those targets are silent, not green, and nothing in the ledger named them.
+
 **STILL OPEN, with the remaining budget now itemised.** 127,032 bytes is still three orders of
 magnitude past glibc's 136, so initial-exec remains out of reach and the 336 Ir stays on the table.
 What is left, from the (now correct) attribution: `DEFERRED_SIGNALS` still costs **71,760 bytes**
