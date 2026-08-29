@@ -447,6 +447,50 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
+
+    // SHORT DISPATCH for everything below one 32-lane panel, ahead of the tier machinery.
+    //
+    // A scan of 8 or 16 bytes reached its one useful instruction only after building the
+    // `rchunks_exact(SIMD_FOLD_BYTES)` iterator and clearing the 128-byte fold guard, the
+    // 32-lane panel guard and the 16-byte length test -- none of which can fire at these
+    // lengths. Measured order-balanced against live glibc, n=8 ran 2.87x and n=16 2.02x.
+    //
+    // Splitting only `count < 16` off the front was tried first and rejected: it bought n=8
+    // (2.87x -> 2.52x) but pushed n=16 to 2.29x, because 16 still walked the whole ladder
+    // and now paid an extra test to get there. Taking the entire sub-panel range instead
+    // shortens both. Two SIMD compares cover 16..=31 with no loop at all: the trailing
+    // window resolves last-match directly, and if it is empty the leading window's mask can
+    // only hold bits below `count - 16` -- a set bit at or above it would name a byte the
+    // trailing window just reported clean -- so its high bit is the answer unconditionally.
+    if count < SIMD_LANES {
+        if count >= MEMCMP_EXACT_16_BYTES {
+            let tail = &hs[count - MEMCMP_EXACT_16_BYTES..];
+            let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(tail)
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some(count - MEMCMP_EXACT_16_BYTES + (63 - mask.leading_zeros() as usize));
+            }
+            let head_mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(
+                &hs[..MEMCMP_EXACT_16_BYTES],
+            )
+            .simd_eq(Simd::splat(needle))
+            .to_bitmask();
+            if head_mask != 0 {
+                return Some(63 - head_mask.leading_zeros() as usize);
+            }
+            return None;
+        }
+        let mut i = count;
+        while i >= WORD {
+            if let Some(j) = last_byte_u64(u64_from_chunk(&hs[i - WORD..i]), needle) {
+                return Some(i - WORD + j);
+            }
+            i -= WORD;
+        }
+        return hs[..i].iter().rposition(|&b| b == needle);
+    }
+
     let mut simd_blocks = hs.rchunks_exact(SIMD_FOLD_BYTES);
     let mut end = count;
 

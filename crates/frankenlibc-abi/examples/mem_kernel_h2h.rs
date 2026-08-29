@@ -63,6 +63,50 @@ fn fastest(v: &[f64]) -> f64 {
     v.iter().copied().fold(f64::INFINITY, f64::min)
 }
 
+/// Bootstrap percentile CI for the MEDIAN of a set of per-round ratios.
+///
+/// The point estimate this harness reports is fastest-of-rounds, for the reason argued above,
+/// and a minimum has no useful sampling distribution -- resampling it just re-finds the same
+/// smallest observation. So the interval is computed for the median of the per-round ratios
+/// instead: it answers "how much of this number is the sample I happened to draw", which is
+/// the question an A/A null is being asked, while the minimum answers "what is the
+/// uncontended cost". Both are reported; neither is derived from the other.
+///
+/// Resampling is seeded deterministically from the round count, so two runs of the same build
+/// produce the same interval and a moved bound means the timings moved, not the dice.
+fn bootstrap_median_ci(ratios: &[f64]) -> (f64, f64) {
+    const RESAMPLES: usize = 2000;
+    let n = ratios.len();
+    if n == 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let mut state = 0x9E37_79B9_7F4A_7C15u64 ^ (n as u64);
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut medians = Vec::with_capacity(RESAMPLES);
+    let mut draw = vec![0.0f64; n];
+    for _ in 0..RESAMPLES {
+        for slot in draw.iter_mut() {
+            *slot = ratios[(next() % n as u64) as usize];
+        }
+        draw.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        medians.push(if n % 2 == 1 {
+            draw[n / 2]
+        } else {
+            0.5 * (draw[n / 2 - 1] + draw[n / 2])
+        });
+    }
+    medians.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let lo = medians[(0.025 * RESAMPLES as f64) as usize];
+    let hi = medians[((0.975 * RESAMPLES as f64) as usize).min(RESAMPLES - 1)];
+    (lo, hi)
+}
+
 #[inline]
 fn timed(iters: usize, mut body: impl FnMut()) -> f64 {
     let t = Instant::now();
@@ -99,9 +143,15 @@ fn measure(op: &str, n: usize, iters: usize, mut fl: impl FnMut(), mut gl: impl 
     // both only push a round upward and the minimum ignores them by construction.
     let (fl_best, gl_best, aa_best) = (fastest(&fls), fastest(&gls), fastest(&aas));
     let (r, null) = (fl_best / gl_best, aa_best / gl_best);
+    // Per-round ratios feed the interval; the fastest-of-rounds pair above feeds the estimate.
+    let null_rounds: Vec<f64> = aas.iter().zip(&gls).map(|(a, g)| a / g).collect();
+    let eff_rounds: Vec<f64> = fls.iter().zip(&gls).map(|(f, g)| f / g).collect();
+    let (nlo, nhi) = bootstrap_median_ci(&null_rounds);
+    let (elo, ehi) = bootstrap_median_ci(&eff_rounds);
     if (ADMISSIBLE.0..=ADMISSIBLE.1).contains(&null) {
         eprintln!(
-            "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3}",
+            "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3} \
+             null_medCI=[{nlo:.3},{nhi:.3}] effect_medCI=[{elo:.3},{ehi:.3}]",
             fl_best,
             gl_best,
         );
@@ -136,6 +186,21 @@ fn main() {
             gl_memchr as usize != frankenlibc_core::string::mem::memchr as usize,
             "arms identical"
         );
+
+        // Spin the core to its steady clock before any timing. memchr is measured first and
+        // was absorbing the process-start ramp: its nulls sat at 0.952 while every later op
+        // read 1.000, which is position-in-the-RUN, not a property of memchr.
+        {
+            let spin = Instant::now();
+            let mut acc = 0u64;
+            while spin.elapsed().as_millis() < 600 {
+                for i in 0..10_000u64 {
+                    acc = acc.wrapping_mul(6364136223846793005).wrapping_add(i);
+                }
+            }
+            black_box(acc);
+            eprintln!("SPINUP_MS=600\n");
+        }
 
         // `memcmp` returns an ORDER: sweep every length, every difference position and the
         // byte pairs where a signed/unsigned confusion shows up, against live glibc's sign.

@@ -39988,3 +39988,129 @@ the added branch can be moved off that path, or the two tiers merged into one le
 block, is the next thing to try. `memchr` n=8/16/32 still fail to resolve even under the new
 estimator (nulls pinned at 0.952) because memchr is measured first and absorbs the process-start
 ramp; measuring it later in the run, or after a longer spin-up, is the fix.
+
+## 2026-08-28 — bd-2g7oyh — `memrchr` sub-panel dispatch: n=8 2.87x -> 2.52x with no trade; the narrower version that WOULD have traded is recorded and rejected
+
+The previous row closed by naming `memrchr` n=8 (~2.87x) as the campaign's worst confirmed
+memory-scan ratio and asking whether the tier ladder in front of it could be shortened "without
+the added branch landing on the path that does not use it". Both a narrow and a wide answer were
+built and measured; the narrow one reproduces exactly the trade this campaign keeps making, and is
+rejected on its own evidence.
+
+**Two changes: a harness fix that finally resolves `memchr`, and the kernel change it did not
+block.**
+
+**Harness — the spin-up, third attempt, and this time it holds.** `memchr` is measured first in the
+run and had never once resolved at n <= 32: its A/A nulls pinned at 0.952 while every op measured
+later read 1.000. Two earlier mitigations were recorded as refuted (per-round warmup; a 400 ms
+spin-up that helped once and did not reproduce). A **600 ms untimed spin loop before any timing**
+does hold: every `memchr` size now returns admissible, nulls 0.978-1.007, across four consecutive
+runs. It also collapsed the run-to-run spread that forced the previous row's revert-and-undo —
+`memrchr` n=8 now reads to three decimal places across separate runs (2.520 / 2.522 / 2.519)
+where identical code used to vary ~12%. That the fix is a *longer* spin-up than the one already
+refuted is worth stating plainly: the earlier attempt was not wrong in mechanism, it was too short,
+and "refuted" was the right call on the evidence then available.
+
+**Kernel — dispatch the whole sub-panel range, not just the sub-16 part.** `memrchr` at n=8 or
+n=16 reached its one useful instruction only after constructing the `rchunks_exact(SIMD_FOLD_BYTES)`
+iterator and clearing three guards -- the 128-byte fold, the 32-lane panels, the 16-byte tier --
+none of which can fire at those lengths. The new block takes everything below one 32-lane panel:
+16..=31 resolves in exactly **two SIMD compares and no loop**, and under 16 takes the SWAR word
+walk directly.
+
+The two-window resolve is what makes the loop unnecessary, and it needs an argument: the trailing
+16-byte window is tested first and returns the last match if any; if it is empty, the leading
+window's mask can only carry bits below `count - 16`, because a set bit at or above that index
+would name a byte the trailing window just reported clean. So the leading mask's high bit is the
+answer unconditionally, with no masking step.
+
+**Measured — order-balanced, fastest-of-rounds, both arms in one process on one worker CPU, live
+glibc via `dlmopen(LM_ID_NEWLM)`, `SELF_ELF_SHA256` self-reported, all output on stderr:**
+
+| n | baseline | narrow (count<16 only) | wide (count<32) | verdict |
+|---|---|---|---|---|
+| 8 | 2.866x / 7.86ns | 2.521x, 2.517x, 2.527x / 6.92ns | **2.520x, 2.522x, 2.519x / 6.92, 6.93, 6.95ns** | **win, ~12%** |
+| 16 | 2.015x, 2.067x / 5.66ns | 2.291x, 2.293x, 2.294x / 6.28, 6.29ns | **2.069x, 2.066x, 2.069x / 5.65, 5.66ns** | narrow LOSES ~11%; wide neutral |
+| 256 | 1.238x | — | 1.282x, 1.282x, 1.279x | indistinguishable |
+| 1024 | 1.348x | — | 1.323x, 1.356x | indistinguishable |
+
+**A denominator regime shift, caught mid-cycle, and why the verdicts survive it.** Runs taken after
+the CI work landed returned glibc's `memrchr` at **3.77-4.09 ns** where every earlier run this
+session read **2.74-2.75 ns**, with no change to either arm's code. fl's own time did not move:
+6.92 / 6.93 / 6.95 ns at n=8 across those same runs, against 6.92 / 6.93 / 6.94 before. So the
+incumbent arm shifted by ~37% between execution slots while ours held to under 1%, and every ratio
+in the table above moved with it -- n=8 reads 1.83x in the new regime and 2.52x in the old, from
+identical binaries.
+
+This is the sharpest form yet of the lesson two rows back: **a same-invocation A/A null certifies a
+run, and does not make two runs comparable.** What rescues the comparison here is that fl's
+absolute nanoseconds are the stable quantity, and they were recorded alongside every ratio. Read
+that column and the verdicts do not depend on the denominator at all: n=8 goes 7.86 -> 6.92 ns
+(-12%), n=16 holds at 5.66 -> 5.65 ns under the wide dispatch and degrades to 6.28 ns under the
+narrow one (+11%). Those are the same three verdicts the ratios gave in the old regime, derived
+without dividing by anything. The ratios are still what the campaign is scored on -- they are the
+only thing that says whether we beat glibc -- but where a change is being judged against its own
+predecessor, the absolute arm is the one that survived the slot change, and later rows should
+record it.
+
+**The narrow variant is REJECTED, and it is the more instructive result.** Splitting only
+`count < 16` off the front bought n=8 by the same 12% the wide version does, and pushed n=16 from
+2.015x to 2.293x -- because 16 does not take the short path, so it walked the entire ladder as
+before and now paid one extra length test to get there. The mechanism is one added test on a path
+that cannot use it: at n=16 fl runs roughly 5.7 ns against glibc's 2.7 ns, so a single predicted
+branch ahead of a four-guard ladder is a measurable fraction of the whole call, and the added
+instructions -> a longer path for every length the branch does not serve. That is the same shape as
+this campaign's last three trades, and taking the wider range instead removes it rather than
+averaging it away.
+
+The rejection is carried by same-invocation A/A nulls, not by the wall ratios alone. Every reading
+quoted for the narrow variant was certified inside the run that produced it: at n=16 the narrow
+arm's A/A null read 0.996, 1.000 and 1.000, and at n=8 it read 1.000, 1.000 and 1.005, all inside
+the 0.97..1.03 admissibility band. The baseline rows it is compared against carry nulls of 0.994
+and 1.002 at n=16 and 1.000 at n=8.
+
+Those nulls now carry an interval rather than standing as bare point values. The harness gained a
+**bootstrap median confidence interval** this cycle, 2000 percentile resamples over the per-round
+ratios, seeded deterministically from the round count so a moved bound means the timings moved and
+not the dice. It is reported for the null and for the effect side by side -- at n=8 the A/A null 0.998 carries a
+bootstrap median CI of [0.999, 1.000] and [0.997, 1.002] with the effect at [1.830, 1.834] and
+[1.829, 1.836]; at n=16 the A/A null 1.000 carries a bootstrap median CI of [0.999, 1.001] and
+[0.997, 1.000] with the effect at [1.498, 1.503] and [1.496, 1.501]. The interval is deliberately computed for the MEDIAN and not for
+the reported fastest-of-rounds estimate, because a minimum has no useful sampling distribution:
+resampling it only re-finds the same smallest observation. The median answers "how much of this is
+the sample I happened to draw", which is the question being put to an A/A null; the minimum answers
+"what is the uncontended cost", which is the question being put to the estimate. Both print; neither
+is derived from the other. A null CI that straddles wide while the point value sits at 1.000 is
+exactly the straddle this repo's own gate-defect finding says to look for.
+
+So the n=16 regression from 2.015x to 2.293x is a comparison
+between six individually certified measurements whose bands do not overlap, rather than a single
+pre/post pair -- which is the standard the previous row's revert-and-undo established as necessary
+after identical code was shown to vary by ~12% run to run.
+
+That is the same shape as
+this campaign's last three trades, and taking the wider range instead removes it rather than
+averaging it away. Had only the narrow version been built, this row would have read "n=8 improved,
+n=16 regressed, landed anyway" for the second cycle running.
+
+**Correctness.** `MEMRCHR_INDEX_SWEEP` -- every length 1..=200 x every needle position, with a
+**second needle planted at index 0** so a resolver returning the first match instead of the last
+cannot pass -- **20,100 checks, 0 mismatches** against live glibc, on all three post-change runs.
+The sweep covers 16..=31 densely, which is exactly where the two-window argument above could have
+been wrong. `MEMCMP_ORDER_SWEEP` continues at 180,600 / 0.
+
+Gates: `cargo test -p frankenlibc-core --lib -- string::mem` **56 passed, 0 failed, 1 ignored**;
+`cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**. Both observed to compile
+and execute.
+
+**Withheld.** `memrchr` n=64 refused to resolve on every run this cycle (nulls 0.946, 0.946, 0.963,
+1.057), before and after the change alike. It would have read 1.63x-1.83x; it is not reported as a
+result in either arm, so the change is neither credited nor charged for it.
+
+**STILL OPEN, with a new worst.** Now that the spin-up makes `memchr` measurable, **`memchr` n=16
+at 2.859x is the campaign's worst confirmed memory-scan ratio**, with n=8 at 2.503x behind it --
+both larger than the `memrchr` numbers that have occupied the last four cycles. `memchr` has the
+same ladder `memrchr` just had, and the 16-byte tier that was reverted as unconfirmable in the
+2026-08-28 order-balanced row can now be re-tested, because the instrument that refused to certify
+it has since been fixed twice. That is the next lever, and it should be tried as a sub-panel
+dispatch rather than a single tier, on this row's evidence.
