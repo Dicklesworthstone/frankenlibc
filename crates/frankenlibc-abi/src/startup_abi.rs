@@ -1183,14 +1183,20 @@ fn take_tls_atexit_entries() -> Vec<TlsAtExitEntry> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        TLS_ATEXIT_LIST.with(|list| {
-            let mut entries = list.borrow_mut();
-            let mut drained = Vec::new();
-            while let Some(entry) = entries.pop() {
-                drained.push(entry);
-            }
-            drained
-        })
+        // `__call_tls_dtors` itself runs during thread teardown. Rust may have
+        // already destroyed this fallback TLS slot by then; `with` would panic
+        // in the non-unwinding ABI callback, whereas an unavailable fallback
+        // list is already drained from this thread's perspective.
+        TLS_ATEXIT_LIST
+            .try_with(|list| {
+                let mut entries = list.borrow_mut();
+                let mut drained = Vec::new();
+                while let Some(entry) = entries.pop() {
+                    drained.push(entry);
+                }
+                drained
+            })
+            .unwrap_or_default()
     }
 }
 

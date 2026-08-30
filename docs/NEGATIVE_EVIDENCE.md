@@ -40400,3 +40400,5 @@ ones that would notice a threading-policy depth counter behaving differently.
   replaced (a `const`-initialised `Cell<u32>` instead of a field inside a lazy-init
   `RefCell<PthreadTlsState>`), which is the only remaining argument for keeping it; that argument is
   code quality, not performance, and is not a perf claim.
+
+- 2026-08-30 `bd-wutxl6` REJECT: the 64 KiB `fwrite` direct-fd bypass measured 1105.69 ns/call vs live glibc 778.56 (1.420x LOSS) on `hz3`; same-invocation A/A nulls were fl/fl 1.001 and glibc/glibc 1.000, so the source and its behavior-specific test were manually reverted.

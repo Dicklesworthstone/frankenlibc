@@ -480,39 +480,6 @@ fn fwrite_then_fread_round_trip_matches_bytes() {
 }
 
 #[test]
-fn fwrite_large_payload_flushes_prefix_and_reaches_fd_before_fflush() {
-    let path = temp_path("fwrite_large_direct");
-    let _ = fs::remove_file(&path);
-    let path_c = path_cstring(&path);
-    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
-    assert!(!stream.is_null());
-
-    let prefix = b"prefix:";
-    let payload = vec![b'Z'; frankenlibc_core::stdio::BUFSIZ];
-    assert_eq!(
-        unsafe { fwrite(prefix.as_ptr().cast(), 1, prefix.len(), stream) },
-        prefix.len()
-    );
-    assert_eq!(
-        unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) },
-        payload.len()
-    );
-
-    // `pread` observes the descriptor without flushing or changing the stream position. A
-    // buffered implementation would expose neither the prefix nor the large payload here.
-    let mut observed = vec![0u8; prefix.len() + payload.len()];
-    let fd = unsafe { fileno(stream) };
-    assert!(fd >= 0);
-    let read = unsafe { libc::pread(fd, observed.as_mut_ptr().cast(), observed.len(), 0) };
-    assert_eq!(read as usize, observed.len());
-    assert_eq!(&observed[..prefix.len()], prefix);
-    assert_eq!(&observed[prefix.len()..], payload.as_slice());
-
-    assert_eq!(unsafe { fclose(stream) }, 0);
-    let _ = fs::remove_file(path);
-}
-
-#[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn fopencookie_rejects_tracked_unterminated_mode() {
     let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };

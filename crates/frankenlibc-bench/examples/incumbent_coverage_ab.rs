@@ -155,6 +155,7 @@ type FpclassifyfFn = unsafe extern "C" fn(f32) -> c_int;
 type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_void;
 type MemcpyFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
 type StrlenFn = unsafe extern "C" fn(*const c_char) -> usize;
+type StrcasestrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
 type TreeCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 type TsearchFn =
     unsafe extern "C" fn(*const c_void, *mut *mut c_void, TreeCompareFn) -> *mut c_void;
@@ -312,6 +313,8 @@ unsafe extern "C" {
     fn linked_host_tanhf(value: f32) -> f32;
     #[link_name = "strnlen"]
     fn linked_host_strnlen(value: *const c_char, bound: usize) -> usize;
+    #[link_name = "strcasestr"]
+    fn linked_host_strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char;
     #[link_name = "wcsnlen"]
     fn linked_host_wcsnlen(value: *const libc::wchar_t, bound: usize) -> usize;
     // `fpclassify` is a MACRO in C; the object-code symbol both sides actually
@@ -624,6 +627,7 @@ enum Family {
     PrintfFloat,
     Sscanf,
     Wcsnrtombs,
+    Strcasestr,
 }
 
 struct Case {
@@ -1119,10 +1123,11 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("printf_float") => Family::PrintfFloat,
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
+                Some(value) if value == OsStr::new("strcasestr") => Family::Strcasestr,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, fread_mem, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
-                     gethostbyaddr, gethostbyname, snprintf, sscanf, or wcsnrtombs"
+                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, or strcasestr"
                 ),
             };
         } else {
@@ -1134,7 +1139,7 @@ fn parse_args() -> Config {
                   nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
-                  wcsnrtombs]"
+                  wcsnrtombs|strcasestr]"
             );
         }
     }
@@ -10507,6 +10512,65 @@ fn run_snprintf(config: &Config) {
     }
 }
 
+const STRCASESTR_HAYSTACK: &[u8] = b"content-type: application/json; charset=UTF-8; x-request-id: 0123456789abcdef\\0";
+const STRCASESTR_NEEDLE: &[u8] = b"CHARSET=utf-8\\0";
+const STRCASESTR_REPS: usize = 200_000;
+
+#[inline(never)]
+fn time_strcasestr_batch(function: StrcasestrFn) -> f64 {
+    let started = Instant::now();
+    let mut accumulator = 0usize;
+    for _ in 0..STRCASESTR_REPS {
+        let result = unsafe {
+            function(
+                STRCASESTR_HAYSTACK.as_ptr().cast(),
+                STRCASESTR_NEEDLE.as_ptr().cast(),
+            )
+        };
+        accumulator ^= black_box(result as usize);
+    }
+    black_box(accumulator);
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / STRCASESTR_REPS as f64
+}
+
+fn run_strcasestr(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let path = CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_symbol = unsafe { libc::dlsym(handle, c"strcasestr".as_ptr()) };
+    assert!(!fl_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC strcasestr"));
+    let host: StrcasestrFn = linked_host_strcasestr;
+    let fl: StrcasestrFn = unsafe { std::mem::transmute(fl_symbol) };
+    let incumbent = symbol_object(host as *const () as *const c_void).expect("identify host strcasestr");
+    let fl_identity = symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC strcasestr");
+    print_identity("INCUMBENT", &incumbent);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=strcasestr");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=strcasestr");
+    assert_incumbent_is_host_libc(&incumbent, "strcasestr");
+    assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FrankenLibC object differs from supplied object");
+    assert_ne!(host as usize, fl as usize, "both strcasestr arms resolve to the same address");
+    println!("ARM_DISTINCT symbol=strcasestr incumbent_address={:#x} fl_address={:#x}", host as usize, fl as usize);
+    let host_result = unsafe { host(STRCASESTR_HAYSTACK.as_ptr().cast(), STRCASESTR_NEEDLE.as_ptr().cast()) };
+    let fl_result = unsafe { fl(STRCASESTR_HAYSTACK.as_ptr().cast(), STRCASESTR_NEEDLE.as_ptr().cast()) };
+    assert!(!host_result.is_null() && !fl_result.is_null(), "strcasestr must find the conformance needle");
+    let host_offset = unsafe { host_result.offset_from(STRCASESTR_HAYSTACK.as_ptr().cast()) };
+    let fl_offset = unsafe { fl_result.offset_from(STRCASESTR_HAYSTACK.as_ptr().cast()) };
+    assert_eq!(fl_offset, host_offset, "strcasestr match offset differs from glibc");
+    println!("INCUMBENT_COVERAGE_CONFORMANCE symbol=strcasestr comparisons=1 matched_offset={host_offset} verdict=pass");
+    if config.verify_only { return; }
+    let guard = HostWideBenchmarkGuard::new().unwrap();
+    let pre = guard.check_quiet().unwrap_or_else(|error| { eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}"); std::process::exit(2) });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let result = measure_arm_case_with_reps("header_charset_hit", "mixed-case HTTP header search", STRCASESTR_REPS, host, fl, time_strcasestr_batch);
+    let post = guard.check_quiet().unwrap_or_else(|error| { eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}"); std::process::exit(2) });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print("strcasestr", &incumbent.path, observed_threads(), observed_threads());
+    println!("INCUMBENT_COVERAGE_VERDICT symbol=strcasestr verdict={} cases=1 wins={} losses={} undecidable={}", if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" }, usize::from(result.comparison == "FL_FASTER"), usize::from(result.comparison == "FL_SLOWER"), usize::from(!result.decidable()));
+    if !result.decidable() { std::process::exit(2); }
+}
+
 fn main() {
     let config = parse_args();
     ensure_fl_shared_object(&config);
@@ -10569,6 +10633,7 @@ fn main() {
         // shared example compiling for every other family; replace it with the
         // real runner rather than building on it.
         Family::Wcsnrtombs => run_wcsnrtombs(&config),
+        Family::Strcasestr => run_strcasestr(&config),
     }
 }
 

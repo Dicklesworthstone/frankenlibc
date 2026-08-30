@@ -10,10 +10,14 @@
 use std::os::raw::c_char;
 use std::time::Instant;
 
+use sha2::{Digest, Sha256};
+
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut libc::c_void;
 type SetvbufFn = unsafe extern "C" fn(*mut libc::c_void, *mut c_char, i32, usize) -> i32;
 type FputsFn = unsafe extern "C" fn(*const c_char, *mut libc::c_void) -> i32;
 type FflushFn = unsafe extern "C" fn(*mut libc::c_void) -> i32;
+type FwriteFn =
+    unsafe extern "C" fn(*const libc::c_void, usize, usize, *mut libc::c_void) -> usize;
 
 fn dl<T: Copy>(h: *mut libc::c_void, n: &[u8]) -> T {
     let p = unsafe { libc::dlsym(h, n.as_ptr().cast()) };
@@ -45,6 +49,7 @@ fn main() {
     let g_setvbuf: SetvbufFn = dl(h, b"setvbuf\0");
     let g_fputs: FputsFn = dl(h, b"fputs\0");
     let g_fflush: FflushFn = dl(h, b"fflush\0");
+    let g_fwrite: FwriteFn = dl(h, b"fwrite\0");
 
     use frankenlibc_abi::stdio_abi as fl;
     let path = b"/dev/null\0".as_ptr() as *const c_char;
@@ -60,6 +65,87 @@ fn main() {
     assert!(!ff.is_null());
     unsafe {
         fl::setvbuf(ff, std::ptr::null_mut(), libc::_IOFBF, cap);
+    }
+
+    if std::env::args().any(|arg| arg == "--bulk-fwrite-aa") {
+        // Keep the payload at the configured buffer size: this is the exact threshold for
+        // fwrite's direct fd-write path, while both handles remain live in this process.
+        let binary = std::env::current_exe().expect("current executable path");
+        let binary_bytes = std::fs::read(&binary).expect("read current executable");
+        let binary_sha256 = Sha256::digest(binary_bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        println!("BINARY_SHA256={binary_sha256} path={}", binary.display());
+        let payload = vec![b'w'; cap];
+        let calls = 512u64;
+        let samples = 48usize;
+        for _ in 0..32 {
+            for _ in 0..calls {
+                assert_eq!(
+                    unsafe { fl::fwrite(payload.as_ptr().cast(), 1, payload.len(), ff) },
+                    payload.len()
+                );
+                assert_eq!(
+                    unsafe { g_fwrite(payload.as_ptr().cast(), 1, payload.len(), gf) },
+                    payload.len()
+                );
+            }
+            assert_eq!(unsafe { fl::fflush(ff) }, 0);
+            assert_eq!(unsafe { g_fflush(gf) }, 0);
+        }
+
+        let (mut fl_a, mut fl_b, mut glibc_a, mut glibc_b) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..samples {
+            let t = Instant::now();
+            for _ in 0..calls {
+                std::hint::black_box(unsafe {
+                    fl::fwrite(payload.as_ptr().cast(), 1, payload.len(), ff)
+                });
+            }
+            assert_eq!(unsafe { fl::fflush(ff) }, 0);
+            fl_a.push(t.elapsed().as_nanos() as f64 / calls as f64);
+
+            let t = Instant::now();
+            for _ in 0..calls {
+                std::hint::black_box(unsafe {
+                    g_fwrite(payload.as_ptr().cast(), 1, payload.len(), gf)
+                });
+            }
+            assert_eq!(unsafe { g_fflush(gf) }, 0);
+            glibc_a.push(t.elapsed().as_nanos() as f64 / calls as f64);
+
+            let t = Instant::now();
+            for _ in 0..calls {
+                std::hint::black_box(unsafe {
+                    g_fwrite(payload.as_ptr().cast(), 1, payload.len(), gf)
+                });
+            }
+            assert_eq!(unsafe { g_fflush(gf) }, 0);
+            glibc_b.push(t.elapsed().as_nanos() as f64 / calls as f64);
+
+            let t = Instant::now();
+            for _ in 0..calls {
+                std::hint::black_box(unsafe {
+                    fl::fwrite(payload.as_ptr().cast(), 1, payload.len(), ff)
+                });
+            }
+            assert_eq!(unsafe { fl::fflush(ff) }, 0);
+            fl_b.push(t.elapsed().as_nanos() as f64 / calls as f64);
+
+        }
+        let (fl_a, fl_b) = (pctl(&fl_a, 0.5), pctl(&fl_b, 0.5));
+        let (glibc_a, glibc_b) = (pctl(&glibc_a, 0.5), pctl(&glibc_b, 0.5));
+        println!(
+            "FWRITE_BULK_DIRECT bytes={cap} calls={calls} samples={samples} \\
+             fl_ns={fl_a:.2} glibc_ns={glibc_a:.2} fl/glibc={:.3} \\
+             fl_a/fl_b={:.3} glibc_a/glibc_b={:.3}",
+            fl_a / glibc_a,
+            fl_a / fl_b,
+            glibc_a / glibc_b
+        );
+        return;
     }
 
     let it = 200_000u64;
@@ -441,9 +527,6 @@ fn main() {
 
     // Large sequential fwrite to /dev/null in 4 KiB chunks (exercises the buffered write +
     // flush path). fl vs glibc, ns per fwrite call. Certifies the write path.
-    type FwriteFn =
-        unsafe extern "C" fn(*const libc::c_void, usize, usize, *mut libc::c_void) -> usize;
-    let g_fwrite: FwriteFn = dl(h, b"fwrite\0");
     let src4k = vec![b'w'; 4096];
     let wchunks = 64u64;
     let witer = 400u64;
