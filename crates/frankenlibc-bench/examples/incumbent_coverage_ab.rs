@@ -10512,8 +10512,9 @@ fn run_snprintf(config: &Config) {
     }
 }
 
-const STRCASESTR_HAYSTACK: &[u8] = b"content-type: application/json; charset=UTF-8; x-request-id: 0123456789abcdef\\0";
-const STRCASESTR_NEEDLE: &[u8] = b"CHARSET=utf-8\\0";
+const STRCASESTR_HAYSTACK: &[u8] = b"content-type: application/json; charset=UTF-8; x-request-id: 0123456789abcdef\0";
+const STRCASESTR_NEEDLE: &[u8] = b"CHARSET=utf-8\0";
+const STRCASESTR_ABSENT_NEEDLE: &[u8] = b"boundary=missing\0";
 const STRCASESTR_REPS: usize = 200_000;
 
 #[inline(never)]
@@ -10531,6 +10532,59 @@ fn time_strcasestr_batch(function: StrcasestrFn) -> f64 {
     }
     black_box(accumulator);
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / STRCASESTR_REPS as f64
+}
+
+fn check_strcasestr_conformance(host: StrcasestrFn, fl: StrcasestrFn) -> (usize, usize) {
+    // SAFETY: the static byte strings are NUL terminated for the duration of
+    // both calls, and each function has the strcasestr C ABI represented by
+    // StrcasestrFn.
+    let host_match = unsafe {
+        host(
+            STRCASESTR_HAYSTACK.as_ptr().cast(),
+            STRCASESTR_NEEDLE.as_ptr().cast(),
+        )
+    };
+    // SAFETY: same static inputs and ABI contract as the incumbent call above.
+    let fl_match = unsafe {
+        fl(
+            STRCASESTR_HAYSTACK.as_ptr().cast(),
+            STRCASESTR_NEEDLE.as_ptr().cast(),
+        )
+    };
+    assert!(
+        !host_match.is_null() && !fl_match.is_null(),
+        "strcasestr must find the conformance needle"
+    );
+    // SAFETY: each result points into the same static haystack passed to its
+    // corresponding call, so these offsets are within one allocation.
+    let host_offset = unsafe { host_match.offset_from(STRCASESTR_HAYSTACK.as_ptr().cast()) };
+    // SAFETY: see the matching host offset calculation immediately above.
+    let fl_offset = unsafe { fl_match.offset_from(STRCASESTR_HAYSTACK.as_ptr().cast()) };
+    assert_eq!(
+        fl_offset, host_offset,
+        "strcasestr match offset differs from glibc"
+    );
+
+    // SAFETY: the static byte strings are NUL terminated and live for both calls.
+    let host_miss = unsafe {
+        host(
+            STRCASESTR_HAYSTACK.as_ptr().cast(),
+            STRCASESTR_ABSENT_NEEDLE.as_ptr().cast(),
+        )
+    };
+    // SAFETY: same static inputs and ABI contract as the incumbent call above.
+    let fl_miss = unsafe {
+        fl(
+            STRCASESTR_HAYSTACK.as_ptr().cast(),
+            STRCASESTR_ABSENT_NEEDLE.as_ptr().cast(),
+        )
+    };
+    assert!(
+        host_miss.is_null() && fl_miss.is_null(),
+        "strcasestr must return null for the absent conformance needle"
+    );
+
+    (2, host_offset as usize)
 }
 
 fn run_strcasestr(config: &Config) {
@@ -10552,21 +10606,19 @@ fn run_strcasestr(config: &Config) {
     assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FrankenLibC object differs from supplied object");
     assert_ne!(host as usize, fl as usize, "both strcasestr arms resolve to the same address");
     println!("ARM_DISTINCT symbol=strcasestr incumbent_address={:#x} fl_address={:#x}", host as usize, fl as usize);
-    let host_result = unsafe { host(STRCASESTR_HAYSTACK.as_ptr().cast(), STRCASESTR_NEEDLE.as_ptr().cast()) };
-    let fl_result = unsafe { fl(STRCASESTR_HAYSTACK.as_ptr().cast(), STRCASESTR_NEEDLE.as_ptr().cast()) };
-    assert!(!host_result.is_null() && !fl_result.is_null(), "strcasestr must find the conformance needle");
-    let host_offset = unsafe { host_result.offset_from(STRCASESTR_HAYSTACK.as_ptr().cast()) };
-    let fl_offset = unsafe { fl_result.offset_from(STRCASESTR_HAYSTACK.as_ptr().cast()) };
-    assert_eq!(fl_offset, host_offset, "strcasestr match offset differs from glibc");
-    println!("INCUMBENT_COVERAGE_CONFORMANCE symbol=strcasestr comparisons=1 matched_offset={host_offset} verdict=pass");
+    let (comparisons, matched_offset) = check_strcasestr_conformance(host, fl);
+    println!("INCUMBENT_COVERAGE_CONFORMANCE symbol=strcasestr comparisons={comparisons} matched_offset={matched_offset} verdict=pass");
     if config.verify_only { return; }
     let guard = HostWideBenchmarkGuard::new().unwrap();
     let pre = guard.check_quiet().unwrap_or_else(|error| { eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}"); std::process::exit(2) });
     println!("{}", pre.contract_line("pre_measurement"));
+    let threads_before = observed_threads();
     let result = measure_arm_case_with_reps("header_charset_hit", "mixed-case HTTP header search", STRCASESTR_REPS, host, fl, time_strcasestr_batch);
+    let threads_after = observed_threads();
+    assert_eq!(threads_before, threads_after, "thread count changed during strcasestr measurement");
     let post = guard.check_quiet().unwrap_or_else(|error| { eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}"); std::process::exit(2) });
     println!("{}", post.contract_line("post_measurement"));
-    result.print("strcasestr", &incumbent.path, observed_threads(), observed_threads());
+    result.print("strcasestr", &incumbent.path, threads_before, threads_after);
     println!("INCUMBENT_COVERAGE_VERDICT symbol=strcasestr verdict={} cases=1 wins={} losses={} undecidable={}", if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" }, usize::from(result.comparison == "FL_FASTER"), usize::from(result.comparison == "FL_SLOWER"), usize::from(!result.decidable()));
     if !result.decidable() { std::process::exit(2); }
 }
@@ -10678,6 +10730,15 @@ mod tests {
 
         assert_eq!(comparisons, 23);
         assert_eq!(mismatches, 0);
+    }
+
+    #[test]
+    fn strcasestr_conformance_exercises_match_and_miss_cases() {
+        let (comparisons, matched_offset) =
+            check_strcasestr_conformance(linked_host_strcasestr, linked_host_strcasestr);
+
+        assert_eq!(comparisons, 2);
+        assert_eq!(matched_offset, 32);
     }
 }
 

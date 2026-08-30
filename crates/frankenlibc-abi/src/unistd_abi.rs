@@ -28237,11 +28237,48 @@ pub unsafe extern "C" fn mbrtoc8(
 // pkey extras
 // ===========================================================================
 
+/// PKRU holds 16 two-bit fields, so 0..=15 are the only addressable keys.
+#[cfg(target_arch = "x86_64")]
+const PKEY_MAX: c_int = 15;
+
+/// The only rights bits PKRU defines: `PKEY_DISABLE_ACCESS | PKEY_DISABLE_WRITE`.
+#[cfg(target_arch = "x86_64")]
+const PKEY_RIGHTS_MASK: c_int = 0x3;
+
+/// Reject an out-of-range key BEFORE any PKRU access, as glibc does.
+///
+/// This is not defensive tidying; it is the difference between an errno and a
+/// dead process. `RDPKRU`/`WRPKRU` raise #UD unless the CPU reports `OSPKE`, so a
+/// wrapper that reads PKRU before validating its argument turns a plain `EINVAL`
+/// into a **SIGILL** on every machine without protection-key support.
+///
+/// MEASURED, not assumed, on rch worker `vmi1264463` with `ospke=0` in
+/// `/proc/cpuinfo`: live glibc returns `-1` with `errno=22` (EINVAL) for
+/// `pkey_get(-1)`, `pkey_get(16)`, `pkey_set(-1,0)`, `pkey_set(16,0)`,
+/// `pkey_set(0,4)` and `pkey_set(0,-1)` — all six, no signal — while a probe
+/// calling glibc's `pkey_get(0)` (a VALID key, so validation passes and PKRU is
+/// really read) dies with SIGILL on the same host. So glibc validates first and
+/// only then touches the register, and that ordering is the contract.
+///
+/// fl did neither: it read PKRU unconditionally, then computed `pkey as u32 * 2`,
+/// which for a negative key also overflows and panics in a debug build. That is
+/// why `conformance_diff_pkey` could not pass on ANY host — SIGILL where OSPKE is
+/// absent, arithmetic overflow where it is present.
+#[cfg(target_arch = "x86_64")]
+fn pkey_arg_is_valid(pkey: c_int) -> bool {
+    (0..=PKEY_MAX).contains(&pkey)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
-    // Read PKRU register via RDPKRU
-    // Fallback: use the syscall interface
+    if !pkey_arg_is_valid(pkey) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // Read PKRU register via RDPKRU. Reached only for an in-range key, so the
+    // shift below cannot overflow and the instruction is the caller's own risk
+    // on a host without OSPKE — exactly where glibc puts it.
     let pkru: u32;
     unsafe {
         std::arch::asm!(
@@ -28260,6 +28297,14 @@ pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
+    // Both arguments are checked before PKRU is read; see `pkey_arg_is_valid`.
+    // The rights check is not redundant with the mask applied further down: a
+    // caller passing 4 or -1 gets EINVAL from glibc rather than having the bits
+    // silently truncated, which is what the measured oracle shows.
+    if !pkey_arg_is_valid(pkey) || (rights & !PKEY_RIGHTS_MASK) != 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     let mut pkru: u32;
     let edx: u32;
     unsafe {

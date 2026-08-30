@@ -363,7 +363,7 @@ required-features = ["abi-bench"]
 
 [[example]]
 name = "incumbent_coverage_ab"
-harness = false
+harness = true
 required-features = ["abi-bench"]
 
 # strcmp OLD (single 32B panel) vs NEW (4×32 folded 128B block) vs glibc, 1 process.
