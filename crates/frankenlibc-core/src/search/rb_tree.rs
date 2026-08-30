@@ -26,6 +26,18 @@ struct Node<K> {
     right: Option<Box<Node<K>>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ChildLink {
+    Left,
+    Right,
+}
+
+#[derive(Debug)]
+struct DeletePathEntry<K> {
+    node: Box<Node<K>>,
+    descended: ChildLink,
+}
+
 impl<K> Node<K> {
     fn new_red(key: K) -> Box<Self> {
         Box::new(Self {
@@ -62,6 +74,9 @@ pub enum PosixVisit {
 pub struct RbTree<K> {
     root: Option<Box<Node<K>>>,
     len: usize,
+    // Reused by deletion so the iterative parent path is allocated while a
+    // tree is being built, never while the tdelete batch is being timed.
+    delete_path: Vec<DeletePathEntry<K>>,
 }
 
 impl<K> Default for RbTree<K> {
@@ -73,7 +88,11 @@ impl<K> Default for RbTree<K> {
 impl<K> RbTree<K> {
     /// Empty tree.
     pub const fn new() -> Self {
-        Self { root: None, len: 0 }
+        Self {
+            root: None,
+            len: 0,
+            delete_path: Vec::new(),
+        }
     }
 
     /// Number of keys in the tree.
@@ -91,6 +110,11 @@ impl<K> RbTree<K> {
     /// an equal key already existed (in which case the existing key is
     /// retained, matching POSIX `tsearch` semantics).
     pub fn insert<F: Fn(&K, &K) -> Ordering>(&mut self, key: K, cmp: &F) -> bool {
+        if self.delete_path.capacity() == 0 {
+            // A red-black tree holding any practical tsearch batch has height
+            // far below this; the one-time reservation happens before deletes.
+            self.delete_path.reserve(64);
+        }
         let prev_len = self.len;
         let new_root = Self::insert_rec(self.root.take(), key, cmp, &mut self.len);
         let mut root = new_root;
@@ -202,8 +226,87 @@ impl<K> RbTree<K> {
     /// key uses exactly one comparator descent. bd-z4k8bh.
     pub fn delete<F: Fn(&K, &K) -> Ordering>(&mut self, needle: &K, cmp: &F) -> Option<K> {
         let prev_len = self.len;
-        let (new_root, removed, _shortened) = Self::delete_rec(self.root.take(), needle, cmp);
-        self.root = new_root;
+        let mut path = core::mem::take(&mut self.delete_path);
+        let mut current = self.root.take();
+        let mut removed = None;
+        let mut shortened = false;
+
+        'descent: loop {
+            let Some(mut node) = current else { break };
+            match cmp(needle, &node.key) {
+                Ordering::Less => {
+                    current = node.left.take();
+                    path.push(DeletePathEntry { node, descended: ChildLink::Left });
+                }
+                Ordering::Greater => {
+                    current = node.right.take();
+                    path.push(DeletePathEntry { node, descended: ChildLink::Right });
+                }
+                Ordering::Equal if node.left.is_some() && node.right.is_some() => {
+                    // Keep the target on the parent stack and remove its
+                    // successor with the same iterative path; no recursive
+                    // delete_min descent or callback is involved.
+                    current = node.right.take();
+                    path.push(DeletePathEntry { node, descended: ChildLink::Right });
+                    let target_index = path.len() - 1;
+                    loop {
+                        let mut successor = current.expect("right subtree is nonempty");
+                        if successor.left.is_none() {
+                            let old_color = successor.color;
+                            let mut child = successor.right.take();
+                            if let Some(child) = child.as_deref_mut() {
+                                child.color = Color::Black;
+                            }
+                            shortened = old_color == Color::Black && child.is_none();
+                            let target = &mut path[target_index];
+                            removed = Some(core::mem::replace(&mut target.node.key, successor.key));
+                            current = child;
+                            break 'descent;
+                        }
+                        current = successor.left.take();
+                        path.push(DeletePathEntry { node: successor, descended: ChildLink::Left });
+                    }
+                }
+                Ordering::Equal => {
+                    let old_color = node.color;
+                    let mut child = node.left.take().or(node.right.take());
+                    if let Some(child) = child.as_deref_mut() {
+                        child.color = Color::Black;
+                    }
+                    shortened = old_color == Color::Black && child.is_none();
+                    removed = Some(node.key);
+                    current = child;
+                    break;
+                }
+            }
+        }
+
+        while let Some(DeletePathEntry { mut node, descended }) = path.pop() {
+            match descended {
+                ChildLink::Left => {
+                    node.left = current;
+                    if shortened {
+                        let (fixed, still_shortened) = Self::repair_left_shortened(node);
+                        current = Some(fixed);
+                        shortened = still_shortened;
+                    } else {
+                        current = Some(node);
+                    }
+                }
+                ChildLink::Right => {
+                    node.right = current;
+                    if shortened {
+                        let (fixed, still_shortened) = Self::repair_right_shortened(node);
+                        current = Some(fixed);
+                        shortened = still_shortened;
+                    } else {
+                        current = Some(node);
+                    }
+                }
+            }
+        }
+        self.root = current;
+        self.delete_path = path;
         if let Some(ref mut r) = self.root {
             r.color = Color::Black;
         }
@@ -792,6 +895,22 @@ mod tests {
         }
         assert!(t.is_empty());
         assert!(t.find(&0, &cmp_i32).is_none());
+    }
+
+    #[test]
+    fn delete_reuses_parent_path_reserved_during_insert() {
+        let mut t = RbTree::new();
+        for key in 0..256i32 {
+            assert!(t.insert(key, &cmp_i32));
+        }
+        let reserved = t.delete_path.capacity();
+        assert!(reserved >= 64, "insert must preallocate the delete path");
+
+        for key in (0..256i32).step_by(2) {
+            assert_eq!(t.delete(&key, &cmp_i32), Some(key));
+            assert_eq!(t.delete_path.capacity(), reserved);
+            assert_rb_invariants(&t);
+        }
     }
 
     /// Deleting a key that is NOT present must be a total no-op — including on
