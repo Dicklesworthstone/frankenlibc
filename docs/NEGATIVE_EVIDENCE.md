@@ -40181,10 +40181,27 @@ size certifies, and this run is that: all seven `memchr` sizes admissible with n
 0.999..1.004.
 
 **STILL OPEN.** With `memchr` n=16 resolved, the worst confirmed memory-scan ratio in this run is
-`memrchr` n=8 at 1.834x, with `memcmp` n=64 at 1.714x and n=256 at 1.722x behind it. `memchr` n=128
-at 1.412x is now the largest `memchr` residual and sits above both its neighbours (1.313x at n=64,
-1.130x at n=256), which is the same non-monotonic tell this row just spent — the 64..255 band is the
-next thing to read.
+`memrchr` n=8 at 1.834x, with `memcmp` n=256 at 1.722x and n=64 at 1.714x behind it.
+
+**RETRACTED, same day, before anyone spent on it: the `memchr` n=128 "non-monotonic tell" is a
+denominator artefact and is NOT a lever.** The first draft of this paragraph read n=128's 1.412x
+against its neighbours (1.313x at n=64, 1.130x at n=256) and called it the same shape that paid off
+twice in this campaign. It is not. Read fl's own absolute nanoseconds — the column this very row
+argues is the one that survives a regime shift — and the curve is monotone with a per-byte cost that
+only falls: 5.64 ns at n=32, 6.58 at n=64, 7.52 at n=128, 8.14 at n=256, 12.90 at n=1024, i.e.
++0.94 ns for the 32 bytes from 32 to 64, +0.94 ns for the 64 bytes from 64 to 128, +0.62 ns for the
+128 bytes from 128 to 256. There is no discontinuity in fl at 128. The ratio bump is glibc being
+unusually cheap there (5.32 ns at n=128 against 7.20 ns at n=256), which is a fact about the
+incumbent's tiering, not about ours.
+
+**And the lever it would have suggested was checked and would have LOST.** The 32..255 band walks
+`chunks_exact(32)` because `MEMCHR_FOLD_BYTES` is 256, so a 128-byte 4x32 combined fold looks like
+the obvious fill — it is the shape `scan_c_string`'s unbounded path already uses. But this harness
+plants the needle at `buf[n - 1]`, so every folded block CONTAINS the match: the fold would report
+"present" and then re-walk all four panels to resolve the index, which is the four compares it was
+meant to replace plus the fold on top. A folded pre-check only pays over blocks that are ABSENT, and
+on the measured shape the last block never is. Recorded here so the next reader does not rebuild it:
+that lever needs an absent-heavy case to be worth anything, and this campaign has not measured one.
 
 ## 2026-08-30 — bd-2g7oyh — REJECT: conditional `tdelete` root-color store
 
