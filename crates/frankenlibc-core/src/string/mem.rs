@@ -63,8 +63,8 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
         return memcmp_exact_16_mask(a, b);
     }
 
-    if count == MEMCMP_EXACT_256_BYTES && !ne_simd_folded_256(a, b) {
-        return core::cmp::Ordering::Equal;
+    if count == MEMCMP_EXACT_256_BYTES {
+        return memcmp_exact_256_mask(a, b);
     }
 
     // Index-based scan (mirrors the parity-class `strcmp` loop, which is faster
@@ -205,31 +205,29 @@ fn ne_simd_folded_128(a: &[u8], b: &[u8]) -> bool {
     (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
-/// True iff any byte differs across the exact 256-byte equality hot path.
-/// Uses four 64-byte panels and one horizontal reduction; callers still use the
-/// ordered resolver for every non-equal case, so first-difference semantics are
-/// unchanged.
+/// Resolves an exact 256-byte comparison from four ordered 64-byte control masks.
+///
+/// The previous exact-size path only certified equality. A non-equal pair then entered the
+/// general 128-byte fold and re-compared its panels to find the first difference. At 256 bytes
+/// with a late difference that means probing the whole input once, then walking most of it again.
+/// Keeping each 64-byte mask makes the exact-size path its own ordered resolver: equal inputs
+/// still make the same four wide comparisons, while a differing input returns directly from the
+/// first mask that names a lane.
 #[inline(always)]
-fn ne_simd_folded_256(a: &[u8], b: &[u8]) -> bool {
+fn memcmp_exact_256_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_EXACT_256_BYTES);
     debug_assert_eq!(b.len(), MEMCMP_EXACT_256_BYTES);
-    let a0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[..MEMCMP_WIDE_LANES]);
-    let b0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[..MEMCMP_WIDE_LANES]);
-    let a1 =
-        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES..MEMCMP_WIDE_LANES * 2]);
-    let b1 =
-        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[MEMCMP_WIDE_LANES..MEMCMP_WIDE_LANES * 2]);
-    let a2 =
-        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES * 2..MEMCMP_WIDE_LANES * 3]);
-    let b2 =
-        Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[MEMCMP_WIDE_LANES * 2..MEMCMP_WIDE_LANES * 3]);
-    let a3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
-        &a[MEMCMP_WIDE_LANES * 3..MEMCMP_EXACT_256_BYTES],
-    );
-    let b3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
-        &b[MEMCMP_WIDE_LANES * 3..MEMCMP_EXACT_256_BYTES],
-    );
-    (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
+    for base in (0..MEMCMP_EXACT_256_BYTES).step_by(MEMCMP_WIDE_LANES) {
+        let end = base + MEMCMP_WIDE_LANES;
+        let diff_mask = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[base..end])
+            .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[base..end]))
+            .to_bitmask();
+        if diff_mask != 0 {
+            let first = base + diff_mask.trailing_zeros() as usize;
+            return a[first].cmp(&b[first]);
+        }
+    }
+    core::cmp::Ordering::Equal
 }
 
 #[inline]

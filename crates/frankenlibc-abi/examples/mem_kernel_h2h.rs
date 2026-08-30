@@ -400,6 +400,33 @@ fn main() {
                 },
             );
         }
+        // Equal 256-byte buffers take the same exact-size resolver as the late-difference row
+        // above. Keep this control beside the target cell: a resolver that removes repeated
+        // work for a mismatch must not make the all-equal certificate worse.
+        {
+            let a = vec![b'q'; 256];
+            let b = a.clone();
+            let iters = (1 << 22) / 256;
+            measure(
+                "memcmp_eq",
+                256,
+                iters,
+                || {
+                    black_box(frankenlibc_core::string::mem::memcmp(
+                        black_box(&a),
+                        black_box(&b),
+                        black_box(256),
+                    ));
+                },
+                || {
+                    black_box(gl_memcmp(
+                        black_box(a.as_ptr()),
+                        black_box(b.as_ptr()),
+                        black_box(256),
+                    ));
+                },
+            );
+        }
         eprintln!();
 
         for &n in &[256usize, 4096] {
