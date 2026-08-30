@@ -508,6 +508,12 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     // only hold bits below `count - 16` -- a set bit at or above it would name a byte the
     // trailing window just reported clean -- so its high bit is the answer unconditionally.
     if count < SIMD_LANES {
+        // The n=8 operating point is a complete SWAR word. Keep it out of
+        // the general short tail so release code does not construct loop state
+        // and then immediately consume its only iteration.
+        if count == WORD {
+            return last_byte_u64(u64_from_chunk(hs), needle);
+        }
         if count >= MEMCMP_EXACT_16_BYTES {
             let tail = &hs[count - MEMCMP_EXACT_16_BYTES..];
             let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(tail)
