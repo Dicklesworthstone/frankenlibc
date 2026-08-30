@@ -71,12 +71,39 @@ const SYS_IO_GETEVENTS: c_long = 208;
 #[cfg(target_arch = "aarch64")]
 const SYS_IO_GETEVENTS: c_long = 4;
 
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `__errno_location`, proven not to be fl's own export.
+///
+/// The function arm is not the only half of this oracle that can collapse. fl
+/// exports `__errno_location` under the same
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a release test
+/// binary a plain `libc::__errno_location()` reads **fl's** errno slot while the
+/// call under test set glibc's. That is not hypothetical: with the syscall arm
+/// already converted below and this one still link-time, the release run of this
+/// gate failed with `io_destroy(0): fl=(-1, 22) host=(-1, 0)` — a real syscall
+/// error whose errno was read out of the wrong TLS variable. Both halves have to
+/// be resolved the same way or the arm is only half a host.
+fn host_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`, declared
+    // `int *__errno_location(void)`; fl's own export is handed over so a
+    // collapsed oracle aborts instead of silently reading fl's errno.
+    unsafe {
+        let addr = host_addr(
+            c"__errno_location",
+            fl_errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr)
+    }
+}
+
 fn host_errno() -> c_int {
-    unsafe { *libc::__errno_location() }
+    unsafe { *host_errno_location()() }
 }
 
 fn set_host_errno(value: c_int) {
-    unsafe { *libc::__errno_location() = value };
+    unsafe { *host_errno_location()() = value };
 }
 
 fn fl_errno() -> c_int {
