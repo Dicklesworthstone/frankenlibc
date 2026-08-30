@@ -47,7 +47,35 @@ use std::sync::{Mutex, OnceLock};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
-use dlsym_oracle::host_fn;
+use dlsym_oracle::{host_addr, host_fn};
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `__errno_location`, resolved out of libc.so.6 and proven not to
+/// be fl's own export.
+///
+/// The codec function arms here are already dlsym-resolved; the errno arm was
+/// not, and fl exports `__errno_location` under the same
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`. In a release test
+/// binary the link-time `libc::__errno_location` bound to FL's slot, so the host
+/// half of `decode_both` zeroed fl's errno and then read back that zero instead
+/// of what glibc's `mbtowc` set. Measured: this gate failed `--release` with
+/// `mbtowc([c3, a9]) under LC_ALL=C left: (-1, 57005, 84) right: (-1, 57005, 0)`
+/// — fl's EILSEQ against a host errno of 0 — while passing in debug, where the
+/// attribute is off and the reference really does reach glibc. See bd-g1sjty.
+fn host_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`, declared
+    // `int *__errno_location(void)`; fl's own export is handed over so a
+    // collapsed oracle aborts instead of silently reading fl's errno.
+    unsafe {
+        let addr = host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut std::ffi::c_void, ErrnoLocationFn>(addr)
+    }
+}
 
 use frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max as fl_mb_cur_max;
 use frankenlibc_abi::locale_abi::{
@@ -133,9 +161,10 @@ fn decode_both(bytes: &[u8]) -> ((c_int, u32, c_int), (c_int, u32, c_int)) {
     let mut fl_wc = 0xDEADu32;
     // SAFETY: both pointers are live locals and `bytes` is a live slice.
     unsafe {
-        *libc::__errno_location() = 0;
+        let host_errno = host_errno_location();
+        *host_errno() = 0;
         let host_rc = (host().mbtowc)(&mut host_wc, bytes.as_ptr(), bytes.len());
-        let host_err = *libc::__errno_location();
+        let host_err = *host_errno();
 
         reset_shift_state();
         *frankenlibc_abi::errno_abi::__errno_location() = 0;

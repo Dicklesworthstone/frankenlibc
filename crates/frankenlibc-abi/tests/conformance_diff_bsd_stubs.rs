@@ -73,10 +73,39 @@ unsafe fn host_versioned_symbol(name: &std::ffi::CStr) -> (*mut c_void, *mut c_v
     (handle, symbol)
 }
 
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `__errno_location`, resolved out of libc.so.6 and proven not to
+/// be fl's own export.
+///
+/// The function arms above are already dlsym-resolved; the errno arm was not,
+/// and fl exports `__errno_location` under the same
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`. In a release test
+/// binary the link-time `libc::__errno_location` therefore bound to FL's slot,
+/// so `clear_errnos` zeroed fl's errno twice and `host_errno` read back the zero
+/// it had just written instead of what glibc's `chflags` set. Measured, not
+/// theorised: this gate failed `--release` with
+/// `chflags ENOSYS contract left: (-1, 38) right: (-1, 0)` — fl's ENOSYS against
+/// a host errno of 0 — while passing in debug, where the attribute is off and
+/// the reference really does reach glibc. See bd-g1sjty.
+fn host_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`, declared
+    // `int *__errno_location(void)`; fl's own export is handed over so a
+    // collapsed oracle aborts instead of silently reading fl's errno.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut std::ffi::c_void, ErrnoLocationFn>(addr)
+    }
+}
+
 fn clear_errnos() {
     unsafe {
         *errno_abi::__errno_location() = 0;
-        *libc::__errno_location() = 0;
+        *host_errno_location()() = 0;
     }
 }
 
@@ -85,7 +114,7 @@ fn fl_errno() -> c_int {
 }
 
 fn host_errno() -> c_int {
-    unsafe { *libc::__errno_location() }
+    unsafe { *host_errno_location()() }
 }
 
 #[test]
