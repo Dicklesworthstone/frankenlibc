@@ -40355,3 +40355,48 @@ ones that would notice a threading-policy depth counter behaving differently.
   overlay: **control 8 of 20 SIGSEGV, candidate 10 of 20** — the same race either way. STRICT mode is
   20 of 20 clean in both arms, and `fixture_malloc`, `fixture_malloc_stress` and `fixture_pthread`
   are 5 of 5 clean hardened with the candidate. Filed as its own bead rather than absorbed here.
+
+## 2026-08-30 — bd-ny3hsa — REJECT (timed follow-up to a LANDED counted row): `threading_policy_depth`'s -10.0 Ir/pair buys NO measurable time either; the point estimate moves the WRONG way inside the overlap
+
+- **RESULT CLASS: loss/baseline (no timed effect).** The counted row earlier today
+  (`766b3ecc5`, -10.0 Ir/pair on `enter_allocator_reentry_guard`) explicitly claimed no speedup and
+  said the effect was below the timing floor. This is that claim tested rather than assumed, on the
+  quiet host the orchestrator asked for. **No timed win exists. None is claimed.**
+- **THE A/B.** Two `libfrankenlibc_abi.so` built from clean historical commits — before
+  `98801170e152b3fe840a87f5768f5b75d3a7c162` sha256
+  `3638554cd2b39b594f1afcaec4ca4479421b836456a0e86848e86e1c46cf267f`, after `766b3ecc5` sha256
+  `8a14bf955e6f875f5a298cdad4fa6d7030b5389f355aa25f02f4b8817cc95cba` — so the arm IS the shipped
+  object and nothing else moved between them. Both run back to back through the same harness binary,
+  `bench_elf_sha256=6bb135370d778d45df36cea1723de54b5c7aa7170bf5a742614ca59e4df6eef7`, incumbent
+  `/usr/lib/x86_64-linux-gnu/libc.so.6` sha256
+  `a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`, on host `thinkstation1`,
+  command `incumbent_coverage_ab --pin-quietest 2 --family malloc_free --fl-deepbind --fl-so <so>`.
+  Quiet gate CLEAR pre and post on both runs; conformance contract `non_null_64_byte_round_trip`
+  passed on both.
+- **THE NUMBERS**, all intervals `bootstrap_median_ci95` from the harness, i.e. bootstrap median CIs.
+  Before: same-invocation FL/glibc effect median **5.771560** with bootstrap median CI [5.718000, 5.827669]; same-invocation A/A null fl-fl median 0.995768 with bootstrap median CI [0.993723, 1.000146]; A/A null glibc-glibc median 1.002470 with bootstrap median CI [0.994216, 1.008569]; `clears_2x_null=true`, DECIDABLE / FL_SLOWER.
+  After: same-invocation FL/glibc effect median **5.832258** with bootstrap median CI [5.771480, 5.883211]; same-invocation A/A null fl-fl median 0.995270 with bootstrap median CI [0.992257, 1.000046]; A/A null glibc-glibc median 0.993886 with bootstrap median CI [0.987536, 1.005561]; `clears_2x_null=true`, DECIDABLE / FL_SLOWER.
+  All four nulls sit inside the 0.020 tolerance. The two effect intervals overlap over
+  [5.771480, 5.827669], so **the 1.05% difference is not resolvable** — and what difference there is
+  points the WRONG way, the shipped arm reading nominally slower.
+- **SO THE COUNTED ROW STANDS AS COUNTED, AND MUST NOT BE READ AS A LATENT WIN.** -10.0 Ir/pair is
+  real and was measured deterministically; it simply does not reach the clock.
+- **THIS IS THE SECOND CONSECUTIVE CONFIRMATION, AND IT IS THE POINT OF THIS ROW.** Today's other
+  slab lever removed **48.0 Ir/pair, -8.9%** of the whole pair, and was also timed NEUTRAL against
+  the live incumbent. Together with the 2026-08-26 ablation (0.94 ns of ~6.2 ns on the
+  `segment_remaining` probe), that is **three measurements across three shapes and two instruments
+  agreeing: on this allocator's hot path, retired instructions and elapsed time are decoupled.**
+  fl runs ~5.8x glibc here while executing ~7x the instructions, and removing 1.8% or even 8.9% of
+  those instructions moves the ratio by nothing the instrument can see, because they issue in the
+  shadow of a four-to-six cold-cache-line dependent load chain.
+- **OPERATIONAL CONSEQUENCE for anyone taking this vein next: stop pricing levers here in Ir.**
+  A counted profile is still the right tool for finding *where the work is* — it is what produced
+  the frame-by-frame attribution — but it must not be used to *predict* a win, and any lever on this
+  path should be required to show a timed live-incumbent row before it is called an improvement.
+  The remaining lever class is data layout that shortens the dependent-load chain, with a cache-line
+  budget stated before the edit.
+- **The shipped change is left in place pending the orchestrator's call**, and this row is the record
+  that it carries no timed benefit. It is behaviour-preserving and strictly simpler than what it
+  replaced (a `const`-initialised `Cell<u32>` instead of a field inside a lazy-init
+  `RefCell<PthreadTlsState>`), which is the only remaining argument for keeping it; that argument is
+  code quality, not performance, and is not a perf claim.
