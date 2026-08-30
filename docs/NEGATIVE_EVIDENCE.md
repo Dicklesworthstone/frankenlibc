@@ -40114,3 +40114,74 @@ same ladder `memrchr` just had, and the 16-byte tier that was reverted as unconf
 2026-08-28 order-balanced row can now be re-tested, because the instrument that refused to certify
 it has since been fixed twice. That is the next lever, and it should be tried as a sub-panel
 dispatch rather than a single tier, on this row's evidence.
+
+## 2026-08-30 — bd-2g7oyh — MAINTENANCE (self-speedup): `memchr` sub-panel dispatch — fl 7.88 -> 4.40 ns at n=16, and the non-monotonic length curve is gone; fl STILL LOSES to glibc at every size
+
+The previous row named this lever and this shape: `memchr` carried the same ladder `memrchr` had
+just had removed, and it was to be tried "as a sub-panel dispatch rather than a single tier". It
+was, it landed in `d012e77dd`, and this row is the measurement it shipped without.
+
+result_class: self-speedup — legacy_incumbent: host-glibc — incumbent_provenance: dlmopen-lmid-newlm — same_invocation=true — bench_elf_sha256=7bd6b65a4c064c6517009a0ee73a52f449e070958ec03cf9e89362aae280cd9d
+
+**NO WIN IS CLAIMED AND NONE IS AVAILABLE HERE.** Against the live incumbent fl is still SLOWER at
+every `memchr` size measured — 1.614x at n=8, 1.076x at n=16, 1.385x at n=32, 1.313x at n=64,
+1.412x at n=128, 1.130x at n=256, 1.005x at n=1024. What this row banks is a self-speedup: fl's own
+time at n=16 fell from 7.88 ns to 4.40 ns, which is MAINTENANCE by this suite's rule, and the ratio
+at that size moved from 2.859x to 1.076x. The lint's refusal of the first draft of this row, which
+was headed WIN, is the correct verdict and is recorded rather than edited away.
+
+**What changed.** Below one 32-lane panel `memchr` built three iterators and cleared the 256-byte
+fold guard on the way to a scan that one or two SIMD compares answer outright. The new block takes
+everything under 32 bytes: 16..=31 resolves in two overlapping 16-byte windows with no loop, and
+under 16 takes the SWAR word walk directly. The two-window argument is the first-match mirror of
+`memrchr`'s: the leading window is tested first and returns its lowest set bit; if it is empty the
+trailing window's mask cannot carry a bit below index 16, because such a bit would name a byte the
+leading window just reported clean, so its low bit is the answer with no masking step.
+
+**The measurement that named the lever was the length curve, not the ratio.** fl took 7.88 ns at
+n=16 against 5.32 ns at n=32 — half the bytes for half again the time. A scan cannot get cheaper as
+it lengthens, so the 16..=31 range was paying for its route rather than for its bytes.
+
+**Measured, one invocation, both arms in the same process on one worker CPU (hz4), live glibc opened
+`dlmopen(LM_ID_NEWLM, "libc.so.6")` and asserted distinct from the fl arm by pointer, harness
+self-reporting its own executing ELF SHA-256 from `/proc/self/exe`:** at n=16 the same-invocation
+FL/glibc effect median is `incumbent_ratio: 1.076` with bootstrap median CI [1.070, 1.150], against
+its same-invocation A/A null median 1.004 with bootstrap median CI [0.995, 1.005]. Machine forms:
+`incumbent_bootstrap_median_ci: [1.070, 1.150]` and `null_bootstrap_median_ci: [0.995, 1.005]`.
+At n=8 the effect median is 1.614 with bootstrap median CI [1.615, 1.620] beside an A/A null median
+0.999 with bootstrap median CI [0.998, 1.002]. Every `memchr` size returned admissible, nulls
+0.999 to 1.004.
+
+**Read as fl's own absolute nanoseconds, which is the quantity the 2026-08-28 row showed survives a
+denominator regime shift: n=16 goes 7.88 -> 4.40 ns (-44%) and n=32 is unchanged at 5.64 ns, so the
+curve is monotonic again — 4.40 at 16 below 5.64 at 32 — where before it inverted.** The ratios in
+the old regime read 2.859x at n=16 and 2.503x at n=8; they now read 1.076x and 1.614x, but those two
+regimes are not directly comparable and the absolute column is what carries the verdict.
+
+**Correctness.** `MEMCHR_INDEX_SWEEP`, added with the change: every length 1..=200 x every needle
+position, with a decoy needle planted at the LAST index so a resolver returning the last match
+instead of the first cannot pass, plus an absent-needle sweep at every length so an unmasked
+trailing read cannot invent a hit — **20,301 checks, 0 mismatches** against live glibc, in the same
+process as the timing. `MEMRCHR_INDEX_SWEEP` 20,100 / 0 and `MEMCMP_ORDER_SWEEP` 180,600 / 0
+continue to pass.
+
+Command, verbatim: `rch exec --base d012e77dd --clean-overlay --no-overlay -- cargo run --release -p
+frankenlibc-abi --example mem_kernel_h2h`, worker hz4, `SPINUP_MS=600`, 25 timed rounds after 3
+warmup, order-balanced `[fl,gl,gl]`/`[gl,fl,gl]`.
+
+**Prior REJECTs on this surface, adjudicated rather than ignored** (preflight matched five):
+`L8825` str/mem large-buffer head-to-head REJECT concerns buffers far above one panel and does not
+reach a sub-32-byte dispatch; `L3608` rejects a *build-flag* lever ("+avx2 widens the string-SIMD
+residuals") on the grounds that the shipped build already emits AVX2, which this row does not
+dispute and does not rely on; `L9771` is the aliases scanner, a different call site; `L18246` is the
+dead-code-bench audit, which bears on unexecuted benches and not on an in-process timed harness.
+The one genuinely adjacent entry is `L39992` [VOID-NONULL], the `memrchr` sub-panel row whose n=64
+readings were withheld for nulls outside the band — its implicit predicate is a run in which every
+size certifies, and this run is that: all seven `memchr` sizes admissible with nulls in
+0.999..1.004.
+
+**STILL OPEN.** With `memchr` n=16 resolved, the worst confirmed memory-scan ratio in this run is
+`memrchr` n=8 at 1.834x, with `memcmp` n=64 at 1.714x and n=256 at 1.722x behind it. `memchr` n=128
+at 1.412x is now the largest `memchr` residual and sits above both its neighbours (1.313x at n=64,
+1.130x at n=256), which is the same non-monotonic tell this row just spent — the 64..255 band is the
+next thing to read.
