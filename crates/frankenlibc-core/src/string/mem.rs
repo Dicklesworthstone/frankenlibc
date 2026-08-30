@@ -383,6 +383,53 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
+
+    // SHORT DISPATCH for everything below one 32-lane panel. Mirror of the block in `memrchr`,
+    // and landed for the same reason: below 32 bytes this function built three iterators and
+    // cleared the 256-byte fold guard on the way to a scan that one or two SIMD compares
+    // answer outright.
+    //
+    // The measurement that named it is the length curve, not the ratio. Order-balanced against
+    // live glibc, fl took **7.88 ns at n=16 against 5.32 ns at n=32** -- half the bytes for
+    // half again the time. A scan cannot get cheaper as it lengthens, so the 16..=31 range was
+    // not paying for its bytes, it was paying for its route: `chunks_exact(SIMD_LANES)` yields
+    // nothing at that length, so the whole range fell through to **two SWAR word steps** where
+    // a single 16-byte compare decides it.
+    //
+    // Two windows cover 16..=31 with no loop. The leading window is tested first and returns
+    // the lowest set bit; if it is empty the trailing window's mask can only carry bits at or
+    // above index 16, because a bit below it would name a byte the leading window just reported
+    // clean -- so its low bit is the answer with no masking step. This is the first-match mirror
+    // of the argument in `memrchr`, and `MEMCHR_INDEX_SWEEP` exercises exactly this range.
+    if count < SIMD_LANES {
+        if count >= MEMCMP_EXACT_16_BYTES {
+            let head_mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(
+                &hs[..MEMCMP_EXACT_16_BYTES],
+            )
+            .simd_eq(Simd::splat(needle))
+            .to_bitmask();
+            if head_mask != 0 {
+                return Some(head_mask.trailing_zeros() as usize);
+            }
+            let tail_start = count - MEMCMP_EXACT_16_BYTES;
+            let tail_mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(&hs[tail_start..])
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if tail_mask != 0 {
+                return Some(tail_start + tail_mask.trailing_zeros() as usize);
+            }
+            return None;
+        }
+        let mut i = 0usize;
+        while count - i >= WORD {
+            if let Some(j) = first_byte_u64(u64_from_chunk(&hs[i..i + WORD]), needle) {
+                return Some(i + j);
+            }
+            i += WORD;
+        }
+        return hs[i..].iter().position(|&b| b == needle).map(|j| i + j);
+    }
+
     let mut base = 0usize;
 
     while count - base >= MEMCHR_FOLD_BYTES {

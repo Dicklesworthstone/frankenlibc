@@ -266,6 +266,49 @@ fn main() {
             );
         }
 
+        // memchr returns the FIRST occurrence: the mirror sweep, with the decoy planted at the
+        // LAST index instead of the first, so a resolver that returns the last match cannot
+        // pass. The sub-panel dispatch resolves 16..=31 from two overlapping 16-byte windows
+        // and argues the trailing mask needs no masking step; if that argument is wrong it is
+        // wrong somewhere in 16..=31 with a match in the overlap, which this covers densely.
+        {
+            let (mut checks, mut bad) = (0usize, 0usize);
+            for len in 1..=200usize {
+                for pos in 0..len {
+                    let mut buf = vec![b'k'; len];
+                    buf[pos] = b'z';
+                    if pos < len - 1 { buf[len - 1] = b'z'; }
+                    let fl = frankenlibc_core::string::mem::memchr(&buf, b'z', len);
+                    let raw = gl_memchr(buf.as_ptr(), b'z' as i32, len);
+                    let gl = (!raw.is_null()).then(|| raw as usize - buf.as_ptr() as usize);
+                    checks += 1;
+                    if fl != gl {
+                        bad += 1;
+                        if bad <= 5 {
+                            eprintln!("MEMCHR MISMATCH len={len} pos={pos} fl={fl:?} glibc={gl:?}");
+                        }
+                    }
+                }
+            }
+            // A needle that is absent entirely must return None at every length, including the
+            // 16..=31 two-window range where an unmasked trailing read could invent a hit.
+            for len in 0..=200usize {
+                let buf = vec![b'k'; len];
+                let fl = frankenlibc_core::string::mem::memchr(&buf, b'z', len);
+                let raw = gl_memchr(buf.as_ptr(), b'z' as i32, len);
+                let gl = (!raw.is_null()).then(|| raw as usize - buf.as_ptr() as usize);
+                checks += 1;
+                if fl != gl {
+                    bad += 1;
+                    eprintln!("MEMCHR ABSENT MISMATCH len={len} fl={fl:?} glibc={gl:?}");
+                }
+            }
+            eprintln!(
+                "MEMCHR_INDEX_SWEEP checks={checks} mismatches={bad} verdict={}\n",
+                if bad == 0 { "PASS" } else { "FAIL" }
+            );
+        }
+
         for &n in &[8usize, 16, 32, 64, 128, 256, 1024] {
             let mut buf = vec![b'a'; n];
             buf[n - 1] = b'z';
