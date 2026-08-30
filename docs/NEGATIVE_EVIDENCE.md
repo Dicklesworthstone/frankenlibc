@@ -40186,6 +40186,10 @@ at 1.412x is now the largest `memchr` residual and sits above both its neighbour
 1.130x at n=256), which is the same non-monotonic tell this row just spent — the 64..255 band is the
 next thing to read.
 
+## 2026-08-30 — bd-2g7oyh — REJECT: conditional `tdelete` root-color store
+
+Live glibc H2H on `vmi1227854` rejected the cache-line elision: tree2048 was 1.257496x slower and tree8192 1.261029x slower. Same-invocation A/A null control: tree2048 FL/FL median 0.999740, deterministic bootstrap median 95% CI [0.979863, 1.027226]; glibc/glibc median 1.010985, deterministic bootstrap median 95% CI [0.981300, 1.046565]. Same-invocation A/A null control: tree8192 FL/FL median 1.000261, deterministic bootstrap median 95% CI [0.974159, 1.025444]; glibc/glibc median 1.008162, deterministic bootstrap median 95% CI [0.993348, 1.033904]. Restored the unconditional root normalization.
+
 ## 2026-08-30 — bd-ny3hsa / bd-dcrhgl — COUNTED MECHANISM ONLY, no timed claim: the malloc+free pair attributed frame by frame, and `threading_policy_depth` out of the lazy-init TLS struct (-10.0 Ir/pair)
 
 **RESULT CLASS: counted mechanism. NO speedup is claimed and no ratio here may be quoted as a
