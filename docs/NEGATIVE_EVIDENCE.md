@@ -40280,6 +40280,8 @@ ones that would notice a threading-policy depth counter behaving differently.
 
 2026-08-30 bd-2g7oyh.507 LIVE LOSS: current cached `nl_langinfo` table path is 1.335104x slower than live glibc on `full_table_cycle` (4.883ns/3.608ns; A/A 1.004721/1.007897; FL ELF `8c28025e…`, worker vmi1153651); this is an incumbent row, not a before/after causal comparison that justifies blind reversion of the shipped cache.
 
+2026-08-30 bd-2g7oyh.505 LIVE LOSS: landed `57ac99a64` tdelete parent-path rebuild is slower than live glibc on tree512/tree1024/tree2048 (1.638046x/1.596844x/1.588009x; each A/A pair 0.97–1.03; FL ELF `8c28025e…`, bench ELF `fddab993…`, worker vmi1153651); reverted.
+
 ## 2026-08-30 — bd-ny3hsa — REJECT: trusting the `mprotect`ed segment header on the ownership-proven free path removes 48.0 Ir/pair (-8.9%) and buys NO measurable time — reverted
 
 - **RESULT CLASS: loss/baseline (rejected lever).** Reverted; no speedup claimed and none found. The
