@@ -2553,6 +2553,11 @@ unsafe fn write_bytes_without_runtime_policy(
     // (try_write_fast_cell). Mirrors the fgetc slow path.
     stream_cell_cache_store(_stream, &cell);
 
+    let capacity = stream_obj.buffer_capacity();
+    if capacity > 0 && bytes.len() >= capacity {
+        return unsafe { write_large_direct_stream(stream_obj, bytes) };
+    }
+
     let write_result = match stream_obj.buffer_write(bytes) {
         Some(result) => result,
         None => return 0,
@@ -2649,6 +2654,56 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
     }
     stream.mark_flushed();
     true
+}
+
+/// Flush an earlier buffered prefix, then write a large caller-owned payload directly to the fd.
+///
+/// `fwrite` must preserve ordering, so the pending buffer is committed before the direct write.
+/// The buffer has already advanced the logical offset for that prefix; only bytes accepted from
+/// `bytes` advance it here. This avoids copying an at-least-buffer-sized payload into a temporary
+/// `StreamBuffer` allocation only to copy it straight back into the kernel.
+///
+/// # Safety
+/// `stream` must be uniquely borrowed while its descriptor and buffering state are mutated.
+unsafe fn write_large_direct_stream(stream: &mut StdioStream, bytes: &[u8]) -> usize {
+    if !unsafe { flush_stream(stream) } {
+        return 0;
+    }
+
+    let fd = stream.fd();
+    let mut written = 0usize;
+    while written < bytes.len() {
+        let rc = unsafe {
+            sys_write_fd(
+                fd,
+                bytes[written..].as_ptr().cast(),
+                bytes.len() - written,
+            )
+        };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                stream.set_error();
+                break;
+            }
+            StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+        }
+        if rc == 0 {
+            stream.set_error();
+            break;
+        }
+        written += rc as usize;
+    }
+
+    if written > 0 {
+        stream.set_offset(stream.offset().saturating_add(written as i64));
+    }
+    written
 }
 
 /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
@@ -4514,6 +4569,19 @@ pub unsafe extern "C" fn fwrite(
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
         let written = s.mem_write(src);
+        let complete_items = written.checked_div(size).unwrap_or(0);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            written < total,
+        );
+        return complete_items;
+    }
+
+    let capacity = s.buffer_capacity();
+    if capacity > 0 && src.len() >= capacity {
+        let written = unsafe { write_large_direct_stream(s, src) };
         let complete_items = written.checked_div(size).unwrap_or(0);
         runtime_policy::observe(
             ApiFamily::Stdio,
