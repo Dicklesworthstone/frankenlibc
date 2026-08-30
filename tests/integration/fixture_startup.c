@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef int (*startup_main_fn_t)(int, char **, char **);
@@ -103,6 +104,14 @@ static int test_startup_happy_path(void) {
                 "FAIL: snapshot mismatch argc=%zu argv=%zu env=%zu auxv=%zu secure=%d\n",
                 snap.argc, snap.argv_count, snap.env_count, snap.auxv_count, snap.secure_mode);
         return 5;
+    }
+
+    /* The phase-0 fixture's envp is stack-owned. Its execution must not
+     * replace the real process environment that later teardown code reads. */
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (mode == NULL) {
+        fprintf(stderr, "FAIL: phase-0 fixture replaced process environment\n");
+        return 6;
     }
 
     return 0;

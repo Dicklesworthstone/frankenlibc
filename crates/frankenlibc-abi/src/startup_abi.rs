@@ -689,6 +689,7 @@ unsafe fn startup_phase0_impl(
     fini: Option<HookFn>,
     rtld_fini: Option<HookFn>,
     stack_end: *mut c_void,
+    publish_environment: bool,
 ) -> c_int {
     let started = Instant::now();
     let mut path = Vec::with_capacity(16);
@@ -847,7 +848,14 @@ unsafe fn startup_phase0_impl(
     path.push(StartupCheckpoint::ResolveEnvp);
     let resolved_envp = unsafe { resolve_startup_envp(argc, ubp_av, envp) };
     path.push(StartupCheckpoint::BindProcessGlobals);
-    init_process_globals(ubp_av, resolved_envp);
+    if publish_environment {
+        init_process_globals(ubp_av, resolved_envp);
+    } else {
+        // The exported phase-0 fixture accepts caller-owned argv/envp buffers.
+        // Keep its program-name observation, but do not publish a temporary
+        // envp globally and later read it after the fixture frame has gone.
+        init_program_name(ubp_av);
+    }
     path.push(StartupCheckpoint::BootstrapHostSymbols);
     crate::host_resolve::bootstrap_host_symbols();
     path.push(StartupCheckpoint::InitHostStdio);
@@ -913,7 +921,9 @@ pub unsafe extern "C" fn __libc_start_main(
     if use_owned_startup() {
         // SAFETY: owned startup path (default since bd-73h55.1).
         let phase0_rc =
-            unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end) };
+            unsafe {
+                startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, true)
+            };
         if phase0_rc >= 0 {
             return finish_libc_start_main_success(phase0_rc);
         }
@@ -1014,7 +1024,7 @@ pub unsafe extern "C" fn __frankenlibc_startup_phase0(
     stack_end: *mut c_void,
 ) -> c_int {
     // SAFETY: dedicated fixture path invokes the same validated implementation.
-    unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end) }
+    unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, false) }
 }
 
 // ===========================================================================
