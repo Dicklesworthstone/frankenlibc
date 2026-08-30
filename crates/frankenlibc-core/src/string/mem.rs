@@ -325,6 +325,22 @@ fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
     }
 }
 
+/// Last matching byte of a 32-byte SIMD panel, or `None` when it has no match.
+///
+/// `to_bitmask` keeps one bit per byte lane, so the high set bit identifies the
+/// rightmost matching lane directly. Keeping this resolution beside the
+/// first-lane helper prevents reverse scan tiers from regressing to a boolean
+/// probe followed by a scalar `rposition` re-scan.
+#[inline(always)]
+fn last_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
+    let mask = byte_mask_simd_32(chunk, byte);
+    if mask == 0 {
+        None
+    } else {
+        Some(63 - mask.leading_zeros() as usize)
+    }
+}
+
 #[inline(always)]
 fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
@@ -559,9 +575,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
                 // needle moved from offset 31 to 0 -- exactly +3 Ir per byte of
                 // backward scan, and 10.32x at the worst position. `leading_zeros`
                 // on the same mask is O(1) and position-independent.
-                let mask = byte_mask_simd_32(chunk, needle);
-                if mask != 0 {
-                    let j = 63 - mask.leading_zeros() as usize;
+                if let Some(j) = last_byte_simd_32(chunk, needle) {
                     return Some(panel_end - SIMD_LANES + j);
                 }
                 panel_end -= SIMD_LANES;
@@ -575,9 +589,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 
     for chunk in simd_chunks.by_ref() {
         // Same O(1) mask resolve as the folded panel above.
-        let mask = byte_mask_simd_32(chunk, needle);
-        if mask != 0 {
-            let j = 63 - mask.leading_zeros() as usize;
+        if let Some(j) = last_byte_simd_32(chunk, needle) {
             return Some(end - SIMD_LANES + j);
         }
         end -= SIMD_LANES;
@@ -1326,6 +1338,22 @@ mod tests {
     #[test]
     fn test_memrchr_not_found() {
         assert_eq!(memrchr(b"hello", b'z', 5), None);
+    }
+
+    #[test]
+    fn last_byte_simd_32_resolves_highest_matching_lane() {
+        let mut panel = [b'A'; SIMD_LANES];
+        assert_eq!(last_byte_simd_32(&panel, b'Z'), None);
+
+        for &lane in &[0, 1, SIMD_LANES / 2, SIMD_LANES - 2, SIMD_LANES - 1] {
+            panel.fill(b'A');
+            panel[lane] = b'Z';
+            assert_eq!(last_byte_simd_32(&panel, b'Z'), Some(lane));
+        }
+
+        panel[3] = b'Z';
+        panel[SIMD_LANES - 1] = b'Z';
+        assert_eq!(last_byte_simd_32(&panel, b'Z'), Some(SIMD_LANES - 1));
     }
 
     #[test]

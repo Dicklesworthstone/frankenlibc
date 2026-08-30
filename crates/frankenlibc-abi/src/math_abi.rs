@@ -8483,11 +8483,11 @@ pub unsafe extern "C" fn fmodf64x(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
-    // The live f128 glibc oracle leaves errno untouched for the NaN-producing
-    // domain cases. This differs from the f64 wrapper above, so do not share
-    // its errno handling merely because the value-level domain predicate is
-    // the same.
+    // As with the f64 wrapper, genuine domain errors set EDOM. The f128
+    // differential gate resolves glibc's errno accessor independently so a
+    // release interposition cannot confuse host and replacement TLS storage.
     if remainder_family_domain_error_f128(x, y) {
+        set_domain_errno();
         // The NEGATIVE quiet NaN, not Rust's positive f128::NAN. This is not
         // over-fitting to glibc: 0xffff8000... is the x86 default QNaN ("real
         // indefinite"), i.e. what the hardware itself yields for an invalid
@@ -8638,6 +8638,7 @@ pub unsafe extern "C" fn remainderf128(x: f128, y: f128) -> f128 {
         return x + y; // NaN propagation, no errno
     }
     if ay == 0.0 || ax.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
         // glibc returns a negative quiet NaN for the domain error.
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     }
