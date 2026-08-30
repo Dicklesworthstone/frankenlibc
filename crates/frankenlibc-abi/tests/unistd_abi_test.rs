@@ -2970,50 +2970,45 @@ fn capture_argp_stdout_child_status(
     Ok(String::from_utf8_lossy(&captured).into_owned())
 }
 
-fn capture_argp_child_exit(
-    expected_status: c_int,
-    child: impl FnOnce(*mut libc::FILE),
-) -> Result<String, Box<dyn std::error::Error>> {
-    let mut fds = [0; 2];
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+fn run_argp_exit_probe(test_name: &str, expected_status: c_int, expected_output: &str) {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .output()
+        .expect("failed to spawn argp exit probe subprocess");
 
-    let pid = unsafe { libc::fork() };
-    assert!(pid >= 0, "fork failed");
-
-    if pid == 0 {
-        unsafe {
-            let _ = libc::close(fds[0]);
-            let mode = c"w";
-            let stream = libc::fdopen(fds[1], mode.as_ptr());
-            if stream.is_null() {
-                libc::_exit(126);
-            }
-            libc::setvbuf(stream, std::ptr::null_mut(), libc::_IONBF, 0);
-            child(stream);
-            libc::_exit(127);
-        }
-    }
-
-    unsafe {
-        let _ = libc::close(fds[1]);
-    }
-
-    let mut status: c_int = 0;
-    let mut captured = Vec::new();
-    // SAFETY: `pid` is our child and `fds[0]` the pipe read end we own.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
-        unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut captured) },
-        pid
+        output.status.code(),
+        Some(expected_status),
+        "argp exit probe returned {:?}; stdout={stdout:?}; stderr={stderr:?}",
+        output.status.code(),
     );
     assert!(
-        libc::WIFEXITED(status),
-        "child did not exit normally: {status}"
+        stdout.contains(expected_output),
+        "argp exit probe omitted its diagnostic {expected_output:?}; stdout={stdout:?}; stderr={stderr:?}",
     );
-    assert_eq!(libc::WEXITSTATUS(status), expected_status);
+}
 
-    // SAFETY: the drain fd is owned here and closed exactly once.
-    unsafe { libc::close(fds[0]) };
-    Ok(String::from_utf8_lossy(&captured).into_owned())
+unsafe fn argp_exit_probe_stream() -> *mut libc::FILE {
+    // SAFETY: duplicating stdout gives the probe an independent descriptor which is
+    // consumed by process exit after the argp routine terminates the subprocess.
+    let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    assert!(fd >= 0, "dup stdout failed: {}", std::io::Error::last_os_error());
+    // SAFETY: fd is a fresh writable descriptor and c"w" is NUL-terminated.
+    let stream = unsafe { libc::fdopen(fd, c"w".as_ptr()) };
+    assert!(
+        !stream.is_null(),
+        "fdopen stdout duplicate failed: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: stream is valid; unbuffered output makes the diagnostic observable
+    // even though argp_error/argp_failure exit without returning to this helper.
+    unsafe { libc::setvbuf(stream, std::ptr::null_mut(), libc::_IONBF, 0) };
+    stream
 }
 
 #[test]
@@ -3467,33 +3462,50 @@ fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
 
 #[test]
 fn abi_argp_error_exits_with_configured_status_in_child() {
+    run_argp_exit_probe(
+        "argp_error_exits_with_configured_status_probe_process",
+        73,
+        "exit-demo: fatal 3\n",
+    );
+}
+
+#[test]
+#[ignore]
+fn argp_error_exits_with_configured_status_probe_process() {
     let name = CString::new("exit-demo").unwrap();
     let fmt = CString::new("fatal %d").unwrap();
 
-    let output = capture_argp_child_exit(73, |stream| unsafe {
+    unsafe {
         frankenlibc_abi::glibc_internal_abi::argp_err_exit_status = 73;
         let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
-        state.err_stream = stream;
+        state.err_stream = argp_exit_probe_stream();
         frankenlibc_abi::unistd_abi::argp_error(
             (&mut state as *mut FixtureArgpState).cast(),
             fmt.as_ptr(),
             3 as c_int,
         );
-    })
-    .unwrap();
-
-    assert_eq!(output, "exit-demo: fatal 3\n");
+    }
 }
 
 #[test]
 fn abi_argp_failure_exits_with_status_in_child() {
+    run_argp_exit_probe(
+        "argp_failure_exits_with_status_probe_process",
+        74,
+        "failure-demo: failed item: No such file or directory\n",
+    );
+}
+
+#[test]
+#[ignore]
+fn argp_failure_exits_with_status_probe_process() {
     let name = CString::new("failure-demo").unwrap();
     let fmt = CString::new("failed %s").unwrap();
     let item = CString::new("item").unwrap();
 
-    let output = capture_argp_child_exit(74, |stream| unsafe {
+    unsafe {
         let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
-        state.err_stream = stream;
+        state.err_stream = argp_exit_probe_stream();
         frankenlibc_abi::unistd_abi::argp_failure(
             (&mut state as *mut FixtureArgpState).cast(),
             74,
@@ -3501,24 +3513,28 @@ fn abi_argp_failure_exits_with_status_in_child() {
             fmt.as_ptr(),
             item.as_ptr(),
         );
-    })
-    .unwrap();
+    }
+}
 
-    assert_eq!(
-        output,
-        "failure-demo: failed item: No such file or directory\n"
+#[test]
+fn abi_argp_failure_honors_no_exit_flag() {
+    run_argp_exit_probe(
+        "argp_failure_honors_no_exit_flag_probe_process",
+        0,
+        "failure-demo: failed 9: Invalid argument\n",
     );
 }
 
 #[test]
-fn abi_argp_failure_honors_no_exit_flag_in_child() {
+#[ignore]
+fn argp_failure_honors_no_exit_flag_probe_process() {
     let name = CString::new("failure-demo").unwrap();
     let fmt = CString::new("failed %d").unwrap();
 
-    let output = capture_argp_child_exit(127, |stream| unsafe {
+    unsafe {
         let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
         state.flags = ARGP_NO_EXIT;
-        state.err_stream = stream;
+        state.err_stream = argp_exit_probe_stream();
         frankenlibc_abi::unistd_abi::argp_failure(
             (&mut state as *mut FixtureArgpState).cast(),
             74,
@@ -3526,10 +3542,7 @@ fn abi_argp_failure_honors_no_exit_flag_in_child() {
             fmt.as_ptr(),
             9 as c_int,
         );
-    })
-    .unwrap();
-
-    assert_eq!(output, "failure-demo: failed 9: Invalid argument\n");
+    }
 }
 
 #[test]
