@@ -6069,6 +6069,248 @@ enum DirectPrintfPayload<'a> {
     StringNewline(&'a [u8]),
 }
 
+/// The deliberately narrow grammar accepted by the fused strict `snprintf`
+/// path. Flags, widths, precisions, positional arguments, and conversions
+/// without an immediate byte-level equivalence remain on the full renderer.
+#[derive(Clone, Copy)]
+enum StrictDirectSnprintfSpec {
+    Percent,
+    Char,
+    String,
+    Signed32,
+    Unsigned32,
+    Hex32(bool),
+    Octal32,
+    SignedLong,
+    UnsignedLong,
+    HexLong(bool),
+    OctalLong,
+    Pointer,
+}
+
+/// Parse bytes after one `%`; the count excludes that percent byte.
+#[inline]
+fn strict_direct_snprintf_spec(bytes: &[u8]) -> Option<(StrictDirectSnprintfSpec, usize)> {
+    let first = *bytes.first()?;
+    if first == b'%' {
+        return Some((StrictDirectSnprintfSpec::Percent, 1));
+    }
+    let (long, conversion, consumed) = if first == b'l' {
+        (true, *bytes.get(1)?, 2usize)
+    } else {
+        (false, first, 1usize)
+    };
+    let spec = match (long, conversion) {
+        (false, b'c') => StrictDirectSnprintfSpec::Char,
+        (false, b's') => StrictDirectSnprintfSpec::String,
+        (false, b'd' | b'i') => StrictDirectSnprintfSpec::Signed32,
+        (false, b'u') => StrictDirectSnprintfSpec::Unsigned32,
+        (false, b'x') => StrictDirectSnprintfSpec::Hex32(false),
+        (false, b'X') => StrictDirectSnprintfSpec::Hex32(true),
+        (false, b'o') => StrictDirectSnprintfSpec::Octal32,
+        (true, b'd' | b'i') => StrictDirectSnprintfSpec::SignedLong,
+        (true, b'u') => StrictDirectSnprintfSpec::UnsignedLong,
+        (true, b'x') => StrictDirectSnprintfSpec::HexLong(false),
+        (true, b'X') => StrictDirectSnprintfSpec::HexLong(true),
+        (true, b'o') => StrictDirectSnprintfSpec::OctalLong,
+        (false, b'p') => StrictDirectSnprintfSpec::Pointer,
+        _ => return None,
+    };
+    Some((spec, consumed))
+}
+
+/// Check eligibility before touching the va_list, so declined formats can take
+/// the general renderer unchanged.
+unsafe fn is_strict_direct_snprintf_format(format: *const c_char) -> bool {
+    // SAFETY: printf requires a NUL-terminated format. The ABI's scanner avoids
+    // the membrane object-size lookup on this strict passthrough path.
+    let (len, _) = unsafe { super::string_abi::scan_c_string(format, None) };
+    let bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), len) };
+    let mut at = 0usize;
+    let mut conversions = 0usize;
+    while at < bytes.len() {
+        if bytes[at] != b'%' {
+            at += 1;
+            continue;
+        }
+        let Some((_, consumed)) = strict_direct_snprintf_spec(&bytes[at + 1..]) else {
+            return false;
+        };
+        conversions += 1;
+        at += 1 + consumed;
+    }
+    conversions != 0
+}
+
+struct StrictDirectSnprintfWriter {
+    dst: *mut c_char,
+    size: usize,
+    written: usize,
+    total: usize,
+}
+
+impl StrictDirectSnprintfWriter {
+    const fn new(dst: *mut c_char, size: usize) -> Self {
+        Self { dst, size, written: 0, total: 0 }
+    }
+
+    /// Append while preserving snprintf's would-have-written length.
+    unsafe fn push(&mut self, bytes: &[u8]) {
+        self.total = self.total.saturating_add(bytes.len());
+        if self.size == 0 || self.dst.is_null() || self.written >= self.size - 1 {
+            return;
+        }
+        let copied = bytes.len().min(self.size - 1 - self.written);
+        if copied != 0 {
+            // SAFETY: `written + copied <= size - 1`; both source and caller
+            // supplied destination ranges are live for the copied bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    self.dst.cast::<u8>().add(self.written),
+                    copied,
+                )
+            };
+            self.written += copied;
+        }
+    }
+
+    unsafe fn finish(self) -> c_int {
+        if self.size != 0 && !self.dst.is_null() {
+            // SAFETY: `push` maintains `written < size`.
+            unsafe { *self.dst.add(self.written) = 0 };
+        }
+        printf_result_to_c_int(self.total)
+    }
+}
+
+#[inline]
+fn strict_direct_unsigned_digits(
+    mut value: u64,
+    base: u64,
+    upper: bool,
+    rendered: &mut [u8; 22],
+) -> usize {
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value % base) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else if upper {
+            b'A' + digit - 10
+        } else {
+            b'a' + digit - 10
+        };
+        value /= base;
+        if value == 0 {
+            return start;
+        }
+    }
+}
+
+// `VaListImpl` is unstable to name directly. Keeping the emitter as a macro
+// lets the ABI entrypoint pass its compiler-provided va_list without exposing
+// that implementation type to a helper signature.
+macro_rules! strict_direct_snprintf_fused {
+    ($str_buf:expr, $size:expr, $format:expr, $args:expr) => {{
+        let (len, _) = unsafe { super::string_abi::scan_c_string($format, None) };
+        let bytes = unsafe { std::slice::from_raw_parts($format.cast::<u8>(), len) };
+        let mut writer = StrictDirectSnprintfWriter::new($str_buf, $size);
+        let mut at = 0usize;
+        let mut literal_start = 0usize;
+        while at < bytes.len() {
+            if bytes[at] != b'%' {
+                at += 1;
+                continue;
+            }
+            unsafe { writer.push(&bytes[literal_start..at]) };
+            let (spec, consumed) = strict_direct_snprintf_spec(&bytes[at + 1..])
+                .expect("fused snprintf called only after eligibility validation");
+            at += 1 + consumed;
+            match spec {
+                StrictDirectSnprintfSpec::Percent => unsafe { writer.push(b"%") },
+                StrictDirectSnprintfSpec::Char => {
+                    let rendered = [unsafe { $args.next_arg::<c_int>() } as u8];
+                    unsafe { writer.push(&rendered) };
+                }
+                StrictDirectSnprintfSpec::String => {
+                    let arg = unsafe { $args.next_arg::<*const c_char>() };
+                    let rendered = if arg.is_null() {
+                        b"(null)".as_slice()
+                    } else {
+                        let (arg_len, _) = unsafe { super::string_abi::scan_c_string(arg, None) };
+                        unsafe { std::slice::from_raw_parts(arg.cast::<u8>(), arg_len) }
+                    };
+                    unsafe { writer.push(rendered) };
+                }
+                StrictDirectSnprintfSpec::Signed32 | StrictDirectSnprintfSpec::SignedLong => {
+                    let value = match spec {
+                        StrictDirectSnprintfSpec::Signed32 => unsafe { $args.next_arg::<c_int>() as i64 },
+                        StrictDirectSnprintfSpec::SignedLong => unsafe { $args.next_arg::<i64>() },
+                        _ => unreachable!(),
+                    };
+                    let mut rendered = [0u8; 22];
+                    let mut start = strict_direct_unsigned_digits(value.unsigned_abs(), 10, false, &mut rendered);
+                    if value < 0 {
+                        start -= 1;
+                        rendered[start] = b'-';
+                    }
+                    unsafe { writer.push(&rendered[start..]) };
+                }
+                StrictDirectSnprintfSpec::Unsigned32
+                | StrictDirectSnprintfSpec::UnsignedLong
+                | StrictDirectSnprintfSpec::Hex32(_)
+                | StrictDirectSnprintfSpec::HexLong(_)
+                | StrictDirectSnprintfSpec::Octal32
+                | StrictDirectSnprintfSpec::OctalLong => {
+                    let value = match spec {
+                        StrictDirectSnprintfSpec::Unsigned32
+                        | StrictDirectSnprintfSpec::Hex32(_)
+                        | StrictDirectSnprintfSpec::Octal32 => unsafe { $args.next_arg::<c_uint>() as u64 },
+                        _ => unsafe { $args.next_arg::<u64>() },
+                    };
+                    let (base, upper) = match spec {
+                        StrictDirectSnprintfSpec::Hex32(upper) | StrictDirectSnprintfSpec::HexLong(upper) => (16, upper),
+                        StrictDirectSnprintfSpec::Octal32 | StrictDirectSnprintfSpec::OctalLong => (8, false),
+                        _ => (10, false),
+                    };
+                    let mut rendered = [0u8; 22];
+                    let start = strict_direct_unsigned_digits(value, base, upper, &mut rendered);
+                    unsafe { writer.push(&rendered[start..]) };
+                }
+                StrictDirectSnprintfSpec::Pointer => {
+                    let arg = unsafe { $args.next_arg::<*mut c_void>() };
+                    let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
+                    let (start, used) = if arg.is_null() {
+                        rendered[..5].copy_from_slice(b"(nil)");
+                        (0usize, 5usize)
+                    } else {
+                        let mut value = arg as usize;
+                        let mut start = rendered.len();
+                        loop {
+                            start -= 1;
+                            let digit = (value & 0xf) as u8;
+                            rendered[start] = if digit < 10 { b'0' + digit } else { b'a' + digit - 10 };
+                            value >>= 4;
+                            if value == 0 {
+                                break;
+                            }
+                        }
+                        start -= 2;
+                        rendered[start..start + 2].copy_from_slice(b"0x");
+                        (start, rendered.len() - start)
+                    };
+                    unsafe { writer.push(&rendered[start..start + used]) };
+                }
+            }
+            literal_start = at;
+        }
+        unsafe { writer.push(&bytes[literal_start..]) };
+        unsafe { writer.finish() }
+    }};
+}
+
 #[inline]
 unsafe fn exact_direct_s_format(format: *const c_char) -> Option<bool> {
     let f = format.cast::<u8>();
@@ -7568,6 +7810,9 @@ pub unsafe extern "C" fn snprintf(
         // SAFETY: snprintf's C contract supplies `size` writable bytes when
         // `size > 0`; the helper bounds every write to that region.
         return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
+    }
+    if strict_direct && unsafe { is_strict_direct_snprintf_format(format) } {
+        return strict_direct_snprintf_fused!(str_buf, size, format, args);
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
@@ -14614,6 +14859,46 @@ mod tests {
                     assert_eq!(buf[copied], 0);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs() {
+        for (format, expected) in [
+            (b"%s %s %d %lu".as_slice(), true),
+            (b"id=%08x".as_slice(), false),
+            (b"%1$s".as_slice(), false),
+            (b"%.3s".as_slice(), false),
+            (b"%f".as_slice(), false),
+            (b"%n".as_slice(), false),
+        ] {
+            let mut nul_terminated = Vec::from(format);
+            nul_terminated.push(0);
+            assert_eq!(
+                unsafe { is_strict_direct_snprintf_format(nul_terminated.as_ptr().cast()) },
+                expected,
+                "{format:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_strict_snprintf_writer_preserves_cross_segment_truncation() {
+        for (size, expected) in [
+            (0usize, b"\xa5\xa5\xa5\xa5\xa5\xa5\xa5\xa5".as_slice()),
+            (1, b"\0\xa5\xa5\xa5\xa5\xa5\xa5\xa5".as_slice()),
+            (4, b"GET\0\xa5\xa5\xa5\xa5".as_slice()),
+            (8, b"GET /x\0\xa5".as_slice()),
+        ] {
+            let mut buf = [0xa5u8; 8];
+            let mut writer = StrictDirectSnprintfWriter::new(buf.as_mut_ptr().cast(), size);
+            unsafe {
+                writer.push(b"GET");
+                writer.push(b" ");
+                writer.push(b"/x");
+                assert_eq!(writer.finish(), 6);
+            }
+            assert_eq!(&buf, expected, "size={size}");
         }
     }
 

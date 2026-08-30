@@ -205,7 +205,12 @@ impl<K> RbTree<K> {
         let (new_root, removed, _shortened) = Self::delete_rec(self.root.take(), needle, cmp);
         self.root = new_root;
         if let Some(ref mut r) = self.root {
-            r.color = Color::Black;
+            // Repair normally returns a black root. Avoid writing the shared
+            // root cache line unless a rotation actually produced the red root
+            // that this public invariant must normalize.
+            if r.color == Color::Red {
+                r.color = Color::Black;
+            }
         }
         self.len -= usize::from(removed.is_some());
         debug_assert_eq!(self.len + usize::from(removed.is_some()), prev_len);
