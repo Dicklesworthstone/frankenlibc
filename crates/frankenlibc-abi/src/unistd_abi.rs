@@ -5318,6 +5318,14 @@ unsafe fn strict_getrandom_passthrough(
 /// Linux `getrandom` — fill buffer with random bytes from the kernel CSPRNG.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
+    // `getrandom(NULL, 0, 0)` is a successful no-op: there is no output region
+    // to validate, no entropy to obtain, and no caller memory to access. Keep
+    // nonzero flags on the vDSO/syscall path so the kernel remains the authority
+    // for their validation (including future Linux flag bits and invalid mixes).
+    if buflen == 0 && flags == 0 {
+        return 0;
+    }
+
     if runtime_policy::strict_passthrough_active() {
         return unsafe { strict_getrandom_passthrough(buf, buflen, flags) };
     }

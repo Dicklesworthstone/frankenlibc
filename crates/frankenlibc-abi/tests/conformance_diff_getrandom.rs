@@ -95,6 +95,35 @@ fn diff_getrandom_zero_length_returns_zero() {
 }
 
 #[test]
+fn diff_getrandom_zero_length_null_and_flag_contract() {
+    // A zero-byte request may use a null output pointer. The fast path is only
+    // for flags=0; valid nonzero flags and an invalid flag must retain the host
+    // contract rather than being silently accepted by an early return.
+    for flags in [0, libc::GRND_NONBLOCK, libc::GRND_RANDOM] {
+        let fl_n = unsafe { fl::getrandom(std::ptr::null_mut(), 0, flags) };
+        let fl_errno = std::io::Error::last_os_error().raw_os_error();
+        let lc_n = unsafe { getrandom(std::ptr::null_mut(), 0, flags) };
+        let lc_errno = std::io::Error::last_os_error().raw_os_error();
+        assert_eq!(
+            (fl_n, fl_errno),
+            (lc_n, lc_errno),
+            "getrandom(NULL, 0, {flags:#x}) contract mismatch"
+        );
+    }
+
+    let invalid_flag = 1_u32 << 31;
+    let fl_n = unsafe { fl::getrandom(std::ptr::null_mut(), 0, invalid_flag) };
+    let fl_errno = std::io::Error::last_os_error().raw_os_error();
+    let lc_n = unsafe { getrandom(std::ptr::null_mut(), 0, invalid_flag) };
+    let lc_errno = std::io::Error::last_os_error().raw_os_error();
+    assert_eq!(
+        (fl_n, fl_errno),
+        (lc_n, lc_errno),
+        "getrandom(NULL, 0, invalid flags) contract mismatch"
+    );
+}
+
+#[test]
 fn getrandom_diff_coverage_report() {
     eprintln!(
         "{{\"family\":\"libc getrandom + getentropy\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",

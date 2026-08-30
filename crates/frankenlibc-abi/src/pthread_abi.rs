@@ -200,7 +200,6 @@ struct PthreadTlsState {
     force_native_threading_override: Option<bool>,
     threading_test_override_baseline: bool,
     threading_test_override_depth: usize,
-    threading_policy_depth: u32,
     thread_cancel_state: c_int,
     thread_cancel_type: c_int,
     current_threading_backend: u8,
@@ -213,7 +212,6 @@ impl PthreadTlsState {
             force_native_threading_override: None,
             threading_test_override_baseline: false,
             threading_test_override_depth: 0,
-            threading_policy_depth: 0,
             thread_cancel_state: PTHREAD_CANCEL_ENABLE_STATE,
             thread_cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
             current_threading_backend: THREAD_BACKEND_UNKNOWN,
@@ -260,6 +258,25 @@ pub(crate) const fn pthread_tls_access_active() -> bool {
 thread_local! {
     static PTHREAD_TLS: RefCell<PthreadTlsState> = RefCell::new(PthreadTlsState::new());
     static PTHREAD_SELF_FAST: Cell<libc::pthread_t> = const { Cell::new(0) };
+}
+
+/// Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
+///
+/// `in_threading_policy_context()` is on the allocator's hot path: the allocator
+/// re-entry guard evaluates it on EVERY `malloc` and `free`, because the term that
+/// would short-circuit it, `pthread_tls_access_active()`, is a `const fn` returning
+/// `false` unless the `owned-tls-cache` feature is on. Reading the depth out of
+/// `PTHREAD_TLS` cost a `RefCell` borrow-flag check and, worse, a LAZY-INIT check,
+/// because that `thread_local!` has a non-`const` initializer
+/// (`RefCell::new(PthreadTlsState::new())`) and so carries a state word the
+/// accessor must test on every use.
+///
+/// A single `u32` in its own `const`-initialised `Cell` needs neither. Same value,
+/// same two writers, same reader semantics -- only the container changes.
+/// Unconditional: the field it replaces was removed from `PthreadTlsState` for both
+/// feature configurations, and `in_threading_policy_context()` has one definition.
+thread_local! {
+    static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 #[inline]
@@ -691,23 +708,22 @@ struct ThreadingPolicyGuard;
 
 impl Drop for ThreadingPolicyGuard {
     fn drop(&mut self) {
-        let _ = try_with_pthread_tls(|tls| {
-            tls.threading_policy_depth = tls.threading_policy_depth.saturating_sub(1);
-        });
+        let _ = THREADING_POLICY_DEPTH.try_with(|d| d.set(d.get().saturating_sub(1)));
     }
 }
 
 #[allow(dead_code)]
 fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
-    try_with_pthread_tls(|tls| {
-        if tls.threading_policy_depth > 0 {
-            None
-        } else {
-            tls.threading_policy_depth += 1;
-            Some(ThreadingPolicyGuard)
-        }
-    })
-    .unwrap_or(None)
+    THREADING_POLICY_DEPTH
+        .try_with(|d| {
+            if d.get() > 0 {
+                None
+            } else {
+                d.set(d.get() + 1);
+                Some(ThreadingPolicyGuard)
+            }
+        })
+        .unwrap_or(None)
 }
 
 #[allow(dead_code)]
@@ -725,7 +741,12 @@ where
 
 #[must_use]
 pub(crate) fn in_threading_policy_context() -> bool {
-    try_with_pthread_tls(|tls| tls.threading_policy_depth > 0).unwrap_or(true)
+    // `unwrap_or(true)` preserved: a thread whose TLS cannot be reached is treated
+    // as being inside the threading-policy context, which is the conservative answer
+    // the allocator guard relies on.
+    THREADING_POLICY_DEPTH
+        .try_with(|d| d.get() > 0)
+        .unwrap_or(true)
 }
 
 /// Treats the leading atomic word of `pthread_mutex_t` as our lock state.

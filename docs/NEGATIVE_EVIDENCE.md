@@ -40185,3 +40185,74 @@ size certifies, and this run is that: all seven `memchr` sizes admissible with n
 at 1.412x is now the largest `memchr` residual and sits above both its neighbours (1.313x at n=64,
 1.130x at n=256), which is the same non-monotonic tell this row just spent — the 64..255 band is the
 next thing to read.
+
+## 2026-08-30 — bd-ny3hsa / bd-dcrhgl — COUNTED MECHANISM ONLY, no timed claim: the malloc+free pair attributed frame by frame, and `threading_policy_depth` out of the lazy-init TLS struct (-10.0 Ir/pair)
+
+**RESULT CLASS: counted mechanism. NO speedup is claimed and no ratio here may be quoted as a
+campaign result.** Instructions retired, counted in software by callgrind; they are not cycles, and
+10 Ir on a ~30 ns pair sits below this suite's timing floor. What is established is that the work
+changed and exactly where.
+
+**Why counted and not timed.** `perf_event_paranoid=4` on this host AND on every rch worker, so
+hardware counters are denied; `rch` refuses non-compilation commands, so valgrind cannot be pointed
+at a worker. The binary is therefore built remotely via `rch` on worker `hz4` and executed LOCALLY
+on `thinkstation1` under `valgrind --tool=callgrind`. bd-ny3hsa asked for exactly this and forbade
+skipping it.
+
+**THE ATTRIBUTION, which is the deliverable bd-ny3hsa named as its first step.** Two-point marginal:
+`ICOUNT_PAIRS=20000` minus `ICOUNT_PAIRS=1000` over sizes 16/64/256/1024, divided by 4x19000 pairs,
+so one-time startup cancels. Base `malloc_icount` sha256
+`674b871523319d8a26d7ff6990f067522b8bfdf3835a494ce3d54a35f02afb01` at commit `5b3f6ce14`. Marginal
+Ir per malloc+free pair, fl arm: `segment_free` 98.0, `enter_allocator_reentry_guard` 80.0, the
+`malloc` entry frame 79.0, `allocate_from_local_class` 78.0, `FlatCombiningStats::apply_locked` 67.0,
+the `free` entry frame 53.0, `segment_allocate` 43.0, `runtime_policy::mode` 27.0, the harness's own
+`main` 13.0, `small_bin_index` 11.0 — total 549.2. The same harness's glibc arm, opened
+`dlmopen(LM_ID_NEWLM)`: `free` 33.0, `malloc` 30.0, `main` 13.0 — total 76.0.
+
+**TWO-POINT IS NOT OPTIONAL HERE, and the flat profile shows why.**
+`host_resolve::symbol_name_matches` reads 3,000,575 Ir (6.08% of the fl arm's flat profile) and
+3,512,850 Ir (28.78%) in the GLIBC arm — which performs no fl allocation at all. Its marginal is
+~0: it is one-time ELF symbol-table work at startup. A flat profile would have put a nonexistent
+hot path second on the list.
+
+**WHAT THAT SETTLES.** bd-ny3hsa's falsification clause said that if the four named wrappers do not
+explain the bulk, the target is the slab and not the membrane. They do not: the wrappers
+(`enter_allocator_reentry_guard` + `runtime_policy::mode` + both entry frames) are 239.0 of the
+536.2 fl allocator Ir/pair, i.e. 45%; the segment path's own work (`segment_free` +
+`allocate_from_local_class` + `segment_allocate` + `small_bin_index`) is 230.0, i.e. 43%; and
+`apply_locked` stats bookkeeping is 67.0, i.e. 12.5%. glibc completes the whole pair in 63.0 Ir,
+less than `segment_free` alone. **The cost is genuinely split, so no single wrapper can close it.**
+
+**THE LEVER.** `in_threading_policy_context()` runs on EVERY `malloc` and `free`: the guard's
+condition is `!pthread_tls_access_active() && in_threading_policy_context()`, and the first term is
+a `const fn` returning `false` unless the `owned-tls-cache` feature is on, so the `&&` never
+short-circuits. It read a `u32` depth out of
+`thread_local! { static PTHREAD_TLS: RefCell<PthreadTlsState> }`, whose initializer is NOT `const`,
+so every access paid a lazy-init state check plus a `RefCell` borrow-flag check. The change moves
+that counter to its own `thread_local! { static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) } }`
+— same value, same two writers, same reader semantics including the conservative `unwrap_or(true)`;
+only the container changes. (The patch was written on 2026-08-27 and recorded there as BUILT BUT
+UNMEASURED when the fleet degraded; this is its measurement. Its `#[cfg(not(feature =
+"owned-tls-cache"))]` was dropped, because the struct field it replaces is removed in both feature
+configurations.)
+
+**MEASURED, same instrument, candidate sha256
+`77ac1556f8100321…`:** `enter_allocator_reentry_guard` 80.0 -> **70.0** Ir/pair; total marginal
+549.2 -> **539.2**, i.e. **-10.0 Ir/pair, -1.8%**. Every other frame is byte-identical between the
+two profiles — `segment_free` 98.0, `malloc` 79.0, `allocate_from_local_class` 78.0, `apply_locked`
+67.0, `free` 53.0, `segment_allocate` 43.0, `mode` 27.0, `small_bin_index` 11.0 in both — so the
+whole delta lands in the frame the lever names and nothing else moved. The harness checksum is
+identical across arms (`0x2865029dde8ac800`), which is what rules out an elided allocation loop.
+
+**AMDAHL CEILING, stated so nobody mistakes this for the answer.** Deleting the reentry guard
+ENTIRELY would remove 80.0 of 549.2 Ir/pair = 14.6%; this lever takes 12.5% of that frame. fl is
+~7.2x glibc by instruction count on this shape (549.2 vs 76.0), and no single frame in the profile
+is large enough to change that. The wrapper vein is worth tidying; it is not where a 7x closes.
+
+**Gates:** `cargo test -p frankenlibc-abi --lib` **200 passed, 0 failed, 1 ignored**, compiled and
+executed on the rch worker with the change overlaid. Deployed-mode: `scripts/c_fixture_suite.sh`
+with the patched `libfrankenlibc_abi.so` (sha256
+`1c5c35e8d8105f900eb5a7d240a09317b7cfe1918bfa2b64cdd17b003dd93825`) — **Total: 26 | Passes: 26 |
+Fails: 0** across all 13 fixtures in BOTH strict and hardened, including `fixture_pthread`,
+`fixture_pthread_mutex_adversarial`, `fixture_malloc` and `fixture_malloc_stress`, which are the
+ones that would notice a threading-policy depth counter behaving differently.
