@@ -40277,3 +40277,79 @@ with the patched `libfrankenlibc_abi.so` (sha256
 Fails: 0** across all 13 fixtures in BOTH strict and hardened, including `fixture_pthread`,
 `fixture_pthread_mutex_adversarial`, `fixture_malloc` and `fixture_malloc_stress`, which are the
 ones that would notice a threading-policy depth counter behaving differently.
+
+2026-08-30 bd-2g7oyh.507 LIVE LOSS: current cached `nl_langinfo` table path is 1.335104x slower than live glibc on `full_table_cycle` (4.883ns/3.608ns; A/A 1.004721/1.007897; FL ELF `8c28025e…`, worker vmi1153651); this is an incumbent row, not a before/after causal comparison that justifies blind reversion of the shipped cache.
+
+## 2026-08-30 — bd-ny3hsa — REJECT: trusting the `mprotect`ed segment header on the ownership-proven free path removes 48.0 Ir/pair (-8.9%) and buys NO measurable time — reverted
+
+- **RESULT CLASS: loss/baseline (rejected lever).** Reverted; no speedup claimed and none found. The
+  counted half is real and is reported because it is useful; the timed half is the verdict.
+- **THE LEVER.** `segment_free` was the largest frame in this file's 2026-08-30 attribution row at
+  98.0 Ir/pair, and its first act is `segment_header_at(base)`, which re-derives four facts on EVERY
+  free: the magic word, `class_index < NUM_SIZE_CLASSES`, `class_size == bin_size(class_index)`, and
+  `slot_count != 0`. Those facts cannot change. `initialize_segment` writes the header, calls
+  `mprotect(base, SEGMENT_HEADER_BYTES, PROT_READ)`, and only THEN publishes the ownership bit with
+  `Release`; `segment_owned_location` observes that bit with `Acquire` before any of this runs. The
+  expensive term is `class_size == bin_size(class_index)`: `bin_size` lives in `frankenlibc-core` and
+  the ABI->core edge is GOT-indirect, so every free of a segment-owned pointer paid an indirect call
+  plus a `SIZE_TABLE` lookup to confirm a `u32` that had been read-only since before the caller could
+  learn the segment existed.
+- **HOW THIS DIFFERS FROM THE 2026-08-26 ABLATION, which is the reason it was worth building at all.**
+  That one deleted the checks from `segment_header_at` outright, for every caller, and was correctly
+  called unshippable: it removes a corruption tripwire on paths whose `base` is NOT ownership-proven.
+  This version adds `segment_header_trusted` used ONLY from `segment_slot_view_in_owned_segment`,
+  whose every caller arrives through `segment_owned_location`; `segment_header_at` keeps its checks
+  for `segment_header(index)` and `segment_slot_view_at`; and the four checks survive as a
+  `debug_assert!` driven in debug by `conformance_diff_malloc_stats_binning`. So the tripwire is kept
+  where it can fire and the hot path stops re-proving a published invariant. **The narrowing worked
+  and the lever still does not pay** — which is a stronger result than the ablation could give.
+- **COUNTED, and this part is solid.** callgrind two-point marginal, `ICOUNT_PAIRS` 20000 minus 1000
+  over sizes 16/64/256/1024, divided by 4x19000; both arms from base `ed86893b4`, candidate overlaying
+  only `crates/frankenlibc-abi/src/malloc_abi.rs`. Base `malloc_icount` sha256
+  `9b6bb1b9abab8e23f2248bcbd6f94e700dbe71ac2f48d1aadc028c311214585a`, candidate
+  `679bae1a24b0f005ccd0568158e546937c2e22f838420f1526f653e5ce2fc1e8`. **TOTAL marginal 539.2 -> 491.2
+  Ir/pair, -48.0, -8.9%.** Read the TOTAL, not the frame: with the header check gone `segment_free`
+  became small enough to inline into `free`, so `segment_free`'s 98.0 disappears and `free` goes
+  53.0 -> 104.0. Every frame that did not move is identical across the two profiles
+  (`allocate_from_local_class` 78.0, `enter_allocator_reentry_guard` 70.0, `apply_locked` 67.0,
+  `segment_allocate` 43.0, `mode` 27.0, `small_bin_index` 11.0, harness `main` 13.0), and the harness
+  checksum is unchanged at `0x2865029dde8ac800`, which rules out an elided allocation loop.
+- **TIMED, live incumbent, and this is the verdict.** `incumbent_coverage_ab --pin-quietest 2
+  --family malloc_free --fl-deepbind --fl-so <so>`, both `.so`s built from base `5e98c3f905`, one
+  with and one without the overlay; harness `bench_elf_sha256=6bb135370d778d45df36cea1723de54b5c7aa7170bf5a742614ca59e4df6eef7`,
+  incumbent `/usr/lib/x86_64-linux-gnu/libc.so.6` sha256
+  `a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c`. Quiet gate CLEAR pre and post
+  on both runs, pinned to `allowed_cpus=30:31`, observed busy fraction 0.09-0.10 against a 0.200
+  ceiling, 2515 MHz. Conformance contract `non_null_64_byte_round_trip` passed on both.
+  All intervals below are `bootstrap_median_ci95` from the harness itself, i.e. a bootstrap median CI.
+  Control: same-invocation FL/glibc effect median **5.845478** with bootstrap median CI [5.831790, 5.889058]; its same-invocation A/A null fl-fl median 1.003536 with bootstrap median CI [0.994550, 1.007045]; its A/A null glibc-glibc median 0.990488 with bootstrap median CI [0.988774, 1.013452]. Both nulls inside the 0.020 tolerance, `clears_2x_null=true`, verdict DECIDABLE / FL_SLOWER.
+  Candidate: same-invocation FL/glibc effect median **5.814744** with bootstrap median CI [5.787603, 5.959766]; its same-invocation A/A null fl-fl median 0.999929 with bootstrap median CI [0.998104, 1.001353]; its A/A null glibc-glibc median 1.008096 with bootstrap median CI [1.004651, 1.009528]. Both nulls inside tolerance, `clears_2x_null=true`, verdict DECIDABLE / FL_SLOWER.
+  **The two effect intervals overlap across almost the whole of the control's range**, so the 0.53%
+  difference in point estimates is not resolvable by this instrument. **NEUTRAL in time.**
+- **THIS INDEPENDENTLY CONFIRMS THE 2026-08-26 CONCLUSION ON A DIFFERENT SHAPE.** That row measured
+  the same four checks on the `segment_remaining` probe and found 0.94 ns of ~6.2 ns, concluding the
+  cost is "four to six distinct, mostly cold cache lines walked in sequence" rather than validation
+  logic. This row reaches the same place from the other direction and on the malloc+free pair
+  instead: **48 instructions can leave the pipeline without the wall clock noticing**, because they
+  issue in the shadow of the dependent-load chain that dominates the path. Two instruments, two
+  shapes, one conclusion — the header validation is not where this allocator's time goes.
+- **WHAT IT MEANS FOR THE VEIN.** Instruction count is the wrong scoreboard for the slab path. The
+  attributed 549.2 Ir/pair is real, but shaving it does not move the 5.8x. The next thing tried here
+  should be a **data-layout** change that shortens the dependent-load chain — the bound reachable in
+  fewer loads — not another instruction-removal lever, and the 2026-08-26 row's warning stands: two
+  layout changes in this allocator have already gone badly (the per-class reciprocal table, +0.02%
+  instructions but +4.6% and +34% cycles; the magazine widening, 30 MB of `.data`), so that needs a
+  design with a measured cache-line budget before any edit.
+- **Gates were green before the revert**, recorded so the next attempt need not re-run them:
+  `cargo test -p frankenlibc-abi --lib` 200 passed / 0 failed / 1 ignored;
+  `conformance_diff_malloc_stats_binning` 5 passed — the one that matters, since it runs in DEBUG
+  where the `debug_assert` that replaced the release-path validation is live; `malloc_abi_test` 77
+  passed; `hardened_mode_safety_test` 15 passed. The reverted patch is preserved at
+  `scratchpad/header_trust_reverted.patch` so the measurement is reproducible.
+- **A PRE-EXISTING HARDENED-MODE CRASH WAS FOUND WHILE GATING THIS, and it is NOT this lever's.**
+  `scripts/c_fixture_suite.sh` returned 25 of 26: `fixture_startup` exited 139 in HARDENED mode after
+  printing `fixture_startup: PASS (2 tests)`, so the SIGSEGV is in process teardown, not in the test.
+  Same fixture binary, 20 runs per arm, both `.so`s from base `5e98c3f905` with and without the
+  overlay: **control 8 of 20 SIGSEGV, candidate 10 of 20** — the same race either way. STRICT mode is
+  20 of 20 clean in both arms, and `fixture_malloc`, `fixture_malloc_stress` and `fixture_pthread`
+  are 5 of 5 clean hardened with the candidate. Filed as its own bead rather than absorbed here.
