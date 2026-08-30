@@ -90,6 +90,18 @@ fn values() -> Vec<f128> {
 }
 
 #[test]
+fn f128_fmod_exports_handle_finite_operands() {
+    // This direct arm is deliberately small: in release, a recursive lowering
+    // of `%` through the exported fmodf128 symbol used to fault before the
+    // larger host-differential table could report a mismatch.
+    assert_eq!(unsafe { ma::fmodf128(5.0, 2.0) }, 1.0);
+    assert_eq!(unsafe { ma::remainderf128(5.0, 2.0) }, 1.0);
+    let mut quotient = 0;
+    assert_eq!(unsafe { ma::remquof128(5.0, 2.0, &mut quotient) }, 1.0);
+    assert_eq!(quotient, 2);
+}
+
+#[test]
 fn f128_fmod_remainder_match_glibc() {
     let vals = values();
     let mut mism = Vec::new();

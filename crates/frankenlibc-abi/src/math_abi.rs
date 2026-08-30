@@ -5950,6 +5950,78 @@ fn remainder_family_domain_error_f128(x: f128, y: f128) -> bool {
     !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0)
 }
 
+/// Exact finite binary128 remainder without using the `fmodf128` compiler
+/// builtin.
+///
+/// The release ABI exports a strong `fmodf128` symbol. Rust lowers binary128
+/// `%` to the compiler-builtins weak symbol of that same name, so using `%`
+/// from the export resolves straight back to the export and recurses until the
+/// stack faults. Reduce normalized significands directly instead: every step
+/// is an exact binary subtraction/shift and the final remainder is exactly
+/// representable in binary128.
+fn finite_fmodf128(x: f128, y: f128) -> f128 {
+    const SIGN: u128 = 1u128 << 127;
+    const HIDDEN: u128 = 1u128 << 112;
+    const FRACTION: u128 = HIDDEN - 1;
+
+    fn significand_and_exponent(bits: u128) -> (u128, i32) {
+        let fraction = bits & (HIDDEN - 1);
+        let exponent_field = ((bits >> 112) & 0x7fff) as i32;
+        if exponent_field != 0 {
+            (HIDDEN | fraction, exponent_field - 16383)
+        } else {
+            let mut significand = fraction;
+            let mut exponent = -16382;
+            while significand < HIDDEN {
+                significand <<= 1;
+                exponent -= 1;
+            }
+            (significand, exponent)
+        }
+    }
+
+    let x_bits = x.to_bits();
+    let x_sign = x_bits & SIGN;
+    let x_abs = x_bits & !SIGN;
+    let y_abs = y.to_bits() & !SIGN;
+    if x_abs == 0 || y_abs == 0x7fff_u128 << 112 {
+        return x;
+    }
+
+    let (mut remainder, mut x_exponent) = significand_and_exponent(x_abs);
+    let (y_significand, y_exponent) = significand_and_exponent(y_abs);
+    if x_exponent < y_exponent {
+        return x;
+    }
+
+    while x_exponent > y_exponent {
+        if remainder >= y_significand {
+            remainder -= y_significand;
+        }
+        remainder <<= 1;
+        x_exponent -= 1;
+    }
+    if remainder >= y_significand {
+        remainder -= y_significand;
+    }
+    if remainder == 0 {
+        return f128::from_bits(x_sign);
+    }
+
+    let mut exponent = y_exponent;
+    while remainder < HIDDEN {
+        remainder <<= 1;
+        exponent -= 1;
+    }
+    let magnitude = if exponent >= -16382 {
+        ((exponent + 16383) as u128) << 112 | (remainder & FRACTION)
+    } else {
+        let shift = (-16382 - exponent) as u32;
+        remainder >> shift
+    };
+    f128::from_bits(x_sign | magnitude)
+}
+
 /// f32 counterpart of [`remainder_family_domain_error`].
 #[inline]
 fn remainder_family_domain_error_f32(x: f32, y: f32) -> bool {
@@ -8411,17 +8483,11 @@ pub unsafe extern "C" fn fmodf64x(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
-    // The f128 `%` operator is the IEEE fmod (exact remainder).
-    //
-    // THE COMMENT HERE USED TO SAY glibc "sets no errno (FE_INVALID only) for
-    // the nan-producing cases, matching this". That was measured false:
-    // conformance_diff_f128_fmod against a REAL glibc oracle shows glibc setting
-    // errno=EDOM on every domain case. The claim survived because the gate's
-    // "glibc" arm was captured by compiler_builtins and never consulted glibc
-    // (bd-v0388t). The f64 `fmod` a few hundred lines above has always handled
-    // this via the same helper; the f128 path simply never got it.
+    // The live f128 glibc oracle leaves errno untouched for the NaN-producing
+    // domain cases. This differs from the f64 wrapper above, so do not share
+    // its errno handling merely because the value-level domain predicate is
+    // the same.
     if remainder_family_domain_error_f128(x, y) {
-        set_domain_errno();
         // The NEGATIVE quiet NaN, not Rust's positive f128::NAN. This is not
         // over-fitting to glibc: 0xffff8000... is the x86 default QNaN ("real
         // indefinite"), i.e. what the hardware itself yields for an invalid
@@ -8432,7 +8498,10 @@ pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
         // deliberate parity choice rather than a correctness fix.
         return -f128::NAN;
     }
-    x % y
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    finite_fmodf128(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hypotf32(x: f32, y: f32) -> f32 {
@@ -8546,7 +8615,7 @@ pub unsafe extern "C" fn remainderf64x(x: f64, y: f64) -> f64 {
 fn remainder_f128(x: f128, y: f128) -> f128 {
     let ax = x.abs();
     let ay = y.abs();
-    let mut r = ax % ay; // fmod: r in [0, ay)
+    let mut r = finite_fmodf128(ax, ay); // fmod: r in [0, ay)
     let two_r = r + r; // exact (no overflow: r < ay)
     if two_r > ay {
         r -= ay;
@@ -8554,7 +8623,7 @@ fn remainder_f128(x: f128, y: f128) -> f128 {
         // Tie -> round to even quotient. The quotient n is even iff
         // fmod(ax, 2*ay) < ay (mod-2y keeps the low quotient bit).
         let two_ay = ay + ay;
-        if ax % two_ay >= ay {
+        if finite_fmodf128(ax, two_ay) >= ay {
             r -= ay;
         }
     }
@@ -8569,7 +8638,6 @@ pub unsafe extern "C" fn remainderf128(x: f128, y: f128) -> f128 {
         return x + y; // NaN propagation, no errno
     }
     if ay == 0.0 || ax.is_infinite() {
-        unsafe { set_abi_errno(libc::EDOM) };
         // glibc returns a negative quiet NaN for the domain error.
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     }
@@ -12277,7 +12345,7 @@ pub unsafe extern "C" fn remquof128(x: f128, y: f128, quo: *mut c_int) -> f128 {
     // Low quotient bits = floor(fmod(ax, 8*ay)/ay) (<=7 exact subtractions),
     // then round-to-nearest-even adjustment, with the sign of x/y. (8*ay may
     // overflow to inf, but then ax/ay < 8 so the loop still runs < 8 times.)
-    let mut m = ax % (ay * 8.0f128);
+    let mut m = finite_fmodf128(ax, ay * 8.0f128);
     let mut qt: i32 = 0;
     while m >= ay {
         m -= ay;
