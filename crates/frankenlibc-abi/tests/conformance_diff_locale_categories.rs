@@ -26,7 +26,39 @@ use std::sync::{Mutex, OnceLock};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
-use dlsym_oracle::host_fn;
+use dlsym_oracle::{host_addr, host_fn};
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `__errno_location`, resolved out of libc.so.6 and proven not to
+/// be fl's own export.
+///
+/// The host FUNCTION arms here are already dlsym-resolved; the errno arm was
+/// not. fl exports `__errno_location` under
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a release test
+/// binary the link-time `libc::__errno_location` bound to FL's slot and the host
+/// half of `run_swprintf` zeroed fl's errno and read back its own zero instead
+/// of what glibc set.
+///
+/// Debug hid it for a specific reason worth recording: `errno_abi::set_abi_errno`
+/// mirrors every value into the HOST errno slot as well (interpose mode), so with
+/// fl's symbol mangled both arms happened to read the same live slot. Release
+/// breaks that coincidence. Measured: this gate failed `--release` with
+/// `errno for utf-8 e-acute under "C" left: 84 right: 0` — fl's EILSEQ against a
+/// host errno of 0 — while passing in debug. See bd-g1sjty.
+fn host_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`, declared
+    // `int *__errno_location(void)`; fl's own export is handed over so a
+    // collapsed oracle aborts instead of silently reading fl's errno.
+    unsafe {
+        let addr = host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut std::ffi::c_void, ErrnoLocationFn>(addr)
+    }
+}
 
 use frankenlibc_abi::locale_abi::{
     locale_reset_active_charset_for_tests, setlocale as fl_setlocale,
@@ -234,9 +266,10 @@ fn run_swprintf(which: Option<SwprintfFn>, narrow: &CStr) -> (c_int, c_int, Stri
     unsafe {
         match which {
             Some(host) => {
-                *libc::__errno_location() = 0;
+                let host_errno = host_errno_location();
+                *host_errno() = 0;
                 let rc = host(buf.as_mut_ptr(), 64, fmt.as_ptr(), narrow.as_ptr());
-                let err = *libc::__errno_location();
+                let err = *host_errno();
                 (rc, err, wide_to_string(&buf, rc))
             }
             None => {
