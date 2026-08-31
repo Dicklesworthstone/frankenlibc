@@ -40406,3 +40406,53 @@ ones that would notice a threading-policy depth counter behaving differently.
 
 - 2026-08-30 `bd-wutxl6` REJECT: the 64 KiB `fwrite` direct-fd bypass measured 1105.69 ns/call vs live glibc 778.56 (1.420x LOSS) on `hz3`; same-invocation A/A nulls were fl/fl 1.001 and glibc/glibc 1.000, so the source and its behavior-specific test were manually reverted.
 - 2026-08-30 `bd-wk2ho4` LIVE LOSS/NO-VERDICT: `snprintf` `%a` measured 138.441 ns vs glibc 61.152 ns (2.258558x LOSS; A/A 0.991869/0.994791) on `vmi1293453`; `%e`/`%g` controls failed, so no win is claimed and no source commit is attributed without a pre-lever arm.
+
+## 2026-08-31 — bd-x1btb7 — COUNTED MECHANISM ONLY, no timed claim: the `%[...]` ScanSet bitmap is NEUTRAL by instruction count (2106.0 -> 2110.0 Ir/call), after an intermediate commit that cost +43.6%
+
+- **RESULT CLASS: loss/baseline (no effect).** No speedup is claimed and none was found. Instructions
+  retired, counted in software by callgrind; not cycles, not a timed claim. The change is already
+  landed — this row is the measurement it never had.
+- **THE QUESTION.** bd-x1btb7 proposed shrinking scanf's `%[...]` membership set from `[bool; 256]`
+  (257 bytes, forcing a heap `Box` to keep `ScanSpec` small) to a 256-BIT `[u64; 4]`. That landed in
+  `20ffdde7e`, and a later commit `5fca65c2c` is titled "build the `%[...]` set bitmap during the
+  parse — undoes a regression I shipped". So the bead's proposal reached HEAD as a PAIR, and either
+  commit alone is the wrong thing to measure.
+- **INSTRUMENT.** `crates/frankenlibc-bench/examples/sscanf_icount.rs`, which exists precisely
+  because three wall-clock A/Bs of this family failed to certify anything: ONE harness binary
+  dlopens the fl object named on argv (`RTLD_NOW|RTLD_LOCAL|RTLD_DEEPBIND`, symbol
+  `__isoc23_sscanf`), so every instruction outside the measured loop is common-mode and only the
+  object differs. Harness sha256 `88f505d38c4e4347…`, run locally under callgrind because
+  `perf_event_paranoid=4` denies counters on this host and on every rch worker; the three fl objects
+  were built via rch from clean historical commits.
+- **METHOD.** Two-point marginal, 200,000 iterations minus 20,000, divided by the 180,000
+  difference, so dlopen and process startup cancel exactly. Case `scanset_only` — `sscanf("key=value", "%[^=]")`.
+  The harness prints an order-sensitive checksum and it is IDENTICAL across all three arms at both
+  iteration counts (`0x8bd43cb03eca5e00` at 200k, `0x8818d1e15667e300` at 20k), which is what rules
+  out an arm that quietly did different work.
+
+  | arm | commit | fl object sha256 | Ir/call | vs pre-shrink |
+  |---|---|---|---:|---:|
+  | pre-shrink `[bool; 256]` | `20ffdde7e^` | `e0f7c23c0922594e…` | 2106.0 | — |
+  | shrink as first shipped | `20ffdde7e` | `510d4bce01a4b19b…` | 3025.0 | +919.0 (+43.6%) |
+  | after the follow-up | `5fca65c2c` | (built from that commit) | 2110.0 | +4.0 (+0.19%) |
+
+- **THE VERDICT: NEUTRAL.** As finally shipped the bitmap costs **+4.0 instructions per call** against
+  the `[bool; 256]` table it replaced — 0.19%, and by a deterministic count rather than a noisy
+  ratio. The bead's stated motivation was that the 257-byte table "bloats the inline ScanSpec"; that
+  motivation is structural and it is satisfied. What is NOT true is that it buys instructions on this
+  shape, and nothing in the ledger should be read as saying it does.
+- **THE INTERMEDIATE REGRESSION IS THE MORE USEFUL NUMBER**, and it is measured here rather than
+  inferred from a commit message. `20ffdde7e` alone cost **+919 Ir/call, +43.6%** — the bitmap was
+  being materialised by walking a 256-byte scratch table and packing it, so the "shrink" added a
+  packing pass to every parse. `5fca65c2c` removed that by accumulating the bits during the parse,
+  and recovered all but 4 instructions. A reader who took `20ffdde7e` at its title would have
+  banked a 43.6% regression as a win.
+- **WHAT THIS DOES NOT MEASURE, stated so the row is not over-read:** one case (`%[^=]` over
+  `"key=value"`), instructions only. It does not price the removed heap `Box` for simple sets, which
+  is an ALLOCATION difference and would show on a shape that constructs many distinct scansets; it
+  does not measure cycles, cache behaviour, or the `SimpleScanSet` inline path; and it says nothing
+  about `key_value` or wide scansets. The size pin
+  `a_simple_scanset_does_not_grow_the_directive` continues to hold the structural property, which is
+  the part of the bead that was real.
+- **CONSISTENT WITH THIS REPOSITORY'S PRIOR FINDING** that a struct shrink is not a perf lever: the
+  `FormatSegment` 64 -> 40 byte shrink measured no time change either. Two independent instances now.
