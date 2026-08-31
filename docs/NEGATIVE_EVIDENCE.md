@@ -40456,3 +40456,53 @@ ones that would notice a threading-policy depth counter behaving differently.
   the part of the bead that was real.
 - **CONSISTENT WITH THIS REPOSITORY'S PRIOR FINDING** that a struct shrink is not a perf lever: the
   `FormatSegment` 64 -> 40 byte shrink measured no time change either. Two independent instances now.
+
+## 2026-08-31 — bd-zum5jm — COUNTED MECHANISM ONLY, no timed claim: the bare `%s` fast path removes ~1,350 instructions per call from `fprintf` and `dprintf`, with the controls flat
+
+- **RESULT CLASS: counted mechanism. NO speedup is claimed and no ratio here may be quoted as a
+  campaign result.** Instructions retired, counted in software by callgrind — not cycles, and not a
+  comparison against glibc. What is established is that the work changed, by how much, and that it
+  changed only where the lever claims to act. The change is already in HEAD; this row is the
+  measurement it never had.
+- **THE LEVER.** bd-zum5jm asked to extend the bare-`%s` fast path to the FILE/fd printf writers
+  "via a shared `bare_s_or_render` helper". It reached HEAD as three commits — `31b536dca` (the FILE
+  writers), `0e0789acb` (`dprintf`), `97260d1e0` (`asprintf`/`vasprintf`/`vdprintf`, completing the
+  family) — so the arms are `31b536dca^` and `97260d1e0`, not any single commit.
+- **MEASURED IN THE DEPLOYED CONFIGURATION**, which is the point: fl is loaded by `LD_PRELOAD` with
+  `FRANKENLIBC_MODE=strict`, so the writers under test are the interposed ones an ordinary C program
+  actually calls, not an rlib-linked copy with different symbol resolution. `perf_event_paranoid=4`
+  denies hardware counters on this host and on every rch worker, so the count comes from callgrind;
+  both fl objects were built via rch from clean historical commits.
+- **METHOD.** Two-point marginal — 200,000 iterations minus 20,000, divided by the 180,000
+  difference — so process startup, `dlopen`, and the `/dev/null` setup cancel exactly. Output goes to
+  `/dev/null` so what is counted is the formatting path rather than a terminal. The driver prints an
+  accumulator of every return value, and it is IDENTICAL across arms in all four cases
+  (8,600,000 on the bare cases, 9,000,000 on the controls), which is what rules out an arm that
+  quietly did different work.
+- **THE CONTROL IS THE LOAD-BEARING PART OF THIS ROW.** Each writer is measured twice: once with
+  `"%s"`, which the lever claims, and once with `"%s|%d"`, which it must not claim because a second
+  conversion disqualifies the fast path. Two builds of a large `.so` differ in code layout, and this
+  ledger has a standing finding that layout alone is worth ~15% on a small hot loop — so a bare-case
+  delta means nothing on its own. Here the controls move +0.08% and +0.12% while the bare cases move
+  -4.71% and -4.91%, which is what makes the delta attributable to the lever rather than to the two
+  objects being different builds.
+
+  In prose, since a table cell is its own clause to the lint: `fprintf` with a bare `%s` goes from
+  28877.5 to 27518.4 instructions per call, a fall of 1359.1 or -4.71%, while its `%s|%d` control
+  goes from 31400.9 to 31426.8, a rise of 26.0 or +0.08%. `dprintf` with a bare `%s` goes from
+  27489.0 to 26139.9, a fall of 1349.1 or -4.91%, while its control goes from 30010.2 to 30045.2, a
+  rise of 35.0 or +0.12%.
+- **THE TWO SAVINGS BEING THE SAME SIZE IS ITSELF EVIDENCE.** `fprintf` sheds 1359.1 and `dprintf`
+  sheds 1349.1 — within 10 instructions of each other on paths that otherwise differ (a `FILE`
+  stream versus a raw fd). That is the signature of ONE shared helper removing the same rendering
+  work from both, which is precisely what "via a shared `bare_s_or_render` helper" predicts and what
+  a pair of independent per-writer hacks would not produce.
+- **WHAT THIS DOES NOT ESTABLISH, so the row is not over-read.** It is not a timed result: ~1,350
+  instructions on a ~28,000-instruction call is 4.7% of the INSTRUCTIONS, and this ledger has three
+  measurements on the allocator showing instruction deltas that did not reach the clock at all. It
+  is not a comparison against glibc, so nothing here says whether fl's `fprintf` beats or loses to
+  the incumbent. It covers `fprintf` and `dprintf` on one payload; `printf`, `asprintf`,
+  `vasprintf`, `vdprintf` and `vfprintf` are in the shipped family but were not measured here.
+- **Objects:** base `31b536dca^`, candidate `97260d1e0`, driver at
+  `scratchpad/bare_s_driver.c` compiled `-O2`, harness invocation
+  `FRANKENLIBC_MODE=strict LD_PRELOAD=<so> valgrind --tool=callgrind ./bare_s_driver <case> <iters>`.
