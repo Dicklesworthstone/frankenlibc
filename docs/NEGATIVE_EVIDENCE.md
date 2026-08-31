@@ -24,6 +24,8 @@ records `legacy_incumbent=host-glibc`, `incumbent_provenance=dlmopen-lmid-newlm`
 uninterposed host-only link), `same_invocation=true`, `incumbent_ratio`,
 `incumbent_bootstrap_median_ci`, and `null_bootstrap_median_ci`.
 
+## 2026-08-31 — REJECTED: `memrchr` highest-lane resolver remains a live loss (`bd-2g7oyh.504`): hz4 same-invocation live glibc, fresh FL SHA-256 `c709373e01b82207c5cdda2c1fc7f558806ab90a8372fc29ea1472895847c9c4`, bench SHA-256 `204a269cb84c1f9cfa62a760e0310d69a5fda1d0839918cd52f3d546d8525e48`, both A/A nulls 0.998–1.001, and all 8 cells lost (headline len512 FL/glibc 1.350826x); reverted.
+
 ## 2026-08-14 (Codex) — REJECTED: `strcasestr` is measurably slower than in-process glibc (`bd-1gm7mw`)
 
 - **MACHINE-READABLE SAME-INVOCATION EVIDENCE:** `legacy_incumbent=host-glibc`;
