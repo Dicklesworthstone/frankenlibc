@@ -96,6 +96,10 @@ const MALLOC_FREE_REPS: usize = 100_000;
 const FREAD_MEM_BYTES: usize = 4 * 1024;
 const FREAD_MEM_CHUNK: usize = 64;
 const FREAD_MEM_REPS: usize = 2_000;
+// A provider-owned regular file stream scanned one character at a time.  This
+// deliberately exercises the stream scanner's seekable-FD path, including its
+// read-ahead and unread-tail restoration, without timing host delegation.
+const FSCANF_FD_REPS: usize = 2_000;
 const MTX_TRYLOCK_REPS: usize = 1_000_000;
 const GETADDRINFO_HOSTS_REPS: usize = 2_000;
 // Raised from 200_000 on 2026-07-31: at 200k the A/A null half-width was 7.7%,
@@ -372,6 +376,8 @@ unsafe extern "C" {
     fn linked_host_fflush(stream: *mut c_void) -> c_int;
     #[link_name = "fclose"]
     fn linked_host_fclose(stream: *mut c_void) -> c_int;
+    #[link_name = "fscanf"]
+    fn linked_host_fscanf(stream: *mut c_void, format: *const c_char, ...) -> c_int;
     #[link_name = "setvbuf"]
     fn linked_host_setvbuf(
         stream: *mut c_void,
@@ -613,6 +619,7 @@ enum Family {
     ThrdCurrent,
     MallocFree,
     FreadMem,
+    FscanfFd,
     MtxTrylock,
     GetaddrinfoHosts,
     SinhfCoshf,
@@ -1109,6 +1116,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
                 Some(value) if value == OsStr::new("malloc_free") => Family::MallocFree,
                 Some(value) if value == OsStr::new("fread_mem") => Family::FreadMem,
+                Some(value) if value == OsStr::new("fscanf_fd") => Family::FscanfFd,
                 Some(value) if value == OsStr::new("mtx_trylock") => Family::MtxTrylock,
                 Some(value) if value == OsStr::new("getaddrinfo_hosts") => Family::GetaddrinfoHosts,
                 Some(value) if value == OsStr::new("sinhf_coshf") => Family::SinhfCoshf,
@@ -1126,7 +1134,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("strcasestr") => Family::Strcasestr,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
-                     sem_post, thrd_current, malloc_free, fread_mem, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
+                     sem_post, thrd_current, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, or strcasestr"
                 ),
             };
@@ -1136,7 +1144,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs|strcasestr]"
@@ -6836,6 +6844,91 @@ fn run_fread_mem(config: &Config) {
     }
 }
 
+type FscanfFn = unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> c_int;
+
+#[derive(Clone, Copy)]
+struct FscanfFdArm {
+    fopen: FopenFn,
+    fscanf: FscanfFn,
+    fclose: FcloseFn,
+}
+
+const FSCANF_FD_PATH: &CStr = c"crates/frankenlibc-abi/src/stdio_abi.rs";
+
+#[inline(never)]
+fn run_fscanf_fd_batch(arm: FscanfFdArm) -> u64 {
+    let stream = unsafe { (arm.fopen)(FSCANF_FD_PATH.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "fscanf regular-file stream open failed");
+    let mut checksum = 0xcbf2_9ce4_8422_2325u64;
+    for _ in 0..FSCANF_FD_REPS {
+        let mut byte = 0u8;
+        let rc = unsafe { black_box(arm.fscanf)(black_box(stream), c"%c".as_ptr(), black_box(&mut byte)) };
+        assert_eq!(rc, 1, "fscanf %c reached EOF during timing");
+        checksum = checksum.rotate_left(5) ^ u64::from(black_box(byte));
+    }
+    assert_eq!(unsafe { (arm.fclose)(stream) }, 0, "fscanf stream close failed");
+    black_box(checksum)
+}
+
+fn time_fscanf_fd_batch(arm: FscanfFdArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_fscanf_fd_batch(arm));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / FSCANF_FD_REPS as f64
+}
+
+fn check_fscanf_fd_conformance(host: FscanfFdArm, fl: FscanfFdArm) -> (usize, usize) {
+    let host_stream = unsafe { (host.fopen)(FSCANF_FD_PATH.as_ptr(), c"r".as_ptr()) };
+    let fl_stream = unsafe { (fl.fopen)(FSCANF_FD_PATH.as_ptr(), c"r".as_ptr()) };
+    assert!(!host_stream.is_null() && !fl_stream.is_null(), "fscanf conformance open failed");
+    let mut comparisons = 0;
+    let mut mismatches = 0;
+    for _ in 0..64 {
+        let (mut host_byte, mut fl_byte) = (0u8, 0u8);
+        let host_rc = unsafe { (host.fscanf)(host_stream, c"%c".as_ptr(), &mut host_byte) };
+        let fl_rc = unsafe { (fl.fscanf)(fl_stream, c"%c".as_ptr(), &mut fl_byte) };
+        comparisons += 1;
+        if host_rc != fl_rc || host_byte != fl_byte { mismatches += 1; }
+    }
+    assert_eq!(unsafe { (host.fclose)(host_stream) }, 0, "host fscanf conformance close failed");
+    assert_eq!(unsafe { (fl.fclose)(fl_stream) }, 0, "FL fscanf conformance close failed");
+    (comparisons, mismatches)
+}
+
+fn run_fscanf_fd(config: &Config) {
+    assert!(config.fl_deepbind, "fscanf_fd requires --fl-deepbind for FL-owned streams");
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let path = CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let fl_fopen = unsafe { libc::dlsym(handle, c"fopen".as_ptr()) };
+    let fl_fscanf = unsafe { libc::dlsym(handle, c"fscanf".as_ptr()) };
+    let fl_fclose = unsafe { libc::dlsym(handle, c"fclose".as_ptr()) };
+    assert!(!fl_fopen.is_null() && !fl_fscanf.is_null() && !fl_fclose.is_null(), "missing FL fscanf lifecycle symbol");
+    let host = FscanfFdArm { fopen: linked_host_fopen, fscanf: linked_host_fscanf, fclose: linked_host_fclose };
+    let fl = FscanfFdArm { fopen: unsafe { std::mem::transmute(fl_fopen) }, fscanf: unsafe { std::mem::transmute(fl_fscanf) }, fclose: unsafe { std::mem::transmute(fl_fclose) } };
+    let incumbent = symbol_object(host.fscanf as *const () as *const c_void).expect("identify host fscanf");
+    let fl_identity = symbol_object(fl_fscanf.cast_const()).expect("identify FL fscanf");
+    print_identity("INCUMBENT", &incumbent); print_identity("FL", &fl_identity);
+    assert_incumbent_is_host_libc(&incumbent, "fscanf");
+    assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FL object differs from supplied object");
+    assert_ne!(host.fopen as usize, fl.fopen as usize); assert_ne!(host.fscanf as usize, fl.fscanf as usize); assert_ne!(host.fclose as usize, fl.fclose as usize);
+    println!("INCUMBENT_LINKAGE direct_process_link symbols=fopen,fscanf,fclose");
+    println!("FL_LINKAGE explicit_dlopen_local_deepbind symbols=fopen,fscanf,fclose");
+    let (comparisons, mismatches) = check_fscanf_fd_conformance(host, fl);
+    println!("INCUMBENT_COVERAGE_CONFORMANCE symbol=fscanf_fd comparisons={comparisons} contract=provider_owned_regular_file_byte_stream verdict={}", if mismatches == 0 { "pass" } else { "fail" });
+    if config.verify_only { if mismatches != 0 { std::process::exit(2); } return; }
+    assert_eq!(mismatches, 0, "fscanf arms diverged; refusing to time them");
+    let guard = HostWideBenchmarkGuard::new().unwrap(); let pre = guard.check_quiet().unwrap(); println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    let result = measure_arm_case_with_reps("regular_file_char_stream", "FL-owned regular file, repeated fscanf(%c)", FSCANF_FD_REPS, host, fl, time_fscanf_fd_batch);
+    let threads_post = observed_threads(); assert_eq!(threads_pre, threads_post);
+    let post = guard.check_quiet().unwrap(); println!("{}", post.contract_line("post_measurement"));
+    result.print("fscanf_fd", &incumbent.path, threads_pre, threads_post);
+    let verdict = if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" };
+    println!("INCUMBENT_COVERAGE_VERDICT symbol=fscanf_fd verdict={verdict} cases=1 wins={} losses={} undecidable={} headline_case=regular_file_char_stream headline_ratio_median={:.6} headline_comparison={}", usize::from(result.comparison == "FL_FASTER"), usize::from(result.comparison == "FL_SLOWER"), usize::from(!result.decidable()), result.effect_median, result.comparison);
+    if !result.decidable() { std::process::exit(2); }
+}
+
 fn verify_mtx_provider(
     provider: &str,
     init: MtxInitFn,
@@ -10667,6 +10760,7 @@ fn main() {
         Family::ThrdCurrent => run_thrd_current(&config),
         Family::MallocFree => run_malloc_free(&config),
         Family::FreadMem => run_fread_mem(&config),
+        Family::FscanfFd => run_fscanf_fd(&config),
         Family::MtxTrylock => run_mtx_trylock(&config),
         Family::GetaddrinfoHosts => run_getaddrinfo_hosts(&config),
         Family::SinhfCoshf => run_sinhf_coshf(&config),
