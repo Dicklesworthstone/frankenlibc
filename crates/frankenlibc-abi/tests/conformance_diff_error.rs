@@ -38,12 +38,25 @@
 use std::ffi::{CString, c_char, c_int, c_uint};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
+use std::sync::{Mutex, MutexGuard};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
 use dlsym_oracle::{host_addr, host_fn};
 
 type ErrorFn = unsafe extern "C" fn(c_int, c_int, *const c_char, ...);
+
+/// `error`, `error_at_line`, and the fd-2 capture all use process-global
+/// state. Keep one entire differential scenario exclusive: locking only one
+/// `capture_stderr` call would still let another test change the program-name
+/// or message-count state between the glibc and FrankenLibC halves.
+static ERROR_GLOBALS_LOCK: Mutex<()> = Mutex::new(());
+
+fn error_globals_lock() -> MutexGuard<'static, ()> {
+    ERROR_GLOBALS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn host_error() -> ErrorFn {
     // SAFETY: `void error(int, int, const char *, ...)`, with fl's own export
@@ -119,6 +132,7 @@ fn program_name() -> String {
 
 #[test]
 fn error_matches_live_glibc_on_stderr() {
+    let _globals = error_globals_lock();
     let host = host_error();
     let prog = program_name();
     let mut divergences = Vec::new();
@@ -169,6 +183,7 @@ fn error_matches_live_glibc_on_stderr() {
 /// announcing that nothing went wrong.
 #[test]
 fn errnum_zero_appends_nothing() {
+    let _globals = error_globals_lock();
     let prog = program_name();
     let fmt = c"no errno here";
     // SAFETY: status 0, NUL-terminated format, no varargs.
@@ -184,6 +199,7 @@ fn errnum_zero_appends_nothing() {
 /// printf conversions in the format string are honoured.
 #[test]
 fn format_arguments_are_expanded() {
+    let _globals = error_globals_lock();
     let host = host_error();
     let prog = program_name();
     let fmt = c"fmt %d and %s";
@@ -207,6 +223,7 @@ fn format_arguments_are_expanded() {
 /// which is why fl orders the increment after the dedup check.
 #[test]
 fn error_message_count_skips_suppressed_messages() {
+    let _globals = error_globals_lock();
     // SAFETY: both are plain globals fl exports.
     unsafe {
         frankenlibc_abi::glibc_internal_abi::error_one_per_line = 1;
