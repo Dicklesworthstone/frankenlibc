@@ -20,7 +20,7 @@ use dlsym_oracle::host_addr;
 type SyscallFn = unsafe extern "C" fn(c_long, ...) -> c_long;
 
 /// `int *__errno_location(void)`.
-type ErrnoLocationFn = unsafe extern "C" fn() -> *mut std::ffi::c_void;
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
 
 /// Host glibc's raw-syscall and errno accessors, resolved out of libc.so.6 and
 /// proven not to be fl's own exports.
@@ -58,7 +58,7 @@ fn host_errno_ptr() -> *mut c_int {
             fl_errno_location as ErrnoLocationFn as *const (),
         );
         let f = std::mem::transmute::<*mut std::ffi::c_void, ErrnoLocationFn>(addr);
-        f().cast::<c_int>()
+        f()
     }
 }
 
