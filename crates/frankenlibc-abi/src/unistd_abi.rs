@@ -7977,9 +7977,27 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 // ---------------------------------------------------------------------------
 //
 // Supports: tilde expansion (~user), environment variable expansion ($VAR, ${VAR}),
-// pathname expansion (glob), field splitting on IFS, and WRDE_NOCMD safety.
-// Command substitution ($(...) and `...`) is rejected when WRDE_NOCMD is set
-// and executed via /bin/sh -c "echo ..." otherwise.
+// arithmetic expansion ($((...))), pathname expansion (glob), field splitting on
+// IFS, and WRDE_NOCMD safety.
+//
+// Command substitution ($(...) and `...`) is rejected with WRDE_CMDSUB when
+// WRDE_NOCMD is set, and executed through /bin/sh otherwise — both matching live
+// glibc, verified rather than assumed: an LD_PRELOADed C program gets the same rc
+// and the same words from fl as from glibc for $(echo hi) with and without
+// WRDE_NOCMD, for a backtick substitution, and for $((1+2)).
+//
+// ARITHMETIC IS NOT COMMAND SUBSTITUTION and is NOT gated by WRDE_NOCMD:
+// $((1+2)) expands to 3 even under WRDE_NOCMD, again matching glibc. Only an
+// arithmetic body that itself contains a command substitution is rejected, which
+// is what `arithmetic_contains_command_substitution` below exists to detect.
+//
+// HOW THE SHELL IS INVOKED, spelled out because the previous wording here
+// described the DANGEROUS shape rather than the implemented one. It is not
+// `sh -c "echo <word>"` with the caller's word interpolated into the script text;
+// that would be a command-injection hazard. The script is a FIXED string and the
+// caller's word is passed as a separate ARGUMENT, so the shell parses it only at
+// the one explicit evaluation point, and the results come back NUL-framed so
+// empty words survive without any whitespace decoding. See the call site below.
 
 // POSIX wordexp_t layout (matches glibc x86_64):
 // struct wordexp_t { size_t we_wordc; char **we_wordv; size_t we_offs; };
