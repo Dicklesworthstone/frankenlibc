@@ -10394,6 +10394,37 @@ pub(crate) fn scanf_finish_consume(
     }
 }
 
+/// Match exactly one narrow `%c` conversion.
+///
+/// A plain character conversion neither skips whitespace nor needs lookahead:
+/// routing it through the bulk scanner needlessly reads and seeks an entire
+/// buffer for every byte in a stream-oriented loop. Keep this deliberately
+/// narrow so widths, suppression, length modifiers, and adjacent literals keep
+/// the general scanner's complete grammar.
+#[inline]
+unsafe fn strict_single_char_scan_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: scanf's format argument is a NUL-terminated C string.
+    unsafe { *f == b'%' && *f.add(1) == b'c' && *f.add(2) == 0 }
+}
+
+/// Serve an exact `%c` from the stream's normal buffered-byte path.
+///
+/// `fgetc` owns stream cursor, EOF, ungetc, and refill semantics. Reusing it
+/// avoids a speculative 8 KiB read plus lseek/restore cycle while preserving
+/// the one-byte consumption contract of `%c`.
+#[inline]
+unsafe fn strict_scan_stream_single_char(stream: *mut c_void, destination: *mut c_char) -> c_int {
+    let byte = unsafe { fgetc(stream) };
+    if byte == libc::EOF {
+        return libc::EOF;
+    }
+    // SAFETY: a non-suppressed `%c` conversion requires the caller to provide
+    // one writable `char`; the general scanf engine has the same precondition.
+    unsafe { *destination = byte as u8 as c_char };
+    1
+}
+
 /// Rewind a memory-backed bulk scanf read by the unparsed count.
 fn rewind_unconsumed_scanf_mem(id: usize, unconsumed: usize) {
     if unconsumed == 0 {
@@ -10526,6 +10557,16 @@ pub unsafe extern "C" fn fscanf(
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
+    }
+
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { strict_single_char_scan_format(format) }
+    {
+        // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
+        let destination = unsafe { args.next_arg::<*mut c_char>() };
+        let rc = unsafe { strict_scan_stream_single_char(stream, destination) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
+        return rc;
     }
 
     let (input_buf, scanf_seek_base) = read_stream_for_scanf(id, 8192);
@@ -10714,6 +10755,16 @@ pub unsafe extern "C" fn vfscanf(
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
+    }
+
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { strict_single_char_scan_format(format) }
+    {
+        // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
+        let destination = unsafe { va_read_one_gp(ap) } as usize as *mut c_char;
+        let rc = unsafe { strict_scan_stream_single_char(stream, destination) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
+        return rc;
     }
 
     let (input_buf, scanf_seek_base) = read_stream_for_scanf(id, 8192);
@@ -14805,6 +14856,41 @@ mod tests {
         let ids = sorted_stream_ids(&reg);
         assert!(ids.windows(2).all(|pair| pair[0] <= pair[1]));
         assert!(ids.starts_with(&[STDIN_SENTINEL, STDOUT_SENTINEL, STDERR_SENTINEL]));
+    }
+
+    #[test]
+    fn fscanf_exact_char_uses_one_byte_stream_consumption() {
+        let mut input = *b"xy";
+        let stream = unsafe {
+            fmemopen(
+                input.as_mut_ptr().cast(),
+                input.len(),
+                c"r".as_ptr(),
+            )
+        };
+        assert!(!stream.is_null());
+
+        let mut first = 0i8;
+        let mut second = 0i8;
+        assert_eq!(unsafe { fscanf(stream, c"%c".as_ptr(), &mut first) }, 1);
+        assert_eq!(first as u8, b'x');
+        assert_eq!(unsafe { fscanf(stream, c"%c".as_ptr(), &mut second) }, 1);
+        assert_eq!(second as u8, b'y');
+        assert_eq!(unsafe { fscanf(stream, c"%c".as_ptr(), &mut second) }, libc::EOF);
+        assert_eq!(unsafe { fclose(stream) }, 0);
+    }
+
+    #[test]
+    fn strict_single_char_scan_format_excludes_nearby_grammars() {
+        for (format, expected) in [
+            (c"%c".as_ptr(), true),
+            (c"%2c".as_ptr(), false),
+            (c" %c".as_ptr(), false),
+            (c"%cX".as_ptr(), false),
+            (c"%lc".as_ptr(), false),
+        ] {
+            assert_eq!(unsafe { strict_single_char_scan_format(format) }, expected);
+        }
     }
 
     #[test]
