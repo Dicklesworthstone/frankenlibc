@@ -40642,3 +40642,60 @@ ones that would notice a threading-policy depth counter behaving differently.
   deliberately cache-friendly reuse pattern. And it does not prove the 110 Ir of framing is
   removable — only that it exists, that it is 20% of the deployed cost, and that the harness the
   campaign has been using cannot see it.
+
+## 2026-08-31 — bd-ny3hsa — LOSS-MAP RE-RANK: the 37x `strlen_256k` loss is a LOADER-MODE artifact — under LD_PRELOAD the same object is at parity (1.00-1.10x)
+
+- **RESULT CLASS: loss/baseline — a standing loss REFUTED as an artifact. No lever, no speedup
+  claimed.** The number this removes from the loss map was the largest in it.
+- **THE STANDING NUMBER, re-confirmed at HEAD before being questioned.**
+  `incumbent_coverage_ab --pin-quietest 2 --family memcpy_strlen --fl-deepbind --fl-so <so>` on
+  `fl` sha256 `b924c8eba8e6c9641e39a8b18efbe658acca5502f375d0e4003728315dd3e87d` returns
+  `strlen_256k` at **37.275554x FL_SLOWER**, CI [37.156577, 37.393036], with A/A nulls
+  fl-fl 1.000497 and glibc-glibc 1.000227, `clears_2x_null=true`, `nulls_hold=true`, verdict
+  DECIDABLE. `memcpy_64k` in the same run is 1.057888x. So the figure is current, not stale, and
+  its nulls are impeccable. That is exactly what makes it dangerous.
+- **EVERY COUNTER SAYS THE OPERATION IS AT PARITY.** A C driver calling `strlen` on a 256 KiB
+  NUL-terminated buffer, fl reached by `LD_PRELOAD`, under `callgrind --cache-sim=yes`, two-point
+  marginal over 180 calls: instructions per byte 0.101967 for fl against 0.078313 for glibc, a
+  ratio of 1.30x — both plainly SIMD, at 9.8 and 12.8 bytes per instruction. Data reads are 1.00x.
+  **D1 read misses are 4107 per call for fl against 4100 for glibc, 1.00x** — both touch the
+  buffer's 4096 lines exactly once, so neither re-scans and neither thrashes. LL misses are zero on
+  both arms.
+
+  **The elision guard is why those numbers can be trusted, and it fired.** `strlen` is declared
+  `__attribute_pure__`, so a loop-invariant call is hoisted straight out of the loop: the first
+  version of this driver measured a two-point marginal of ~44 instructions for 180 x 256 KiB, i.e.
+  the loop had been deleted while the program still printed rows. Reading the pointer through a
+  `volatile` restored it. The published numbers are from the guarded version.
+- **AND DIRECT WALL TIMING AGREES WITH THE COUNTERS, NOT WITH THE HARNESS.** 50,000 iterations of
+  `strlen(256 KiB)` — 12.8 GB scanned — three alternating reps, fl by `LD_PRELOAD` against
+  unpreloaded glibc: **1.10x, 1.00x, 1.00x**.
+- **THE CAUSE IS THE LOADER MODE, demonstrated in ONE PROCESS so it cannot be a between-run
+  artifact.** A driver that `dlopen`s the same `.so` with `RTLD_NOW|RTLD_LOCAL|RTLD_DEEPBIND` and
+  `dlsym`s `strlen` — which is exactly how `incumbent_coverage_ab` reaches the fl arm — times that
+  pointer against the process's own `strlen` on the same buffer, and asserts the two addresses
+  differ before measuring:
+
+  fl via dlopen+DEEPBIND reads 76931.5 ns, 80426.3 ns and 90185.4 ns per call against a host
+  arm of 2023.9, 2677.1 and 1970.5 ns, giving **38.01x, 30.04x and 45.77x**, while the host A/A
+  control taken at the end of each run reads 0.961, 1.009 and 1.145 of the host arm. The same
+  object under `LD_PRELOAD` is at 1.00-1.10x. **Same `.so`, same operation, same buffer, same
+  machine, same process for the DEEPBIND comparison — only the loader mode differs, and it moves
+  the result by a factor of thirty.**
+- **SO THE LOSS MAP LOSES ITS TOP ENTRY.** `strlen_256k` at 37x is not a property of fl's `strlen`;
+  it is a property of reaching fl's `strlen` through `dlopen(RTLD_DEEPBIND)`. A real program that
+  loads fl the way fl is meant to be loaded sees parity. The corrected worst standing deployed loss
+  is `malloc_free` at 5.845478x.
+- **DOES THIS INVALIDATE THE OTHER FAMILIES? NOT AUTOMATICALLY, and the malloc case argues against
+  a blanket dismissal.** `incumbent_coverage_ab` reaches every fl arm the same way, so every family
+  is exposed to the same question — but exposure is not proof. For `malloc_free` there is an
+  independent cross-check in this file: the deployed `LD_PRELOAD` instruction ratio is 7.92x against
+  a harness wall ratio of 5.85x, which is the same order and the right side. A 30x distortion of the
+  kind seen here would have shown up as a gross mismatch there and did not. The honest statement is
+  that the distortion is **demonstrated for `strlen_256k` and not yet excluded elsewhere**, and that
+  each family needs the same two-loader-mode check before its number is trusted.
+- **WHY DEEPBIND WOULD DO THIS is NOT established here.** The plausible mechanism is that fl's
+  runtime-mode detection sees a different world when it is a `dlopen`ed object rather than the
+  process's preloaded libc, and takes a validating path instead of the strict one; this file already
+  carries "harness loader-mode interposition" as a known hazard. That is a hypothesis. What is
+  measured is the effect, its size, and that the loader mode is the only variable.
