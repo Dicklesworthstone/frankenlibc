@@ -40545,3 +40545,52 @@ ones that would notice a threading-policy depth counter behaving differently.
 - **NOT MEASURED:** any comparison against glibc; `printf`, `asprintf`, `vasprintf`, `vdprintf`,
   `vfprintf`; payloads other than a 43-byte string; and cycles or cache behaviour.
 - **Driver:** `scratchpad/bare_s_timed.c`, compiled `-O2`; objects `31b536dca^` and `97260d1e0`.
+
+## 2026-08-31 — bd-ny3hsa — DECOMPOSITION, counted mechanism, no lever: the malloc gap on this shape is WORK VOLUME, not cold cache lines — marginal misses are ZERO for both arms, refuting the standing explanation
+
+- **RESULT CLASS: counted mechanism / decomposition. No speedup is claimed, no lever was built, and
+  nothing here may be quoted as a campaign result.** What this row does is falsify an explanation
+  this file has been carrying since 2026-08-26.
+- **THE STANDING EXPLANATION, and why it needed testing.** The 2026-08-26 ablation row concluded that
+  the residual `malloc`+`free` cost is "four to six distinct, mostly cold cache lines walked in
+  sequence" — `SEGMENT_ARENA_STATE`/`_BASE`, then `SEGMENT_OWNED_BITMAP`, then the segment header
+  line, then `SEGMENT_DESCRIPTORS` at a 0x7e10-byte stride, then the `meta_base` sidecar, then
+  `requested_size`. That was INFERRED from what an ablation failed to buy, never counted. Three
+  later measurements leaned on it: -10 Ir/pair, -48 Ir/pair, and a 0.94 ns ablation all came back
+  timed-neutral, and each was explained by saying the instructions issued in the shadow of that
+  chain. An explanation carrying that much weight should be measured.
+- **MEASURED.** `valgrind --tool=callgrind --cache-sim=yes` on `malloc_icount`, both arms, two-point
+  marginal (`ICOUNT_PAIRS` 20000 minus 2000 over 4 sizes = 72,000 pairs) so startup cancels.
+  Per malloc+free pair:
+
+  `Ir` fl 539.206 against glibc 76.000, a ratio of 7.09x. `Dr` fl 127.047 against glibc 18.000,
+  7.06x. `Dw` fl 79.001 against glibc 12.000, 6.58x. And every miss counter — `I1mr`, `D1mr`,
+  `D1mw`, `ILmr`, `DLmr`, `DLmw` — is **0.000 for BOTH arms**, to three decimals, at both iteration
+  counts.
+
+  The `Ir` figure reproduces the 539.2 from the earlier frame attribution exactly, which is the
+  internal check that the two-point subtraction is doing what it claims.
+- **SO THE COLD-LINE STORY DOES NOT SURVIVE ON THIS SHAPE.** There are no marginal misses to walk.
+  The loop allocates and frees the same size classes repeatedly, so the arena state, the bitmap, the
+  header, the descriptor and the sidecar are all L1-resident after warm-up; the chain is real as a
+  DEPENDENCY but it is not a cold one. Whatever costs fl its time here, it is not memory stalls.
+- **WHAT THE DECOMPOSITION CLOSES TO INSTEAD, and it closes cleanly.** fl does about seven times
+  everything: 7.09x the instructions, 7.06x the data reads, 6.58x the data writes, at an identical
+  (zero) miss rate. Three independent counters agreeing within 7% of one another is a work-volume
+  signature, not a latency one. Against a measured wall ratio of 5.85x on the deployed object, a
+  7.09x work ratio is the right side of the number and the right order — fl is slower because it
+  EXECUTES more, not because it WAITS more.
+- **AND THAT PUTS A REAL DISCREPANCY ON THE RECORD RATHER THAN SMOOTHING IT.** If cost is work
+  volume with no stalls, then removing 48 Ir/pair (-8.9%) should have moved the clock, and it did
+  not — that A/B came back with overlapping intervals. The two measurements use DIFFERENT PATHS:
+  `malloc_icount` links fl as an rlib and calls `malloc_abi::malloc` directly, while the timed
+  `incumbent_coverage_ab` run `dlopen`s the shipped `.so` and goes through the interposed entry with
+  its full framing. So the 539.2 Ir/pair decomposed here is NOT the object whose 5.85x was timed.
+  Reconciling those two is the next step, and it is a bigger deal than any single lever: one of the
+  two harnesses is not measuring the thing the campaign is scored on.
+- **SCOPE, stated so this is not over-read.** callgrind's cache simulator is a MODEL with the host's
+  default geometry, and this workload is deliberately cache-friendly — same sizes, tight loop, one
+  thread. A deployed allocator under scattered allocation would miss, and this row says nothing
+  about that. What it does say is that the benchmark the campaign has been optimising against has no
+  misses in it, so any lever justified by "shortens the dependent cold-line chain" cannot be
+  validated on this harness at all.
