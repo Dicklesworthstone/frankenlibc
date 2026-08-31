@@ -40506,3 +40506,42 @@ ones that would notice a threading-policy depth counter behaving differently.
 - **Objects:** base `31b536dca^`, candidate `97260d1e0`, driver at
   `scratchpad/bare_s_driver.c` compiled `-O2`, harness invocation
   `FRANKENLIBC_MODE=strict LD_PRELOAD=<so> valgrind --tool=callgrind ./bare_s_driver <case> <iters>`.
+
+## 2026-08-31 — bd-zum5jm — the paired wall-time observation for the bare `%s` fast path: -4.63% on the bare/control ratio, against a 1.97% A/A null, agreeing with the -4.71% instruction count
+
+- **RESULT CLASS: corroborating observation. This row does NOT meet this ledger's bar for a timed
+  positive and must not be quoted as a certified win.** It carries no same-invocation A/A null, no
+  in-process self-reported ELF SHA-256, and no bootstrap median CI, so `result_class` is deliberately
+  absent. What it establishes is narrower and still worth recording: the instruction saving in the
+  companion row is NOT one of the ones that fails to reach the clock.
+- **WHY A SAME-INVOCATION A/A IS STRUCTURALLY IMPOSSIBLE HERE, rather than merely omitted.** The two
+  arms are two `libfrankenlibc_abi.so` builds that interpose the SAME symbols. They cannot coexist in
+  one process, so the interleaved `[fl, gl, gl]` shape this ledger prefers has nothing to interleave.
+  The same limit applied to the `threading_policy_depth` lever and was handled the same way: build
+  each arm as the shipped object and compare runs.
+- **WHAT MAKES THE COMPARISON ROBUST ANYWAY.** Each invocation measures BOTH cases — bare `"%s"` and
+  a control `"%s|%d"` that cannot take the fast path — inside the same process, and reports their
+  RATIO. A run that landed on a slow core inflates both numbers and the ratio is unmoved, so
+  machine-speed variation cancels within the run instead of being averaged across runs. The A/B is
+  then a comparison of those in-process ratios across objects. Fastest-of-9-rounds per case, 200,000
+  iterations per round, output to `/dev/null`, five interleaved base/cand invocation pairs, host
+  loadavg 1.39 at start.
+- **THE NUMBERS.** The bare/control ratio has median 0.940186 on the base object and median 0.896609
+  on the candidate, an effect of **-4.63%**. The A/A control — the SAME base object run twice as if
+  it were two arms — gives 0.923588 against 0.941804, a null of **+1.97%**. The effect is about 2.4x
+  the null, and more usefully the two per-arm ranges do not overlap at all: base spans
+  [0.918272, 0.944195] and candidate spans [0.885389, 0.899805]. The driver's accumulators are
+  identical across every run (8,600,000 bare, 9,000,000 control).
+- **THE AGREEMENT WITH THE COUNTED ROW IS THE POINT.** Instructions fell 4.71% on `fprintf` and 4.91%
+  on `dprintf`; wall time on the same shape falls 4.63%. Three independent quantities landing within
+  0.3 percentage points is what a real removal of work looks like, and it is the opposite of this
+  ledger's allocator findings, where -10 and -48 Ir/pair produced no timed movement at all because
+  they issued in the shadow of a dependent-load chain. `printf` formatting is not that shape: the
+  removed rendering work is on the critical path, so it shows up.
+- **AND THE 1.97% NULL IS REPORTED RATHER THAN HIDDEN.** It is not a tight null. On a quieter host it
+  would be smaller, and a reader is entitled to weigh the effect against it: 4.63% over a 1.97% null
+  is a clear but not enormous margin, which is exactly why this row corroborates the counted
+  measurement instead of replacing it. The counted number is the deterministic one.
+- **NOT MEASURED:** any comparison against glibc; `printf`, `asprintf`, `vasprintf`, `vdprintf`,
+  `vfprintf`; payloads other than a 43-byte string; and cycles or cache behaviour.
+- **Driver:** `scratchpad/bare_s_timed.c`, compiled `-O2`; objects `31b536dca^` and `97260d1e0`.
