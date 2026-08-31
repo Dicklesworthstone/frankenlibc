@@ -12,7 +12,39 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 
-use std::ffi::{c_int, c_void};
+use std::ffi::{c_int, c_long, c_void};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// `long syscall(long number, ...)`, matching glibc's declaration.
+type SyscallFn = unsafe extern "C" fn(c_long, ...) -> c_long;
+
+/// Host glibc's raw syscall entry, resolved out of libc.so.6 and proven not to
+/// be fl's own export.
+///
+/// NOTE ON WHY THIS ONE IS DIFFERENT, so the next reader does not mis-file it
+/// with the rest of bd-0q7ba9: the `syscall` call below is NOT this gate's host
+/// arm. The host arm is `glibc(c"ppoll")`, already dlsym-resolved. The raw call
+/// is a NON-VACUITY PROBE — it establishes that the kernel really does write the
+/// remaining time back, without which the whole comparison would be meaningless.
+///
+/// A link-time reference there is a smaller problem than a collapsed host arm:
+/// fl's `syscall` wrapper does perform the real syscall, so the probe would
+/// still exercise the kernel. It is converted anyway because the probe's job is
+/// to speak for the KERNEL, and routing it through fl's wrapper makes it speak
+/// for fl's argument marshalling too — which is precisely the thing the probe is
+/// supposed to be independent of.
+fn host_syscall() -> SyscallFn {
+    // SAFETY: resolved address is glibc's raw syscall entry, `long(long, ...)`.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"syscall",
+            frankenlibc_abi::unistd_abi::syscall as SyscallFn as *const (),
+        );
+        std::mem::transmute::<*mut c_void, SyscallFn>(addr)
+    }
+}
 
 unsafe extern "C" {
     fn dlopen(filename: *const i8, flag: c_int) -> *mut c_void;
@@ -76,7 +108,7 @@ fn ppoll_does_not_clobber_caller_timeout_like_glibc() {
         let mut t = TMO;
         let sz = core::mem::size_of::<libc::c_ulong>();
         let rc = unsafe {
-            libc::syscall(
+            host_syscall()(
                 libc::SYS_ppoll,
                 &mut pfd as *mut libc::pollfd,
                 1usize as libc::nfds_t,
