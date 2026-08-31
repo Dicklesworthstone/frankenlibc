@@ -40405,3 +40405,4 @@ ones that would notice a threading-policy depth counter behaving differently.
   code quality, not performance, and is not a perf claim.
 
 - 2026-08-30 `bd-wutxl6` REJECT: the 64 KiB `fwrite` direct-fd bypass measured 1105.69 ns/call vs live glibc 778.56 (1.420x LOSS) on `hz3`; same-invocation A/A nulls were fl/fl 1.001 and glibc/glibc 1.000, so the source and its behavior-specific test were manually reverted.
+- 2026-08-30 `bd-wk2ho4` LIVE LOSS/NO-VERDICT: `snprintf` `%a` measured 138.441 ns vs glibc 61.152 ns (2.258558x LOSS; A/A 0.991869/0.994791) on `vmi1293453`; `%e`/`%g` controls failed, so no win is claimed and no source commit is attributed without a pre-lever arm.
