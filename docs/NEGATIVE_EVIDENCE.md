@@ -40594,3 +40594,51 @@ ones that would notice a threading-policy depth counter behaving differently.
   about that. What it does say is that the benchmark the campaign has been optimising against has no
   misses in it, so any lever justified by "shortens the dependent cold-line chain" cannot be
   validated on this harness at all.
+
+## 2026-08-31 — bd-ny3hsa / bd-dcrhgl — HARNESS RECONCILIATION: `malloc_icount` understates the deployed path by 110 Ir/pair (20%), and the zero-miss result holds on the real object too
+
+- **RESULT CLASS: counted mechanism / methodology. No lever was built and no speedup is claimed.**
+  This closes the discrepancy the previous row opened rather than proposing a fix.
+- **THE DISCREPANCY.** The cache-sim decomposition measured 539.2 Ir/pair on `malloc_icount`, which
+  links fl as an rlib and calls `malloc_abi::malloc` directly. The certified wall figure, 5.85x, came
+  from `incumbent_coverage_ab --fl-so`, which `dlopen`s the shipped `.so` and enters through the
+  interposed symbol. Those cannot both be describing the same object, and until they are reconciled
+  it is not knowable which one the campaign is scored on.
+- **MEASURED, same instrument, same two-point method.** A C driver performing `malloc`/`free` pairs
+  at the same four sizes (16/64/256/1024), run under `callgrind --cache-sim=yes` twice: unpreloaded
+  for glibc, and under `LD_PRELOAD` of the shipped `libfrankenlibc_abi.so` for the DEPLOYED fl path.
+  Marginal over 4 x (20000 - 2000) = 72,000 pairs.
+
+  **Elision was guarded three ways, because this file records a probe that performed ZERO allocations
+  while still printing rows:** compiled `-fno-builtin-malloc -fno-builtin-free` so the compiler
+  cannot treat the pair as a deletable builtin, the block is written at both ends, and the
+  accumulator is `volatile` so the writes cannot be sunk. The guard was then CHECKED rather than
+  assumed — instructions scale with the pair count (802,857 at 2,000 to 6,706,887 at 20,000), which a
+  deleted loop would not do.
+
+  Deployed fl runs 649.057 instructions per pair against glibc's 82.000, a ratio of 7.92x; data reads
+  163.015 against 18.000, 9.06x; data writes 86.001 against 11.000, 7.82x. The method validates
+  against the other harness on the shared arm: glibc reads 82.0 Ir/pair here versus 76.0 in
+  `malloc_icount`, an 8% difference attributable to this driver's own touch-and-accumulate loop.
+- **THE RECONCILIATION: the rlib harness is 110 Ir/pair cheap.** Deployed fl is 649.1 against the
+  rlib path's 539.2 — **1.20x**. That 110 instructions is the interposition and entry framing that
+  only the shipped object pays and that `malloc_icount` cannot see by construction. **Every
+  instruction-counted lever validated on that harness has therefore been scored against a path 20%
+  cheaper than the one that ships**, and a lever that targets the framing specifically would be
+  invisible to it entirely — which is precisely what bd-dcrhgl proposes to attack.
+- **THE ZERO-MISS RESULT SURVIVES THE MOVE TO THE DEPLOYED OBJECT.** Every miss counter — `I1mr`,
+  `D1mr`, `D1mw`, `ILmr`, `DLmr`, `DLmw` — is again 0.000 per pair on both arms. So the "four to six
+  cold cache lines walked in sequence" explanation is refuted for the SHIPPED object as well, not
+  merely for the rlib harness. Whatever this costs, it is not memory stalls on this shape.
+- **AND THE DIRECTION OF THE REMAINING GAP IS NOW INFORMATIVE.** The deployed instruction ratio is
+  7.92x while the measured wall ratio is 5.85x. Time is BETTER than instruction count predicts,
+  which is the signature of fl's extra work having higher instruction-level parallelism than glibc's
+  — many simple, independent operations against glibc's tighter, more serial ones. That is the
+  correct sign for an explanation of why instruction removal has repeatedly under-delivered against
+  the clock: at fl's higher IPC, each instruction removed is worth less time than the ratio suggests.
+  It is offered as the direction the evidence points, not as a quantified account.
+- **WHAT THIS DOES NOT ESTABLISH.** It does not measure cycles, so the IPC reading above is inference
+  from two ratios rather than a counter. It is one allocation shape, single-threaded, with a
+  deliberately cache-friendly reuse pattern. And it does not prove the 110 Ir of framing is
+  removable — only that it exists, that it is 20% of the deployed cost, and that the harness the
+  campaign has been using cannot see it.
