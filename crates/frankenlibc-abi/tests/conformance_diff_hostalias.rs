@@ -8,11 +8,30 @@
 //!
 //! Filed under [bd-58e87f] follow-up.
 
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_long, c_void};
 use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::resolv_abi as fl;
+use frankenlibc_abi::unistd_abi as fl_unistd;
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use dlsym_oracle::host_addr;
+
+/// `long syscall(long number, ...)`, matching glibc's declaration.
+type SyscallFn = unsafe extern "C" fn(c_long, ...) -> c_long;
+
+/// Resolve the fixture setup syscall from host glibc rather than letting a
+/// release test binary bind it to FrankenLibC's exported `syscall` wrapper.
+fn host_syscall() -> SyscallFn {
+    // SAFETY: `host_addr` proves this is not fl's own export; the signature is
+    // the C declaration of glibc's `syscall` entry point.
+    unsafe {
+        let addr = host_addr(c"syscall", fl_unistd::syscall as SyscallFn as *const ());
+        std::mem::transmute::<*mut c_void, SyscallFn>(addr)
+    }
+}
 
 // Tests in this file mutate the process-global HOSTALIASES env var.
 // Cargo runs them in parallel by default, so we serialize through a
@@ -97,7 +116,9 @@ fn restore_hostaliases(prev: Option<std::ffi::OsString>) {
 
 fn memfd_alias_file(content: &str) -> (libc::c_int, String) {
     let name = CString::new("frankenlibc-hostaliases").unwrap();
-    let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) as libc::c_int };
+    let fd = unsafe {
+        host_syscall()(libc::SYS_memfd_create as c_long, name.as_ptr(), 0) as libc::c_int
+    };
     assert!(fd >= 0, "memfd_create failed");
     let bytes = content.as_bytes();
     let written = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
