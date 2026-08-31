@@ -35,6 +35,7 @@
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
+use std::sync::Mutex;
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -58,7 +59,30 @@ fn host_psignal() -> PsignalFn {
 /// fl writes through a raw `write(2)` syscall and glibc through stdio, so the
 /// capture has to be at the FILE DESCRIPTOR level; capturing Rust's `io::stderr`
 /// would see neither.
+/// Serialises the fd-2 redirect window below.
+///
+/// `capture_stderr` redirects PROCESS-GLOBAL file descriptor 2, and libtest runs
+/// this file's tests on parallel threads by default. Two concurrent captures
+/// interleave: one test's `dup2(saved, 2)` restores stderr while another is
+/// still inside its window, so that test's bytes go to the real stderr instead
+/// of its pipe, and a reader can be left blocked in `read_to_end` on a pipe
+/// whose write end is still held open through fd 2 by the other thread.
+///
+/// Both failure modes were observed, not theorised. Under default parallelism
+/// this file produced `strsignal_names_real_time_signals_where_psignal_does_not
+/// ... FAILED` with the expected text visible on the RUN'S OWN stderr — proving
+/// it had escaped the capture — while `psignal_matches_live_glibc_on_stderr`
+/// hung until rch killed the run at its 1800s SSH timeout. With
+/// `--test-threads=1` both pass in 0.00s. bd-rfd32s.
+///
+/// Eight sibling stderr-capturing gates in this directory already take a lock
+/// exactly like this one (`conformance_diff_herror`, `_err_h`, `_error`,
+/// `_error_at_line`, `_psiginfo`, `_syslog_mask`, and the two `_long_double_live`
+/// pair); this file and two others were the ones that did not.
+static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
 fn capture_stderr(body: impl FnOnce()) -> Vec<u8> {
+    let _guard = CAPTURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: pipe/dup/dup2 on descriptors this function owns for its duration.
     unsafe {
         let mut fds = [0 as c_int; 2];
