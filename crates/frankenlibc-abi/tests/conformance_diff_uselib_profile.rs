@@ -38,7 +38,53 @@ use std::ffi::{c_char, c_int, c_long, c_void};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
-use dlsym_oracle::host_fn;
+use dlsym_oracle::{host_addr, host_fn};
+
+/// `long syscall(long number, ...)`, matching glibc's declaration.
+type SyscallFn = unsafe extern "C" fn(c_long, ...) -> c_long;
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `syscall`, proven not to be fl's own export.
+fn host_syscall() -> SyscallFn {
+    // SAFETY: the resolved address is glibc's `syscall`, declared
+    // `long syscall(long, ...)`; fl's own export is handed over so a collapsed
+    // oracle aborts instead of comparing fl against itself.
+    unsafe {
+        let addr = host_addr(
+            c"syscall",
+            frankenlibc_abi::unistd_abi::syscall as SyscallFn as *const (),
+        );
+        std::mem::transmute::<*mut c_void, SyscallFn>(addr)
+    }
+}
+
+/// Host glibc's `__errno_location`, proven not to be fl's own export.
+///
+/// `kernel_uselib` is the raw-kernel arm of this gate and both of its halves —
+/// the call and the errno read — were link-time references. fl exports `syscall`
+/// AND `__errno_location` under
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a release test
+/// binary the linker prefers fl's definitions for both: the arm calls fl's
+/// syscall wrapper and then reads fl's errno slot, and the comparison becomes
+/// fl against fl. Debug hides it because the attribute is off there.
+///
+/// This gate happens to pass in release today, so unlike bsd_stubs,
+/// c_locale_codec and locale_categories this conversion is prophylactic rather
+/// than bug-fixing — recorded plainly so nobody reads it as a fix. The three
+/// that WERE broken had the identical shape (bd-g1sjty).
+fn host_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`, declared
+    // `int *__errno_location(void)`; fl's own export is the collapse guard.
+    unsafe {
+        let addr = host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr)
+    }
+}
 
 /// x86_64 `__NR_uselib`.
 const SYS_USELIB: c_long = 134;
@@ -48,9 +94,10 @@ fn kernel_uselib(path: *const c_char) -> (c_long, c_int) {
     // SAFETY: `uselib` takes one pointer; a NULL or dangling path is exactly
     // what is under test, and the kernel validates it.
     unsafe {
-        *libc::__errno_location() = 0;
-        let rc = libc::syscall(SYS_USELIB, path);
-        (rc, *libc::__errno_location())
+        let host_errno = host_errno_location();
+        *host_errno() = 0;
+        let rc = host_syscall()(SYS_USELIB, path);
+        (rc, *host_errno())
     }
 }
 
