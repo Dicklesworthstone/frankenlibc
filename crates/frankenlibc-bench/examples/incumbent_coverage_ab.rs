@@ -8883,9 +8883,13 @@ const FLOAT_TIMING: [f64; 8] = [
 fn check_float_conformance(host: SnprintfFn, fl: SnprintfFn) -> (usize, usize) {
     let mut comparisons = 0usize;
     let mut mismatches = 0usize;
-    // Bare "%f" (precision 6) plus every single-digit "%.Nf".
-    let formats: [&CStr; 10] = [
+    // The fixed-format ladder plus the deployed width-zero `%e`/`%g`/`%a`
+    // direct-write routes.  The latter are not byte-identical by inspection:
+    // they apply exponent and trailing-zero post-processing, so the timing
+    // arms below are admitted only after this differential check.
+    let formats: [&CStr; 15] = [
         c"%f", c"%.0f", c"%.1f", c"%.2f", c"%.3f", c"%.4f", c"%.5f", c"%.6f", c"%.8f", c"%.9f",
+        c"%e", c"%.4e", c"%g", c"%.6g", c"%a",
     ];
     for format in formats {
         for &value in &FLOAT_VALUES {
@@ -8956,6 +8960,24 @@ fn time_float_4f_batch(function: SnprintfFn) -> f64 {
     started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
 }
 
+fn time_float_6e_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_float_batch(function, c"%e"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_float_6g_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_float_batch(function, c"%g"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
+fn time_float_a_batch(function: SnprintfFn) -> f64 {
+    let started = Instant::now();
+    black_box(run_float_batch(function, c"%a"));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / SNPRINTF_REPS as f64
+}
+
 fn run_snprintf_float(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
@@ -8995,7 +9017,7 @@ fn run_snprintf_float(config: &Config) {
     let (comparisons, mismatches) = check_float_conformance(host, fl);
     let conformance_verdict = if mismatches == 0 { "pass" } else { "fail" };
     println!(
-        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_float formats=10 values=16 \
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=snprintf_float formats=15 values=16 \
          destination_sizes=9 comparisons={comparisons} mismatches={mismatches} \
          compared=return_value_and_full_destination \
          covers=signed_zero,subnormal,u64_scale_overflow,huge_finite,nan,inf \
@@ -9049,6 +9071,27 @@ fn run_snprintf_float(config: &Config) {
             host,
             fl,
             time_float_6f_batch,
+        ),
+        measure_arm_case(
+            "default_6e",
+            "bare \"%e\" -- deployed scientific direct-write route",
+            host,
+            fl,
+            time_float_6e_batch,
+        ),
+        measure_arm_case(
+            "default_6g",
+            "bare \"%g\" -- deployed general-format direct-write route",
+            host,
+            fl,
+            time_float_6g_batch,
+        ),
+        measure_arm_case(
+            "default_a",
+            "bare \"%a\" -- deployed hexadecimal direct-write route",
+            host,
+            fl,
+            time_float_a_batch,
         ),
     ];
 

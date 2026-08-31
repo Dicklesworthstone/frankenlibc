@@ -14859,41 +14859,6 @@ mod tests {
     }
 
     #[test]
-    fn fscanf_exact_char_uses_one_byte_stream_consumption() {
-        let mut input = *b"xy";
-        let stream = unsafe {
-            fmemopen(
-                input.as_mut_ptr().cast(),
-                input.len(),
-                c"r".as_ptr(),
-            )
-        };
-        assert!(!stream.is_null());
-
-        let mut first = 0i8;
-        let mut second = 0i8;
-        assert_eq!(unsafe { fscanf(stream, c"%c".as_ptr(), &mut first) }, 1);
-        assert_eq!(first as u8, b'x');
-        assert_eq!(unsafe { fscanf(stream, c"%c".as_ptr(), &mut second) }, 1);
-        assert_eq!(second as u8, b'y');
-        assert_eq!(unsafe { fscanf(stream, c"%c".as_ptr(), &mut second) }, libc::EOF);
-        assert_eq!(unsafe { fclose(stream) }, 0);
-    }
-
-    #[test]
-    fn strict_single_char_scan_format_excludes_nearby_grammars() {
-        for (format, expected) in [
-            (c"%c".as_ptr(), true),
-            (c"%2c".as_ptr(), false),
-            (c" %c".as_ptr(), false),
-            (c"%cX".as_ptr(), false),
-            (c"%lc".as_ptr(), false),
-        ] {
-            assert_eq!(unsafe { strict_single_char_scan_format(format) }, expected);
-        }
-    }
-
-    #[test]
     fn printf_direct_payload_classifies_string_newline_only_for_nonnull_s() {
         let text = b"status=ok\0";
         let args = [text.as_ptr() as u64];

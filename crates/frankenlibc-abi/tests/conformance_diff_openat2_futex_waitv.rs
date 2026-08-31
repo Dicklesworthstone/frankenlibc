@@ -13,6 +13,42 @@ use frankenlibc_abi::unistd_abi as fl;
 use std::ffi::{c_int, c_long, c_uint, c_void};
 use std::ptr;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use dlsym_oracle::host_addr;
+
+/// `long syscall(long number, ...)`, matching glibc's declaration.
+type SyscallFn = unsafe extern "C" fn(c_long, ...) -> c_long;
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Resolve both parts of the host oracle out of glibc rather than linking to
+/// their names.  In a release test binary fl exports `syscall` and
+/// `__errno_location` as global symbols, so link-time references can collapse
+/// into fl-vs-fl and pass silently. `host_addr` rejects that collapse.
+fn host_syscall() -> SyscallFn {
+    // SAFETY: `syscall` has the declared C signature and `host_addr` rejects
+    // fl's own export before the address is transmuted.
+    unsafe {
+        let addr = host_addr(c"syscall", fl::syscall as SyscallFn as *const ());
+        std::mem::transmute::<*mut c_void, SyscallFn>(addr)
+    }
+}
+
+fn host_errno_ptr() -> *mut c_int {
+    // SAFETY: `__errno_location` has the declared C signature and `host_addr`
+    // rejects fl's own TLS accessor before it is called.
+    unsafe {
+        let addr = host_addr(
+            c"__errno_location",
+            fl_errno_location as ErrnoLocationFn as *const (),
+        );
+        let errno_location = std::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr);
+        errno_location()
+    }
+}
+
 const SYS_OPENAT2: c_long = 437;
 const SYS_FUTEX_WAITV: c_long = 449;
 
@@ -24,11 +60,13 @@ struct OpenHow {
 }
 
 fn host_errno() -> c_int {
-    unsafe { *libc::__errno_location() }
+    // SAFETY: `host_errno_ptr` returns glibc's live errno slot.
+    unsafe { *host_errno_ptr() }
 }
 
 fn set_host_errno(value: c_int) {
-    unsafe { *libc::__errno_location() = value };
+    // SAFETY: `host_errno_ptr` returns glibc's live errno slot.
+    unsafe { *host_errno_ptr() = value };
 }
 
 fn fl_errno() -> c_int {
@@ -46,7 +84,7 @@ fn host_openat2(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe { libc::syscall(SYS_OPENAT2, dirfd, pathname, how, size) as c_long };
+    let rc = unsafe { host_syscall()(SYS_OPENAT2, dirfd, pathname, how, size) };
     (rc as c_int, host_errno())
 }
 
@@ -70,7 +108,7 @@ fn host_futex_waitv(
 ) -> (c_int, c_int) {
     set_host_errno(0);
     let rc = unsafe {
-        libc::syscall(
+        host_syscall()(
             SYS_FUTEX_WAITV,
             waiters,
             nr_futexes,

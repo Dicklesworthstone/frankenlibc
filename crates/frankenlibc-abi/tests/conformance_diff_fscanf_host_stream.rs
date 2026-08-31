@@ -57,6 +57,12 @@ struct Outcome {
     num: c_int,
 }
 
+/// The result sequence from repeated exact `%c` conversions.
+#[derive(Debug, PartialEq, Eq)]
+struct CharOutcome {
+    results: [(c_int, u8); 3],
+}
+
 /// Open the file with HOST glibc, run `f` over it, close it with HOST glibc.
 ///
 /// Each arm gets its own open so no arm inherits another's file position.
@@ -88,6 +94,36 @@ fn run_arm(f: FscanfFn, path: &CString, fopen: FopenFn, fclose: FcloseFn) -> Out
         word: String::from_utf8_lossy(&word[..end]).into_owned(),
         num,
     }
+}
+
+/// Open a provider-owned stream and run two exact character conversions plus
+/// the EOF probe. Each arm owns its own stream, so its cursor cannot be
+/// inherited from the other provider.
+fn run_char_arm(f: FscanfFn, path: &CString, fopen: FopenFn, fclose: FcloseFn) -> CharOutcome {
+    let stream = unsafe { fopen(path.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "provider fopen failed");
+
+    let mut first = 0u8;
+    let mut second = 0u8;
+    let mut eof = 0u8;
+    let results = unsafe {
+        [
+            (
+                f(stream, c"%c".as_ptr(), (&mut first as *mut u8).cast::<c_char>()),
+                first,
+            ),
+            (
+                f(stream, c"%c".as_ptr(), (&mut second as *mut u8).cast::<c_char>()),
+                second,
+            ),
+            (
+                f(stream, c"%c".as_ptr(), (&mut eof as *mut u8).cast::<c_char>()),
+                eof,
+            ),
+        ]
+    };
+    assert_eq!(unsafe { fclose(stream) }, 0, "provider fclose failed");
+    CharOutcome { results }
 }
 
 #[test]
@@ -153,4 +189,44 @@ fn fscanf_and_its_isoc_aliases_agree_on_a_host_owned_stream() {
              implementations (bd-r8hpym)."
         );
     }
+}
+
+#[test]
+fn fscanf_exact_char_on_an_fl_owned_stream_matches_glibc_cursor_and_eof() {
+    let dir = std::env::temp_dir().join("fl_fscanf_exact_char_stream");
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("input.txt");
+    std::fs::write(&path, b"xy").expect("write input");
+    let cpath = CString::new(path.to_str().expect("utf-8 path")).expect("path has NUL");
+
+    let host_fopen: FopenFn =
+        unsafe { host_fn(c"fopen", frankenlibc_abi::stdio_abi::fopen as *const ()) };
+    let host_fclose: FcloseFn =
+        unsafe { host_fn(c"fclose", frankenlibc_abi::stdio_abi::fclose as *const ()) };
+    let glibc_fscanf: FscanfFn = unsafe {
+        host_fn(
+            c"__isoc23_fscanf",
+            frankenlibc_abi::isoc_abi::__isoc23_fscanf as *const (),
+        )
+    };
+
+    let want = run_char_arm(glibc_fscanf, &cpath, host_fopen, host_fclose);
+    assert_eq!(
+        want,
+        CharOutcome {
+            results: [(1, b'x'), (1, b'y'), (libc::EOF, 0)],
+        },
+        "the host oracle did not prove ordinary two-byte cursor and EOF behaviour"
+    );
+
+    let got = run_char_arm(
+        frankenlibc_abi::stdio_abi::fscanf as FscanfFn,
+        &cpath,
+        frankenlibc_abi::stdio_abi::fopen as FopenFn,
+        frankenlibc_abi::stdio_abi::fclose as FcloseFn,
+    );
+    assert_eq!(
+        got, want,
+        "FL-owned stream exact %c sequence diverged from glibc: got {got:?}, want {want:?}"
+    );
 }
