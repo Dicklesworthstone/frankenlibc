@@ -14,17 +14,54 @@ use frankenlibc_abi::unistd_abi as fl;
 use std::ffi::{c_char, c_int, c_long, c_void};
 use std::ptr;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use dlsym_oracle::host_addr;
+
+/// `long syscall(long number, ...)`, matching glibc's declaration.
+type SyscallFn = unsafe extern "C" fn(c_long, ...) -> c_long;
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Resolve both pieces of the host oracle from glibc. In release test binaries
+/// fl exports both names, making link-time references silently compare fl with
+/// itself; `host_addr` rejects that collapsed oracle.
+fn host_syscall() -> SyscallFn {
+    // SAFETY: the signature is glibc's `long syscall(long, ...)`, and the
+    // resolver refuses fl's own export before transmutation.
+    unsafe {
+        let addr = host_addr(c"syscall", fl::syscall as SyscallFn as *const ());
+        std::mem::transmute::<*mut c_void, SyscallFn>(addr)
+    }
+}
+
+fn host_errno_ptr() -> *mut c_int {
+    // SAFETY: the signature is `int *__errno_location(void)`, and the resolver
+    // refuses fl's own TLS accessor before calling the host function.
+    unsafe {
+        let addr = host_addr(
+            c"__errno_location",
+            fl_errno_location as ErrnoLocationFn as *const (),
+        );
+        let errno_location = std::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr);
+        errno_location()
+    }
+}
+
 const SYS_PIVOT_ROOT: c_long = libc::SYS_pivot_root as c_long;
 const SYS_SWAPON: c_long = libc::SYS_swapon as c_long;
 const SYS_SWAPOFF: c_long = libc::SYS_swapoff as c_long;
 const SYS_QUOTACTL: c_long = libc::SYS_quotactl as c_long;
 
 fn host_errno() -> c_int {
-    unsafe { *libc::__errno_location() }
+    // SAFETY: `host_errno_ptr` returns glibc's live errno slot.
+    unsafe { *host_errno_ptr() }
 }
 
 fn set_host_errno(value: c_int) {
-    unsafe { *libc::__errno_location() = value };
+    // SAFETY: `host_errno_ptr` returns glibc's live errno slot.
+    unsafe { *host_errno_ptr() = value };
 }
 
 fn fl_errno() -> c_int {
@@ -37,7 +74,7 @@ fn set_fl_errno(value: c_int) {
 
 fn host_pivot_root(new_root: *const c_char, put_old: *const c_char) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe { libc::syscall(SYS_PIVOT_ROOT, new_root, put_old) as c_long };
+    let rc = unsafe { host_syscall()(SYS_PIVOT_ROOT, new_root, put_old) };
     (rc as c_int, host_errno())
 }
 
@@ -49,7 +86,7 @@ fn fl_pivot_root(new_root: *const c_char, put_old: *const c_char) -> (c_int, c_i
 
 fn host_swapon(path: *const c_char, swapflags: c_int) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe { libc::syscall(SYS_SWAPON, path, swapflags) as c_long };
+    let rc = unsafe { host_syscall()(SYS_SWAPON, path, swapflags) };
     (rc as c_int, host_errno())
 }
 
@@ -61,7 +98,7 @@ fn fl_swapon(path: *const c_char, swapflags: c_int) -> (c_int, c_int) {
 
 fn host_swapoff(path: *const c_char) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe { libc::syscall(SYS_SWAPOFF, path) as c_long };
+    let rc = unsafe { host_syscall()(SYS_SWAPOFF, path) };
     (rc as c_int, host_errno())
 }
 
@@ -78,7 +115,7 @@ fn host_quotactl(
     addr: *mut c_void,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe { libc::syscall(SYS_QUOTACTL, cmd, special, id, addr) as c_long };
+    let rc = unsafe { host_syscall()(SYS_QUOTACTL, cmd, special, id, addr) };
     (rc as c_int, host_errno())
 }
 
