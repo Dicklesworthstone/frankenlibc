@@ -41024,3 +41024,63 @@ ones that would notice a threading-policy depth counter behaving differently.
   was touched and no lane was restored — restoring one is a perf lever that needs its own
   same-invocation measurement, and this row does not pre-authorise it. Verified remotely: `[RCH]
   remote vmi1293453 (116.1s)`, base `7726a792f`, `test result: ok. 2 passed; 0 failed`.
+
+## 2026-09-01 (cc) — RETRACTION: the 2026-06-20 `rand()`/`random()` single-threaded lock-skip row at L11481 describes a mechanism that has not existed since 2026-06-26
+
+- **WHAT IS RETRACTED.** The row at L11481, "rand()/random() single-threaded lock-skip — LANDED:
+  1.64x LOSS → 0.63x WIN", reports 12.3 ns → 3.2-3.6 ns and states its mechanism explicitly:
+  `GLOBAL` restructured to `UnsafeCell<RandomState>` + `LOCK: Mutex<()>` + a `SINGLE_THREADED`
+  `AtomicU8` cleared at `pthread_create` via `mark_multithreaded()`, with a `with_state` helper
+  "that locks ONLY when multi-threaded". **None of that is in the tree.** At HEAD
+  `crates/frankenlibc-core/src/stdlib/random_sv.rs:190` is `static GLOBAL: Mutex<RandomState>` and
+  every accessor (lines 223, 234, 240, 263, 293) opens with `GLOBAL.lock()`. There is no
+  `UnsafeCell`, no `SINGLE_THREADED`, no `with_state`. No speedup is claimed or denied here — the
+  claim is retracted because its stated mechanism is absent, exactly as the tdelete row was
+  retracted in `f339942f7`.
+
+- **PROVENANCE, by `git log -S` on the three mechanism symbols, all three agreeing:**
+  - `b888f312b` (2026-06-20) "perf(stdlib): rand()/random() single-threaded lock-skip" ADDED
+    `SINGLE_THREADED`, `with_state` and `UnsafeCell` to `random_sv.rs`. That is the win.
+  - `bd829b12f` (2026-06-26) "stdlib/random: glibc-exact System V random types + reentrant
+    random_r", **53 insertions against 97 deletions on `random_sv.rs`**, removed all three. It says
+    nothing about perf, cites no perf bead, and is entirely reasonable on its own terms.
+  - `d35f6a9f8` (2026-08-04) "fix(merge): restore ABI helper definitions (bd-aaouxv)" then re-added
+    `pub fn mark_multithreaded() {}` — **an empty body** — under a doc comment explaining that "the
+    current global random-state implementation already serializes every access with its mutex, so
+    this transition carries no additional state". The ABI entry point was restored; the mechanism
+    was not. `pthread_abi.rs:2507` still calls it.
+
+- **THIS IS THE SECOND CONFIRMED INSTANCE OF bd-stale-win-silent-revert-audit-xezk5d's CLASS, AND IT
+  TIES THAT CLASS TO A KNOWN INCIDENT.** `bd829b12f` is one of the three commits `AGENTS.md:49`
+  names as the 2026-06-26 silent deletion. That incident has been audited for deleted FUNCTIONS and
+  for dark GATES; nobody enumerated its casualties among **banked ledger rows**. This one sat
+  unretracted for ten weeks, and the 2026-08-04 "restore" made it harder to see rather than easier,
+  because the symbol the row names is present again — as a no-op.
+
+- **HOW IT WAS FOUND, and the join is reusable.** The audit this bead specifies — join WIN rows
+  against later `fix(`-prefixed commits touching what they name — was run over 288 banked-win rows
+  and 607 `fix(` commits that touch production source. Matching on file basenames is useless
+  (`mod.rs` matches everything); matching on IDENTIFIERS the row backticks, weighted by how few fix
+  diffs mention them, is not. It reproduces the known positive at the top of the rarest bucket:
+  L1458 `tdelete` matched `delete_rec` at df=1 against `a35732373`, which is precisely the pair this
+  bead documented by hand.
+
+- **THREE BLIND SPOTS THAT MAKE A NEGATIVE RESULT FROM THIS SWEEP WORTHLESS, each demonstrated on
+  this very case.** An automated "did a Jun-26 commit delete a mechanism a banked win names, and is
+  it still absent?" pass returned ZERO — including this instance, which was found by hand. Why:
+  1. **Uppercase constants are invisible** to a `[a-z][a-z0-9_]{9,}` identifier regex, so
+     `SINGLE_THREADED` never matched.
+  2. **A stub restores the name without the mechanism**, so an "is the identifier absent at HEAD?"
+     test says `mark_multithreaded` is fine. It is present and empty.
+  3. **Whole-tree substring presence is far too permissive**: `with_state` was deleted from
+     `random_sv.rs` but survives in `frankenlibc-membrane/src/flat_combining.rs`, an unrelated
+     module, so the tree-wide test reported it present.
+  Any one of the three alone would have hidden this row. The bead already says its own two cheap
+  probes cannot find a silent revert; these are three more reasons a zero means nothing here.
+
+- **DISPOSITION.** L11481 is retracted as a standing claim. Whether fl's `rand()` is currently fast
+  or slow against glibc is UNMEASURED by me and is a separate question — the point is only that the
+  banked row no longer describes the code. Restoring the lock-skip is a perf lever needing its own
+  same-invocation measurement, and this row does not pre-authorise it; note also that whoever does
+  restore it must re-establish the safety argument the original row made, since the flag that made
+  it safe is what `bd829b12f` removed.
