@@ -872,18 +872,27 @@ fn error_flushes_buffered_stdout_before_the_diagnostic() {
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g)
     );
-    // Assert what the ORACLE produced, not just that the arms agree: if both
-    // impls stopped flushing, the equality above would still hold.
-    assert!(
-        g.starts_with(MARKER),
-        "glibc should flush buffered stdout ahead of the diagnostic, got {:?}",
-        String::from_utf8_lossy(&g)
-    );
-    assert!(
-        f.starts_with(MARKER),
-        "fl left buffered stdout behind the diagnostic, got {:?}",
-        String::from_utf8_lossy(&f)
-    );
+    // The concern behind the two assertions that used to stand here is real —
+    // "assert what the ORACLE produced, not just that the arms agree", because
+    // if both impls stopped flushing the equality above would still hold. But
+    // they were spelled `g.starts_with(MARKER)` / `f.starts_with(MARKER)`, and
+    // a byte PREFIX comparison is exactly what the comment eleven lines up says
+    // cannot be stable here: these tests redirect the process's fd 1 and 2, so
+    // libtest's own progress lines land in the capture from other threads.
+    //
+    // It fired (bd-aykfv1). On rch worker vmi1293453 the captured glibc buffer
+    // was:
+    //   "test error_prefix_is_the_full_argv0_not_its_basename ... ok\nMARKER<exe>: msg\n"
+    // — a foreign libtest line at the FRONT. The marker still precedes the
+    // diagnostic, so the property under test held and every order assertion
+    // passed; only `starts_with` failed, on a byte that has nothing to do with
+    // flushing. The same target is green on ovh-a, which is what a
+    // parallelism artifact looks like.
+    //
+    // Nothing is lost by removing them: the `for` loop above already asserts
+    // `marker_precedes_message` for EACH arm individually, not merely that the
+    // two agree, so the oracle's own behaviour is still pinned — by the
+    // predicate built for this exact instability rather than around it.
 }
 
 #[test]
@@ -901,23 +910,56 @@ fn error_at_line_flushes_buffered_stdout_before_the_diagnostic() {
         frankenlibc_abi::stdlib_abi::error_at_line(0, 0, file.as_ptr(), 7, fmt.as_ptr());
     });
 
+    // This WAS `assert_eq!(f, g)` — a full byte equality over a buffer other
+    // libtest threads write into. It fired on the next run after the rest of
+    // this test was hardened (bd-aykfv1), on rch worker vmi1293453:
+    //   fl    = "test error_at_line_honors_error_print_progname_like_glibc ... ok\nMARKER<exe>:f.c:7: msg\n"
+    //   glibc = "MARKER<exe>:f.c:7: msg\n"
+    // The two arms produced identical output. They differed only by a foreign
+    // progress line landing in one capture and not the other.
+    //
+    // So compare the relation this test exists to prove, in both arms and
+    // between them, rather than the bytes: the marker must precede the
+    // diagnostic (stdout was flushed first), and both impls must agree on that.
+    for (arm, captured) in [("fl", &f), ("glibc", &g)] {
+        assert!(
+            marker_precedes_message(captured),
+            "{arm}'s error_at_line() must flush buffered stdout before the diagnostic, so the \
+             marker should precede the message; got {:?}",
+            String::from_utf8_lossy(captured)
+        );
+    }
     assert_eq!(
-        f,
-        g,
+        marker_precedes_message(&f),
+        marker_precedes_message(&g),
         "error_at_line() stdout/stderr interleaving: fl={:?} glibc={:?}",
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g)
     );
+    // Same removal as in `error_flushes_buffered_stdout_before_the_diagnostic`
+    // above, and the same reason: a byte PREFIX check cannot be stable in a
+    // capture that other libtest threads write into. This twin has not been
+    // observed failing — it is fixed by inspection rather than by observation,
+    // because leaving one of two identical unstable assertions in place is how
+    // the same red comes back on the next unlucky worker.
+    //
+    // The oracle claim is kept, through the order predicate:
     assert!(
-        g.starts_with(MARKER),
-        "glibc should flush buffered stdout ahead of the diagnostic, got {:?}",
+        marker_precedes_message(&g),
+        "glibc's error_at_line() must flush buffered stdout before the diagnostic, so the \
+         marker should precede the message; got {:?}",
         String::from_utf8_lossy(&g)
     );
     assert!(
-        f.starts_with(MARKER),
-        "fl left buffered stdout behind the diagnostic, got {:?}",
+        marker_precedes_message(&f),
+        "fl's error_at_line() left buffered stdout behind the diagnostic; the marker should \
+         precede the message, got {:?}",
         String::from_utf8_lossy(&f)
     );
+    // The byte equality that used to stand above this is gone; see the comment
+    // there. It was left in place on one run's evidence and fired on the next,
+    // which is the whole argument for not leaving a known-unstable assertion
+    // alone because it has not bitten yet.
 }
 
 #[test]
