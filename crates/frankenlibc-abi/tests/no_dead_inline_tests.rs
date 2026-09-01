@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 5 across 2 today (a third module is listed at 0 —
+/// across 11 modules; 2 across 1 today (a second module is listed at 0 —
 /// see the `pthread_abi` note below). Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
@@ -48,7 +48,6 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     // assertion. At 0 the growth check is at its tightest: any `#[test]` written
     // back into that block fails immediately.
     ("pthread_abi", 0),
-    ("stdio_abi", 3),
 ];
 // BURNED DOWN (bd-xh08pf):
 //   fenv_abi (11)      -> 10 retired against existing coverage in
@@ -201,7 +200,38 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                          tests/io_internal_native_file_test.rs::native_file_construct_for_fd,
 //                          which already asserts the vtable is set to
 //                          NATIVE_IO_JUMP_T on a freshly built stream.
-// 54 -> 5 stranded tests, 11 -> 2 modules (pthread_abi listed at 0).
+//   stdio_abi, LAST (3 of 8) -> 2 RETIRED AS TAUTOLOGIES, a fifth impossibility
+//                         shape on this bead after could-not-PASS,
+//                         could-not-COMPILE, unreachable-branch and
+//                         could-not-FAIL. `stdio_stream_id_hasher_integer_fast_
+//                         path_matches_usize_and_u64` asserts write_usize ==
+//                         write_u64 where write_usize IS `self.write_u64(value
+//                         as u64)`; `stdio_flush_all_id_snapshot_is_sorted`
+//                         asserts sortedness of a Vec `sort_unstable` was just
+//                         called on. The one real fact underneath the second —
+//                         that the standard sentinels sort below every
+//                         dynamically allocated id, so fflush(NULL) reaches
+//                         stderr before a program's own files — is now a `const`
+//                         assertion beside the new named FIRST_DYNAMIC_STREAM_ID
+//                         in stdio_abi.rs, and the registration half was already
+//                         covered by stdio_abi_test.rs (bd-0ftdgt).
+//                       -> 1 REWRITTEN differential:
+//                         tests/conformance_diff_stdio_ext.rs::
+//                         fpending_after_printf_newline_matches_glibc_across_buffering_modes
+//                         plus ::line_buffering_flushes_at_the_newline_and_full_buffering_does_not.
+//                         The original poked the private
+//                         try_write_direct_s_newline_stream and read
+//                         pending_flush(); the observable contract is POSIX's
+//                         (line-buffered flushes at the newline, fully-buffered
+//                         does not) and `__fpending` reports the same byte count
+//                         on both implementations. The host arm is dlsym-resolved
+//                         and the fl stream is asserted NOT to be delegating, so
+//                         it cannot collapse to glibc-vs-glibc.
+//   glibc_internal_abi, REMAINING (2) -> the adjtime pair, still not burned down
+//                         for the reason recorded above: the only public route
+//                         to the setting direction CHANGES THE SYSTEM CLOCK on a
+//                         shared rch worker. It needs a different instrument.
+// 54 -> 2 stranded tests, 11 -> 1 module (pthread_abi listed at 0).
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

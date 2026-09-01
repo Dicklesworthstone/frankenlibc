@@ -1007,8 +1007,34 @@ const STDIN_SENTINEL: usize = 0x1000_0001;
 const STDOUT_SENTINEL: usize = 0x1000_0002;
 const STDERR_SENTINEL: usize = 0x1000_0003;
 
+/// First id `alloc_stream_id` hands out for a dynamically opened stream.
+///
+/// Named rather than inlined so the ordering invariant below can be a `const`
+/// assertion (bd-xh08pf).
+const FIRST_DYNAMIC_STREAM_ID: usize = 0x1000_0010;
+
 /// Next stream ID for dynamically opened files.
-static NEXT_STREAM_ID: Mutex<usize> = Mutex::new(0x1000_0010);
+static NEXT_STREAM_ID: Mutex<usize> = Mutex::new(FIRST_DYNAMIC_STREAM_ID);
+
+// `sorted_stream_ids` sorts numerically, and `_IO_flush_all` / `fflush(NULL)`
+// walk that order, so stdin/stdout/stderr flush before any stream the program
+// opened — the ordering a program relies on when its own output and its error
+// messages have to interleave sensibly at exit.
+//
+// That ordering is not a property of the sort; it is a property of these four
+// numbers, and it was previously asserted only by a `#[test]` inside this
+// module's dead `#[cfg(test)]` block, which `lib.rs`'s `#[cfg(not(test))]` gate
+// meant had NEVER run (bd-xh08pf). As `const` assertions they hold in the build
+// that ships, and moving any sentinel — or lowering the dynamic base — is a
+// compile error instead of a silent reordering.
+const _: () = assert!(
+    STDIN_SENTINEL < STDOUT_SENTINEL && STDOUT_SENTINEL < STDERR_SENTINEL,
+    "the standard streams must sort stdin, stdout, stderr"
+);
+const _: () = assert!(
+    STDERR_SENTINEL < FIRST_DYNAMIC_STREAM_ID,
+    "every dynamically opened stream must sort AFTER the three standard ones,      or fflush(NULL) could flush a program's own file before its stderr"
+);
 
 #[derive(Clone)]
 struct StreamIdHasher {
@@ -14811,116 +14837,86 @@ pub unsafe extern "C" fn snprintb_m(
     unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// BURN-DOWN MAP for the dead inline `#[cfg(test)] mod tests` that stood here
+// until 2026-09-01 (bd-xh08pf). `lib.rs` declares this module
+// `#[cfg(not(test))] pub mod stdio_abi;`, so nothing in that block ever
+// compiled. The notes from the two earlier passes are kept below; this pass
+// cleared the last three and removed the block itself.
+//
+//   stdio_stream_id_hasher_integer_fast_path_matches_usize_and_u64
+//     RETIRED as a TAUTOLOGY, the fifth impossibility shape found on this bead.
+//     Its first assertion is `via_usize.finish() == via_u64.finish()`, and
+//     `StreamIdHasher::write_usize` is literally `self.write_u64(value as u64)`
+//     three lines above — there is no state in which those can differ. Its
+//     second, `via_usize != via_bytes`, is an INCIDENTAL inequality: a single
+//     FNV-1a step over a whole u64 is not expected to agree with eight per-byte
+//     steps, nothing depends on their disagreeing, and nothing mixes the two
+//     paths (`StreamMap` is keyed by `usize`, so only `write_usize` is ever
+//     called). What the hasher actually has to do — resolve every registered
+//     stream id back to its cell — is exercised by every fopen/fclose/fwrite in
+//     tests/stdio_abi_test.rs; a broken hasher fails hundreds of them.
+//
+//   stdio_flush_all_id_snapshot_is_sorted
+//     SPLIT, then retired. Its first assertion, "the ids are sorted", is
+//     tautological: `sorted_stream_ids` calls `sort_unstable` immediately
+//     before returning. Its second, "stdin/stdout/stderr come first", is two
+//     real but separate facts, and both are now covered better:
+//       * the three standard streams are REGISTERED — already asserted three
+//         times over in tests/stdio_abi_test.rs via
+//         `stdio_standard_streams_registered_for_tests` (bd-0ftdgt);
+//       * their ids sort below every dynamically allocated one — now a `const`
+//         assertion beside `FIRST_DYNAMIC_STREAM_ID`, which is checked in the
+//         build that ships rather than in one that never compiled.
+//
+//   printf_direct_newline_stream_only_absorbs_full_buffered_without_flush
+//     REWRITTEN against the public ABI and LIVE GLIBC as
+//     tests/conformance_diff_stdio_ext.rs::
+//     fpending_after_printf_newline_matches_glibc_across_buffering_modes.
+//     The original poked `try_write_direct_s_newline_stream` and read
+//     `pending_flush()` off the private stream. The observable contract is the
+//     POSIX one it implements — a line-buffered stream flushes at the newline
+//     and a fully-buffered one does not — and `__fpending` reports exactly the
+//     byte count the dead test was reading, on both implementations. The
+//     rewrite also asserts the fl stream is NOT delegating to host glibc, so
+//     the comparison cannot collapse into glibc-vs-glibc.
+//
+// BURNED DOWN (bd-xh08pf), second pass. Three tests stood here —
+// `printf_direct_payload_classifies_string_newline_only_for_nonnull_s`,
+// `printf_direct_payload_copy_preserves_snprintf_truncation_boundary` and
+// `printf_direct_unsigned_decimal_preserves_full_length_and_truncation` —
+// driving the private `direct_printf_string_payload`,
+// `copy_direct_printf_payload` and `strict_direct_snprintf_u`. Dead, like
+// everything in this block.
+//
+// Rewritten against the public entry points and LIVE GLIBC in
+// tests/conformance_diff_printf_direct.rs, which is stronger than the
+// originals: they asserted fl's private helpers matched fl's own
+// expectations, and glibc is the authority on all three contracts. The
+// NULL-`%s` case in particular is a real divergence risk rather than an
+// internal detail — glibc prints `(null)`, so a direct path that took the
+// pointer would fault or print nothing — and it now has its own arm.
+//
+// The stream case uses a private TEMP FILE rather than redirecting the
+// process's fd 1. Tests in this suite that redirect it are flaky under
+// default libtest parallelism, because other threads' progress lines land in
+// the capture (observed on conformance_diff_error_at_line, 2026-09-01).
 
-    #[test]
-    fn stdio_stream_id_hasher_integer_fast_path_matches_usize_and_u64() {
-        let value = 0x1000_0100usize;
-
-        let mut via_usize = StreamIdHasher::default();
-        via_usize.write_usize(value);
-
-        let mut via_u64 = StreamIdHasher::default();
-        via_u64.write_u64(value as u64);
-
-        let mut via_bytes = StreamIdHasher::default();
-        via_bytes.write(&value.to_ne_bytes());
-
-        assert_eq!(via_usize.finish(), via_u64.finish());
-        assert_ne!(via_usize.finish(), via_bytes.finish());
-    }
-
-    #[test]
-    fn stdio_flush_all_id_snapshot_is_sorted() {
-        let mut reg = StreamRegistry::new();
-        let writable = OpenFlags {
-            writable: true,
-            ..Default::default()
-        };
-
-        reg.streams
-            .insert(0x1000_0040, StdioStream::new(-1, writable));
-        reg.insert_stream(
-            0x1000_0020,
-            StdioStream::new(
-                -1,
-                OpenFlags {
-                    writable: true,
-                    ..Default::default()
-                },
-            ),
-        );
-
-        let ids = sorted_stream_ids(&reg);
-        assert!(ids.windows(2).all(|pair| pair[0] <= pair[1]));
-        assert!(ids.starts_with(&[STDIN_SENTINEL, STDOUT_SENTINEL, STDERR_SENTINEL]));
-    }
-
-    // BURNED DOWN (bd-xh08pf), second pass. Three tests stood here —
-    // `printf_direct_payload_classifies_string_newline_only_for_nonnull_s`,
-    // `printf_direct_payload_copy_preserves_snprintf_truncation_boundary` and
-    // `printf_direct_unsigned_decimal_preserves_full_length_and_truncation` —
-    // driving the private `direct_printf_string_payload`,
-    // `copy_direct_printf_payload` and `strict_direct_snprintf_u`. Dead, like
-    // everything in this block.
-    //
-    // Rewritten against the public entry points and LIVE GLIBC in
-    // tests/conformance_diff_printf_direct.rs, which is stronger than the
-    // originals: they asserted fl's private helpers matched fl's own
-    // expectations, and glibc is the authority on all three contracts. The
-    // NULL-`%s` case in particular is a real divergence risk rather than an
-    // internal detail — glibc prints `(null)`, so a direct path that took the
-    // pointer would fault or print nothing — and it now has its own arm.
-    //
-    // The stream case uses a private TEMP FILE rather than redirecting the
-    // process's fd 1. Tests in this suite that redirect it are flaky under
-    // default libtest parallelism, because other threads' progress lines land in
-    // the capture (observed on conformance_diff_error_at_line, 2026-09-01).
-
-    // BURNED DOWN (bd-xh08pf). Two tests stood here —
-    // `fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs` and
-    // `fused_strict_snprintf_writer_preserves_cross_segment_truncation`. This
-    // module is `#[cfg(not(test))] pub mod` in lib.rs, so this whole block
-    // compiles in neither configuration and neither had ever run.
-    //
-    // They drove the module-private `is_strict_direct_snprintf_format` and
-    // `StrictDirectSnprintfWriter`, so they are REWRITTEN rather than moved:
-    //   tests/conformance_diff_snprintf_fused.rs
-    // which asserts the same two contracts — the grammar boundary and
-    // cross-segment truncation — against LIVE GLIBC through the public
-    // `snprintf`. That is stronger than the originals, which only checked fl's
-    // private predicate against fl's own expectations.
-    //
-    // WHY THIS PATH ESPECIALLY: the fused emitter has already been deleted once
-    // unnoticed. Landed 2026-07-31 (7eebd3db4, banked at 0.788267x), removed
-    // 2026-08-03 by 73c8da5cd, measured as a 2.64-3.92x LOSS on 2026-08-16 while
-    // absent, restored 2026-08-30 by 89c356d7e as a macro. For that whole month
-    // the only tests naming it were these two, dead in this block.
-
-    #[test]
-    fn printf_direct_newline_stream_only_absorbs_full_buffered_without_flush() {
-        let writable = OpenFlags {
-            writable: true,
-            ..Default::default()
-        };
-        let full_id = register_stream(StdioStream::with_mode(-1, writable, BufMode::Full));
-
-        assert_eq!(
-            unsafe { try_write_direct_s_newline_stream(full_id, b"status=ok") },
-            Some(true)
-        );
-        let cell = stream_cell(full_id).expect("registered full stream");
-        let stream = cell.lock();
-        assert_eq!(stream.pending_flush(), b"status=ok\n");
-        assert_eq!(stream.offset(), 10);
-        drop(stream);
-
-        let line_id = register_stream(StdioStream::with_mode(-1, writable, BufMode::Line));
-        assert_eq!(
-            unsafe { try_write_direct_s_newline_stream(line_id, b"status=ok") },
-            None
-        );
-    }
-}
+// BURNED DOWN (bd-xh08pf). Two tests stood here —
+// `fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs` and
+// `fused_strict_snprintf_writer_preserves_cross_segment_truncation`. This
+// module is `#[cfg(not(test))] pub mod` in lib.rs, so this whole block
+// compiles in neither configuration and neither had ever run.
+//
+// They drove the module-private `is_strict_direct_snprintf_format` and
+// `StrictDirectSnprintfWriter`, so they are REWRITTEN rather than moved:
+//   tests/conformance_diff_snprintf_fused.rs
+// which asserts the same two contracts — the grammar boundary and
+// cross-segment truncation — against LIVE GLIBC through the public
+// `snprintf`. That is stronger than the originals, which only checked fl's
+// private predicate against fl's own expectations.
+//
+// WHY THIS PATH ESPECIALLY: the fused emitter has already been deleted once
+// unnoticed. Landed 2026-07-31 (7eebd3db4, banked at 0.788267x), removed
+// 2026-08-03 by 73c8da5cd, measured as a 2.64-3.92x LOSS on 2026-08-16 while
+// absent, restored 2026-08-30 by 89c356d7e as a macro. For that whole month
+// the only tests naming it were these two, dead in this block.
