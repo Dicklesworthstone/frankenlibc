@@ -20,6 +20,9 @@ use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 unsafe extern "C" {
     fn psiginfo(info: *const libc::siginfo_t, msg: *const c_char);
 }
@@ -58,13 +61,20 @@ fn capture<F: FnOnce()>(f: F) -> String {
     let _guard = CAPTURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fds = [0i32; 2];
     unsafe { libc::pipe(fds.as_mut_ptr()) };
-    let saved = unsafe { libc::dup(2) };
-    unsafe { libc::dup2(fds[1], 2) };
-    f();
-    unsafe { libc::fflush(std::ptr::null_mut()) };
+    // The guard restores fd 2 on the way out of this block, INCLUDING on an
+    // unwind. A straight-line restore is skipped when the captured body
+    // panics, which leaves this process's stderr pointed at the pipe for the
+    // rest of the run and swallows libtest's report of that very failure
+    // (bd-ug42ol). The block is scoped so fd 2 is restored BEFORE the read
+    // below: while it is redirected it holds a second reference to the pipe's
+    // WRITE end, and the reader would never see EOF.
+    {
+        let _restore = unsafe { fd_capture::StdFdRestore::new(2) };
+        unsafe { libc::dup2(fds[1], 2) };
+        f();
+        unsafe { libc::fflush(std::ptr::null_mut()) };
+    }
     unsafe {
-        libc::dup2(saved, 2);
-        libc::close(saved);
         libc::close(fds[1]);
     }
     let mut out = String::new();
