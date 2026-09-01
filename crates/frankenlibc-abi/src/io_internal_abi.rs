@@ -267,128 +267,128 @@ const _: () = assert!(
     "_IO_jump_t must be exactly 168 bytes (21 slots × 8 bytes)"
 );
 
-#[cfg(test)]
-mod layout_tests {
-    use super::*;
+// ...and every slot must sit at its glibc index. The size assertion alone does
+// not pin the ORDER, and the order is the whole contract: a C caller reaches
+// these through `fp->vtable->__xsputn`, i.e. a fixed byte offset, so two
+// transposed fields give a 168-byte struct that dispatches writes into the
+// seek slot. These were runtime `#[test]`s in a `#[cfg(test)]` block that
+// `lib.rs`'s `#[cfg(not(test))]` gate made dead, so they had NEVER run
+// (bd-xh08pf). As `const` assertions they are checked in every build,
+// including the `not(test)` one that ships, and cannot go dark again.
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __dummy) == 0,
+    "_IO_jump_t.__dummy must sit in slot 0"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __dummy2) == 8,
+    "_IO_jump_t.__dummy2 must sit in slot 1"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __finish) == 16,
+    "_IO_jump_t.__finish must sit in slot 2"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __overflow) == 24,
+    "_IO_jump_t.__overflow must sit in slot 3"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __underflow) == 32,
+    "_IO_jump_t.__underflow must sit in slot 4"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __uflow) == 40,
+    "_IO_jump_t.__uflow must sit in slot 5"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __pbackfail) == 48,
+    "_IO_jump_t.__pbackfail must sit in slot 6"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __xsputn) == 56,
+    "_IO_jump_t.__xsputn must sit in slot 7"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __xsgetn) == 64,
+    "_IO_jump_t.__xsgetn must sit in slot 8"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __seekoff) == 72,
+    "_IO_jump_t.__seekoff must sit in slot 9"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __seekpos) == 80,
+    "_IO_jump_t.__seekpos must sit in slot 10"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __setbuf) == 88,
+    "_IO_jump_t.__setbuf must sit in slot 11"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __sync) == 96,
+    "_IO_jump_t.__sync must sit in slot 12"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __doallocate) == 104,
+    "_IO_jump_t.__doallocate must sit in slot 13"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __read) == 112,
+    "_IO_jump_t.__read must sit in slot 14"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __write) == 120,
+    "_IO_jump_t.__write must sit in slot 15"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __seek) == 128,
+    "_IO_jump_t.__seek must sit in slot 16"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __close) == 136,
+    "_IO_jump_t.__close must sit in slot 17"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __stat) == 144,
+    "_IO_jump_t.__stat must sit in slot 18"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __showmanyc) == 152,
+    "_IO_jump_t.__showmanyc must sit in slot 19"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_jump_t, __imbue) == 160,
+    "_IO_jump_t.__imbue must sit in slot 20"
+);
 
-    #[test]
-    fn io_file_layout_matches_glibc_234_x86_64_offsets() {
-        assert_eq!(
-            std::mem::size_of::<_IO_FILE_Layout>(),
-            GLIBC_234_IO_FILE_SIZE
-        );
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _flags), 0);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr), 8);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end), 16);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_base), 24);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_write_base), 32);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_write_ptr), 40);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_write_end), 48);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_base), 56);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_end), 64);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_save_base), 72);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_backup_base), 80);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_save_end), 88);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _markers), 96);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _chain), 104);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _fileno), 112);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _flags2), 116);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _old_offset), 120);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _cur_column), 128);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _vtable_offset), 130);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _shortbuf), 131);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _lock), 136);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _offset), 144);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _codecvt), 152);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _wide_data), 160);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _freeres_list), 168);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _freeres_buf), 176);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _pad5), 184);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _mode), 192);
-        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _unused2), 196);
-    }
-
-    #[test]
-    fn native_file_is_a_real_io_file_plus_shape() {
-        assert_eq!(
-            std::mem::offset_of!(NativeFile, vtable),
-            GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET
-        );
-        assert!(
-            std::mem::size_of::<NativeFile>() > std::mem::size_of::<_IO_FILE_Layout>(),
-            "NativeFile must carry private state beyond the glibc _IO_FILE prefix"
-        );
-        assert!(
-            std::mem::size_of::<NativeFile>() <= 4096,
-            "NativeFile must remain slab-friendly"
-        );
-    }
-
-    #[test]
-    fn io_jump_t_layout_is_correct() {
-        // _IO_jump_t must be exactly 168 bytes (21 slots × 8 bytes).
-        assert_eq!(std::mem::size_of::<_IO_jump_t>(), 168);
-
-        // Verify offsets of key slots (8-byte alignment).
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __dummy), 0);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __dummy2), 8);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __finish), 16);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __overflow), 24);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __underflow), 32);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __uflow), 40);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __pbackfail), 48);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __xsputn), 56);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __xsgetn), 64);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __seekoff), 72);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __seekpos), 80);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __setbuf), 88);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __sync), 96);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __doallocate), 104);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __read), 112);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __write), 120);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __seek), 128);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __close), 136);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __stat), 144);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __showmanyc), 152);
-        assert_eq!(std::mem::offset_of!(_IO_jump_t, __imbue), 160);
-    }
-
-    #[test]
-    fn native_io_jump_t_is_initialized() {
-        // Verify that NATIVE_IO_JUMP_T has non-null function pointers.
-        assert!(NATIVE_IO_JUMP_T.__finish as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__overflow as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__underflow as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__uflow as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__pbackfail as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__xsputn as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__xsgetn as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__seekoff as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__seekpos as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__setbuf as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__sync as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__doallocate as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__read as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__write as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__seek as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__close as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__stat as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__showmanyc as usize != 0);
-        assert!(NATIVE_IO_JUMP_T.__imbue as usize != 0);
-    }
-
-    #[test]
-    fn native_file_has_vtable_set() {
-        // Creating a NativeFile should automatically set the vtable.
-        let file = NativeFile::new(42, file_flags::READ, NativeFileBufMode::Full);
-        assert!(!file.vtable.is_null());
-        // The vtable should point to NATIVE_IO_JUMP_T.
-        assert_eq!(
-            file.vtable as *const _IO_jump_t,
-            ptr::addr_of!(NATIVE_IO_JUMP_T)
-        );
-    }
-}
+// BURN-DOWN MAP for the dead inline `#[cfg(test)] mod layout_tests` that stood
+// here until 2026-09-01 (bd-xh08pf). `lib.rs` declares this module
+// `#[cfg(not(test))] pub mod io_internal_abi;`, so the block compiled in neither
+// build and its five `#[test]` fns had never run. Where each went:
+//
+//   io_file_layout_matches_glibc_234_x86_64_offsets  (29 offsets)
+//   io_jump_t_layout_is_correct                      (21 offsets)
+//   native_file_is_a_real_io_file_plus_shape         (strict size bound)
+//     PROMOTED TO `const` ASSERTIONS, next to the size assertions that were
+//     already there — see the two blocks above. That is strictly stronger than
+//     relocating them: a layout invariant checked by a `const` is checked in
+//     EVERY build, including the `not(test)` one that actually ships, and it
+//     cannot be made dark by a cfg again. It also needed no widening of the
+//     module's surface; `_IO_FILE_Layout` stays private.
+//
+//   native_io_jump_t_is_initialized
+//     RETIRED — it could not have failed. It asserted
+//     `NATIVE_IO_JUMP_T.__finish as usize != 0` for each of the 19 slots, but
+//     every slot's type is a BARE `unsafe extern "C" fn(..)`, not an
+//     `Option<fn>`, so a null there is not representable and the type system
+//     already guarantees what the test checked. Replaced by the property that
+//     IS at risk in a hand-written 21-slot table triplicated three times over:
+//     tests/io_internal_native_file_test.rs::
+//     native_jump_tables_agree_slot_for_slot_and_the_wide_table_diverges_only_where_it_should.
+//
+//   native_file_has_vtable_set
+//     RETIRED as a duplicate. tests/io_internal_native_file_test.rs::
+//     native_file_construct_for_fd already asserts `!f.vtable.is_null()` and
+//     `f.vtable == addr_of!(NATIVE_IO_JUMP_T)` on a NativeFile::new stream.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NativeFileRuntimeMathHooks {
@@ -576,6 +576,143 @@ pub const NATIVE_FILE_MAGIC: u32 = 0x464b_4c43;
 const _: () = assert!(
     std::mem::size_of::<_IO_FILE_Layout>() == GLIBC_234_IO_FILE_SIZE,
     "_IO_FILE_Layout must match glibc 2.34 FILE size"
+);
+
+// ...field by field, not just in total. Every one of these offsets is a place a
+// C caller — or glibc's own `_IO_flush_all_lockp` walking our `_IO_list_all` —
+// reads through a `FILE*` we handed it. The total size matching while a field
+// moved is precisely the failure this cannot afford, and `repr(C)` does not
+// prevent it: reordering two same-sized fields, or the compiler placing padding
+// differently after an edit to `_padding0`, keeps the size at 216.
+//
+// Same provenance as the `_IO_jump_t` block above: these were dead runtime
+// tests (bd-xh08pf), promoted to `const` so the shipped `not(test)` build
+// checks them.
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _flags) == 0,
+    "_IO_FILE_Layout._flags must sit at glibc 2.34 x86_64 offset 0"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr) == 8,
+    "_IO_FILE_Layout._IO_read_ptr must sit at glibc 2.34 x86_64 offset 8"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end) == 16,
+    "_IO_FILE_Layout._IO_read_end must sit at glibc 2.34 x86_64 offset 16"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_read_base) == 24,
+    "_IO_FILE_Layout._IO_read_base must sit at glibc 2.34 x86_64 offset 24"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_write_base) == 32,
+    "_IO_FILE_Layout._IO_write_base must sit at glibc 2.34 x86_64 offset 32"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_write_ptr) == 40,
+    "_IO_FILE_Layout._IO_write_ptr must sit at glibc 2.34 x86_64 offset 40"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_write_end) == 48,
+    "_IO_FILE_Layout._IO_write_end must sit at glibc 2.34 x86_64 offset 48"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_base) == 56,
+    "_IO_FILE_Layout._IO_buf_base must sit at glibc 2.34 x86_64 offset 56"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_end) == 64,
+    "_IO_FILE_Layout._IO_buf_end must sit at glibc 2.34 x86_64 offset 64"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_save_base) == 72,
+    "_IO_FILE_Layout._IO_save_base must sit at glibc 2.34 x86_64 offset 72"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_backup_base) == 80,
+    "_IO_FILE_Layout._IO_backup_base must sit at glibc 2.34 x86_64 offset 80"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_save_end) == 88,
+    "_IO_FILE_Layout._IO_save_end must sit at glibc 2.34 x86_64 offset 88"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _markers) == 96,
+    "_IO_FILE_Layout._markers must sit at glibc 2.34 x86_64 offset 96"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _chain) == 104,
+    "_IO_FILE_Layout._chain must sit at glibc 2.34 x86_64 offset 104"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _fileno) == 112,
+    "_IO_FILE_Layout._fileno must sit at glibc 2.34 x86_64 offset 112"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _flags2) == 116,
+    "_IO_FILE_Layout._flags2 must sit at glibc 2.34 x86_64 offset 116"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _old_offset) == 120,
+    "_IO_FILE_Layout._old_offset must sit at glibc 2.34 x86_64 offset 120"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _cur_column) == 128,
+    "_IO_FILE_Layout._cur_column must sit at glibc 2.34 x86_64 offset 128"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _vtable_offset) == 130,
+    "_IO_FILE_Layout._vtable_offset must sit at glibc 2.34 x86_64 offset 130"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _shortbuf) == 131,
+    "_IO_FILE_Layout._shortbuf must sit at glibc 2.34 x86_64 offset 131"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _lock) == 136,
+    "_IO_FILE_Layout._lock must sit at glibc 2.34 x86_64 offset 136"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _offset) == 144,
+    "_IO_FILE_Layout._offset must sit at glibc 2.34 x86_64 offset 144"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _codecvt) == 152,
+    "_IO_FILE_Layout._codecvt must sit at glibc 2.34 x86_64 offset 152"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _wide_data) == 160,
+    "_IO_FILE_Layout._wide_data must sit at glibc 2.34 x86_64 offset 160"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _freeres_list) == 168,
+    "_IO_FILE_Layout._freeres_list must sit at glibc 2.34 x86_64 offset 168"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _freeres_buf) == 176,
+    "_IO_FILE_Layout._freeres_buf must sit at glibc 2.34 x86_64 offset 176"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _pad5) == 184,
+    "_IO_FILE_Layout._pad5 must sit at glibc 2.34 x86_64 offset 184"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _mode) == 192,
+    "_IO_FILE_Layout._mode must sit at glibc 2.34 x86_64 offset 192"
+);
+const _: () = assert!(
+    std::mem::offset_of!(_IO_FILE_Layout, _unused2) == 196,
+    "_IO_FILE_Layout._unused2 must sit at glibc 2.34 x86_64 offset 196"
+);
+
+// NativeFile must be STRICTLY larger than the glibc prefix, not merely >= it.
+// `tests/io_internal_native_file_test.rs::native_file_size_at_least_glibc`
+// asserts `>= 216`, which a NativeFile that had lost all of its private state
+// would still satisfy while every `magic()`/`fd()`/buffer accessor read off the
+// end of the ABI prefix.
+const _: () = assert!(
+    std::mem::size_of::<NativeFile>() > std::mem::size_of::<_IO_FILE_Layout>(),
+    "NativeFile must carry private state beyond the glibc _IO_FILE prefix"
 );
 const _: () = assert!(
     std::mem::offset_of!(NativeFile, vtable) == GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET,

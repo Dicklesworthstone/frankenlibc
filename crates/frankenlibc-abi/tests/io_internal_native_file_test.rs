@@ -1220,3 +1220,113 @@ fn io_adjust_wcolumn_no_newline_path() {
         "must return start + count when no \\n is present"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Jump-table agreement (bd-xh08pf)
+//
+// Replaces `native_io_jump_t_is_initialized`, a dead inline test in
+// io_internal_abi.rs that asserted each slot of `NATIVE_IO_JUMP_T` was non-null.
+// It never compiled, and it could not have failed if it had: the slot types are
+// bare `unsafe extern "C" fn(..)`, not `Option<fn>`, so null is not
+// representable there.
+//
+// The property actually at risk is a different one. The 21-slot table is written
+// out by hand THREE times — `NATIVE_IO_JUMP_T`, the exported `_IO_file_jumps`,
+// and the exported `_IO_wfile_jumps` — with no macro tying them together. A slot
+// transposed or copy-pasted in one of them is a live-fire bug (a C caller
+// reaching `fp->vtable->__xsputn` would land in whatever else got written there)
+// and no type checks it, because every slot has a distinct fn type but many of
+// those types are structurally identical: `__underflow`, `__uflow`, `__sync`,
+// `__doallocate` and `__close` are ALL `fn(*mut c_void) -> c_int`, so the
+// compiler will happily accept any of them in any of those five slots.
+// ---------------------------------------------------------------------------
+
+/// The 19 function slots, in declaration order, as raw code addresses.
+///
+/// `__dummy`/`__dummy2` are excluded: they are `usize` magic markers, not
+/// pointers, and both are legitimately 0.
+fn jump_slots(t: &_IO_jump_t) -> [(&'static str, usize); 19] {
+    [
+        ("__finish", t.__finish as usize),
+        ("__overflow", t.__overflow as usize),
+        ("__underflow", t.__underflow as usize),
+        ("__uflow", t.__uflow as usize),
+        ("__pbackfail", t.__pbackfail as usize),
+        ("__xsputn", t.__xsputn as usize),
+        ("__xsgetn", t.__xsgetn as usize),
+        ("__seekoff", t.__seekoff as usize),
+        ("__seekpos", t.__seekpos as usize),
+        ("__setbuf", t.__setbuf as usize),
+        ("__sync", t.__sync as usize),
+        ("__doallocate", t.__doallocate as usize),
+        ("__read", t.__read as usize),
+        ("__write", t.__write as usize),
+        ("__seek", t.__seek as usize),
+        ("__close", t.__close as usize),
+        ("__stat", t.__stat as usize),
+        ("__showmanyc", t.__showmanyc as usize),
+        ("__imbue", t.__imbue as usize),
+    ]
+}
+
+/// Slots the wide table routes to its own wide trampolines. Everything after
+/// `__doallocate` is a raw-fd operation with no wide/narrow distinction, so the
+/// wide table reuses the narrow trampoline there by design.
+const WIDE_SPECIFIC_SLOTS: usize = 12;
+
+#[test]
+fn native_jump_tables_agree_slot_for_slot_and_the_wide_table_diverges_only_where_it_should() {
+    let narrow_ptr = unsafe { _IO_file_jumps_get() };
+    let wide_ptr = unsafe { _IO_wfile_jumps_get() };
+    assert!(!narrow_ptr.is_null() && !wide_ptr.is_null());
+    // SAFETY: both accessors return the address of a `static _IO_jump_t`.
+    let exported_narrow = jump_slots(unsafe { &*(narrow_ptr.cast::<_IO_jump_t>()) });
+    let exported_wide = jump_slots(unsafe { &*(wide_ptr.cast::<_IO_jump_t>()) });
+    let canonical = jump_slots(&NATIVE_IO_JUMP_T);
+
+    // 1. The exported narrow table is the same table every NativeFile carries.
+    //    These are two independent hand-written literals; nothing but this
+    //    assertion keeps them in step.
+    for (i, ((name, want), (_, got))) in canonical.iter().zip(exported_narrow.iter()).enumerate() {
+        assert_eq!(
+            want, got,
+            "slot {i} ({name}): _IO_file_jumps disagrees with NATIVE_IO_JUMP_T, \
+             so a stream dispatching through the exported vtable and one \
+             dispatching through its own would take different code paths"
+        );
+    }
+
+    // 2. No narrow slot is a copy-paste of another. This is the assertion the
+    //    dead non-null test should have been.
+    for (i, (name_i, addr_i)) in canonical.iter().enumerate() {
+        for (name_j, addr_j) in canonical.iter().skip(i + 1) {
+            assert_ne!(
+                addr_i, addr_j,
+                "slots {name_i} and {name_j} point at the SAME trampoline; one of \
+                 them is a copy-paste, and the compiler cannot catch it because \
+                 several of these slots share a signature"
+            );
+        }
+    }
+
+    // 3. The wide table diverges in exactly the stream slots and shares exactly
+    //    the raw-fd tail. Asserted in BOTH directions: a wide table that shared
+    //    everything would silently give wide streams narrow semantics, and one
+    //    that overrode the fd tail as well would be a maintenance hazard nobody
+    //    had decided on.
+    for (i, ((name, narrow), (_, wide))) in canonical.iter().zip(exported_wide.iter()).enumerate() {
+        if i < WIDE_SPECIFIC_SLOTS {
+            assert_ne!(
+                narrow, wide,
+                "slot {i} ({name}) is a stream operation, so _IO_wfile_jumps must \
+                 route it to a wide trampoline, not reuse the narrow one"
+            );
+        } else {
+            assert_eq!(
+                narrow, wide,
+                "slot {i} ({name}) is a raw-fd operation with no wide/narrow \
+                 distinction; _IO_wfile_jumps is expected to share it"
+            );
+        }
+    }
+}

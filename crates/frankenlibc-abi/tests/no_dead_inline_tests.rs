@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 10 across 3 today (a fourth module is listed at 0 —
+/// across 11 modules; 5 across 2 today (a third module is listed at 0 —
 /// see the `pthread_abi` note below). Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
@@ -41,7 +41,6 @@ use std::path::{Path, PathBuf};
 /// dead and the debt total silently drifted from 27 to 30.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("glibc_internal_abi", 2),
-    ("io_internal_abi", 5),
     // ZERO stranded tests as of 2026-09-01 — but still LISTED, because the
     // `#[cfg(test)]` block itself remains: it holds the per-test burn-down map
     // and the helper fns the retired tests used. `has_dead_inline_block` keys on
@@ -177,7 +176,32 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         dlsym-resolved host arm. The module is REMOVED from
 //                         the list entirely (its block is gone, helpers and all),
 //                         which is why the module count drops.
-// 54 -> 10 stranded tests, 11 -> 3 modules (pthread_abi listed at 0).
+//   io_internal_abi (5) -> 3 PROMOTED TO `const` ASSERTIONS in io_internal_abi.rs
+//                         (29 `_IO_FILE_Layout` field offsets, 21 `_IO_jump_t`
+//                          slot offsets, and NativeFile's strict size bound),
+//                          which is stronger than relocating them: a `const`
+//                          assertion is checked in every build INCLUDING the
+//                          shipped `not(test)` one, and a cfg can never make it
+//                          dark again. It also kept `_IO_FILE_Layout` private.
+//                       -> 1 RETIRED as unfailable: native_io_jump_t_is_initialized
+//                          asserted each vtable slot was non-null, but the slots
+//                          are bare `unsafe extern "C" fn`, not `Option<fn>`, so
+//                          null is not representable. Replaced by the property
+//                          that IS at risk across three hand-written copies of a
+//                          21-slot table — tests/io_internal_native_file_test.rs::
+//                          native_jump_tables_agree_slot_for_slot_and_the_wide_table_diverges_only_where_it_should
+//                          (exported table == canonical table, no slot is a
+//                           copy-paste of another, and the wide table diverges in
+//                           exactly the 12 stream slots and shares the 7 raw-fd
+//                           ones). Several slots share a signature — __underflow,
+//                           __uflow, __sync, __doallocate and __close are all
+//                           `fn(*mut c_void) -> c_int` — so the compiler accepts
+//                           any of them in any of those positions.
+//                       -> 1 RETIRED as a duplicate of
+//                          tests/io_internal_native_file_test.rs::native_file_construct_for_fd,
+//                          which already asserts the vtable is set to
+//                          NATIVE_IO_JUMP_T on a freshly built stream.
+// 54 -> 5 stranded tests, 11 -> 2 modules (pthread_abi listed at 0).
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
