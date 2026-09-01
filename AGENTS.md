@@ -75,9 +75,27 @@ verdict, since a faithful rewrite legitimately deletes more than it adds:
 | +944 | `ff2ef56aa` | string/wctype: glibc-exact iswctype + towupper/towlower … |
 | +16 | `26fcdc3a0` | stdlib/strto*: C-locale whitespace + signed-zero conformance |
 
-Spot-checked `73c8da5cd`: it deleted `fused_render_i64`, `fused_render_u64` and `fused_render_hex`
-from `stdio_abi.rs`, and all three are still absent at HEAD. No ledger row names them, so it cost no
-banked win — but nobody has read it the way bd-nas5rt read `51c39dec3`.
+**Adjudicated 2026-09-01, three of the five.** All three deleted named perf work added DAYS or
+weeks earlier, none of it carrying a banked ledger row, and some of it since restored in a different
+form. Deletions exceeding insertions really is only a screen:
+
+- `73c8da5cd` removed `strict_direct_snprintf_fused` and its `fused_render_*` helpers. **Restored
+  2026-08-30 by `89c356d7e` as `macro_rules! strict_direct_snprintf_fused`** — a `grep "fn fused_"`
+  at HEAD finds nothing and would have produced a false conclusion. The render helpers really are
+  gone; the macro renders differently.
+- `325855a09` removed `try_strftime_strict_literal_copy` (added the day before by `d225aa099`,
+  "SIMD pure-literal strftime formats") and `try_strftime_strict_fused_single_name` (added
+  2026-07-31 by `47668eeed`). A pure-literal path still exists at HEAD, inline in
+  `time_abi.rs` (`if !fmt.contains(&b'%')`), but it is a plain `copy_nonoverlapping`, not the SIMD
+  form.
+- `ff2ef56aa` removed `towupper_search`/`towlower_search` and the direct-BMP ctype/case tables added
+  2026-06-13 by `3d48c9b7c` and `cbde329b0`, whose own messages claim "~4.2x, beats glibc" and
+  "~6-7x, now beats glibc". At HEAD `towcase_table.rs` is back to the 2026-06-08 design: a binary
+  search over 1477/1460 delta pairs.
+
+**None of the three cost a banked ledger row** — those perf claims live only in commit messages,
+which is why the ledger audit did not surface them and why no retraction is warranted. `325855a09`
+and `ff2ef56aa` remain unadjudicated as to whether the deletions were intentional.
 
 **They also take LEDGER ROWS, and that half had never been audited.** Three banked wins in
 `docs/NEGATIVE_EVIDENCE.md` were falsified by that one day and stood unretracted for ten weeks:
