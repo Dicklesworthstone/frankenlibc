@@ -41084,3 +41084,45 @@ ones that would notice a threading-policy depth counter behaving differently.
   same-invocation measurement, and this row does not pre-authorise it; note also that whoever does
   restore it must re-establish the safety argument the original row made, since the flag that made
   it safe is what `bd829b12f` removed.
+
+## 2026-09-01 (cc) — RETRACTION: the two 2026-06-25 `qsort` radix rows at L8184 and L8199 describe a lane deleted the next day, and its absence is MEASURED not merely grepped
+
+- **WHAT IS RETRACTED.** Two rows dated 2026-06-25 bank the integer radix lane:
+  L8184 "qsort NARROW-key radix LANDED — i32 30-40% FASTER, u16 5.5x (conformance green)" and
+  L8199 "qsort UNSIGNED radix attempt LANDED — u16 1.25x LOSS → 0.50x WIN". Both name the same
+  mechanism, `try_qsort_integer_radix_lane`, and describe refactoring it to native-width keys and
+  teaching it the unsigned rank order. **`try_qsort_integer_radix_lane` does not exist.** It was
+  removed the following day by `51c39dec3` (2026-06-26), which deletes it on three lines of
+  `crates/frankenlibc-core/src/stdlib/sort.rs` and is the commit `bd-nas5rt` records as
+  "25 INSERTIONS AGAINST 1103 DELETIONS" on that file.
+
+- **THE ABSENCE IS MEASURED, WHICH IS WHAT MAKES THIS STRONGER THAN THE OTHER RETRACTIONS IN THIS
+  FILE.** `bdeceadad` added `crates/frankenlibc-abi/tests/conformance_diff_qsort_lane_inventory.rs`,
+  which counts the caller's comparator invocations through fl's deployed ABI entry point against
+  live glibc. At n = 4096, executed on rch worker vmi1293453:
+  width 1 → 39914 calls, width 2 → 53078, width 16 → 53078, against glibc's 42835-43975 — the
+  O(n log n) signature of a comparison sort. Only width 4 and width 8 spend 4095 calls, exactly
+  `n - 1`, the adjacent-pair verify of the surviving comparison-sort fast lanes. **There is no radix
+  lane at any width**, and that is a counted mechanism, not an inference from `grep`.
+
+- **PROVENANCE.** `git log -S try_qsort_integer_radix_lane -- crates/*/src` places the identifier's
+  last removal at `51c39dec3`. No ledger row retracts either claim; both have stood for ten weeks.
+
+- **THIS IS THE FOURTH JUN-26 CASUALTY AND THE THIRD BANKED WIN THE INCIDENT TOOK.** `AGENTS.md:49`
+  names three commits for 2026-06-26; `bd-nas5rt` later identified `51c39dec3` as a fourth. A sweep
+  over the 35 banked wins predating 2026-06-27 against the three NAMED commits found exactly one
+  casualty (the `rand`/`random` lock-skip, retracted above). Extending the same identifier join to
+  the whole history finds these two, both from the fourth commit. So the running total is three
+  banked wins lost to that day: L11481 to `bd829b12f`, and L8184 + L8199 to `51c39dec3`.
+
+- **A NOTE ON WHAT THE GATES SAID MEANWHILE.** `conformance_diff_qsort_radix.rs` and
+  `_radix16.rs` existed throughout and passed throughout, because they compare SORTED OUTPUT and
+  pdqsort sorts correctly too. Their doc comments asserted the radix lane was being exercised until
+  `87fe32f2f` corrected them. A green gate naming a mechanism is not evidence the mechanism exists.
+
+- **DISPOSITION.** Both rows are retracted as standing claims. No current ratio is asserted: whether
+  a radix lane would still pay at HEAD is unmeasured, and the comparison lanes' ceiling has since
+  been raised to `1 << 22` (`d6fecf944`, `cf65cca1d`), which changes the arithmetic the 2026-06-25
+  rows were reasoning about. Restoring a radix lane is a perf lever needing its own
+  same-invocation measurement; `conformance_diff_qsort_lane_inventory` is where its row table
+  should be updated from `NoLane` to `Lane` if anyone does.
