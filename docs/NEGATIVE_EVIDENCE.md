@@ -40767,3 +40767,32 @@ ones that would notice a threading-policy depth counter behaving differently.
   owner needs before more per-call levers are spent here.
 - Drivers preserved: `scratchpad/malloc_loadermode.c`, `scratchpad/malloc_preload.c`,
   `scratchpad/cg_callers.py`.
+
+## 2026-08-31 — bd-ny3hsa — `malloc_free` membrane-tax closure: chain-limited, no safe micro-lever remains
+
+- **VERDICT: CHAIN-LIMITED, no source lever attempted.** The live loader-mode row immediately above
+  establishes the 38% membrane tax as 242 of 644 Ir per deployed `malloc(64)` + `free` pair. This
+  follow-up closes the attribution requested for that tax before spending a lever: it is 122 Ir of
+  allocator reentry dispatch, 96 Ir of four general-dynamic TLS resolutions, 67 Ir of exact local
+  accounting, and 53 Ir of immutable-mode dispatch. These are disjoint call subtrees; there is no
+  hidden cache-miss term to recover.
+- **DISPATCH (122 Ir/pair): not an elidable wrapper.** `enter_allocator_reentry_guard` runs once on
+  each entrypoint. Its direct `fs:[0]` slot lookup is already the no-TLS fast path; the remaining
+  work is the depth CAS plus the post-CAS reentrancy predicates that keep allocator recursion,
+  runtime-policy recursion, and pthread TLS access from re-entering the allocator. The guard-CAS
+  ablation is already REJECTED, so bypassing the chain would weaken a live safety property rather
+  than test a new mechanism.
+- **TLS (96 Ir/pair): infrastructure-blocked.** Two resolutions originate in that guard, one in
+  `runtime_policy::mode`, and one in `malloc`. The only demonstrated broad removal,
+  `-Ztls-model=initial-exec`, removes 2417 of 2458 sites but makes this cdylib unloadable; it is
+  therefore REJECTED. Replacing `mode()` with a direct global-state read would also skip its
+  per-thread immutable-mode switch-attempt audit, so it is a gate weakening, not a valid lever.
+- **ACCOUNTING (67 Ir/pair): exactness-limited.** This is not the flat-combiner lock: the measured
+  single-threaded path is already slot-local and calls `FlatCombiningStats::apply_locked` directly.
+  It performs the required saturating allocation/free counters, live-byte/peak accounting, and
+  observable per-size-class update. The apparent global `record_mutation` caller was previously
+  ablated for only 5 Ir because it is not this path; retrying that family has no new predicate.
+- **SCOPE CONSEQUENCE.** Even deleting all 242 Ir leaves 402 Ir/pair versus glibc's 77. The remaining
+  real loss is the allocator chain (`segment_allocate`, `allocate_from_local_class`, `segment_free`,
+  and size-class work), so this bead's membrane-tax lane is ledgered as chain-limited. No binary was
+  rebuilt and no speedup is claimed by this closure.
