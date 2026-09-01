@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 23 across 5 today. Burning these down is tracked separately —
+/// across 11 modules; 20 across 5 today. Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
@@ -42,7 +42,7 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("glibc_internal_abi", 2),
     ("iconv_abi", 7),
     ("io_internal_abi", 5),
-    ("pthread_abi", 6),
+    ("pthread_abi", 3),
     ("stdio_abi", 3),
 ];
 // BURNED DOWN (bd-xh08pf):
@@ -122,7 +122,17 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                          the public snprintf/fprintf and live glibc; the
 //                          stream arm uses a temp file, NOT stdout capture,
 //                          which is flaky under libtest parallelism)
-// 54 -> 23 stranded tests, 11 -> 5 modules.
+//   pthread_abi, PARTIAL (3 of 6) -> tests/conformance_diff_pthread_cancel.rs
+//                         TWO OF THE THREE COULD NOT HAVE PASSED: they assert
+//                         after `pthread_testcancel`, which exits the thread via
+//                         pthread_exit(PTHREAD_CANCELED) when it consumes a
+//                         pending cancel. Restated as the observable POSIX
+//                         contract — a cancelled thread joins with
+//                         PTHREAD_CANCELED — on fl-CREATED threads, since these
+//                         entry points delegate to host glibc on a host-backed
+//                         thread. The validation half IS differential vs live
+//                         glibc, because both reject before touching state.
+// 54 -> 20 stranded tests, 11 -> 5 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

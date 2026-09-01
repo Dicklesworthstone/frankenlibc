@@ -6988,88 +6988,36 @@ mod tests {
         assert_eq!(waiter.join().unwrap(), 0x1234usize as libc::pthread_t);
     }
 
-    fn reset_cancel_state_for_tests() {
-        with_pthread_tls(|tls| {
-            tls.thread_cancel_state = PTHREAD_CANCEL_ENABLE_STATE;
-            tls.thread_cancel_type = PTHREAD_CANCEL_DEFERRED_TYPE;
-        });
-        set_cancellation_pending(current_cancel_key(), false);
-    }
-
-    fn current_thread_pending_cancel() -> bool {
-        cancellation_pending(current_cancel_key())
-    }
-
-    #[test]
-    fn pthread_cancel_validates_state_and_type_inputs() {
-        reset_cancel_state_for_tests();
-        let mut old_state = -1;
-        let mut old_type = -1;
-
-        // SAFETY: exercising local ABI state transitions.
-        unsafe {
-            assert_eq!(
-                pthread_setcancelstate(PTHREAD_CANCEL_DISABLE_STATE, &mut old_state),
-                0
-            );
-            assert_eq!(old_state, PTHREAD_CANCEL_ENABLE_STATE);
-            assert_eq!(
-                pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, &mut old_type),
-                0
-            );
-            assert_eq!(old_type, PTHREAD_CANCEL_DEFERRED_TYPE);
-            assert_eq!(
-                pthread_setcancelstate(99, std::ptr::null_mut()),
-                libc::EINVAL
-            );
-            assert_eq!(
-                pthread_setcanceltype(99, std::ptr::null_mut()),
-                libc::EINVAL
-            );
-        }
-    }
-
-    #[test]
-    fn pthread_cancel_marks_pending_and_testcancel_consumes_when_enabled() {
-        reset_cancel_state_for_tests();
-
-        // SAFETY: exercising local ABI cancellation state machine.
-        unsafe {
-            let self_thread = pthread_self();
-            assert_eq!(pthread_cancel(self_thread), 0);
-            assert!(current_thread_pending_cancel());
-
-            assert_eq!(
-                pthread_setcancelstate(PTHREAD_CANCEL_DISABLE_STATE, std::ptr::null_mut()),
-                0
-            );
-            pthread_testcancel();
-            assert!(current_thread_pending_cancel());
-
-            assert_eq!(
-                pthread_setcancelstate(PTHREAD_CANCEL_ENABLE_STATE, std::ptr::null_mut()),
-                0
-            );
-            pthread_testcancel();
-            assert!(!current_thread_pending_cancel());
-        }
-    }
-
-    #[test]
-    fn pthread_cancel_self_async_consumes_immediately() {
-        reset_cancel_state_for_tests();
-
-        // SAFETY: exercising local ABI cancellation state machine.
-        unsafe {
-            assert_eq!(
-                pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, std::ptr::null_mut()),
-                0
-            );
-            let self_thread = pthread_self();
-            assert_eq!(pthread_cancel(self_thread), 0);
-            assert!(!current_thread_pending_cancel());
-        }
-    }
+    // BURNED DOWN (bd-xh08pf). Three tests stood here —
+    // `pthread_cancel_validates_state_and_type_inputs`,
+    // `pthread_cancel_marks_pending_and_testcancel_consumes_when_enabled` and
+    // `pthread_cancel_self_async_consumes_immediately` — plus the
+    // `reset_cancel_state_for_tests` / `current_thread_pending_cancel` helpers
+    // they used. Dead, like everything in this block (see the comment below).
+    //
+    // TWO OF THEM COULD NOT HAVE PASSED, which is only visible once you try to
+    // make them run. Both assert past a call that terminates the thread:
+    // `pthread_testcancel` (:4437) is `if consume_pending_cancel_for_current_thread()
+    // { pthread_exit(PTHREAD_CANCELED) }`, so with a cancel pending and
+    // cancellation enabled it consumes the flag AND EXITS. The
+    // `assert!(!current_thread_pending_cancel())` after it is unreachable, and
+    // running it would have killed the libtest worker thread rather than
+    // failing. The async variant is the same shape, because `pthread_cancel`
+    // calls `pthread_testcancel` itself on an async self-cancel (:4335).
+    //
+    // Restated in tests/conformance_diff_pthread_cancel.rs as the property POSIX
+    // actually specifies and that is externally observable: a cancelled thread
+    // terminates with PTHREAD_CANCELED as its join value. Each scenario runs on
+    // its own fl-created thread and is observed through `pthread_join`, so the
+    // thread exiting is the expected outcome rather than a harness casualty.
+    // The threads must be fl-MANAGED because setcancelstate/testcancel/cancel
+    // all delegate to host glibc when the backend resolves to
+    // THREAD_BACKEND_HOST — testing them on a host-backed thread would compare
+    // glibc against glibc (bd-v0388t).
+    //
+    // The input-validation half IS compared against live glibc there, and can
+    // be, because both reject an out-of-range argument before touching any
+    // cancellation state — fl at :4343, ahead of its delegation branch.
 }
 
 // Test-only hook: integration tests in `tests/pthread_abi_test.rs` drive the
