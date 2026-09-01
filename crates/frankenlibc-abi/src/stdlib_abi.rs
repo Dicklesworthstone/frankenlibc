@@ -6759,17 +6759,6 @@ pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char)
     unsafe { qgcvt_x87(ndigit, buf, bytes.as_ptr()) }
 }
 
-/// Read the ten significant bytes of an x87 `long double` argument.
-///
-/// # Safety
-///
-/// `value` must address the caller's 16-byte long double slot.
-unsafe fn x87_arg(value: *const u8) -> f64 {
-    // SAFETY: as `x87_bytes`.
-    let bytes = unsafe { x87_bytes(value) };
-    crate::stdio_abi::f64_from_x87_bytes(&bytes)
-}
-
 /// The ten significant bytes of an x87 `long double` argument.
 ///
 /// # Safety
@@ -6804,11 +6793,11 @@ const QCVT_MAX_DIGITS: usize = 21;
 /// in the sequence, so the out-pointer takes the next free integer register —
 /// RCX here — and a tail `jmp` returns the `char *` in RAX untouched.
 ///
-/// STILL LOSSY, deliberately and visibly: the value is rounded to `f64` before
-/// formatting, so digits past the seventeenth are not the long double's. That
-/// is a bounded, documented shortfall where the previous behaviour was
-/// unbounded nonsense. Carrying full precision needs the binary128 digit path
-/// (`float128::x87_to_binary128` is the exact widening, already in place).
+/// EXACT, no longer f64-rounded. `float128::x87_ecvt` expands the value's own
+/// digits through the exact widening, which a live comparison against glibc
+/// caught the f64 body on at the seventeenth digit: `qecvt(0.1, 17)` gave
+/// `10000000000000001` where the long double's expansion is
+/// `10000000000000000`. The same is now true of `qfcvt` and `qgcvt`.
 ///
 /// # Safety
 ///
@@ -6962,36 +6951,44 @@ pub unsafe extern "C" fn qgcvt_x87(
     buf: *mut c_char,
     value: *const u8,
 ) -> *mut c_char {
-    // SAFETY: the shim points `value` at the caller's stack slot.
-    let value = unsafe { x87_arg(value) };
     if buf.is_null() {
         return std::ptr::null_mut();
     }
-    // Per glibc: qgcvt is the long-double variant of gcvt and shares
-    // the same `%.<ndigit>g` semantics — total significant digits,
-    // auto-switch between fixed and scientific based on exponent,
-    // trailing-zero stripping, C-style `e+02` exponents. The previous
-    // impl used `format!("{:.prec$}", value)` (i.e., %.Nf fixed-point
-    // with N fractional digits), which diverged from glibc on every
-    // case where %f and %g differ — same bug shape as the original
-    // gcvt before its 58ac3c7f rewrite. Delegate to the now-correct
-    // shared %g renderer in frankenlibc-core.
-    let prec = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
-    // DBL_DECIMAL_DIG (17) and below fit the core gcvt renderer's proven
-    // 48-byte scratch. Reuse that allocation-free sink for the common qgcvt
-    // precisions; larger precision retains render_pct_g's growable String.
-    // Passing `prec` rather than the original `ndigit` also preserves qgcvt's
-    // existing negative-precision behavior (effective precision 1, not gcvt's
-    // default precision 6).
-    let mut stack_rendered = [0u8; 48];
-    let heap_rendered;
-    let bytes = if prec <= 17 {
-        let len = frankenlibc_core::stdlib::gcvt(value, prec as i32, &mut stack_rendered);
-        &stack_rendered[..len]
-    } else {
-        heap_rendered = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
-        heap_rendered.as_bytes()
+    // SAFETY: the shim points `value` at the caller's ten significant bytes.
+    let bytes_in = unsafe { x87_bytes(value) };
+    // Per glibc: qgcvt is the long-double variant of gcvt and shares the same
+    // `%.<ndigit>g` semantics — total significant digits, auto-switch between
+    // fixed and scientific on the exponent, trailing-zero stripping, C-style
+    // `e+02` exponents.
+    //
+    // EXACT digits, not an f64 round-trip, which is what `qecvt_x87` and
+    // `qfcvt_x87` already do and this one did not. Measured against the running
+    // glibc:
+    //
+    //     qgcvt(pi,    21)   glibc 3.14159265358979323851
+    //                        f64   3.14159265358979311600
+    //     qgcvt(1e400,  1)   glibc 1e+400
+    //                        f64   inf          <- a finite long double
+    //
+    // The second is the loud one: 1e400 is an ordinary long double and an f64
+    // infinity, so the narrowing lost the value's RANGE, not just its digits.
+    //
+    // A NEGATIVE `ndigit` is "no precision", not "precision 0". Measured:
+    // qgcvt(pi, -1) is "3.14159" (the %g default of 6) while qgcvt(pi, 0) is
+    // "3" (precision 0, which %g reads as 1). The previous `ndigit.max(0)`
+    // collapsed the two and answered "3" for both.
+    let spec = frankenlibc_core::float128::FmtSpec {
+        conv: b'g',
+        precision: (ndigit >= 0).then(|| (ndigit as usize).min(QCVT_MAX_DIGITS)),
+        width: 0,
+        left: false,
+        plus: false,
+        space: false,
+        alt: false,
+        zero: false,
     };
+    let rendered = frankenlibc_core::float128::format_x87(&bytes_in, &spec);
+    let bytes = rendered.as_slice();
     let tracked_remaining = known_remaining(buf as usize);
     let copy_len = tracked_remaining
         .map(|remaining| bytes.len().min(remaining.saturating_sub(1)))

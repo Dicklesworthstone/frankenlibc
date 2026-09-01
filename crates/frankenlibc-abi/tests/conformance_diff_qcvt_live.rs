@@ -386,3 +386,170 @@ fn fl_reads_the_stack_argument_not_a_register() {
         "12.5 and 2.5 must not share a decimal point"
     );
 }
+
+// ---------------------------------------------------------------------------
+// qgcvt. Its two siblings above reach `float128::x87_ecvt`/`x87_fcvt` and carry
+// the value's own digits; `qgcvt_x87` alone still converted to `f64` first, so
+// it lost the significand past the seventeenth digit AND the exponent range
+// entirely — `qgcvt(1e400, 1)` answered "inf" for an ordinary finite long
+// double. bd-longdouble-varargs-43usjw.
+//
+// Unlike qecvt, qgcvt has no unexplained length residual: it is `%.<n>Lg`, so
+// these arms compare BYTES.
+// ---------------------------------------------------------------------------
+
+type HostQgcvt = unsafe extern "C" fn() -> *mut c_char;
+
+/// Call `host(<long double at value>, ndigit, buf)`.
+///
+/// One fewer integer parameter than [`call_host_qcvt`], so the value pointer
+/// arrives in RDX and the callee address in RCX, while RDI/RSI already hold
+/// `ndigit` and `buf` — the sequence skips the long double exactly as the
+/// production shim's `lea rdx, [rsp+8]` assumes.
+///
+/// # Safety
+///
+/// `value` must address sixteen readable bytes, `buf` a writable region large
+/// enough for the answer, and `host` must be a real `qgcvt`.
+#[unsafe(naked)]
+unsafe extern "C" fn call_host_qgcvt(
+    _ndigit: c_int,
+    _buf: *mut c_char,
+    _value: *const u8,
+    _host: HostQgcvt,
+) -> *mut c_char {
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "movups xmm0, [rdx]",
+        "movups [rsp], xmm0",
+        "call rcx",
+        "add rsp, 24",
+        "ret",
+    )
+}
+
+fn host_qgcvt() -> HostQgcvt {
+    static H: OnceLock<Option<HostQcvt>> = OnceLock::new();
+    let sym = H
+        .get_or_init(|| host_symbol(c"qgcvt"))
+        .expect("glibc qgcvt must resolve");
+    // SAFETY: same nullary-shaped alias the other oracles use; the trampoline
+    // supplies the real signature.
+    unsafe { std::mem::transmute::<HostQcvt, HostQgcvt>(sym) }
+}
+
+fn render(buf: &[c_char]) -> String {
+    // SAFETY: qgcvt NUL-terminates within the buffer.
+    unsafe { CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn host_qgcvt_call(value: &[u8; 16], ndigit: c_int) -> String {
+    let _serialised = oracle_lock();
+    let mut buf = [0 as c_char; 8192];
+    // SAFETY: sixteen readable value bytes, 8192 writable ones, a resolved symbol.
+    unsafe {
+        call_host_qgcvt(ndigit, buf.as_mut_ptr(), value.as_ptr(), host_qgcvt());
+    }
+    render(&buf)
+}
+
+fn fl_qgcvt(value: &[u8; 16], ndigit: c_int) -> String {
+    let mut buf = [0 as c_char; 8192];
+    // SAFETY: as above, through fl's own helper.
+    unsafe {
+        frankenlibc_abi::stdlib_abi::qgcvt_x87(ndigit, buf.as_mut_ptr(), value.as_ptr());
+    }
+    render(&buf)
+}
+
+/// Raw x87 bytes, for the encodings no decimal literal names.
+fn x87_raw(significand: u64, sign_exp: u16) -> [u8; 16] {
+    let mut sixteen = [0u8; 16];
+    sixteen[..8].copy_from_slice(&significand.to_le_bytes());
+    sixteen[8..10].copy_from_slice(&sign_exp.to_le_bytes());
+    sixteen
+}
+
+/// The inputs, chosen so half of them cannot survive an `f64`.
+fn qgcvt_values() -> Vec<(&'static str, [u8; 16])> {
+    vec![
+        ("pi", x87(b"314159265358979323846264338327950288", -35)),
+        ("e", x87(b"271828182845904523536028747135266250", -35)),
+        ("2^64+1", x87(b"18446744073709551617", 0)),
+        ("1e400", x87(b"1", 400)),
+        ("1e-400", x87(b"1", -400)),
+        ("1e4000", x87(b"1", 4000)),
+        ("0.1", x87(b"1", -1)),
+        ("1.0", x87(b"1", 0)),
+        ("12.5", x87(b"125", -1)),
+        ("0.0", x87(b"0", 0)),
+        ("1e5", x87(b"1", 5)),
+        ("1234567", x87(b"1234567", 0)),
+        ("1e-4", x87(b"1", -4)),
+        ("inf", x87_raw(1 << 63, 0x7fff)),
+        ("-inf", x87_raw(1 << 63, 0xffff)),
+        ("nan", x87_raw((1 << 63) | (1 << 62), 0x7fff)),
+        ("-nan", x87_raw((1 << 63) | (1 << 62), 0xffff)),
+    ]
+}
+
+/// INSTRUMENT ARM. Every comparison below would still pass against an oracle
+/// that had quietly narrowed to `f64`, so pin on GLIBC ALONE that it has not.
+#[test]
+fn the_qgcvt_oracle_carries_more_than_f64() {
+    let pi = x87(b"314159265358979323846264338327950288", -35);
+    let host = host_qgcvt_call(&pi, 21);
+    assert_eq!(
+        host, "3.14159265358979323851",
+        "live glibc's own qgcvt answer changed — the expectations here are read \
+         from it, so nothing can be concluded until this is understood"
+    );
+    assert_ne!(
+        host, "3.14159265358979311600",
+        "the oracle is rendering pi through an f64; a comparison against it \
+         cannot detect the defect this arm exists for"
+    );
+    let big = host_qgcvt_call(&x87(b"1", 400), 1);
+    assert_eq!(
+        big, "1e+400",
+        "1e400 is a finite long double; an oracle answering inf has narrowed"
+    );
+}
+
+/// Byte equality against the live glibc, across the precisions that matter:
+/// below f64's limit, at it, past it, past the long double's own 21-digit cap,
+/// zero, and negative.
+#[test]
+fn qgcvt_matches_live_glibc() {
+    for (name, value) in qgcvt_values() {
+        for ndigit in [1, 3, 6, 17, 18, 21, 25, 0, -1] {
+            let host = host_qgcvt_call(&value, ndigit);
+            let fl = fl_qgcvt(&value, ndigit);
+            assert_eq!(fl, host, "qgcvt({name}, {ndigit})");
+        }
+    }
+}
+
+/// A NEGATIVE ndigit is "no precision" (the %g default of 6), not "precision
+/// 0". The two are different answers and the previous `ndigit.max(0)` gave both
+/// the same one, so this is called out separately from the sweep above rather
+/// than left to be one row in it.
+#[test]
+fn qgcvt_negative_ndigit_is_the_default_precision_not_zero() {
+    let pi = x87(b"314159265358979323846264338327950288", -35);
+    let negative = host_qgcvt_call(&pi, -1);
+    let zero = host_qgcvt_call(&pi, 0);
+    assert_eq!(
+        negative, "3.14159",
+        "glibc: negative ndigit means %g's default"
+    );
+    assert_eq!(
+        zero, "3",
+        "glibc: ndigit 0 is precision 0, which %g reads as 1"
+    );
+    assert_ne!(negative, zero, "the two must not collapse to one answer");
+    assert_eq!(fl_qgcvt(&pi, -1), negative);
+    assert_eq!(fl_qgcvt(&pi, 0), zero);
+}
