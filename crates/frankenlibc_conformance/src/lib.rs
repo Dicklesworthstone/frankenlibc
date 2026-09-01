@@ -990,8 +990,6 @@ pub fn execute_fixture_case(
         "ferror" => execute_ferror_case(inputs, mode),
         "fileno" => execute_fileno_case(inputs, mode),
         "sscanf" => execute_sscanf_case(inputs, mode),
-        #[cfg(target_arch = "x86_64")]
-        "vsscanf" => execute_vsscanf_case(inputs, mode),
         // ctype
         "isalpha" => execute_ctype_classify_case("isalpha", inputs, mode),
         "isdigit" => execute_ctype_classify_case("isdigit", inputs, mode),
@@ -7053,76 +7051,6 @@ fn execute_sscanf_case(
     })
 }
 
-/// `vsscanf` — same contract as [`execute_sscanf_case`], reached through a
-/// `va_list` instead of a variadic call.
-///
-/// This exists because `vsscanf` had NO executor at all, so it produced no rows
-/// in `conformance_matrix.v1.json`, so its `WrapsHostLibc -> Implemented`
-/// reclassification had no evidence and the support-matrix maintenance gate
-/// failed on `reclassification_requires_conformance` (bd-4habm0, bd-7c4m1x).
-/// Writing fixture JSON alone could not have fixed that: with no dispatch entry
-/// the cases would never have run.
-#[cfg(target_arch = "x86_64")]
-fn execute_vsscanf_case(
-    inputs: &serde_json::Value,
-    mode: &str,
-) -> Result<DifferentialExecution, String> {
-    let strict = mode_is_strict(mode);
-    let hardened = mode_is_hardened(mode);
-    if !strict && !hardened {
-        return Err(format!("unsupported mode: {mode}"));
-    }
-
-    let input = parse_string(inputs, "input")?;
-    let format = parse_string(inputs, "format")?;
-    let input_c = CString::new(input.as_str()).map_err(|_| "input contains NUL")?;
-    let format_c = CString::new(format.as_str()).map_err(|_| "format contains NUL")?;
-
-    let specs = count_scanf_specs(&format);
-    if specs > 8 {
-        return Err(format!("too many scanf specs: {specs}"));
-    }
-    let types = detect_scanf_type(&format);
-
-    let (impl_ret, impl_slots) = call_vsscanf_multi(
-        input_c.as_ptr(),
-        format_c.as_ptr(),
-        types.len(),
-        SscanfTarget::Impl,
-    )?;
-    let impl_vals = collect_sscanf_values(impl_ret, &types, &impl_slots)?;
-    let impl_output = format_sscanf_result(impl_ret, &impl_vals);
-
-    if strict {
-        let (host_ret, host_slots) = call_vsscanf_multi(
-            input_c.as_ptr(),
-            format_c.as_ptr(),
-            types.len(),
-            SscanfTarget::Host,
-        )?;
-        let host_vals = collect_sscanf_values(host_ret, &types, &host_slots)?;
-        let host_output = format_sscanf_result(host_ret, &host_vals);
-        let host_parity = host_output == impl_output;
-        return Ok(DifferentialExecution {
-            host_output,
-            impl_output,
-            host_parity,
-            note: if host_parity {
-                None
-            } else {
-                Some(String::from("vsscanf divergence"))
-            },
-        });
-    }
-
-    Ok(DifferentialExecution {
-        host_output: String::from("SKIP"),
-        impl_output,
-        host_parity: true,
-        note: None,
-    })
-}
-
 #[derive(Debug, Clone)]
 enum SscanfValue {
     Int(i64),
@@ -7874,93 +7802,10 @@ fn run_host_sscanf_multi(
     Ok((ret, collect_sscanf_values(ret, types, &slots)?))
 }
 
-/// The x86_64 System V `va_list` element, `__va_list_tag`.
-///
-/// `vsscanf` cannot be driven by a variadic call the way `sscanf` is: it takes
-/// an already-formed `va_list`, so the executor has to build one. The layout is
-/// fixed by the psABI and is the same structure `stdio_abi::va_next_pointer`
-/// documents and walks: `gp_offset` at +0, `fp_offset` at +4,
-/// `overflow_arg_area` at +8, `reg_save_area` at +16.
-///
-/// Setting `gp_offset` to 48 declares all six general-purpose argument
-/// registers already consumed, which sends every subsequent fetch to
-/// `overflow_arg_area` — so a plain array of destination pointers IS the
-/// argument list, and no register save area is needed. Every scanf destination
-/// is a pointer, so the floating-point half never participates; `fp_offset` is
-/// parked past the FP save area for the same reason.
-///
-/// This is the platform ABI rather than a FrankenLibC convention, so the same
-/// structure drives the host `vsscanf` oracle and the comparison is real.
-#[cfg(target_arch = "x86_64")]
-#[repr(C)]
-struct VaListTag {
-    gp_offset: c_uint,
-    fp_offset: c_uint,
-    overflow_arg_area: *mut c_void,
-    reg_save_area: *mut c_void,
-}
-
-#[cfg(target_arch = "x86_64")]
-const VA_GP_EXHAUSTED: c_uint = 48;
-#[cfg(target_arch = "x86_64")]
-const VA_FP_EXHAUSTED: c_uint = 304;
-
-unsafe extern "C" {
-    /// Host oracle. `libc` does not re-export `vsscanf`, and the third argument
-    /// is declared `*mut c_void` to match FrankenLibC's own signature so both
-    /// arms are handed the byte-identical `va_list`.
-    #[link_name = "vsscanf"]
-    fn host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
-}
-
 #[derive(Clone, Copy)]
 enum SscanfTarget {
     Impl,
     Host,
-}
-
-/// `vsscanf` counterpart to [`call_sscanf_multi`].
-///
-/// Shares the destination-slot machinery exactly, so the two entry points are
-/// compared on the same storage, the same sentinel policy, and the same value
-/// collection. Only the call shape differs.
-#[cfg(target_arch = "x86_64")]
-fn call_vsscanf_multi(
-    input: *const c_char,
-    format: *const c_char,
-    spec_count: usize,
-    target: SscanfTarget,
-) -> Result<(c_int, [SscanfStorage; 8]), String> {
-    if spec_count > 8 {
-        return Err(format!("too many scanf specs: {spec_count}"));
-    }
-
-    let mut slots = [SscanfStorage::sentinel(); 8];
-    let mut ptrs = [std::ptr::null_mut::<c_void>(); 8];
-    for (slot, ptr) in slots.iter_mut().zip(ptrs.iter_mut()) {
-        *ptr = slot.as_mut_ptr();
-    }
-
-    let mut tag = VaListTag {
-        gp_offset: VA_GP_EXHAUSTED,
-        fp_offset: VA_FP_EXHAUSTED,
-        overflow_arg_area: ptrs.as_mut_ptr().cast(),
-        reg_save_area: std::ptr::null_mut(),
-    };
-    let ap: *mut c_void = (&raw mut tag).cast();
-
-    // SAFETY: `input` and `format` are live NUL-terminated C strings owned by
-    // the fixture executor. `ap` is a `__va_list_tag` whose overflow area is
-    // `ptrs`, an array of 8 distinct aligned scratch slots; the caller has
-    // checked `spec_count <= 8`, so a conforming `vsscanf` fetches at most 8
-    // pointers and cannot walk past it.
-    let ret = unsafe {
-        match target {
-            SscanfTarget::Impl => frankenlibc_abi::stdio_abi::vsscanf(input, format, ap),
-            SscanfTarget::Host => host_vsscanf(input, format, ap),
-        }
-    };
-    Ok((ret, slots))
 }
 
 fn call_sscanf_multi(
@@ -31252,70 +31097,6 @@ mod tests {
             assert_eq!(result.impl_output, expected);
             assert_eq!(result.host_output, expected);
             assert!(result.host_parity);
-        }
-    }
-
-    /// The `vsscanf` executor must actually execute, and must agree with the
-    /// host `vsscanf` through the synthesised `va_list`.
-    ///
-    /// This is the non-vacuity gate for the executor added for bd-4habm0 /
-    /// bd-7c4m1x: without a test that runs it, `--test vsscanf` reports
-    /// `0 passed; N filtered out`, which libtest prints as `ok` and which is
-    /// silence rather than green.
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn vsscanf_executor_runs_and_matches_host_through_a_synthesised_va_list() {
-        let cases: &[(serde_json::Value, &str)] = &[
-            (serde_json::json!({ "input": "42", "format": "%d" }), "1:[42]"),
-            (
-                serde_json::json!({ "input": "-123", "format": "%d" }),
-                "1:[-123]",
-            ),
-            (serde_json::json!({ "input": "ff", "format": "%x" }), "1:[255]"),
-            (
-                serde_json::json!({ "input": "hello", "format": "%s" }),
-                "1:[\"hello\"]",
-            ),
-            // Two and three conversions prove the va_list ADVANCES: a list that
-            // failed to advance would write every value through the first
-            // destination and this would not match.
-            (
-                serde_json::json!({ "input": "7 8", "format": "%d %d" }),
-                "2:[7,8]",
-            ),
-            (
-                serde_json::json!({ "input": "1 2 3", "format": "%d %d %d" }),
-                "3:[1,2,3]",
-            ),
-            (
-                serde_json::json!({ "input": "42 ok", "format": "%d %s" }),
-                "2:[42,\"ok\"]",
-            ),
-            (serde_json::json!({ "input": "abc", "format": "%d" }), "0:[]"),
-        ];
-
-        for (inputs, expected) in cases {
-            let result = execute_fixture_case("vsscanf", inputs, "strict")
-                .expect("vsscanf fixture should execute");
-            assert_eq!(
-                result.impl_output, *expected,
-                "vsscanf impl output for {inputs}"
-            );
-            assert_eq!(
-                result.host_output, *expected,
-                "host vsscanf oracle for {inputs}"
-            );
-            assert!(result.host_parity, "vsscanf host parity for {inputs}");
-
-            // The va_list entry point must agree with the variadic one on the
-            // same input; they share a scanning engine, so a divergence here is
-            // the va_list plumbing and nothing else.
-            let via_sscanf = execute_fixture_case("sscanf", inputs, "strict")
-                .expect("sscanf fixture should execute");
-            assert_eq!(
-                result.impl_output, via_sscanf.impl_output,
-                "vsscanf and sscanf disagree for {inputs}"
-            );
         }
     }
 
