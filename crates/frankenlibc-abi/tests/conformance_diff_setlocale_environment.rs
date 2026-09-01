@@ -73,24 +73,33 @@ fn text(p: *const c_char) -> String {
     unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
 }
 
-/// The child: adopt the environment in BOTH libcs and print each codeset.
+/// The child: adopt the environment in BOTH libcs and print each result.
 fn helper_body() {
     let empty = CString::new("").expect("no interior NUL");
 
     // SAFETY: NUL-terminated locale name; CODESET is a valid nl_item.
-    let (host_codeset, fl_codeset) = unsafe {
-        host_setlocale()(libc::LC_ALL, empty.as_ptr());
+    let (host_returned, host_codeset, fl_returned, fl_codeset) = unsafe {
+        let host_returned = !host_setlocale()(libc::LC_ALL, empty.as_ptr()).is_null();
         let host = text(host_nl_langinfo()(libc::CODESET));
-        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, empty.as_ptr());
+        let fl_returned =
+            !frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, empty.as_ptr()).is_null();
         let fl = text(frankenlibc_abi::locale_abi::nl_langinfo(libc::CODESET));
-        (host, fl)
+        (host_returned, host, fl_returned, fl)
     };
+    println!("HOST_RETURNED={host_returned}");
     println!("HOST={host_codeset}");
+    println!("FL_RETURNED={fl_returned}");
     println!("FL={fl_codeset}");
 }
 
-/// Re-exec this binary with exactly `vars` set, and return `(host, fl)` codesets.
-fn codesets_under(vars: &[(&str, &str)]) -> (String, String) {
+#[derive(Debug)]
+struct LocaleOutcome {
+    returned: bool,
+    codeset: String,
+}
+
+/// Re-exec this binary with exactly `vars` set, and return both libc outcomes.
+fn locale_outcomes_under(vars: &[(&str, &str)]) -> (LocaleOutcome, LocaleOutcome) {
     let mut cmd = Command::new(std::env::current_exe().expect("current test binary path"));
     cmd.env_clear().env(HELPER_VAR, "1");
     for (k, v) in vars {
@@ -110,7 +119,21 @@ fn codesets_under(vars: &[(&str, &str)]) -> (String, String) {
             })
             .to_string()
     };
-    (field("HOST="), field("FL="))
+    let parse_returned = |tag| match field(tag).as_str() {
+        "true" => true,
+        "false" => false,
+        other => panic!("helper returned invalid boolean {other:?} for {tag}"),
+    };
+    (
+        LocaleOutcome {
+            returned: parse_returned("HOST_RETURNED="),
+            codeset: field("HOST="),
+        },
+        LocaleOutcome {
+            returned: parse_returned("FL_RETURNED="),
+            codeset: field("FL="),
+        },
+    )
 }
 
 #[test]
@@ -149,15 +172,19 @@ fn setlocale_empty_name_follows_the_environment() {
             "LC_ALL empty falls through to LANG",
             &[("LC_ALL", ""), ("LANG", "C.UTF-8")],
         ),
-        // A codeset fl cannot name is still a UTF-8 codeset.
+        // This name is installed on some workers and absent on others. The
+        // differential covers both legitimate host outcomes.
         ("LANG=en_US.UTF-8", &[("LANG", "en_US.UTF-8")]),
     ];
 
     let mut divergences = Vec::new();
     for (label, vars) in rows {
-        let (host, fl) = codesets_under(vars);
-        if host != fl {
-            divergences.push(format!("  {label}: glibc CODESET={host} fl CODESET={fl}"));
+        let (host, fl) = locale_outcomes_under(vars);
+        if host.returned != fl.returned || host.codeset != fl.codeset {
+            divergences.push(format!(
+                "  {label}: glibc returned={} CODESET={} fl returned={} CODESET={}",
+                host.returned, host.codeset, fl.returned, fl.codeset
+            ));
         }
     }
     assert!(
@@ -177,16 +204,41 @@ fn the_environment_actually_reaches_the_child() {
     if std::env::var(HELPER_VAR).is_ok() {
         return;
     }
-    let (ascii_host, _) = codesets_under(&[("LANG", "C")]);
-    let (utf8_host, _) = codesets_under(&[("LANG", "C.UTF-8")]);
+    let (ascii_host, _) = locale_outcomes_under(&[("LANG", "C")]);
+    let (utf8_host, _) = locale_outcomes_under(&[("LANG", "C.UTF-8")]);
     assert_ne!(
-        ascii_host, utf8_host,
+        ascii_host.codeset, utf8_host.codeset,
         "glibc reported the same codeset for LANG=C and LANG=C.UTF-8 — the child \
          is not seeing the environment we set, so this gate cannot prove anything"
     );
     assert_eq!(
-        ascii_host, "ANSI_X3.4-1968",
+        ascii_host.codeset, "ANSI_X3.4-1968",
         "glibc's C-locale codeset on this host"
     );
-    assert_eq!(utf8_host, "UTF-8", "glibc's C.UTF-8 codeset on this host");
+    assert_eq!(
+        utf8_host.codeset, "UTF-8",
+        "glibc's C.UTF-8 codeset on this host"
+    );
+}
+
+/// A missing environment locale is a failing selection, not an ASCII success.
+///
+/// The old implementation passed this test by accepting its UTF-8 suffix and
+/// mutating the active codec. The name is deliberately impossible to install
+/// accidentally, while the host result remains the independent oracle.
+#[test]
+fn setlocale_empty_name_rejects_an_uninstalled_environment_locale() {
+    if std::env::var(HELPER_VAR).is_ok() {
+        return;
+    }
+    let (host, fl) = locale_outcomes_under(&[("LANG", "frankenlibc.definitely_missing.UTF-8")]);
+    assert!(
+        !host.returned,
+        "host unexpectedly installed the reserved test locale"
+    );
+    assert_eq!(
+        host.returned, fl.returned,
+        "setlocale return value for missing LANG"
+    );
+    assert_eq!(host.codeset, fl.codeset, "CODESET after missing LANG");
 }

@@ -260,24 +260,65 @@ fn charset_for_request(name: &[u8]) -> Option<Charset> {
     }
 }
 
-/// The charset a locale NAME implies, for names that came from the environment.
+/// The charset a locale NAME implies, after glibc has admitted that NAME.
 ///
-/// Deliberately wider than [`charset_for_request`]. That one gates which names
-/// `setlocale` accepts FROM A CALLER, where answering `None` yields ENOENT.
-/// This one is asked about whatever `LANG`/`LC_*` happens to hold, where
-/// refusing is not an option: glibc resolves the value against installed
-/// locales, and the codeset is the only part of that fl models.
-///
-/// So the codeset suffix decides. `en_US.UTF-8` is a UTF-8 locale even though fl
-/// cannot otherwise represent it; anything without a UTF-8 codeset resolves to
-/// ASCII, which is the C locale's charset and the safe answer for a charmap fl
-/// does not carry.
+/// This deliberately stays wider than [`charset_for_request`]: an installed
+/// `en_US.UTF-8` is a UTF-8 locale even though FrankenLibC cannot represent its
+/// collation and formatting tables. The name must nevertheless be loadable by
+/// the host first. Parsing a `.UTF-8` suffix alone accepts absent locales,
+/// whereas glibc makes `setlocale(category, "")` fail and leaves the active
+/// locale unchanged.
 fn env_charset_for_name(name: &[u8]) -> Charset {
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(b".utf-8") || lower.ends_with(b".utf8") {
         Charset::Utf8
     } else {
         Charset::Ascii
+    }
+}
+
+/// Does host glibc load `name` for this locale category?
+///
+/// Locale availability is not a pathname predicate: common distributions put
+/// generated locales in glibc's binary locale archive. Resolve glibc's
+/// `newlocale`/`freelocale` through `RTLD_NEXT` so this ABI export does not
+/// recurse into FrankenLibC when it is preloaded. The `1 << category` mask is
+/// glibc's `LC_<category>_MASK` definition; `LC_ALL` is the one pseudo-category
+/// and uses the libc-provided all-category mask instead.
+fn host_locale_is_available(category: c_int, name: &[u8]) -> bool {
+    let Ok(name) = CString::new(name) else {
+        return false;
+    };
+    let category_mask = if category == locale_core::LC_ALL {
+        libc::LC_ALL_MASK
+    } else {
+        1_i32 << category
+    };
+
+    type HostNewlocale = unsafe extern "C" fn(c_int, *const c_char, LocaleT) -> LocaleT;
+    type HostFreelocale = unsafe extern "C" fn(LocaleT);
+
+    // SAFETY: both versioned symbols are glibc's declared `locale.h` ABI; the
+    // bounded input above is NUL-terminated, and a non-null locale_t returned
+    // by newlocale is released exactly once by the matching host freelocale.
+    unsafe {
+        let newlocale =
+            crate::host_resolve::host_dlvsym_next_raw(c"newlocale".as_ptr(), c"GLIBC_2.3".as_ptr());
+        let freelocale = crate::host_resolve::host_dlvsym_next_raw(
+            c"freelocale".as_ptr(),
+            c"GLIBC_2.3".as_ptr(),
+        );
+        if newlocale.is_null() || freelocale.is_null() {
+            return false;
+        }
+        let newlocale: HostNewlocale = core::mem::transmute(newlocale);
+        let freelocale: HostFreelocale = core::mem::transmute(freelocale);
+        let locale = newlocale(category_mask, name.as_ptr(), std::ptr::null_mut());
+        if locale.is_null() {
+            return false;
+        }
+        freelocale(locale);
+        true
     }
 }
 
@@ -300,7 +341,7 @@ fn env_charset_for_name(name: &[u8]) -> Charset {
 /// The last row is why this resolves PER CATEGORY rather than once for the
 /// process: one `LC_CTYPE` in the environment moves that category alone and
 /// leaves the rest in C, and `setlocale` then reports the composite string.
-fn env_charset_for_category(category: c_int) -> Charset {
+fn env_charset_for_category(category: c_int) -> Option<Charset> {
     fn var(name: &str) -> Option<Vec<u8>> {
         let value = std::env::var_os(name)?;
         let bytes = value.as_os_str().as_bytes().to_vec();
@@ -314,11 +355,16 @@ fn env_charset_for_category(category: c_int) -> Charset {
         .or_else(|| specific.and_then(var))
         .or_else(|| var("LANG"))
     {
-        Some(name) => env_charset_for_name(&name),
+        Some(name) if host_locale_is_available(category, &name) => {
+            Some(env_charset_for_name(&name))
+        }
+        // glibc returns NULL when its environment-selected locale is absent;
+        // do not mutate FrankenLibC's active state before setlocale reports it.
+        Some(_) => None,
         // Nothing set: the C locale, NOT UTF-8. fl answered UTF-8 here
         // unconditionally, which is the defect b5aef5e3a fixed for the startup
         // locale surviving at this entry point (bd-9t8wzq, bd-1kxrmz).
-        None => Charset::Ascii,
+        None => Some(Charset::Ascii),
     }
 }
 /// POSIX C-locale radix character.
@@ -438,11 +484,26 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
     // An empty name means "adopt the environment", resolved per category.
     if name.is_empty() {
         if category == locale_core::LC_ALL {
-            for (_, cat) in locale_core::COMPOSITE_ORDER.iter() {
-                set_category_charset(*cat, env_charset_for_category(*cat));
+            let mut resolved =
+                [(locale_core::LC_CTYPE, Charset::Ascii); locale_core::CATEGORY_COUNT];
+            for (slot, (_, cat)) in locale_core::COMPOSITE_ORDER.iter().enumerate() {
+                let Some(charset) = env_charset_for_category(*cat) else {
+                    unsafe { set_abi_errno(libc::ENOENT) };
+                    runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+                    return std::ptr::null();
+                };
+                resolved[slot] = (*cat, charset);
+            }
+            for (cat, charset) in resolved {
+                set_category_charset(cat, charset);
             }
         } else {
-            set_category_charset(category, env_charset_for_category(category));
+            let Some(charset) = env_charset_for_category(category) else {
+                unsafe { set_abi_errno(libc::ENOENT) };
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+                return std::ptr::null();
+            };
+            set_category_charset(category, charset);
         }
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
         return if category == locale_core::LC_ALL {
@@ -1007,8 +1068,13 @@ pub unsafe extern "C" fn newlocale(
     // environment's locale, not a synonym for UTF-8. An fl handle carries one
     // charset, and the codec is what it is used for, so LC_CTYPE decides.
     if name.is_empty() {
+        let Some(charset) = env_charset_for_category(locale_core::LC_CTYPE) else {
+            unsafe { set_abi_errno(libc::ENOENT) };
+            runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+            return std::ptr::null_mut();
+        };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
-        return locale_handle_for(env_charset_for_category(locale_core::LC_CTYPE));
+        return locale_handle_for(charset);
     }
 
     if let Some(charset) = charset_for_request(&name) {
