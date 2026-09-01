@@ -108,6 +108,9 @@ fn sigignore_matches_glibc() {
 
 use std::ffi::c_void;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 unsafe extern "C" {
     fn dlopen(filename: *const i8, flag: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
@@ -132,13 +135,43 @@ fn glibc_sig_fn(name: &std::ffi::CStr, fl_addr: usize) -> SigFn {
     }
 }
 
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// glibc's errno slot, resolved the same way the FUNCTION arm is.
+///
+/// The function arm above is hardened by `dlsym` because a link-time reference
+/// binds to fl's own `no_mangle` export in a release build. errno is the OTHER
+/// HALF of every row here, and fl exports `__errno_location` under that same
+/// attribute — so a plain `libc::__errno_location()` reads FL's slot in release
+/// while glibc's call wrote glibc's. The comment below already claimed each side
+/// reads "its own errno slot"; in release that was only true of the fl side.
+///
+/// Not hypothetical: with the function arm converted and this one left
+/// link-time, `conformance_diff_linux_aio_syscalls` failed in release with
+/// `io_destroy(0): fl=(-1, 22) host=(-1, 0)` — a real error whose errno was read
+/// out of the wrong TLS variable (bd-g1sjty, fixed there by 1da1f3df3).
+fn glibc_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is handed over so a collapsed oracle aborts rather than silently
+    // reading fl's errno.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr)
+    }
+}
+
 /// Call through one implementation and report (rc, errno), reading each side's
 /// own errno slot.
 fn call_glibc(f: SigFn, sig: c_int) -> (c_int, c_int) {
     unsafe {
-        *libc::__errno_location() = 0;
+        let errno_slot = glibc_errno_location()();
+        *errno_slot = 0;
         let rc = f(sig);
-        (rc, *libc::__errno_location())
+        (rc, *errno_slot)
     }
 }
 fn call_fl(f: SigFn, sig: c_int) -> (c_int, c_int) {

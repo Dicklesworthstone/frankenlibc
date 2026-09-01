@@ -27,6 +27,9 @@
 //! fact that the vDSO mapping itself was found, so "skipped" can never be
 //! confused with "verified".
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 use std::ffi::c_void;
 
 type GetrandomFn = unsafe extern "C" fn(*mut c_void, usize, libc::c_uint) -> isize;
@@ -45,6 +48,31 @@ fn live_glibc_getrandom() -> GetrandomFn {
             "incumbent lookup resolved to frankenlibc rather than libc.so.6"
         );
         std::mem::transmute(raw)
+    }
+}
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut libc::c_int;
+
+/// glibc's errno slot, resolved the way `live_glibc_getrandom` resolves the
+/// FUNCTION — because errno is the other half of every comparison here.
+///
+/// fl exports `__errno_location` under
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a RELEASE test
+/// binary `libc::__errno_location()` reads FL's slot while the incumbent call
+/// wrote glibc's. The fl arm below already reads fl's own slot explicitly; this
+/// makes the incumbent arm equally explicit instead of correct only in debug
+/// (bd-g1sjty; the same shape produced a live wrong answer in
+/// `conformance_diff_linux_aio_syscalls`, fixed by 1da1f3df3).
+fn glibc_errno_location() -> ErrnoLocationFn {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is passed as the collapse guard so a self-comparison aborts.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        std::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr)
     }
 }
 
@@ -216,9 +244,10 @@ fn fl_getrandom_zero_length_and_invalid_flags_match_live_glibc() {
         // SAFETY: this calls the separately resolved live libc function with
         // the same valid zero-length shape, and reads its current-thread errno.
         let (glibc, glibc_error) = unsafe {
-            *libc::__errno_location() = 0;
+            let errno_slot = glibc_errno_location()();
+            *errno_slot = 0;
             let result = glibc_getrandom(std::ptr::null_mut(), 0, flags);
-            (result, *libc::__errno_location())
+            (result, *errno_slot)
         };
 
         assert_eq!(

@@ -33,6 +33,29 @@ union Pipe2Sym {
     function: Pipe2Fn,
 }
 
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// The incumbent's errno slot, resolved the way the FUNCTION arms are.
+///
+/// This file already asserts its `pipe`/`pipe2` lookups are not fl's own
+/// symbols. errno is the other half of each comparison and was still read
+/// link-time, which is only an incumbent slot in a debug build. See bd-g1sjty.
+fn glibc_errno_location() -> *mut c_int {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is the collapse guard, so a self-comparison aborts loudly.
+    unsafe {
+        let raw = libc::dlsym(libc_handle(), c"__errno_location".as_ptr());
+        assert!(!raw.is_null(), "libc.so.6 has no __errno_location");
+        assert_ne!(
+            raw as usize,
+            frankenlibc_abi::errno_abi::__errno_location as *const () as usize,
+            "__errno_location resolved to fl's own export — the arms share one slot"
+        );
+        std::mem::transmute::<*mut std::ffi::c_void, ErrnoLocationFn>(raw)()
+    }
+}
+
 fn libc_handle() -> *mut std::ffi::c_void {
     // SAFETY: libc.so.6 is the process host libc; flags request a local handle.
     let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
@@ -190,9 +213,17 @@ fn diff_pipe2_invalid_flags_returns_einval() {
     let fl_r = unsafe { fl::pipe2(fl_fds.as_mut_ptr(), 0x10_0000) };
     let fl_e = unsafe { *libc::__errno_location() };
 
-    unsafe { *libc::__errno_location() = 0 };
+    // The INCUMBENT arm reads the INCUMBENT's errno slot. fl exports
+    // `__errno_location` under `#[cfg_attr(not(debug_assertions), no_mangle)]`,
+    // so a plain `libc::__errno_location()` reads FL's slot in a release build —
+    // where this call never wrote it (bd-g1sjty). The fl read above stays on the
+    // link-time slot deliberately: fl's `set_abi_errno` mirrors into the host
+    // slot, so it is fl's value in either profile, and which slot an fl arm
+    // SHOULD assert on is the open question on bd-38clmn.
+    let lc_errno_slot = glibc_errno_location();
+    unsafe { *lc_errno_slot = 0 };
     let lc_r = unsafe { pipe2(lc_fds.as_mut_ptr(), 0x10_0000) };
-    let lc_e = unsafe { *libc::__errno_location() };
+    let lc_e = unsafe { *lc_errno_slot };
 
     assert_eq!(fl_r, lc_r, "pipe2 invalid-flag return value");
     if fl_r == -1 {
