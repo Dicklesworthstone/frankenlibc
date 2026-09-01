@@ -13,10 +13,14 @@
 use std::ffi::{CString, c_char, c_int, c_uint};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
+use std::process::Command;
 use std::sync::Mutex;
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
+
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
 
 type ErrorAtLine =
     unsafe extern "C" fn(c_int, c_int, *const c_char, c_uint, *const c_char, ...);
@@ -71,13 +75,22 @@ fn capture<F: FnOnce()>(f: F) -> Vec<u8> {
 fn capture_inner<F: FnOnce()>(f: F) -> Vec<u8> {
     let mut fds = [0i32; 2];
     unsafe { libc::pipe(fds.as_mut_ptr()) };
-    let saved = unsafe { libc::dup(2) };
-    unsafe { libc::dup2(fds[1], 2) };
-    f();
-    unsafe { libc::fflush(std::ptr::null_mut()) };
+    // Restored by a Drop guard, INCLUDING on unwind (bd-ug42ol). `f()` is the
+    // code under test and an assertion inside it panics; a straight-line
+    // `dup2(saved, 2)` below would be skipped, leaving the process's stderr
+    // pointed at this pipe for the rest of the run — swallowing libtest's
+    // report of the very failure that caused it.
+    //
+    // BLOCK-SCOPED, and that is load-bearing: while the guard lives, fd 2 still
+    // holds a second reference to the pipe's WRITE end, so the read below would
+    // never see EOF and the test would HANG rather than fail.
+    {
+        let _restore = unsafe { fd_capture::StdFdRestore::new(2) };
+        unsafe { libc::dup2(fds[1], 2) };
+        f();
+        unsafe { libc::fflush(std::ptr::null_mut()) };
+    }
     unsafe {
-        libc::dup2(saved, 2);
-        libc::close(saved);
         libc::close(fds[1]);
     }
     let mut out = Vec::new();
@@ -756,20 +769,23 @@ fn capture_stdout_and_stderr<F: FnOnce()>(f: F) -> Vec<u8> {
     let _guard = CAPTURE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut fds = [0i32; 2];
     unsafe { libc::pipe(fds.as_mut_ptr()) };
-    let saved_out = unsafe { libc::dup(1) };
-    let saved_err = unsafe { libc::dup(2) };
-    unsafe {
-        libc::dup2(fds[1], 1);
-        libc::dup2(fds[1], 2);
+    // Two Drop guards, block-scoped, for the reasons in `capture_inner`: panic
+    // safety, and releasing both references to the pipe's write end before the
+    // read below so it can see EOF (bd-ug42ol).
+    {
+        let _restore_out = unsafe { fd_capture::StdFdRestore::new(1) };
+        let _restore_err = unsafe { fd_capture::StdFdRestore::new(2) };
+        unsafe {
+            libc::dup2(fds[1], 1);
+            libc::dup2(fds[1], 2);
+        }
+        f();
+        unsafe {
+            libc::fflush(std::ptr::null_mut());
+            frankenlibc_abi::stdio_abi::fflush(fl_stdout());
+        }
     }
-    f();
     unsafe {
-        libc::fflush(std::ptr::null_mut());
-        frankenlibc_abi::stdio_abi::fflush(fl_stdout());
-        libc::dup2(saved_out, 1);
-        libc::dup2(saved_err, 2);
-        libc::close(saved_out);
-        libc::close(saved_err);
         libc::close(fds[1]);
     }
     let mut out = Vec::new();
@@ -779,6 +795,9 @@ fn capture_stdout_and_stderr<F: FnOnce()>(f: F) -> Vec<u8> {
 }
 
 const MARKER: &[u8] = b"MARKER";
+
+/// Set by the parent test on the child that runs the three fd-1 arms.
+const FLUSH_HELPER_ENV: &str = "FRANKENLIBC_ERROR_FLUSH_HELPER";
 
 /// Whether the sentinel arrives BEFORE the diagnostic text.
 fn marker_precedes_message(captured: &[u8]) -> bool {
@@ -792,8 +811,9 @@ fn marker_precedes_message(captured: &[u8]) -> bool {
 
 /// Whether the sentinel arrives AFTER the diagnostic text.
 ///
-/// The unflushed-stdout control asserts ordering; comparing tails cannot,
-/// because foreign bytes (see [`from_marker`]) may follow the marker.
+/// Kept alongside the exact-byte assertions as the first thing to report: it
+/// names the property in one line where a byte diff of two similar buffers does
+/// not.
 fn marker_trails_message(captured: &[u8]) -> bool {
     let marker_at = captured
         .windows(MARKER.len())
@@ -805,38 +825,58 @@ fn marker_trails_message(captured: &[u8]) -> bool {
     }
 }
 
-/// Drop anything captured before the test's own sentinel.
+/// Text only libtest writes, never `error`/`error_at_line`/`warnx`.
 ///
-/// These tests redirect the PROCESS's fd 1 and 2, so libtest's own progress
-/// lines ("test foo ... ok\n"), written by other threads while tests run in
-/// parallel, land in the capture too. That is foreign traffic, not the
-/// behaviour under test: it made
-/// `error_flushes_buffered_stdout_before_the_diagnostic` fail with
-/// `fl="ok\nMARKER..."` against `glibc="MARKER..."` while passing under
-/// `--test-threads=1`.
+/// The first is the 60-second watchdog line, which no test arrangement can
+/// prevent; the rest would mean the isolation below stopped working.
+const LIBTEST_SIGNATURES: [&[u8]; 4] = [
+    b"has been running for over",
+    b" ... ok",
+    b" ... FAILED",
+    b"test result:",
+];
+
+/// Is this capture holding bytes no implementation under test produced?
 ///
-/// Anchoring at MARKER keeps exactly what the test asserts — that buffered
-/// stdout is flushed BEFORE the diagnostic, so the sentinel precedes the
-/// message — and discards bytes neither arm produced. The file's CAPTURE_LOCK
-/// cannot help here; it serialises these tests against each other, and libtest
-/// does not take it.
-fn from_marker(captured: &[u8]) -> Vec<u8> {
-    let start = captured
-        .windows(MARKER.len())
-        .position(|w| w == MARKER)
-        .unwrap_or(0);
-    let rest = &captured[start..];
-    // Foreign lines arrive at BOTH ends: libtest writes a progress line before
-    // the capture window opens and another when a sibling test finishes inside
-    // it. One diagnostic is exactly one line, so cutting at the first newline
-    // after the sentinel isolates it from both.
-    let end = rest.iter().position(|&b| b == b'\n').map_or(rest.len(), |n| n + 1);
-    rest[..end].to_vec()
+/// bd-ug42ol step 2: CHECK the capture rather than trusting it. The three arms
+/// below redirect the PROCESS's fd 1, and libtest writes to fd 1 from its own
+/// threads — the `test <name> ... ok` line when any sibling completes, and a
+/// watchdog line from a thread that fires while one runs. Those bytes landed
+/// before, after, and INSIDE the captured line on rch worker vmi1293453, and
+/// the response at the time was to delete the byte-equality assertions and
+/// compare only the marker/message ORDER.
+///
+/// That was the wrong repair, and this is the right one: the arms now run in a
+/// child process where exactly one test executes (see
+/// `stdout_flush_ordering_is_checked_in_an_isolated_child`), so no sibling can
+/// complete inside a capture window and the exact bytes are assertable again.
+/// What survives is the watchdog, which nothing can arrange away — so a
+/// contaminated capture is REPORTED AS CONTAMINATION here rather than compared
+/// and reported as a divergence in whichever arm was unlucky.
+fn contamination(arm: &str, captured: &[u8]) -> Option<String> {
+    let found = LIBTEST_SIGNATURES
+        .iter()
+        .find(|sig| captured.windows(sig.len()).any(|w| w == **sig))?;
+    Some(format!(
+        "CONTAMINATED {arm} capture: it contains {:?}, which libtest writes to fd 1 and \
+         no implementation under test does. This is foreign traffic in the capture, NOT a \
+         divergence — bd-ug42ol. Captured: {:?}",
+        String::from_utf8_lossy(found),
+        String::from_utf8_lossy(captured)
+    ))
 }
 
+/// Panic with the contamination report if either arm's capture is not clean.
+fn assert_uncontaminated(f: &[u8], g: &[u8]) {
+    for (arm, captured) in [("fl", f), ("glibc", g)] {
+        if let Some(why) = contamination(arm, captured) {
+            panic!("{why}");
+        }
+    }
+}
 
-
-#[test]
+/// Runs in the isolated child; see
+/// `stdout_flush_ordering_is_checked_in_an_isolated_child`.
 fn error_flushes_buffered_stdout_before_the_diagnostic() {
     let marker = CString::new("MARKER").unwrap();
     let fmt = CString::new("msg").unwrap();
@@ -850,13 +890,12 @@ fn error_flushes_buffered_stdout_before_the_diagnostic() {
         frankenlibc_abi::stdlib_abi::error(0, 0, fmt.as_ptr());
     });
 
-    // ORDERING on each arm, not byte equality between them. Both captures
-    // redirect the PROCESS's fd 1 and 2, and libtest writes its progress lines
-    // to the same fds from other threads — those fragments were observed landing
-    // before, after, and even INSIDE the captured line, so no amount of trimming
-    // makes a byte comparison stable. What this test exists to prove is that
-    // `error()` FLUSHES buffered stdout first, i.e. the marker precedes the
-    // diagnostic; that relation survives foreign bytes anywhere.
+    // The capture is CHECKED before it is compared: foreign bytes are reported
+    // as contamination, never as a divergence.
+    assert_uncontaminated(&f, &g);
+
+    // Order first, because it names the property in one line where a byte diff
+    // of two similar buffers does not; exact bytes below.
     for (arm, captured) in [("fl", &f), ("glibc", &g)] {
         assert!(
             marker_precedes_message(captured),
@@ -872,30 +911,42 @@ fn error_flushes_buffered_stdout_before_the_diagnostic() {
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g)
     );
-    // The concern behind the two assertions that used to stand here is real —
-    // "assert what the ORACLE produced, not just that the arms agree", because
-    // if both impls stopped flushing the equality above would still hold. But
-    // they were spelled `g.starts_with(MARKER)` / `f.starts_with(MARKER)`, and
-    // a byte PREFIX comparison is exactly what the comment eleven lines up says
-    // cannot be stable here: these tests redirect the process's fd 1 and 2, so
-    // libtest's own progress lines land in the capture from other threads.
-    //
-    // It fired (bd-aykfv1). On rch worker vmi1293453 the captured glibc buffer
-    // was:
+    // RESTORED (bd-ug42ol). These two assertions, and the byte equality below,
+    // were deleted in response to libtest's progress lines landing in the
+    // capture on rch worker vmi1293453:
     //   "test error_prefix_is_the_full_argv0_not_its_basename ... ok\nMARKER<exe>: msg\n"
-    // — a foreign libtest line at the FRONT. The marker still precedes the
-    // diagnostic, so the property under test held and every order assertion
-    // passed; only `starts_with` failed, on a byte that has nothing to do with
-    // flushing. The same target is green on ovh-a, which is what a
-    // parallelism artifact looks like.
+    // — a foreign line at the FRONT, which broke `starts_with` on a byte that
+    // has nothing to do with flushing. Deleting them made the gate stable by
+    // making it weaker: with only the order predicates, `error()` could emit an
+    // entirely different diagnostic and nothing here would notice.
     //
-    // Nothing is lost by removing them: the `for` loop above already asserts
-    // `marker_precedes_message` for EACH arm individually, not merely that the
-    // two agree, so the oracle's own behaviour is still pinned — by the
-    // predicate built for this exact instability rather than around it.
+    // The contamination is now removed at its source — one test runs in the
+    // child, so no sibling can complete inside the window — and what cannot be
+    // arranged away is reported as contamination by `assert_uncontaminated`
+    // above. So the exact claim is assertable again, and is asserted.
+    assert!(
+        g.starts_with(MARKER),
+        "glibc's error() must flush buffered stdout FIRST, so the capture begins with the \
+         marker; got {:?}",
+        String::from_utf8_lossy(&g)
+    );
+    assert!(
+        f.starts_with(MARKER),
+        "fl's error() must flush buffered stdout FIRST, so the capture begins with the \
+         marker; got {:?}",
+        String::from_utf8_lossy(&f)
+    );
+    assert_eq!(
+        f,
+        g,
+        "error() stdout/stderr bytes: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&g)
+    );
 }
 
-#[test]
+/// Runs in the isolated child; see
+/// `stdout_flush_ordering_is_checked_in_an_isolated_child`.
 fn error_at_line_flushes_buffered_stdout_before_the_diagnostic() {
     let marker = CString::new("MARKER").unwrap();
     let file = CString::new("f.c").unwrap();
@@ -910,17 +961,15 @@ fn error_at_line_flushes_buffered_stdout_before_the_diagnostic() {
         frankenlibc_abi::stdlib_abi::error_at_line(0, 0, file.as_ptr(), 7, fmt.as_ptr());
     });
 
-    // This WAS `assert_eq!(f, g)` — a full byte equality over a buffer other
-    // libtest threads write into. It fired on the next run after the rest of
-    // this test was hardened (bd-aykfv1), on rch worker vmi1293453:
+    // The byte equality below fired here on rch worker vmi1293453 (bd-aykfv1):
     //   fl    = "test error_at_line_honors_error_print_progname_like_glibc ... ok\nMARKER<exe>:f.c:7: msg\n"
     //   glibc = "MARKER<exe>:f.c:7: msg\n"
-    // The two arms produced identical output. They differed only by a foreign
-    // progress line landing in one capture and not the other.
-    //
-    // So compare the relation this test exists to prove, in both arms and
-    // between them, rather than the bytes: the marker must precede the
-    // diagnostic (stdout was flushed first), and both impls must agree on that.
+    // The two arms produced IDENTICAL output; they differed only by a foreign
+    // progress line landing in one capture and not the other. The response was
+    // to delete the equality. It is back, because the contamination is now
+    // removed at its source and what remains is reported as contamination.
+    assert_uncontaminated(&f, &g);
+
     for (arm, captured) in [("fl", &f), ("glibc", &g)] {
         assert!(
             marker_precedes_message(captured),
@@ -936,33 +985,31 @@ fn error_at_line_flushes_buffered_stdout_before_the_diagnostic() {
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g)
     );
-    // Same removal as in `error_flushes_buffered_stdout_before_the_diagnostic`
-    // above, and the same reason: a byte PREFIX check cannot be stable in a
-    // capture that other libtest threads write into. This twin has not been
-    // observed failing — it is fixed by inspection rather than by observation,
-    // because leaving one of two identical unstable assertions in place is how
-    // the same red comes back on the next unlucky worker.
-    //
-    // The oracle claim is kept, through the order predicate:
+    // RESTORED, same as the twin above: the prefix claim against the ORACLE's
+    // own bytes, then the full byte equality between the arms.
     assert!(
-        marker_precedes_message(&g),
-        "glibc's error_at_line() must flush buffered stdout before the diagnostic, so the \
-         marker should precede the message; got {:?}",
+        g.starts_with(MARKER),
+        "glibc's error_at_line() must flush buffered stdout FIRST, so the capture begins \
+         with the marker; got {:?}",
         String::from_utf8_lossy(&g)
     );
     assert!(
-        marker_precedes_message(&f),
-        "fl's error_at_line() left buffered stdout behind the diagnostic; the marker should \
-         precede the message, got {:?}",
+        f.starts_with(MARKER),
+        "fl's error_at_line() must flush buffered stdout FIRST, so the capture begins with \
+         the marker; got {:?}",
         String::from_utf8_lossy(&f)
     );
-    // The byte equality that used to stand above this is gone; see the comment
-    // there. It was left in place on one run's evidence and fired on the next,
-    // which is the whole argument for not leaving a known-unstable assertion
-    // alone because it has not bitten yet.
+    assert_eq!(
+        f,
+        g,
+        "error_at_line() stdout/stderr bytes: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&g)
+    );
 }
 
-#[test]
+/// Runs in the isolated child; see
+/// `stdout_flush_ordering_is_checked_in_an_isolated_child`.
 fn warnx_does_not_flush_stdout_so_the_arms_above_can_fail() {
     // Negative control for the two arms above, in the same harness: err.h's
     // warnx writes to stderr WITHOUT flushing stdout, so its marker must arrive
@@ -981,12 +1028,8 @@ fn warnx_does_not_flush_stdout_so_the_arms_above_can_fail() {
         frankenlibc_abi::err_abi::warnx(fmt.as_ptr());
     });
 
-    // ORDERING, not `ends_with`. The capture redirects the process's fds, so
-    // libtest's own progress lines from concurrently finishing tests can land
-    // after the marker and break a tail comparison — which is how this control
-    // failed in the default parallel mode while passing under
-    // `--test-threads=1`. "The marker arrives after the message" is the property
-    // being controlled for, and it survives foreign bytes on either side.
+    assert_uncontaminated(&f, &g);
+
     assert!(
         marker_trails_message(&g),
         "glibc's warnx must NOT flush stdout, so the marker should trail the \
@@ -998,4 +1041,86 @@ fn warnx_does_not_flush_stdout_so_the_arms_above_can_fail() {
         "fl's warnx must NOT flush stdout either; got {:?}",
         String::from_utf8_lossy(&f)
     );
+    // RESTORED alongside the two arms above: `ends_with` was dropped for the
+    // same contamination, and the control is much stronger with it. Without a
+    // tail claim, "the marker trails the message" would still hold if warnx
+    // emitted the wrong diagnostic entirely.
+    assert!(
+        g.ends_with(MARKER),
+        "glibc's warnx leaves stdout buffered, so the marker must arrive LAST, when the \
+         capture is flushed; got {:?}",
+        String::from_utf8_lossy(&g)
+    );
+    assert!(
+        f.ends_with(MARKER),
+        "fl's warnx must leave stdout buffered too, so the marker arrives LAST; got {:?}",
+        String::from_utf8_lossy(&f)
+    );
+    assert_eq!(
+        f,
+        g,
+        "warnx() stdout/stderr bytes: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&f),
+        String::from_utf8_lossy(&g)
+    );
+}
+
+/// The isolation that makes the three arms above assertable byte-for-byte.
+///
+/// bd-ug42ol step 1. Those arms redirect the PROCESS's fd 1, and libtest writes
+/// `test <name> ... ok` to fd 1 from its own threads when any sibling finishes.
+/// With eleven siblings in this binary running in parallel, a foreign line
+/// landing inside a capture window is not unlikely — it was measured twice, and
+/// both times the response was to delete an assertion.
+///
+/// So the arms run where there is no sibling: a child process invoked on this
+/// same binary with `--exact <one name> --test-threads 1`. libtest's own writes
+/// there are the header before the test starts and the result line after it
+/// returns — neither inside a window. What remains is the 60-second watchdog,
+/// which no test arrangement can prevent and which `contamination` reports.
+///
+/// This does NOT collapse the file's other nine tests; they keep their names
+/// and their parallelism.
+#[test]
+fn stdout_flush_ordering_is_checked_in_an_isolated_child() {
+    let current_exe = std::env::current_exe().expect("current test binary path");
+    let output = Command::new(current_exe)
+        .args([
+            "--exact",
+            "stdout_flush_ordering_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(FLUSH_HELPER_ENV, "1")
+        .output()
+        .expect("run isolated stdout-flush helper");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "isolated stdout-flush helper failed:\nstdout={stdout}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // ZERO IS NOT EVIDENCE. libtest prints `test result: ok.` for a filter that
+    // matched nothing, so a renamed child test would turn this gate green while
+    // running none of the three arms. Assert the child actually ran one.
+    assert!(
+        stdout.contains("1 passed"),
+        "the child ran no test — the filter matched nothing, so none of the three flush \
+         arms executed:\nstdout={stdout}"
+    );
+}
+
+/// The child half of [`stdout_flush_ordering_is_checked_in_an_isolated_child`].
+///
+/// Inert unless the parent set the env var, so a plain `cargo test` run of this
+/// binary neither redirects fd 1 in a parallel context nor double-runs the arms.
+#[test]
+fn stdout_flush_ordering_child_invocation() {
+    if std::env::var_os(FLUSH_HELPER_ENV).is_none() {
+        return;
+    }
+    error_flushes_buffered_stdout_before_the_diagnostic();
+    error_at_line_flushes_buffered_stdout_before_the_diagnostic();
+    warnx_does_not_flush_stdout_so_the_arms_above_can_fail();
 }
