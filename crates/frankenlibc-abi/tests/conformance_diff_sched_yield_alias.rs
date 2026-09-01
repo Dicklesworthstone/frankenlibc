@@ -14,6 +14,33 @@
 use frankenlibc_abi::{errno_abi, glibc_internal_abi as fl};
 use std::ffi::{c_int, c_void};
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut core::ffi::c_int;
+
+/// The INCUMBENT's errno slot, resolved rather than linked.
+///
+/// fl exports `__errno_location` under
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a RELEASE test
+/// binary a plain `libc::__errno_location()` reads FL's slot while the incumbent
+/// call wrote glibc's — a slot the incumbent never touched. The fl arm in this
+/// file already reads fl's own slot; this makes the incumbent arm equally
+/// explicit instead of correct only in debug (bd-g1sjty; the same shape produced
+/// a live wrong answer in conformance_diff_linux_aio_syscalls, 1da1f3df3).
+fn glibc_errno_slot() -> *mut core::ffi::c_int {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is the collapse guard, so a self-comparison aborts loudly.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        core::mem::transmute::<*mut core::ffi::c_void, ErrnoLocationFn>(addr)()
+    }
+}
+
 type YieldFn = unsafe extern "C" fn() -> c_int;
 
 union YieldSymbol {
@@ -48,9 +75,9 @@ fn sched_yield_alias_matches_glibc_success_and_errno_contract() {
     for iteration in 0..64 {
         // SAFETY: errno location is always valid; the call takes no arguments.
         let host_out = unsafe {
-            *libc::__errno_location() = SENTINEL;
+            *glibc_errno_slot() = SENTINEL;
             let rc = host();
-            (rc, *libc::__errno_location())
+            (rc, *glibc_errno_slot())
         };
         // SAFETY: as above, against fl's alias and fl's errno slot.
         let fl_out = unsafe {

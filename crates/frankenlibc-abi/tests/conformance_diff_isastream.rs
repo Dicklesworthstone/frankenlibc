@@ -14,6 +14,33 @@
 use frankenlibc_abi::{errno_abi, glibc_internal_abi as fl};
 use std::ffi::{c_int, c_void};
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut core::ffi::c_int;
+
+/// The INCUMBENT's errno slot, resolved rather than linked.
+///
+/// fl exports `__errno_location` under
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a RELEASE test
+/// binary a plain `libc::__errno_location()` reads FL's slot while the incumbent
+/// call wrote glibc's — a slot the incumbent never touched. The fl arm in this
+/// file already reads fl's own slot; this makes the incumbent arm equally
+/// explicit instead of correct only in debug (bd-g1sjty; the same shape produced
+/// a live wrong answer in conformance_diff_linux_aio_syscalls, 1da1f3df3).
+fn glibc_errno_slot() -> *mut core::ffi::c_int {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is the collapse guard, so a self-comparison aborts loudly.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        core::mem::transmute::<*mut core::ffi::c_void, ErrnoLocationFn>(addr)()
+    }
+}
+
 const GLIBC_2_2_5: &std::ffi::CStr = c"GLIBC_2.2.5";
 type IsastreamFn = unsafe extern "C" fn(c_int) -> c_int;
 
@@ -44,9 +71,9 @@ const SENTINEL: c_int = 0x5eed;
 fn host_call(f: IsastreamFn, fd: c_int) -> (c_int, c_int) {
     // SAFETY: errno location is always valid; isastream takes an int.
     unsafe {
-        *libc::__errno_location() = SENTINEL;
+        *glibc_errno_slot() = SENTINEL;
         let rc = f(fd);
-        (rc, *libc::__errno_location())
+        (rc, *glibc_errno_slot())
     }
 }
 

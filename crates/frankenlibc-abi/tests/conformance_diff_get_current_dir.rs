@@ -14,6 +14,33 @@ use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
 use frankenlibc_abi::glibc_internal_abi as fl_internal;
 use frankenlibc_abi::unistd_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// `int *__errno_location(void)`.
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut core::ffi::c_int;
+
+/// The INCUMBENT's errno slot, resolved rather than linked.
+///
+/// fl exports `__errno_location` under
+/// `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`, so in a RELEASE test
+/// binary a plain `libc::__errno_location()` reads FL's slot while the incumbent
+/// call wrote glibc's — a slot the incumbent never touched. The fl arm in this
+/// file already reads fl's own slot; this makes the incumbent arm equally
+/// explicit instead of correct only in debug (bd-g1sjty; the same shape produced
+/// a live wrong answer in conformance_diff_linux_aio_syscalls, 1da1f3df3).
+fn glibc_errno_slot() -> *mut core::ffi::c_int {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is the collapse guard, so a self-comparison aborts loudly.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        core::mem::transmute::<*mut core::ffi::c_void, ErrnoLocationFn>(addr)()
+    }
+}
+
 // The host arms are resolved with `dlsym`, not declared at link time. fl
 // exports its own getcwd/getwd/get_current_dir_name into this binary, and a
 // link-time reference can bind to those instead of libc's — making both arms fl
@@ -97,11 +124,11 @@ fn fl_errno() -> c_int {
 }
 
 fn clear_host_errno() {
-    unsafe { *libc::__errno_location() = 0 };
+    unsafe { *glibc_errno_slot() = 0 };
 }
 
 fn host_errno() -> c_int {
-    unsafe { *libc::__errno_location() }
+    unsafe { *glibc_errno_slot() }
 }
 
 #[test]
