@@ -115,6 +115,17 @@ storage.recovered.sqlite3
 .beads/beads.db-wal.bad_*
 .beads/beads.db.rebuild_*
 .beads/beads.db.stale_*
+# Same family as the patterns above, but these variants were NOT covered and so
+# sat untracked-but-unignored — a `git add .beads/` sweeps them straight in
+# (which is exactly what happened in ca66157fd, reverted by the commit that
+# added these lines). Globs rather than `beads.db.`-anchored names because the
+# probe variants also appear as `probe_<tag>.db.*` and carry -shm/-wal suffixes.
+.beads/*.schemabroken_*
+.beads/*rebuildprobe*
+.beads/*.probe_*
+.beads/*.fsqlite-migration-state
+.beads/*-shm.stale_*
+.beads/*wal-cert*.stale_*
 .beads/recovery_*/
 .beads_snapshot_*/
 .beads.snapshot_*/
