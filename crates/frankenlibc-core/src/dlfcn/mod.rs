@@ -9,6 +9,7 @@ pub const RTLD_NOW: i32 = 0x00002;
 pub const RTLD_GLOBAL: i32 = 0x00100;
 pub const RTLD_LOCAL: i32 = 0x00000;
 pub const RTLD_NOLOAD: i32 = 0x00004;
+pub const RTLD_DEEPBIND: i32 = 0x00008;
 pub const RTLD_NODELETE: i32 = 0x01000;
 
 /// Special pseudo-handles for dlsym.
@@ -19,7 +20,14 @@ pub const RTLD_NEXT: usize = usize::MAX;
 const BINDING_MASK: i32 = RTLD_LAZY | RTLD_NOW;
 
 /// Valid modifier bits.
-const MODIFIER_MASK: i32 = RTLD_GLOBAL | RTLD_LOCAL | RTLD_NOLOAD | RTLD_NODELETE;
+///
+/// `RTLD_DEEPBIND` is accepted here and forwarded unchanged to the loader.
+/// Omitting it made `dlopen(path, RTLD_NOW | RTLD_DEEPBIND)` fail with
+/// "invalid mode for dlopen" where glibc succeeds — and that is the very mode
+/// `incumbent_coverage_ab` uses to load FrankenLibC, so fl rejected the way its
+/// own benchmark harness loads it.
+const MODIFIER_MASK: i32 =
+    RTLD_GLOBAL | RTLD_LOCAL | RTLD_NOLOAD | RTLD_DEEPBIND | RTLD_NODELETE;
 
 /// Returns `true` if `flags` represent a valid dlopen mode.
 ///
@@ -60,6 +68,21 @@ mod tests {
     }
 
     #[test]
+    fn valid_flags_accepts_deepbind() {
+        // glibc accepts RTLD_DEEPBIND; rejecting it made every
+        // `dlopen(path, RTLD_NOW | RTLD_DEEPBIND)` fail under fl with
+        // "invalid mode for dlopen", including the load performed by this
+        // repository's own `incumbent_coverage_ab` harness.
+        assert!(valid_flags(RTLD_NOW | RTLD_DEEPBIND));
+        assert!(valid_flags(RTLD_LAZY | RTLD_DEEPBIND));
+        // and in combination with the other modifiers
+        assert!(valid_flags(RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND));
+        assert!(valid_flags(RTLD_NOW | RTLD_GLOBAL | RTLD_DEEPBIND | RTLD_NODELETE));
+        // still exactly one binding bit, DEEPBIND does not substitute for it
+        assert!(!valid_flags(RTLD_DEEPBIND));
+    }
+
+    #[test]
     fn test_is_pseudo_handle() {
         assert!(is_pseudo_handle(RTLD_DEFAULT));
         assert!(is_pseudo_handle(RTLD_NEXT));
@@ -77,6 +100,7 @@ mod tests {
         assert_eq!(RTLD_GLOBAL, 0x00100);
         assert_eq!(RTLD_LOCAL, 0x00000);
         assert_eq!(RTLD_NOLOAD, 0x00004);
+        assert_eq!(RTLD_DEEPBIND, 0x00008);
         assert_eq!(RTLD_NODELETE, 0x01000);
     }
 

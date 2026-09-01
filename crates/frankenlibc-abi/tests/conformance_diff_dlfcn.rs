@@ -16,6 +16,9 @@ use std::ffi::{CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::dlfcn_abi as fl;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 unsafe extern "C" {
     fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -35,6 +38,8 @@ struct DlInfo {
 
 const RTLD_LAZY: c_int = 0x00001;
 const RTLD_NOW: c_int = 0x00002;
+const RTLD_DEEPBIND: c_int = 0x00008;
+const RTLD_LOCAL: c_int = 0x00000;
 const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
 
 #[test]
@@ -238,6 +243,67 @@ fn diff_dladdr_resolves_known_function() {
             info_fl.dli_fbase, info_lc.dli_fbase,
             "dladdr dli_fbase divergence"
         );
+    }
+}
+
+/// `RTLD_DEEPBIND` must be accepted, and must behave the same as it does under
+/// glibc.
+///
+/// fl's `valid_flags` omitted `RTLD_DEEPBIND` from its modifier mask, so every
+/// `dlopen(path, RTLD_NOW | RTLD_DEEPBIND)` returned NULL with "invalid mode for
+/// dlopen" where glibc returns a usable handle. That is the exact mode this
+/// repository's own `incumbent_coverage_ab` uses to load FrankenLibC, so fl
+/// rejected the way its own benchmark harness loads it.
+///
+/// The glibc arm is resolved through the `dlsym` oracle rather than a link-time
+/// declaration: fl exports `dlopen` too, so in a release build a plain
+/// `extern "C"` reference can bind to fl and quietly compare fl against itself.
+#[test]
+fn diff_dlopen_deepbind_is_accepted() {
+    type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+    type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+    let host_dlopen: DlopenFn =
+        unsafe { dlsym_oracle::host_fn(c"dlopen", fl::dlopen as DlopenFn as *const ()) };
+    let host_dlclose: DlcloseFn =
+        unsafe { dlsym_oracle::host_fn(c"dlclose", fl::dlclose as DlcloseFn as *const ()) };
+
+    let lib = CString::new("libm.so.6").unwrap();
+    let sym = CString::new("cos").unwrap();
+
+    for flags in [
+        RTLD_NOW | RTLD_DEEPBIND,
+        RTLD_LAZY | RTLD_DEEPBIND,
+        RTLD_NOW | RTLD_DEEPBIND | RTLD_LOCAL,
+    ] {
+        let h_fl = unsafe { fl::dlopen(lib.as_ptr(), flags) };
+        let h_lc = unsafe { host_dlopen(lib.as_ptr(), flags) };
+
+        // The contract under test is agreement with glibc, not "fl succeeds":
+        // if a host ever refused these flags, this gate must follow it.
+        assert_eq!(
+            h_fl.is_null(),
+            h_lc.is_null(),
+            "dlopen(libm.so.6, {flags:#x}) null-match: fl={h_fl:?} glibc={h_lc:?}"
+        );
+
+        // Non-vacuity: on this platform glibc accepts DEEPBIND, so a run in
+        // which BOTH arms failed would satisfy the equality above while
+        // testing nothing.
+        assert!(
+            !h_lc.is_null(),
+            "glibc refused dlopen(libm.so.6, {flags:#x}); the equality above would be vacuous"
+        );
+
+        // A handle opened with DEEPBIND must still resolve symbols.
+        let p_fl = unsafe { fl::dlsym(h_fl, sym.as_ptr()) };
+        assert!(
+            !p_fl.is_null(),
+            "dlsym(cos) on a DEEPBIND handle returned NULL (flags={flags:#x})"
+        );
+
+        unsafe { fl::dlclose(h_fl) };
+        unsafe { host_dlclose(h_lc) };
     }
 }
 
