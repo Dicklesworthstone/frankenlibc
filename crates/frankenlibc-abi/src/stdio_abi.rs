@@ -14858,60 +14858,26 @@ mod tests {
         assert!(ids.starts_with(&[STDIN_SENTINEL, STDOUT_SENTINEL, STDERR_SENTINEL]));
     }
 
-    #[test]
-    fn printf_direct_payload_classifies_string_newline_only_for_nonnull_s() {
-        let text = b"status=ok\0";
-        let args = [text.as_ptr() as u64];
-
-        let payload = unsafe { direct_printf_string_payload(b"%s\n", args.as_ptr(), 1) };
-        match payload {
-            Some(DirectPrintfPayload::StringNewline(bytes)) => assert_eq!(bytes, b"status=ok"),
-            _ => panic!("expected direct %s newline payload"),
-        }
-
-        let null_args = [0u64];
-        assert!(unsafe { direct_printf_string_payload(b"%s\n", null_args.as_ptr(), 1) }.is_none());
-        assert!(unsafe { direct_printf_string_payload(b"[%s]\n", args.as_ptr(), 1) }.is_none());
-    }
-
-    #[test]
-    fn printf_direct_payload_copy_preserves_snprintf_truncation_boundary() {
-        let mut buf = [0u8; 8];
-        unsafe {
-            copy_direct_printf_payload(buf.as_mut_ptr().cast(), b"abcdef", true, 7);
-        }
-        assert_eq!(&buf, b"abcdef\n\0");
-
-        let mut truncated = [0u8; 4];
-        unsafe {
-            copy_direct_printf_payload(truncated.as_mut_ptr().cast(), b"abcdef", true, 3);
-        }
-        assert_eq!(&truncated, b"abc\0");
-    }
-
-    #[test]
-    fn printf_direct_unsigned_decimal_preserves_full_length_and_truncation() {
-        for (value, expected) in [
-            (0u32, "0"),
-            (9, "9"),
-            (10, "10"),
-            (1_000_000, "1000000"),
-            (u32::MAX, "4294967295"),
-        ] {
-            for size in 0..=12 {
-                let mut buf = [0x55u8; 12];
-                let rc = unsafe {
-                    strict_direct_snprintf_u(buf.as_mut_ptr().cast(), size, value as c_uint)
-                };
-                assert_eq!(rc as usize, expected.len());
-                if size > 0 {
-                    let copied = expected.len().min(size - 1);
-                    assert_eq!(&buf[..copied], &expected.as_bytes()[..copied]);
-                    assert_eq!(buf[copied], 0);
-                }
-            }
-        }
-    }
+    // BURNED DOWN (bd-xh08pf), second pass. Three tests stood here —
+    // `printf_direct_payload_classifies_string_newline_only_for_nonnull_s`,
+    // `printf_direct_payload_copy_preserves_snprintf_truncation_boundary` and
+    // `printf_direct_unsigned_decimal_preserves_full_length_and_truncation` —
+    // driving the private `direct_printf_string_payload`,
+    // `copy_direct_printf_payload` and `strict_direct_snprintf_u`. Dead, like
+    // everything in this block.
+    //
+    // Rewritten against the public entry points and LIVE GLIBC in
+    // tests/conformance_diff_printf_direct.rs, which is stronger than the
+    // originals: they asserted fl's private helpers matched fl's own
+    // expectations, and glibc is the authority on all three contracts. The
+    // NULL-`%s` case in particular is a real divergence risk rather than an
+    // internal detail — glibc prints `(null)`, so a direct path that took the
+    // pointer would fault or print nothing — and it now has its own arm.
+    //
+    // The stream case uses a private TEMP FILE rather than redirecting the
+    // process's fd 1. Tests in this suite that redirect it are flaky under
+    // default libtest parallelism, because other threads' progress lines land in
+    // the capture (observed on conformance_diff_error_at_line, 2026-09-01).
 
     // BURNED DOWN (bd-xh08pf). Two tests stood here —
     // `fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs` and
