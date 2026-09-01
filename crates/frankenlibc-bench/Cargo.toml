@@ -933,6 +933,14 @@ name = "strftime_litrun_ab"
 harness = false
 required-features = ["abi-bench"]
 
+# f32 hyperbolics vs live glibc (dlmopen). The DIRECT instrument for bd-rdhdeq,
+# whose `incumbent_coverage_ab --family sinhf_coshf` path has not returned a
+# verdict for five agents across three beads.
+[[example]]
+name = "hyperbolicf_litrun_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[example]]
 name = "strlen_gate_ab"
 harness = false
