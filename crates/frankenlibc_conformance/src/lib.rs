@@ -31255,6 +31255,70 @@ mod tests {
         }
     }
 
+    /// The `vsscanf` executor must actually execute, and must agree with the
+    /// host `vsscanf` through the synthesised `va_list`.
+    ///
+    /// This is the non-vacuity gate for the executor added for bd-4habm0 /
+    /// bd-7c4m1x: without a test that runs it, `--test vsscanf` reports
+    /// `0 passed; N filtered out`, which libtest prints as `ok` and which is
+    /// silence rather than green.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn vsscanf_executor_runs_and_matches_host_through_a_synthesised_va_list() {
+        let cases: &[(serde_json::Value, &str)] = &[
+            (serde_json::json!({ "input": "42", "format": "%d" }), "1:[42]"),
+            (
+                serde_json::json!({ "input": "-123", "format": "%d" }),
+                "1:[-123]",
+            ),
+            (serde_json::json!({ "input": "ff", "format": "%x" }), "1:[255]"),
+            (
+                serde_json::json!({ "input": "hello", "format": "%s" }),
+                "1:[\"hello\"]",
+            ),
+            // Two and three conversions prove the va_list ADVANCES: a list that
+            // failed to advance would write every value through the first
+            // destination and this would not match.
+            (
+                serde_json::json!({ "input": "7 8", "format": "%d %d" }),
+                "2:[7,8]",
+            ),
+            (
+                serde_json::json!({ "input": "1 2 3", "format": "%d %d %d" }),
+                "3:[1,2,3]",
+            ),
+            (
+                serde_json::json!({ "input": "42 ok", "format": "%d %s" }),
+                "2:[42,\"ok\"]",
+            ),
+            (serde_json::json!({ "input": "abc", "format": "%d" }), "0:[]"),
+        ];
+
+        for (inputs, expected) in cases {
+            let result = execute_fixture_case("vsscanf", inputs, "strict")
+                .expect("vsscanf fixture should execute");
+            assert_eq!(
+                result.impl_output, *expected,
+                "vsscanf impl output for {inputs}"
+            );
+            assert_eq!(
+                result.host_output, *expected,
+                "host vsscanf oracle for {inputs}"
+            );
+            assert!(result.host_parity, "vsscanf host parity for {inputs}");
+
+            // The va_list entry point must agree with the variadic one on the
+            // same input; they share a scanning engine, so a divergence here is
+            // the va_list plumbing and nothing else.
+            let via_sscanf = execute_fixture_case("sscanf", inputs, "strict")
+                .expect("sscanf fixture should execute");
+            assert_eq!(
+                result.impl_output, via_sscanf.impl_output,
+                "vsscanf and sscanf disagree for {inputs}"
+            );
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn assert_differential_contract(
         subsystem: &str,
