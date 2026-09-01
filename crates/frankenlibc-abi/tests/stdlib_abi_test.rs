@@ -2814,32 +2814,34 @@ fn herror_writes_prefixed_message_to_stderr() {
     let read_fd = pipe_fds[0];
     let write_fd = pipe_fds[1];
 
-    // SAFETY: duplicate current stderr so we can restore it after capture.
-    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
-    assert!(saved_stderr >= 0);
+    // Restored by a Drop guard, INCLUDING on unwind (bd-ug42ol). This binary runs
+    // 486 tests: the two asserts below sit INSIDE the redirect window, and a
+    // straight-line restore is skipped when one of them panics, leaving this
+    // process's stderr pointed at the pipe for every remaining test — which then
+    // swallows libtest's report of this very failure. Block-scoped so stderr is
+    // restored BEFORE the read below: while redirected it holds a second
+    // reference to the pipe's WRITE end and the reader would never see EOF.
+    {
+        // SAFETY: duplicates the live stderr; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDERR_FILENO) };
 
-    // SAFETY: redirect stderr to pipe writer for deterministic capture.
-    assert_eq!(
-        unsafe { libc::dup2(write_fd, libc::STDERR_FILENO) },
-        libc::STDERR_FILENO
-    );
+        // SAFETY: redirect stderr to pipe writer for deterministic capture.
+        assert_eq!(
+            unsafe { libc::dup2(write_fd, libc::STDERR_FILENO) },
+            libc::STDERR_FILENO
+        );
 
-    // SAFETY: set thread-local h_errno and call herror with valid prefix string.
-    unsafe {
-        let h_err = __h_errno_location();
-        assert!(!h_err.is_null());
-        *h_err = 1;
-        herror(c"lookup".as_ptr());
+        // SAFETY: set thread-local h_errno and call herror with valid prefix string.
+        unsafe {
+            let h_err = __h_errno_location();
+            assert!(!h_err.is_null());
+            *h_err = 1;
+            herror(c"lookup".as_ptr());
+        }
     }
 
-    // SAFETY: restore stderr and release duplicated fds.
-    assert_eq!(
-        unsafe { libc::dup2(saved_stderr, libc::STDERR_FILENO) },
-        libc::STDERR_FILENO
-    );
-    // SAFETY: close duplicated descriptor and write-end once restored.
+    // SAFETY: close our copy of the write end once stderr is restored.
     unsafe {
-        libc::close(saved_stderr);
         libc::close(write_fd);
     }
 
@@ -9133,6 +9135,9 @@ fn sradixsort_preserves_input_order_among_collisions() {
 
 use libc::{intmax_t, uintmax_t};
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
     assert!(!raw.is_null());
@@ -10101,35 +10106,106 @@ fn pathconf_and_fpathconf_match_host_for_root_limits() {
     let _ = unsafe { libc::close(fd) };
 }
 
+/// `qgcvt`'s precision contract, against strings MEASURED on the running glibc.
+///
+/// This arm used to assert `qgcvt_x87` equalled
+/// `frankenlibc_core::stdlib::ecvt::render_pct_g(value, ndigit.max(0).min(512))`
+/// — fl's own f64 `%g` renderer. That is a SELF-COMPARISON: it pins whatever fl
+/// does, and it pinned two things the incumbent does not do. Measured with a C
+/// probe against glibc 2.42 (bd-4dipf6's sibling work, 296fa19e5):
+///
+/// ```text
+///   qgcvt(pi, 21)         3.14159265358979323851
+///   qgcvt(pi, 22)         3.14159265358979323851   <- CLAMPED at 21, not 512
+///   qgcvt(pi, 512)        3.14159265358979323851
+///   qgcvt(pi, INT_MAX)    3.14159265358979323851
+///   qgcvt(pi, -2)         3.14159                  <- default 6, not precision 0
+///   qgcvt(pi, 0)          3
+/// ```
+///
+/// The old expectation also carried the f64 narrowing: `render_pct_g` cannot
+/// produce a long double's digits, because it goes through an `f64`.
+///
+/// MEASURE THE VALUE THIS TEST ACTUALLY SUPPLIES. `x87(v)` widens an `f64`, so
+/// the number under test is `(long double)3.141592653589793`, NOT the literal
+/// `3.14159265358979323846...L`. Those are different numbers and their digits
+/// diverge at the seventeenth place. I first wrote these expectations from a
+/// probe of the long-double literal and the arm failed with
+/// `left: "3.1415926535897931"  right: "3.1415926535897932"` — fl was right and
+/// the expectation was measured on the wrong value. Re-probed with
+/// `(long double)` casts of these exact `f64`s:
+///
+/// ```text
+///   (ld)f64_pi     17  3.1415926535897931      21  3.141592653589793116
+///   (ld)999999.5    6  1e+06                   17  999999.5
+///   (ld)9.9999e-5   6  9.9999e-05              17  9.9999000000000003e-05
+/// ```
+///
+/// So this now asserts the CONTRACT — the clamp, the negative-means-default rule,
+/// and a handful of exact glibc strings — instead of fl against itself.
 #[test]
-fn qgcvt_matches_shared_percent_g_renderer_across_precision_boundary() {
-    let values = [
-        0.0,
-        -0.0,
-        3.141592653589793,
-        9.9999e-5,
-        999_999.5,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NAN,
-        -f64::NAN,
-    ];
-    let precisions = [-2, 0, 1, 6, 17, 18, 512, libc::c_int::MAX];
+fn qgcvt_precision_contract_matches_measured_glibc() {
+    let mut buf = [0 as libc::c_char; 640];
+    let mut render = |value: f64, ndigit: libc::c_int| -> String {
+        let encoded = x87(value);
+        let result = unsafe { qgcvt_x87(ndigit, buf.as_mut_ptr(), encoded.as_ptr()) };
+        unsafe { std::ffi::CStr::from_ptr(result) }
+            .to_string_lossy()
+            .into_owned()
+    };
 
-    for value in values {
-        for ndigit in precisions {
-            let prec = (ndigit.max(0) as usize).min(512);
-            let expected = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
-            let mut buf = [0 as libc::c_char; 640];
-            let encoded = x87(value);
-            let result = unsafe { qgcvt_x87(ndigit, buf.as_mut_ptr(), encoded.as_ptr()) };
-            let actual = unsafe { std::ffi::CStr::from_ptr(result) };
+    // Exact strings read off the running glibc.
+    let pi = 3.141592653589793_f64;
+    assert_eq!(render(pi, 0), "3");
+    assert_eq!(render(pi, 1), "3");
+    assert_eq!(render(pi, 6), "3.14159");
+    assert_eq!(render(pi, 17), "3.1415926535897931");
+    assert_eq!(render(pi, 21), "3.141592653589793116");
+    assert_eq!(render(999_999.5, 6), "1e+06");
+    assert_eq!(render(999_999.5, 17), "999999.5");
+    assert_eq!(render(9.9999e-5, 0), "0.0001");
+    assert_eq!(render(9.9999e-5, 6), "9.9999e-05");
+    assert_eq!(render(9.9999e-5, 17), "9.9999000000000003e-05");
+    assert_eq!(render(0.0, 6), "0");
+    assert_eq!(render(-0.0, 6), "-0");
+
+    // NEGATIVE ndigit is "no precision" — glibc's %g default of 6 — NOT 0.
+    // The old `ndigit.max(0)` collapsed these two and answered "3" for both.
+    for value in [pi, 999_999.5, 9.9999e-5] {
+        assert_eq!(
+            render(value, -2),
+            render(value, 6),
+            "negative ndigit must render as the %g default of 6, not as 0"
+        );
+    }
+    assert_ne!(
+        render(pi, -2),
+        render(pi, 0),
+        "negative ndigit and 0 are different answers; collapsing them is the \
+         defect this arm exists to catch"
+    );
+
+    // CLAMPED at the long double's decimal width. Everything at or above 21 is
+    // the same string, so 512 and INT_MAX cannot widen it.
+    for value in [pi, 9.9999e-5, 999_999.5, 0.0, -0.0] {
+        let at21 = render(value, 21);
+        for ndigit in [22, 512, libc::c_int::MAX] {
             assert_eq!(
-                actual.to_bytes(),
-                expected.as_bytes(),
-                "qgcvt({value:?}, {ndigit})"
+                render(value, ndigit),
+                at21,
+                "qgcvt({value:?}, {ndigit}) must clamp to the 21-digit answer"
             );
         }
+    }
+
+    // Non-finite values render as words at every precision.
+    for value in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN, -f64::NAN] {
+        let at6 = render(value, 6);
+        assert!(
+            at6.contains("inf") || at6.contains("nan"),
+            "qgcvt({value:?}, 6) = {at6:?} should be a non-finite word"
+        );
+        assert_eq!(render(value, 512), at6, "non-finite must ignore precision");
     }
 }
 
