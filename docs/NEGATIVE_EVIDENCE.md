@@ -20440,7 +20440,7 @@ follow-on: wcsnrtombs count (interwoven with its dst loop + n/NUL bound); mbs* D
 The wide→multibyte ENCODE vein is now comprehensively mined: write paths (wcstombs/wcsrtombs/wcsnrtombs)
 AND count paths (wcstombs/wcsrtombs) all SIMD + clean.
 
-## cod-wcsrtombs-count-live-incumbent-2026-07-31 — REFUTE four-locale claim; CONFIRM ASCII specialization (1 WIN / 3 INCOMPARABLE)
+## 2026-07-31 — cod-wcsrtombs-count-live-incumbent-2026-07-31 — REFUTE four-locale claim; CONFIRM ASCII specialization (1 WIN / 3 INCOMPARABLE)
 
 - **WHY THIS CLAIM WAS RETRIED.** The shipped `869e9b13d` row had only the old `dlmopen` comparator.
   Reconstructing its fixtures exposed a configuration mismatch: fresh-namespace glibc alone was placed
@@ -26779,7 +26779,7 @@ failed. Evidence and harness only; no production optimization attempted.
   this REJECT and should be re-measured or removed independently of the rest of
   that commit.
 
-## REJECT `sscanf-direct-engine-2026-07-31` — the allocation-free scanf engine is performance-neutral
+## 2026-07-31 — REJECT `sscanf-direct-engine-2026-07-31` — the allocation-free scanf engine is performance-neutral
 
 - **THE PREDICTION.** FrankenLibC's `sscanf` reached glibc parity only through an
   exact-format leaf that matched `%d`, `%d %d`, and `%d %d %d` on the bare
@@ -26844,7 +26844,7 @@ failed. Evidence and harness only; no production optimization attempted.
   shapes WIN (`%lx` 0.71x, `%d` 0.78x, `%[^=]` 0.84x). It is not allocation and
   not the scanset. That is the next lever, and it needs a profile, not a guess.
 
-## KEEP `scan-float-in-place-2026-07-31` — the float token copy was the sscanf gap (1.574x -> 0.583x)
+## 2026-07-31 — KEEP `scan-float-in-place-2026-07-31` — the float token copy was the sscanf gap (1.574x -> 0.583x)
 
 Recorded here because it is the resolution of the REJECT above: that entry named
 `%s`-bearing multi-directive shapes as "the real standing gap ... needs a

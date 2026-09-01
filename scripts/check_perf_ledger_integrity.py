@@ -836,6 +836,64 @@ def _row_line_span(row: Row) -> range:
     return range(row.line, row.line + max(1, len((row.raw + "\n" + row.text).splitlines())))
 
 
+def _previous_ledger_headings(*, since, staged):
+    """The ledger's heading lines BEFORE this change, or None if unavailable.
+
+    `--staged` compares against HEAD, `--since <ref>` against that ref. Returning
+    None makes [`_is_date_prepend_only`] exempt nothing, so an unreadable
+    baseline fails CLOSED.
+    """
+    rel = LEDGER.relative_to(REPO).as_posix()
+    ref = "HEAD" if staged else since
+    if ref is None:
+        return None
+    try:
+        text = _git_capture(["show", ref + ":" + rel])
+    except (OSError, RuntimeError):
+        return None
+    return {line for line in text.splitlines() if line.startswith("## ")}
+
+
+def _is_date_prepend_only(row, touched, previous):
+    """Is the only change to `row` the date prefix its own ratchet asks for?
+
+    LEDGER_HEADING_DEBT's comment instructs "lower it when a heading is converted
+    to `## <date> - <title>`", but performing that conversion makes the row's
+    span intersect the touched set for the first time, so the lint then refuses a
+    legacy row whose evidence bundle predates the contract. The two rules were
+    mutually blocking and `ledger-self-check` -- the anti-regrowth gate -- stayed
+    off entirely (bd-ledger-selfcheck-deadlock-fq5sx0).
+
+    This exempts EXACTLY that operation and nothing adjacent. Both must hold:
+
+    * the only touched line inside the row is its HEADING. Any body edit is
+      linted as before, and a NEW row necessarily adds body lines, so it cannot
+      reach this path; and
+    * deleting the date prefix reproduces a heading line BYTE IDENTICAL to one
+      already present in the previous revision.
+
+    The second condition is what makes this a reformat rather than a claim. The
+    verdict token lives in the title text, so retitling REJECT to WIN -- or any
+    other edit to the title -- leaves no matching previous heading and the row is
+    linted normally. A missing baseline exempts nothing.
+    """
+    if previous is None:
+        return False
+    if touched.intersection(_row_line_span(row)) != {row.line}:
+        return False
+    if not row.raw.startswith("## "):
+        return False
+    remainder = row.raw.split("## ", 1)[1]
+    without_date = re.sub(
+        r"^\d{4}-\d{2}-\d{2}\s*(?:\([^)]*\))?\s*(?:[-\u2014]+\s*)?",
+        "",
+        remainder,
+    )
+    if without_date == remainder:
+        return False
+    return "## " + without_date in previous
+
+
 def _retry_predicate(row: Row) -> str:
     concrete = re.search(
         r"(?:\*\*)?CONCRETE RETRY PREDICATE(?:\s*\([^)]*\))?"
@@ -883,7 +941,13 @@ def cmd_lint(args: argparse.Namespace) -> int:
     }
     rows = all_rows
     if touched is not None:
-        rows = [row for row in rows if touched.intersection(_row_line_span(row))]
+        previous = _previous_ledger_headings(since=args.since, staged=args.staged)
+        rows = [
+            row
+            for row in rows
+            if touched.intersection(_row_line_span(row))
+            and not _is_date_prepend_only(row, touched, previous)
+        ]
     decisions = [row for row in rows if row.is_reject() or row.is_positive_result()]
 
     def violations_for(row: Row) -> list[str]:
@@ -1348,6 +1412,55 @@ def cmd_self_test(args: argparse.Namespace) -> int:
                 3,
             )
             is None,
+        )
+    )
+    # The date-prepend exemption (bd-ledger-selfcheck-deadlock-fq5sx0). Each of
+    # these is a way the exemption could widen into a hole, pinned so it cannot.
+    _prev = {"## KEEP `scan-float-in-place` — the float token copy was the gap"}
+    _dated = row(
+        "2026-07-31 — KEEP `scan-float-in-place` — the float token copy was the gap",
+        "body unchanged",
+    )
+    _dated.raw = (
+        "## 2026-07-31 — KEEP `scan-float-in-place` — the float token copy was the gap"
+    )
+    checks.append(
+        (
+            "a pure date-prepend of an existing heading is exempt from the lint",
+            _is_date_prepend_only(_dated, {_dated.line}, _prev),
+        )
+    )
+    checks.append(
+        (
+            "a date-prepend is NOT exempt when a body line also changed",
+            not _is_date_prepend_only(_dated, {_dated.line, _dated.line + 1}, _prev),
+        )
+    )
+    _retitled = row(
+        "2026-07-31 — WIN `scan-float-in-place` — the float token copy was the gap",
+        "body unchanged",
+    )
+    _retitled.raw = (
+        "## 2026-07-31 — WIN `scan-float-in-place` — the float token copy was the gap"
+    )
+    checks.append(
+        (
+            "changing the verdict token while dating is NOT exempt",
+            not _is_date_prepend_only(_retitled, {_retitled.line}, _prev),
+        )
+    )
+    _brand_new = row("2026-07-31 — WIN something never seen before", "body")
+    _brand_new.raw = "## 2026-07-31 — WIN something never seen before"
+    checks.append(
+        (
+            "a heading with no previous counterpart is NOT exempt",
+            not _is_date_prepend_only(_brand_new, {_brand_new.line}, _prev),
+        )
+    )
+    checks.append(
+        (
+            "an unavailable baseline exempts nothing",
+            not _is_date_prepend_only(_dated, {_dated.line}, None),
         )
     )
     checks.append(
