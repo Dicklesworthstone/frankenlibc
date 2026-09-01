@@ -311,8 +311,7 @@ fn arms() -> Vec<Arm> {
     let fl_wcsncmp: WideCmp = w::wcsncmp;
     let host_wcsncmp: WideCmp = unsafe { host_fn(c"wcsncmp", w::wcsncmp as *const ()) };
     let fl_wcsncasecmp: WideCmp = w::wcsncasecmp;
-    let host_wcsncasecmp: WideCmp =
-        unsafe { host_fn(c"wcsncasecmp", w::wcsncasecmp as *const ()) };
+    let host_wcsncasecmp: WideCmp = unsafe { host_fn(c"wcsncasecmp", w::wcsncasecmp as *const ()) };
     let fl_wcsncpy: WideCpy = w::wcsncpy;
     let host_wcsncpy: WideCpy = unsafe { host_fn(c"wcsncpy", w::wcsncpy as *const ()) };
 
@@ -541,7 +540,8 @@ fn bounded_scans_never_read_into_guard_page() {
 fn fixture_can_observe_an_over_read() {
     use frankenlibc_abi::string_abi as s;
 
-    type MemchrFn = unsafe extern "C" fn(*const std::ffi::c_void, c_int, usize) -> *mut std::ffi::c_void;
+    type MemchrFn =
+        unsafe extern "C" fn(*const std::ffi::c_void, c_int, usize) -> *mut std::ffi::c_void;
     let fl: MemchrFn = s::memchr;
     let host: MemchrFn = unsafe { host_fn(c"memchr", s::memchr as *const ()) };
 
@@ -734,11 +734,7 @@ fn capped_parsers_never_read_into_guard_page() {
         }
     }
 
-    assert_eq!(
-        checked,
-        PARSER_PAYLOADS.len() * 2 + 2,
-        "not every arm ran"
-    );
+    assert_eq!(checked, PARSER_PAYLOADS.len() * 2 + 2, "not every arm ran");
     assert!(
         divergences.is_empty(),
         "capped parsers read past the terminator where glibc did not: {divergences:#?}"
@@ -773,15 +769,170 @@ fn saturating_bound_is_still_page_clamped() {
     let narrow_fl = probe(1, |p| unsafe {
         fl_strnlen(p.cast::<c_char>(), usize::MAX) as u8
     });
-    let wide_host = probe(4, |p| unsafe { host_wcsnlen(p.cast::<u32>(), usize::MAX) as u8 });
-    let wide_fl = probe(4, |p| unsafe { fl_wcsnlen(p.cast::<u32>(), usize::MAX) as u8 });
+    let wide_host = probe(4, |p| unsafe {
+        host_wcsnlen(p.cast::<u32>(), usize::MAX) as u8
+    });
+    let wide_fl = probe(4, |p| unsafe {
+        fl_wcsnlen(p.cast::<u32>(), usize::MAX) as u8
+    });
 
     println!("BOUNDED_GUARD strnlen      n=SIZE_MAX host={narrow_host:?} fl={narrow_fl:?}");
     println!("BOUNDED_GUARD wcsnlen      n=SIZE_MAX host={wide_host:?} fl={wide_fl:?}");
 
     let want = Outcome::Code(NUL_AT as u8);
-    assert_eq!(narrow_host, want, "fixture: host strnlen must survive SIZE_MAX");
-    assert_eq!(wide_host, want, "fixture: host wcsnlen must survive SIZE_MAX");
+    assert_eq!(
+        narrow_host, want,
+        "fixture: host strnlen must survive SIZE_MAX"
+    );
+    assert_eq!(
+        wide_host, want,
+        "fixture: host wcsnlen must survive SIZE_MAX"
+    );
     assert_eq!(narrow_fl, want, "fl strnlen at SIZE_MAX");
     assert_eq!(wide_fl, want, "fl wcsnlen at SIZE_MAX");
+}
+
+// ---------------------------------------------------------------------------
+// Defensive caps applied to a PUBLISHED program name
+// (bd-defensive-cap-scan-sweep-fhk28c)
+//
+// `err.h`'s diagnostics and `error(3)` both prefix their output with the
+// program name, which they read from a global an embedder can set:
+// `program_invocation_short_name` for `warnx`, `program_invocation_name` for
+// `error`. fl caps that scan at MAX_PUBLISHED_PROGNAME_BYTES so a bad embedder
+// cannot make diagnostics walk memory — but a CAP is not a promise about the
+// mapping, and `scan_c_string(p, Some(4096))` reads its 128-byte window
+// regardless. A program name that ends flush against a page boundary is a
+// perfectly ordinary thing for a caller to publish, and glibc prints it.
+//
+// This is the same footprint defect as the bounded family above, on the caller
+// string rather than on a caller-supplied `n`. Both arms set the corresponding
+// global in their OWN implementation — fl's `AtomicPtr`, glibc's writable
+// `char *` resolved through dlsym — so each reads a guard-flush name through its
+// own code path.
+// ---------------------------------------------------------------------------
+
+type WarnxFn = unsafe extern "C" fn(*const c_char, ...);
+type ErrorFn = unsafe extern "C" fn(c_int, c_int, *const c_char, ...);
+
+/// Silence the child's diagnostic; only its exit status is the result.
+///
+/// # Safety
+/// Called in a forked child that is about to `_exit`.
+unsafe fn mute_stderr() {
+    // SAFETY: /dev/null is opened read-write and dup2'd over fd 2; on failure
+    // the arm still runs, it is merely noisy.
+    unsafe {
+        let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        if devnull >= 0 {
+            libc::dup2(devnull, 2);
+            libc::close(devnull);
+        }
+    }
+}
+
+/// glibc's own `program_invocation_short_name` / `program_invocation_name`,
+/// as writable slots.
+///
+/// Resolved through `dlsym` rather than declared `extern`: fl exports both names
+/// itself in a release build, and writing fl's slot while calling glibc's `warnx`
+/// would make the host arm read whatever it had before — a green arm proving
+/// nothing (bd-v0388t).
+fn host_progname_slot(name: &std::ffi::CStr) -> *mut *mut c_char {
+    // SAFETY: both symbols are `char *` globals in libc.
+    unsafe {
+        dlsym_oracle::host_addr(
+            name,
+            frankenlibc_abi::startup_abi::program_invocation_short_name.as_ptr() as *const (),
+        )
+        .cast::<*mut c_char>()
+    }
+}
+
+#[test]
+fn published_progname_scan_never_reads_into_guard_page() {
+    use frankenlibc_abi::{err_abi as e, startup_abi as st, stdlib_abi as s};
+
+    let fl_warnx: WarnxFn = e::warnx;
+    let host_warnx: WarnxFn = unsafe { host_fn(c"warnx", e::warnx as *const ()) };
+    let fl_error: ErrorFn = s::error;
+    let host_error: ErrorFn = unsafe { host_fn(c"error", s::error as *const ()) };
+
+    // A name whose terminator is the LAST readable byte. Not "a": a realistic
+    // basename makes the arm's intent legible, and its length is irrelevant to
+    // the defect — the window is 128 bytes wide whatever the string says.
+    const NAME: &[u8] = b"probe";
+
+    let fl_warnx_arm = move |p: *const u8| {
+        // SAFETY: forked child; publishes the guard-flush name and emits one
+        // diagnostic through fl.
+        unsafe {
+            mute_stderr();
+            st::program_invocation_short_name
+                .store(p as *mut c_char, std::sync::atomic::Ordering::Release);
+            fl_warnx(c"x".as_ptr());
+        }
+        0
+    };
+    let host_warnx_arm = move |p: *const u8| {
+        // SAFETY: as above, against glibc's own slot.
+        unsafe {
+            mute_stderr();
+            *host_progname_slot(c"program_invocation_short_name") = p as *mut c_char;
+            host_warnx(c"x".as_ptr());
+        }
+        0
+    };
+    let fl_error_arm = move |p: *const u8| {
+        // SAFETY: as above. status=0 means `error` returns rather than exiting,
+        // so a surviving child reports Code(0) and a faulting one reports Signal.
+        unsafe {
+            mute_stderr();
+            st::program_invocation_name
+                .store(p as *mut c_char, std::sync::atomic::Ordering::Release);
+            fl_error(0, 0, c"x".as_ptr());
+        }
+        0
+    };
+    let host_error_arm = move |p: *const u8| {
+        // SAFETY: as above.
+        unsafe {
+            mute_stderr();
+            *host_progname_slot(c"program_invocation_name") = p as *mut c_char;
+            host_error(0, 0, c"x".as_ptr());
+        }
+        0
+    };
+
+    let cases = [
+        (
+            "warnx/program_invocation_short_name",
+            probe_payload(NAME, host_warnx_arm),
+            probe_payload(NAME, fl_warnx_arm),
+        ),
+        (
+            "error/program_invocation_name",
+            probe_payload(NAME, host_error_arm),
+            probe_payload(NAME, fl_error_arm),
+        ),
+    ];
+
+    let mut divergences = Vec::new();
+    for (case, host_outcome, fl_outcome) in cases {
+        println!("PROGNAME_GUARD {case:<38} host={host_outcome:?} fl={fl_outcome:?}");
+        assert_eq!(
+            host_outcome,
+            Outcome::Code(0),
+            "host glibc must print a program name flush against a guard page; \
+             the fixture is wrong, not fl"
+        );
+        if fl_outcome != Outcome::Code(0) {
+            divergences.push(format!("{case}: fl={fl_outcome:?}"));
+        }
+    }
+    assert!(
+        divergences.is_empty(),
+        "fl read past a published program name's terminator where glibc did not: \
+         {divergences:#?}"
+    );
 }

@@ -2080,6 +2080,16 @@ fn swar_word_has_zero(w: u64) -> bool {
 /// reads *aligned* u64s: an 8-aligned 8-byte load never straddles a 4096-byte
 /// page boundary, so it cannot fault past the NUL's own (mapped) page — the same
 /// safety argument glibc/musl strlen rely on.
+/// # NOT [`crate::util::scan_c_string`], and the difference is a page fault
+///
+/// Two functions in this crate carry this name. THIS one's bounded arm takes
+/// `bound` as a PROMISE of readable bytes and loads whole 128-byte windows under
+/// it, which is correct for `memchr(p, c, n)` and wrong for any caller whose
+/// `bound` is a defensive cap over a pointer it does not own. `util::scan_c_string`
+/// walks byte by byte and is the one to reach for there; every module that wants
+/// a cap imports that one, and this function is only ever called FULLY QUALIFIED
+/// (see `tests/capped_scans_use_the_scalar_scanner.rs`). For a caller-supplied
+/// ceiling that must still be fast, use [`scan_c_string_nul_or_bound`].
 pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
     let p = ptr.cast::<u8>();
     match bound {

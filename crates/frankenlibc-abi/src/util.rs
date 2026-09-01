@@ -219,6 +219,26 @@ fn allocation_bound(ptr: *const c_char) -> Option<usize> {
 /// - `len` is the byte length before the first NUL or before the bound.
 /// - `terminated` indicates whether a NUL byte was observed.
 ///
+/// # NOT `string_abi::scan_c_string`, and the difference is a page fault
+///
+/// There are TWO functions with this name in this crate and their read
+/// footprints differ. THIS one walks byte by byte and stops at the terminator,
+/// so it never touches a byte past the NUL — which is why a caller may hand it a
+/// DEFENSIVE CAP (a limit it invented for a string of unknown length, like
+/// `MAX_PUBLISHED_PROGNAME_BYTES`) over a pointer it does not own.
+/// [`crate::string_abi::scan_c_string`] is the SWAR/SIMD scanner: its bounded arm
+/// treats the bound as a promise of readable bytes and loads whole 128-byte
+/// windows under it, so the same call there faults on a string that ends flush
+/// against a page boundary.
+///
+/// The 20 modules that `use crate::util::scan_c_string` therefore get the safe
+/// one for free, and `string_abi`'s is only ever reached FULLY QUALIFIED. That
+/// invariant is not decoration — bd-defensive-cap-scan-sweep-fhk28c was filed
+/// against six cap sites on the strength of the other function's contract, and
+/// all six turned out to call this one. `tests/capped_scans_use_the_scalar_scanner.rs`
+/// pins it so a future `use crate::string_abi::scan_c_string` cannot silently
+/// change which scanner those bare calls resolve to.
+///
 /// # Safety
 ///
 /// `ptr` must be valid to read up to the discovered length (and bound when given).
