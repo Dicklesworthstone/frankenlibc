@@ -9,7 +9,8 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::int_plus_one)]
 
-#[cfg(not(feature = "owned-tls-cache"))]
+// Unconditional: the `getnameinfo` render paths below borrow-or-own their host
+// and service text in both feature configurations.
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, OsStr, c_char, c_int, c_void};

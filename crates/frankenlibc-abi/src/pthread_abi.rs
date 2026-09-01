@@ -5,8 +5,11 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+// `Cell` is unconditional: `THREADING_POLICY_DEPTH` below is defined for both
+// feature configurations. Only `RefCell` belongs to the non-owned-TLS path.
+use std::cell::Cell;
 #[cfg(not(feature = "owned-tls-cache"))]
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
