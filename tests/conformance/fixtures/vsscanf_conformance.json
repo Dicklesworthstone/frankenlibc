@@ -1,0 +1,129 @@
+{
+  "version": "v1",
+  "family": "vsscanf_conformance",
+  "captured_at": "2026-08-31T00:00:00Z",
+  "description": "vsscanf differential conformance: the va_list entry point of the scanf family. Cases reuse input/format pairs already proven for sscanf in scanf_conformance.json, so a failure here is attributable to the va_list path rather than to the case itself. mode=both so each case yields a strict row (host-parity checked against glibc vsscanf) and a hardened row, which is what a WrapsHostLibc -> Implemented promotion requires.",
+  "spec_reference": "C11 7.21.6.2 (fscanf conversions), C11 7.21.6.14 (vsscanf)",
+  "cases": [
+    {
+      "name": "vsscanf_d_basic",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %d specifier via va_list",
+      "inputs": { "input": "42", "format": "%d" },
+      "expected_return": 1,
+      "expected_values": [42],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_d_negative",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %d negative via va_list",
+      "inputs": { "input": "-123", "format": "%d" },
+      "expected_return": 1,
+      "expected_values": [-123],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_d_leading_ws",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %d leading whitespace via va_list",
+      "inputs": { "input": "   42", "format": "%d" },
+      "expected_return": 1,
+      "expected_values": [42],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_u_basic",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %u specifier via va_list",
+      "inputs": { "input": "255", "format": "%u" },
+      "expected_return": 1,
+      "expected_values": [255],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_x_basic",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %x specifier via va_list",
+      "inputs": { "input": "ff", "format": "%x" },
+      "expected_return": 1,
+      "expected_values": [255],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_s_basic",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %s specifier via va_list",
+      "inputs": { "input": "hello", "format": "%s" },
+      "expected_return": 1,
+      "expected_values": ["hello"],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_s_stops_ws",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 %s stops at whitespace via va_list",
+      "inputs": { "input": "hello world", "format": "%s" },
+      "expected_return": 1,
+      "expected_values": ["hello"],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_two_ints_advance_va_list",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 multiple conversions advance the va_list",
+      "inputs": { "input": "7 8", "format": "%d %d" },
+      "expected_return": 2,
+      "expected_values": [7, 8],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_three_ints_advance_va_list",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 three conversions advance the va_list",
+      "inputs": { "input": "1 2 3", "format": "%d %d %d" },
+      "expected_return": 3,
+      "expected_values": [1, 2, 3],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_int_then_string_mixed_destinations",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 mixed destination types via va_list",
+      "inputs": { "input": "42 ok", "format": "%d %s" },
+      "expected_return": 2,
+      "expected_values": [42, "ok"],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_matching_failure_returns_zero",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 matching failure before any conversion",
+      "inputs": { "input": "abc", "format": "%d" },
+      "expected_return": 0,
+      "expected_values": [],
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "vsscanf_partial_match_stops_early",
+      "function": "vsscanf",
+      "spec_section": "C11 7.21.6.2 partial match returns the converted count",
+      "inputs": { "input": "5 zz", "format": "%d %d" },
+      "expected_return": 1,
+      "expected_values": [5],
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}
