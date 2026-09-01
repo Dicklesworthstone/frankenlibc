@@ -31,6 +31,9 @@ use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 unsafe extern "C" {
     fn openlog(ident: *const c_char, option: c_int, facility: c_int);
     fn closelog();
@@ -62,13 +65,19 @@ fn log_upto(pri: c_int) -> c_int {
 fn capture<F: FnOnce()>(f: F) -> Vec<u8> {
     let mut fds = [0i32; 2];
     unsafe { libc::pipe(fds.as_mut_ptr()) };
-    let saved = unsafe { libc::dup(2) };
-    unsafe { libc::dup2(fds[1], 2) };
-    f();
-    unsafe { libc::fflush(std::ptr::null_mut()) };
+    // Restored by a Drop guard, INCLUDING on unwind: a panic in the captured
+    // body would skip a straight-line restore and leave this process's stderr
+    // pointed at the pipe for the rest of the run, swallowing libtest's report
+    // of that very failure (bd-ug42ol). Scoped to a block so fd 2 is restored
+    // BEFORE the read below — while redirected it holds a second reference to
+    // the pipe's WRITE end and the reader would never see EOF.
+    {
+        let _restore = unsafe { fd_capture::StdFdRestore::new(2) };
+        unsafe { libc::dup2(fds[1], 2) };
+        f();
+        unsafe { libc::fflush(std::ptr::null_mut()) };
+    }
     unsafe {
-        libc::dup2(saved, 2);
-        libc::close(saved);
         libc::close(fds[1]);
     }
     let mut out = Vec::new();
