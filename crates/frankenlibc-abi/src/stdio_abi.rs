@@ -5145,6 +5145,11 @@ pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
 // setvbuf / setbuf
 // ---------------------------------------------------------------------------
 
+/// The buffer size glibc gives a stream when `setvbuf` is called with a NULL
+/// `buf`, regardless of the `size` argument. Measured, not assumed: `__fbufsize`
+/// reports 4096 for `_IOFBF` across sizes 0, 64, 4096 and 65536 (bd-kzceks).
+const GLIBC_DEFAULT_STREAM_BUFSIZ: usize = 4096;
+
 /// POSIX `setvbuf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setvbuf(
@@ -5157,12 +5162,30 @@ pub unsafe extern "C" fn setvbuf(
         return -1;
     };
 
+    // glibc IGNORES `size` entirely when `buf` is NULL and gives the stream its
+    // own default buffer, so `setvbuf(f, NULL, _IOFBF, 0)` — "buffer this fully,
+    // you pick the size" — must not be read as "use a zero-length buffer".
+    // fl used to pass the caller's size straight through, and
+    // `Buffer::set_mode` clamps with `size.max(1)`, so that call produced a
+    // ONE-BYTE buffer and an effectively unbuffered stream: every write became
+    // its own write(2) (bd-kzceks).
+    //
+    // MEASURED on host glibc 2.42, `__fbufsize` after `setvbuf(f, NULL, mode, n)`
+    // for n in {0, 64, 4096, 65536}: 4096 every time for _IOFBF, and 4096 after
+    // the first write for _IOLBF. A caller-supplied buffer still honours the
+    // caller's size, which is what glibc does with it.
+    let requested_size = if _buf.is_null() {
+        GLIBC_DEFAULT_STREAM_BUFSIZ
+    } else {
+        size
+    };
+
     let id = canonical_stream_id(stream);
     if let Some(cell) = stream_cell(id) {
         let mut s = cell.lock();
         // Note: we ignore the caller's buffer pointer; we always use internal allocation.
-        if s.set_buffering(buf_mode, size) {
-            sync_native_stdio_buffering(stream, buf_mode, _buf, size);
+        if s.set_buffering(buf_mode, requested_size) {
+            sync_native_stdio_buffering(stream, buf_mode, _buf, requested_size);
             0
         } else {
             -1

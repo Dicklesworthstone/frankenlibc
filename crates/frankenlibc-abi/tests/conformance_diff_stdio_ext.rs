@@ -185,6 +185,7 @@ type FcloseFn = unsafe extern "C" fn(*mut File) -> c_int;
 type SetvbufFn = unsafe extern "C" fn(*mut File, *mut c_char, c_int, usize) -> c_int;
 type FflushFn = unsafe extern "C" fn(*mut File) -> c_int;
 type FpendingFn = unsafe extern "C" fn(*mut File) -> usize;
+type FwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut File) -> usize;
 /// Declared VARIADIC on purpose. Calling a variadic C function through a
 /// fixed-arity pointer leaves `al` (the SysV vector-register count) unset, which
 /// glibc's `fprintf` prologue reads to decide whether to spill the XMM save
@@ -205,6 +206,7 @@ struct StdioArm {
     fflush: FflushFn,
     fpending: FpendingFn,
     fprintf: FprintfFn,
+    fwrite: FwriteFn,
 }
 
 fn fl_arm() -> StdioArm {
@@ -216,6 +218,7 @@ fn fl_arm() -> StdioArm {
         fflush: fl::fflush,
         fpending: fle::__fpending,
         fprintf: fl::fprintf,
+        fwrite: fl::fwrite,
     }
 }
 
@@ -230,6 +233,7 @@ fn host_arm() -> StdioArm {
             fflush: dlsym_oracle::host_fn(c"fflush", fl::fflush as *const ()),
             fpending: dlsym_oracle::host_fn(c"__fpending", fle::__fpending as *const ()),
             fprintf: dlsym_oracle::host_fn(c"fprintf", fl::fprintf as *const ()),
+            fwrite: dlsym_oracle::host_fn(c"fwrite", fl::fwrite as *const ()),
         }
     }
 }
@@ -353,5 +357,132 @@ fn line_buffering_flushes_at_the_newline_and_full_buffering_does_not() {
             out.on_disk_before_flush, 10,
             "{label}: the bytes must be at the fd before any explicit fflush"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setvbuf's size argument when `buf` is NULL (bd-kzceks)
+//
+// glibc IGNORES `size` when the caller passes a NULL buffer and hands the stream
+// its own default — measured at 4096 across sizes 0, 64, 4096 and 65536. fl used
+// to pass the caller's size through to a buffer whose capacity is `size.max(1)`,
+// so `setvbuf(f, NULL, _IOFBF, 0)` — "buffer this fully, you pick the size" —
+// produced a ONE-BYTE buffer and turned every write into its own write(2).
+//
+// `fpending_matches_glibc_for_buffered_writes` above cannot see this: it passes
+// 4096, which happens to equal glibc's default, so the two agree by coincidence.
+// This matrix varies the size on purpose.
+// ---------------------------------------------------------------------------
+
+/// Payload lengths to write. 5 is smaller than every `size` under test, so it
+/// only discriminates when the size clamps below 5; 200 is larger than the 1-
+/// and 64-byte sizes, which is what makes those rows tell fl's honoured-`size`
+/// buffer apart from glibc's 4096-byte one. With only the 5-byte payload, the
+/// size=64 rows agree even on the unfixed build.
+const PAYLOAD_LENS: &[usize] = &[5, 200];
+
+/// What a small write did to a stream configured with a NULL buffer.
+#[derive(PartialEq, Eq, Debug)]
+struct NullBufOutcome {
+    pending: usize,
+    on_disk_before_flush: u64,
+    on_disk_after_flush: u64,
+}
+
+fn null_buf_write(arm: &StdioArm, vmode: c_int, size: usize, payload_len: usize) -> NullBufOutcome {
+    let path = temp_path(&format!("{}-nb-{vmode}-{size}-{payload_len}", arm.name));
+    let os_path = std::path::PathBuf::from(path.to_str().unwrap());
+    // No newline anywhere in it, so line buffering has nothing to flush on.
+    let payload = vec![b'a'; payload_len];
+
+    // SAFETY: `path` is NUL-terminated; the stream is used only through `arm`
+    // and closed exactly once.
+    unsafe {
+        let f = (arm.fopen)(path.as_ptr(), c"w".as_ptr());
+        assert!(!f.is_null(), "{}: fopen failed", arm.name);
+        assert_eq!(
+            (arm.setvbuf)(f, std::ptr::null_mut(), vmode, size),
+            0,
+            "{}: setvbuf(NULL, {vmode}, {size}) failed",
+            arm.name
+        );
+        (arm.fwrite)(payload.as_ptr().cast(), 1, payload.len(), f);
+        let pending = (arm.fpending)(f);
+        let on_disk_before_flush = std::fs::metadata(&os_path).map(|m| m.len()).unwrap_or(0);
+        assert_eq!((arm.fflush)(f), 0, "{}: fflush failed", arm.name);
+        let on_disk_after_flush = std::fs::metadata(&os_path).map(|m| m.len()).unwrap_or(0);
+        assert_eq!((arm.fclose)(f), 0, "{}: fclose failed", arm.name);
+        NullBufOutcome {
+            pending,
+            on_disk_before_flush,
+            on_disk_after_flush,
+        }
+    }
+}
+
+#[test]
+fn setvbuf_with_a_null_buffer_ignores_the_size_like_glibc() {
+    let fl = fl_arm();
+    let host = host_arm();
+    let mut divergences = Vec::new();
+
+    for (vmode, label) in [
+        (libc::_IOFBF, "_IOFBF"),
+        (libc::_IOLBF, "_IOLBF"),
+        (libc::_IONBF, "_IONBF"),
+    ] {
+        for size in [0usize, 1, 64, 4096, 65536] {
+            for &len in PAYLOAD_LENS {
+                let f = null_buf_write(&fl, vmode, size, len);
+                let h = null_buf_write(&host, vmode, size, len);
+                if f != h {
+                    divergences.push(format!(
+                        "{label} size={size} payload={len}\n    fl:    {f:?}\n    glibc: {h:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        divergences.is_empty(),
+        "setvbuf(NULL, ..) behaviour diverges from live glibc:\n  {}",
+        divergences.join("\n  ")
+    );
+}
+
+/// And state the contract the differential test is checking, so a future where
+/// BOTH implementations changed still fails: a 5-byte write into a
+/// self-allocated buffer is retained by _IOFBF and _IOLBF (no newline in it) and
+/// goes straight to the fd when unbuffered — whatever `size` said.
+#[test]
+fn a_null_buffer_never_yields_an_effectively_unbuffered_stream() {
+    let fl = fl_arm();
+    for size in [0usize, 1, 64, 4096, 65536] {
+        for &len in PAYLOAD_LENS {
+            let n = len as u64;
+            for (vmode, label) in [(libc::_IOFBF, "_IOFBF"), (libc::_IOLBF, "_IOLBF")] {
+                let out = null_buf_write(&fl, vmode, size, len);
+                assert_eq!(
+                    out,
+                    NullBufOutcome {
+                        pending: len,
+                        on_disk_before_flush: 0,
+                        on_disk_after_flush: n,
+                    },
+                    "{label} size={size} payload={len}: a NULL buffer must give a real \
+                     buffer, not a write-through stream"
+                );
+            }
+            let unbuffered = null_buf_write(&fl, libc::_IONBF, size, len);
+            assert_eq!(
+                unbuffered,
+                NullBufOutcome {
+                    pending: 0,
+                    on_disk_before_flush: n,
+                    on_disk_after_flush: n,
+                },
+                "_IONBF size={size} payload={len}"
+            );
+        }
     }
 }
