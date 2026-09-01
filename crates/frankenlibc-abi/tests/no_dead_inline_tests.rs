@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 28 across 5 today. Burning these down is tracked separately —
+/// across 11 modules; 26 across 5 today. Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
@@ -43,7 +43,7 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("iconv_abi", 7),
     ("io_internal_abi", 5),
     ("pthread_abi", 6),
-    ("stdio_abi", 8),
+    ("stdio_abi", 6),
 ];
 // BURNED DOWN (bd-xh08pf):
 //   fenv_abi (11)      -> 10 retired against existing coverage in
@@ -109,7 +109,15 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                          and the read-only route (`adjtime(NULL, &old)`)
 //                          reaches only one of the two helpers. It needs a
 //                          different instrument, not more of this one.
-// 54 -> 28 stranded tests, 11 -> 5 modules.
+//   stdio_abi, PARTIAL (2 of 8) -> tests/conformance_diff_snprintf_fused.rs
+//                         (rewritten against the public `snprintf` and LIVE
+//                          glibc; the originals drove the private
+//                          `is_strict_direct_snprintf_format` and
+//                          `StrictDirectSnprintfWriter`). Motivated: the fused
+//                          emitter was deleted 2026-08-03 and not restored until
+//                          2026-08-30, and for that month these two dead tests
+//                          were the only ones naming it.
+// 54 -> 26 stranded tests, 11 -> 5 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

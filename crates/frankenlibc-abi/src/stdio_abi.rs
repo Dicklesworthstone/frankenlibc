@@ -14913,45 +14913,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs() {
-        for (format, expected) in [
-            (b"%s %s %d %lu".as_slice(), true),
-            (b"id=%08x".as_slice(), false),
-            (b"%1$s".as_slice(), false),
-            (b"%.3s".as_slice(), false),
-            (b"%f".as_slice(), false),
-            (b"%n".as_slice(), false),
-        ] {
-            let mut nul_terminated = Vec::from(format);
-            nul_terminated.push(0);
-            assert_eq!(
-                unsafe { is_strict_direct_snprintf_format(nul_terminated.as_ptr().cast()) },
-                expected,
-                "{format:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn fused_strict_snprintf_writer_preserves_cross_segment_truncation() {
-        for (size, expected) in [
-            (0usize, b"\xa5\xa5\xa5\xa5\xa5\xa5\xa5\xa5".as_slice()),
-            (1, b"\0\xa5\xa5\xa5\xa5\xa5\xa5\xa5".as_slice()),
-            (4, b"GET\0\xa5\xa5\xa5\xa5".as_slice()),
-            (8, b"GET /x\0\xa5".as_slice()),
-        ] {
-            let mut buf = [0xa5u8; 8];
-            let mut writer = StrictDirectSnprintfWriter::new(buf.as_mut_ptr().cast(), size);
-            unsafe {
-                writer.push(b"GET");
-                writer.push(b" ");
-                writer.push(b"/x");
-                assert_eq!(writer.finish(), 6);
-            }
-            assert_eq!(&buf, expected, "size={size}");
-        }
-    }
+    // BURNED DOWN (bd-xh08pf). Two tests stood here —
+    // `fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs` and
+    // `fused_strict_snprintf_writer_preserves_cross_segment_truncation`. This
+    // module is `#[cfg(not(test))] pub mod` in lib.rs, so this whole block
+    // compiles in neither configuration and neither had ever run.
+    //
+    // They drove the module-private `is_strict_direct_snprintf_format` and
+    // `StrictDirectSnprintfWriter`, so they are REWRITTEN rather than moved:
+    //   tests/conformance_diff_snprintf_fused.rs
+    // which asserts the same two contracts — the grammar boundary and
+    // cross-segment truncation — against LIVE GLIBC through the public
+    // `snprintf`. That is stronger than the originals, which only checked fl's
+    // private predicate against fl's own expectations.
+    //
+    // WHY THIS PATH ESPECIALLY: the fused emitter has already been deleted once
+    // unnoticed. Landed 2026-07-31 (7eebd3db4, banked at 0.788267x), removed
+    // 2026-08-03 by 73c8da5cd, measured as a 2.64-3.92x LOSS on 2026-08-16 while
+    // absent, restored 2026-08-30 by 89c356d7e as a macro. For that whole month
+    // the only tests naming it were these two, dead in this block.
 
     #[test]
     fn printf_direct_newline_stream_only_absorbs_full_buffered_without_flush() {
