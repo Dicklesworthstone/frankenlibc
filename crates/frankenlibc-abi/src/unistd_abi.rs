@@ -5373,18 +5373,33 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
     }
 }
 
-#[cfg(test)]
-mod getrandom_tests {
-    use super::*;
-
-    #[test]
-    fn strict_passthrough_accepts_a_null_zero_length_buffer() {
-        // SAFETY: getrandom(2) permits a null output pointer when the requested
-        // length is zero; this directly executes the strict-only fast path.
-        let result = unsafe { strict_getrandom_passthrough(std::ptr::null_mut(), 0, 0) };
-        assert_eq!(result, 0);
-    }
-}
+// BURNED DOWN (bd-xh08pf). `unistd_abi` is `#[cfg(not(test))] pub mod` in
+// lib.rs, so the `#[cfg(test)] mod getrandom_tests` that stood here could never
+// compile in either configuration — it was dead from the day it was written and
+// the ratchet in tests/no_dead_inline_tests.rs was failing on it.
+//
+// Its single test asserted `strict_getrandom_passthrough(NULL, 0, 0) == 0`, and
+// retiring it loses nothing, for a reason worth writing down rather than
+// asserting: **the public entry point cannot deliver those arguments to that
+// helper.** `getrandom` short-circuits `buflen == 0 && flags == 0` with an
+// immediate `return 0` (see the comment above that branch) BEFORE it consults
+// `strict_passthrough_active()`, so `strict_getrandom_passthrough` never
+// receives `(NULL, 0, 0)` in any build. The stranded test was pinning a helper's
+// behaviour on an input the helper is unreachable for.
+//
+// The REACHABLE half of the same shape — `(NULL, 0, nonzero_flags)`, which does
+// fall through to the strict branch — is covered against live glibc, not merely
+// against fl's own expectations:
+//   tests/conformance_diff_vdso_getrandom.rs::
+//     fl_getrandom_zero_length_and_invalid_flags_match_live_glibc
+//       (flags 0 and c_uint::MAX, comparing return value AND errno)
+//   tests/conformance_diff_getrandom.rs::
+//     diff_getrandom_zero_length_null_and_flag_contract
+//       (flags 0, GRND_NONBLOCK, GRND_RANDOM, and an invalid 1<<31)
+// Both call `frankenlibc_abi::unistd_abi::getrandom`, where
+// `strict_passthrough_active()` is true (integration tests compile the library
+// without `--test`, so its `cfg!(test)` early-return does not apply), so the
+// strict branch is the one they execute.
 
 // ---------------------------------------------------------------------------
 // statx — RawSyscall

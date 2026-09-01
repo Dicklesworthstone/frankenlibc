@@ -12,15 +12,19 @@
 //! This is a RATCHET, not a clean bill of health. The modules in
 //! `KNOWN_DEAD_INLINE_TESTS` already carry the pattern and are recorded as debt
 //! with their `#[test]` counts; the test fails if a module NOT on that list
-//! acquires it, and also fails if a listed module is cleaned up but left on the
-//! list, so the list cannot rot into a permanent excuse.
+//! acquires it, if a listed module is cleaned up but left on the list, and — as
+//! of 2026-09-01 — if a listed module's count moves in EITHER direction. So the
+//! list cannot rot into a permanent excuse, and it also cannot quietly absorb
+//! new dead tests written into a block that is already known to be dead, which
+//! is how `iconv_abi` and `stdio_abi` grew by three between them while every
+//! assertion here stayed green.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Modules already carrying dead inline `#[cfg(test)]` blocks when this ratchet
-/// was introduced, with the number of `#[test]` functions stranded in each.
-/// Total: 54 dead test functions. Burning these down is tracked separately —
+/// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
+/// `#[test]` functions stranded in each. 54 when this ratchet was introduced
+/// across 11 modules; 30 across 5 today. Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
@@ -28,12 +32,18 @@ use std::path::{Path, PathBuf};
 /// per bd-ul4pyl). A first pass of this survey counted them because it scanned
 /// raw text — the same comment-blindness the support-matrix scanner had in
 /// bd-4habm0 — and the ratchet's own `cleaned` check caught the mistake.
+/// The counts are ASSERTED, not decorative — see
+/// `known_dead_inline_test_counts_have_not_grown`. They were decorative until
+/// 2026-09-01, and in that window `iconv_abi` grew 6 -> 7 and `stdio_abi` 6 -> 8
+/// with nothing to notice: the ratchet only ever asked whether a module HAS a
+/// dead block, so three more tests were written into blocks already known to be
+/// dead and the debt total silently drifted from 27 to 30.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("glibc_internal_abi", 4),
-    ("iconv_abi", 6),
+    ("iconv_abi", 7),
     ("io_internal_abi", 5),
     ("pthread_abi", 6),
-    ("stdio_abi", 6),
+    ("stdio_abi", 8),
 ];
 // BURNED DOWN (bd-xh08pf):
 //   fenv_abi (11)      -> 10 retired against existing coverage in
@@ -64,7 +74,28 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         and ::tcsetattr_cbreak_raw_restore_sequence_on_pty
 //                         (rewritten through public ABI calls; the originals
 //                          inspected private tracker state directly)
-// 54 -> 42 stranded tests, 11 -> 8 modules.
+//   unistd_abi, AGAIN (1) -> and the repeat is the point: this module appears
+//                         TWICE in this list. It was burned down once (the
+//                         res_init entry above), and a NEW dead #[cfg(test)] mod
+//                         getrandom_tests was later written into it. That is the
+//                         regression `no_new_module_gains_a_dead_inline_test_block`
+//                         exists for, and it caught it — the ratchet had been
+//                         RED on unistd_abi since roughly 2026-08-24.
+//                         RETIRED, not relocated. Its one test asserted
+//                         strict_getrandom_passthrough(NULL, 0, 0) == 0, and the
+//                         public getrandom short-circuits `buflen == 0 &&
+//                         flags == 0` with an immediate return BEFORE consulting
+//                         strict_passthrough_active() — so that helper is
+//                         unreachable with those arguments and the test pinned a
+//                         branch production cannot enter. The reachable half,
+//                         (NULL, 0, nonzero_flags), is covered against LIVE
+//                         glibc by tests/conformance_diff_vdso_getrandom.rs::
+//                         fl_getrandom_zero_length_and_invalid_flags_match_live_glibc
+//                         and tests/conformance_diff_getrandom.rs::
+//                         diff_getrandom_zero_length_null_and_flag_contract.
+//                         A per-test map is left in unistd_abi.rs where the
+//                         block stood.
+// 54 -> 30 stranded tests, 11 -> 5 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -192,6 +223,47 @@ fn known_dead_inline_test_list_is_accurate() {
         let path = src_dir().join(format!("{module}.rs"));
         assert!(path.is_file(), "{module}.rs listed but missing at {path:?}");
     }
+}
+
+/// A listed module may not GROW. Without this the ratchet is one-sided: it
+/// catches a module acquiring a dead block and catches one being cleaned but
+/// left listed, and says nothing at all about writing more tests into a block
+/// already known to be dead. That is not hypothetical — between this file's
+/// introduction and 2026-09-01, `iconv_abi` went 6 -> 7 and `stdio_abi` 6 -> 8
+/// while every assertion here stayed green, because the counts in
+/// `KNOWN_DEAD_INLINE_TESTS` were never read.
+///
+/// The check is one-directional on purpose. Growth fails. SHRINKAGE also fails,
+/// with a different message, because a burn-down that forgets to lower the
+/// number leaves the list overstating the debt and hides the next regression
+/// underneath the slack.
+#[test]
+fn known_dead_inline_test_counts_have_not_grown() {
+    let mut wrong = Vec::new();
+    for (module, recorded) in KNOWN_DEAD_INLINE_TESTS {
+        let path = src_dir().join(format!("{module}.rs"));
+        let text = std::fs::read_to_string(&path).expect("read listed module");
+        let actual = strip_comments(&text).matches("#[test]").count();
+        if actual > *recorded {
+            let n = actual - recorded;
+            wrong.push(format!(
+                "{module}: {actual} dead #[test] fns, list says {recorded} — {n} \
+                 {} ADDED to a block that already could not compile. Put {} in \
+                 crates/frankenlibc-abi/tests/ instead.",
+                if n == 1 { "was" } else { "were" },
+                if n == 1 { "it" } else { "them" },
+            ));
+        } else if actual < *recorded {
+            let n = recorded - actual;
+            wrong.push(format!(
+                "{module}: {actual} dead #[test] fns, list says {recorded} — the \
+                 burn-down landed but the count was not lowered, so the list now \
+                 overstates the debt and would hide {n} new dead {}.",
+                if n == 1 { "test" } else { "tests" },
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "KNOWN_DEAD_INLINE_TESTS is out of date:\n  {}", wrong.join("\n  "));
 }
 
 /// The module this bead named must be clean: its dead `test_helpers` block is
