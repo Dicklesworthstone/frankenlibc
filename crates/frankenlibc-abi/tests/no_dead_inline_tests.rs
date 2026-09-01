@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 17 across 4 today (a fifth module is listed at 0 —
+/// across 11 modules; 10 across 3 today (a fourth module is listed at 0 —
 /// see the `pthread_abi` note below). Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
@@ -41,7 +41,6 @@ use std::path::{Path, PathBuf};
 /// dead and the debt total silently drifted from 27 to 30.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("glibc_internal_abi", 2),
-    ("iconv_abi", 7),
     ("io_internal_abi", 5),
     // ZERO stranded tests as of 2026-09-01 — but still LISTED, because the
     // `#[cfg(test)]` block itself remains: it holds the per-test burn-down map
@@ -159,7 +158,26 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         replacement drives both halves through address-based
 //                         hooks (the shape production uses) and proves which
 //                         path ran with a slow-path counter.
-// 54 -> 17 stranded tests, 11 -> 4 modules (pthread_abi listed at 0).
+//   iconv_abi (7)      -> 3 RETIRED as exact duplicates of tests/iconv_abi_test.rs
+//                         arms that already existed; 2 folded into those arms as
+//                         the errno assertion they were missing
+//                         (iconv_e2big_partial_progress,
+//                          iconv_invalid_handle_returns_error); 1 relocated and
+//                         WIDENED to tests/iconv_abi_test.rs::
+//                         hardened_iconv_policy_normalizes_deferred_codec_aliases
+//                         plus ::hardened_mode_rejects_deferred_codec_alias_through_iconv_open,
+//                         because a policy predicate that nothing consults is
+//                         not a gate; and 1 — iconv_null_inbuf_emits_bom_for_utf32
+//                         — RETIRED because it asserted a DIVERGENCE. Host glibc
+//                         writes nothing on a reset call and defers the UTF-32
+//                         BOM to the first conversion; fl emitted it there, and
+//                         failed the reset with E2BIG when fewer than 4 bytes
+//                         were free. Core fixed, and the contract now lives in
+//                         tests/conformance_diff_iconv_reset_bom.rs against a
+//                         dlsym-resolved host arm. The module is REMOVED from
+//                         the list entirely (its block is gone, helpers and all),
+//                         which is why the module count drops.
+// 54 -> 10 stranded tests, 11 -> 3 modules (pthread_abi listed at 0).
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

@@ -462,154 +462,45 @@ pub unsafe extern "C" fn iconv_close(cd: *mut c_void) -> c_int {
     rc
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn c_ptr(bytes: &'static [u8]) -> *const c_char {
-        bytes.as_ptr().cast::<c_char>()
-    }
-
-    unsafe fn abi_errno() -> i32 {
-        // SAFETY: errno ABI is always available in this crate.
-        unsafe { *crate::errno_abi::__errno_location() }
-    }
-
-    #[test]
-    fn iconv_open_and_close_roundtrip() {
-        // SAFETY: static C strings and valid descriptor lifecycle.
-        unsafe {
-            let cd = iconv_open(c_ptr(b"UTF-16LE\0"), c_ptr(b"UTF-8\0"));
-            assert!(!cd.is_null());
-            assert_ne!(cd, iconv_error_handle());
-            assert_eq!(iconv_close(cd), 0);
-        }
-    }
-
-    #[test]
-    fn iconv_open_accepts_utf32_encoding() {
-        // SAFETY: static C strings.
-        unsafe {
-            let cd = iconv_open(c_ptr(b"UTF-32\0"), c_ptr(b"UTF-8\0"));
-            assert!(!cd.is_null());
-            assert_ne!(cd, iconv_error_handle());
-            assert_eq!(iconv_close(cd), 0);
-        }
-    }
-
-    #[test]
-    fn hardened_iconv_policy_rejects_deferred_codec_aliases_only() {
-        for encoding in [
-            b"ISO-2022-JP".as_slice(),
-            b"iso_2022_jp".as_slice(),
-            b"UTF-7".as_slice(),
-            b"utf 7".as_slice(),
-        ] {
-            assert!(hardened_iconv_open_denied(b"UTF-8", encoding));
-            assert!(hardened_iconv_open_denied(encoding, b"UTF-8"));
-        }
-        assert!(!hardened_iconv_open_denied(b"UTF-8", b"UTF-16LE"));
-        assert!(!hardened_iconv_open_denied(b"ISO-2022-JP-2", b"UTF-8"));
-    }
-
-    #[test]
-    fn iconv_converts_and_updates_pointers() {
-        // SAFETY: all pointers are derived from valid local buffers.
-        unsafe {
-            let cd = iconv_open(c_ptr(b"UTF-16LE\0"), c_ptr(b"UTF-8\0"));
-            assert_ne!(cd, iconv_error_handle());
-
-            let mut input = b"AB".to_vec();
-            let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
-            let mut in_left = input.len();
-
-            let mut output = [0u8; 8];
-            let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
-            let mut out_left = output.len();
-
-            let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
-            assert_eq!(rc, 0);
-            assert_eq!(in_left, 0);
-            assert_eq!(out_left, 4);
-            assert_eq!(&output[..4], &[0x41, 0x00, 0x42, 0x00]);
-
-            assert_eq!(iconv_close(cd), 0);
-        }
-    }
-
-    #[test]
-    fn iconv_reports_e2big_with_partial_progress() {
-        // SAFETY: all pointers are derived from valid local buffers.
-        unsafe {
-            let cd = iconv_open(c_ptr(b"UTF-16LE\0"), c_ptr(b"UTF-8\0"));
-            assert_ne!(cd, iconv_error_handle());
-
-            let mut input = b"AB".to_vec();
-            let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
-            let mut in_left = input.len();
-
-            let mut output = [0u8; 2];
-            let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
-            let mut out_left = output.len();
-
-            let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
-            assert_eq!(rc, iconv_error_return());
-            assert_eq!(abi_errno(), iconv::ICONV_E2BIG);
-            assert_eq!(in_left, 1);
-            assert_eq!(out_left, 0);
-            assert_eq!(&output, &[0x41, 0x00]);
-
-            assert_eq!(iconv_close(cd), 0);
-        }
-    }
-
-    #[test]
-    fn iconv_invalid_handle_sets_ebadf() {
-        // SAFETY: function validates handle before dereference.
-        unsafe {
-            let mut input = b"A".to_vec();
-            let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
-            let mut in_left = input.len();
-            let mut output = [0u8; 8];
-            let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
-            let mut out_left = output.len();
-
-            let rc = iconv(
-                0x1234usize as *mut c_void,
-                &mut in_ptr,
-                &mut in_left,
-                &mut out_ptr,
-                &mut out_left,
-            );
-            assert_eq!(rc, iconv_error_return());
-            assert_eq!(abi_errno(), errno::EBADF);
-        }
-    }
-
-    #[test]
-    fn iconv_null_inbuf_emits_bom_for_utf32() {
-        // SAFETY: valid buffers and descriptor lifecycle.
-        unsafe {
-            let cd = iconv_open(c_ptr(b"UTF-32\0"), c_ptr(b"UTF-8\0"));
-            assert!(!cd.is_null());
-
-            let mut output = [0u8; 16];
-            let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
-            let mut out_left = output.len();
-
-            // Null inbuf pointer should trigger BOM emission for UTF-32
-            let rc = iconv(
-                cd,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                &mut out_ptr,
-                &mut out_left,
-            );
-            assert_eq!(rc, 0);
-            assert_eq!(out_left, 12); // 16 - 4
-            assert_eq!(&output[..4], &[0xFF, 0xFE, 0x00, 0x00]);
-
-            assert_eq!(iconv_close(cd), 0);
-        }
-    }
-}
+// BURN-DOWN MAP for the dead inline `#[cfg(test)] mod tests` that stood here
+// until 2026-09-01 (bd-xh08pf). `lib.rs` declares this module
+// `#[cfg(not(test))] pub mod iconv_abi;`, so that block compiled in neither
+// build: its seven `#[test]` fns had never run. Where each went, and why:
+//
+//   iconv_open_and_close_roundtrip
+//   iconv_open_accepts_utf32_encoding
+//   iconv_converts_and_updates_pointers
+//     RETIRED as exact duplicates. tests/iconv_abi_test.rs already contains
+//     `iconv_open_utf8_to_utf16le`, `iconv_open_utf8_to_utf32` and
+//     `iconv_ascii_to_utf16le`, each asserting the same handle/`in_left`/
+//     `out_left`/byte conditions on the same codec pairs, with more input.
+//
+//   iconv_reports_e2big_with_partial_progress -> tests/iconv_abi_test.rs::
+//     iconv_e2big_partial_progress, which covered every assertion EXCEPT the
+//     errno one. That test now asserts `errno == E2BIG` as well, which is the
+//     only thing the dead version added.
+//
+//   iconv_invalid_handle_sets_ebadf -> tests/iconv_abi_test.rs::
+//     iconv_invalid_handle_returns_error, same story: it checked the return
+//     value and not the errno, so the errno assertion moved into it. Not made
+//     differential — glibc dereferences a bogus `iconv_t` and segfaults, so
+//     EBADF here is an fl hardening contract with no host arm to compare to.
+//
+//   hardened_iconv_policy_rejects_deferred_codec_aliases_only ->
+//     tests/iconv_abi_test.rs::hardened_iconv_policy_normalizes_deferred_codec_aliases
+//     (`hardened_iconv_open_denied` is already `pub`, so this is a relocation)
+//     plus ::hardened_mode_rejects_deferred_codec_alias_through_iconv_open,
+//     which is the assertion the original was missing: the predicate being
+//     correct proves nothing unless `iconv_open` actually consults it.
+//
+//   iconv_null_inbuf_emits_bom_for_utf32
+//     RETIRED because it was WRONG, and finding that out is the whole return on
+//     this burn-down. It asserted that a reset call emits the 4-byte UTF-32 BOM
+//     immediately. Host glibc writes nothing on that call and defers the BOM to
+//     the first conversion; fl also failed the reset with E2BIG when fewer than
+//     4 bytes were free, which glibc never does. Core is fixed (see the reset
+//     branch of `frankenlibc_core::iconv::iconv`) and the contract is now pinned
+//     against a dlsym-resolved host arm in
+//     tests/conformance_diff_iconv_reset_bom.rs, which also pins the other half
+//     of the split: the stateful ISO-2022 destinations DO emit their
+//     return-to-initial-state sequence on the same call.

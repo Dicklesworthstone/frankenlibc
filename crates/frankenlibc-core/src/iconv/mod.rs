@@ -48368,8 +48368,11 @@ pub fn iconv(
     let mut out_pos = 0usize;
     let non_reversible = 0usize;
 
-    // Standard iconv reset behavior: if inbuf is None, reset shift state and
-    // potentially emit a Byte Order Mark if the destination encoding requires it.
+    // Standard iconv reset behavior: if inbuf is None, return the destination to
+    // its initial state, emitting whatever escape/shift sequence that takes. A
+    // pending Byte Order Mark is NOT such a sequence — it is held back for the
+    // first conversion, which is what glibc does (bd-xh08pf); see the fall-through
+    // at the end of this arm.
     let input = match inbuf {
         Some(b) => b,
         None => {
@@ -48559,30 +48562,27 @@ pub fn iconv(
                     out_written: 0,
                 });
             }
-            if cd.emit_bom && !outbuf.is_empty() {
-                let bom = match cd.to {
-                    Encoding::Utf16 | Encoding::Unicode => &[0xFF, 0xFE][..],
-                    Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00][..],
-                    _ => &[][..],
-                };
-                if !bom.is_empty() {
-                    if outbuf.len() < bom.len() {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: 0,
-                            out_written: 0,
-                        });
-                    }
-                    outbuf[..bom.len()].copy_from_slice(bom);
-                    out_pos = bom.len();
-                }
-                cd.emit_bom = false;
-            } else if cd.emit_bom && outbuf.is_empty() {
-                // If outbuf is empty but we need to emit a BOM, we don't
-                // emit it yet and don't clear emit_bom, unless this is
-                // a pure state reset which POSIX allows to have null outbuf.
-                // For stateless phase-1, we just return success.
-            }
+            // A reset writes NOTHING for the BOM-carrying Unicode targets, and
+            // `emit_bom` is deliberately left set so the pending BOM lands on the
+            // next real conversion instead. This is measured glibc behaviour, not
+            // an inference from POSIX (bd-xh08pf, host glibc 2.42 via ctypes):
+            //
+            //   iconv_open("UTF-32","UTF-8"); iconv(cd, NULL, NULL, &out, &n)
+            //     glibc -> rc 0, 0 bytes written, n unchanged      (any n, incl. 0 and 3)
+            //     then   iconv(cd, "AB", ...) -> ff fe 00 00 41 .. 42 ..
+            //
+            // fl used to emit the 4-byte BOM here, and to fail the reset with
+            // E2BIG when fewer than 4 bytes were free — two divergences on a call
+            // glibc treats as a pure no-op for these encodings. The concatenated
+            // byte stream came out identical, so only `*outbytesleft` after the
+            // reset told them apart, which is exactly what a caller sizing its
+            // buffer reads. Verified the same for UTF-16, UCS-2 and a reset issued
+            // twice before any conversion.
+            //
+            // The stateful destinations above (ISO-2022-*, EBCDIC DBCS, UTF-7)
+            // return earlier and are UNAFFECTED: glibc does emit their
+            // return-to-initial-state sequence on reset, and
+            // conformance_diff_iconv_reset_bom pins both halves of that split.
             return Ok(IconvResult {
                 non_reversible,
                 in_consumed: 0,
@@ -51162,21 +51162,30 @@ mod tests {
         assert_eq!(&out[..4], &[0x00, 0x00, 0x00, 0x41]);
     }
 
+    /// A reset does NOT emit the BOM; it defers it to the next conversion.
+    ///
+    /// This test asserted the opposite until 2026-09-01 (bd-xh08pf). Probing host
+    /// glibc showed `iconv(cd, NULL, NULL, &out, &n)` on a fresh UTF-32
+    /// descriptor writes nothing and leaves `n` alone, then emits the BOM ahead
+    /// of the first converted character.
     #[test]
-    fn utf8_to_utf32_conversion_reset_emits_bom() {
+    fn utf8_to_utf32_reset_defers_bom_to_the_first_conversion() {
         let mut cd = iconv_open(b"UTF-32", b"UTF-8").unwrap();
         let mut out = [0u8; 16];
-        // First call with None should emit BOM
+        // A reset before any conversion writes nothing at all.
         let res1 = iconv(&mut cd, None, &mut out).unwrap();
         assert_eq!(res1.in_consumed, 0);
-        assert_eq!(res1.out_written, 4);
-        assert_eq!(&out[..4], &[0xFF, 0xFE, 0x00, 0x00]);
+        assert_eq!(res1.out_written, 0);
 
-        // Second call with Some should convert without another BOM
-        let res2 = iconv(&mut cd, Some(b"A"), &mut out[4..]).unwrap();
+        // The BOM is still pending, so the first conversion carries it.
+        let res2 = iconv(&mut cd, Some(b"A"), &mut out).unwrap();
         assert_eq!(res2.in_consumed, 1);
-        assert_eq!(res2.out_written, 4);
-        assert_eq!(&out[4..8], &[0x41, 0x00, 0x00, 0x00]);
+        assert_eq!(res2.out_written, 8);
+        assert_eq!(&out[..8], &[0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]);
+
+        // And a reset AFTER the BOM has gone out is a no-op too.
+        let res3 = iconv(&mut cd, None, &mut out[8..]).unwrap();
+        assert_eq!(res3.out_written, 0);
     }
 
     #[test]
@@ -51199,11 +51208,24 @@ mod tests {
         assert_eq!(&out[..2], &[0x41, 0x00]);
     }
 
+    /// A reset can never be too small to succeed — it writes nothing, so even a
+    /// 3-byte (or zero-byte) output buffer returns 0 rather than E2BIG.
+    ///
+    /// The E2BIG-before-the-BOM contract still exists, but it belongs to the
+    /// CONVERSION path, which is the second half of this test. Both halves are
+    /// glibc's measured behaviour (bd-xh08pf).
     #[test]
-    fn utf8_to_utf32_e2big_before_bom() {
+    fn utf8_to_utf32_reset_never_reports_e2big_but_conversion_does() {
         let mut cd = iconv_open(b"UTF-32", b"UTF-8").unwrap();
         let mut out = [0u8; 3];
-        let err = iconv(&mut cd, None, &mut out).unwrap_err();
+        let res = iconv(&mut cd, None, &mut out).unwrap();
+        assert_eq!(res.in_consumed, 0);
+        assert_eq!(res.out_written, 0);
+        let res = iconv(&mut cd, None, &mut out[..0]).unwrap();
+        assert_eq!(res.out_written, 0);
+
+        // The pending BOM does not fit, so the conversion is the call that fails.
+        let err = iconv(&mut cd, Some(b"A"), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_E2BIG);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);

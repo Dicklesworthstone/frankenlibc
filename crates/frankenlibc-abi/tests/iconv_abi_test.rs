@@ -291,8 +291,17 @@ fn iconv_e2big_partial_progress() {
         let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
         let mut out_left = output.len();
 
+        *__errno_location() = 0;
         let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
         assert_eq!(rc, ICONV_ERROR, "should return error for E2BIG");
+        // The errno half arrived with bd-xh08pf: the dead inline copy of this
+        // test in iconv_abi.rs asserted it and this one did not, so a build that
+        // returned (size_t)-1 with the wrong errno passed here for months.
+        assert_eq!(
+            *__errno_location(),
+            core_iconv::ICONV_E2BIG,
+            "a short output buffer must report E2BIG, not merely fail"
+        );
         assert_eq!(in_left, 1, "one input byte should remain");
         assert_eq!(out_left, 0, "output buffer should be fully consumed");
         // First two chars converted
@@ -341,6 +350,7 @@ fn iconv_invalid_handle_returns_error() {
         let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
         let mut out_left = output.len();
 
+        *__errno_location() = 0;
         let rc = iconv(
             fake_cd,
             &mut in_ptr,
@@ -349,6 +359,15 @@ fn iconv_invalid_handle_returns_error() {
             &mut out_left,
         );
         assert_eq!(rc, ICONV_ERROR);
+        // Also from bd-xh08pf's dead inline block. Deliberately NOT differential:
+        // glibc dereferences an unregistered `iconv_t` and segfaults, so there is
+        // no host arm to compare against — EBADF is fl's own hardening contract,
+        // and the registry lookup that produces it is the thing under test.
+        assert_eq!(
+            *__errno_location(),
+            libc::EBADF,
+            "an unregistered descriptor must be rejected with EBADF"
+        );
     }
 }
 
@@ -1085,4 +1104,159 @@ fn hardened_mode_iconv_invalid_utf8_reports_eilseq() {
 
         assert_eq!(iconv_close(cd), 0);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Hardened-mode deferred-codec policy (bd-xh08pf)
+//
+// `hardened_iconv_open_denied` normalizes an encoding name — dropping `-`, `_`,
+// space and tab, then upper-casing — before matching ISO-2022-JP and UTF-7, so
+// punctuation and case variants cannot walk past the hardened phase-1 contract.
+// Both tests below replace one dead inline `#[cfg(test)]` fn that had never
+// compiled; the second is the half the original was missing.
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::iconv_abi::hardened_iconv_open_denied;
+use std::process::Command;
+
+#[test]
+fn hardened_iconv_policy_normalizes_deferred_codec_aliases() {
+    for encoding in [
+        b"ISO-2022-JP".as_slice(),
+        b"iso_2022_jp".as_slice(),
+        b"UTF-7".as_slice(),
+        b"utf 7".as_slice(),
+    ] {
+        let shown = String::from_utf8_lossy(encoding).into_owned();
+        assert!(
+            hardened_iconv_open_denied(b"UTF-8", encoding),
+            "{shown} must be denied as a SOURCE encoding"
+        );
+        assert!(
+            hardened_iconv_open_denied(encoding, b"UTF-8"),
+            "{shown} must be denied as a DESTINATION encoding"
+        );
+    }
+    // The predicate must stay narrow. UTF-16LE is an ordinary phase-1 codec, and
+    // ISO-2022-JP-2 is a DIFFERENT codec whose name merely has ISO-2022-JP as a
+    // prefix — normalizing it yields "ISO2022JP2", which must not match.
+    assert!(!hardened_iconv_open_denied(b"UTF-8", b"UTF-16LE"));
+    assert!(!hardened_iconv_open_denied(b"ISO-2022-JP-2", b"UTF-8"));
+}
+
+/// Env var naming the alias the child should hand to `iconv_open`.
+const HARDENED_ALIAS_ENV: &str = "FRANKENLIBC_ICONV_HARDENED_ALIAS";
+
+/// Marker the child prints its verdict behind.
+const MARKER: &str = "ICONV_OPEN";
+
+/// Ask a CHILD process to open `alias` under `mode` and report what happened.
+///
+/// A child is not ceremony here. `frankenlibc_membrane::config::safety_level()`
+/// resolves `FRANKENLIBC_MODE` **once** and caches it in a process-global atomic,
+/// so an in-process `set_var` only takes effect if nothing in the binary has
+/// asked for the level yet — which under libtest's default parallelism is a race,
+/// not a setting. Every mode assertion made in-process is therefore reporting
+/// whichever test happened to run first. Spawning the case is what makes the mode
+/// real.
+fn open_alias_in_mode(mode: &str, alias: &str) -> (bool, i32) {
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let output = Command::new(&current_exe)
+        .args([
+            "--exact",
+            "iconv_hardened_alias_child",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_MODE", mode)
+        .env(HARDENED_ALIAS_ENV, alias)
+        .output()
+        .unwrap_or_else(|e| panic!("spawning {current_exe:?} for {mode}/{alias}: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    // Scan for the marker as a SUBSTRING, not as a line prefix. Under
+    // `--nocapture` libtest writes `test <name> ... ` with NO trailing newline
+    // and the test's own output continues that same line, so the marker never
+    // starts one. A line-prefix match here failed while the child ran perfectly
+    // and exited 0 — exactly the shape a silent "the mode could not be tested"
+    // skip would have swallowed.
+    //
+    // A child that says nothing at all is worth naming loudly: it means the
+    // helper never ran (renamed test, filter matched nothing, crash before the
+    // print), which is a broken gate rather than evidence about fl.
+    let Some(after) = stdout.find(MARKER).map(|i| &stdout[i + MARKER.len()..]) else {
+        panic!(
+            "the {mode} child for {alias:?} printed no {MARKER} line. status: {:?}\nstdout:\n{stdout}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let line = after.split('\n').next().unwrap_or_default();
+    let mut parts = line.split_whitespace();
+    let opened = parts.next() == Some("ok");
+    let errno = parts
+        .next()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| panic!("malformed {MARKER} payload {line:?}"));
+    (opened, errno)
+}
+
+#[test]
+fn iconv_hardened_alias_child() {
+    let Ok(alias) = std::env::var(HARDENED_ALIAS_ENV) else {
+        return; // not the child invocation
+    };
+    let name = std::ffi::CString::new(alias).expect("alias has no interior NUL");
+    // SAFETY: `name` outlives the call; UTF-8 is a static NUL-terminated literal.
+    unsafe {
+        *__errno_location() = 0;
+        let cd = iconv_open(name.as_ptr(), c_str(b"UTF-8\0"));
+        let errno = *__errno_location();
+        let opened = cd != iconv_error_handle() && !cd.is_null();
+        if opened {
+            assert_eq!(iconv_close(cd), 0);
+        }
+        println!("{MARKER} {} {}", if opened { "ok" } else { "err" }, errno);
+        // Flush explicitly: this stdout is a pipe, so it is block buffered and
+        // the parent only reads it after wait().
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    }
+}
+
+#[test]
+fn hardened_mode_rejects_deferred_codec_alias_through_iconv_open() {
+    const ALIASES: &[&str] = &["ISO-2022-JP", "iso_2022_jp", "UTF-7", "utf 7"];
+
+    let mut accepted_in_strict = Vec::new();
+    for alias in ALIASES {
+        let (hardened_opened, hardened_errno) = open_alias_in_mode("hardened", alias);
+        assert!(
+            !hardened_opened,
+            "hardened mode accepted the deferred codec {alias}; \
+             hardened_iconv_open_denied is not wired into iconv_open"
+        );
+        assert_eq!(
+            hardened_errno,
+            core_iconv::ICONV_EINVAL,
+            "hardened refusal of {alias} must report EINVAL"
+        );
+
+        let (strict_opened, _) = open_alias_in_mode("strict", alias);
+        if strict_opened {
+            accepted_in_strict.push(*alias);
+        }
+    }
+
+    // Without this the test is hollow: if strict rejected every spelling too, the
+    // hardened refusals above would be the ordinary unsupported-codec path and
+    // would still pass with the policy check deleted. At least one spelling has
+    // to be a codec fl really implements, so that the ONLY thing turning it away
+    // in hardened mode is the policy.
+    assert!(
+        !accepted_in_strict.is_empty(),
+        "strict mode rejected all of {ALIASES:?}, so the hardened refusals prove \
+         nothing about the deferred-codec policy — pick spellings fl actually \
+         supports, or this gate is measuring the unsupported-codec path"
+    );
 }
