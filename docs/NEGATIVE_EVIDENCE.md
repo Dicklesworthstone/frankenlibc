@@ -40796,3 +40796,49 @@ ones that would notice a threading-policy depth counter behaving differently.
   real loss is the allocator chain (`segment_allocate`, `allocate_from_local_class`, `segment_free`,
   and size-class work), so this bead's membrane-tax lane is ledgered as chain-limited. No binary was
   rebuilt and no speedup is claimed by this closure.
+
+## 2026-08-31 — bd-ny3hsa — REJECT the `owned-tls-cache` lever against malloc's TLS tax: not isolable, and its Amdahl ceiling is 1.17x anyway — but the attempt found the feature does not compile
+
+- **RESULT CLASS: rejected before any source edit, on a named profile frame plus an Amdahl ceiling.
+  No timing was run and none is claimed** — the arm never built, so there is no wall-time number in
+  this row and there must not be one.
+- **THE LEVER.** The row above decomposes deployed `malloc(64)`+`free` into 644 instructions per
+  pair against glibc's 77, of which the named frame `__tls_get_addr` costs 96 Ir/pair across 4 calls
+  at 24 Ir each — **14.9% self-time**, the largest pure tax that is not already refuted. The
+  `owned-tls-cache` feature exists precisely to bundle the scattered `thread_local!` slots into one
+  per-thread struct, which would collapse those 4 lookups toward 1. It is off by default, so testing
+  it is a build-configuration A/B needing no source change.
+- **REJECTED ON TWO INDEPENDENT GROUNDS, either one sufficient.**
+  1. **Amdahl ceiling.** Even a *perfect* consolidation removing all 96 Ir/pair leaves 548 against
+     glibc's 77. That is a 1.175x ceiling on the arm and 8.36x -> 7.12x on the gap: it cannot change
+     the conclusion that `malloc_free` is an allocator-architecture problem, so it does not deserve
+     a measurement slot ahead of that work.
+  2. **Not isolable.** The only consumers in-tree (`check_standalone_replacement_artifact.sh`,
+     `check_soak_artifact_freshness.sh`) build it exclusively as the triple
+     `standalone,owned-unwind-stub,owned-tls-cache`. Measuring through that triple swaps the
+     standalone runtime and the unwind stub at the same time, so any delta could not be attributed
+     to TLS consolidation. That is not an A/B.
+  Prior evidence pointed the same way: this file already records `--features owned-tls-cache`
+  **pessimising** strlen 0.16s -> 7.89s.
+- **WHAT THE ATTEMPT FOUND INSTEAD: the feature does not compile at HEAD.**
+  `cargo check --release -p frankenlibc-abi --features owned-tls-cache --keep-going` fails with 14
+  errors, every one the same shape — an import gated `#[cfg(not(feature = "owned-tls-cache"))]`
+  whose use sites are unconditional. Exact accounting: **2 x `Cell`** (`pthread_abi.rs:279`) and
+  **12 x `Cow`** (`resolv_abi.rs`, the `getnameinfo` render paths), 5 E0425 + 9 E0433, totalling the
+  14 rustc reported. Fixed in `885890e28`. **The `Cell` half is a regression I introduced in
+  `766b3ecc5`**, which moved `THREADING_POLICY_DEPTH` into its own unconditional `Cell<u32>` while
+  the import stayed on the non-owned path. Nothing caught it because no default gate builds this
+  feature at all.
+- **VERIFICATION STATUS, STATED PRECISELY: the fix is NOT compile-verified.** Three remote check
+  attempts were lost to `queue_timeout` contention and the fourth was killed during backoff, so no
+  build of the corrected tree has been observed. What supports the fix is a complete static
+  accounting and not a compile: rustc reported exactly 14 errors, all "cannot find type", naming
+  exactly two types, and the edit imports exactly those two types unconditionally. Under the default
+  (non-owned) configuration the imported set is unchanged, so deployed builds are byte-unaffected —
+  which bounds the risk of committing it unverified, but does not substitute for the build. Per this
+  repo's own rule that an unbuilt gate is silent rather than green, **the next agent to touch this
+  must run that check before treating the feature as restored.**
+- **RETRY CONDITION.** Do not re-attempt `owned-tls-cache` as a malloc perf lever on the strength of
+  the 96 Ir/pair alone. It is worth revisiting only if the allocator proper is first brought near
+  glibc, at which point 14.9% stops being a rounding error, AND a way is found to build the feature
+  without the standalone triple so the delta is attributable.
