@@ -14,6 +14,9 @@ use std::sync::Mutex;
 
 use frankenlibc_abi::unistd_abi as fl;
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 unsafe extern "C" {
     static mut optind: c_int;
     static mut optarg: *mut c_char;
@@ -76,18 +79,23 @@ fn run_getopt_loop(args: &[&str], optstr: &str) -> Vec<(c_int, Option<String>)> 
 fn capture_stderr(body: impl FnOnce() -> c_int) -> (c_int, Vec<u8>) {
     let mut pipe_fds = [0; 2];
     assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
-    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
-    assert!(saved_stderr >= 0);
-    assert_eq!(
-        unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
-        libc::STDERR_FILENO
-    );
+    // Restored by a Drop guard, INCLUDING on unwind: a panic in `body()` would
+    // skip a straight-line restore and leave this process's stderr pointed at the
+    // pipe for the rest of the run, swallowing libtest's report of that very
+    // failure (bd-ug42ol). Block-scoped so stderr is restored BEFORE the read
+    // below: while redirected it holds a second reference to the pipe's WRITE end
+    // and the reader would never see EOF.
+    let rc = {
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDERR_FILENO) };
+        assert_eq!(
+            unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
+            libc::STDERR_FILENO
+        );
 
-    let rc = body();
+        body()
+    };
 
     unsafe {
-        libc::dup2(saved_stderr, libc::STDERR_FILENO);
-        libc::close(saved_stderr);
         libc::close(pipe_fds[1]);
     }
 

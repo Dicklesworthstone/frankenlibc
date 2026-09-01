@@ -41,6 +41,9 @@ use std::sync::Mutex;
 mod dlsym_oracle;
 use dlsym_oracle::host_fn;
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 type PsignalFn = unsafe extern "C" fn(c_int, *const c_char);
 
 fn host_psignal() -> PsignalFn {
@@ -88,18 +91,22 @@ fn capture_stderr(body: impl FnOnce()) -> Vec<u8> {
         let mut fds = [0 as c_int; 2];
         assert_eq!(libc::pipe(fds.as_mut_ptr()), 0, "pipe failed");
         let (read_fd, write_fd) = (fds[0], fds[1]);
-        let saved = libc::dup(2);
-        assert!(saved >= 0, "dup(2) failed");
+        // Restored by a Drop guard, INCLUDING on unwind: a panic in `body()` would
+        // skip a straight-line restore and leave this process's stderr pointed at
+        // the pipe for the rest of the run, swallowing libtest's report of that
+        // very failure (bd-ug42ol). Block-scoped so fd 2 is restored BEFORE the
+        // read below: while redirected it holds a second reference to the pipe's
+        // WRITE end and the reader would never see EOF.
+        {
+            let _restore = fd_capture::StdFdRestore::new(2);
 
-        assert!(libc::dup2(write_fd, 2) >= 0, "dup2 onto stderr failed");
-        libc::close(write_fd);
+            assert!(libc::dup2(write_fd, 2) >= 0, "dup2 onto stderr failed");
+            libc::close(write_fd);
 
-        body();
-        // glibc buffers; flush before restoring or the bytes arrive too late.
-        libc::fflush(std::ptr::null_mut());
-
-        libc::dup2(saved, 2);
-        libc::close(saved);
+            body();
+            // glibc buffers; flush before restoring or the bytes arrive too late.
+            libc::fflush(std::ptr::null_mut());
+        }
 
         let mut file = std::fs::File::from_raw_fd(read_fd);
         let mut out = Vec::new();
