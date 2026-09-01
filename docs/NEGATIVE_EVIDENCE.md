@@ -40699,3 +40699,71 @@ ones that would notice a threading-policy depth counter behaving differently.
   process's preloaded libc, and takes a validating path instead of the strict one; this file already
   carries "harness loader-mode interposition" as a known hazard. That is a hypothesis. What is
   measured is the effect, its size, and that the loader mode is the only variable.
+
+## 2026-08-31 — bd-ny3hsa — `malloc_free` SURVIVES the loader-mode test that killed `strlen_256k`: the ~6x is REAL, and it decomposes into 38% membrane tax / 62% allocator work
+
+- **RESULT CLASS: loss/baseline confirmation + decomposition. No lever landed, no speedup
+  claimed.** The previous row (`6fa91e193`) removed `strlen_256k`'s 37x from the loss map as a
+  `dlopen(RTLD_DEEPBIND)` artifact and stated explicitly that the distortion was *demonstrated for
+  `strlen_256k` and not yet excluded elsewhere*. This row applies that same test to the family that
+  inherited the top of the map, and the answer is the opposite one.
+- **THE HARNESS'S OWN CLAIM IS THE HYPOTHESIS UNDER TEST.** `run_malloc_free` asserts
+  `config.fl_deepbind` with the message *"malloc_free requires --fl-deepbind so FrankenLibC's
+  internal allocation path models LD_PRELOAD deployment"*
+  (`crates/frankenlibc-bench/examples/incumbent_coverage_ab.rs`). For `strlen_256k` that claim was
+  false by a factor of thirty. For `malloc_free` it holds.
+- **BOTH LOADER MODES AGREE, on the same object** (`fl_now.so`, sha256
+  `b924c8eba8e6c9641e39a8b18efbe658acca5502f375d0e4003728315dd3e87d`, the object the harness scored
+  `malloc_free` 5.845478x on). Workload copied from the harness: `malloc(64)` + `free`, 100000 reps
+  per batch.
+
+  | reach | ns per malloc/free pair | ratio |
+  |---|---|---|
+  | harness (`--fl-deepbind --fl-so`) | — | 5.845478x |
+  | in-process `dlopen(RTLD_NOW\|RTLD_LOCAL\|RTLD_DEEPBIND)` + `dlsym`, host A/A 0.878-1.011 | host 5.31-6.19, fl 36.56-39.01 | **6.049x, 6.211x, 6.455x** |
+  | `LD_PRELOAD` (deployed) | glibc 6.68-6.87, fl 33.95-47.13 | **~6.0-6.2x** |
+
+  The host arm's 6.04 ns/pair independently matches this repo's own recorded glibc baseline
+  (`malloc_free_64 p50_ns_op=5.705`, `hardened_mode_2x_bound_contract_test.rs`), so the driver is
+  faithful rather than merely self-consistent. **`malloc_free` stays at the top of the loss map.**
+- **COUNTED DECOMPOSITION, two-point callgrind under `LD_PRELOAD`** (20000 vs 2000 reps; the driver
+  runs 3.2 batches per rep, so every edge below is exactly one call per pair):
+  COUNTED MECHANISM: fl executes 644 instructions per malloc/free pair vs 77 for glibc, 8.36x.
+  That is the same direction and order as the ~6x wall ratio, so the two instruments agree.
+
+  | Ir/pair | share | site |
+  |---|---|---|
+  | 122 | 19% | `enter_allocator_reentry_guard` — entered TWICE per pair (once from `malloc`, once from `free`), 61 Ir each |
+  | 96 | 15% | `__tls_get_addr` — 4 calls/pair at 24 Ir (2 inside the guard, 1 in `mode`, 1 direct from `malloc`) |
+  | 67 | 10% | `FlatCombiningStats::apply_locked` |
+  | 53 | 8% | `runtime_policy::mode`, called once per `malloc` |
+  | ~330 | 51% | allocator proper (`segment_allocate` / `allocate_from_local_class` / `segment_free` / `small_bin_index`) |
+
+  The four tax subtrees are disjoint in the call graph (no edge from the guard to `mode`, none from
+  `mode` to `apply_locked`), so the 242 Ir/pair total is a sum, not a double-count.
+- **THE ELISION AND ATTRIBUTION GUARDS BOTH FIRED, and one of them refuted me.** `malloc`/`free`
+  are compiler builtins that GCC deletes in matched pairs, so the driver is built
+  `-fno-builtin-malloc -fno-builtin-free` with the pointer accumulated through a `volatile` sink and
+  the per-rep cost printed at both `reps` and `reps/10`. Separately, the flat profile put
+  `host_resolve::symbol_name_matches` at 6.65% and I took it for per-call symbol resolution on the
+  allocator path — a startling result if true. the two-point subtraction refuted it, as a
+  counted mechanism: that frame costs 3,127,032 instructions at 20000 reps vs 3,127,032 at 2000
+  reps, identical to the byte, so nothing there scales with the call count. It
+  is one-time ELF `.dynsym` parsing at startup. A flat profile alone would have sent a lever at a
+  cost that does not exist.
+- **WHY NO MICRO-LEVER IS WORTH SPENDING HERE, with the arithmetic.** Each of the four tax sites is
+  already optimised, already probed, or blocked by an existing REJECT in this file:
+  `MODE_THREAD_LOCAL_CACHE` is already `const`-initialised (no lazy-init flag);
+  `current_thread_key()` already reads `fs:[0]` by inline asm rather than through TLS; the guard's
+  CAS was already ablated for nothing; `apply_locked`'s obvious caller was already ablated for 5 Ir;
+  and the 24 Ir per `__tls_get_addr` is the general-dynamic TLS model, whose `initial-exec` fix is
+  REJECTED above (2026-08-26) because it removes 2417 of 2458 call sites and then **cannot be
+  loaded at all**. More importantly the arithmetic caps the whole class: deleting *every* one of the
+  242 Ir/pair of membrane tax — semantics and all — leaves 402 Ir/pair against glibc's 77, still
+  **5.2x**. fl's allocator proper is already ~4x glibc before any membrane cost is added.
+- **CONSEQUENCE FOR THE MAP.** `malloc_free` is a real, reproducible ~6x deployed loss, and it is
+  an allocator-architecture problem, not a membrane-tax problem. Micro-levers on the entry path can
+  recover at most ~1.6x of the 8.36x counted gap and cannot reach parity. That is a scoping fact the
+  owner needs before more per-call levers are spent here.
+- Drivers preserved: `scratchpad/malloc_loadermode.c`, `scratchpad/malloc_preload.c`,
+  `scratchpad/cg_callers.py`.
