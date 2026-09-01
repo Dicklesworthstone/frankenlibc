@@ -40910,3 +40910,73 @@ ones that would notice a threading-policy depth counter behaving differently.
   `dlopen(RTLD_DEEPBIND)`, on a `.so` built at or after `9bd42227c`.
 - Drivers preserved: `scratchpad/loadermode_sweep.c`, `scratchpad/dlopen_probe.c`,
   `scratchpad/dlopen_after_malloc.c`.
+
+## 2026-09-01 (cc) — REPEAT AT HEAD, and the missing control: exact `strftime("%j")` holds at 0.388086x on a second host, while the SAME directive inside literal text costs 9.288260x
+
+- **WHY THIS RUN EXISTS AND WHAT IT IS NOT.** `bd-2d2hrk` carried an "UNTIMED external blocker: two
+  exact remote bench attempts failed RCH-I001 … resume only when a worker receives a remote
+  assignment", so it read as an unmeasured perf lever. It is not. Preflighting the ledger first
+  (`grep -n '%j' docs/NEGATIVE_EVIDENCE.md`) found the lever already measured and banked on
+  2026-07-27 at `incumbent_ratio=0.381437` with a full campaign-win bundle. **This row therefore
+  claims no new win and must not be counted as one**; it is the repeat that row's own retry
+  predicate asks for ("reopen if a repeat's FL/glibc bootstrap median CI no longer lies below 1.0 by
+  more than twice the wider same-invocation A/A null-CI half-width"), run on a different host with a
+  different harness, plus one control the campaign row never had.
+
+- **INSTRUMENT AND PROVENANCE.** `crates/frankenlibc-bench/examples/strftime_litrun_ab.rs`, which
+  resolves host glibc through `dlmopen(LM_ID_NEWLM, "libc.so.6")` inside the benchmark process, so
+  every ratio below is a same-invocation FL/glibc effect paired against a source-identical FL/FL
+  null, with pair order alternating by sample. 33 retained samples after 4 warmups, 150,000 calls
+  per arm. Fixture 2023-11-14 22:13:20 UTC, `tm_yday=317`, built directly rather than through either
+  `gmtime` arm. Worker vmi1227854 for both runs; `[RCH] remote vmi1227854`; base
+  `7726a792f9faf900ed48045303fde1a0673b88f6`, clean-overlay fingerprint
+  `42de23310d9a61d573d091286f46b6897e80633ab529ef24e333bc24538e5795` (the only overlaid path is the
+  harness file itself; no production source is in the diff). `ISA_PROVENANCE built_avx2=true
+  built_fma=true built_sse42=true`, executing cpu avx2=true avx512f=false. Host-wide exclusivity
+  guard `verdict=clear` at startup and at pre- and post-measurement for both cases, with
+  `observed_maximum_busy_fraction` 0.010–0.020 against a 0.200 limit and `cpu_mhz_min = median = max
+  = 3195.2`, so no intra-run clock ramp. The two cases were built into two separately-compiled
+  binaries of identical source, so each row's ELF SHA-256 is quoted with its own row rather than
+  shared.
+
+- **CASE `yday_exact` (`%j\0`, the byte-exact recognizer) — the repeat HOLDS.** In-process
+  self-reported executing ELF `bench_elf_sha256=e994a66ebed2b1be5aaf617b051cccdebc10641a137809fb534b973cacd81a90`.
+  FL median 6.648 ns, host-glibc median 17.564 ns. Same-invocation FL/glibc effect median 0.388086
+  with bootstrap median CI [0.387480, 0.407877]. Same-invocation A/A null median 1.007674 with
+  bootstrap median CI [1.003805, 1.012182], null half-width 0.012182; the effect deviates 0.611914
+  from unity, 50.2x the mandatory 2x-null rule, and the effect CI lies wholly below 1.0. Harness
+  verdict `comparison=FL_FASTER`. Behaviour proof in the same binary before timing: `verify: OK`
+  over capacities 1..=128 against live glibc. Against the 2026-07-27 row's 0.381437x on a different
+  host this is a 1.7% difference in the same direction — the retry predicate is satisfied and the
+  banked win stands. `ratio_cv_pct` 17.829 is descriptive telemetry only and gates nothing.
+
+- **CASE `yday_general` (`prefix %j suffix`) — the NEW datum, and it is a loss.** In-process
+  self-reported executing ELF `bench_elf_sha256=ea9a045da2ef8ffafa74c164c4dd54f76acb7d3c6f9220f284af6dce4a3acc14`.
+  FL median 252.625 ns, host-glibc median 29.423 ns. Same-invocation FL/glibc effect median 9.288260
+  with bootstrap median CI [8.916414, 9.796682]. Same-invocation A/A null median 1.026696 with
+  bootstrap median CI [0.985612, 1.077767], null half-width 0.077767; the effect deviates 8.288260
+  from unity, 53.3x the 2x-null rule. Harness verdict `comparison=FL_SLOWER`. **Reported honestly:
+  this null's median sits inside the 0.97–1.03 admissibility band but its CI upper edge, 1.077767,
+  does not.** The effect exceeds that half-width by two orders of magnitude, so the sign and the
+  order of magnitude are not in question; a tighter null would be needed only to argue about the
+  third significant figure, which nothing here does.
+
+- **WHAT THE PAIR ESTABLISHES THAT NEITHER CASE COULD ALONE.** Wrapping the identical directive in
+  14 bytes of literal text moves fl from 2.58x FASTER to 9.29x SLOWER — a 23.9x swing in FL's own
+  time, 6.648 ns to 252.625 ns, while glibc moves only 17.564 ns to 29.423 ns. So the 2026-07-27
+  win belongs to the **three-byte recognizer**, not to `%j` being cheap to emit: the bounded
+  001..366 emitter is reached only by the exact format, and everything else pays fl's general
+  per-directive loop. This is the first single-directive measurement of that boundary; the closest
+  prior evidence was the 2026-06-26 `strftime_survey` row, which could only say `%j %U %W %w %p`
+  cost 4.7x as a five-directive group, and the `mixed_general` (`prefix %A suffix`) case at 11.7x.
+  It also means the exact-leaf family's wins are **narrow by construction** and should not be
+  generalised to "fl strftime is faster than glibc".
+
+- **DISPOSITION.** No source change is proposed or made — production `time_abi.rs` is untouched and
+  the only edit is two cases added to the harness, so the leaf now has a permanent regression
+  tripwire and its control is measured alongside it. The general-loop gap is NOT re-litigated here
+  and remains the standing separate lever recorded on 2026-06-26 ("closing it means speeding the
+  general loop, not adding more hardcoded formats"); adding a fourth hardcoded recognizer for
+  `prefix %j suffix` would be exactly the move that row warns against. Reproducer:
+  `cargo run --release -p frankenlibc-bench --features abi-bench --example strftime_litrun_ab --
+  --case yday_exact` (and `--case yday_general`).

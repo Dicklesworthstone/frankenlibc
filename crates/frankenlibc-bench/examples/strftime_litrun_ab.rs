@@ -104,6 +104,25 @@ const CASES: &[Case] = &[
         label: "month_alias_h",
         format: b"%h\0",
     },
+    // Exact `%j\0` — the day-of-year finite leaf (bd-2d2hrk). The strict
+    // recognizer reads only `tm_yday` and emits from the bounded 001..366
+    // table, skipping both the format scan and the full `tm` projection; an
+    // out-of-range `tm_yday` falls through to the unchanged general formatter.
+    // The lever has been at HEAD since bbec38abe with NO timing row: every
+    // prior attempt was refused by a load guard, so this pair is the row.
+    Case {
+        label: "yday_exact",
+        format: b"%j\0",
+    },
+    // The SAME directive wrapped in literal text, which the three-byte
+    // recognizer deliberately does not match, so it routes to the general
+    // formatter. Without this control a win on `yday_exact` cannot be
+    // attributed: it would be indistinguishable from `%j` simply being cheap to
+    // emit in any path.
+    Case {
+        label: "yday_general",
+        format: b"prefix %j suffix\0",
+    },
     // Real-world shapes. The exact-leaf family already beats glibc (0.448-0.675) while
     // `mixed_general` — one directive wrapped in literal text — loses 11.7x on a 227 ns
     // frame. These probe where the boundary actually falls for formats people write:
