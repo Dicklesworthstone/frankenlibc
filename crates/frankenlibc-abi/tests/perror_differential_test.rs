@@ -12,6 +12,9 @@ use std::ffi::CString;
 
 use frankenlibc_abi::stdio_abi as fl;
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 unsafe extern "C" {
     fn perror(s: *const libc::c_char);
 }
@@ -19,13 +22,18 @@ unsafe extern "C" {
 /// Capture what `call` writes to fd 2.
 fn capture(tmp_fd: libc::c_int, call: impl FnOnce()) -> Vec<u8> {
     unsafe {
-        let saved = libc::dup(2);
         libc::ftruncate(tmp_fd, 0);
         libc::lseek(tmp_fd, 0, libc::SEEK_SET);
-        libc::dup2(tmp_fd, 2);
-        call();
-        libc::dup2(saved, 2);
-        libc::close(saved);
+        // Restored by a Drop guard, INCLUDING on unwind: a panic in `call()` would
+        // skip a straight-line restore and leave this process's stderr pointed at
+        // the temp file for the rest of the run, swallowing libtest's report of
+        // that very failure (bd-ug42ol). Block-scoped so fd 2 is restored before
+        // the rewind-and-read below.
+        {
+            let _restore = fd_capture::StdFdRestore::new(2);
+            libc::dup2(tmp_fd, 2);
+            call();
+        }
         libc::lseek(tmp_fd, 0, libc::SEEK_SET);
         let mut buf = Vec::new();
         let mut chunk = [0u8; 4096];

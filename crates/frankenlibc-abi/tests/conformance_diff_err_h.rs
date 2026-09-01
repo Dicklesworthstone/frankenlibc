@@ -19,6 +19,9 @@ use std::sync::Mutex;
 
 use frankenlibc_abi::err_abi as fl;
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 unsafe extern "C" {
     fn warn(fmt: *const c_char, ...);
     fn warnx(fmt: *const c_char, ...);
@@ -72,22 +75,23 @@ fn capture_stderr<F: FnOnce()>(body: F) -> Vec<u8> {
     if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
         return Vec::new();
     }
-    let saved_stderr = unsafe { dup(2) };
-    if saved_stderr < 0 {
+    // Restored by a Drop guard, INCLUDING on unwind: a panic in `body()` would
+    // skip a straight-line restore and leave this process's stderr pointed at the
+    // pipe for the rest of the run, swallowing libtest's report of that very
+    // failure (bd-ug42ol). Block-scoped so fd 2 is restored before the read loop
+    // below. `fds[1]` is closed inside the block, so once the guard restores fd 2
+    // no descriptor references the pipe's write end and the reader sees EOF.
+    //
+    // The old code returned an EMPTY Vec when `dup(2)` failed, which would have
+    // compared "" against "" and passed VACUOUSLY. The guard asserts instead: a
+    // capture that cannot be set up is not a passing comparison.
+    {
+        let _restore = unsafe { fd_capture::StdFdRestore::new(2) };
         unsafe {
-            close(fds[0]);
+            dup2(fds[1], 2);
             close(fds[1]);
         }
-        return Vec::new();
-    }
-    unsafe {
-        dup2(fds[1], 2);
-        close(fds[1]);
-    }
-    body();
-    unsafe {
-        dup2(saved_stderr, 2);
-        close(saved_stderr);
+        body();
     }
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
