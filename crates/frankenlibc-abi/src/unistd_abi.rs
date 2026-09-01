@@ -24383,6 +24383,85 @@ pub unsafe extern "C" fn endfsent() {
 
 pub(crate) const NETGROUP_PATH: &str = "/etc/netgroup";
 
+/// Path to the NSS dispatch configuration glibc consults before any `files`
+/// backend runs.
+pub(crate) const NSSWITCH_PATH: &str = "/etc/nsswitch.conf";
+
+/// Does the `netgroup` database actually reach the `files` backend?
+///
+/// ## Why this exists (bd-4dipf6)
+///
+/// FrankenLibC read `/etc/netgroup` unconditionally, and glibc does not: it
+/// dispatches every database through `/etc/nsswitch.conf` first. The STOCK
+/// Debian/Ubuntu line is
+///
+/// ```text
+/// netgroup:       nis
+/// ```
+///
+/// with no `files` at all, so on a default-configured host that happens to have
+/// an `/etc/netgroup`, glibc never opens it and reports no membership while fl
+/// reported membership. That is the FAIL-OPEN direction in an access-control
+/// predicate — fl admitting where the incumbent denies.
+///
+/// ## The rule, measured rather than read from the manual
+///
+/// `bwrap`-bound `/etc` on glibc 2.42, one synthetic `/etc/netgroup`, varying
+/// only the nsswitch line. `innetgr("plain","host1","user1","dom1")` and
+/// `setnetgrent("plain")` agree on every row:
+///
+/// ```text
+///   no /etc/nsswitch.conf at all      1   (glibc's built-in default has files)
+///   nsswitch.conf, no `netgroup:` line 1  (same default)
+///   netgroup: nis                     0   <- the stock line
+///   netgroup: files                   1
+///   netgroup: nis files               1
+///   netgroup: files nis               1
+/// ```
+///
+/// So `files` is consulted exactly when the line is ABSENT or lists `files`
+/// among its sources; ORDER does not matter here, because NIS is unconfigured
+/// and glibc falls through to the next source.
+///
+/// ## Scope, deliberately narrow
+///
+/// This answers the question for the netgroup database ONLY. fl reads no other
+/// `nsswitch.conf` line, and whether it should is the systemic half of
+/// bd-4dipf6, left open on that bead. netgroup is fixed here because it is the
+/// one database whose STOCK line omits `files`, which is what turns a
+/// configuration difference into a wrong answer on a default install.
+pub(crate) fn netgroup_files_backend_enabled() -> bool {
+    let Ok(content) = std::fs::read(NSSWITCH_PATH) else {
+        // Measured: with no nsswitch.conf, glibc's compiled-in default reaches
+        // the files backend. Absent config must not deny.
+        return true;
+    };
+    for raw in content.split(|&b| b == b'\n') {
+        let line = match raw.iter().position(|&b| b == b'#') {
+            Some(hash) => &raw[..hash],
+            None => raw,
+        };
+        let mut parts = line.splitn(2, |&b| b == b':');
+        let Some(database) = parts.next() else {
+            continue;
+        };
+        let Some(sources) = parts.next() else {
+            continue;
+        };
+        if !database.trim_ascii().eq_ignore_ascii_case(b"netgroup") {
+            continue;
+        }
+        // A source list may carry `[NOTFOUND=return]` action blocks between
+        // sources; splitting on whitespace and comparing whole tokens ignores
+        // them, because an action block never equals `files`.
+        return sources
+            .split(|b| b.is_ascii_whitespace())
+            .any(|token| token.eq_ignore_ascii_case(b"files"));
+    }
+    // Measured: a `nsswitch.conf` with no `netgroup:` line behaves like no file.
+    true
+}
+
 use frankenlibc_core::netgroup::NetgroupTriple;
 
 struct NetgroupIterState {
@@ -24461,6 +24540,16 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
         });
         return 0;
     };
+    // The BACKEND decides before the file does. With the stock `netgroup: nis`
+    // line glibc never opens /etc/netgroup and `setnetgrent` returns 0 — measured,
+    // alongside `getnetgrent` yielding nothing (bd-4dipf6).
+    if !netgroup_files_backend_enabled() {
+        with_netgroup_iter_state(|state| {
+            state.triples.clear();
+            state.pos = 0;
+        });
+        return 0;
+    }
     let content = match std::fs::read(NETGROUP_PATH) {
         Ok(c) => c,
         Err(_) => {

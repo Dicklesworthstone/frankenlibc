@@ -6424,6 +6424,15 @@ pub unsafe extern "C" fn innetgr(
         return 0;
     };
 
+    // THE BACKEND DECIDES BEFORE THE FILE DOES. glibc dispatches netgroup through
+    // /etc/nsswitch.conf, whose STOCK Debian/Ubuntu line is `netgroup: nis` with
+    // no `files` — so on a default host carrying an /etc/netgroup, glibc never
+    // opens it and answers 0 while fl answered 1. Fail-OPEN in a membership
+    // predicate, which is the direction this function must never have
+    // (bd-4dipf6). Checked before the read, exactly as glibc orders it.
+    if !crate::unistd_abi::netgroup_files_backend_enabled() {
+        return 0;
+    }
     let Ok(content) = std::fs::read(crate::unistd_abi::NETGROUP_PATH) else {
         // No /etc/netgroup is not an error, just no members.
         return 0;

@@ -1,0 +1,1052 @@
+warning: /data/projects/frankenlibc/crates/frankenlibc-bench/Cargo.toml: file `/data/projects/frankenlibc/crates/frankenlibc-bench/examples/hostent_iter_ab.rs` found to be present in multiple build targets:
+  * `example` target `hostent_iter_ab`
+  * `bench` target `hostent_iter_ab`
+warning: /data/projects/frankenlibc/crates/frankenlibc-bench/Cargo.toml: file `/data/projects/frankenlibc/crates/frankenlibc-bench/examples/hosts_reverse_ab.rs` found to be present in multiple build targets:
+  * `example` target `hosts_reverse_ab`
+  * `bench` target `hosts_reverse_ab`
+warning: /data/projects/frankenlibc/crates/frankenlibc-bench/Cargo.toml: file `/data/projects/frankenlibc/crates/frankenlibc-bench/examples/hosts_lookup_ab.rs` found to be present in multiple build targets:
+  * `example` target `hosts_lookup_ab`
+  * `bench` target `hosts_lookup_ab`
+warning: /data/projects/frankenlibc/crates/frankenlibc-bench/Cargo.toml: file `/data/projects/frankenlibc/crates/frankenlibc-bench/examples/wcsftime_survey.rs` found to be present in multiple build targets:
+  * `example` target `wcsftime_survey`
+  * `bench` target `strftime_exact_ab`
+warning: /data/projects/frankenlibc/crates/frankenlibc-bench/Cargo.toml: file `/data/projects/frankenlibc/crates/frankenlibc-bench/examples/wcsftime_ab.rs` found to be present in multiple build targets:
+  * `example` target `wcsftime_ab`
+  * `bench` target `wcsftime_ab`
+warning: /data/projects/frankenlibc/crates/frankenlibc-bench/Cargo.toml: file `/data/projects/frankenlibc/crates/frankenlibc-bench/examples/textdomain_ab.rs` found to be present in multiple build targets:
+  * `example` target `textdomain_ab`
+  * `bench` target `textdomain_ab`
+   Compiling typenum v1.20.0
+   Compiling cfg-if v1.0.4
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling const-oid v0.10.2
+   Compiling unicode-ident v1.0.24
+   Compiling hybrid-array v0.4.10
+   Compiling block-buffer v0.12.0
+   Compiling crypto-common v0.2.1
+   Compiling serde_core v1.0.228
+   Compiling cpufeatures v0.3.0
+   Compiling zmij v1.0.21
+   Compiling digest v0.11.2
+   Compiling sha2 v0.11.0
+   Compiling syn v2.0.117
+   Compiling serde_json v1.0.149
+   Compiling utf8parse v0.2.2
+   Compiling memchr v2.8.0
+   Compiling itoa v1.0.18
+   Compiling anstyle-parse v1.0.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling serde v1.0.228
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstream v1.0.0
+   Compiling serde_derive v1.0.228
+   Compiling shlex v1.3.0
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling clap_lex v1.1.0
+   Compiling clap_builder v4.6.0
+   Compiling cc v1.2.60
+   Compiling clap_derive v4.6.1
+   Compiling blake3 v1.8.4
+   Compiling libc v0.2.185
+   Compiling frankenlibc-membrane v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-membrane)
+   Compiling clap v4.6.1
+   Compiling stdio-synth v0.1.0 (/data/projects/frankenlibc/tools/stdio_synth)
+   Compiling constant_time_eq v0.4.2
+   Compiling libm v0.2.16
+   Compiling arrayref v0.3.9
+   Compiling parking_lot_core v0.9.12
+   Compiling arrayvec v0.7.6
+   Compiling frankenlibc-core v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-core)
+   Compiling smallvec v1.15.1
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/.rch-target/debug/build/frankenlibc-core-76a4ce386ac501eb/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+   Compiling frankenlibc-abi v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-abi)
+   Compiling md-5 v0.11.0
+   Compiling parking_lot v0.12.5
+warning: unused attribute
+   --> crates/frankenlibc-core/src/string/mem.rs:149:1
+    |
+149 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^ help: remove this attribute
+    |
+note: attribute also specified here
+   --> crates/frankenlibc-core/src/string/mem.rs:138:1
+    |
+138 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `i` is never read
+   --> crates/frankenlibc-core/src/inet/mod.rs:557:13
+    |
+557 |             i = n; // the IPv4 consumed the remainder
+    |             ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates/frankenlibc-core/src/crypt/blowfish.rs:103:13
+    |
+103 |         let mut next_salt_pair = |salt_pos: &mut usize| -> (u32, u32) {
+    |             ----^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+     --> crates/frankenlibc-core/src/iconv/mod.rs:44404:13
+      |
+44404 |         let mut emit_g1 =
+      |             ----^^^^^^^
+      |             |
+      |             help: remove this `mut`
+
+warning: static `EUCJX_P2_MULTI` is never used
+     --> crates/frankenlibc-core/src/iconv/eucjisx0213_tables.rs:11272:19
+      |
+11272 | pub(crate) static EUCJX_P2_MULTI: [(u16, &[u32]); 0] = [];
+      |                   ^^^^^^^^^^^^^^
+      |
+      = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `EXPM1_POSITIVE_FAST_MAX` is never used
+    --> crates/frankenlibc-core/src/math/exp.rs:1051:7
+     |
+1051 | const EXPM1_POSITIVE_FAST_MAX: f64 = 2.5;
+     |       ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `TWO_OVER_SQRT_PI_M1` is never used
+    --> crates/frankenlibc-core/src/math/float32.rs:1334:11
+     |
+1334 |     const TWO_OVER_SQRT_PI_M1: f32 = f32::from_bits(0x3e0375d4);
+     |           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_ascii_decimal_u32` is never used
+   --> crates/frankenlibc-core/src/resolv/mod.rs:680:4
+    |
+680 | fn parse_ascii_decimal_u32(bytes: &[u8]) -> Option<u32> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `nonfinite_cvt` is never used
+  --> crates/frankenlibc-core/src/stdlib/ecvt.rs:24:4
+   |
+24 | fn nonfinite_cvt(value: f64) -> (Vec<u8>, i32, bool) {
+   |    ^^^^^^^^^^^^^
+
+warning: `frankenlibc-core` (lib) generated 9 warnings (run `cargo fix --lib -p frankenlibc-core` to apply 3 suggestions)
+warning: unused import: `std::arch::x86_64::*`
+    --> crates/frankenlibc-abi/src/string_abi.rs:1823:9
+     |
+1823 |     use std::arch::x86_64::*;
+     |         ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `finite_unary_f128`
+     --> crates/frankenlibc-abi/src/math_abi.rs:13876:14
+      |
+13876 | macro_rules! finite_unary_f128 {
+      |              ^^^^^^^^^^^^^^^^^
+      |
+      = note: `#[warn(unused_macros)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused macro definition: `finite_binary_f128`
+     --> crates/frankenlibc-abi/src/math_abi.rs:13894:14
+      |
+13894 | macro_rules! finite_binary_f128 {
+      |              ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::setjmp_abi::longjmp`
+   --> crates/frankenlibc-abi/src/fortify_abi.rs:146:5
+    |
+146 | use crate::setjmp_abi::longjmp;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> crates/frankenlibc-abi/src/pthread_abi.rs:278:1
+    |
+278 | / /// Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
+279 | | ///
+280 | | /// `in_threading_policy_context()` is on the allocator's hot path: the allocator
+281 | | /// re-entry guard evaluates it on EVERY `malloc` and `free`, because the term that
+...   |
+291 | | /// Unconditional: the field it replaces was removed from `PthreadTlsState` for both
+292 | | /// feature configurations, and `in_threading_policy_context()` has one definition.
+    | |_----------------------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:2680:1
+     |
+2680 | /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+     --> crates/frankenlibc-abi/src/stdio_abi.rs:11584:1
+      |
+11584 | / /// POSIX `getdelim` — read until a delimiter, dynamically allocating the buffer.
+11585 | | ///
+11586 | | /// Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
+11587 | | /// `*lineptr` using `malloc`/`realloc`. Stores the line length in `*n`.
+11588 | | /// Returns the number of bytes read (including delim), or -1 on error/EOF.
+      | |_--------------------------------------------------------------------------^
+      |   |
+      |   rustdoc does not generate documentation for macro invocations
+      |
+      = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused attribute
+    --> crates/frankenlibc-abi/src/malloc_abi.rs:1366:1
+     |
+1366 | #[inline]
+     | ^^^^^^^^^ help: remove this attribute
+     |
+note: attribute also specified here
+    --> crates/frankenlibc-abi/src/malloc_abi.rs:1356:1
+     |
+1356 | #[inline]
+     | ^^^^^^^^^
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused attribute
+    --> crates/frankenlibc-abi/src/malloc_abi.rs:2966:1
+     |
+2966 | #[inline]
+     | ^^^^^^^^^ help: remove this attribute
+     |
+note: attribute also specified here
+    --> crates/frankenlibc-abi/src/malloc_abi.rs:2961:1
+     |
+2961 | #[inline]
+     | ^^^^^^^^^
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+
+warning: unused attribute
+    --> crates/frankenlibc-abi/src/string_abi.rs:1596:1
+     |
+1596 | #[inline]
+     | ^^^^^^^^^ help: remove this attribute
+     |
+note: attribute also specified here
+    --> crates/frankenlibc-abi/src/string_abi.rs:1592:1
+     |
+1592 | #[inline(never)]
+     | ^^^^^^^^^^^^^^^^
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+
+warning: unused attribute
+   --> crates/frankenlibc-abi/src/wchar_abi.rs:389:1
+    |
+389 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^ help: remove this attribute
+    |
+note: attribute also specified here
+   --> crates/frankenlibc-abi/src/wchar_abi.rs:371:1
+    |
+371 | #[inline]
+    | ^^^^^^^^^
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+
+warning: unused attribute
+   --> crates/frankenlibc-abi/src/unistd_abi.rs:134:1
+    |
+134 | #[inline]
+    | ^^^^^^^^^ help: remove this attribute
+    |
+note: attribute also specified here
+   --> crates/frankenlibc-abi/src/unistd_abi.rs:112:1
+    |
+112 | #[inline]
+    | ^^^^^^^^^
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+
+warning: unreachable expression
+    --> crates/frankenlibc-abi/src/wchar_abi.rs:3101:9
+     |
+3101 | /          return unsafe {
+3102 | |              let (accept_len, _) = scan_w_string(accept, None);
+...    |
+3122 | |/             loop {
+3123 | ||                 let x = *s.add(i);
+3124 | ||                 if x == 0 {
+3125 | ||                     return std::ptr::null_mut();
+...    ||
+3130 | ||                 i += 1;
+3131 | ||             }
+     | ||_____________- any code following this expression is unreachable
+3132 | |          };
+     | |__________^ unreachable expression
+     |
+     = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+    --> crates/frankenlibc-abi/src/string_abi.rs:2630:5
+     |
+2630 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning[E0133]: call to function `std::arch::x86_64::_mm256_cmpeq_epi8` with `#[target_feature]` is unsafe and requires unsafe block
+    --> crates/frankenlibc-abi/src/string_abi.rs:2635:31
+     |
+2635 |             let target_bits = _mm256_cmpeq_epi8(lanes, target);
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to function with `#[target_feature]`
+     |
+     = help: in order for the call to be safe, the context requires the following additional target feature: avx2
+     = note: the avx2 target feature being enabled in the build configuration does not remove the requirement to list it in `#[target_feature]`
+note: an unsafe function restricts its caller, but its body is safe by default
+    --> crates/frankenlibc-abi/src/string_abi.rs:2632:9
+     |
+2632 |         unsafe fn target_or_nul_bits(p: *const u8, target: __m256i, zero: __m256i) -> u32 {
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+     = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning[E0133]: call to function `std::arch::x86_64::_mm256_cmpeq_epi8` with `#[target_feature]` is unsafe and requires unsafe block
+    --> crates/frankenlibc-abi/src/string_abi.rs:2636:28
+     |
+2636 |             let nul_bits = _mm256_cmpeq_epi8(lanes, zero);
+     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to function with `#[target_feature]`
+     |
+     = help: in order for the call to be safe, the context requires the following additional target feature: avx2
+     = note: the avx2 target feature being enabled in the build configuration does not remove the requirement to list it in `#[target_feature]`
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to function `std::arch::x86_64::_mm256_movemask_epi8` with `#[target_feature]` is unsafe and requires unsafe block
+    --> crates/frankenlibc-abi/src/string_abi.rs:2637:13
+     |
+2637 |             _mm256_movemask_epi8(_mm256_or_si256(target_bits, nul_bits)) as u32
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to function with `#[target_feature]`
+     |
+     = help: in order for the call to be safe, the context requires the following additional target feature: avx2
+     = note: the avx2 target feature being enabled in the build configuration does not remove the requirement to list it in `#[target_feature]`
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to function `std::arch::x86_64::_mm256_or_si256` with `#[target_feature]` is unsafe and requires unsafe block
+    --> crates/frankenlibc-abi/src/string_abi.rs:2637:34
+     |
+2637 |             _mm256_movemask_epi8(_mm256_or_si256(target_bits, nul_bits)) as u32
+     |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to function with `#[target_feature]`
+     |
+     = help: in order for the call to be safe, the context requires the following additional target feature: avx2
+     = note: the avx2 target feature being enabled in the build configuration does not remove the requirement to list it in `#[target_feature]`
+     = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning: value assigned to `work_local` is never read
+    --> crates/frankenlibc-abi/src/string_abi.rs:6698:30
+     |
+6698 |         let mut work_local = 0usize;
+     |                              ^^^^^^ this value is reassigned later and never used
+...
+6726 |             work_local = hay_len;
+     |             -------------------- `work_local` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `work_local` is never read
+    --> crates/frankenlibc-abi/src/wchar_abi.rs:2140:30
+     |
+2140 |         let mut work_local = 0usize;
+     |                              ^^^^^^ this value is reassigned later and never used
+...
+2164 |             work_local = hay_len;
+     |             -------------------- `work_local` is overwritten here before the previous value is read
+
+warning: unreachable pattern
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2947:15
+     |
+2810 |         libc::_SC_XOPEN_LEGACY => 1,
+     |         ---------------------- matches all the relevant values
+...
+2947 |         127 | 129 | 130 => 1, // _SC_XBS5_LP64_OFF64, _SC_XOPEN_{LEGACY,REALTIME}
+     |               ^^^ no value can reach this
+     |
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2947:21
+     |
+2811 |         libc::_SC_XOPEN_REALTIME => 1,
+     |         ------------------------ matches all the relevant values
+...
+2947 |         127 | 129 | 130 => 1, // _SC_XBS5_LP64_OFF64, _SC_XOPEN_{LEGACY,REALTIME}
+     |                     ^^^ no value can reach this
+
+warning: unreachable pattern
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2916:9
+     |
+2916 |         77..=82 => 200809, // _SC_THREAD_{ATTR_*,PRIORITY_*,PRIO_*,PROCESS_SHARED}
+     |         ^^^^^^^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2916:9
+     |
+2854 |         libc::_SC_THREAD_ATTR_STACKADDR => 200809,
+     |         ------------------------------- matches some of the same values
+2855 |         libc::_SC_THREAD_ATTR_STACKSIZE => 200809,
+     |         ------------------------------- matches some of the same values
+2856 |         libc::_SC_THREAD_PRIORITY_SCHEDULING => 200809,
+     |         ------------------------------------ matches some of the same values
+2857 |         libc::_SC_THREAD_PRIO_INHERIT => 200809,
+     |         ----------------------------- matches some of the same values
+...
+2916 |         77..=82 => 200809, // _SC_THREAD_{ATTR_*,PRIORITY_*,PRIO_*,PROCESS_SHARED}
+     |         ^^^^^^^ ...and 2 other patterns collectively make this unreachable
+
+warning: unreachable pattern
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2919:9
+     |
+2813 |         libc::_SC_XOPEN_XCU_VERSION => 4,
+     |         --------------------------- matches all the relevant values
+...
+2919 |         90 => 4,           // _SC_XOPEN_XCU_VERSION
+     |         ^^ no value can reach this
+
+warning: unreachable pattern
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2920:9
+     |
+2920 |         91 | 93 | 94 => 1, // _SC_XOPEN_{UNIX,ENH_I18N,SHM}
+     |         ^^^^^^^^^^^^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:2920:9
+     |
+2807 |         libc::_SC_XOPEN_UNIX => 1,
+     |         -------------------- matches some of the same values
+2808 |         libc::_SC_XOPEN_ENH_I18N => 1,
+     |         ------------------------ matches some of the same values
+2809 |         libc::_SC_XOPEN_SHM => 1,
+     |         ------------------- matches some of the same values
+...
+2920 |         91 | 93 | 94 => 1, // _SC_XOPEN_{UNIX,ENH_I18N,SHM}
+     |         ^^^^^^^^^^^^ collectively making this unreachable
+
+warning: value assigned to `last_nonopt` is never read
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:3347:13
+     |
+3347 |             last_nonopt = optind;
+     |             ^^^^^^^^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+3356 |         last_nonopt = optind;
+     |         -------------------- `last_nonopt` is overwritten here before the previous value is read
+
+warning: value assigned to `last_nonopt` is never read
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:3370:17
+     |
+3370 |                 last_nonopt = optind;
+     |                 ^^^^^^^^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+3374 |             last_nonopt = argc_us;
+     |             --------------------- `last_nonopt` is overwritten here before the previous value is read
+
+warning: variable does not need to be mutable
+     --> crates/frankenlibc-abi/src/math_abi.rs:10875:9
+      |
+10875 |     let mut s_h = pow_hi59_f128(s);
+      |         ----^^^
+      |         |
+      |         help: remove this `mut`
+      |
+      = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+     --> crates/frankenlibc-abi/src/math_abi.rs:10879:9
+      |
+10879 |     let mut s_l = v * ((u - s_h * t_h) - s_h * t_l);
+      |         ----^^^
+      |         |
+      |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> crates/frankenlibc-abi/src/math_abi.rs:10883:9
+      |
+10883 |     let mut vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
+      |         ----^^
+      |         |
+      |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> crates/frankenlibc-abi/src/math_abi.rs:10891:9
+      |
+10891 |     let mut v2 = s_l * t_h + t_l * s;
+      |         ----^^
+      |         |
+      |         help: remove this `mut`
+
+warning: unnecessary `unsafe` block
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:8695:8
+     |
+8695 |     if unsafe { write_all_fd(fd, &buf[..len]) } {
+     |        ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:8707:8
+     |
+8707 |     if unsafe { write_all_fd(fd, &buf[..len]) } {
+     |        ^^^^^^ unnecessary `unsafe` block
+
+warning: value assigned to `local_ts` is never read
+   --> crates/frankenlibc-abi/src/poll_abi.rs:201:24
+    |
+201 |       let mut local_ts = libc::timespec {
+    |  ________________________^
+202 | |         tv_sec: 0,
+203 | |         tv_nsec: 0,
+204 | |     };
+    | |_____^ this value is reassigned later and never used
+...
+208 |           local_ts = unsafe { *timeout_ts };
+    |           --------------------------------- `local_ts` is overwritten here before the previous value is read
+
+warning: value assigned to `local_ts` is never read
+   --> crates/frankenlibc-abi/src/poll_abi.rs:417:24
+    |
+417 |       let mut local_ts = libc::timespec {
+    |  ________________________^
+418 | |         tv_sec: 0,
+419 | |         tv_nsec: 0,
+420 | |     };
+    | |_____^ this value is reassigned later and never used
+...
+424 |           local_ts = unsafe { *timeout };
+    |           ------------------------------ `local_ts` is overwritten here before the previous value is read
+
+warning: value assigned to `filtered` is never read
+   --> crates/frankenlibc-abi/src/signal_abi.rs:934:39
+    |
+934 |     let mut filtered: libc::c_ulong = 0;
+    |                                       ^ this value is reassigned later and never used
+...
+942 |             filtered = word0 & !reserved;
+    |             ---------------------------- `filtered` is overwritten here before the previous value is read
+
+warning: unnecessary `unsafe` block
+    --> crates/frankenlibc-abi/src/signal_abi.rs:1721:17
+     |
+1721 |     let rtmin = unsafe { libc::SIGRTMIN() };
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/frankenlibc-abi/src/signal_abi.rs:1722:17
+     |
+1722 |     let rtmax = unsafe { libc::SIGRTMAX() };
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: function `set_active_charset` is never used
+   --> crates/frankenlibc-abi/src/locale_abi.rs:169:4
+    |
+169 | fn set_active_charset(charset: Charset) {
+    |    ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `nextafter_range_error_f64` is never used
+   --> crates/frankenlibc-abi/src/math_abi.rs:240:4
+    |
+240 | fn nextafter_range_error_f64(x: f64, r: f64) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `nextafter_range_error_f32` is never used
+   --> crates/frankenlibc-abi/src/math_abi.rs:252:4
+    |
+252 | fn nextafter_range_error_f32(x: f32, r: f32) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `EPS` is never used
+     --> crates/frankenlibc-abi/src/math_abi.rs:13241:11
+      |
+13241 |     const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+      |           ^^^
+
+warning: constant `EPS` is never used
+     --> crates/frankenlibc-abi/src/math_abi.rs:13609:11
+      |
+13609 |     const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+      |           ^^^
+
+warning: function `lookup_service_entry_by_name` is never used
+   --> crates/frankenlibc-abi/src/resolv_abi.rs:976:15
+    |
+976 | pub(crate) fn lookup_service_entry_by_name(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `lookup_protocol_entry_by_name` is never used
+    --> crates/frankenlibc-abi/src/resolv_abi.rs:1047:15
+     |
+1047 | pub(crate) fn lookup_protocol_entry_by_name(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `lookup_protocol_entry_by_number` is never used
+    --> crates/frankenlibc-abi/src/resolv_abi.rs:1053:15
+     |
+1053 | pub(crate) fn lookup_protocol_entry_by_number(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `HostsAddress` is never used
+    --> crates/frankenlibc-abi/src/resolv_abi.rs:1221:6
+     |
+1221 | enum HostsAddress {
+     |      ^^^^^^^^^^^^
+
+warning: function `resolve_hosts_subset` is never used
+    --> crates/frankenlibc-abi/src/resolv_abi.rs:1227:4
+     |
+1227 | fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
+     |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: field `values` is never read
+   --> crates/frankenlibc-abi/src/stdio_abi.rs:180:16
+    |
+177 | pub(crate) struct StrictDecimalIntsScan {
+    |                   --------------------- field in this struct
+...
+180 |     pub(crate) values: [c_int; STRICT_INT_LIST_MAX],
+    |                ^^^^^^
+    |
+    = note: `StrictDecimalIntsScan` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: function `try_fputc_fast` is never used
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:1727:4
+     |
+1727 | fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
+     |    ^^^^^^^^^^^^^^
+
+warning: function `try_fgetc_fast` is never used
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:1781:4
+     |
+1781 | fn try_fgetc_fast(id: usize) -> Option<c_int> {
+     |    ^^^^^^^^^^^^^^
+
+warning: function `try_fread_fast` is never used
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:1800:4
+     |
+1800 | fn try_fread_fast(id: usize, dst: &mut [u8]) -> bool {
+     |    ^^^^^^^^^^^^^^
+
+warning: function `f64_from_x87_bytes` is never used
+    --> crates/frankenlibc-abi/src/stdio_abi.rs:9028:15
+     |
+9028 | pub(crate) fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
+     |               ^^^^^^^^^^^^^^^^^^
+
+warning: function `getopt_block_takes_next_arg` is never used
+    --> crates/frankenlibc-abi/src/unistd_abi.rs:3220:4
+     |
+3220 | fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: static variable `RNr13` should have an upper case name
+  --> crates/frankenlibc-abi/src/erf_tables.rs:63:12
+   |
+63 | pub static RNr13: [f128; 9] = [
+   |            ^^^^^
+   |
+   = note: `#[warn(non_upper_case_globals)]` (part of `#[warn(nonstandard_style)]`) on by default
+help: convert the identifier to upper case
+   |
+63 - pub static RNr13: [f128; 9] = [
+63 + pub static RNR13: [f128; 9] = [
+   |
+
+warning: static variable `RDr13` should have an upper case name
+  --> crates/frankenlibc-abi/src/erf_tables.rs:76:12
+   |
+76 | pub static RDr13: [f128; 8] = [
+   |            ^^^^^
+   |
+help: convert the identifier to upper case
+   |
+76 - pub static RDr13: [f128; 8] = [
+76 + pub static RDR13: [f128; 8] = [
+   |
+
+warning: static variable `RNr14` should have an upper case name
+  --> crates/frankenlibc-abi/src/erf_tables.rs:88:12
+   |
+88 | pub static RNr14: [f128; 9] = [
+   |            ^^^^^
+   |
+help: convert the identifier to upper case
+   |
+88 - pub static RNr14: [f128; 9] = [
+88 + pub static RNR14: [f128; 9] = [
+   |
+
+warning: static variable `RDr14` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:101:12
+    |
+101 | pub static RDr14: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+101 - pub static RDr14: [f128; 8] = [
+101 + pub static RDR14: [f128; 8] = [
+    |
+
+warning: static variable `RNr15` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:113:12
+    |
+113 | pub static RNr15: [f128; 9] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+113 - pub static RNr15: [f128; 9] = [
+113 + pub static RNR15: [f128; 9] = [
+    |
+
+warning: static variable `RDr15` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:126:12
+    |
+126 | pub static RDr15: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+126 - pub static RDr15: [f128; 8] = [
+126 + pub static RDR15: [f128; 8] = [
+    |
+
+warning: static variable `RNr16` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:138:12
+    |
+138 | pub static RNr16: [f128; 9] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+138 - pub static RNr16: [f128; 9] = [
+138 + pub static RNR16: [f128; 9] = [
+    |
+
+warning: static variable `RDr16` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:151:12
+    |
+151 | pub static RDr16: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+151 - pub static RDr16: [f128; 8] = [
+151 + pub static RDR16: [f128; 8] = [
+    |
+
+warning: static variable `RNr17` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:163:12
+    |
+163 | pub static RNr17: [f128; 9] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+163 - pub static RNr17: [f128; 9] = [
+163 + pub static RNR17: [f128; 9] = [
+    |
+
+warning: static variable `RDr17` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:176:12
+    |
+176 | pub static RDr17: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+176 - pub static RDr17: [f128; 8] = [
+176 + pub static RDR17: [f128; 8] = [
+    |
+
+warning: static variable `RNr18` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:188:12
+    |
+188 | pub static RNr18: [f128; 9] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+188 - pub static RNr18: [f128; 9] = [
+188 + pub static RNR18: [f128; 9] = [
+    |
+
+warning: static variable `RDr18` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:201:12
+    |
+201 | pub static RDr18: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+201 - pub static RDr18: [f128; 8] = [
+201 + pub static RDR18: [f128; 8] = [
+    |
+
+warning: static variable `RNr19` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:213:12
+    |
+213 | pub static RNr19: [f128; 9] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+213 - pub static RNr19: [f128; 9] = [
+213 + pub static RNR19: [f128; 9] = [
+    |
+
+warning: static variable `RDr19` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:226:12
+    |
+226 | pub static RDr19: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+226 - pub static RDr19: [f128; 8] = [
+226 + pub static RDR19: [f128; 8] = [
+    |
+
+warning: static variable `RNr20` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:238:12
+    |
+238 | pub static RNr20: [f128; 9] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+238 - pub static RNr20: [f128; 9] = [
+238 + pub static RNR20: [f128; 9] = [
+    |
+
+warning: static variable `RDr20` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:251:12
+    |
+251 | pub static RDr20: [f128; 8] = [
+    |            ^^^^^
+    |
+help: convert the identifier to upper case
+    |
+251 - pub static RDr20: [f128; 8] = [
+251 + pub static RDR20: [f128; 8] = [
+    |
+
+warning: static variable `RNr1` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:263:12
+    |
+263 | pub static RNr1: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+263 - pub static RNr1: [f128; 10] = [
+263 + pub static RNR1: [f128; 10] = [
+    |
+
+warning: static variable `RDr1` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:277:12
+    |
+277 | pub static RDr1: [f128; 9] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+277 - pub static RDr1: [f128; 9] = [
+277 + pub static RDR1: [f128; 9] = [
+    |
+
+warning: static variable `RNr2` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:290:12
+    |
+290 | pub static RNr2: [f128; 12] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+290 - pub static RNr2: [f128; 12] = [
+290 + pub static RNR2: [f128; 12] = [
+    |
+
+warning: static variable `RDr2` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:306:12
+    |
+306 | pub static RDr2: [f128; 11] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+306 - pub static RDr2: [f128; 11] = [
+306 + pub static RDR2: [f128; 11] = [
+    |
+
+warning: static variable `RNr3` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:321:12
+    |
+321 | pub static RNr3: [f128; 12] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+321 - pub static RNr3: [f128; 12] = [
+321 + pub static RNR3: [f128; 12] = [
+    |
+
+warning: static variable `RDr3` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:337:12
+    |
+337 | pub static RDr3: [f128; 11] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+337 - pub static RDr3: [f128; 11] = [
+337 + pub static RDR3: [f128; 11] = [
+    |
+
+warning: static variable `RNr4` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:352:12
+    |
+352 | pub static RNr4: [f128; 11] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+352 - pub static RNr4: [f128; 11] = [
+352 + pub static RNR4: [f128; 11] = [
+    |
+
+warning: static variable `RDr4` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:367:12
+    |
+367 | pub static RDr4: [f128; 11] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+367 - pub static RDr4: [f128; 11] = [
+367 + pub static RDR4: [f128; 11] = [
+    |
+
+warning: static variable `RNr5` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:382:12
+    |
+382 | pub static RNr5: [f128; 11] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+382 - pub static RNr5: [f128; 11] = [
+382 + pub static RNR5: [f128; 11] = [
+    |
+
+warning: static variable `RDr5` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:397:12
+    |
+397 | pub static RDr5: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+397 - pub static RDr5: [f128; 10] = [
+397 + pub static RDR5: [f128; 10] = [
+    |
+
+warning: static variable `RNr6` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:411:12
+    |
+411 | pub static RNr6: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+411 - pub static RNr6: [f128; 10] = [
+411 + pub static RNR6: [f128; 10] = [
+    |
+
+warning: static variable `RDr6` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:425:12
+    |
+425 | pub static RDr6: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+425 - pub static RDr6: [f128; 10] = [
+425 + pub static RDR6: [f128; 10] = [
+    |
+
+warning: static variable `RNr7` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:439:12
+    |
+439 | pub static RNr7: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+439 - pub static RNr7: [f128; 10] = [
+439 + pub static RNR7: [f128; 10] = [
+    |
+
+warning: static variable `RDr7` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:453:12
+    |
+453 | pub static RDr7: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+453 - pub static RDr7: [f128; 10] = [
+453 + pub static RDR7: [f128; 10] = [
+    |
+
+warning: static variable `RNr8` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:467:12
+    |
+467 | pub static RNr8: [f128; 10] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+467 - pub static RNr8: [f128; 10] = [
+467 + pub static RNR8: [f128; 10] = [
+    |
+
+warning: static variable `RDr8` should have an upper case name
+   --> crates/frankenlibc-abi/src/erf_tables.rs:481:12
+    |
+481 | pub static RDr8: [f128; 9] = [
+    |            ^^^^
+    |
+help: convert the identifier to upper case
+    |
+481 - pub static RDr8: [f128; 9] = [
+481 + pub static RDR8: [f128; 9] = [
+    |
+
+For more information about this error, try `rustc --explain E0133`.
+warning: `frankenlibc-abi` (lib) generated 86 warnings (run `cargo fix --lib -p frankenlibc-abi` to apply 44 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 49.99s
+     Running tests/conformance_diff_setlocale_environment.rs (.rch-target/debug/deps/conformance_diff_setlocale_environment-8d831c1fe4d6b964)
+
+running 4 tests
+test setlocale_environment_helper ... ok
+test setlocale_empty_name_rejects_an_uninstalled_environment_locale ... ok
+test the_environment_actually_reaches_the_child ... ok
+test setlocale_empty_name_follows_the_environment ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
