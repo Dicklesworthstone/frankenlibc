@@ -1,16 +1,30 @@
-//! Live-glibc differential gate for the `qsort` 2-byte (i16/u16) radix lane.
+//! Live-glibc **output-parity** gate for 2-byte (i16/u16) `qsort`.
 //!
-//! 2-byte integer keys with num > 256 take a 2-pass LSD radix sort that commits
-//! only after verifying the result against the caller's comparator. This gate
-//! proves behavior parity is absolute: fl `qsort` output must be byte-identical
-//! to glibc `qsort` for
-//!   * the natural signed i16 comparator (radix happy path),
-//!   * an unsigned u16 comparator (radix verify fails -> generic fallback),
-//!   * a descending comparator (radix verify fails -> generic fallback),
+//! ## The lane this file is named after does not exist (bd-nas5rt)
 //!
-//! across element counts spanning the 256 threshold into large N, over random,
-//! duplicate-heavy, all-equal, sorted, reverse, small-magnitude, and mixed-sign
-//! distributions (where signed vs unsigned 16-bit order diverge).
+//! This header used to say that 2-byte keys with num > 256 take a 2-pass LSD
+//! radix sort. **They do not, at HEAD.** `frankenlibc_core::stdlib::sort::qsort`
+//! has exactly two fast lanes, width 4 and width 8, and then `pdqsort_recurse`
+//! — width 2 has no lane at all. Measured rather than read: at n = 4096 fl
+//! spends 53,078 comparator calls at this width against live glibc's 42,835,
+//! where a lane would spend about `n`.
+//!
+//! The gate stayed green throughout, because it compares SORTED OUTPUT and
+//! pdqsort sorts correctly too. The parity claim is real and kept; the LANE
+//! claim was not, and is removed rather than left to mislead.
+//! `conformance_diff_qsort_lane_inventory` pins the real inventory by comparator
+//! call count and goes red if a lane is added here.
+//!
+//! What this gate does prove: fl `qsort` output is byte-identical to glibc
+//! `qsort` for
+//!   * the natural signed i16 comparator,
+//!   * an unsigned u16 comparator,
+//!   * a descending comparator,
+//!
+//! across element counts spanning what used to be the 256 threshold into large
+//! N, over random, duplicate-heavy, all-equal, sorted, reverse, small-magnitude,
+//! and mixed-sign distributions (where signed and unsigned 16-bit order
+//! diverge).
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 

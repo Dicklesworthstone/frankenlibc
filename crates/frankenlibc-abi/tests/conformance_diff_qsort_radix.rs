@@ -1,17 +1,33 @@
-//! Live-glibc differential gate for the `qsort` large-N integer **radix lane**.
+//! Live-glibc **output-parity** gate for large-N integer `qsort`.
 //!
-//! Above the comparison-sort fast-lane window (num > 2048) 4-/8-byte integer
-//! keys take an LSD radix sort that commits only after verifying the result
-//! against the caller's comparator. This gate proves behavior parity is
-//! absolute: fl `qsort` output must be byte-identical to glibc `qsort` for
-//!   * the natural signed comparator (radix happy path),
-//!   * an unsigned comparator (radix verify fails -> generic fallback),
-//!   * a descending comparator (radix verify fails -> generic fallback),
+//! ## The lane this file is named after does not exist (bd-nas5rt)
 //!
-//! over element counts spanning the radix threshold and a range of input
-//! distributions — random, duplicate-heavy, all-equal, sorted, reverse,
-//! small-magnitude (exercises the constant-digit pass skip), and mixed sign
-//! (where signed vs unsigned order diverge).
+//! This header used to read "differential gate for the `qsort` large-N integer
+//! radix lane", and to state that above the fast-lane window (num > 2048)
+//! 4-/8-byte keys take an LSD radix sort. **Neither clause is true at HEAD.**
+//! `frankenlibc_core::stdlib::sort::qsort` dispatches to exactly two fast lanes,
+//! width 4 and width 8, and then `pdqsort_recurse`; there is no radix lane at
+//! any width, and the comparison lanes' ceiling is `1 << 22`, not 2048.
+//!
+//! The gate stayed green throughout, because it compares SORTED OUTPUT and
+//! pdqsort sorts correctly too — the hollow shape bd-nas5rt records. Its parity
+//! claim is real and worth keeping; its LANE claim was not, and is removed here
+//! rather than left to mislead the next reader into thinking large-N sorts are
+//! covered by a radix path. `conformance_diff_qsort_lane_inventory` pins the
+//! real inventory by comparator call count and will go red if a lane is added.
+//!
+//! What this gate does prove: fl `qsort` output is byte-identical to glibc
+//! `qsort` for
+//!   * the natural signed comparator,
+//!   * an unsigned comparator,
+//!   * a descending comparator,
+//!
+//! over element counts spanning what used to be the radix threshold and a range
+//! of input distributions — random, duplicate-heavy, all-equal, sorted, reverse,
+//! small-magnitude, and mixed sign (where signed and unsigned order diverge).
+//! The per-case annotations that said "radix happy path" / "radix verify fails
+//! -> generic fallback" are gone for the same reason as the header: every one of
+//! these cases takes the same path today.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 

@@ -8,9 +8,20 @@
 //!   * an unsigned-u64 comparator (lane verify fails -> generic fallback),
 //!   * a descending comparator (lane verify fails -> generic fallback),
 //!
-//! across element counts spanning below, inside, and above the lane's
-//! `[64, 2048]` activation window, including duplicate-heavy inputs where tie
-//! order is unspecified but the emitted bytes are nonetheless fully determined.
+//! across element counts spanning below and inside the lane's activation
+//! window, including duplicate-heavy inputs where tie order is unspecified but
+//! the emitted bytes are nonetheless fully determined.
+//!
+//! The window was `[64, 2048]` when this file was written and the sizes below
+//! were chosen to straddle 2048. `I64_FAST_LANE_MAX` is now `1 << 22`
+//! (cf65cca1d), so **every size here except 1..=63 is now INSIDE the lane** and
+//! nothing in this file reaches the upper edge any more. That does not weaken
+//! the parity claim, which is what this gate is for, but it does mean the
+//! ceiling is untested here. Note also that being inside the window is not the
+//! same as taking the lane, and this gate cannot tell the difference — it
+//! compares sorted output, which pdqsort also produces (bd-nas5rt).
+//! `conformance_diff_qsort_lane_inventory` is the file that settles which path
+//! ran, by comparator call count.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 
@@ -78,7 +89,7 @@ fn bytes_of(v: &[i64]) -> Vec<u8> {
 type GlCmp = extern "C" fn(*const c_void, *const c_void) -> i32;
 
 fn check(label: &str, data: &[i64], fl_cmp: fn(&[u8], &[u8]) -> i32, gl_cmp: GlCmp) {
-    // fl path (exercises the fast lane when width==8 and 64<=n<=2048).
+    // fl path (inside the width-8 lane's window when n >= I64_FAST_LANE_MIN).
     let mut fl_buf = bytes_of(data);
     fl_qsort(&mut fl_buf, 8, fl_cmp);
 
@@ -104,8 +115,11 @@ fn check(label: &str, data: &[i64], fl_cmp: fn(&[u8], &[u8]) -> i32, gl_cmp: GlC
 
 #[test]
 fn qsort_i64_fast_lane_matches_glibc() {
-    // Sizes below (32), at the lower edge (64), inside (128/512/1024/2048),
-    // and above (4096) the fast-lane window.
+    // Sizes below the floor (1..=63), at the lower edge (64), and inside. The
+    // 2047/2048/2049 cluster and 4096 were chosen to straddle a ceiling of
+    // 2048; since cf65cca1d raised `I64_FAST_LANE_MAX` to `1 << 22` they are
+    // all simply inside, and are kept because they still exercise distinct
+    // sizes rather than because they bracket anything.
     let sizes = [
         1usize, 2, 7, 31, 32, 63, 64, 65, 128, 511, 512, 1024, 2047, 2048, 2049, 4096,
     ];
