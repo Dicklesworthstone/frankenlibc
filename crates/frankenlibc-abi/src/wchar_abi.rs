@@ -5064,8 +5064,11 @@ macro_rules! extract_wprintf_args_registers {
                     // `%Lf` sets `has_long_double`, and the dispatcher above
                     // sends those to the va_list walker, which is the only
                     // reader that can see an X87 stack slot. `next_arg` has no
-                    // X87 case to offer, so this arm keeps the pre-existing
-                    // behaviour rather than inventing a third wrong answer;
+                    // X87 case to offer, so this arm stores the NULL that an
+                    // X87 slot means "no argument" with, rather than inventing an
+                    // address the renderer would dereference: the slot for an X87
+                    // spec carries the argument ADDRESS, not its value, and only
+                    // `vprintf_read_x87` can produce one;
                     // `positional_x87_implies_has_long_double` in core pins the
                     // routing invariant so it cannot drift into being live.
                     ValueArgKind::X87 => {
@@ -5074,8 +5077,12 @@ macro_rules! extract_wprintf_args_registers {
                             "X87 reached the register extractor: has_long_double \
                              disagreed with the argument plan"
                         );
+                        // Still CONSUMES the register slot the pre-address
+                        // version did, so a broken invariant moves the cursor
+                        // exactly as before and only the stored value changes.
+                        let _ = unsafe { $args.next_arg::<f64>() };
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            $buf[_idx] = 0;
                             _idx += 1;
                         }
                     }

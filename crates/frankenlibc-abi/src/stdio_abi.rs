@@ -5447,8 +5447,11 @@ macro_rules! extract_va_args_registers {
                     // `%Lf` sets `has_long_double`, and the dispatcher above
                     // sends those to the va_list walker, which is the only
                     // reader that can see an X87 stack slot. `next_arg` has no
-                    // X87 case to offer, so this arm keeps the pre-existing
-                    // behaviour rather than inventing a third wrong answer;
+                    // X87 case to offer, so this arm stores the NULL that an
+                    // X87 slot means "no argument" with, rather than inventing an
+                    // address the renderer would dereference: the slot for an X87
+                    // spec carries the argument ADDRESS, not its value, and only
+                    // `vprintf_read_x87` can produce one;
                     // `positional_x87_implies_has_long_double` in core pins the
                     // routing invariant so it cannot drift into being live.
                     ValueArgKind::X87 => {
@@ -5457,8 +5460,12 @@ macro_rules! extract_va_args_registers {
                             "X87 reached the register extractor: has_long_double \
                              disagreed with the argument plan"
                         );
+                        // Still CONSUMES the register slot the pre-address
+                        // version did, so a broken invariant moves the cursor
+                        // exactly as before and only the stored value changes.
+                        let _ = unsafe { $args.next_arg::<f64>() };
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            $buf[_idx] = 0;
                             _idx += 1;
                         }
                     }
@@ -5492,8 +5499,31 @@ macro_rules! extract_va_args_registers {
                     // reproduce the chain's behaviour when the buffer is already full,
                     // where the original fell through to a test that could not match.
                     match spec.value_arg_kind() {
-                        Some(ValueArgKind::Fp | ValueArgKind::X87) if _idx < $extract_count => {
+                        Some(ValueArgKind::Fp) if _idx < $extract_count => {
                             $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                        // Split out of the `Fp` arm above rather than merged
+                        // with it: the two classes now store DIFFERENT THINGS
+                        // — `Fp` a value, `X87` the argument's address — so
+                        // sharing an arm would hand the renderer eight bytes of
+                        // SSE save area to dereference. Splitting costs nothing:
+                        // it is one more arm of the same single match, not a
+                        // second classification (the merge that bought 57 Ir is
+                        // `value_arg_kind()` being called once, and it still is).
+                        // Unreachable for the same reason as the positional arm
+                        // above.
+                        Some(ValueArgKind::X87) if _idx < $extract_count => {
+                            debug_assert!(
+                                false,
+                                "X87 reached the register extractor: has_long_double \
+                                 disagreed with the spec"
+                            );
+                            // Still CONSUMES the register slot the pre-address
+                            // version did, so a broken invariant moves the cursor
+                            // exactly as before and only the stored value changes.
+                            let _ = unsafe { $args.next_arg::<f64>() };
+                            $buf[_idx] = 0;
                             _idx += 1;
                         }
                         Some(ValueArgKind::Gp) if _idx < $extract_count => {
@@ -6071,7 +6101,54 @@ pub(crate) unsafe fn render_segments(
                         format_str(&utf8, &width_spec, &mut buf);
                     }
                 } else if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                    let _ = resolved_spec.render_value_arg(raw, &mut buf);
+                    // The CHEAP half of the predicate first, and it is what
+                    // every real format answers on. `value_arg_is_x87()`
+                    // resolves the conversion's route — the work
+                    // `render_value_arg` below is about to do again — while
+                    // `length == BigL` is a plain enum comparison, and the class
+                    // is X87 only when the length is `L` (`value_arg_kind`), so
+                    // the conjunction is exactly `value_arg_is_x87()` with the
+                    // route computed only for the `%L…` specs that can reach it.
+                    // The same lesson as the `has_long_double` field: this
+                    // family's per-call walks are measured in whole percents of
+                    // self time (bd-ntb9fq), so a predicate on this path pays
+                    // for itself in enum compares or not at all.
+                    if resolved_spec.length == LengthMod::BigL && resolved_spec.value_arg_is_x87() {
+                        // `%Lf`. The slot holds the ADDRESS of the caller's
+                        // sixteen-byte x87 argument, not a value — a `u64`
+                        // cannot carry 80 bits, and rounding to `f64` here is
+                        // what used to print pi's seventeenth digit onward
+                        // wrong and turn a finite `1e400` into `inf`
+                        // (bd-longdouble-varargs-43usjw). Only
+                        // `vprintf_read_x87` writes such a slot, and
+                        // `has_long_double()` routes every format carrying one
+                        // to it; the register extractors' unreachable X87 arms
+                        // store a null, which lands on the fallback below.
+                        let mut ld = [0u8; 10];
+                        // `vprintf_read_x87` only ever returns a non-null,
+                        // 16-byte-aligned address, because that is what the ABI
+                        // guarantees about the slot. Testing it costs one AND on
+                        // a path taken only by `%Lf`, and it is what keeps a
+                        // drift in the routing invariant — three of the four
+                        // register extractors key their float arm on the
+                        // CONVERSION alone and cannot see `L` — from
+                        // dereferencing eight bytes of SSE save area.
+                        if raw != 0 && raw % 16 == 0 {
+                            // SAFETY: the address came from the caller's own
+                            // overflow area, whose frame outlives this call, and
+                            // ten of the slot's sixteen bytes are the value.
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    raw as *const u8,
+                                    ld.as_mut_ptr(),
+                                    10,
+                                )
+                            };
+                        }
+                        let _ = resolved_spec.render_long_double_arg(&ld, &mut buf);
+                    } else {
+                        let _ = resolved_spec.render_value_arg(raw, &mut buf);
+                    }
                 }
             }
         }
@@ -8899,7 +8976,7 @@ unsafe fn vprintf_read_fp(
     }
 }
 
-/// Read a `long double` argument and return it as `f64` bits.
+/// Consume a `long double` argument and return the ADDRESS of its stack slot.
 ///
 /// ## Why this exists
 ///
@@ -8915,21 +8992,29 @@ unsafe fn vprintf_read_fp(
 /// following conversion reads the wrong argument too**. One `%Lf` corrupts the
 /// rest of the format string.
 ///
-/// This does not make `%Lf` exact — the extracted-argument buffer is one `u64`
-/// per argument and cannot hold 80 bits, so the value is rounded to `f64` here.
-/// It does make the argument stream correct, which is the difference between a
-/// wrong digit and a wrong program.
+/// ## Why an address rather than a value
+///
+/// The extracted-argument buffer is one `u64` per argument and cannot hold 80
+/// bits, so returning the value meant rounding to `f64` — `%.25Lf` of pi came
+/// out as `3.1415926535897931159979635` against glibc's
+/// `3.1415926535897932385128090`, and `%Lf` of `1e400`, an ordinary finite long
+/// double, came out `inf`. The slot instead carries the address of the caller's
+/// own sixteen bytes, which live for the whole call exactly as a `%s` argument's
+/// string does, and [`render_segments`] widens from there. That keeps the buffer
+/// (and the per-call memset it costs) the size it was.
+///
+/// THE SLOT'S MEANING IS PER-CLASS, so producer and consumer must agree: a slot
+/// whose spec is [`ValueArgKind::X87`] holds an address, every other slot holds
+/// a value. The four register-path extractors cannot see an X87 argument at all,
+/// which is why `has_long_double()` routes any format carrying one here; their
+/// X87 arms store a null instead of inventing an address, and `render_segments`
+/// treats null as "no argument".
 unsafe fn vprintf_read_x87(overflow_ptr: *mut *mut u8) -> u64 {
     // The slot is 16-byte aligned, so round the cursor up before reading.
     let raw = unsafe { *overflow_ptr } as usize;
     let aligned = (raw + 15) & !15usize;
-    let p = aligned as *const u8;
-    let mut bytes = [0u8; 10];
-    // SAFETY: the caller placed a 16-byte long double slot here; ten bytes of
-    // it are the value.
-    unsafe { core::ptr::copy_nonoverlapping(p, bytes.as_mut_ptr(), 10) };
     unsafe { *overflow_ptr = (aligned + 16) as *mut u8 };
-    f64_from_x87_bytes(&bytes).to_bits()
+    aligned as u64
 }
 
 /// Round an x87 80-bit extended value to `f64`, correctly and in one step.

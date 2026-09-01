@@ -4189,8 +4189,11 @@ macro_rules! extract_syslog_args_registers {
                     // `%Lf` sets `has_long_double`, and the dispatcher above
                     // routes those to the va_list walker, the only reader that
                     // can see an X87 stack slot. `next_arg` has no X87 case to
-                    // offer, so this arm keeps the pre-dispatcher behaviour
-                    // rather than inventing a third wrong answer;
+                    // offer, so this arm stores the NULL that an X87 slot means
+                    // "no argument" with, rather than inventing an address the
+                    // renderer would dereference: the slot for an X87 spec
+                    // carries the argument ADDRESS, not its value, and only
+                    // `vprintf_read_x87` can produce one;
                     // `positional_x87_implies_has_long_double` in core pins the
                     // routing invariant so it cannot drift into being live.
                     ValueArgKind::X87 => {
@@ -4199,8 +4202,12 @@ macro_rules! extract_syslog_args_registers {
                             "X87 reached the register extractor: has_long_double \
                              disagreed with the argument plan"
                         );
+                        // Still CONSUMES the register slot the pre-address
+                        // version did, so a broken invariant moves the cursor
+                        // exactly as before and only the stored value changes.
+                        let _ = unsafe { $args.next_arg::<f64>() };
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            $buf[_idx] = 0;
                             _idx += 1;
                         }
                     }
@@ -29836,9 +29843,15 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
         let max_args = crate::stdio_abi::MAX_VA_ARGS;
         let extract_count = frankenlibc_core::stdio::count_printf_args(&segments).min(max_args);
         let mut arg_buf = [0u64; crate::stdio_abi::MAX_VA_ARGS];
-        for slot in arg_buf.iter_mut().take(extract_count) {
-            *slot = unsafe { args.next_arg::<u64>() };
-        }
+        // THE FIFTH COPY of variadic extraction in this library, and the only
+        // one that read every argument as a `u64`: `setproctitle("%f", 1.5)`
+        // took a GENERAL-purpose register for a value the caller put in an SSE
+        // one, so the number printed was whatever happened to be in RSI. The
+        // shared macro classifies per spec and routes a format carrying a `%Lf`
+        // to the va_list walker, which is now also load-bearing for safety —
+        // the slot for an X87 spec carries the argument's ADDRESS, and this
+        // loop could only ever have produced a value there.
+        extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
         let body =
             unsafe { crate::stdio_abi::render_printf(render_fmt, arg_buf.as_ptr(), extract_count) };
 

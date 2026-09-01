@@ -592,6 +592,49 @@ impl FormatSpec {
         }
     }
 
+    /// Render a `long double` value argument from its ten significant bytes.
+    ///
+    /// [`Self::render_value_arg`] takes the argument as a `u64`, which cannot
+    /// hold an 80-bit x87 value, so `%Lf` rendered the `f64` ROUNDING of its
+    /// argument: `%.25Lf` of pi produced `3.1415926535897931159979635` where
+    /// glibc produces `3.1415926535897932385128090`, and `%Lf` of `1e400` —
+    /// an ordinary finite `long double` — produced `inf`. Handed the bytes
+    /// instead, the value reaches `float128`'s exact formatter intact.
+    ///
+    /// Returns false without writing anything when the spec is not a `long
+    /// double` float conversion, so a caller that has misclassified an argument
+    /// falls back rather than printing from the wrong bytes.
+    ///
+    /// The `'` grouping flag needs no special case here: the active locale is
+    /// the C locale, whose empty `grouping` makes the flag a no-op, which is
+    /// what the `f64` path already relies on.
+    pub fn render_long_double_arg(&self, bytes: &[u8; 10], buf: &mut Vec<u8>) -> bool {
+        if !self.value_arg_is_x87() {
+            return false;
+        }
+        let spec = crate::float128::FmtSpec {
+            conv: self.conversion,
+            // Width and precision have already been resolved from `*` arguments
+            // by the time a renderer sees the spec; anything still unresolved is
+            // treated as absent, which is what the default arms below mean.
+            precision: match self.precision {
+                Precision::Fixed(p) => Some(p),
+                _ => None,
+            },
+            width: match self.width {
+                Width::Fixed(w) => w,
+                _ => 0,
+            },
+            left: self.flags.left_justify,
+            plus: self.flags.force_sign,
+            space: self.flags.space_sign,
+            alt: self.flags.alt_form,
+            zero: self.flags.zero_pad,
+        };
+        buf.extend_from_slice(&crate::float128::format_x87(bytes, &spec));
+        true
+    }
+
     fn route(&self) -> Option<PrintfRoute> {
         if self.conversion == b'm' {
             None
@@ -4593,5 +4636,79 @@ mod tests {
         // "1." + 65535 '0's = 65537 bytes.
         assert_eq!(buf.len(), 65_537);
         assert_eq!(&buf[..2], b"1.");
+    }
+
+    /// pi as `long double`, the x87 bytes a C compiler stores for the
+    /// `3.14159265358979323846264338327950288L` literal.
+    const X87_PI: [u8; 10] = [0x35, 0xc2, 0x68, 0x21, 0xa2, 0xda, 0x0f, 0xc9, 0x00, 0x40];
+
+    fn spec_of(fmt: &[u8]) -> FormatSpec {
+        match parse_format_string(fmt).iter().next() {
+            Some(FormatSegment::Spec(spec)) => *spec,
+            other => panic!("{fmt:?} did not parse to a single spec: {other:?}"),
+        }
+    }
+
+    /// The FormatSpec -> `float128::FmtSpec` mapping, against strings READ OFF
+    /// THE RUNNING GLIBC rather than against another call to the code under
+    /// test. A mapping that swapped `plus` for `space`, or dropped the width,
+    /// would satisfy any self-comparison and fail every line here.
+    #[test]
+    fn render_long_double_arg_carries_the_flags_width_and_precision() {
+        for (fmt, expected) in [
+            (&b"%.25Lf"[..], &b"3.1415926535897932385128090"[..]),
+            (b"%Lf", b"3.141593"),
+            (b"%+.20Lg", b"+3.1415926535897932385"),
+            (b"%#.0Lf", b"3."),
+            (b"%-20.5Le", b"3.14159e+00         "),
+            (b"%La", b"0xc.90fdaa22168c235p-2"),
+            (b"%.3La", b"0xc.910p-2"),
+            (b"%LA", b"0XC.90FDAA22168C235P-2"),
+        ] {
+            let mut buf = Vec::new();
+            assert!(
+                spec_of(fmt).render_long_double_arg(&X87_PI, &mut buf),
+                "{fmt:?} was not classified as a long double conversion"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&buf),
+                String::from_utf8_lossy(expected),
+                "{}",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    /// The refusal path. `render_long_double_arg` is reached from the ABI on the
+    /// strength of a classification, and the ten bytes it is handed are read
+    /// through a pointer that only an X87 argument slot supplies — so a spec
+    /// that is not a long double conversion must be declined, not rendered from
+    /// whatever those bytes happen to be. `%Ld` is the case that matters: `L` on
+    /// a non-float conversion is Gp, not X87.
+    #[test]
+    fn render_long_double_arg_declines_everything_that_is_not_x87() {
+        for fmt in [
+            &b"%f"[..],
+            b"%.2f",
+            b"%lf",
+            b"%Ld",
+            b"%Lu",
+            b"%Ls",
+            b"%d",
+            b"%s",
+        ] {
+            let mut buf = Vec::new();
+            assert!(
+                !spec_of(fmt).render_long_double_arg(&X87_PI, &mut buf),
+                "{} was accepted as a long double conversion",
+                String::from_utf8_lossy(fmt)
+            );
+            assert!(
+                buf.is_empty(),
+                "{} was declined but still wrote {:?}",
+                String::from_utf8_lossy(fmt),
+                String::from_utf8_lossy(&buf)
+            );
+        }
     }
 }

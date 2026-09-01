@@ -143,9 +143,9 @@ fn render(out: &[c_char]) -> String {
 /// glibc and fl, same format, same bytes, in one invocation.
 fn both(fmt: &str, value: &[u8; 16]) -> (String, String) {
     let fmt_c = CString::new(fmt).expect("no interior NUL");
-    let mut host_buf = [0 as c_char; 512];
-    let mut fl_buf = [0 as c_char; 512];
-    // SAFETY: 512 writable bytes each; sixteen readable value bytes.
+    let mut host_buf = [0 as c_char; 8192];
+    let mut fl_buf = [0 as c_char; 8192];
+    // SAFETY: 8192 writable bytes each; sixteen readable value bytes.
     unsafe {
         call_snprintf_ld(
             host_buf.as_mut_ptr(),
@@ -169,8 +169,8 @@ fn both(fmt: &str, value: &[u8; 16]) -> (String, String) {
 
 fn both_with_trailing(fmt: &str, value: &[u8; 16], trailing: c_int) -> (String, String) {
     let fmt_c = CString::new(fmt).expect("no interior NUL");
-    let mut host_buf = [0 as c_char; 512];
-    let mut fl_buf = [0 as c_char; 512];
+    let mut host_buf = [0 as c_char; 8192];
+    let mut fl_buf = [0 as c_char; 8192];
     // SAFETY: as above.
     unsafe {
         call_snprintf_ld_then_int(
@@ -197,8 +197,8 @@ fn both_with_trailing(fmt: &str, value: &[u8; 16], trailing: c_int) -> (String, 
 
 fn both_gp_with_trailing(fmt: &str, value: usize, trailing: c_int) -> (String, String) {
     let fmt_c = CString::new(fmt).expect("no interior NUL");
-    let mut host_buf = [0 as c_char; 512];
-    let mut fl_buf = [0 as c_char; 512];
+    let mut host_buf = [0 as c_char; 8192];
+    let mut fl_buf = [0 as c_char; 8192];
     // SAFETY: both output buffers are writable and the trampoline preserves
     // the SysV general-purpose vararg register layout.
     unsafe {
@@ -412,9 +412,9 @@ fn render_wide(buf: &[u32]) -> String {
 /// Both arms of a wide format carrying a long double and a trailing int.
 fn both_wide(fmt: &str, value: &[u8; 16], trailing: c_int) -> (String, String) {
     let fmt_w = wide(fmt);
-    let mut host_buf = [0u32; 256];
-    let mut fl_buf = [0u32; 256];
-    // SAFETY: 256 wide chars each; sixteen readable value bytes. swprintf has
+    let mut host_buf = [0u32; 8192];
+    let mut fl_buf = [0u32; 8192];
+    // SAFETY: 8192 wide chars each; sixteen readable value bytes. swprintf has
     // the same register layout as snprintf, so the same trampoline applies.
     unsafe {
         call_snprintf_ld_then_int(
@@ -478,5 +478,145 @@ fn wide_positional_long_double_reads_its_own_argument() {
             fl.contains("12.5"),
             "the positional long double was misread for wide {fmt:?}: {fl:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PRECISION. Everything above uses values an `f64` holds exactly — 1, 12.5,
+// 0.5, 3, 100 — which is why those arms passed while `%Lf` still rendered its
+// argument as a `double`. The extracted-argument buffer is one `u64` per
+// argument, so the eighty-bit value was rounded on the way in; the slot now
+// carries the argument's ADDRESS and the renderer widens from the caller's own
+// bytes. bd-longdouble-varargs-43usjw.
+// ---------------------------------------------------------------------------
+
+/// Values that no `f64` can hold, as x87 bytes.
+///
+/// The first three need more than 53 significand bits; the last three are
+/// outside `f64`'s exponent range entirely, where a round trip does not merely
+/// round — `1e400` is an ordinary finite `long double` and an `f64` infinity.
+fn beyond_f64() -> Vec<(&'static str, [u8; 16])> {
+    vec![
+        (
+            "pi",
+            x87(b"314159265358979323846264338327950288", -35, false),
+        ),
+        (
+            "e",
+            x87(b"271828182845904523536028747135266250", -35, false),
+        ),
+        (
+            "-pi",
+            x87(b"314159265358979323846264338327950288", -35, true),
+        ),
+        ("2^64+1", x87(b"18446744073709551617", 0, false)),
+        ("1e400", x87(b"1", 400, false)),
+        ("1e-400", x87(b"1", -400, false)),
+        ("1e4000", x87(b"1", 4000, false)),
+    ]
+}
+
+/// INSTRUMENT ARM. Every comparison below would still pass if the oracle had
+/// quietly become `f64`-shaped, so pin on GLIBC ALONE that it has not: `%.25Lf`
+/// of pi must differ from the `f64` rounding of pi, and `1e400` must not be an
+/// infinity. Without this the precision arms are vacuous.
+#[test]
+fn the_oracle_carries_more_than_f64_precision() {
+    let (host, _fl) = both(
+        "%.25Lf",
+        &x87(b"314159265358979323846264338327950288", -35, false),
+    );
+    assert_eq!(
+        host, "3.1415926535897932385128090",
+        "live glibc's own answer changed — the expectations below are read \
+         from it, so nothing can be concluded until this is understood"
+    );
+    assert_ne!(
+        host,
+        format!("{:.25}", std::f64::consts::PI),
+        "the oracle is rendering pi at f64 precision, so a comparison against \
+         it cannot detect the defect this file exists for"
+    );
+    let (host, _fl) = both("%Le", &x87(b"1", 400, false));
+    assert_eq!(
+        host, "1.000000e+400",
+        "1e400 is a finite long double; an oracle answering inf has narrowed"
+    );
+}
+
+/// `%Lf`/`%Le`/`%Lg` must carry the argument's own precision and range.
+#[test]
+fn long_double_precision_matches_live_glibc() {
+    for (name, value) in beyond_f64() {
+        for fmt in [
+            "%.25Lf",
+            "%.30Le",
+            "%.30Lg",
+            "%.21Lg",
+            "%Lf",
+            "%Le",
+            "%Lg",
+            "%.0Lf",
+            "%LF",
+            "%LE",
+            "%LG",
+            "%+.20Lg",
+            "%#.0Lf",
+            "%30.20Le",
+            "%-30.20Le|",
+        ] {
+            let (host, fl) = both(fmt, &value);
+            assert_eq!(fl, host, "{fmt} of {name}");
+        }
+    }
+}
+
+/// The same values with a conversion AFTER them: precision and the argument
+/// stream are independent, and this file has already been burned once by a
+/// format that ended at the `%Lf`.
+#[test]
+fn precision_does_not_disturb_the_argument_stream() {
+    for (name, value) in beyond_f64() {
+        for fmt in ["%.25Lf|%d", "%.30Le %d", "%1$.28Lg[%2$d]"] {
+            let (host, fl) = both_with_trailing(fmt, &value, 4242);
+            assert_eq!(fl, host, "{fmt} of {name}");
+            assert!(fl.contains("4242"), "trailing int lost: {fmt} of {name}");
+        }
+    }
+}
+
+/// `%La` renders the ENCODING, and glibc renders a long double's from the x87
+/// significand: `0xc.90fdaa22168c235p-2` for pi, where the same value widened
+/// to binary128 and printed in the `0x1.<...>` form would be
+/// `0x1.921fb54442d18468p+1`. Equal numbers, different strings.
+#[test]
+fn long_double_hex_matches_live_glibc() {
+    let mut values = beyond_f64();
+    values.push(("1.0", x87(b"1", 0, false)));
+    values.push(("12.5", x87(b"125", -1, false)));
+    values.push(("0.0", x87(b"0", 0, false)));
+    values.push(("0.1", x87(b"1", -1, false)));
+    for (name, value) in values {
+        for fmt in ["%La", "%LA", "%.0La", "%.1La", "%.3La", "%.20La", "%#.0La"] {
+            let (host, fl) = both(fmt, &value);
+            assert_eq!(fl, host, "{fmt} of {name}");
+        }
+    }
+}
+
+/// The wide side reaches the same renderer, but through `wchar_abi`'s own copy
+/// of the extractor — the copy that stayed broken for a day after the narrow
+/// one was fixed (e9e2f45c1). It gets its own precision arm for that reason.
+#[test]
+fn wide_long_double_precision_matches_live_glibc() {
+    for (name, value) in beyond_f64() {
+        for fmt in ["%.25Lf|%d", "%.30Le %d", "%La[%d]"] {
+            let (host, fl) = both_wide(fmt, &value, 4242);
+            assert_eq!(fl, host, "wide {fmt} of {name}");
+            assert!(
+                fl.contains("4242"),
+                "trailing int lost: wide {fmt} of {name}"
+            );
+        }
     }
 }

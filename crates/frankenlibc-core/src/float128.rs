@@ -1292,22 +1292,23 @@ fn render_g(
     }
 }
 
-/// Hex float (`%a`) body, unsigned, including the `0x`/`0X` prefix.
-fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8> {
-    let exp_field = ((bits >> 112) & 0x7fff) as i32;
-    let mantissa = bits & ((1u128 << 112) - 1);
-    let (mut lead, exp2): (u32, i32) = if exp_field == 0 {
-        if mantissa == 0 { (0, 0) } else { (0, -16382) }
-    } else {
-        (1, exp_field - 16383)
-    };
-    let mut nibs: Vec<u8> = (0..28)
-        .rev()
-        .map(|i| ((mantissa >> (i * 4)) & 0xf) as u8)
-        .collect();
-
-    if let Some(p) = p_opt {
-        if p < nibs.len() {
+/// Round a hex-float significand — a leading digit plus its fraction nibbles —
+/// to `p_opt` fraction digits, in place, and return the leading digit.
+///
+/// Round-half-to-even over the hexadecimal digits, which is what glibc's `%a`
+/// does. MEASURED against the running glibc rather than assumed: at precision 0
+/// `0x8.8` stays `0x8` (kept digit even) while `0x9.8` becomes `0xa` (odd rounds
+/// up), and `0x8.8000000000000001` goes to `0x9` because a nonzero tail past the
+/// `8` breaks the tie. With no precision the fraction keeps every significant
+/// digit and trailing zeros are stripped.
+///
+/// The carry can push the leading digit past `0xf`. binary128 enters with a lead
+/// of 0 or 1 and cannot, but an x87 significand's leading nibble is `0x8..0xf`
+/// for every normal, so [`render_a_x87`] renormalises on the way out.
+fn round_hex_nibbles(nibs: &mut Vec<u8>, lead: u32, p_opt: Option<usize>) -> u32 {
+    let mut lead = lead;
+    match p_opt {
+        Some(p) if p < nibs.len() => {
             let round_nib = nibs[p];
             let rest_nonzero = nibs[p + 1..].iter().any(|&x| x != 0);
             let last_kept = if p == 0 { lead as u8 } else { nibs[p - 1] };
@@ -1331,17 +1332,87 @@ fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8>
                     lead += 1;
                 }
             }
-        } else {
+        }
+        Some(p) => {
             while nibs.len() < p {
                 nibs.push(0);
             }
         }
-    } else {
-        while nibs.last() == Some(&0) {
-            nibs.pop();
+        None => {
+            while nibs.last() == Some(&0) {
+                nibs.pop();
+            }
         }
     }
+    lead
+}
 
+/// Hex float (`%a`) body, unsigned, including the `0x`/`0X` prefix.
+fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8> {
+    let exp_field = ((bits >> 112) & 0x7fff) as i32;
+    let mantissa = bits & ((1u128 << 112) - 1);
+    let (lead, exp2): (u32, i32) = if exp_field == 0 {
+        if mantissa == 0 { (0, 0) } else { (0, -16382) }
+    } else {
+        (1, exp_field - 16383)
+    };
+    let mut nibs: Vec<u8> = (0..28)
+        .rev()
+        .map(|i| ((mantissa >> (i * 4)) & 0xf) as u8)
+        .collect();
+    let lead = round_hex_nibbles(&mut nibs, lead, p_opt);
+    emit_hex_float(lead, &nibs, exp2, upper, alt)
+}
+
+/// Hex float (`%La`) body for an x87 80-bit extended value, unsigned.
+///
+/// ## Why this is not `render_a` on the widened value
+///
+/// `%a` renders an ENCODING, not just a value, and glibc renders a `long
+/// double`'s from the x87 significand as it stands: the leading hex digit is the
+/// TOP NIBBLE of the 64-bit significand — `0x8..0xf` for every normal, because
+/// x87 stores its integer bit explicitly — and the exponent is the unbiased one
+/// less three, since three of that digit's four bits sit left of the binary
+/// point. Widening to binary128 and reusing [`render_a`] prints the same VALUE
+/// in the `0x1.<...>` form: `0x1.921fb54442d18468p+1` for pi where glibc prints
+/// `0xc.90fdaa22168c235p-2`. Equal numbers, different strings, and `%a` is
+/// compared as a string.
+fn render_a_x87(
+    significand: u64,
+    exp_field: u16,
+    p_opt: Option<usize>,
+    upper: bool,
+    alt: bool,
+) -> Vec<u8> {
+    // Exponent fields 0 and 1 denote the same scale, so `max(1)` is the whole
+    // subnormal handling — the leading nibble is simply 0 there, which is why
+    // `0x0.000000000000001p-16385` is how glibc prints the smallest subnormal.
+    // Zero is the one value that does not follow: it prints at `p+0`, not at the
+    // subnormal exponent.
+    let (lead, mut exp2) = if significand == 0 && exp_field == 0 {
+        (0u32, 0i32)
+    } else {
+        (
+            (significand >> 60) as u32,
+            i32::from(exp_field.max(1)) - 16383 - 3,
+        )
+    };
+    let mut nibs: Vec<u8> = (0..15)
+        .rev()
+        .map(|i| ((significand >> (i * 4)) & 0xf) as u8)
+        .collect();
+    let mut lead = round_hex_nibbles(&mut nibs, lead, p_opt);
+    if lead > 0xf {
+        // The carry left the leading digit entirely: `0xf.8` at precision 0 is
+        // `0x1p+1`, not `0x10p-3`. One hex digit is four binades.
+        lead = 1;
+        exp2 += 4;
+    }
+    emit_hex_float(lead, &nibs, exp2, upper, alt)
+}
+
+/// Assemble `0x<lead>[.<nibs>]p<exp2>` from an already-rounded significand.
+fn emit_hex_float(lead: u32, nibs: &[u8], exp2: i32, upper: bool, alt: bool) -> Vec<u8> {
     let hexdig: &[u8] = if upper {
         b"0123456789ABCDEF"
     } else {
@@ -1355,7 +1426,7 @@ fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8>
     out.push(hexdig[lead as usize]);
     if !nibs.is_empty() || alt {
         out.push(b'.');
-        for &nb in &nibs {
+        for &nb in nibs {
             out.push(hexdig[nb as usize]);
         }
     }
@@ -1453,6 +1524,52 @@ pub fn format_binary128(bits: u128, spec: &FmtSpec) -> Vec<u8> {
         _ => Vec::new(),
     };
     assemble(sign, &body, spec, conv == b'a', true)
+}
+
+/// Format an x87 80-bit extended (`long double`) value per `spec`, returning the
+/// bytes (no NUL), matching glibc's `%Lf` / `%Le` / `%Lg` / `%La` family.
+///
+/// ## Why the decimal conversions do not need their own formatter
+///
+/// [`x87_to_binary128`] is EXACT, so the digits [`classify_binary128`] hands
+/// back for the widened value are the x87 value's own digits. `%Lf` therefore
+/// reuses the binary128 renderer rather than growing a second decimal path.
+///
+/// `%a` cannot take that route — it renders the encoding, and glibc renders a
+/// long double's from the x87 significand. See [`render_a_x87`].
+pub fn format_x87(bytes: &[u8; 10], spec: &FmtSpec) -> Vec<u8> {
+    if !spec.conv.eq_ignore_ascii_case(&b'a') {
+        return format_binary128(x87_to_binary128(bytes), spec);
+    }
+    let significand = u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    let sign_exp = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let exp_field = sign_exp & 0x7fff;
+    let upper = spec.conv.is_ascii_uppercase();
+    let sign: &[u8] = if sign_exp >> 15 != 0 {
+        b"-"
+    } else if spec.plus {
+        b"+"
+    } else if spec.space {
+        b" "
+    } else {
+        b""
+    };
+    if exp_field == 0x7fff {
+        // Infinity is significand `2^63` exactly; anything else with a full
+        // exponent field is a NaN. Both print as words, and `assemble` is told
+        // they are not numeric so the `0` flag cannot pad them with zeroes.
+        let body: &[u8] = match (significand << 1 == 0, upper) {
+            (true, false) => b"inf",
+            (true, true) => b"INF",
+            (false, false) => b"nan",
+            (false, true) => b"NAN",
+        };
+        return assemble(sign, body, spec, false, false);
+    }
+    let body = render_a_x87(significand, exp_field, spec.precision, upper, spec.alt);
+    assemble(sign, &body, spec, true, true)
 }
 
 #[cfg(test)]
@@ -1965,5 +2082,166 @@ mod tests {
         let wide = x87_to_binary128(&tiny);
         assert_eq!((wide >> 112) & 0x7fff, 0, "still subnormal");
         assert_eq!(wide & ((1u128 << 112) - 1), 1u128 << 49);
+    }
+
+    // -----------------------------------------------------------------------
+    // format_x87 — every expectation below was READ OFF THE RUNNING GLIBC with
+    // a C probe, not derived from the standard. The x87 `%a` form in particular
+    // is not what widening to binary128 would print, so these strings are the
+    // only thing that distinguishes a correct implementation from a
+    // correct-looking one (bd-longdouble-varargs-43usjw).
+    // -----------------------------------------------------------------------
+
+    fn ld_fmt(bytes: &[u8; 10], conv: u8, precision: Option<usize>) -> String {
+        let spec = FmtSpec {
+            conv,
+            precision,
+            width: 0,
+            left: false,
+            plus: false,
+            space: false,
+            alt: false,
+            zero: false,
+        };
+        String::from_utf8(format_x87(bytes, &spec)).unwrap()
+    }
+
+    /// pi as `long double`: `0xc90fdaa22168c235 * 2^-63`, the value a C compiler
+    /// stores for the `3.14159265358979323846264338327950288L` literal.
+    fn x87_pi() -> [u8; 10] {
+        encode_x87(false, 0xc90f_daa2_2168_c235, 0x4000)
+    }
+
+    #[test]
+    fn long_double_decimal_carries_more_than_f64() {
+        // THE DEFECT THIS EXISTS FOR: rendering pi through an `f64` gives
+        // 3.1415926535897931159979635 at this precision. Every digit from the
+        // 17th on is different, so this arm cannot pass on the old path.
+        assert_eq!(
+            ld_fmt(&x87_pi(), b'f', Some(25)),
+            "3.1415926535897932385128090"
+        );
+        assert_eq!(
+            ld_fmt(&x87_pi(), b'e', Some(30)),
+            "3.141592653589793238512808959406e+00"
+        );
+        assert_eq!(
+            ld_fmt(&x87_pi(), b'g', Some(30)),
+            "3.14159265358979323851280895941"
+        );
+        assert_eq!(ld_fmt(&x87_pi(), b'f', None), "3.141593");
+    }
+
+    #[test]
+    fn long_double_decimal_beyond_the_f64_exponent_range() {
+        // 1e400 is an ordinary finite long double and an f64 infinity, so a
+        // round trip through f64 cannot produce these digits at all.
+        let big = decimal_to_x87_extended(false, b"1", 400);
+        assert_eq!(
+            ld_fmt(&big, b'e', Some(30)),
+            "1.000000000000000000028188068395e+400"
+        );
+        let tiny = decimal_to_x87_extended(false, b"1", -400);
+        assert_eq!(
+            ld_fmt(&tiny, b'e', Some(30)),
+            "9.999999999999999999793291563521e-401"
+        );
+    }
+
+    #[test]
+    fn long_double_hex_uses_the_x87_form_not_the_widened_one() {
+        // Widening to binary128 and calling render_a would print
+        // "0x1.921fb54442d18468p+1" — the same number, a different string.
+        assert_eq!(ld_fmt(&x87_pi(), b'a', None), "0xc.90fdaa22168c235p-2");
+        assert_eq!(ld_fmt(&x87_pi(), b'a', Some(3)), "0xc.910p-2");
+        assert_eq!(
+            ld_fmt(&encode_x87(false, 1 << 63, 0x3fff), b'a', None),
+            "0x8p-3",
+            "1.0"
+        );
+        assert_eq!(
+            ld_fmt(
+                &encode_x87(false, 0xc800_0000_0000_0000, 0x4002),
+                b'a',
+                None
+            ),
+            "0xc.8p+0",
+            "12.5"
+        );
+        assert_eq!(ld_fmt(&encode_x87(false, 0, 0), b'a', None), "0x0p+0");
+        assert_eq!(ld_fmt(&encode_x87(true, 0, 0), b'a', None), "-0x0p+0");
+        assert_eq!(
+            ld_fmt(&encode_x87(false, 1, 0), b'a', None),
+            "0x0.000000000000001p-16385",
+            "smallest subnormal — the leading nibble really is 0"
+        );
+        assert_eq!(
+            ld_fmt(&encode_x87(false, 1 << 63, 1), b'a', None),
+            "0x8p-16385",
+            "exponent fields 0 and 1 denote the same scale"
+        );
+    }
+
+    #[test]
+    fn long_double_hex_rounds_half_to_even_and_renormalises() {
+        let at = |sig: u64, p: usize| ld_fmt(&encode_x87(false, sig, 0x3fff), b'a', Some(p));
+        // Exact tie: the kept digit decides. 0x8 is even and stays; 0x9 is odd
+        // and rounds up.
+        assert_eq!(at(0x8800_0000_0000_0000, 0), "0x8p-3");
+        assert_eq!(at(0x9800_0000_0000_0000, 0), "0xap-3");
+        // A nonzero tail past the 8 breaks the tie upward.
+        assert_eq!(at(0x8800_0000_0000_0001, 0), "0x9p-3");
+        assert_eq!(at(0x87ff_ffff_ffff_ffff, 0), "0x8p-3");
+        // Carry out of the leading digit: 0xf.8 is 0x1p+1, not 0x10p-3.
+        assert_eq!(at(0xf800_0000_0000_0000, 0), "0x1p+1");
+        assert_eq!(at(0xffff_ffff_ffff_ffff, 1), "0x1.0p+1");
+        // Padding when the precision exceeds the significand.
+        assert_eq!(at(0x8000_0000_0000_0000, 5), "0x8.00000p-3");
+    }
+
+    #[test]
+    fn long_double_specials_and_flags() {
+        let inf = encode_x87(false, 1 << 63, 0x7fff);
+        let neg_inf = encode_x87(true, 1 << 63, 0x7fff);
+        let nan = encode_x87(false, (1 << 63) | (1 << 62), 0x7fff);
+        assert_eq!(ld_fmt(&inf, b'a', None), "inf");
+        assert_eq!(ld_fmt(&neg_inf, b'f', None), "-inf");
+        assert_eq!(ld_fmt(&nan, b'a', None), "nan");
+        assert_eq!(ld_fmt(&nan, b'A', None), "NAN");
+        assert_eq!(ld_fmt(&inf, b'A', None), "INF");
+
+        let spec = |conv: u8, precision, width, left, plus, alt, zero| FmtSpec {
+            conv,
+            precision,
+            width,
+            left,
+            plus,
+            space: false,
+            alt,
+            zero,
+        };
+        let fmt = |s: FmtSpec| String::from_utf8(format_x87(&x87_pi(), &s)).unwrap();
+        assert_eq!(
+            fmt(spec(b'A', None, 0, false, false, false, false)),
+            "0XC.90FDAA22168C235P-2"
+        );
+        assert_eq!(
+            fmt(spec(b'a', None, 0, false, true, false, false)),
+            "+0xc.90fdaa22168c235p-2"
+        );
+        assert_eq!(
+            fmt(spec(b'a', Some(0), 0, false, false, true, false)),
+            "0xd.p-2",
+            "the alt form keeps the point with no fraction digits"
+        );
+        assert_eq!(
+            fmt(spec(b'e', Some(5), 20, true, false, false, false)),
+            "3.14159e+00         "
+        );
+        assert_eq!(
+            fmt(spec(b'g', Some(20), 0, false, true, false, false)),
+            "+3.1415926535897932385"
+        );
+        assert_eq!(fmt(spec(b'f', Some(0), 0, false, false, true, false)), "3.");
     }
 }
