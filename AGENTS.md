@@ -46,13 +46,47 @@ too weak to catch a defect that was still live. Before closing on such a comment
 3. **If the source is right but nothing could fail on the original bug, the bead is not done** —
    write the gate, then close on it.
 
-**THREE** commits on 2026-06-26 silently deleted shipped work: `e634aff2a` and `bd829b12f`
-(~1300 lines, including tests), and `517d0a233` — found 2026-08-06, **−6914 lines**, larger than
-the other two combined, which took the entire f128 math engine and the C23 `fromfp` family with it.
+**FOUR** commits on 2026-06-26 silently deleted shipped work: `e634aff2a` and `bd829b12f`
+(~1300 lines, including tests); `517d0a233` — found 2026-08-06, **−6914 lines**, larger than
+the other two combined, which took the entire f128 math engine and the C23 `fromfp` family with it;
+and `51c39dec3` — found 2026-08-24 (bd-nas5rt), **787 insertions against 3964 deletions**, which
+took the qsort fast/radix lanes.
 That is why the sweep's premises decayed. `git log -S '<expression>' -- <file>` names the adding
-and deleting commit in one command. See bd-bldxfy, bd-ocwiw9.
+and deleting commit in one command. See bd-bldxfy, bd-ocwiw9, bd-nas5rt.
 
-Audit this class by **per-commit deletion size, never by reading commit messages** — all three
+**THE COUNT IS STILL INCOMPLETE, AND `--since`/`--until` CANNOT FIND THEM.** All four were
+*authored* 2026-06-26 but *committed* 2026-08-03 — they were replayed onto the branch — and
+`git log --since=.. --until=..` filters on COMMIT date, so a 2026-06-25..28 window returns none of
+them. Verified 2026-09-01. Filter on AUTHOR date and rank by deletion excess instead:
+
+```
+git log --format='%h|%ad|%s' --date=short --shortstat |
+  awk/py: keep author-date 2026-06-26, keep deletions > insertions, sort by (deletions - insertions)
+```
+
+That query returns **NINE** commits, of which only four are listed above. The five others, largest
+first, are CANDIDATES and not yet adjudicated — deletions exceeding insertions is a screen, not a
+verdict, since a faithful rewrite legitimately deletes more than it adds:
+
+| excess | commit | subject |
+|---|---|---|
+| +8007 | `73c8da5cd` | abi/stdio: glibc-faithful printf/scanf narrow+wide string (−9431, **larger than any listed above**) |
+| +1689 | `325855a09` | abi/time: strptime full month/weekday names with exact-name … |
+| +944 | `ff2ef56aa` | string/wctype: glibc-exact iswctype + towupper/towlower … |
+| +16 | `26fcdc3a0` | stdlib/strto*: C-locale whitespace + signed-zero conformance |
+
+Spot-checked `73c8da5cd`: it deleted `fused_render_i64`, `fused_render_u64` and `fused_render_hex`
+from `stdio_abi.rs`, and all three are still absent at HEAD. No ledger row names them, so it cost no
+banked win — but nobody has read it the way bd-nas5rt read `51c39dec3`.
+
+**They also take LEDGER ROWS, and that half had never been audited.** Three banked wins in
+`docs/NEGATIVE_EVIDENCE.md` were falsified by that one day and stood unretracted for ten weeks:
+the `rand`/`random` single-threaded lock-skip (L11481, killed by `bd829b12f`) and both 2026-06-25
+qsort radix rows (L8184, L8199, killed by `51c39dec3` the day after they were banked). Retracted
+2026-09-01 in `c35a87323` and `dda9885f4`. When auditing a deletion commit, ask what it removed from
+the LEDGER as well as from the tree — the method is on bd-stale-win-silent-revert-audit-xezk5d.
+
+Audit this class by **per-commit deletion size, never by reading commit messages** — all four
 messages are accurate about what they *added*. `git log --shortstat` and flag any commit whose
 deletions dwarf its insertions.
 
