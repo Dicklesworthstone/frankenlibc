@@ -24,10 +24,11 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 2 across 1 today (a second module is listed at 0 —
-/// see the `pthread_abi` note below). Burning these down is tracked separately —
-/// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
-/// not mechanical because many touch module-private items.
+/// across 11 modules; ZERO today. The single remaining entry is `pthread_abi` at
+/// 0 — see the note below for why a module with no stranded tests still has to
+/// be listed. The list is now a pure guard rather than a debt ledger: any module
+/// that acquires a dead block, or any `#[test]` written back into pthread_abi's
+/// surviving block, fails immediately.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
 /// the attribute are inside COMMENTS (err_abi's comment records this very trap,
 /// per bd-ul4pyl). A first pass of this survey counted them because it scanned
@@ -40,7 +41,6 @@ use std::path::{Path, PathBuf};
 /// dead block, so three more tests were written into blocks already known to be
 /// dead and the debt total silently drifted from 27 to 30.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
-    ("glibc_internal_abi", 2),
     // ZERO stranded tests as of 2026-09-01 — but still LISTED, because the
     // `#[cfg(test)]` block itself remains: it holds the per-test burn-down map
     // and the helper fns the retired tests used. `has_dead_inline_block` keys on
@@ -231,7 +231,36 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         for the reason recorded above: the only public route
 //                         to the setting direction CHANGES THE SYSTEM CLOCK on a
 //                         shared rch worker. It needs a different instrument.
-// 54 -> 2 stranded tests, 11 -> 1 module (pthread_abi listed at 0).
+//   glibc_internal_abi, LAST (2) -> the adjtime pair, and they are the reason
+//                         this bead ran as long as it did. Both drive pure
+//                         integer conversions, but one of them —
+//                         timeval_to_offset_micros — sits on the SETTING side of
+//                         adjtime, and the only delta that reaches it through
+//                         the public entry point is one the kernel then acts on
+//                         by slewing the system clock. These tests run on shared
+//                         rch workers. An EPERM-on-unprivileged shortcut is
+//                         worse, not better: it would make the assertion depend
+//                         on whether the runner happens to be root, the trap
+//                         that mis-classified 23 of 27 rows in bd-aykfv1.
+//                         RESOLVED by splitting what is observable from what is
+//                         not, in tests/conformance_diff_adjtime.rs:
+//                           * differential vs live glibc for the two halves that
+//                             ARE reachable safely — the overflow rejection
+//                             (EINVAL before any clock syscall; measured on the
+//                             host across 1<<62, -(1<<62), i64::MAX, i64::MIN+1)
+//                             and the read-only adjtime(NULL, &old) query;
+//                           * the conversions themselves through two
+//                             `#[doc(hidden)]` hooks taking and returning plain
+//                             i64s, so no libc type joins the module's public
+//                             shape (the address-based-hook lesson from
+//                             pthread_abi);
+//                           * plus the round-trip property NEITHER original
+//                             stated, which is what a caller actually depends on.
+//                         The differential test also asserts glibc still
+//                         REJECTS those deltas, so a future where it stops is a
+//                         failure rather than a gate quietly asking a build
+//                         worker to adjust its clock.
+// 54 -> 0 stranded tests, 11 -> 0 modules (pthread_abi still listed, at 0).
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

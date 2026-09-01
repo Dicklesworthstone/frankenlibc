@@ -5605,25 +5605,48 @@ unsafe fn utimbuf_to_timespecs(times: *const c_void) -> Option<[libc::timespec; 
     ])
 }
 
-#[cfg(test)]
-mod adjtime_abi_tests {
-    use super::{offset_micros_to_timeval, timeval_to_offset_micros};
+/// Test hook (bd-xh08pf): `adjtime`'s microsecond conversions, as plain
+/// integers.
+///
+/// These two helpers had inline `#[test]`s in a `#[cfg(test)]` block right here,
+/// and `lib.rs` declares this module `#[cfg(not(test))]`, so they had never run.
+/// They are the LAST of the 54 stranded tests that bead enumerated, and the only
+/// ones that could not simply be rewritten against the public entry point:
+/// `timeval_to_offset_micros` is on the SETTING side of `adjtime`, and the only
+/// way to reach it with a delta the conversion accepts is to actually ask the
+/// kernel to slew the clock. These tests run on shared rch build workers.
+/// Skewing one to cover an arithmetic conversion is not a trade worth making,
+/// and on an unprivileged worker the syscall fails with EPERM anyway, which
+/// would make the assertion depend on whether the runner happens to be root
+/// (the trap recorded in bd-aykfv1's triage: root and unprivileged workers flip
+/// which rows fail).
+///
+/// So the conversions are exposed instead. They are pure integer arithmetic with
+/// no unsafe surface, and the signature deliberately takes and returns plain
+/// `i64`s rather than `libc::timeval`, so the hook adds no type to this module's
+/// public shape — the same reasoning as the address-based pthread handoff hook.
+///
+/// What IS reachable through the public `adjtime` is gated differentially
+/// against live glibc in `tests/conformance_diff_adjtime.rs`: the overflow
+/// rejection (which returns EINVAL before any clock syscall) and the read-only
+/// `adjtime(NULL, &old)` query.
+#[doc(hidden)]
+#[must_use]
+pub fn adjtime_timeval_to_offset_micros_for_tests(tv_sec: i64, tv_usec: i64) -> Option<i64> {
+    timeval_to_offset_micros(libc::timeval {
+        tv_sec: tv_sec as _,
+        tv_usec: tv_usec as _,
+    })
+    .map(|v| v as i64)
+}
 
-    #[test]
-    fn timeval_to_offset_micros_handles_signed_microseconds() {
-        let tv = libc::timeval {
-            tv_sec: 1,
-            tv_usec: -250_000,
-        };
-        assert_eq!(timeval_to_offset_micros(tv), Some(750_000));
-    }
-
-    #[test]
-    fn offset_micros_to_timeval_normalizes_negative_offsets() {
-        let tv = offset_micros_to_timeval(-1);
-        assert_eq!(tv.tv_sec, -1);
-        assert_eq!(tv.tv_usec, 999_999);
-    }
+/// Test hook (bd-xh08pf): the reading half of the same pair. Returns
+/// `(tv_sec, tv_usec)`. See [`adjtime_timeval_to_offset_micros_for_tests`].
+#[doc(hidden)]
+#[must_use]
+pub fn adjtime_offset_micros_to_timeval_for_tests(offset: i64) -> (i64, i64) {
+    let tv = offset_micros_to_timeval(offset as _);
+    (tv.tv_sec as i64, tv.tv_usec as i64)
 }
 
 // arch_prctl: native syscall
