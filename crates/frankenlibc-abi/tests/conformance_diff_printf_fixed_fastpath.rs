@@ -50,6 +50,10 @@ union SymFl {
 }
 
 /// fd 1 is process-global, so only one arm may hold the redirect at a time.
+///
+/// NOT sufficient on its own: it serialises this file's redirects against each
+/// other, not against libtest, which writes to fd 1 from its own threads. See
+/// [`printf_fixed_fastpath_gate`].
 static FD1: Mutex<()> = Mutex::new(());
 
 fn fd1_lock() -> MutexGuard<'static, ()> {
@@ -73,7 +77,10 @@ fn host_printf() -> (Printf, Fflush, *mut c_void) {
             libc::dlsym(h, c"stdout".as_ptr()).cast::<*mut c_void>(),
         )
     };
-    assert!(!p.is_null() && !f.is_null() && !slot.is_null(), "dlsym printf trio");
+    assert!(
+        !p.is_null() && !f.is_null() && !slot.is_null(),
+        "dlsym printf trio"
+    );
     assert_ne!(
         p as usize,
         frankenlibc_abi::stdio_abi::printf as *const () as usize,
@@ -98,6 +105,37 @@ fn capture<F>(flush_with: Fflush, stream: *mut c_void, emit: F) -> (c_int, Vec<u
 where
     F: FnOnce() -> c_int,
 {
+    let (rc, bytes) = capture_once(flush_with, stream, emit);
+    // `printf` returns the number of bytes it wrote, so the file must hold
+    // exactly that many. If it holds more, something ELSE wrote to fd 1 inside
+    // the redirect window, and comparing those bytes would fabricate a
+    // divergence out of the harness's own output — which is the failure this
+    // file was filed for (bd-dq41u0). Checked rather than tolerated: the bytes
+    // are printed, so a reader can tell contamination from a real defect.
+    if rc >= 0 && bytes.len() != rc as usize {
+        eprintln!(
+            "PRINTF_FIXED_CAPTURE_CONTAMINATED rc={rc} captured={} bytes={:?}",
+            bytes.len(),
+            String::from_utf8_lossy(&bytes)
+        );
+        panic!(
+            "capture holds {} bytes for a printf that reported writing {rc}. Either \
+             another thread wrote to fd 1 inside the redirect window (see \
+             `printf_fixed_fastpath_gate`), or the implementation's return value \
+             disagrees with what it emitted — a real defect. The captured bytes \
+             are on stderr above and say which.",
+            bytes.len()
+        );
+    }
+    (rc, bytes)
+}
+
+/// One redirect/emit/restore cycle. Split out so [`capture`] can check the
+/// result before handing it to a comparison.
+fn capture_once<F>(flush_with: Fflush, stream: *mut c_void, emit: F) -> (c_int, Vec<u8>)
+where
+    F: FnOnce() -> c_int,
+{
     let _guard = fd1_lock();
     let dir = std::env::temp_dir().join(format!("fl-printf-{}.out", std::process::id()));
     let path = dir.to_str().expect("ascii temp path").to_string();
@@ -118,18 +156,33 @@ where
     // SAFETY: both descriptors are open.
     assert!(unsafe { libc::dup2(fd, 1) } >= 0, "dup2 onto fd 1");
 
+    // Restore fd 1 on the way out EVEN IF `emit` or the flush panics. Without
+    // this the process's stdout stays pointed at the temp file for the rest of
+    // the run, so libtest's own report — including the panic message that would
+    // say what went wrong — disappears into a file nobody reads.
+    struct Fd1Restore {
+        saved: c_int,
+        temp: c_int,
+    }
+    impl Drop for Fd1Restore {
+        fn drop(&mut self) {
+            // SAFETY: both descriptors are ours and are closed exactly once.
+            unsafe {
+                libc::dup2(self.saved, 1);
+                libc::close(self.saved);
+                libc::close(self.temp);
+            }
+        }
+    }
+    let restore = Fd1Restore { saved, temp: fd };
+
     let rc = emit();
     // Flush THIS implementation's stream, not the other's: they are separate
     // FILE objects with separate buffers over the same fd.
     // SAFETY: `stream` is that implementation's live stdout.
     unsafe { flush_with(stream) };
 
-    // SAFETY: restore fd 1 and drop the temporaries.
-    unsafe {
-        libc::dup2(saved, 1);
-        libc::close(saved);
-        libc::close(fd);
-    }
+    drop(restore);
 
     let mut buf = Vec::new();
     std::fs::File::open(&path)
@@ -218,10 +271,13 @@ fn host_libc_version() -> String {
 /// never recurred left no evidence of WHAT differed. One line survives any
 /// line-oriented filter, and hex survives bytes that are not printable.
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join("")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
-#[test]
 fn printf_fixed_matches_glibc_on_stdout() {
     let (gprintf, gflush, gstdout) = host_printf();
     println!(
@@ -242,7 +298,8 @@ fn printf_fixed_matches_glibc_on_stdout() {
             });
 
             assert_eq!(
-                frc, grc,
+                frc,
+                grc,
                 "{label} of {value:?} [{:#018x}]: return fl={frc} glibc={grc}",
                 value.to_bits()
             );
@@ -280,12 +337,11 @@ fn printf_fixed_matches_glibc_on_stdout() {
 
 /// Formats the future probe must DECLINE: widths, flags, other conversions, and
 /// precisions outside 1..=9. They keep the general path and must still match.
-#[test]
 fn adjacent_printf_float_formats_still_match_glibc() {
     let (gprintf, gflush, gstdout) = host_printf();
     let specs = [
-        "%10.2f", "%-10.2f", "%+.2f", "% .2f", "%010.2f", "%#.2f", "%.0f", "%.10f", "%.15f",
-        "%e", "%.2e", "%g", "%.2g", "%a", "%E", "%G",
+        "%10.2f", "%-10.2f", "%+.2f", "% .2f", "%010.2f", "%#.2f", "%.0f", "%.10f", "%.15f", "%e",
+        "%.2e", "%g", "%.2g", "%a", "%E", "%G",
     ];
     for spec in specs {
         let fmt = CString::new(spec).unwrap();
@@ -317,7 +373,6 @@ fn adjacent_printf_float_formats_still_match_glibc() {
 /// This is the "zero is not evidence" check for this file: it asserts the
 /// positive fact that a known string round-trips through the redirect, for BOTH
 /// implementations, before any differential result is trusted.
-#[test]
 fn capture_harness_actually_captures() {
     let (gprintf, gflush, gstdout) = host_printf();
     let fmt = CString::new("%.3f").unwrap();
@@ -327,7 +382,10 @@ fn capture_harness_actually_captures() {
         // SAFETY: the format names exactly one double.
         unsafe { frankenlibc_abi::stdio_abi::printf(f, 2.5f64) }
     });
-    assert_eq!(fbytes, b"2.500", "fl capture produced {fbytes:?}, expected \"2.500\"");
+    assert_eq!(
+        fbytes, b"2.500",
+        "fl capture produced {fbytes:?}, expected \"2.500\""
+    );
     assert_eq!(frc, 5, "fl returned {frc}, expected 5");
 
     let (grc, gbytes) = capture(gflush, gstdout, || {
@@ -336,4 +394,94 @@ fn capture_harness_actually_captures() {
     });
     assert_eq!(gbytes, b"2.500", "glibc capture produced {gbytes:?}");
     assert_eq!(grc, 5, "glibc returned {grc}");
+}
+
+/// EVERY assertion in this file runs from ONE `#[test]`, and that is the fix for
+/// a fabricated RED (bd-dq41u0).
+///
+/// `capture` points the process's fd 1 at a temp file for the duration of one
+/// `printf`. fd 1 is process-wide, and libtest writes its own progress lines to
+/// it from the main thread as each test COMPLETES — so with several `#[test]`
+/// functions running in parallel, one test finishing lands its result line
+/// inside another's capture file. The `FD1` mutex above cannot prevent that: it
+/// serialises the redirects against each other, not against libtest.
+///
+/// MEASURED rather than argued. Widening the redirect window with a sleep and
+/// adding one trivial extra `#[test]` makes it deterministic:
+///
+/// ```text
+/// assertion `left == right` failed: fl capture produced
+///   [116, 101, 115, 116, 32, ...]   =  "test printf_fixed_matches_glibc_on_stdout ... FAILED\n2.500"
+/// expected "2.500"
+/// ```
+///
+/// With a single test there is nothing else for libtest to report while the
+/// redirect is held. The three original test bodies are kept verbatim as plain
+/// functions and are still reported individually — each runs under
+/// `catch_unwind` so one failure does not hide the other two, which is the only
+/// thing the split into three `#[test]`s was buying.
+///
+/// ## One test is necessary but NOT sufficient, and that was measured too
+///
+/// Re-running the widened-window experiment with the single test still red it,
+/// on a DIFFERENT libtest write:
+///
+/// ```text
+/// fl_text="test printf_fixed_fastpath_gate has been running for over 60 seconds\n0.0"
+/// glibc_text="0.0"
+/// ```
+///
+/// libtest has a watchdog thread that reports a slow test to fd 1 while that
+/// test is still running, so no arrangement of `#[test]` functions closes the
+/// hole completely. (It needs a >60 s test; this file runs in 0.11 s, and only
+/// the artificial 400 ms-per-capture sleep manufactured it.) Hence `capture`
+/// also CHECKS its result against `printf`'s return value, which is the byte
+/// count the implementation says it wrote: a mismatch means someone else wrote
+/// into the window, and it is reported as contamination with the bytes attached
+/// rather than compared and reported as a divergence.
+#[test]
+fn printf_fixed_fastpath_gate() {
+    // The property this file's correctness now rests on. A second `#[test]`
+    // here would silently reintroduce the race, and it would not look like a
+    // mistake at the point it was written — so it is asserted, not commented.
+    let source = include_str!("conformance_diff_printf_fixed_fastpath.rs");
+    let declared = source
+        .lines()
+        .filter(|line| line.trim() == "#[test]")
+        .count();
+    assert_eq!(
+        declared, 1,
+        "this file must declare exactly ONE #[test]: `capture` redirects the \
+         process-wide fd 1, and libtest writes its own result lines there as \
+         other tests finish, which lands them inside the capture. Add a plain \
+         `fn` and call it from `printf_fixed_fastpath_gate` instead."
+    );
+
+    let phases: [(&str, fn()); 3] = [
+        (
+            "capture_harness_actually_captures",
+            capture_harness_actually_captures,
+        ),
+        (
+            "printf_fixed_matches_glibc_on_stdout",
+            printf_fixed_matches_glibc_on_stdout,
+        ),
+        (
+            "adjacent_printf_float_formats_still_match_glibc",
+            adjacent_printf_float_formats_still_match_glibc,
+        ),
+    ];
+
+    let mut failed = Vec::new();
+    for (name, phase) in phases {
+        // The harness self-check runs FIRST: every other phase's green result is
+        // meaningless if the redirect is silently broken.
+        if std::panic::catch_unwind(phase).is_err() {
+            failed.push(name);
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "phases failed (their panic messages are above, in order): {failed:?}"
+    );
 }
