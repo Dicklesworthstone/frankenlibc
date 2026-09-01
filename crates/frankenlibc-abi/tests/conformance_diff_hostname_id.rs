@@ -102,3 +102,75 @@ fn hostname_id_diff_coverage_report() {
         "{{\"family\":\"libc gethostname/getdomainname/gethostid\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0}}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// sethostid range check (bd-xh08pf)
+//
+// glibc_internal_abi.rs carried a `#[cfg(test)] mod hostid_abi_tests` driving
+// the private `hostid_to_i32` helper directly. That module is
+// `#[cfg(not(test))] pub mod` in lib.rs, so the block compiled in neither
+// configuration and its two tests had never run.
+//
+// The property is worth keeping, so it is rewritten here against the PUBLIC
+// entry point. `sethostid` validates before it acts —
+//
+//     let hostid = match hostid_to_i32(hostid) { Ok(h) => h, Err(e) => { set_errno(e); return -1 } };
+//     match write_hostid_file(hostid) { ... }
+//
+// — so an out-of-range argument is rejected without the file ever being
+// touched, which makes the reject side safe to exercise anywhere. glibc does
+// the same check (`if (id != (int) id) { __set_errno (EOVERFLOW); return -1; }`),
+// so the two are directly comparable.
+//
+// THE ACCEPT SIDE IS DELIBERATELY NOT EXERCISED, and that is a real limit
+// rather than an oversight: an in-range `sethostid` WRITES /etc/hostid, and
+// these tests run on shared rch workers, some of which run as root. A test that
+// rewrites the host identity of a build worker to prove a range check is not a
+// trade worth making. The boundary below pins the accept side by its edge —
+// 0x7fff_ffff is the largest accepted value precisely because 0x8000_0000 is
+// the smallest rejected one.
+unsafe extern "C" {
+    fn sethostid(id: libc::c_long) -> c_int;
+}
+
+fn errno() -> c_int {
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
+#[test]
+fn sethostid_rejects_out_of_32_bit_range_like_glibc() {
+    // Each value is one step outside signed 32-bit, plus a far-out case.
+    for id in [
+        0x8000_0000i64,
+        -0x8000_0001i64,
+        0x1_0000_0000i64,
+        i64::from(i32::MAX) + 1,
+        i64::MAX,
+        i64::MIN,
+    ] {
+        let id = id as libc::c_long;
+
+        // SAFETY: sethostid takes a scalar and, for these values, returns
+        // before touching the filesystem. It lives in glibc_internal_abi, not
+        // unistd_abi -- reachable here because an integration test compiles the
+        // library WITHOUT --test, so its #[cfg(not(test))] gate is satisfied.
+        let fl_rc = unsafe { frankenlibc_abi::glibc_internal_abi::sethostid(id) };
+        let fl_errno = errno();
+        // SAFETY: same call into live glibc.
+        let gl_rc = unsafe { sethostid(id) };
+        let gl_errno = errno();
+
+        assert_eq!(
+            (fl_rc, fl_errno),
+            (gl_rc, gl_errno),
+            "sethostid({id:#x}) diverged: fl=({fl_rc}, {fl_errno}) glibc=({gl_rc}, {gl_errno})"
+        );
+        // Assert what the ORACLE did, not only that the arms agree: if both
+        // stopped range-checking, the equality above would still hold.
+        assert_eq!(
+            (gl_rc, gl_errno),
+            (-1, libc::EOVERFLOW),
+            "live glibc should reject {id:#x} with EOVERFLOW"
+        );
+    }
+}

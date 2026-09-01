@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 30 across 5 today. Burning these down is tracked separately —
+/// across 11 modules; 28 across 5 today. Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 /// dead block, so three more tests were written into blocks already known to be
 /// dead and the debt total silently drifted from 27 to 30.
 const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
-    ("glibc_internal_abi", 4),
+    ("glibc_internal_abi", 2),
     ("iconv_abi", 7),
     ("io_internal_abi", 5),
     ("pthread_abi", 6),
@@ -95,7 +95,21 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         diff_getrandom_zero_length_null_and_flag_contract.
 //                         A per-test map is left in unistd_abi.rs where the
 //                         block stood.
-// 54 -> 30 stranded tests, 11 -> 5 modules.
+//   glibc_internal_abi, HALF (2 of 4) -> tests/conformance_diff_hostname_id.rs::
+//                         sethostid_rejects_out_of_32_bit_range_like_glibc
+//                         (rewritten against the public entry point; the
+//                          originals drove the private hostid_to_i32). The
+//                          module's OTHER dead block, adjtime_abi_tests, is not
+//                          burned down: its two helpers convert between a
+//                          `struct timeval` delta and microseconds, and the only
+//                          public route to the setting direction is `adjtime`,
+//                          which CHANGES THE SYSTEM CLOCK. These tests run on
+//                          shared rch workers; skewing a build worker's clock to
+//                          cover a unit conversion is not a trade worth making,
+//                          and the read-only route (`adjtime(NULL, &old)`)
+//                          reaches only one of the two helpers. It needs a
+//                          different instrument, not more of this one.
+// 54 -> 28 stranded tests, 11 -> 5 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

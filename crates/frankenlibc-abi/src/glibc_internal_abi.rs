@@ -7471,22 +7471,23 @@ pub unsafe extern "C" fn sethostid(hostid: c_long) -> c_int {
     }
 }
 
-#[cfg(test)]
-mod hostid_abi_tests {
-    use super::hostid_to_i32;
-
-    #[test]
-    fn hostid_to_i32_accepts_signed_32_bit_values() {
-        assert_eq!(hostid_to_i32(0x7fff_ffff), Ok(0x7fff_ffff));
-        assert_eq!(hostid_to_i32(-0x8000_0000), Ok(-0x8000_0000));
-    }
-
-    #[test]
-    fn hostid_to_i32_rejects_out_of_range_values() {
-        assert_eq!(hostid_to_i32(0x1_0000_0000), Err(libc::EOVERFLOW));
-        assert_eq!(hostid_to_i32(-0x8000_0001), Err(libc::EOVERFLOW));
-    }
-}
+// BURNED DOWN (bd-xh08pf). `glibc_internal_abi` is `#[cfg(not(test))] pub mod`
+// in lib.rs, so the `#[cfg(test)] mod hostid_abi_tests` that stood here could
+// compile in neither configuration; its two tests had never run.
+//
+// Rewritten against the PUBLIC entry point rather than relocated, because the
+// originals drove the private `hostid_to_i32` directly:
+//   tests/conformance_diff_hostname_id.rs::
+//     sethostid_rejects_out_of_32_bit_range_like_glibc
+// It compares (rc, errno) against LIVE glibc — which applies the same check,
+// `if (id != (int) id) { __set_errno (EOVERFLOW); return -1; }` — over six
+// out-of-range values, and separately asserts what the oracle produced so the
+// gate cannot pass by both sides agreeing to stop checking.
+//
+// The ACCEPT side is deliberately not exercised: `sethostid` writes
+// /etc/hostid once the value passes, and these tests run on shared rch workers,
+// some as root. The boundary pins it instead — 0x7fff_ffff is the largest
+// accepted value exactly because 0x8000_0000 is the smallest rejected one.
 
 // setipv4sourcefilter: set multicast source filter via setsockopt(IP_MSFILTER)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
