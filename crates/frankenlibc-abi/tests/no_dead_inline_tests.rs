@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 20 across 5 today. Burning these down is tracked separately —
+/// across 11 modules; 18 across 5 today. Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
@@ -42,7 +42,7 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("glibc_internal_abi", 2),
     ("iconv_abi", 7),
     ("io_internal_abi", 5),
-    ("pthread_abi", 3),
+    ("pthread_abi", 1),
     ("stdio_abi", 3),
 ];
 // BURNED DOWN (bd-xh08pf):
@@ -132,7 +132,13 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         entry points delegate to host glibc on a host-backed
 //                         thread. The validation half IS differential vs live
 //                         glibc, because both reject before touching state.
-// 54 -> 20 stranded tests, 11 -> 5 modules.
+//   pthread_abi, again (2 more of 6) -> one RETIRED as already covered three
+//                         times over by tests/pthread_abi_test.rs's trylock
+//                         arms; one RELOCATED there, with its fixed 10 ms sleep
+//                         replaced by a bounded poll (bd-d3tvn3 is this suite's
+//                         timing-flake bead) and the process-global scope of the
+//                         counters stated, which the original left implicit.
+// 54 -> 18 stranded tests, 11 -> 5 modules.
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

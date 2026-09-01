@@ -5089,3 +5089,100 @@ fn under_pthread_attr_destroy_on_uninitialized_returns_einval() {
     let rc = unsafe { __pthread_attr_destroy(&mut attr) };
     assert_eq!(rc, libc::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// Futex mutex contention (bd-xh08pf)
+//
+// Relocated from the dead `#[cfg(test)] mod tests` block in pthread_abi.rs. The
+// counters it reads were already exposed for exactly this purpose —
+// `pthread_mutex_branch_counters_for_tests` (pthread_abi.rs:2372) — so this is a
+// relocation rather than a rewrite; the only change is to how it waits.
+//
+// THE ORIGINAL SLEPT 10 ms and then asserted the wait counter had moved, i.e. it
+// assumed the worker had reached the futex within that window. This suite
+// already has timing tests that fail under parallel test-binary load
+// (bd-d3tvn3), and a fixed sleep is that shape. Replaced with a BOUNDED POLL: it
+// waits for the event it needs, up to a generous ceiling, and fails loudly
+// naming what it was waiting for. That cannot flake under load; it can only be
+// slow.
+//
+// HONEST LIMIT, which the original shared and did not state: these counters are
+// PROCESS-GLOBAL, so `>= before + 1` can also be satisfied by another test
+// contending a different mutex concurrently. This is therefore a smoke test that
+// contention reaches the futex path, not an attribution of these particular
+// increments to this particular mutex. It can pass for the wrong reason; it
+// cannot fail spuriously.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn futex_mutex_contention_increments_wait_and_wake_counters() {
+    use std::sync::{Arc, Barrier};
+    use std::time::{Duration, Instant};
+
+    let boxed: Box<libc::pthread_mutex_t> = Box::new(unsafe { std::mem::zeroed() });
+    let mutex = Box::into_raw(boxed);
+
+    // SAFETY: `mutex` is a live, uniquely-owned mutex object for this test.
+    unsafe {
+        assert_eq!(pthread_mutex_init(mutex, ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(mutex), 0);
+    }
+
+    let before = pthread_mutex_branch_counters_for_tests();
+    let barrier = Arc::new(Barrier::new(2));
+    let barrier_worker = Arc::clone(&barrier);
+    let mutex_addr = mutex as usize;
+
+    let worker = std::thread::spawn(move || {
+        barrier_worker.wait();
+        // SAFETY: pointer identity is stable for the lifetime of this test, and
+        // the main thread does not free the mutex until after the join below.
+        unsafe {
+            let m = mutex_addr as *mut libc::pthread_mutex_t;
+            assert_eq!(pthread_mutex_lock(m), 0);
+            assert_eq!(pthread_mutex_unlock(m), 0);
+        }
+    });
+
+    barrier.wait();
+
+    // Wait for the worker to actually BLOCK, rather than sleeping and hoping.
+    // The wait-branch counter moving is the observable that it reached the futex.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if pthread_mutex_branch_counters_for_tests().1 >= before.1 + 1 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "worker never reached the futex wait branch within 5s: before={before:?} \
+             now={:?} — the contention path was not exercised",
+            pthread_mutex_branch_counters_for_tests()
+        );
+        std::thread::yield_now();
+    }
+
+    // SAFETY: still holding the lock taken above.
+    unsafe { assert_eq!(pthread_mutex_unlock(mutex), 0) };
+    worker.join().expect("contending worker panicked");
+
+    let after = pthread_mutex_branch_counters_for_tests();
+    assert!(
+        after.0 >= before.0 + 1,
+        "spin branch counter did not increase: before={before:?} after={after:?}"
+    );
+    assert!(
+        after.1 >= before.1 + 1,
+        "wait branch counter did not increase: before={before:?} after={after:?}"
+    );
+    assert!(
+        after.2 >= before.2 + 1,
+        "wake branch counter did not increase: before={before:?} after={after:?}"
+    );
+
+    // SAFETY: the worker has joined, so no other thread references the mutex.
+    unsafe {
+        assert_eq!(pthread_mutex_destroy(mutex), 0);
+        drop(Box::from_raw(mutex));
+    }
+}

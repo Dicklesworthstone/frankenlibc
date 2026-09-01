@@ -6899,78 +6899,27 @@ mod tests {
         unsafe { drop(Box::from_raw(ptr)) };
     }
 
-    #[test]
-    fn futex_mutex_roundtrip_and_trylock_busy() {
-        reset_mutex_registry_for_tests();
-        let mutex = alloc_mutex_ptr();
-
-        // SAFETY: ABI functions operate on opaque pointer identity in this implementation.
-        unsafe {
-            assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
-            assert_eq!(pthread_mutex_lock(mutex), 0);
-            assert_eq!(pthread_mutex_trylock(mutex), libc::EBUSY);
-            assert_eq!(pthread_mutex_unlock(mutex), 0);
-            assert_eq!(pthread_mutex_destroy(mutex), 0);
-            free_mutex_ptr(mutex);
-        }
-    }
-
-    #[test]
-    fn futex_mutex_contention_increments_wait_and_wake_counters() {
-        reset_mutex_registry_for_tests();
-        let mutex = alloc_mutex_ptr();
-
-        // SAFETY: ABI functions operate on opaque pointer identity in this implementation.
-        unsafe {
-            assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
-            assert_eq!(pthread_mutex_lock(mutex), 0);
-        }
-
-        let before = mutex_branch_counters();
-        let barrier = Arc::new(Barrier::new(2));
-        let barrier_worker = Arc::clone(&barrier);
-        let mutex_addr = mutex as usize;
-        let handle = std::thread::spawn(move || {
-            barrier_worker.wait();
-            // SAFETY: pointer identity is stable for test lifetime.
-            unsafe {
-                assert_eq!(
-                    pthread_mutex_lock(mutex_addr as *mut libc::pthread_mutex_t),
-                    0
-                );
-                assert_eq!(
-                    pthread_mutex_unlock(mutex_addr as *mut libc::pthread_mutex_t),
-                    0
-                );
-            }
-        });
-
-        barrier.wait();
-        std::thread::sleep(Duration::from_millis(10));
-        // SAFETY: pointer identity is stable for test lifetime.
-        unsafe { assert_eq!(pthread_mutex_unlock(mutex), 0) };
-        handle.join().unwrap();
-        let after = mutex_branch_counters();
-
-        assert!(
-            after.0 >= before.0 + 1,
-            "spin branch counter did not increase: before={before:?} after={after:?}"
-        );
-        assert!(
-            after.1 >= before.1 + 1,
-            "wait branch counter did not increase: before={before:?} after={after:?}"
-        );
-        assert!(
-            after.2 >= before.2 + 1,
-            "wake branch counter did not increase: before={before:?} after={after:?}"
-        );
-
-        // SAFETY: pointer identity is stable for test lifetime.
-        unsafe {
-            assert_eq!(pthread_mutex_destroy(mutex), 0);
-            free_mutex_ptr(mutex);
-        }
-    }
+    // BURNED DOWN (bd-xh08pf), second pass on this module.
+    //
+    // `futex_mutex_roundtrip_and_trylock_busy` is RETIRED, not moved: it is
+    // already covered, better, by tests/pthread_abi_test.rs — see
+    // `mutex_trylock_succeeds_when_unlocked` (:512) and
+    // `mutex_trylock_fails_when_locked` (:524), plus the init/lock/unlock/
+    // destroy round trip at :459-504 and the NULL-mutex EINVAL arm at :479.
+    // Relocating it would have added a fourth copy of an assertion that already
+    // runs three times.
+    //
+    // `futex_mutex_contention_increments_wait_and_wake_counters` is RELOCATED to
+    // tests/pthread_abi_test.rs. Its counters were already exposed for exactly
+    // this purpose (`pthread_mutex_branch_counters_for_tests`, :2372), so the
+    // only change is how it waits: the original slept 10 ms and assumed the
+    // worker had reached the futex, which is the shape that makes this suite's
+    // timing tests fail under parallel load (bd-d3tvn3). It now polls for the
+    // wait-branch counter to move, bounded at 5 s, and fails loudly naming what
+    // it was waiting for. The relocated copy also states the limit the original
+    // left implicit: these counters are process-global, so `>= before + 1` can
+    // be satisfied by another test's contention — it is a smoke test for the
+    // futex path being reached, not an attribution.
 
     #[test]
     fn host_thread_handoff_waiter_observes_parent_publication() {
