@@ -40980,3 +40980,47 @@ ones that would notice a threading-policy depth counter behaving differently.
   `prefix %j suffix` would be exactly the move that row warns against. Reproducer:
   `cargo run --release -p frankenlibc-bench --features abi-bench --example strftime_litrun_ab --
   --case yday_exact` (and `--case yday_general`).
+
+## 2026-09-01 (cc) — COUNTED MECHANISM, no speedup claimed: the `qsort` lanes this ledger's frontier reasoning assumes DO NOT EXIST at HEAD — two gates name absent lanes and are green
+
+- **WHAT THIS CORRECTS.** Rows in this file reason from "above 2048 the radix lanes already cover
+  unsigned", and three ABI gates (`conformance_diff_qsort_radix`, `_radix16`, `_count8`) state in
+  their own doc comments that a large-N radix lane, a 2-byte radix lane and a 1-byte counting-sort
+  lane are being exercised. At HEAD `frankenlibc_core::stdlib::sort::qsort` dispatches to exactly
+  two fast lanes — width 4 and width 8, both `I*_FAST_LANE_MIN..=I*_FAST_LANE_MAX` — and then
+  `pdqsort_recurse`. **There is no radix lane at any width and no counting-sort lane.** What covers
+  large N is the raised comparison-lane ceiling (`1 << 22`), not a radix lane. This is the ledger
+  consequence bd-nas5rt predicted; it is now measured rather than inferred from `grep`.
+
+- **NO PERFORMANCE CLAIM IS MADE HERE.** No ratio, no timing, no A/A. The mechanism is a COUNT:
+  comparator invocations through fl's deployed ABI entry point `frankenlibc_abi::stdlib_abi::qsort`
+  and through live glibc's `qsort` on byte-identical input, n = 4096, scrambled distinct keys, one
+  process. A fast lane sorts the raw integers with the standard-library sort and then verifies its
+  candidate against the caller's comparator on ADJACENT PAIRS ONLY, so it spends about `n` calls;
+  any comparison sort spends O(n log n). Counted:
+
+  | width | fl calls | glibc calls | lane taken | gate that names a lane here |
+  |---|---|---|---|---|
+  | 1 | 39914 | 43975 | no | `conformance_diff_qsort_count8` |
+  | 2 | 53078 | 42835 | no | `conformance_diff_qsort_radix16` |
+  | 4 | 4095 | 42835 | YES | — |
+  | 8 | 4095 | 42835 | YES | — |
+  | 16 | 53078 | 42835 | no | none |
+
+  4095 is exactly `n - 1`: the verify pass and nothing else. The two populations differ by a factor
+  of ten, so the classifier (`calls <= 4n`) is nowhere near its edge. A separate row pins the
+  window's FLOOR: at n = 32, below `I64_FAST_LANE_MIN`, fl spends 137 calls and glibc 108, against
+  31 for a lane that commits on its first ordering.
+
+- **WHY THE GREEN GATES PROVE NOTHING ABOUT LANES.** All four qsort gates compare SORTED OUTPUT
+  against live glibc. pdqsort produces correctly sorted output, so the gates pass whether the lane
+  they name exists, was deleted, or was never written. Two of them are in the third case right now.
+  This is the same hollow shape this repository has already recorded for oracle arms, in a different
+  dimension: the gate names the feature, survives its absence, and reports green.
+
+- **DISPOSITION.** `crates/frankenlibc-abi/tests/conformance_diff_qsort_lane_inventory.rs`
+  (bdeceadad) pins the inventory above by call count, asserting the absent rows as ABSENT so that
+  restoring a lane turns the file red and has to be acknowledged deliberately. No production source
+  was touched and no lane was restored — restoring one is a perf lever that needs its own
+  same-invocation measurement, and this row does not pre-authorise it. Verified remotely: `[RCH]
+  remote vmi1293453 (116.1s)`, base `7726a792f`, `test result: ok. 2 passed; 0 failed`.
