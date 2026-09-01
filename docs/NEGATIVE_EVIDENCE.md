@@ -40844,3 +40844,69 @@ ones that would notice a threading-policy depth counter behaving differently.
   the 96 Ir/pair alone. It is worth revisiting only if the allocator proper is first brought near
   glibc, at which point 14.9% stops being a rounding error, AND a way is found to build the feature
   without the standalone triple so the delta is attributable.
+
+## 2026-08-31 — bd-ny3hsa — REJECT the "DEEPBIND vs plain dlopen" sweep design with a deterministic mechanism, not a timing null: plain `dlopen` is an UNSUPPORTED configuration for fl and jumps to an invalid host-allocator pointer
+
+- **RESULT CLASS: rejected experimental design, refuted by a crash rather than by a measurement. No
+  timing was produced and none is claimed.** Two ledger rows above establish that the harness's
+  `dlopen(RTLD_DEEPBIND)` loader mode inflates `strlen_256k` thirtyfold while leaving `malloc_free`
+  intact, and both say the same thing: every other family is exposed to that question and unchecked.
+  This row is the attempt to sweep them, and the design failure that stopped it.
+- **THE DESIGN.** `incumbent_coverage_ab` covers 28 families. Rather than re-run that expensive
+  harness twice per family, the intent was to isolate the flag: `dlopen` the *same* fl object twice
+  from a plain C driver — once `RTLD_NOW|RTLD_LOCAL`, once with `RTLD_DEEPBIND` added, from a
+  byte-identical copy at a second path so the second call creates a second mapping instead of
+  returning the first — and time both arms interleaved on 8 symbols spanning 8 families, with
+  `strlen` as a positive control and `malloc` as a negative control. Ledger-293 discipline applied:
+  arms interleaved within each round and order-balanced across rounds, a same-arm A/A null per
+  round, and no effect reported that does not clear the incumbent spread.
+- **IT SEGFAULTS, DETERMINISTICALLY, AND THE BACKTRACE KILLS THE DESIGN:**
+
+  ```
+  #0  0x00007fffd3cb5090 in ?? ()                                    <- wild jump
+  #1  frankenlibc_abi::malloc_abi::native_libc_malloc () from fl.so
+  #2  malloc () from fl.so
+  ```
+
+  COUNTED MECHANISM: the plain arm takes 1 fault vs 0 faults on the DEEPBIND arm, at a stack of
+  exactly **5 frames** — so this is NOT unbounded recursion, which was my first reading of it and
+  was wrong. `bt -1000000` captures 5 frames total, one `native_libc_malloc` and one `malloc`.
+
+  The faulting target `0x00007fffd3cb5090` is a **stack address**. Under a plain `RTLD_LOCAL`
+  `dlopen`, fl's undefined symbols bind to the global scope, and fl's resolution of the **host**
+  allocator yields a non-null but invalid pointer; `native_libc_malloc` validates it only with
+  `if ptr != 0`, then transmutes and calls it. **Plain `dlopen` is therefore not a configuration fl
+  supports**, which is exactly why the harness passes `RTLD_DEEPBIND`. The comparison would not
+  have been "one flag differs"; it would have been fl working against fl in a broken hybrid state.
+  The crash is the design being refuted, not a bug in the arm under test.
+
+  Noted but deliberately NOT fixed in this lane, because it is a different lane and the allocator's
+  host-resolution path is load-bearing: `ptr != 0` is the only guard between a bad resolution and an
+  indirect call through it, so an unsupported load mode gets a wild jump where it could get a clean
+  `bump_alloc` fallback (the branch already present two lines below).
+- **TWO HYPOTHESES REFUTED ALONG THE WAY, both by direct measurement rather than by reasoning.**
+  The crash first appeared to be in `dlopen` itself, because a marker printed before it and none
+  after. (1) "A prior `malloc` breaks the load" — a probe that allocates then loads was run at 0,
+  1 KiB, 64 KiB, 128 KiB-1, 128 KiB and 256 KiB, straddling glibc's `M_MMAP_THRESHOLD`, and **all
+  six exited 0**. (2) "Linking `-lm` changes the resolution scope" — refuted by `ldd`: the crashing
+  and non-crashing binaries have byte-identical dependency lists and neither links libm. Only the
+  backtrace located it, in a case far past the marker; the missing markers were lost stdout, which
+  is the same buffering trap this repository already records for SIGSEGV.
+- **AND THE ATTEMPT FOUND A REAL DEFECT, fixed in `9bd42227c`.** The first version of the sweep ran
+  under `LD_PRELOAD` and could not `dlopen` fl at all: **fl supplies `dlopen` when preloaded, and
+  fl's `dlopen` rejected `RTLD_DEEPBIND`** with "invalid mode for dlopen". `valid_flags` built its
+  `MODIFIER_MASK` from `GLOBAL|LOCAL|NOLOAD|NODELETE` and omitted `RTLD_DEEPBIND` (0x8, confirmed
+  against live glibc on this host). So fl refused the very mode its own benchmark harness uses to
+  load it for every family it measures. The flag needed no plumbing — flags are already forwarded
+  unchanged to `load_native_dso` and to the host `dlopen` — so the mask was the whole bug.
+- **CONSEQUENCE: THE SWEEP IS BLOCKED, AND ITS BLOCKER IS NOW FIXED.** The only valid comparison is
+  the one the two rows above used: `LD_PRELOAD` (how fl is deployed) against `dlopen(RTLD_DEEPBIND)`
+  (how the harness loads it). Running that in ONE process requires fl's own `dlopen` to accept
+  DEEPBIND, which is precisely what `9bd42227c` restores. The sweep therefore needs a rebuilt `.so`
+  carrying that fix and is not runnable against `fl_now.so`
+  (`b924c8eba8e6c9641e39a8b18efbe658acca5502f375d0e4003728315dd3e87d`).
+- **RETRY CONDITION.** Do not re-attempt a plain-`dlopen` arm for fl in any benchmark: it is not a
+  supported load and will recurse. Sweep the remaining families only via `LD_PRELOAD` versus
+  `dlopen(RTLD_DEEPBIND)`, on a `.so` built at or after `9bd42227c`.
+- Drivers preserved: `scratchpad/loadermode_sweep.c`, `scratchpad/dlopen_probe.c`,
+  `scratchpad/dlopen_after_malloc.c`.
