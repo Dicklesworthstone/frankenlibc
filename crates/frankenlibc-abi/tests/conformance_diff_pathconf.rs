@@ -402,7 +402,7 @@ fn link_max_matches_glibc_on_loopback_minix() {
     const CHILD_ENV: &str = "FRANKENLIBC_PATHCONF_MINIX_CHILD";
 
     if std::env::var_os(CHILD_ENV).is_none() {
-        let output = std::process::Command::new("unshare")
+        let spawned = std::process::Command::new("unshare")
             .args(["--mount", "--propagation", "private"])
             .env(CHILD_ENV, "1")
             .arg(std::env::current_exe().expect("test executable"))
@@ -411,13 +411,54 @@ fn link_max_matches_glibc_on_loopback_minix() {
                 "link_max_matches_glibc_on_loopback_minix",
                 "--nocapture",
             ])
-            .output()
-            .expect("unshare must be available on the root oracle worker");
+            .output();
+
+        // PRECONDITION, NOT A RESULT (bd-aykfv1). This arm needs CAP_SYS_ADMIN
+        // to create a private mount namespace. It used to `.expect()` on a
+        // missing `unshare` and assert on any nonzero exit, so on an
+        // unprivileged host it reported a RED that says nothing about fl —
+        // observed on rch worker ovh-a (running as `ubuntu`) as
+        // "unshare: unshare failed: Operation not permitted".
+        //
+        // That matters beyond one row: the 2026-08-09 red sweep that recorded
+        // this gate ran as ROOT in a container, where this arm passes and the
+        // EPERM-premised arms fail instead. Which arms are red was therefore a
+        // property of the sweep's environment, not of fl, and a gate cannot say
+        // "I could not run" while it only has pass and fail.
+        //
+        // The skip is deliberately NARROW so it cannot mask a divergence: it
+        // fires only when `unshare` itself refused (its own diagnostic on
+        // stderr) AND the child never got far enough to print a libtest result
+        // line. A real divergence produces a `test result:` line, so it still
+        // fails loudly.
+        let output = match spawned {
+            Ok(output) => output,
+            Err(error) => {
+                println!(
+                    "SKIPPED link_max_matches_glibc_on_loopback_minix: cannot execute `unshare` \
+                     ({error}). This arm needs a private mount namespace; nothing about fl was \
+                     checked."
+                );
+                return;
+            }
+        };
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success()
+            && stderr.contains("unshare failed")
+            && !stdout.contains("test result:")
+        {
+            println!(
+                "SKIPPED link_max_matches_glibc_on_loopback_minix: `unshare --mount` was refused \
+                 ({}). This arm needs CAP_SYS_ADMIN or unprivileged user namespaces; nothing \
+                 about fl was checked, and this is a precondition of the HOST, not a result.",
+                stderr.trim(),
+            );
+            return;
+        }
         assert!(
             output.status.success(),
-            "private-namespace MINIX oracle failed:\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
+            "private-namespace MINIX oracle failed:\nstdout:\n{stdout}\nstderr:\n{stderr}",
         );
         return;
     }
