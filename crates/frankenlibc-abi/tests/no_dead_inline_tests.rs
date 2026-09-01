@@ -24,7 +24,8 @@ use std::path::{Path, PathBuf};
 
 /// Modules still carrying dead inline `#[cfg(test)]` blocks, with the number of
 /// `#[test]` functions stranded in each. 54 when this ratchet was introduced
-/// across 11 modules; 18 across 5 today. Burning these down is tracked separately —
+/// across 11 modules; 17 across 4 today (a fifth module is listed at 0 —
+/// see the `pthread_abi` note below). Burning these down is tracked separately —
 /// each needs its assertions moved to `crates/frankenlibc-abi/tests/`, which is
 /// not mechanical because many touch module-private items.
 /// `err_abi` and `malloc_abi` are deliberately ABSENT: their only occurrences of
@@ -42,7 +43,13 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
     ("glibc_internal_abi", 2),
     ("iconv_abi", 7),
     ("io_internal_abi", 5),
-    ("pthread_abi", 1),
+    // ZERO stranded tests as of 2026-09-01 — but still LISTED, because the
+    // `#[cfg(test)]` block itself remains: it holds the per-test burn-down map
+    // and the helper fns the retired tests used. `has_dead_inline_block` keys on
+    // the block, not the count, so removing this entry would trip the `cleaned`
+    // assertion. At 0 the growth check is at its tightest: any `#[test]` written
+    // back into that block fails immediately.
+    ("pthread_abi", 0),
     ("stdio_abi", 3),
 ];
 // BURNED DOWN (bd-xh08pf):
@@ -138,7 +145,21 @@ const KNOWN_DEAD_INLINE_TESTS: &[(&str, usize)] = &[
 //                         replaced by a bounded poll (bd-d3tvn3 is this suite's
 //                         timing-flake bead) and the process-global scope of the
 //                         counters stated, which the original left implicit.
-// 54 -> 18 stranded tests, 11 -> 5 modules.
+//   pthread_abi, LAST (1 of 6) -> tests/pthread_host_thread_handoff_test.rs.
+//                         COULD NOT COMPILE, a different failure from the cancel
+//                         pair above: it moved an `Arc<HostThreadStartContext>`
+//                         into `std::thread::spawn`, and that struct holds a
+//                         `*mut c_void` with no `unsafe impl Send`/`Sync`, so it
+//                         is E0277. Not fixed by adding those impls — the type
+//                         is correctly non-Send, since production never shares
+//                         it as an Arc. It ALSO covered the wrong half: it
+//                         published immediately after spawning the waiter, so
+//                         the waiter returned on spin iteration 0 and the
+//                         blocking futex fallback was never entered. The
+//                         replacement drives both halves through address-based
+//                         hooks (the shape production uses) and proves which
+//                         path ran with a slow-path counter.
+// 54 -> 17 stranded tests, 11 -> 4 modules (pthread_abi listed at 0).
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

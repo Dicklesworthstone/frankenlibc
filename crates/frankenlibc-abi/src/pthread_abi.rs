@@ -151,6 +151,18 @@ const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
 const HOST_THREAD_HANDOFF_READY: i32 = 1;
 const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
 
+/// Counts children that exhausted [`HOST_THREAD_HANDOFF_SPIN_LIMIT`] and had to
+/// block on the futex for the parent's publication (bd-xh08pf).
+///
+/// This exists because the blocking half of the rendezvous is otherwise
+/// invisible: nothing outside can tell which path a handoff took, so a gate
+/// could neither steer it nor confirm it. (In practice the parent publishes
+/// before the child's first load, which is why the existing host-backed
+/// `pthread_create` arms are expected to resolve on the spin path — an
+/// inference this counter is what finally makes checkable.) It is incremented
+/// once per waiter, on the slow path only — never on the spin path.
+static HOST_THREAD_HANDOFF_FUTEX_WAITS: AtomicU64 = AtomicU64::new(0);
+
 /// Yields the creating thread spends waiting for the child to publish its TID
 /// before it stops spinning and blocks on [`HOST_THREAD_REGISTRATION_EPOCH`].
 const HOST_THREAD_REGISTRATION_YIELD_SPINS: usize = 256;
@@ -1129,6 +1141,7 @@ fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pth
 
     #[cfg(target_os = "linux")]
     {
+        HOST_THREAD_HANDOFF_FUTEX_WAITS.fetch_add(1, Ordering::Relaxed);
         while start_ctx.handoff_state.load(Ordering::Acquire) == HOST_THREAD_HANDOFF_PENDING {
             let rc = futex_wait_private(&start_ctx.handoff_state, HOST_THREAD_HANDOFF_PENDING);
             if rc == 0 {
@@ -2378,6 +2391,80 @@ pub fn pthread_mutex_branch_counters_for_tests() -> (u64, u64, u64) {
 #[must_use]
 pub fn pthread_mutex_htm_snapshot_for_tests() -> HtmSiteSnapshot {
     PTHREAD_MUTEX_HTM_SITE.snapshot()
+}
+
+/// The start routine a handoff probe context carries. It is never called: the
+/// probe drives the rendezvous atomics only, never the trampoline that would
+/// invoke this.
+unsafe extern "C" fn handoff_probe_unreachable_start(_arg: *mut c_void) -> *mut c_void {
+    unreachable!("a handoff probe context is never handed to the start trampoline")
+}
+
+/// Test hook: allocate a host-thread handoff context and return its address.
+///
+/// The API is address-based rather than handing out a shareable Rust value
+/// because that is the shape production uses — [`pthread_create`] passes the
+/// child trampoline a `*const HostThreadStartContext` — and because
+/// `HostThreadStartContext` is deliberately neither `Send` nor `Sync` (it holds
+/// the caller's `*mut c_void`). A `usize` crosses a thread boundary on its own,
+/// so exercising the rendezvous needs no fabricated auto-trait impl.
+///
+/// The returned address must be released with
+/// [`pthread_host_thread_handoff_probe_free_for_tests`].
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_host_thread_handoff_probe_new_for_tests() -> usize {
+    Box::into_raw(Box::new(HostThreadStartContext {
+        start_routine: handoff_probe_unreachable_start,
+        arg: std::ptr::null_mut(),
+        host_thread: AtomicUsize::new(0),
+        handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
+    })) as usize
+}
+
+/// Test hook: run the child half of the rendezvous, blocking until the parent
+/// publishes. Returns the handle the child would adopt as its own.
+///
+/// # Safety
+/// `addr` must come from [`pthread_host_thread_handoff_probe_new_for_tests`]
+/// and must not have been freed.
+#[doc(hidden)]
+pub unsafe fn pthread_host_thread_handoff_probe_wait_for_tests(addr: usize) -> libc::pthread_t {
+    // SAFETY: the caller guarantees `addr` is a live probe context; the waiter
+    // touches only its atomics, and the parent keeps the box alive until join.
+    let start_ctx = unsafe { &*(addr as *const HostThreadStartContext) };
+    wait_for_host_thread_handoff(start_ctx)
+}
+
+/// Test hook: run the parent half of the rendezvous.
+///
+/// # Safety
+/// As [`pthread_host_thread_handoff_probe_wait_for_tests`].
+#[doc(hidden)]
+pub unsafe fn pthread_host_thread_handoff_probe_publish_for_tests(
+    addr: usize,
+    host_thread: libc::pthread_t,
+) {
+    publish_host_thread_handoff(addr as *const HostThreadStartContext, host_thread);
+}
+
+/// Test hook: release a probe context.
+///
+/// # Safety
+/// `addr` must come from [`pthread_host_thread_handoff_probe_new_for_tests`],
+/// must not have been freed already, and no waiter may still be blocked on it.
+#[doc(hidden)]
+pub unsafe fn pthread_host_thread_handoff_probe_free_for_tests(addr: usize) {
+    // SAFETY: the caller guarantees sole ownership of a box from `..._new_...`.
+    drop(unsafe { Box::from_raw(addr as *mut HostThreadStartContext) });
+}
+
+/// Test hook: how many waiters have fallen through the spin loop and blocked on
+/// the futex. Process-global and monotonic; compare two snapshots.
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_host_thread_handoff_futex_waits_for_tests() -> u64 {
+    HOST_THREAD_HANDOFF_FUTEX_WAITS.load(Ordering::Relaxed)
 }
 
 /// Test hook: force thread lifecycle operations (create/join/detach/self/equal)
@@ -6921,21 +7008,28 @@ mod tests {
     // be satisfied by another test's contention — it is a smoke test for the
     // futex path being reached, not an attribution.
 
-    #[test]
-    fn host_thread_handoff_waiter_observes_parent_publication() {
-        let start_ctx = Arc::new(HostThreadStartContext {
-            start_routine: noop_host_start,
-            arg: std::ptr::null_mut(),
-            host_thread: AtomicUsize::new(0),
-            handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
-        });
-        let waiter_ctx = Arc::clone(&start_ctx);
-        let waiter = std::thread::spawn(move || wait_for_host_thread_handoff(&waiter_ctx));
-
-        publish_host_thread_handoff(Arc::as_ptr(&start_ctx), 0x1234usize as libc::pthread_t);
-
-        assert_eq!(waiter.join().unwrap(), 0x1234usize as libc::pthread_t);
-    }
+    // BURNED DOWN (bd-xh08pf), third pass — the last of this module's stranded
+    // tests. `host_thread_handoff_waiter_observes_parent_publication` is
+    // REPLACED by tests/pthread_host_thread_handoff_test.rs, for two reasons
+    // that only surface when you try to make it run.
+    //
+    // IT COULD NOT COMPILE. It moved an `Arc<HostThreadStartContext>` into
+    // `std::thread::spawn`, but that struct holds the caller's `*mut c_void`
+    // and has no `unsafe impl Send`/`Sync` — the file's only such impl is for
+    // `AtforkHandlers`. `Arc<T>: Send` needs `T: Send + Sync`, so this is
+    // E0277, "`*mut c_void` cannot be shared between threads safely".
+    // Deliberately NOT fixed by adding those impls: the type is correctly
+    // non-Send, because a real handoff never shares it as an `Arc` — the parent
+    // owns it and passes the child a raw address.
+    //
+    // AND IT COVERED THE WRONG HALF. It spawned the waiter and published
+    // immediately, so publication almost always landed before the waiter's
+    // first load: it returned on spin iteration 0 without ever spinning, let
+    // alone blocking. That is the same half every host-backed `pthread_create`
+    // in the suite already exercises. The blocking fallback — where the futex
+    // retry, the EAGAIN/EINTR handling and the volatile errno read live — was
+    // covered by nothing, which is what the replacement gates, using
+    // `HOST_THREAD_HANDOFF_FUTEX_WAITS` to prove which path ran.
 
     // BURNED DOWN (bd-xh08pf). Three tests stood here —
     // `pthread_cancel_validates_state_and_type_inputs`,
