@@ -40285,6 +40285,8 @@ ones that would notice a threading-policy depth counter behaving differently.
 
 2026-08-30 bd-2g7oyh.505 LIVE LOSS: landed `57ac99a64` tdelete parent-path rebuild is slower than live glibc on tree512/tree1024/tree2048 (1.638046x/1.596844x/1.588009x; each A/A pair 0.97–1.03; FL ELF `8c28025e…`, bench ELF `fddab993…`, worker vmi1153651); reverted.
 
+2026-08-31 bd-ny3hsa TDELETE PHASE CLOSURE: the corrected loader-mode loss map's next surviving row is already lever-exhausted on the current path. `TDELETE_DELETIONS_PER_BATCH=8192` is an equal-work harness budget (tree8192 executes one 8192-delete timed cycle; construction is excluded), not a production constant. `RbTree::delete` performs one comparator descent with no membership prewalk; ABI `tdelete` directly delegates to it. The conditional root-color-store and parent-path rebuild levers are both recorded live H2H REJECTs above. RCH job 30000682123657597 on hz2 exited 2 after remote execution but returned no terminal stdout, so it is NO_VERDICT and contributes no new timing datum. CHAIN-LIMITED: no safe untried micro-lever; no source change.
+
 ## 2026-08-30 — bd-ny3hsa — REJECT: trusting the `mprotect`ed segment header on the ownership-proven free path removes 48.0 Ir/pair (-8.9%) and buys NO measurable time — reverted
 
 - **RESULT CLASS: loss/baseline (rejected lever).** Reverted; no speedup claimed and none found. The
