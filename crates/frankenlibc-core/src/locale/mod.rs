@@ -205,12 +205,37 @@ mod tests {
         assert!(valid_category(LC_ALL));
     }
 
+    /// The rejection set, MEASURED on the running glibc 2.42 by sweeping
+    /// `setlocale(cat, NULL)` over -2..=14: 0..=12 all answer `"C"` with errno
+    /// untouched, while -1, -2, 13 and 14 return NULL with EINVAL.
+    ///
+    /// This arm used to assert `!valid_category(7)`, which was fl's old
+    /// six-category world and is not glibc's: 7 is `LC_PAPER`, a category a
+    /// conforming program may set. The assertion outlived the fix that widened
+    /// `LC_MAX` to 12, so it was pinning the defect rather than the behaviour.
     #[test]
     fn valid_category_rejects_out_of_range() {
         assert!(!valid_category(-1));
-        assert!(!valid_category(7));
+        assert!(!valid_category(-2));
+        assert!(!valid_category(LC_MAX + 1), "13 is past LC_IDENTIFICATION");
+        assert!(!valid_category(14));
         assert!(!valid_category(i32::MIN));
         assert!(!valid_category(i32::MAX));
+    }
+
+    /// The ACCEPTANCE half of the same sweep, stated outright rather than left
+    /// to `valid_category_accepts_all_defined_categories`, which names only the
+    /// seven POSIX categories and would still pass if the six GNU ones were
+    /// dropped again.
+    #[test]
+    fn valid_category_accepts_every_category_glibc_does() {
+        for cat in 0..=12 {
+            assert!(valid_category(cat), "glibc accepts setlocale({cat}, NULL)");
+        }
+        for (name, cat) in COMPOSITE_ORDER {
+            assert!(valid_category(cat), "{name} must be a valid category");
+        }
+        assert!(valid_category(LC_ALL));
     }
 
     #[test]
@@ -303,6 +328,12 @@ mod tests {
 
     // ── constant value tests ────────────────────────────────────────
 
+    /// Every value here is a glibc 2.42 macro read off the running header, not a
+    /// convention: the six GNU categories sit ABOVE `LC_ALL`, which is why
+    /// `LC_ALL` is in the middle of the range and `LC_MAX` is 12 rather than 6.
+    ///
+    /// `LC_MAX == 6` is what this arm asserted before, and it was the reason it
+    /// failed at HEAD: the constant was widened without the assertion following.
     #[test]
     fn category_constants_have_expected_values() {
         assert_eq!(LC_CTYPE, 0);
@@ -312,8 +343,19 @@ mod tests {
         assert_eq!(LC_MONETARY, 4);
         assert_eq!(LC_MESSAGES, 5);
         assert_eq!(LC_ALL, 6);
+        assert_eq!(LC_PAPER, 7);
+        assert_eq!(LC_NAME, 8);
+        assert_eq!(LC_ADDRESS, 9);
+        assert_eq!(LC_TELEPHONE, 10);
+        assert_eq!(LC_MEASUREMENT, 11);
+        assert_eq!(LC_IDENTIFICATION, 12);
         assert_eq!(LC_MIN, 0);
-        assert_eq!(LC_MAX, 6);
+        assert_eq!(LC_MAX, 12);
+        // `LC_ALL` is not the last category, so the per-category slot count is
+        // not `LC_MAX + 1`. Pinning this stops a future `[T; LC_MAX + 1]` from
+        // silently leaving a hole where `LC_ALL` sits.
+        assert_eq!(CATEGORY_COUNT, 12);
+        assert_eq!(COMPOSITE_ORDER.len(), CATEGORY_COUNT);
     }
 
     // ===== glibc parity tests =====
