@@ -28,6 +28,9 @@ use std::ffi::{CString, c_char, c_int, c_void};
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 type HostWarnx = unsafe extern "C" fn() -> c_int;
 
 /// `warnx(fmt, <long double>, trailing_int)`.
@@ -105,21 +108,25 @@ fn capture_stderr(f: impl FnOnce()) -> String {
     assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
     let (read_fd, write_fd) = (fds[0], fds[1]);
 
-    // SAFETY: dup/dup2 on live descriptors; the saved fd is restored below.
-    let saved = unsafe { libc::dup(2) };
-    assert!(saved >= 0, "dup(2) failed");
-    // SAFETY: as above.
-    assert!(
-        unsafe { libc::dup2(write_fd, 2) } >= 0,
-        "dup2 onto 2 failed"
-    );
+    // Restored by a Drop guard, INCLUDING on unwind: a panic in `f()` would skip
+    // a straight-line restore and leave this process's stderr pointed at the pipe
+    // for the rest of the run, swallowing libtest's report of that very failure
+    // (bd-ug42ol). Block-scoped so fd 2 is restored BEFORE the read below: while
+    // redirected it holds a second reference to the pipe's WRITE end and the
+    // reader would never see EOF.
+    {
+        // SAFETY: dup/dup2 on live descriptors; the guard restores fd 2 on exit.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(2) };
+        assert!(
+            unsafe { libc::dup2(write_fd, 2) } >= 0,
+            "dup2 onto 2 failed"
+        );
 
-    f();
+        f();
+    }
 
-    // SAFETY: restoring the saved descriptor and closing our own copies.
+    // SAFETY: closing our own copy of the write end.
     unsafe {
-        libc::dup2(saved, 2);
-        libc::close(saved);
         libc::close(write_fd);
     }
 
