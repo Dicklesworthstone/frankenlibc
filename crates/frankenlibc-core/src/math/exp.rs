@@ -809,6 +809,12 @@ fn pow_math_divzero(sign_bias: u64) -> f64 {
     core::hint::black_box(s) / core::hint::black_box(0.0) // -> ±inf + FE_DIVBYZERO
 }
 #[inline]
+// `z / z` is fdlibm's deliberate way to MANUFACTURE a NaN and raise FE_INVALID
+// while doing it, not a typo — which is the only thing `clippy::eq_op` (a
+// deny-by-default lint) can see. Silencing it here rather than rewriting: any
+// formulation that does not divide a value by itself either loses the exception
+// or loses the NaN payload x86 produces for 0/0 (bd-pa0nlj).
+#[allow(clippy::eq_op)]
 fn pow_math_invalid(x: f64) -> f64 {
     // glibc `(x - x) / (x - x)`; on x86 this yields the indefinite qNaN.
     let z = core::hint::black_box(x) - core::hint::black_box(x);

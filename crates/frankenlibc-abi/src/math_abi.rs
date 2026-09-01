@@ -4,6 +4,30 @@
 //! so numeric exceptional regimes (NaN/Inf/denormal patterns) participate
 //! in the same strict/hardened control loop as memory and concurrency paths.
 
+// Two clippy lints are deny-by-default and fire, between them, 68 times in this
+// one file on idioms that ARE the file's business. Because they are DENIALS
+// rather than warnings they abort the lib build, and `cargo clippy -p
+// frankenlibc-abi --test <anything>` then lints none of the test targets it was
+// asked about — the whole crate is unreachable behind them (bd-pa0nlj).
+//
+//   approx_constant (44 sites) says "you wrote 3.14, use PI". Every one of these
+//   is a full-precision f128 literal — e.g. `const LOG2E: f128 =
+//   1.442695040888963407359924681001892137f128` — written deliberately, to all
+//   113 bits, to match the value glibc uses. A libm cannot take this lint's
+//   advice without swapping its constants for someone else's rounding.
+//
+//   eq_op (24 sites) sees `(x - x) / (x - x)` and `z / z`. That is IEEE's way to
+//   MANUFACTURE a NaN with the input's payload while raising FE_INVALID, not a
+//   typo; `x != x` as a NaN test is the same lint's blind spot in reverse. In a
+//   file derived from fdlibm this lint has essentially no true positives.
+//
+// Allowed at file scope rather than at 68 call sites: the narrower fix is a
+// single named helper (`fn nan_from(x) -> f128 { (x - x) / (x - x) }`) that the
+// 24 eq_op sites call, which would let eq_op stay on here. That is a mechanical
+// pass over numeric code and is left as follow-up rather than folded into a
+// gate-integrity fix.
+#![allow(clippy::approx_constant, clippy::eq_op)]
+
 use std::ffi::{c_char, c_int, c_void};
 use std::os::raw::c_long;
 use std::sync::OnceLock;

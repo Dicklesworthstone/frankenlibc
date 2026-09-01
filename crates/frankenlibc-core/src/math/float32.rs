@@ -1082,7 +1082,11 @@ pub fn remainderf(x: f32, y: f32) -> f32 {
     let apb = pbits & 0x7fff_ffff; // |y| bits
     // y == 0, or x non-finite, or y NaN -> NaN (raising invalid via 0/0 or inf/inf).
     if apb == 0 || axb >= 0x7f80_0000 || apb > 0x7f80_0000 {
-        return (x * y) / (x * y);
+        // As in the f64 `remainder`: self-division is fdlibm's NaN-plus-
+        // FE_INVALID idiom, not a typo. See bd-pa0nlj.
+        #[allow(clippy::eq_op)]
+        let invalid = (x * y) / (x * y);
+        return invalid;
     }
     let ap = f32::from_bits(apb);
     let mut xv = x;

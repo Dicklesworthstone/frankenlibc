@@ -55,7 +55,14 @@ pub fn remainder(x: f64, y: f64) -> f64 {
     let apb = pbits & 0x7fff_ffff_ffff_ffff; // |y| bits
     // y == 0, or x non-finite, or y NaN -> NaN (raising the invalid flag via 0/0).
     if apb == 0 || axb >= 0x7ff0_0000_0000_0000 || apb > 0x7ff0_0000_0000_0000 {
-        return (x * y) / (x * y);
+        // Dividing a value by ITSELF is the point: it is fdlibm's idiom for
+        // producing a NaN and raising FE_INVALID in the same expression, and it
+        // is what glibc's remainder does here. `clippy::eq_op` is deny-by-default
+        // and cannot tell that from a typo, so it is allowed on this statement
+        // alone (bd-pa0nlj).
+        #[allow(clippy::eq_op)]
+        let invalid = (x * y) / (x * y);
+        return invalid;
     }
     let ap = f64::from_bits(apb);
     let mut xv = x;
