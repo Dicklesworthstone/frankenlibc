@@ -730,6 +730,22 @@ pub(crate) unsafe fn write_host_errno_if_available(val: c_int) {
     }
 }
 
+/// The host `__errno_location` ONLY if it is already cached — never resolves.
+///
+/// For callers that must not do work: [`crate::runtime_policy::observe`]'s errno
+/// guard runs on every adverse call and may not perform an ELF scan, take the
+/// image `OnceLock`, or re-enter anything (bd-q1mkwh). A cold cache here is not
+/// a problem to solve — if the symbol is not resolved then `set_abi_errno` could
+/// not have written the host slot either, so there is nothing to preserve.
+#[inline]
+pub(crate) fn host_errno_location_cached() -> Option<unsafe extern "C" fn() -> *mut c_int> {
+    let addr = HOST_ERRNO_LOCATION.load(Ordering::Acquire);
+    (addr != 0).then(|| {
+        // SAFETY: a non-zero cache entry is the resolved host `__errno_location`.
+        unsafe { core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr) }
+    })
+}
+
 /// Get the cached host `dl_iterate_phdr` address (non-blocking, no recursion).
 #[inline]
 pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {

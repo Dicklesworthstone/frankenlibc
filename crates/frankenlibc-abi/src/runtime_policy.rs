@@ -2386,6 +2386,89 @@ fn decide_strict_observation(
     (mode, decision)
 }
 
+/// Snapshots the caller's errno and puts it back when dropped.
+///
+/// Both slots matter and they are written by different code: fl keeps its own
+/// thread-local (`errno_abi::__errno_location`), and in interpose mode
+/// `set_abi_errno` mirrors into the HOST glibc slot as well, which is the one a
+/// C caller — or a differential test using `libc::__errno_location` — reads.
+/// Restoring only one would leave the two disagreeing, which is worse than the
+/// clobber it replaces.
+///
+/// Restores on unwind too: [`observe`] runs a panic-catching guard, and an errno
+/// left over from a caught panic is exactly as wrong as one left by a futex.
+struct ErrnoTransparencyGuard {
+    fl_slot: *mut std::ffi::c_int,
+    fl_value: std::ffi::c_int,
+    /// Null when the host `__errno_location` is not resolvable — in which case
+    /// `set_abi_errno` could not have written that slot either, so there is
+    /// nothing to protect.
+    host_slot: *mut std::ffi::c_int,
+    host_value: std::ffi::c_int,
+}
+
+impl ErrnoTransparencyGuard {
+    #[inline]
+    fn capture() -> Self {
+        // SAFETY: `__errno_location` returns this thread's slot, valid for the
+        // life of the thread and therefore for this guard's scope.
+        let fl_slot = unsafe { crate::errno_abi::__errno_location() };
+        let fl_value = if fl_slot.is_null() {
+            0
+        } else {
+            // SAFETY: non-null slot from our own thread-local errno.
+            unsafe { std::ptr::read_volatile(fl_slot) }
+        };
+
+        // CACHED ONLY, never resolving. `host_errno_location_raw` would attempt
+        // an ELF scan on a cold cache, and this guard runs on every adverse
+        // observe() — doing symbol resolution from inside telemetry is new work
+        // on a path that previously did none, and it showed up as a 1-in-10 red
+        // in `abi_argp_help_ignores_unterminated_literal_text` where HEAD was
+        // 10/10. A cold cache needs no protection anyway: `set_abi_errno` uses
+        // the same cache, so it could not have written the host slot either.
+        #[cfg(not(feature = "standalone"))]
+        let (host_slot, host_value) = match crate::host_resolve::host_errno_location_cached() {
+            // SAFETY: the resolved host `__errno_location` returns this thread's
+            // glibc errno slot.
+            Some(loc) => {
+                let slot = unsafe { loc() };
+                let value = if slot.is_null() {
+                    0
+                } else {
+                    // SAFETY: non-null slot returned by host `__errno_location`.
+                    unsafe { std::ptr::read_volatile(slot) }
+                };
+                (slot, value)
+            }
+            None => (std::ptr::null_mut(), 0),
+        };
+        #[cfg(feature = "standalone")]
+        let (host_slot, host_value) = (std::ptr::null_mut(), 0);
+
+        Self {
+            fl_slot,
+            fl_value,
+            host_slot,
+            host_value,
+        }
+    }
+}
+
+impl Drop for ErrnoTransparencyGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if !self.fl_slot.is_null() {
+            // SAFETY: captured from this thread's own errno slot, still live.
+            unsafe { std::ptr::write_volatile(self.fl_slot, self.fl_value) };
+        }
+        if !self.host_slot.is_null() {
+            // SAFETY: captured from the host errno slot for this thread.
+            unsafe { std::ptr::write_volatile(self.host_slot, self.host_value) };
+        }
+    }
+}
+
 pub(crate) fn observe(
     family: ApiFamily,
     profile: ValidationProfile,
@@ -2439,6 +2522,25 @@ pub(crate) fn observe(
     {
         return;
     }
+
+    // ERRNO TRANSPARENCY (bd-q1mkwh). Everything below this line is telemetry —
+    // certificate lookups, a reentry guard, a panic-hook install, and the
+    // kernel's own bookkeeping — and all of it takes locks. A futex wait whose
+    // word has already changed returns EAGAIN, which lands in the caller's errno
+    // slot. Callers reach here having ALREADY set the errno they intend to
+    // return, so without this their value is silently replaced by 11.
+    //
+    // MEASURED (bd-7dq39e): `nonexistent file should set ENOENT: left: 11,
+    // right: 2`, ~21% of runs of a 304-test binary. Fixing that one call site by
+    // reordering worked, but there are 440 more `set_abi_errno(..)` followed by
+    // `observe(.., true)` across 22 *_abi.rs files — 136 in unistd_abi.rs alone.
+    // The invariant is not "callers must order their statements"; it is that
+    // POST-OP TELEMETRY MUST NOT BE OBSERVABLE. Enforcing it here fixes all of
+    // them and cannot regress when a new call site is written.
+    //
+    // Placed AFTER the high-frequency fast path above, so the calls that skip
+    // observation entirely pay nothing.
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
 
     let mode = mode();
     if runtime_kernel_passthrough_family(family) {
@@ -2638,6 +2740,120 @@ mod tests {
     use std::ffi::{CString, OsString};
     use std::hint::black_box;
     use std::time::Instant;
+
+    /// The guard restores BOTH errno slots, including a value written inside its
+    /// scope (bd-q1mkwh).
+    ///
+    /// This asserts the mechanism directly rather than hoping to catch the race
+    /// it exists for. `observe`'s slow path clobbers errno only when one of its
+    /// locks is contended — measured at ~21% of runs of a 304-test binary — so a
+    /// test that merely calls `observe` and finds errno intact proves nothing at
+    /// all; it is green in exactly the case where the bug is absent. Here the
+    /// clobber is performed on purpose, so deleting either `write_volatile` in
+    /// `Drop` fails this immediately.
+    #[test]
+    fn errno_transparency_guard_restores_both_slots() {
+        const CALLER_VALUE: std::ffi::c_int = libc::ENOENT;
+        const CLOBBER: std::ffi::c_int = libc::EAGAIN; // what a futex wait leaves
+
+        // SAFETY: single-threaded test body writing this thread's own errno.
+        unsafe { crate::errno_abi::set_abi_errno(CALLER_VALUE) };
+
+        let fl_slot = unsafe { crate::errno_abi::__errno_location() };
+        assert!(!fl_slot.is_null(), "fl errno slot must exist");
+        let host_slot = crate::host_resolve::host_errno_location_raw().map(|loc| unsafe { loc() });
+
+        assert_eq!(
+            unsafe { std::ptr::read_volatile(fl_slot) },
+            CALLER_VALUE,
+            "precondition: the caller's value is in fl's slot"
+        );
+        if let Some(slot) = host_slot.filter(|s| !s.is_null()) {
+            assert_eq!(
+                unsafe { std::ptr::read_volatile(slot) },
+                CALLER_VALUE,
+                "precondition: set_abi_errno mirrors into the host slot"
+            );
+        }
+
+        {
+            let _guard = ErrnoTransparencyGuard::capture();
+            // Stand in for the futex/EAGAIN that observe's locks produce.
+            unsafe { std::ptr::write_volatile(fl_slot, CLOBBER) };
+            if let Some(slot) = host_slot.filter(|s| !s.is_null()) {
+                unsafe { std::ptr::write_volatile(slot, CLOBBER) };
+            }
+            assert_eq!(
+                unsafe { std::ptr::read_volatile(fl_slot) },
+                CLOBBER,
+                "the injected clobber must actually land, or this test is vacuous"
+            );
+        }
+
+        assert_eq!(
+            unsafe { std::ptr::read_volatile(fl_slot) },
+            CALLER_VALUE,
+            "fl's errno slot must survive telemetry"
+        );
+        if let Some(slot) = host_slot.filter(|s| !s.is_null()) {
+            assert_eq!(
+                unsafe { std::ptr::read_volatile(slot) },
+                CALLER_VALUE,
+                "the HOST errno slot must survive telemetry — that is the one a C \
+                 caller reads, and the one bd-7dq39e caught holding EAGAIN"
+            );
+        }
+    }
+
+    /// `observe`'s slow path is WIRED to the guard, asserted against the source.
+    ///
+    /// I wrote a behavioural version of this first — set errno, call
+    /// `observe(.., adverse = true)`, assert errno survived — and ablated the
+    /// guard's `Drop` to check it. It still PASSED. Of course it did: a
+    /// single-threaded test contends no lock, so nothing clobbers errno and the
+    /// assertion holds whether or not the guard exists. That is a hollow gate,
+    /// green in exactly the case where the bug is absent, and it would have gone
+    /// in claiming to pin something it could not.
+    ///
+    /// The real regression risk here is not that the guard stops working —
+    /// `errno_transparency_guard_restores_both_slots` covers that deterministically
+    /// — it is that someone deletes the one line in `observe` that installs it, or
+    /// moves it below the locks it protects against. That is a source property, so
+    /// it is asserted as one.
+    #[test]
+    fn observe_installs_the_errno_guard_before_taking_any_lock() {
+        let src = include_str!("runtime_policy.rs");
+        let start = src
+            .find("pub(crate) fn observe(")
+            .expect("observe() must exist");
+        let body = &src[start..];
+        let end = body.find("\n}\n").expect("observe() must have an end");
+        let body = &body[..end];
+
+        let guard_at = body.find("ErrnoTransparencyGuard::capture()").expect(
+            "observe() must install ErrnoTransparencyGuard — without it, every one of the \
+             440 `set_abi_errno(..); observe(.., true)` call sites can have its errno \
+             replaced by a futex EAGAIN (bd-q1mkwh)",
+        );
+
+        // Everything the guard protects against comes after it. `enter_policy_
+        // reentry_guard` is the first of them; the certificate lookups above it
+        // take locks too, so the guard must precede those as well.
+        for later in [
+            "lookup_active_ffi_pcc_certificate",
+            "enter_policy_reentry_guard",
+            "observe_validation_result",
+        ] {
+            let at = body
+                .find(later)
+                .unwrap_or_else(|| panic!("observe() should still call {later}"));
+            assert!(
+                guard_at < at,
+                "the errno guard is installed AFTER {later}, so anything that call \
+                 leaves in errno survives into the caller"
+            );
+        }
+    }
 
     struct ModeSwitchCounterGuard {
         previous_global: u64,
