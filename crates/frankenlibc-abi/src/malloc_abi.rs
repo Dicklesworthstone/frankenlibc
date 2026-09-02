@@ -928,9 +928,62 @@ fn segment_live_requested(view: SegmentSlotView) -> Option<usize> {
     Some(requested)
 }
 
+/// ABLATION ONLY -- NOT SHIPPABLE. One-entry memo of the last segment's immutable
+/// geometry, to price the "shorten the dependency chain" lever before anyone designs
+/// it properly. Measured: the probe costs ~7 ns and is flat whether its metadata is
+/// L1-hot or spread over 4096 buffers, so it is serial load latency (5-6 dependent
+/// loads), not misses. This collapses the chain to: arena base -> memo key compare ->
+/// requested_size, and answers what that would be worth.
+///
+/// It is UNSOUND as written: nothing invalidates the memo when a segment is retired or
+/// its geometry changes, and the key is process-global rather than per-thread. Reverted
+/// after measuring.
+static MEMO_KEY: AtomicUsize = AtomicUsize::new(usize::MAX);
+static MEMO_BASE: AtomicUsize = AtomicUsize::new(0);
+static MEMO_CLASS_SIZE: AtomicUsize = AtomicUsize::new(0);
+static MEMO_META_BASE: AtomicUsize = AtomicUsize::new(0);
+static MEMO_RECIP: AtomicU32 = AtomicU32::new(0);
+
 #[inline]
+
 fn segment_remaining(addr: usize) -> Option<usize> {
+    let arena_base = segment_arena_base_if_ready()?;
+    let relative = addr.wrapping_sub(arena_base);
+    if relative >= SEGMENT_ARENA_SIZE {
+        return None;
+    }
+    let index = relative >> SEGMENT_SHIFT;
+    if MEMO_KEY.load(Ordering::Relaxed) == index {
+        let base = MEMO_BASE.load(Ordering::Relaxed);
+        let class_size = MEMO_CLASS_SIZE.load(Ordering::Relaxed);
+        let meta_base = MEMO_META_BASE.load(Ordering::Relaxed);
+        let recip = MEMO_RECIP.load(Ordering::Relaxed);
+        let payload_relative = addr.wrapping_sub(base).wrapping_sub(SEGMENT_HEADER_BYTES);
+        let slot_index = slot_index_from_reciprocal(recip, payload_relative);
+        let user_base = base + SEGMENT_HEADER_BYTES + slot_index * class_size;
+        // SAFETY: ablation; the sidecar entry for this slot was valid when memoised.
+        let meta = unsafe { &*((meta_base as *const SegmentSlotMeta).add(slot_index)) };
+        let requested = meta.requested_size.load(Ordering::Acquire) as usize;
+        if requested == 0 || requested > class_size {
+            return None;
+        }
+        let offset = addr.wrapping_sub(user_base);
+        return (offset < requested).then_some(requested - offset);
+    }
     let view = segment_slot_view(addr)?;
+    if let Some(descriptor) = SEGMENT_DESCRIPTORS.get(view.segment_index) {
+        let meta_base = descriptor.meta_base.load(Ordering::Acquire);
+        if meta_base != 0
+            && let Some(header) = segment_header(view.segment_index)
+            && let Some(base) = segment_base(view.segment_index)
+        {
+            MEMO_BASE.store(base, Ordering::Relaxed);
+            MEMO_CLASS_SIZE.store(view.class_size, Ordering::Relaxed);
+            MEMO_META_BASE.store(meta_base, Ordering::Relaxed);
+            MEMO_RECIP.store(header.slot_reciprocal, Ordering::Relaxed);
+            MEMO_KEY.store(view.segment_index, Ordering::Relaxed);
+        }
+    }
     let requested = segment_live_requested(view)?;
     let offset = addr.wrapping_sub(view.user_base);
     (offset < requested).then_some(requested - offset)
