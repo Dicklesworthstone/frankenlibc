@@ -669,8 +669,52 @@ pub(crate) fn host_free_raw() -> Option<unsafe extern "C" fn(*mut c_void)> {
     load_host_symbol(&HOST_FREE).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
+/// Attempts spent resolving the host `__errno_location` SPECIFICALLY.
+///
+/// bd-7dq39e. `bootstrap_host_symbols` backs off on ONE counter shared by every
+/// caller of every symbol, and while `RESOLVED` is still 0 that counter is
+/// advanced overwhelmingly by malloc/free — so the few attempts the backoff does
+/// allow get spent on somebody else's call and this symbol stays cold. Its own
+/// budget cannot be starved that way.
+static ERRNO_RESOLVE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+
+/// The host `__errno_location`, resolved on its own budget.
+///
+/// THE SILENT NO-OP THIS EXISTS TO KILL. When this returns `None`,
+/// [`write_host_errno_if_available`] returns having written nothing — while the
+/// caller has already produced its error return. The ABI then reports a failure
+/// with whatever was in the slot before, which for a test that seeds it is
+/// `errno == 0`. Measured: five stdio error-path gates failing together, e.g.
+/// `fdopen(-1) should set EBADF: left: 0, right: 9`, 3 runs in 14 (21%) against
+/// HEAD on worker hz4.
+///
+/// The backoff SHAPE is kept — bd-dcrhgl measured symbol lookup at 7.7% of
+/// malloc+free, so a per-call ELF scan is not affordable — but the budget is
+/// this symbol's own, so a cold cache always gets its first three attempts.
+/// Once resolved this is one load and a branch, as before.
 pub(crate) fn host_errno_location_raw() -> Option<unsafe extern "C" fn() -> *mut c_int> {
-    load_host_symbol(&HOST_ERRNO_LOCATION).map(|addr| unsafe { core::mem::transmute(addr) })
+    if let Some(addr) = load_host_symbol(&HOST_ERRNO_LOCATION) {
+        // SAFETY: the cached address is the host `__errno_location`.
+        return Some(unsafe {
+            core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr)
+        });
+    }
+
+    // Cold: the shared bootstrap skipped us. Spend one of THIS symbol's own
+    // attempts. `resolve_host_symbol_raw` reaches the ELF image through raw
+    // syscalls (`raw_open`/`raw_fstat`/raw `mmap`), never through fl's own
+    // interposed entry points, so this cannot re-enter the errno path.
+    let attempt = ERRNO_RESOLVE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+    if attempt > 2 && !attempt.is_power_of_two() {
+        return None;
+    }
+    let addr = resolve_host_symbol_raw("__errno_location").unwrap_or(0);
+    if addr == 0 {
+        return None;
+    }
+    HOST_ERRNO_LOCATION.store(addr, Ordering::Release);
+    // SAFETY: resolved from the host image's symbol table under that name.
+    Some(unsafe { core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr) })
 }
 
 #[inline]

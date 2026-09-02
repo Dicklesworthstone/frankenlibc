@@ -2999,8 +2999,15 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     } {
         Ok(f) => f,
         Err(e) => {
-            unsafe { set_abi_errno(e) };
+            // ERRNO LAST (bd-7dq39e). `observe` is bookkeeping, and it takes a
+            // contended lock: a futex wait that finds the word already changed
+            // returns EAGAIN and leaves 11 in the HOST errno slot, on top of the
+            // value we just set. Measured under 304-way parallelism as
+            // `nonexistent file should set ENOENT: left: 11, right: 2` — errno
+            // written, then clobbered by our own accounting. Nothing may run
+            // between the errno write and the error return.
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            unsafe { set_abi_errno(e) };
             return std::ptr::null_mut();
         }
     };
