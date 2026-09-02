@@ -5731,12 +5731,35 @@ struct ResolverRdataDialect {
     type_prefix: bool,
     refuses_tkey: bool,
     refuses_tsig: bool,
+    /// What separates the generic-rdata length from its `;` comment.
+    ///
+    /// The two deployed dialects disagree, and this one is invisible unless you
+    /// look at the byte before the semicolon (bd-d9et7k). Measured on live
+    /// `libresolv.so.2` (glibc 2.42) with a deliberately 3-byte A record:
+    ///
+    /// ```text
+    /// foo.com.\t\t1H IN A\t\t\# 3 ( ; RR format error\n\t01 02 03 )\t\t\t\t\t; ...
+    ///                                ^ SPACE
+    /// ```
+    ///
+    /// while the legacy dialect recorded on bd-mz6xqf emits a TAB:
+    ///
+    /// ```text
+    /// weird.example.\t\t1M IN 999\t\# 4 (\t; unknown RR type 999\n\tde ad be ef )...
+    ///                                    ^ TAB
+    /// ```
+    ///
+    /// glibc reaches both comments through the same `hexify` label in
+    /// `ns_print.c`, so one probe settles the separator for every comment this
+    /// formatter emits.
+    comment_separator: &'static str,
 }
 
 const LEGACY_RDATA_DIALECT: ResolverRdataDialect = ResolverRdataDialect {
     type_prefix: false,
     refuses_tkey: true,
     refuses_tsig: true,
+    comment_separator: "\t; ",
 };
 
 /// libbind's generic-RR presentation changed between the deployed libresolv
@@ -5807,8 +5830,47 @@ fn resolver_rdata_dialect() -> ResolverRdataDialect {
                 .to_bytes()
                 .windows(b"TYPE999".len())
                 .any(|window| window == b"TYPE999");
+
+        // SECOND PROBE, for the comment separator. The type-999 probe above
+        // cannot answer it: in the TYPE<n> dialect an unknown type carries no
+        // comment at all, so there is no separator to look at. A three-byte A
+        // record does carry one — every dialect calls it an "RR format error" —
+        // and it goes through the same `hexify` label in glibc's ns_print.c as
+        // the unknown-type note, so this one probe settles both (bd-d9et7k).
+        let short_a = [1u8, 2, 3];
+        let mut probe_buf = [0i8; 128];
+        let written = sprintrrf(
+            ptr::null(),
+            0,
+            c"probe".as_ptr(),
+            1,
+            1, /* A */
+            60,
+            short_a.as_ptr(),
+            short_a.len(),
+            ptr::null(),
+            ptr::null(),
+            probe_buf.as_mut_ptr(),
+            probe_buf.len(),
+        );
+        let comment_separator = if written > 0 {
+            let rendered = CStr::from_ptr(probe_buf.as_ptr()).to_bytes();
+            let tabbed = b"\t; RR format error";
+            if rendered.windows(tabbed.len()).any(|w| w == tabbed) {
+                "\t; "
+            } else {
+                // Either the space form or a host that renders this some third
+                // way; the space form is what glibc 2.42 emits and what the
+                // legacy tab form was measured to differ from.
+                " ; "
+            }
+        } else {
+            LEGACY_RDATA_DIALECT.comment_separator
+        };
+
         ResolverRdataDialect {
             type_prefix,
+            comment_separator,
             // The same two deployed dialects differ on malformed TKEY/TSIG:
             // legacy libbind rejects them while the TYPE<n> dialect emits
             // RFC 3597 generic rdata. This is the discriminator exercised by
@@ -5959,18 +6021,22 @@ fn format_generic_rdata(rdata: &[u8], ty: u16, diagnostic: Option<&str>, out: &m
     /// Bytes per dump line.
     const PER_LINE: usize = 16;
 
+    // The separator before `;` is dialect-dependent — see
+    // `ResolverRdataDialect::comment_separator` for both measurements.
+    let sep = resolver_rdata_dialect().comment_separator;
+
     let _ = write!(out, "\\# {}", rdata.len());
     if rdata.is_empty() {
         if let Some(diagnostic) = diagnostic {
-            let _ = write!(out, "\t; {diagnostic}");
+            let _ = write!(out, "{sep}{diagnostic}");
         }
         return;
     }
     out.push_str(" (");
     if let Some(diagnostic) = diagnostic {
-        let _ = write!(out, "\t; {diagnostic}");
+        let _ = write!(out, "{sep}{diagnostic}");
     } else if !resolver_rdata_dialect().type_prefix {
-        let _ = write!(out, "\t; unknown RR type {ty}");
+        let _ = write!(out, "{sep}unknown RR type {ty}");
     }
 
     let mut remaining = rdata;
