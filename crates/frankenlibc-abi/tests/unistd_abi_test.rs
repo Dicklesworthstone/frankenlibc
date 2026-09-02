@@ -18,6 +18,9 @@ use std::sync::atomic::AtomicI32;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 /// Serializes all gai_*/getaddrinfo_a tests in this binary.
 ///
 /// host glibc's async-getaddrinfo machinery (gai_cancel, gai_error,
@@ -8601,9 +8604,6 @@ fn run_with_piped_stdin(payload: &[u8], call: impl FnOnce()) {
     let _guard = READPASSPHRASE_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let saved_stdin = unsafe { libc::dup(0) };
-    assert!(saved_stdin >= 0);
-
     let mut pipefds = [0 as c_int; 2];
     let rc = unsafe { libc::pipe(pipefds.as_mut_ptr()) };
     assert_eq!(rc, 0);
@@ -8612,13 +8612,20 @@ fn run_with_piped_stdin(payload: &[u8], call: impl FnOnce()) {
     assert_eq!(written as usize, payload.len());
     unsafe { libc::close(pipefds[1]) };
 
-    unsafe { libc::dup2(pipefds[0], 0) };
-    unsafe { libc::close(pipefds[0]) };
+    // Restored by a Drop guard, INCLUDING on unwind (bd-ug42ol). `call()` is the
+    // readpassphrase invocation under test and its callers assert on the result;
+    // a panic anywhere in that window would skip a straight-line
+    // `dup2(saved_stdin, 0)` and leave this process's STDIN pointed at a drained
+    // pipe for the remaining 635 tests, so every later arm here would read EOF
+    // and fail for a reason unrelated to what it tests.
+    {
+        // SAFETY: duplicates the live stdin; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(0) };
+        unsafe { libc::dup2(pipefds[0], 0) };
+        unsafe { libc::close(pipefds[0]) };
 
-    call();
-
-    unsafe { libc::dup2(saved_stdin, 0) };
-    unsafe { libc::close(saved_stdin) };
+        call();
+    }
 }
 
 #[test]

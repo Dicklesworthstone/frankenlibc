@@ -321,6 +321,14 @@ fn diff_progname_source_matches_glibc() {
 
 #[test]
 fn err_h_diff_coverage_report() {
+    // Takes IO_LOCK like every other test here, because this one WRITES TO
+    // STDERR too (bd-ug42ol's audit clause: does every stderr writer in this
+    // binary take the same lock?). Under libtest's default capture `eprintln!`
+    // goes to a per-thread sink and is harmless — but under `--nocapture`, which
+    // is how these gates are usually run, it goes to fd 2, where the arms above
+    // are holding a pipe. This line would then be captured as `warnx` output and
+    // reported as a divergence in whichever arm was unlucky.
+    let _g = IO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _ = core::ptr::null::<c_void>();
     eprintln!("{{\"family\":\"err.h\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0}}",);
 }

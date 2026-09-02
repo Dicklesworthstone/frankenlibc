@@ -153,11 +153,152 @@ use frankenlibc_abi::stdio_abi::{
     vis,
 };
 
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
 const IOFBF: i32 = 0;
 const IONBF: i32 = 2;
 
 static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
 static STDOUT_REDIRECT_LOCK: Mutex<()> = Mutex::new(());
+
+/// Text only libtest writes, never the stdio entrypoints under test.
+///
+/// ` ... ` is libtest's separator between a test's name and its verdict, and it
+/// is the one fragment that catches every verdict — including the `ignored` line
+/// measured below, whose two halves arrived on either side of the payload.
+const LIBTEST_SIGNATURES: [&[u8]; 4] = [
+    b"has been running for over",
+    b" ... ",
+    b"test result:",
+    b"\ntest ",
+];
+
+/// Set by the parent test on the child that runs the fd-1 capture arms.
+const STDOUT_CAPTURE_HELPER_ENV: &str = "FRANKENLIBC_STDIO_STDOUT_CAPTURE_HELPER";
+
+/// Check a redirected-stdout capture against the byte count the call returned
+/// (bd-ug42ol step 2).
+///
+/// This is the highest-exposure capture in the suite: it points the PROCESS's
+/// fd 1 at a file while up to 303 other tests run in parallel, and libtest
+/// writes `test <name> ... ok` to fd 1 from its own threads when any of them
+/// completes — plus a watchdog line no arrangement can prevent. Those bytes land
+/// in the very file this reads back.
+///
+/// `printf` and `_IO_printf` RETURN the number of bytes they transmitted, which
+/// is exactly the discriminator that case needs: the file must hold that many
+/// bytes and no more. A longer capture carrying libtest's own text is reported
+/// as CONTAMINATION with the bytes attached; anything else is a real divergence
+/// and is compared byte-for-byte.
+///
+/// The assertion this replaces was `bytes.windows(n).any(|w| w == payload)` — a
+/// containment check, which passes just as happily with a libtest line wrapped
+/// around the payload. It could not have caught a stdio bug that emitted extra
+/// output, because tolerating extra output is precisely what it did.
+fn assert_counted_stdout_capture(label: &str, returned: c_int, captured: &[u8], expected: &[u8]) {
+    if captured.len() != returned as usize {
+        if let Some(sig) = LIBTEST_SIGNATURES
+            .iter()
+            .find(|sig| captured.windows(sig.len()).any(|w| w == **sig))
+        {
+            panic!(
+                "CONTAMINATED {label} capture: {} returned {returned} bytes but the file holds \
+                 {} and contains {:?}, which libtest writes to fd 1 and no stdio entrypoint \
+                 does. This is foreign traffic in the capture, NOT a divergence — bd-ug42ol. \
+                 Captured: {:?}",
+                label,
+                captured.len(),
+                String::from_utf8_lossy(sig),
+                String::from_utf8_lossy(captured)
+            );
+        }
+        panic!(
+            "{label} returned {returned} but wrote {} bytes to the redirected stdout: {:?}",
+            captured.len(),
+            String::from_utf8_lossy(captured)
+        );
+    }
+    assert_eq!(
+        captured,
+        expected,
+        "{label} redirected-stdout bytes: got {:?}, want {:?}",
+        String::from_utf8_lossy(captured),
+        String::from_utf8_lossy(expected)
+    );
+}
+
+/// The isolation that makes the two fd-1 capture arms assertable at all
+/// (bd-ug42ol step 1).
+///
+/// Those arms point the PROCESS's fd 1 at a temp file while up to 303 siblings
+/// run in parallel, and libtest writes each sibling's verdict to fd 1 from its
+/// own threads. MEASURED on worker hz4 the moment the counted check went in:
+///
+/// ```text
+/// _IO_printf returned 5 but wrote 128 bytes to the redirected stdout:
+///   "test fopen_regular_file_uses_full_buffering ... io-9\nignored, requires LD_PRELOAD: ..."
+/// ```
+///
+/// The payload landed INSIDE a foreign line — libtest's name-and-separator
+/// before it, the rest of that verdict after it. Both arms passed anyway,
+/// because both asserted `bytes.windows(n).any(..)`: a containment check cannot
+/// see 119 bytes of anyone else's text wrapped around the payload.
+///
+/// So the arms run where there is no sibling: a child process on this same
+/// binary with `--exact <one name> --test-threads 1`. libtest's writes there
+/// bracket the test rather than land inside it. What remains is the 60-second
+/// watchdog, which no arrangement prevents and which
+/// [`assert_counted_stdout_capture`] reports as contamination instead of
+/// comparing.
+#[test]
+fn process_global_stdio_arms_run_in_an_isolated_child() {
+    let current_exe = std::env::current_exe().expect("current test binary path");
+    let output = std::process::Command::new(current_exe)
+        .args([
+            "--exact",
+            "process_global_stdio_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(STDOUT_CAPTURE_HELPER_ENV, "1")
+        .output()
+        .expect("run isolated redirected-stdout helper");
+    // Not `stdout`: this file imports fl's `stdout` STATIC, and a let binding
+    // may not shadow a static (E0530).
+    let child_stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "isolated redirected-stdout helper failed:\nstdout={child_stdout}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // ZERO IS NOT EVIDENCE: libtest prints `test result: ok.` for a filter that
+    // matched nothing, so a renamed child test would turn this green while
+    // running neither arm.
+    assert!(
+        child_stdout.contains("1 passed"),
+        "the child ran no test — the filter matched nothing, so neither redirected-stdout \
+         arm executed:\nstdout={child_stdout}"
+    );
+}
+
+/// The child half of [`process_global_stdio_arms_run_in_an_isolated_child`].
+///
+/// Inert unless the parent set the env var, so a plain run of this binary never
+/// redirects fd 1 with 303 tests in flight.
+#[test]
+fn process_global_stdio_child_invocation() {
+    if std::env::var_os(STDOUT_CAPTURE_HELPER_ENV).is_none() {
+        return;
+    }
+    printf_writes_to_redirected_stdout();
+    io_internal_printf_and_sscanf_use_native_stdio_paths();
+    // Not a capture, but the same hazard class: a process-global side effect
+    // that the tests around it observe. See its own comment for the 6-in-20
+    // measurement.
+    fcloseall_keeps_the_standard_streams_registered();
+}
 
 /// Serializes tests that assert specific addresses are absent from the
 /// native stream registry after fclose. Without this, a parallel test
@@ -1266,11 +1407,17 @@ fn vfprintf_writes_to_native_tmpfile_handle() {
     assert_eq!(unsafe { fclose(stream) }, 0);
 }
 
-#[test]
+/// Runs in the isolated child; see
+/// [`process_global_stdio_arms_run_in_an_isolated_child`].
 fn printf_writes_to_redirected_stdout() {
     let _guard = STDOUT_REDIRECT_LOCK
         .lock()
-        .expect("stdout redirect lock should not be poisoned");
+        // A panic in ANY holder poisons this lock, and `.expect()` here turned
+        // that into a failure of whichever test asked for it next — three reds
+        // for one defect, two of them naming innocent tests (bd-ug42ol). The
+        // failure is already reported by the test that caused it; taking the
+        // data anyway keeps this one honest.
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let path = temp_path("printf");
     let _ = fs::remove_file(&path);
@@ -1286,33 +1433,31 @@ fn printf_writes_to_redirected_stdout() {
     };
     assert!(out_fd >= 0);
 
-    // SAFETY: dup/dup2/close operate on valid fds.
-    let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
-    assert!(saved_stdout >= 0);
-    // SAFETY: redirect stdout to the temp file.
-    assert_eq!(
-        unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
-        libc::STDOUT_FILENO
-    );
+    // The `assert_eq!(written, 9)` below sits INSIDE the redirect window, and a
+    // straight-line restore is skipped when it panics — leaving this process's
+    // stdout pointed at the temp file for all 303 remaining tests, which then
+    // swallows libtest's report of this very failure (bd-ug42ol). Block-scoped
+    // so stdout is restored before the file is read back.
+    let written = {
+        // SAFETY: duplicates the live stdout; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDOUT_FILENO) };
+        // SAFETY: redirect stdout to the temp file.
+        assert_eq!(
+            unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
+            libc::STDOUT_FILENO
+        );
 
-    // SAFETY: variadic args match the format string.
-    let written = unsafe { printf(c"printf-%d\n".as_ptr(), 9_i32) };
-    assert_eq!(written, 9);
+        // SAFETY: variadic args match the format string.
+        let written = unsafe { printf(c"printf-%d\n".as_ptr(), 9_i32) };
+        assert_eq!(written, 9);
+        written
+    };
 
-    // SAFETY: restore stdout and close descriptors.
-    unsafe {
-        libc::dup2(saved_stdout, libc::STDOUT_FILENO);
-        libc::close(saved_stdout);
-        libc::close(out_fd);
-    }
+    // SAFETY: our copy of the output descriptor, closed once stdout is restored.
+    unsafe { libc::close(out_fd) };
 
     let bytes = fs::read(&path).expect("redirected printf output file should exist");
-    assert!(
-        bytes
-            .windows(b"printf-9\n".len())
-            .any(|window| window == b"printf-9\n"),
-        "redirected stdout should contain printf payload; got bytes={bytes:?}"
-    );
+    assert_counted_stdout_capture("printf", written, &bytes, b"printf-9\n");
     let _ = fs::remove_file(path);
 }
 
@@ -2174,7 +2319,9 @@ fn popen_rejects_tracked_unterminated_mode() {
 fn perror_does_not_crash_with_null_or_empty() {
     let _guard = STDOUT_REDIRECT_LOCK
         .lock()
-        .expect("stdio redirect lock should not be poisoned");
+        // See the note at the first holder: poisoning is another test's failure,
+        // not this one's (bd-ug42ol).
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // perror writes to stderr; we just verify it doesn't crash
     unsafe { perror(std::ptr::null()) };
@@ -2186,27 +2333,33 @@ fn perror_does_not_crash_with_null_or_empty() {
 fn perror_ignores_tracked_unterminated_prefix() {
     let _guard = STDOUT_REDIRECT_LOCK
         .lock()
-        .expect("stdio redirect lock should not be poisoned");
+        // See the note at the first holder: poisoning is another test's failure,
+        // not this one's (bd-ug42ol).
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut pipe_fds = [0; 2];
     assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
 
-    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
-    assert!(saved_stderr >= 0);
-    assert_eq!(
-        unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
-        libc::STDERR_FILENO
-    );
+    // Block-scoped guard (bd-ug42ol): restores stderr on unwind, and releases
+    // the second reference to the pipe's WRITE end before the read below — at
+    // wider scope the reader would never see EOF and this would HANG.
+    {
+        // SAFETY: duplicates the live stderr; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDERR_FILENO) };
+        assert_eq!(
+            unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
+            libc::STDERR_FILENO
+        );
 
-    let prefix = unsafe { tracked_bytes_without_nul(b"unterminated_prefix") };
-    unsafe {
-        *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
-        perror(prefix.cast_const());
-        frankenlibc_abi::malloc_abi::free(prefix.cast::<c_void>());
-        libc::dup2(saved_stderr, libc::STDERR_FILENO);
-        libc::close(saved_stderr);
-        libc::close(pipe_fds[1]);
+        let prefix = unsafe { tracked_bytes_without_nul(b"unterminated_prefix") };
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
+            perror(prefix.cast_const());
+            frankenlibc_abi::malloc_abi::free(prefix.cast::<c_void>());
+        }
     }
+    // SAFETY: our copy of the write end, closed once stderr is restored.
+    unsafe { libc::close(pipe_fds[1]) };
 
     let mut captured = Vec::new();
     let mut buf = [0u8; 128];
@@ -3239,11 +3392,17 @@ fn io_internal_fprintf_and_sprintf_use_native_formatting() {
     let _ = fs::remove_file(path);
 }
 
-#[test]
+/// Runs in the isolated child; see
+/// [`process_global_stdio_arms_run_in_an_isolated_child`].
 fn io_internal_printf_and_sscanf_use_native_stdio_paths() {
     let _guard = STDOUT_REDIRECT_LOCK
         .lock()
-        .expect("stdout redirect lock should not be poisoned");
+        // A panic in ANY holder poisons this lock, and `.expect()` here turned
+        // that into a failure of whichever test asked for it next — three reds
+        // for one defect, two of them naming innocent tests (bd-ug42ol). The
+        // failure is already reported by the test that caused it; taking the
+        // data anyway keeps this one honest.
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let path = temp_path("io_internal_printf");
     let _ = fs::remove_file(&path);
@@ -3258,29 +3417,26 @@ fn io_internal_printf_and_sscanf_use_native_stdio_paths() {
     };
     assert!(out_fd >= 0);
 
-    let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
-    assert!(saved_stdout >= 0);
-    assert_eq!(
-        unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
-        libc::STDOUT_FILENO
-    );
+    // Same treatment as `printf_writes_to_redirected_stdout` above, and for the
+    // same reason: `assert_eq!(written, 5)` runs inside the window (bd-ug42ol).
+    let written = {
+        // SAFETY: duplicates the live stdout; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDOUT_FILENO) };
+        assert_eq!(
+            unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
+            libc::STDOUT_FILENO
+        );
 
-    let written = unsafe { _IO_printf(c"io-%d\n".as_ptr(), 9_i32) };
-    assert_eq!(written, 5);
+        let written = unsafe { _IO_printf(c"io-%d\n".as_ptr(), 9_i32) };
+        assert_eq!(written, 5);
+        written
+    };
 
-    unsafe {
-        libc::dup2(saved_stdout, libc::STDOUT_FILENO);
-        libc::close(saved_stdout);
-        libc::close(out_fd);
-    }
+    // SAFETY: our copy of the output descriptor, closed once stdout is restored.
+    unsafe { libc::close(out_fd) };
 
     let bytes = fs::read(&path).expect("redirected _IO_printf output file should exist");
-    assert!(
-        bytes
-            .windows(b"io-9\n".len())
-            .any(|window| window == b"io-9\n"),
-        "redirected stdout should contain _IO_printf payload; got bytes={bytes:?}"
-    );
+    assert_counted_stdout_capture("_IO_printf", written, &bytes, b"io-9\n");
 
     let input = c"11 parsed";
     let mut value = 0_i32;
@@ -6410,12 +6566,20 @@ fn funopen_round_trips_write_seek_read() {
 ///
 /// Calling it twice matters: the second call is the one that used to find the
 /// sentinels already missing.
-#[test]
+/// Driven from the isolated child, NOT as a `#[test]` of its own.
+///
+/// `fcloseall()` closes every registered stream in the PROCESS, including ones
+/// other tests in this binary opened microseconds earlier and are about to use.
+/// STDOUT_REDIRECT_LOCK did not close that hole: the victims never take it.
+/// MEASURED on worker hz4 with a filter selecting only the `fclose*` tests —
+/// none of them touched by bd-ug42ol — `fclose_closes_fd` failed 6 times in 20
+/// runs (30%) on `assert!(fd >= 0)`, because `fileno` cannot find a stream that
+/// `fcloseall` unregistered between its `fopen` and its `fileno`. Running it
+/// here instead: 0 failures in 20.
+///
+/// A process-global destructive call is the same hazard as a process-global
+/// redirect, and takes the same cure: run it where no other test is running.
 fn fcloseall_keeps_the_standard_streams_registered() {
-    let _guard = STDOUT_REDIRECT_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
     assert!(
         frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
         "precondition: the standard streams should be registered before fcloseall"

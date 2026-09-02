@@ -504,6 +504,12 @@ fn conformance_getopt_long_only_single_dash_long_options() {
 
 #[test]
 fn getopt_diff_coverage_report() {
+    // Takes OPT_LOCK like every other test here, because this one WRITES TO
+    // STDERR too (bd-ug42ol's audit clause). Harmless under libtest's default
+    // per-thread capture; under `--nocapture` it goes to fd 2 while the arms
+    // above hold a pipe on it, and would be captured as getopt's own
+    // diagnostic.
+    let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     eprintln!(
         "{{\"family\":\"unistd.h(getopt+getopt_long+getopt_long_only)\",\"reference\":\"POSIX/GNU\",\"functions\":3,\"test_type\":\"conformance\",\"long_option_cases\":9}}",
     );
