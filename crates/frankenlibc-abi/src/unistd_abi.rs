@@ -4404,41 +4404,36 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 }
 
 #[inline]
-/// Per-filesystem LINK_MAX values, mirroring glibc's pathconf table.
-/// f_type magic numbers from <linux/magic.h>.
+/// Per-filesystem LINK_MAX values, mirroring glibc's __statfs_link_max.
+/// f_type magic numbers from <linux/magic.h> and glibc's jump tree (bd-t5wk3d).
 fn fs_link_max_for_type(f_type: i64) -> libc::c_long {
+    const MINIX_SUPER_MAGIC: i64 = 0x137F;
+    const MINIX_SUPER_MAGIC2: i64 = 0x138F;
+    const MINIX2_SUPER_MAGIC: i64 = 0x2468;
+    const MINIX2_SUPER_MAGIC2: i64 = 0x2478;
+    const UFS_MAGIC: i64 = 0x11954;
+    const COH_MAGIC_V4: i64 = 0x12FF7B7;
     const EXT2_SUPER_MAGIC: i64 = 0xEF53; // also EXT3, EXT4
-    const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
+    const AFS_FS_MAGIC: i64 = 0xBD00BD0;
+    const REISERFS_SUPER_MAGIC: i64 = 0x52654973;
+    const UDF_SUPER_MAGIC: i64 = 0x54190100;
     const XFS_SUPER_MAGIC: i64 = 0x58465342;
+    const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
+    const F2FS_SUPER_MAGIC: i64 = 0xF2F52010;
+
     match f_type {
+        MINIX_SUPER_MAGIC | MINIX_SUPER_MAGIC2 => 250,
+        MINIX2_SUPER_MAGIC | MINIX2_SUPER_MAGIC2 => 65530,
+        UFS_MAGIC => 32000,
+        0x12FF7B4..=0x12FF7B6 => 126,
+        COH_MAGIC_V4 => 10000,
         EXT2_SUPER_MAGIC => 65000, // EXT4 limit; ext2/3 cap at 32000 but glibc returns 65000
-        BTRFS_SUPER_MAGIC => 65535,
+        AFS_FS_MAGIC => 65000,
+        REISERFS_SUPER_MAGIC => 64535,
+        UDF_SUPER_MAGIC => 32000,
         XFS_SUPER_MAGIC => 2147483647, // INT32_MAX
-        // Everything else takes glibc's default. THREE entries were removed
-        // from this match rather than added, because they were inventions:
-        //
-        //   PROC_SUPER_MAGIC (0x9fa0)  -> was 1, glibc says 127  [MEASURED]
-        //   SYSFS_MAGIC (0x62656572)   -> was 1, glibc says 127  [MEASURED]
-        //   NFS_SUPER_MAGIC (0x6969)   -> was 32000, glibc says 127
-        //
-        // The first two are reproducible on any Linux box: pathconf("/proc",
-        // _PC_LINK_MAX) and pathconf("/sys", _PC_LINK_MAX) are both 127 in
-        // glibc and were both 1 here. The NFS row could not be measured (no NFS
-        // mount), and comes from the incumbent's code instead: disassembling
-        // __statfs_link_max in libc.so.6 2.42 (the local helper pathconf tail-
-        // calls at 0x104360) gives the COMPLETE set of filesystem magics it
-        // compares --
-        //   0xef53, 0x2468, 0x2478, 0x11954, 0xbd00bd0, 0x12ff7b7, 0x52654973,
-        //   0x54190100, 0x58465342, 0x9123683e, 0xf2f52010
-        // -- and 0x6969 is not among them, nor are 0x9fa0, 0x62656572,
-        // 0x858458f6 (ramfs) or 0x01021994 (tmpfs). The tmpfs and ramfs arms
-        // this match used to carry were harmless because they returned the
-        // default anyway; they are dropped as noise.
-        //
-        // glibc DOES special-case eight magics that fl still does not, which
-        // means fl returns 127 where glibc returns a real limit on reiserfs,
-        // f2fs, ufs, minix and friends. Those are latent, unmeasurable here,
-        // and filed rather than guessed (see the bead referenced in the commit).
+        BTRFS_SUPER_MAGIC => 65535,
+        F2FS_SUPER_MAGIC => 32000,
         _ => 127, // POSIX minimum (LINUX_LINK_MAX), and glibc's default
     }
 }
@@ -4449,7 +4444,11 @@ unsafe fn pc_link_max_for_path(path: *const c_char) -> libc::c_long {
     let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
     match unsafe { syscall::sys_statfs(path as *const u8, sf.as_mut_ptr()) } {
         Ok(()) => fs_link_max_for_type(unsafe { sf.assume_init() }.f_type),
-        Err(_) => 127,
+        Err(e) if e == libc::ENOSYS => 127,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4458,7 +4457,11 @@ unsafe fn pc_link_max_for_fd(fd: c_int) -> libc::c_long {
     let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
     match unsafe { syscall::sys_fstatfs(fd, sf.as_mut_ptr()) } {
         Ok(()) => fs_link_max_for_type(unsafe { sf.assume_init() }.f_type),
-        Err(_) => 127,
+        Err(e) if e == libc::ENOSYS => 127,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
