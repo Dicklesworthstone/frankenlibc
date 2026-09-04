@@ -5810,7 +5810,7 @@ fn resolver_rdata_dialect() -> ResolverRdataDialect {
         // SAFETY: `symbol` was resolved from libresolv under its public name.
         let sprintrrf: SprintRrf = core::mem::transmute(symbol);
         let rdata = [0xde, 0xad, 0xbe, 0xef];
-        let mut buf = [0i8; 128];
+        let mut buf = [0 as c_char; 128];
         let written = sprintrrf(
             ptr::null(),
             0,
@@ -5838,7 +5838,7 @@ fn resolver_rdata_dialect() -> ResolverRdataDialect {
         // and it goes through the same `hexify` label in glibc's ns_print.c as
         // the unknown-type note, so this one probe settles both (bd-d9et7k).
         let short_a = [1u8, 2, 3];
-        let mut probe_buf = [0i8; 128];
+        let mut probe_buf = [0 as c_char; 128];
         let written = sprintrrf(
             ptr::null(),
             0,
