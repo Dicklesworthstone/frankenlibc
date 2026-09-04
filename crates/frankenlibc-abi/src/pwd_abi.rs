@@ -413,14 +413,14 @@ impl PwdStorage {
             buf.push(0);
             offset
         };
-        let passwd_off = (!entry.nis_compat_null_fields)
-            .then(|| append_field(&mut self.buf, &entry.pw_passwd));
-        let gecos_off = (!entry.nis_compat_null_fields)
-            .then(|| append_field(&mut self.buf, &entry.pw_gecos));
-        let dir_off = (!entry.nis_compat_null_fields)
-            .then(|| append_field(&mut self.buf, &entry.pw_dir));
-        let shell_off = (!entry.nis_compat_null_fields)
-            .then(|| append_field(&mut self.buf, &entry.pw_shell));
+        let passwd_off =
+            (!entry.nis_compat_null_fields).then(|| append_field(&mut self.buf, &entry.pw_passwd));
+        let gecos_off =
+            (!entry.nis_compat_null_fields).then(|| append_field(&mut self.buf, &entry.pw_gecos));
+        let dir_off =
+            (!entry.nis_compat_null_fields).then(|| append_field(&mut self.buf, &entry.pw_dir));
+        let shell_off =
+            (!entry.nis_compat_null_fields).then(|| append_field(&mut self.buf, &entry.pw_shell));
 
         let base = self.buf.as_ptr() as *mut c_char;
         // SAFETY: offsets are within the buf allocation. Pointers are stable

@@ -170,8 +170,7 @@ const HOST_THREAD_REGISTRATION_YIELD_SPINS: usize = 256;
 /// Upper bound on how long `pthread_create` waits for that publication. This
 /// is a safety net against a child that never runs, not the mechanism: the
 /// futex wake makes the common case return as soon as the child publishes.
-const HOST_THREAD_REGISTRATION_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(10);
+const HOST_THREAD_REGISTRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Bumped by every host-thread trampoline immediately after it publishes its
 /// kernel TID into [`HOST_THREAD_TID_REGISTRY`]. Global and `'static` so a

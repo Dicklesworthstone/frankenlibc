@@ -419,10 +419,7 @@ pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0
-        && !iov.is_null()
-        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
-    {
+    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -464,10 +461,7 @@ pub unsafe extern "C" fn writev(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0
-        && !iov.is_null()
-        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
-    {
+    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -657,10 +651,7 @@ pub unsafe extern "C" fn preadv(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0
-        && !iov.is_null()
-        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
-    {
+    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -706,10 +697,7 @@ pub unsafe extern "C" fn pwritev(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0
-        && !iov.is_null()
-        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
-    {
+    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -762,10 +750,7 @@ pub unsafe extern "C" fn preadv2(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0
-        && !iov.is_null()
-        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
-    {
+    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -816,10 +801,7 @@ pub unsafe extern "C" fn pwritev2(
     // So only the bounds check fl actually owns stays here, and it runs solely
     // when there is something to bound. Everything else — a bad fd, a zero
     // count, a negative count, a NULL vector — is the kernel's to answer.
-    if iovcnt > 0
-        && !iov.is_null()
-        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
-    {
+    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;

@@ -261,9 +261,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
             last_d_off,
             ..
         } = &mut *state;
-        if let Some((entry, next_off)) =
-            dirent_core::parse_dirent64(&buffer[..*valid_bytes], 0)
-        {
+        if let Some((entry, next_off)) = dirent_core::parse_dirent64(&buffer[..*valid_bytes], 0) {
             let d_reclen = next_off as libc::c_ushort;
             *last_d_off = entry.d_off;
             *offset = next_off;

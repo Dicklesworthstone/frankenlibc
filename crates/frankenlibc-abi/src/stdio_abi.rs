@@ -5694,45 +5694,44 @@ unsafe fn render_printf_impl(
 /// `@llvm.memcpy`, which would re-enter the symbol this is avoiding.
 #[inline(always)]
 fn push_bytes(v: &mut Vec<u8>, src: &[u8]) {
-        let n = src.len();
-        if n == 0 {
-            return;
+    let n = src.len();
+    if n == 0 {
+        return;
+    }
+    if n > 16 {
+        v.extend_from_slice(src);
+        return;
+    }
+    v.reserve(n);
+    let len = v.len();
+    // SAFETY: `reserve(n)` guarantees `n` writable bytes at `len`; `src` is a
+    // live slice of `n` bytes and cannot alias the vector's spare capacity.
+    // Every branch writes exactly the bytes in `[0, n)`, with overlap where the
+    // two accesses meet, before `set_len` publishes them.
+    unsafe {
+        let d = v.as_mut_ptr().add(len);
+        let p = src.as_ptr();
+        if n >= 8 {
+            let a = core::ptr::read_unaligned(p.cast::<u64>());
+            let b = core::ptr::read_unaligned(p.add(n - 8).cast::<u64>());
+            core::ptr::write_unaligned(d.cast::<u64>(), a);
+            core::ptr::write_unaligned(d.add(n - 8).cast::<u64>(), b);
+        } else if n >= 4 {
+            let a = core::ptr::read_unaligned(p.cast::<u32>());
+            let b = core::ptr::read_unaligned(p.add(n - 4).cast::<u32>());
+            core::ptr::write_unaligned(d.cast::<u32>(), a);
+            core::ptr::write_unaligned(d.add(n - 4).cast::<u32>(), b);
+        } else if n >= 2 {
+            let a = core::ptr::read_unaligned(p.cast::<u16>());
+            let b = core::ptr::read_unaligned(p.add(n - 2).cast::<u16>());
+            core::ptr::write_unaligned(d.cast::<u16>(), a);
+            core::ptr::write_unaligned(d.add(n - 2).cast::<u16>(), b);
+        } else {
+            *d = *p;
         }
-        if n > 16 {
-            v.extend_from_slice(src);
-            return;
-        }
-        v.reserve(n);
-        let len = v.len();
-        // SAFETY: `reserve(n)` guarantees `n` writable bytes at `len`; `src` is a
-        // live slice of `n` bytes and cannot alias the vector's spare capacity.
-        // Every branch writes exactly the bytes in `[0, n)`, with overlap where the
-        // two accesses meet, before `set_len` publishes them.
-        unsafe {
-            let d = v.as_mut_ptr().add(len);
-            let p = src.as_ptr();
-            if n >= 8 {
-                let a = core::ptr::read_unaligned(p.cast::<u64>());
-                let b = core::ptr::read_unaligned(p.add(n - 8).cast::<u64>());
-                core::ptr::write_unaligned(d.cast::<u64>(), a);
-                core::ptr::write_unaligned(d.add(n - 8).cast::<u64>(), b);
-            } else if n >= 4 {
-                let a = core::ptr::read_unaligned(p.cast::<u32>());
-                let b = core::ptr::read_unaligned(p.add(n - 4).cast::<u32>());
-                core::ptr::write_unaligned(d.cast::<u32>(), a);
-                core::ptr::write_unaligned(d.add(n - 4).cast::<u32>(), b);
-            } else if n >= 2 {
-                let a = core::ptr::read_unaligned(p.cast::<u16>());
-                let b = core::ptr::read_unaligned(p.add(n - 2).cast::<u16>());
-                core::ptr::write_unaligned(d.cast::<u16>(), a);
-                core::ptr::write_unaligned(d.add(n - 2).cast::<u16>(), b);
-            } else {
-                *d = *p;
-            }
-            v.set_len(len + n);
-        }
+        v.set_len(len + n);
+    }
 }
-
 
 /// Render already-parsed `segments` into a fresh buffer. Split out from
 /// [`render_printf_impl`] so the printf-family entry points can reuse the
@@ -6284,7 +6283,12 @@ struct StrictDirectSnprintfWriter {
 
 impl StrictDirectSnprintfWriter {
     const fn new(dst: *mut c_char, size: usize) -> Self {
-        Self { dst, size, written: 0, total: 0 }
+        Self {
+            dst,
+            size,
+            written: 0,
+            total: 0,
+        }
     }
 
     /// Append while preserving snprintf's would-have-written length.
@@ -6379,12 +6383,19 @@ macro_rules! strict_direct_snprintf_fused {
                 }
                 StrictDirectSnprintfSpec::Signed32 | StrictDirectSnprintfSpec::SignedLong => {
                     let value = match spec {
-                        StrictDirectSnprintfSpec::Signed32 => unsafe { $args.next_arg::<c_int>() as i64 },
+                        StrictDirectSnprintfSpec::Signed32 => unsafe {
+                            $args.next_arg::<c_int>() as i64
+                        },
                         StrictDirectSnprintfSpec::SignedLong => unsafe { $args.next_arg::<i64>() },
                         _ => unreachable!(),
                     };
                     let mut rendered = [0u8; 22];
-                    let mut start = strict_direct_unsigned_digits(value.unsigned_abs(), 10, false, &mut rendered);
+                    let mut start = strict_direct_unsigned_digits(
+                        value.unsigned_abs(),
+                        10,
+                        false,
+                        &mut rendered,
+                    );
                     if value < 0 {
                         start -= 1;
                         rendered[start] = b'-';
@@ -6400,12 +6411,17 @@ macro_rules! strict_direct_snprintf_fused {
                     let value = match spec {
                         StrictDirectSnprintfSpec::Unsigned32
                         | StrictDirectSnprintfSpec::Hex32(_)
-                        | StrictDirectSnprintfSpec::Octal32 => unsafe { $args.next_arg::<c_uint>() as u64 },
+                        | StrictDirectSnprintfSpec::Octal32 => unsafe {
+                            $args.next_arg::<c_uint>() as u64
+                        },
                         _ => unsafe { $args.next_arg::<u64>() },
                     };
                     let (base, upper) = match spec {
-                        StrictDirectSnprintfSpec::Hex32(upper) | StrictDirectSnprintfSpec::HexLong(upper) => (16, upper),
-                        StrictDirectSnprintfSpec::Octal32 | StrictDirectSnprintfSpec::OctalLong => (8, false),
+                        StrictDirectSnprintfSpec::Hex32(upper)
+                        | StrictDirectSnprintfSpec::HexLong(upper) => (16, upper),
+                        StrictDirectSnprintfSpec::Octal32 | StrictDirectSnprintfSpec::OctalLong => {
+                            (8, false)
+                        }
                         _ => (10, false),
                     };
                     let mut rendered = [0u8; 22];
@@ -6424,7 +6440,11 @@ macro_rules! strict_direct_snprintf_fused {
                         loop {
                             start -= 1;
                             let digit = (value & 0xf) as u8;
-                            rendered[start] = if digit < 10 { b'0' + digit } else { b'a' + digit - 10 };
+                            rendered[start] = if digit < 10 {
+                                b'0' + digit
+                            } else {
+                                b'a' + digit - 10
+                            };
                             value >>= 4;
                             if value == 0 {
                                 break;
@@ -7860,14 +7880,10 @@ pub unsafe extern "C" fn snprintf(
     // The per-rung format scans are NOT addressed here; each `exact_direct_*_format`
     // still walks the format. This removes only the repeated mode test.
     let strict_direct = runtime_policy::strict_passthrough_active();
-    if strict_direct
-        && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
-    {
+    if strict_direct && let Some(literal_len) = unsafe { strict_literal_format_len(format) } {
         return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
     }
-    if strict_direct
-        && let Some(append_newline) = unsafe { exact_direct_s_format(format) }
-    {
+    if strict_direct && let Some(append_newline) = unsafe { exact_direct_s_format(format) } {
         let arg = unsafe { args.next_arg::<*const c_char>() };
         return unsafe { strict_direct_snprintf_s(str_buf, size, arg, append_newline) };
     }
@@ -7935,9 +7951,7 @@ pub unsafe extern "C" fn snprintf(
     // fixed cost at 87.5 ns, which is the whole of the 1.56-1.78x float loss.
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_f_format`.
-    if strict_direct
-        && let Some(precision) = unsafe { exact_direct_f_format(format) }
-    {
+    if strict_direct && let Some(precision) = unsafe { exact_direct_f_format(format) } {
         // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
         let arg = unsafe { args.next_arg::<f64>() };
         // SAFETY: snprintf's C contract supplies `size` writable bytes when

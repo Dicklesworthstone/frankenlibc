@@ -73,7 +73,7 @@ pub struct Timeval {
 ///   - u16 → 0
 macro_rules! rpc_native {
     // Pattern 1: function returning c_int
-    ($name:ident ( $($pname:ident : $pty:ty),* ) -> c_int) => {
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
             $( let _ = $pname; )*
@@ -81,7 +81,7 @@ macro_rules! rpc_native {
         }
     };
     // Pattern 2: function returning *mut c_void
-    ($name:ident ( $($pname:ident : $pty:ty),* ) -> *mut c_void) => {
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_void) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_void {
             $( let _ = $pname; )*
@@ -89,14 +89,14 @@ macro_rules! rpc_native {
         }
     };
     // Pattern 3: function returning ()
-    ($name:ident ( $($pname:ident : $pty:ty),* ) -> ()) => {
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> ()) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) {
             $( let _ = $pname; )*
         }
     };
     // Pattern 4: function returning c_ulong
-    ($name:ident ( $($pname:ident : $pty:ty),* ) -> c_ulong) => {
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_ulong) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_ulong {
             $( let _ = $pname; )*
@@ -104,7 +104,7 @@ macro_rules! rpc_native {
         }
     };
     // Pattern 5: function returning *mut c_char
-    ($name:ident ( $($pname:ident : $pty:ty),* ) -> *mut c_char) => {
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_char) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_char {
             $( let _ = $pname; )*
@@ -112,7 +112,7 @@ macro_rules! rpc_native {
         }
     };
     // Pattern 6: function returning u16
-    ($name:ident ( $($pname:ident : $pty:ty),* ) -> u16) => {
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> u16) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> u16 {
             $( let _ = $pname; )*
@@ -2200,13 +2200,15 @@ pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> 
 
 rpc_native!(authnone_create() -> *mut c_void);
 
-rpc_native!(authunix_create(
-    machname: *mut c_char,
-    uid: c_int,
-    gid: c_int,
-    len: c_int,
-    aup_gids: *mut c_int
-) -> *mut c_void);
+rpc_native!(
+    authunix_create(
+        machname: *mut c_char,
+        uid: c_int,
+        gid: c_int,
+        len: c_int,
+        aup_gids: *mut c_int,
+    ) -> *mut c_void
+);
 
 rpc_native!(authunix_create_default() -> *mut c_void);
 
@@ -2260,61 +2262,73 @@ rpc_native!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int);
 // RPC client creation and error handling (14 symbols)
 // ===========================================================================
 
-rpc_native!(clnt_create(
-    host: *const c_char,
-    prog: c_ulong,
-    vers: c_ulong,
-    proto: *const c_char
-) -> *mut c_void);
+rpc_native!(
+    clnt_create(
+        host: *const c_char,
+        prog: c_ulong,
+        vers: c_ulong,
+        proto: *const c_char,
+    ) -> *mut c_void
+);
 
 rpc_native!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
 
-rpc_native!(clnttcp_create(
-    raddr: *mut c_void,
-    prog: c_ulong,
-    vers: c_ulong,
-    sockp: *mut c_int,
-    sendsz: c_uint,
-    recvsz: c_uint
-) -> *mut c_void);
+rpc_native!(
+    clnttcp_create(
+        raddr: *mut c_void,
+        prog: c_ulong,
+        vers: c_ulong,
+        sockp: *mut c_int,
+        sendsz: c_uint,
+        recvsz: c_uint,
+    ) -> *mut c_void
+);
 
-rpc_native!(clntudp_create(
-    raddr: *mut c_void,
-    prog: c_ulong,
-    vers: c_ulong,
-    wait: Timeval,
-    sockp: *mut c_int
-) -> *mut c_void);
+rpc_native!(
+    clntudp_create(
+        raddr: *mut c_void,
+        prog: c_ulong,
+        vers: c_ulong,
+        wait: Timeval,
+        sockp: *mut c_int,
+    ) -> *mut c_void
+);
 
-rpc_native!(clntudp_bufcreate(
-    raddr: *mut c_void,
-    prog: c_ulong,
-    vers: c_ulong,
-    wait: Timeval,
-    sockp: *mut c_int,
-    sendsz: c_uint,
-    recvsz: c_uint
-) -> *mut c_void);
+rpc_native!(
+    clntudp_bufcreate(
+        raddr: *mut c_void,
+        prog: c_ulong,
+        vers: c_ulong,
+        wait: Timeval,
+        sockp: *mut c_int,
+        sendsz: c_uint,
+        recvsz: c_uint,
+    ) -> *mut c_void
+);
 
-rpc_native!(clntunix_create(
-    raddr: *mut c_void,
-    prog: c_ulong,
-    vers: c_ulong,
-    sockp: *mut c_int,
-    sendsz: c_uint,
-    recvsz: c_uint
-) -> *mut c_void);
+rpc_native!(
+    clntunix_create(
+        raddr: *mut c_void,
+        prog: c_ulong,
+        vers: c_ulong,
+        sockp: *mut c_int,
+        sendsz: c_uint,
+        recvsz: c_uint,
+    ) -> *mut c_void
+);
 
-rpc_native!(callrpc(
-    host: *const c_char,
-    prognum: c_ulong,
-    versnum: c_ulong,
-    procnum: c_ulong,
-    inproc: *mut c_void,
-    in_: *mut c_char,
-    outproc: *mut c_void,
-    out: *mut c_char
-) -> c_int);
+rpc_native!(
+    callrpc(
+        host: *const c_char,
+        prognum: c_ulong,
+        versnum: c_ulong,
+        procnum: c_ulong,
+        inproc: *mut c_void,
+        in_: *mut c_char,
+        outproc: *mut c_void,
+        out: *mut c_char,
+    ) -> c_int
+);
 
 /// Broadcast an RPC call to all hosts on the local network.
 /// Returns RPC_UNKNOWNPROTO (17) — broadcast requires portmapper which is not supported.
@@ -2475,21 +2489,21 @@ use frankenlibc_core::rpc::status_message as rpc_errstr;
 // RPC server / SVC (24 symbols)
 // ===========================================================================
 
-rpc_native!(svc_register(
-    xprt: *mut c_void,
-    prog: c_ulong,
-    vers: c_ulong,
-    dispatch: *mut c_void,
-    protocol: c_int
-) -> c_int);
+rpc_native!(
+    svc_register(
+        xprt: *mut c_void,
+        prog: c_ulong,
+        vers: c_ulong,
+        dispatch: *mut c_void,
+        protocol: c_int,
+    ) -> c_int
+);
 
 rpc_native!(svc_unregister(prog: c_ulong, vers: c_ulong) -> ());
 
-rpc_native!(svc_sendreply(
-    xprt: *mut c_void,
-    xdr_results: *mut c_void,
-    xdr_location: *mut c_void
-) -> c_int);
+rpc_native!(
+    svc_sendreply(xprt: *mut c_void, xdr_results: *mut c_void, xdr_location: *mut c_void) -> c_int
+);
 
 rpc_native!(svc_run() -> ());
 rpc_native!(svc_exit() -> ());
@@ -2505,11 +2519,7 @@ rpc_native!(svcerr_auth(xprt: *mut c_void, why: c_int) -> ());
 rpc_native!(svcerr_decode(xprt: *mut c_void) -> ());
 rpc_native!(svcerr_noproc(xprt: *mut c_void) -> ());
 rpc_native!(svcerr_noprog(xprt: *mut c_void) -> ());
-rpc_native!(svcerr_progvers(
-    xprt: *mut c_void,
-    low_vers: c_ulong,
-    high_vers: c_ulong
-) -> ());
+rpc_native!(svcerr_progvers(xprt: *mut c_void, low_vers: c_ulong, high_vers: c_ulong) -> ());
 rpc_native!(svcerr_systemerr(xprt: *mut c_void) -> ());
 rpc_native!(svcerr_weakauth(xprt: *mut c_void) -> ());
 
@@ -2520,11 +2530,7 @@ rpc_native!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut 
 rpc_native!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 rpc_native!(svcudp_create(sock: c_int) -> *mut c_void);
 
-rpc_native!(svcudp_bufcreate(
-    sock: c_int,
-    sendsz: c_uint,
-    recvsz: c_uint
-) -> *mut c_void);
+rpc_native!(svcudp_bufcreate(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut c_void);
 
 rpc_native!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
 rpc_native!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
@@ -2534,14 +2540,16 @@ rpc_native!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *
 // RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)
 // ===========================================================================
 
-rpc_native!(registerrpc(
-    prognum: c_ulong,
-    versnum: c_ulong,
-    procnum: c_ulong,
-    progname: *mut c_void,
-    inproc: *mut c_void,
-    outproc: *mut c_void
-) -> c_int);
+rpc_native!(
+    registerrpc(
+        prognum: c_ulong,
+        versnum: c_ulong,
+        procnum: c_ulong,
+        progname: *mut c_void,
+        inproc: *mut c_void,
+        outproc: *mut c_void,
+    ) -> c_int
+);
 
 /// Returns the file descriptor table size (same as getdtablesize).
 /// Uses getrlimit(RLIMIT_NOFILE) with a fallback to FD_SETSIZE (1024).

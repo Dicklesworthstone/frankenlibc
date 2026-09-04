@@ -1,5 +1,7 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #![allow(unsafe_code)] // dladdr provenance probe over live oracle arms
+#![allow(invalid_runtime_symbol_definitions)]
+#![allow(suspicious_runtime_symbol_definitions)]
 
 //! SCREEN, not a fix: which link-time "glibc" arms in the math differentials
 //! actually reach `libc.so.6`, and which are captured by a local provider?
@@ -122,11 +124,41 @@ macro_rules! declare_math_arms {
 /// gate comparing FrankenLibC's f128 work against a link-time "glibc" arm is
 /// measuring compiler_builtins.
 const KNOWN_CAPTURED: &[&str] = &[
-    "cbrt", "cbrtf", "ceil", "ceilf128", "copysign", "copysignf128", "fabs", "fabsf128", "fdim",
-    "fdimf128", "floor", "floorf128", "fmaf128", "fmax", "fmaxf128", "fmaximum_numf128",
-    "fmaximumf128", "fmin", "fminf128", "fminimum_numf128", "fminimumf128", "fmod", "fmodf128",
-    "rint", "rintf", "rintf128", "round", "roundevenf128", "roundf", "roundf128", "sqrt",
-    "sqrtf128", "trunc", "truncf", "truncf128",
+    "cbrt",
+    "cbrtf",
+    "ceil",
+    "ceilf128",
+    "copysign",
+    "copysignf128",
+    "fabs",
+    "fabsf128",
+    "fdim",
+    "fdimf128",
+    "floor",
+    "floorf128",
+    "fmaf128",
+    "fmax",
+    "fmaxf128",
+    "fmaximum_numf128",
+    "fmaximumf128",
+    "fmin",
+    "fminf128",
+    "fminimum_numf128",
+    "fminimumf128",
+    "fmod",
+    "fmodf128",
+    "rint",
+    "rintf",
+    "rintf128",
+    "round",
+    "roundevenf128",
+    "roundf",
+    "roundf128",
+    "sqrt",
+    "sqrtf128",
+    "trunc",
+    "truncf",
+    "truncf128",
 ];
 
 declare_math_arms!(
@@ -1083,7 +1115,10 @@ fn math_oracle_arms_report_their_owning_object() {
     arms.extend(binary_arm_addresses());
     arms.extend(mem_arm_addresses());
     arms.extend(foreign_lib_arm_addresses());
-    assert!(!arms.is_empty(), "no arms declared; the macro did not expand");
+    assert!(
+        !arms.is_empty(),
+        "no arms declared; the macro did not expand"
+    );
 
     let mut captured = Vec::new();
     let mut clean = Vec::new();
@@ -1099,7 +1134,12 @@ fn math_oracle_arms_report_their_owning_object() {
         }
     }
 
-    println!("ORACLE_ARM_CENSUS total={} clean={} captured={}", arms.len(), clean.len(), captured.len());
+    println!(
+        "ORACLE_ARM_CENSUS total={} clean={} captured={}",
+        arms.len(),
+        clean.len(),
+        captured.len()
+    );
     for (name, object) in &clean {
         println!("  CLEAN    {name:12} -> {object}");
     }
@@ -1192,7 +1232,10 @@ fn no_differential_binds_a_captured_symbol_at_link_time() {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
         if !name.starts_with("conformance_diff_") || !name.ends_with(".rs") {
             continue;
         }
@@ -1230,7 +1273,10 @@ fn no_differential_binds_a_captured_symbol_at_link_time() {
         }
     }
 
-    assert!(scanned > 100, "only {scanned} differentials scanned; the glob is wrong");
+    assert!(
+        scanned > 100,
+        "only {scanned} differentials scanned; the glob is wrong"
+    );
     assert!(
         offenders.is_empty(),
         "these gates bind a locally-captured symbol at link time, so their \

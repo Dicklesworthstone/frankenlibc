@@ -6,6 +6,7 @@
 //! glibc is reached via dlsym; both engines act on the SAME fds.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
+#![allow(invalid_runtime_symbol_definitions)]
 
 use frankenlibc_abi::unistd_abi as fl;
 use std::ffi::{CStr, c_char, c_int, c_void};

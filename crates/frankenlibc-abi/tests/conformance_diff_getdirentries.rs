@@ -6,6 +6,7 @@
 //! untouched-on-error behavior against the host (glibc via dlsym).
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
+#![allow(invalid_runtime_symbol_definitions)]
 
 use frankenlibc_abi::glibc_internal_abi as fl;
 use std::ffi::{CString, c_char, c_int, c_long, c_void};

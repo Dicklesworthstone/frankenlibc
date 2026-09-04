@@ -661,7 +661,10 @@ enum SegmentFreeResult {
     /// the size class it lived in, carried out so the stats accumulator does not
     /// have to recompute from `size` what the segment already knows (see
     /// [`StatsBin`]).
-    Freed { size: usize, bin: usize },
+    Freed {
+        size: usize,
+        bin: usize,
+    },
 }
 
 #[inline]
@@ -3033,12 +3036,7 @@ impl StatsBin {
 }
 
 #[inline(always)]
-fn record_stats_binned(
-    slot: Option<&AllocatorReentrySlot>,
-    op: usize,
-    size: usize,
-    bin: StatsBin,
-) {
+fn record_stats_binned(slot: Option<&AllocatorReentrySlot>, op: usize, size: usize, bin: StatsBin) {
     if size == 0 {
         return;
     }
@@ -3083,11 +3081,7 @@ fn record_free_stats(slot: Option<&AllocatorReentrySlot>, size: usize) {
 
 /// `record_alloc_stats` for a caller that already knows the size class.
 #[inline(always)]
-fn record_alloc_stats_binned(
-    slot: Option<&AllocatorReentrySlot>,
-    size: usize,
-    class_index: usize,
-) {
+fn record_alloc_stats_binned(slot: Option<&AllocatorReentrySlot>, size: usize, class_index: usize) {
     record_stats_binned(
         slot,
         FC_OP_ALLOC,
@@ -3098,11 +3092,7 @@ fn record_alloc_stats_binned(
 
 /// `record_free_stats` for a caller that already knows the size class.
 #[inline(always)]
-fn record_free_stats_binned(
-    slot: Option<&AllocatorReentrySlot>,
-    size: usize,
-    class_index: usize,
-) {
+fn record_free_stats_binned(slot: Option<&AllocatorReentrySlot>, size: usize, class_index: usize) {
     record_stats_binned(
         slot,
         FC_OP_FREE,

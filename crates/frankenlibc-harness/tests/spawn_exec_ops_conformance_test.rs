@@ -392,13 +392,11 @@ fn spawn_exec_ops_fixture_executes_with_host_parity_via_harness_matrix() -> Resu
                         case.name
                     )
                 })?;
-            if matches!(case.function.as_str(), "system" | "posix_spawn") {
-                assert_ne!(
-                    result.host_output, "SKIP",
-                    "{} fixture {} ({mode}) must execute a host oracle, not a canned result",
-                    case.function, case.name
-                );
-            }
+            assert_ne!(
+                result.host_output, "SKIP",
+                "{} fixture {} ({mode}) must execute a host oracle, not a canned result",
+                case.function, case.name
+            );
             assert!(
                 result.host_parity,
                 "spawn_exec_ops case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",

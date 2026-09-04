@@ -191,7 +191,7 @@ fn ns_sprintrrf_padding_matches_glibc_across_lengths_and_ttls() {
                     name_c.as_ptr(),
                     1,
                     1,
-                    ttl,
+                    ttl.into(),
                     RDATA.as_ptr(),
                     RDATA.len(),
                     std::ptr::null(),

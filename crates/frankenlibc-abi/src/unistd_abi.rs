@@ -1454,6 +1454,7 @@ pub unsafe extern "C" fn fdatasync(fd: c_int) -> c_int {
 // ---------------------------------------------------------------------------
 
 /// POSIX `open` — open a file descriptor.
+#[allow(invalid_runtime_symbol_definitions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
@@ -5302,11 +5303,7 @@ unsafe fn vdso_getrandom_draw(buf: *mut c_void, buflen: usize, flags: c_uint) ->
 /// successful path, while retaining the output-capacity clamp, vDSO routing,
 /// syscall fallback, errno, and adverse-result telemetry.
 #[inline]
-unsafe fn strict_getrandom_passthrough(
-    buf: *mut c_void,
-    buflen: usize,
-    flags: c_uint,
-) -> isize {
+unsafe fn strict_getrandom_passthrough(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
     let effective_buflen = tracked_void_output_capacity(buf, buflen);
     if let Some(n) = unsafe { vdso_getrandom_draw(buf, effective_buflen, flags) } {
         return n;

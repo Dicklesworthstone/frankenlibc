@@ -2426,10 +2426,7 @@ const SCAN_PAGE: usize = 4096;
 ///
 /// `ptr` must be readable up to the first NUL or `bound` bytes, whichever comes
 /// first. That is strictly weaker than what [`scan_c_string`] requires.
-pub(crate) unsafe fn scan_c_string_nul_or_bound(
-    ptr: *const c_char,
-    bound: usize,
-) -> (usize, bool) {
+pub(crate) unsafe fn scan_c_string_nul_or_bound(ptr: *const c_char, bound: usize) -> (usize, bool) {
     // Fast path: `[ptr, ptr+bound)` lies in one page, and that page is mapped
     // because `ptr` is readable — so every byte the scan may load is readable and
     // `scan_c_string`'s stronger contract already holds. Written as a comparison
@@ -2975,7 +2972,9 @@ unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -
         let set_len = if set_nul != 0 {
             let l = set_nul.trailing_zeros() as usize;
             if l < 5 {
-                return SpanProbe::Decline { set_len: Some(l as u8) };
+                return SpanProbe::Decline {
+                    set_len: Some(l as u8),
+                };
             }
             l
         } else if *set.add(16) == 0 {
@@ -3634,132 +3633,134 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
         // guard vanishes. Indentation inside the guard is deliberately left as it
         // was; reflowing it would rewrite the whole body for no semantic change.
         if !BOUNDED || bound >= 32 {
-        // Wide 128-byte unrolled fast path: the plain 32B loop below re-ran the
-        // dual page-guard (`&0xFFF <= 0x1000-32` on BOTH pointers) AND the `i+32<=bound`
-        // check on EVERY 32 bytes — ~2.7x slower than glibc for long equal strings
-        // (measured strcmp_align, alignment-independent ⇒ pure per-iter overhead, not
-        // splits). glibc unrolls and amortizes the page check. Here: one guard covers a
-        // full 128B window (both pointers in-page), then four 32-lane compares whose
-        // flag masks are OR-combined so the all-equal common case takes a SINGLE branch
-        // and advances 128B. Byte-identical: the first set bit across the four masks (in
-        // order) is the exact first differing-or-s1-NUL byte the 32B/SWAR tail resolves to.
-        if i + 128 <= bound
-            && (p1 as usize + i) & 0xFFF <= 0x1000 - 128
-            && (p2 as usize + i) & 0xFFF <= 0x1000 - 128
-        {
-            use core::simd::Simd;
-            use core::simd::cmp::SimdPartialEq;
-            let zero = Simd::<u8, 32>::splat(0);
-            // SAFETY: the 128B window [i, i+128) stays within both mapped pages and bound.
-            let cmp = |off: usize| -> u64 {
+            // Wide 128-byte unrolled fast path: the plain 32B loop below re-ran the
+            // dual page-guard (`&0xFFF <= 0x1000-32` on BOTH pointers) AND the `i+32<=bound`
+            // check on EVERY 32 bytes — ~2.7x slower than glibc for long equal strings
+            // (measured strcmp_align, alignment-independent ⇒ pure per-iter overhead, not
+            // splits). glibc unrolls and amortizes the page check. Here: one guard covers a
+            // full 128B window (both pointers in-page), then four 32-lane compares whose
+            // flag masks are OR-combined so the all-equal common case takes a SINGLE branch
+            // and advances 128B. Byte-identical: the first set bit across the four masks (in
+            // order) is the exact first differing-or-s1-NUL byte the 32B/SWAR tail resolves to.
+            if i + 128 <= bound
+                && (p1 as usize + i) & 0xFFF <= 0x1000 - 128
+                && (p2 as usize + i) & 0xFFF <= 0x1000 - 128
+            {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let zero = Simd::<u8, 32>::splat(0);
+                // SAFETY: the 128B window [i, i+128) stays within both mapped pages and bound.
+                let cmp = |off: usize| -> u64 {
+                    let a = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p1.add(i + off), 32)
+                    });
+                    let b = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p2.add(i + off), 32)
+                    });
+                    (a.simd_ne(b) | a.simd_eq(zero)).to_bitmask()
+                };
+                // EARLY-OUT PER PANEL. OR-combining all four masks gives the
+                // all-equal case a single branch, but it also prices four panels
+                // when the answer is in the first one — and the page guard admits
+                // this window for a 5-byte string, so EVERY compare under 128 bytes
+                // paid all four. Measured (callgrind two-point vs live glibc in the
+                // same process image): a flat ~99 Ir from L=4 to L=32 against
+                // glibc's 20, a fixed ~79-instruction floor at 4.95x. Testing each
+                // mask as it is produced lets a short or early-differing compare
+                // leave after one panel; the all-equal case still executes the same
+                // four compares, trading its single branch for four predictable
+                // ones. NOTE: this is an INSTRUCTION-COUNT trade — the OR form also
+                // lets the four loads issue without an intervening branch, which a
+                // cycle-accurate measurement may value differently for long strings.
+                let f0 = cmp(0);
+                if f0 != 0 {
+                    return (i + f0.trailing_zeros() as usize, false);
+                }
+                let f1 = cmp(32);
+                if f1 != 0 {
+                    return (i + 32 + f1.trailing_zeros() as usize, false);
+                }
+                let f2 = cmp(64);
+                let f3 = cmp(96);
+                if f2 | f3 == 0 {
+                    i += 128;
+                    continue;
+                }
+                if f2 != 0 {
+                    return (i + 64 + f2.trailing_zeros() as usize, false);
+                }
+                return (i + 96 + f3.trailing_zeros() as usize, false);
+            }
+            // Wide 32-byte portable-SIMD fast path: skip whole equal, NUL-free panels
+            // at AVX width (glibc's strcmp/strncmp step 16-32 bytes; the 8-byte SWAR
+            // below was the bottleneck — strncmp was ~1.5x slower). A flagged panel
+            // falls through to the SWAR/scalar tail, which resolves the exact first
+            // differing-or-NUL index, so the returned (index, hit_limit) is unchanged.
+            if i + 32 <= bound
+                && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
+                && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
+            {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                // SAFETY: both 32-byte reads stay within their mapped pages and bound.
+                let va = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i), 32)
+                });
+                let vb = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i), 32)
+                });
+                let flagged = (va.simd_ne(vb) | va.simd_eq(Simd::splat(0))).to_bitmask();
+                if flagged == 0 {
+                    i += 32;
+                    continue;
+                }
+                // Flagged panel: the first set bit is the exact first
+                // differing-or-s1-NUL byte (the same index the SWAR/scalar tail would
+                // resolve to). Return it directly via trailing_zeros instead of
+                // re-scanning the same 32 bytes with the 8-byte SWAR path below — the
+                // same O(1) resolve used in scan_c_string/strchr. Byte-identical.
+                return (i + flagged.trailing_zeros() as usize, false);
+            }
+            // OVERLAPPING FINAL PANEL, placed ABOVE the 8-byte SWAR tier. An earlier
+            // version sat below every tier and measured -10 Ir: by the time it ran,
+            // SWAR had already nibbled the remainder down to about three bytes, so the
+            // panel paid two 32-byte loads to replace three scalar compares. Here it
+            // takes the WHOLE remainder instead. `strncmp(a, b, 43)` clears the 32B
+            // tier once to i=32, then `32 + 32 <= 43` fails and this resolves
+            // [11, 43) in one panel rather than SWAR-at-32, SWAR-declines-at-40, three
+            // scalar.
+            //
+            // `i + 32 > bound` is REQUIRED, not implied: the 32B tier declines both for
+            // a short remainder AND for a failed page guard, and only the first makes
+            // `bound - 32` meaningful. Omitting it in the `wcsncmp` version computed
+            // `usize::MAX - 32` on an unbounded call that declined on its page guard
+            // and read a wild address -- 114 conformance failures. With it,
+            // `start <= i` holds by construction.
+            if BOUNDED
+                && bound >= 32
+                && i + 32 > bound
+                && (p1 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+                && (p2 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+            {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let start = bound - 32;
+                let skip = i - start;
+                // SAFETY: `[bound-32, bound)` is one 32-byte window, page-guarded above.
                 let a = Simd::<u8, 32>::from_slice(unsafe {
-                    core::slice::from_raw_parts(p1.add(i + off), 32)
+                    core::slice::from_raw_parts(p1.add(start), 32)
                 });
                 let b = Simd::<u8, 32>::from_slice(unsafe {
-                    core::slice::from_raw_parts(p2.add(i + off), 32)
+                    core::slice::from_raw_parts(p2.add(start), 32)
                 });
-                (a.simd_ne(b) | a.simd_eq(zero)).to_bitmask()
-            };
-            // EARLY-OUT PER PANEL. OR-combining all four masks gives the
-            // all-equal case a single branch, but it also prices four panels
-            // when the answer is in the first one — and the page guard admits
-            // this window for a 5-byte string, so EVERY compare under 128 bytes
-            // paid all four. Measured (callgrind two-point vs live glibc in the
-            // same process image): a flat ~99 Ir from L=4 to L=32 against
-            // glibc's 20, a fixed ~79-instruction floor at 4.95x. Testing each
-            // mask as it is produced lets a short or early-differing compare
-            // leave after one panel; the all-equal case still executes the same
-            // four compares, trading its single branch for four predictable
-            // ones. NOTE: this is an INSTRUCTION-COUNT trade — the OR form also
-            // lets the four loads issue without an intervening branch, which a
-            // cycle-accurate measurement may value differently for long strings.
-            let f0 = cmp(0);
-            if f0 != 0 {
-                return (i + f0.trailing_zeros() as usize, false);
+                let m =
+                    (a.simd_ne(b) | a.simd_eq(Simd::splat(0))).to_bitmask() & !((1u64 << skip) - 1);
+                if m == 0 {
+                    // Every byte in [i, bound) is equal and non-NUL: bound reached.
+                    return (bound, true);
+                }
+                return (start + m.trailing_zeros() as usize, false);
             }
-            let f1 = cmp(32);
-            if f1 != 0 {
-                return (i + 32 + f1.trailing_zeros() as usize, false);
-            }
-            let f2 = cmp(64);
-            let f3 = cmp(96);
-            if f2 | f3 == 0 {
-                i += 128;
-                continue;
-            }
-            if f2 != 0 {
-                return (i + 64 + f2.trailing_zeros() as usize, false);
-            }
-            return (i + 96 + f3.trailing_zeros() as usize, false);
-        }
-        // Wide 32-byte portable-SIMD fast path: skip whole equal, NUL-free panels
-        // at AVX width (glibc's strcmp/strncmp step 16-32 bytes; the 8-byte SWAR
-        // below was the bottleneck — strncmp was ~1.5x slower). A flagged panel
-        // falls through to the SWAR/scalar tail, which resolves the exact first
-        // differing-or-NUL index, so the returned (index, hit_limit) is unchanged.
-        if i + 32 <= bound
-            && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
-            && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
-        {
-            use core::simd::Simd;
-            use core::simd::cmp::SimdPartialEq;
-            // SAFETY: both 32-byte reads stay within their mapped pages and bound.
-            let va =
-                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
-            let vb =
-                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
-            let flagged = (va.simd_ne(vb) | va.simd_eq(Simd::splat(0))).to_bitmask();
-            if flagged == 0 {
-                i += 32;
-                continue;
-            }
-            // Flagged panel: the first set bit is the exact first
-            // differing-or-s1-NUL byte (the same index the SWAR/scalar tail would
-            // resolve to). Return it directly via trailing_zeros instead of
-            // re-scanning the same 32 bytes with the 8-byte SWAR path below — the
-            // same O(1) resolve used in scan_c_string/strchr. Byte-identical.
-            return (i + flagged.trailing_zeros() as usize, false);
-        }
-        // OVERLAPPING FINAL PANEL, placed ABOVE the 8-byte SWAR tier. An earlier
-        // version sat below every tier and measured -10 Ir: by the time it ran,
-        // SWAR had already nibbled the remainder down to about three bytes, so the
-        // panel paid two 32-byte loads to replace three scalar compares. Here it
-        // takes the WHOLE remainder instead. `strncmp(a, b, 43)` clears the 32B
-        // tier once to i=32, then `32 + 32 <= 43` fails and this resolves
-        // [11, 43) in one panel rather than SWAR-at-32, SWAR-declines-at-40, three
-        // scalar.
-        //
-        // `i + 32 > bound` is REQUIRED, not implied: the 32B tier declines both for
-        // a short remainder AND for a failed page guard, and only the first makes
-        // `bound - 32` meaningful. Omitting it in the `wcsncmp` version computed
-        // `usize::MAX - 32` on an unbounded call that declined on its page guard
-        // and read a wild address -- 114 conformance failures. With it,
-        // `start <= i` holds by construction.
-        if BOUNDED
-            && bound >= 32
-            && i + 32 > bound
-            && (p1 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
-            && (p2 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
-        {
-            use core::simd::Simd;
-            use core::simd::cmp::SimdPartialEq;
-            let start = bound - 32;
-            let skip = i - start;
-            // SAFETY: `[bound-32, bound)` is one 32-byte window, page-guarded above.
-            let a = Simd::<u8, 32>::from_slice(unsafe {
-                core::slice::from_raw_parts(p1.add(start), 32)
-            });
-            let b = Simd::<u8, 32>::from_slice(unsafe {
-                core::slice::from_raw_parts(p2.add(start), 32)
-            });
-            let m = (a.simd_ne(b) | a.simd_eq(Simd::splat(0))).to_bitmask()
-                & !((1u64 << skip) - 1);
-            if m == 0 {
-                // Every byte in [i, bound) is equal and non-NUL: bound reached.
-                return (bound, true);
-            }
-            return (start + m.trailing_zeros() as usize, false);
-        }
         }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
@@ -3804,7 +3805,6 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
         i += 1;
     }
 }
-
 
 /// Branchless SWAR ASCII lowercase: folds bytes in `'A'..='Z'` to `'a'..='z'`
 /// and leaves every other byte (incl. non-ASCII `>= 0x80`) untouched — exactly C
@@ -4058,7 +4058,6 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         }
         return dst;
     }
-
 
     // COLD-TAIL SPLIT, cut BELOW the raw bypass — the `memcmp`/`strlen` shape, not the
     // `wcschr` one. `string_raw_passthrough_active()` above is the re-entrancy/TLS guard
@@ -7876,7 +7875,6 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
 #[cold]
 #[inline(never)]
 unsafe fn strcspn_validating(s: *const c_char, reject: *const c_char) -> usize {
-
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, reject as usize);
     if s.is_null() || reject.is_null() {
         record_string_stage_outcome(
@@ -8086,7 +8084,6 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
 #[cold]
 #[inline(never)]
 unsafe fn strpbrk_validating(s: *const c_char, accept: *const c_char) -> *mut c_char {
-
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
     if s.is_null() || accept.is_null() {
         record_string_stage_outcome(

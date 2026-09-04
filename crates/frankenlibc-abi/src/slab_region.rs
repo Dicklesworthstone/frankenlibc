@@ -190,7 +190,10 @@ pub fn register(base: usize, len: usize) -> bool {
 
 /// Release a region. The envelope is intentionally left as-is; see `register`.
 pub fn unregister(base: usize) -> bool {
-    for slot in REGIONS.iter().take(REGION_HIGH_WATER.load(Ordering::Acquire)) {
+    for slot in REGIONS
+        .iter()
+        .take(REGION_HIGH_WATER.load(Ordering::Acquire))
+    {
         if slot.len.load(Ordering::Acquire) == 0 {
             continue;
         }

@@ -490,8 +490,8 @@ fn set_baud_fields(termios_p: *mut libc::termios, baud: u32, input: bool, output
     let code = baud_rate_to_constant(baud as libc::speed_t);
     unsafe {
         if input {
-            (*termios_p).c_cflag = ((*termios_p).c_cflag & !(libc::CIBAUD as libc::tcflag_t))
-                | input_speed_bits(code);
+            (*termios_p).c_cflag =
+                ((*termios_p).c_cflag & !(libc::CIBAUD as libc::tcflag_t)) | input_speed_bits(code);
             (*termios_p).c_ispeed = baud as libc::speed_t;
         }
         if output {

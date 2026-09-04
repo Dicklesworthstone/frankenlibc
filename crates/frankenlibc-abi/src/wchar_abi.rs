@@ -1074,94 +1074,94 @@ unsafe fn scan_wcscmp_simd<const BOUNDED: bool>(
         // Indentation inside the guards is deliberately left as it was; reflowing
         // would rewrite the whole body for no semantic change.
         if !BOUNDED || bound >= WLANES {
-        // 128-byte (32-wchar) unrolled fast path: the 32B/iter loop below re-ran the dual
-        // page-guard + bounds check every 8 wchars — ~2.2x slower than glibc for long equal
-        // wide strings (measured wcscmp_sweep, grows with n ⇒ per-element throughput, not
-        // splits). One guard covers the full 128B window (both pointers in-page), four
-        // 8-lane `(ne | eq-zero)` masks OR-combined so the all-equal case takes a SINGLE
-        // branch and advances 32 wchars; a flagged window scalar-resolves the first
-        // differing-or-NUL element (needed for the sign). Byte-identical to the 8-lane path.
-        if i + 32 <= bound
-            && (s1 as usize + i * 4) & 0xFFF <= 0x1000 - 128
-            && (s2 as usize + i * 4) & 0xFFF <= 0x1000 - 128
-        {
-            // SAFETY: the 128B window [i, i+32) wchars stays within both pages and bound.
-            let flag = |off: usize| -> u64 {
-                let a = Simd::<u32, WLANES>::from_array(unsafe {
-                    core::ptr::read(s1.add(i + off).cast::<[u32; WLANES]>())
+            // 128-byte (32-wchar) unrolled fast path: the 32B/iter loop below re-ran the dual
+            // page-guard + bounds check every 8 wchars — ~2.2x slower than glibc for long equal
+            // wide strings (measured wcscmp_sweep, grows with n ⇒ per-element throughput, not
+            // splits). One guard covers the full 128B window (both pointers in-page), four
+            // 8-lane `(ne | eq-zero)` masks OR-combined so the all-equal case takes a SINGLE
+            // branch and advances 32 wchars; a flagged window scalar-resolves the first
+            // differing-or-NUL element (needed for the sign). Byte-identical to the 8-lane path.
+            if i + 32 <= bound
+                && (s1 as usize + i * 4) & 0xFFF <= 0x1000 - 128
+                && (s2 as usize + i * 4) & 0xFFF <= 0x1000 - 128
+            {
+                // SAFETY: the 128B window [i, i+32) wchars stays within both pages and bound.
+                let flag = |off: usize| -> u64 {
+                    let a = Simd::<u32, WLANES>::from_array(unsafe {
+                        core::ptr::read(s1.add(i + off).cast::<[u32; WLANES]>())
+                    });
+                    let b = Simd::<u32, WLANES>::from_array(unsafe {
+                        core::ptr::read(s2.add(i + off).cast::<[u32; WLANES]>())
+                    });
+                    (a.simd_ne(b) | a.simd_eq(zv)).to_bitmask()
+                };
+                let f0 = flag(0);
+                let f1 = flag(8);
+                let f2 = flag(16);
+                let f3 = flag(24);
+                if f0 | f1 | f2 | f3 == 0 {
+                    i += 32;
+                    continue;
+                }
+                // Resolve from the lane mask, not a scalar re-scan. Each `flag` is
+                // `(differs | s1-is-NUL)`, so its lowest set bit is exactly the element
+                // the old `for j in 0..WLANES` loop walked forward to find — up to eight
+                // loads and compares to recover an index the mask already held. Measured
+                // (callgrind two-point vs live glibc in the same process image):
+                // `scan_wcscmp_simd` spent 203 Ir comparing 31 wchars against 58 Ir for
+                // glibc's entire `__wcsncmp_avx2` call. Same fix, same reason, as the
+                // `memrchr` mask resolve.
+                let (base, m) = if f0 != 0 {
+                    (i, f0)
+                } else if f1 != 0 {
+                    (i + 8, f1)
+                } else if f2 != 0 {
+                    (i + 16, f2)
+                } else {
+                    (i + 24, f3)
+                };
+                let idx = base + m.trailing_zeros() as usize;
+                // SAFETY: idx < i+32 <= bound; within the just-read in-page window.
+                let a = unsafe { *s1.add(idx) };
+                let b = unsafe { *s2.add(idx) };
+                if a != b {
+                    return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
+                }
+                // Equal at a flagged lane ⇒ the flag came from the NUL term ⇒ equal strings.
+                return (0, idx + 1, false);
+            }
+            if i + WLANES <= bound
+                && (whole_range_in_page
+                    || (wide32_read_within_page(s1.wrapping_add(i) as usize)
+                        && wide32_read_within_page(s2.wrapping_add(i) as usize)))
+            {
+                // SAFETY: both 32-byte reads stay within their pages and within bound.
+                // When `whole_range_in_page` holds, `[0, bound)` lies in a single page
+                // for both operands, so `[i, i+WLANES) ⊆ [0, bound)` cannot cross one.
+                // Raw array loads (not Rust slices over C memory) mirror wcschr.
+                let va = Simd::<u32, WLANES>::from_array(unsafe {
+                    core::ptr::read(s1.add(i).cast::<[u32; WLANES]>())
                 });
-                let b = Simd::<u32, WLANES>::from_array(unsafe {
-                    core::ptr::read(s2.add(i + off).cast::<[u32; WLANES]>())
+                let vb = Simd::<u32, WLANES>::from_array(unsafe {
+                    core::ptr::read(s2.add(i).cast::<[u32; WLANES]>())
                 });
-                (a.simd_ne(b) | a.simd_eq(zv)).to_bitmask()
-            };
-            let f0 = flag(0);
-            let f1 = flag(8);
-            let f2 = flag(16);
-            let f3 = flag(24);
-            if f0 | f1 | f2 | f3 == 0 {
-                i += 32;
-                continue;
+                // One combined mask instead of an equality test plus a NUL test plus a
+                // scalar re-scan: same `(differs | s1-is-NUL)` predicate the 128B tier
+                // uses, resolved the same O(1) way.
+                let m = (va.simd_ne(vb) | va.simd_eq(zv)).to_bitmask();
+                if m == 0 {
+                    i += WLANES;
+                    continue;
+                }
+                let idx = i + m.trailing_zeros() as usize;
+                // SAFETY: idx < i+WLANES <= bound.
+                let a = unsafe { *s1.add(idx) };
+                let b = unsafe { *s2.add(idx) };
+                if a != b {
+                    return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
+                }
+                return (0, idx + 1, false);
             }
-            // Resolve from the lane mask, not a scalar re-scan. Each `flag` is
-            // `(differs | s1-is-NUL)`, so its lowest set bit is exactly the element
-            // the old `for j in 0..WLANES` loop walked forward to find — up to eight
-            // loads and compares to recover an index the mask already held. Measured
-            // (callgrind two-point vs live glibc in the same process image):
-            // `scan_wcscmp_simd` spent 203 Ir comparing 31 wchars against 58 Ir for
-            // glibc's entire `__wcsncmp_avx2` call. Same fix, same reason, as the
-            // `memrchr` mask resolve.
-            let (base, m) = if f0 != 0 {
-                (i, f0)
-            } else if f1 != 0 {
-                (i + 8, f1)
-            } else if f2 != 0 {
-                (i + 16, f2)
-            } else {
-                (i + 24, f3)
-            };
-            let idx = base + m.trailing_zeros() as usize;
-            // SAFETY: idx < i+32 <= bound; within the just-read in-page window.
-            let a = unsafe { *s1.add(idx) };
-            let b = unsafe { *s2.add(idx) };
-            if a != b {
-                return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
-            }
-            // Equal at a flagged lane ⇒ the flag came from the NUL term ⇒ equal strings.
-            return (0, idx + 1, false);
-        }
-        if i + WLANES <= bound
-            && (whole_range_in_page
-                || (wide32_read_within_page(s1.wrapping_add(i) as usize)
-                    && wide32_read_within_page(s2.wrapping_add(i) as usize)))
-        {
-            // SAFETY: both 32-byte reads stay within their pages and within bound.
-            // When `whole_range_in_page` holds, `[0, bound)` lies in a single page
-            // for both operands, so `[i, i+WLANES) ⊆ [0, bound)` cannot cross one.
-            // Raw array loads (not Rust slices over C memory) mirror wcschr.
-            let va = Simd::<u32, WLANES>::from_array(unsafe {
-                core::ptr::read(s1.add(i).cast::<[u32; WLANES]>())
-            });
-            let vb = Simd::<u32, WLANES>::from_array(unsafe {
-                core::ptr::read(s2.add(i).cast::<[u32; WLANES]>())
-            });
-            // One combined mask instead of an equality test plus a NUL test plus a
-            // scalar re-scan: same `(differs | s1-is-NUL)` predicate the 128B tier
-            // uses, resolved the same O(1) way.
-            let m = (va.simd_ne(vb) | va.simd_eq(zv)).to_bitmask();
-            if m == 0 {
-                i += WLANES;
-                continue;
-            }
-            let idx = i + m.trailing_zeros() as usize;
-            // SAFETY: idx < i+WLANES <= bound.
-            let a = unsafe { *s1.add(idx) };
-            let b = unsafe { *s2.add(idx) };
-            if a != b {
-                return (if (a as i32) < (b as i32) { -1 } else { 1 }, idx + 1, false);
-            }
-            return (0, idx + 1, false);
-        }
         }
         if i >= bound {
             return (0, bound, true);
@@ -1237,10 +1237,12 @@ unsafe fn wcscmp_tail_panel(
     let start = bound - WLANES;
     let skip = i - start;
     // SAFETY: caller guarantees the window is in-page on both operands.
-    let va =
-        Simd::<u32, WLANES>::from_array(unsafe { core::ptr::read(s1.add(start).cast::<[u32; WLANES]>()) });
-    let vb =
-        Simd::<u32, WLANES>::from_array(unsafe { core::ptr::read(s2.add(start).cast::<[u32; WLANES]>()) });
+    let va = Simd::<u32, WLANES>::from_array(unsafe {
+        core::ptr::read(s1.add(start).cast::<[u32; WLANES]>())
+    });
+    let vb = Simd::<u32, WLANES>::from_array(unsafe {
+        core::ptr::read(s2.add(start).cast::<[u32; WLANES]>())
+    });
     let m = (va.simd_ne(vb) | va.simd_eq(zv)).to_bitmask() & !((1u64 << skip) - 1);
     if m == 0 {
         // Every element in [i, bound) is equal and non-NUL: bound reached.
@@ -1303,7 +1305,6 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
 #[cold]
 #[inline(never)]
 unsafe fn wcscmp_validating(s1: *const u32, s2: *const u32) -> c_int {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -1339,7 +1340,8 @@ unsafe fn wcscmp_validating(s1: *const u32, s2: *const u32) -> c_int {
     // to the old scalar element loop. `cmp_bound == None` => no limit; any
     // hit-limit is the membrane bound, so it maps directly to `adverse`.
     let (result, adverse, span) = unsafe {
-        let (r, span, hit_limit) = scan_wcscmp_simd::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        let (r, span, hit_limit) =
+            scan_wcscmp_simd::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
         (r, hit_limit, span)
     };
 
@@ -1601,9 +1603,8 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
         // SAFETY: `base` is the 32-byte-aligned start of the block containing `s`, so the
         // 32-byte read stays within one page and within a block the caller can read.
         let base = unsafe { s.sub(skip) };
-        let v = Simd::<u32, LANES>::from_array(unsafe {
-            core::ptr::read(base.cast::<[u32; LANES]>())
-        });
+        let v =
+            Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(base.cast::<[u32; LANES]>()) });
         let keep = !((1u64 << skip) - 1);
         let zm = v.simd_eq(zv).to_bitmask() & keep;
         let cm = v.simd_eq(cv).to_bitmask() & keep;
@@ -1842,7 +1843,6 @@ pub unsafe extern "C" fn wcschr(s: *const u32, c: u32) -> *mut u32 {
 #[cold]
 #[inline(never)]
 unsafe fn wcschr_validating(s: *const u32, c: u32) -> *mut u32 {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -1941,7 +1941,6 @@ pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
 #[cold]
 #[inline(never)]
 unsafe fn wcsrchr_validating(s: *const u32, c: u32) -> *mut u32 {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -2457,7 +2456,6 @@ pub unsafe extern "C" fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> c_
 #[cold]
 #[inline(never)]
 unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -2553,7 +2551,6 @@ pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
 #[cold]
 #[inline(never)]
 unsafe fn wmemchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -2924,7 +2921,6 @@ pub unsafe extern "C" fn wcsspn(s: *const u32, accept: *const u32) -> usize {
 #[cold]
 #[inline(never)]
 unsafe fn wcsspn_validating(s: *const u32, accept: *const u32) -> usize {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -3036,7 +3032,6 @@ pub unsafe extern "C" fn wcscspn(s: *const u32, reject: *const u32) -> usize {
 #[cold]
 #[inline(never)]
 unsafe fn wcscspn_validating(s: *const u32, reject: *const u32) -> usize {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -3150,7 +3145,6 @@ pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 
 #[cold]
 #[inline(never)]
 unsafe fn wcspbrk_validating(s: *const u32, accept: *const u32) -> *mut u32 {
-
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,

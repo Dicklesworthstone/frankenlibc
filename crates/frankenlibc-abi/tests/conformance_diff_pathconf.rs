@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
+#![allow(invalid_runtime_symbol_definitions)]
 //! Differential gate: fl `pathconf` must match glibc. _PC_2_SYMLINKS and the
 //! record/allocation limits (_PC_REC_MIN_XFER_SIZE / _PC_REC_XFER_ALIGN /
 //! _PC_ALLOC_SIZE_MIN, which glibc derives from statvfs f_bsize) used to fall

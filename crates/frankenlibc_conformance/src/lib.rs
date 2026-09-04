@@ -27512,11 +27512,21 @@ fn execute_execve_case(
         // than a pass.
         let host_status = execve_child_status(false, &path_c, &argv, &envp)?;
         let fl_status = execve_child_status(true, &path_c, &argv, &envp)?;
-        return Ok(non_host_execution(if fl_status == host_status {
+        let host_parity = fl_status == host_status;
+        let impl_output = if host_parity {
             format!("EXECVE_REPLACES_PROCESS_MATCHES_HOST_{fl_status}")
         } else {
             format!("EXECVE_REPLACES_PROCESS_DIVERGES_HOST_{host_status}_FL_{fl_status}")
-        }));
+        };
+        let host_output = format!("EXECVE_REPLACES_PROCESS_MATCHES_HOST_{host_status}");
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note: (!host_parity).then(|| {
+                format!("execve child status mismatch: host {host_status}, fl {fl_status}")
+            }),
+        });
     }
 
     // Read the host arm's errno from the HOST slot explicitly, the same way the acct arm does.
@@ -27533,14 +27543,23 @@ fn execute_execve_case(
     // The match token deliberately carries no errno: execve's errno for a non-executable file
     // is the same under either privilege today, but pinning the value into the passing token
     // would re-introduce the host-dependence this arm exists to remove. Divergence spells it out.
-    let verdict = if fl_rc == host_rc && fl_errno == host_errno {
+    let host_parity = fl_rc == host_rc && fl_errno == host_errno;
+    let verdict = if host_parity {
         format!("EXECVE_MATCHES_HOST_RC_{fl_rc}")
     } else {
         format!(
             "EXECVE_DIVERGES_HOST_RC_{host_rc}_ERRNO_{host_errno}_FL_RC_{fl_rc}_ERRNO_{fl_errno}"
         )
     };
-    Ok(non_host_execution(verdict))
+    let host_output = format!("EXECVE_MATCHES_HOST_RC_{host_rc}");
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output: verdict,
+        host_parity,
+        note: (!host_parity).then(|| {
+            format!("execve rc/errno mismatch: host rc={host_rc},errno={host_errno}, fl rc={fl_rc},errno={fl_errno}")
+        }),
+    })
 }
 
 fn posix_spawn_outcome(

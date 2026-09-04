@@ -115,10 +115,7 @@ pub unsafe extern "C" fn __isoc23_sscanf(
     // Gating on the format first keeps the fast path's policy check exactly
     // `sscanf`'s while leaving the delegating path with the single decision it
     // always had. (The same double-membrane shape cost `reallocarray` 2.05x.)
-    if !s.is_null()
-        && !format.is_null()
-        && crate::runtime_policy::strict_passthrough_active()
-    {
+    if !s.is_null() && !format.is_null() && crate::runtime_policy::strict_passthrough_active() {
         if let Some((fields, sep, kinds, delims)) =
             unsafe { crate::stdio_abi::strict_decimal_int_format_count(format) }
             && crate::stdio_abi::strict_field_list_is_scannable(fields, sep, &kinds)
@@ -136,7 +133,14 @@ pub unsafe extern "C" fn __isoc23_sscanf(
                 *slot = unsafe { args.next_arg::<*mut c_void>() };
             }
             let fast = unsafe {
-                crate::stdio_abi::strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations)
+                crate::stdio_abi::strict_scan_decimal_ints(
+                    s,
+                    fields,
+                    sep,
+                    &kinds,
+                    &delims,
+                    &destinations,
+                )
             };
             crate::runtime_policy::observe(
                 frankenlibc_membrane::runtime_math::ApiFamily::Stdio,

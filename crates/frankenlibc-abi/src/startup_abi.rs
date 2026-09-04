@@ -920,10 +920,9 @@ pub unsafe extern "C" fn __libc_start_main(
 
     if use_owned_startup() {
         // SAFETY: owned startup path (default since bd-73h55.1).
-        let phase0_rc =
-            unsafe {
-                startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, true)
-            };
+        let phase0_rc = unsafe {
+            startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, true)
+        };
         if phase0_rc >= 0 {
             return finish_libc_start_main_success(phase0_rc);
         }

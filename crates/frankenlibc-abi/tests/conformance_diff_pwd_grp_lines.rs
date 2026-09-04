@@ -18,7 +18,7 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
-use frankenlibc_abi as fl;
+use frankenlibc_abi::unistd_abi as fl;
 
 #[repr(C)]
 struct CPasswd {
@@ -258,7 +258,10 @@ fn colonless_nis_entries_preserve_glibc_null_fields() {
             assert!(ours.pw_gecos.is_null());
             assert!(ours.pw_dir.is_null());
             assert!(ours.pw_shell.is_null());
-            assert_eq!(unsafe { cstr(ours.pw_name) }, Some(line.as_bytes().to_vec()));
+            assert_eq!(
+                unsafe { cstr(ours.pw_name) },
+                Some(line.as_bytes().to_vec())
+            );
         });
     }
 
@@ -268,7 +271,8 @@ fn colonless_nis_entries_preserve_glibc_null_fields() {
             assert!(!host.is_null(), "glibc rejected group NIS entry {line:?}");
             let host = unsafe { &*host };
             assert!(host.gr_passwd.is_null());
-            assert!(host.gr_mem.is_null());
+            assert!(!host.gr_mem.is_null());
+            assert!(unsafe { (*host.gr_mem).is_null() });
         });
 
         with_stream(line, |stream| {
@@ -276,8 +280,12 @@ fn colonless_nis_entries_preserve_glibc_null_fields() {
             assert!(!ours.is_null(), "fl rejected group NIS entry {line:?}");
             let ours = unsafe { &*ours };
             assert!(ours.gr_passwd.is_null());
-            assert!(ours.gr_mem.is_null());
-            assert_eq!(unsafe { cstr(ours.gr_name) }, Some(line.as_bytes().to_vec()));
+            assert!(!ours.gr_mem.is_null());
+            assert!(unsafe { (*ours.gr_mem).is_null() });
+            assert_eq!(
+                unsafe { cstr(ours.gr_name) },
+                Some(line.as_bytes().to_vec())
+            );
         });
     }
 }

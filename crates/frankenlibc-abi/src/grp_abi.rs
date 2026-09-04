@@ -432,13 +432,11 @@ impl GrpStorage {
 
         // Build the NULL-terminated pointer array for gr_mem
         self.mem_ptrs.clear();
-        if !entry.nis_compat_null_fields {
-            for off in &mem_offsets {
-                // SAFETY: offsets are within buf allocation.
-                self.mem_ptrs.push(unsafe { base.add(*off) });
-            }
-            self.mem_ptrs.push(ptr::null_mut()); // NULL terminator
+        for off in &mem_offsets {
+            // SAFETY: offsets are within buf allocation.
+            self.mem_ptrs.push(unsafe { base.add(*off) });
         }
+        self.mem_ptrs.push(ptr::null_mut()); // NULL terminator
 
         // SAFETY: offsets are within buf allocation. Pointers are stable
         // because we don't resize buf/mem_ptrs again until the next fill_from call.
@@ -446,11 +444,7 @@ impl GrpStorage {
             gr_name: unsafe { base.add(name_off) },
             gr_passwd: passwd_off.map_or(ptr::null_mut(), |off| unsafe { base.add(off) }),
             gr_gid: entry.gr_gid,
-            gr_mem: if entry.nis_compat_null_fields {
-                ptr::null_mut()
-            } else {
-                self.mem_ptrs.as_mut_ptr()
-            },
+            gr_mem: self.mem_ptrs.as_mut_ptr(),
         };
 
         &mut self.gr as *mut libc::group

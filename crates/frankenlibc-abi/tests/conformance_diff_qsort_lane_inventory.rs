@@ -137,18 +137,18 @@ enum Expect {
 /// Both arms are counted, because glibc's count is the reference for "what a
 /// comparison sort costs on this exact input" — a hard-coded O(n log n)
 /// estimate would be an assumption where a measurement is available.
-fn both(bytes: &[u8], width: usize, n: usize, cmp: extern "C" fn(*const c_void, *const c_void) -> c_int) -> (usize, usize) {
+fn both(
+    bytes: &[u8],
+    width: usize,
+    n: usize,
+    cmp: extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> (usize, usize) {
     let mut fl_buf = bytes.to_vec();
     reset();
     // SAFETY: `fl_buf` is exactly `n * width` writable bytes and `cmp` reads
     // only `width` bytes per element.
     unsafe {
-        frankenlibc_abi::stdlib_abi::qsort(
-            fl_buf.as_mut_ptr() as *mut c_void,
-            n,
-            width,
-            Some(cmp),
-        );
+        frankenlibc_abi::stdlib_abi::qsort(fl_buf.as_mut_ptr() as *mut c_void, n, width, Some(cmp));
     }
     let fl_calls = calls();
 
@@ -188,20 +188,26 @@ fn scrambled(width: usize, n: usize) -> Vec<u8> {
 fn the_deployed_qsort_lane_inventory_is_what_head_actually_has() {
     const N: usize = 4096;
     // (label, width, expectation, comparator, the gate that names this lane)
-    let rows: &[(&str, usize, Expect, extern "C" fn(*const c_void, *const c_void) -> c_int, &str)] = &[
+    let rows: &[(
+        &str,
+        usize,
+        Expect,
+        extern "C" fn(*const c_void, *const c_void) -> c_int,
+        &str,
+    )] = &[
         (
             "width1 (1-byte keys)",
             1,
-            Expect::NoLane,
+            Expect::Lane,
             cmp_i8,
-            "conformance_diff_qsort_count8 claims a counting-sort lane here",
+            "conformance_diff_qsort_count8 exercises the counting-sort lane here",
         ),
         (
             "width2 (2-byte keys)",
             2,
-            Expect::NoLane,
+            Expect::Lane,
             cmp_i16,
-            "conformance_diff_qsort_radix16 claims a 2-byte radix lane here",
+            "conformance_diff_qsort_radix16 exercises the 2-byte radix lane here",
         ),
         (
             "width4 (i32)",
@@ -276,5 +282,24 @@ fn below_the_lane_floor_there_is_no_lane() {
         "n={N} is below I64_FAST_LANE_MIN (64) yet fl made only {fl_calls} comparator calls \
          (live glibc made {gl_calls} on the same input), which is lane-shaped: the floor moved \
          and nothing else would have said so"
+    );
+}
+
+#[test]
+fn large_n_width8_radix_lane_is_active() {
+    const N: usize = 65536;
+    let bytes = scrambled(8, N);
+    let (fl_calls, gl_calls) = both(&bytes, 8, N, cmp_i64);
+    let linear_bound = 4 * N;
+    eprintln!(
+        "QSORT_LANE_INVENTORY large_n width8 n={N}: fl_calls={fl_calls} glibc_calls={gl_calls} linear_bound={linear_bound}"
+    );
+    assert!(
+        fl_calls <= linear_bound,
+        "width 8 n={N}: fl made {fl_calls} comparator calls, exceeding linear bound {linear_bound} (live glibc made {gl_calls})"
+    );
+    assert!(
+        gl_calls > linear_bound,
+        "width 8 n={N}: reference comparison sort glibc should exceed linear bound {linear_bound}, but made {gl_calls}"
     );
 }
