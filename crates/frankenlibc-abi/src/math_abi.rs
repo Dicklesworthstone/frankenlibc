@@ -86,6 +86,223 @@ fn f128_unbiased_exp(bits: u128) -> i32 {
     }
 }
 
+/// Truncate a binary128 to integral towards zero using bitwise manipulation,
+/// completely avoiding `x.trunc()` which lowers to the exported ABI symbol and recurses.
+#[inline]
+fn finite_truncf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    // |x| >= 2^112 (and inf/NaN): already integral.
+    if e >= 16383 + 112 {
+        return x;
+    }
+    // |x| < 1: truncates to ±0.0 preserving sign.
+    if e < 16383 {
+        return f128::from_bits(bits & (1u128 << 127));
+    }
+    let frac_bits = (16383 + 112) - e; // 1..=112 fractional mantissa bits
+    let frac_mask = (1u128 << frac_bits) - 1;
+    f128::from_bits(bits & !frac_mask)
+}
+
+/// Floor a binary128 towards -inf using bitwise manipulation, avoiding `x.floor()`.
+#[inline]
+fn finite_floorf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    if e >= 16383 + 112 {
+        return x;
+    }
+    // ±0.0 preserved as-is.
+    if (bits & !(1u128 << 127)) == 0 {
+        return x;
+    }
+    let sign_bit = (bits >> 127) != 0;
+    if e < 16383 {
+        return if sign_bit { -1.0_f128 } else { 0.0_f128 };
+    }
+    let frac_bits = (16383 + 112) - e;
+    let frac_mask = (1u128 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    if frac != 0 && sign_bit {
+        f128::from_bits(int_part + (1u128 << frac_bits))
+    } else {
+        f128::from_bits(int_part)
+    }
+}
+
+/// Ceil a binary128 towards +inf using bitwise manipulation, avoiding `x.ceil()`.
+#[inline]
+fn finite_ceilf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    if e >= 16383 + 112 {
+        return x;
+    }
+    if (bits & !(1u128 << 127)) == 0 {
+        return x;
+    }
+    let sign_bit = (bits >> 127) != 0;
+    if e < 16383 {
+        return if sign_bit { -0.0_f128 } else { 1.0_f128 };
+    }
+    let frac_bits = (16383 + 112) - e;
+    let frac_mask = (1u128 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    if frac != 0 && !sign_bit {
+        f128::from_bits(int_part + (1u128 << frac_bits))
+    } else {
+        f128::from_bits(int_part)
+    }
+}
+
+/// Round a binary128 to nearest, half away from zero, avoiding `x.round()`.
+#[inline]
+fn finite_roundf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    if e >= 16383 + 112 {
+        return x;
+    }
+    let sign = bits & (1u128 << 127);
+    if e < 16383 {
+        return if e == 16382 {
+            // |x| >= 0.5 rounds away from zero to ±1.0
+            f128::from_bits(sign | (16383u128 << 112))
+        } else {
+            f128::from_bits(sign)
+        };
+    }
+    let frac_bits = (16383 + 112) - e;
+    let frac_mask = (1u128 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let half = 1u128 << (frac_bits - 1);
+    if frac >= half {
+        f128::from_bits(int_part + (1u128 << frac_bits))
+    } else {
+        f128::from_bits(int_part)
+    }
+}
+
+/// Round a binary128 to nearest, half to even, avoiding `x.round_ties_even()`.
+#[inline]
+fn finite_roundevenf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    if e >= 16383 + 112 {
+        return x;
+    }
+    let sign = bits & (1u128 << 127);
+    if e < 16383 {
+        let mant = bits & ((1u128 << 112) - 1);
+        return if e == 16382 && mant != 0 {
+            f128::from_bits(sign | (16383u128 << 112))
+        } else {
+            f128::from_bits(sign)
+        };
+    }
+    let frac_bits = (16383 + 112) - e;
+    let frac_mask = (1u128 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let half = 1u128 << (frac_bits - 1);
+    let round_up = frac > half || (frac == half && (int_part & (1u128 << frac_bits)) != 0);
+    if round_up {
+        f128::from_bits(int_part + (1u128 << frac_bits))
+    } else {
+        f128::from_bits(int_part)
+    }
+}
+
+/// IEEE 754-2008 correctly-rounded binary128 square root, avoiding `x.sqrt()`.
+fn finite_sqrtf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let sign = (bits >> 127) != 0;
+    let exp_field = ((bits >> 112) & 0x7fff) as i32;
+    let mant = bits & ((1u128 << 112) - 1);
+
+    if exp_field == 0x7fff {
+        if mant != 0 {
+            return f128::from_bits(bits | (1u128 << 111));
+        }
+        if !sign {
+            return x;
+        }
+    }
+
+    if (bits & !(1u128 << 127)) == 0 {
+        return x;
+    }
+
+    if sign {
+        set_domain_errno();
+        return -f128::NAN;
+    }
+
+    let mut exp = exp_field;
+    let mut m: u128;
+
+    if exp == 0 {
+        let lz = mant.leading_zeros();
+        let shift = lz - 15;
+        m = mant << shift;
+        exp = 1 - (shift as i32);
+    } else {
+        m = (1u128 << 112) | mant;
+    }
+
+    exp -= 16383;
+
+    if exp & 1 != 0 {
+        exp -= 1;
+        m <<= 1;
+    }
+
+    let out_exp = (exp / 2) + 16383;
+    let mut m_top = m << 14;
+    let mut q = 0u128;
+    let mut r = 0u128;
+
+    for i in 0..115 {
+        let next_2_bits = if i < 57 {
+            let b = (m_top >> 126) as u128;
+            m_top <<= 2;
+            b
+        } else {
+            0u128
+        };
+
+        r = (r << 2) | next_2_bits;
+        let d = (q << 2) | 1;
+        if r >= d {
+            r -= d;
+            q = (q << 1) | 1;
+        } else {
+            q <<= 1;
+        }
+    }
+
+    let guard = (q >> 1) & 1;
+    let round = q & 1;
+    let sticky = if r != 0 { 1u128 } else { 0u128 };
+    let lsb = (q >> 2) & 1;
+
+    let round_up = guard == 1 && (round == 1 || sticky == 1 || lsb == 1);
+    let mut root_mant = (q >> 2) + if round_up { 1 } else { 0 };
+
+    let mut final_exp = out_exp;
+    if (root_mant >> 113) != 0 {
+        root_mant >>= 1;
+        final_exp += 1;
+    }
+
+    let stored_mant = root_mant & ((1u128 << 112) - 1);
+    f128::from_bits(((final_exp as u128) << 112) | stored_mant)
+}
+
 /// Round to integral, nearest-even, regardless of the dynamic rounding mode.
 ///
 /// THIS IS NO LONGER USED BY `rintf128`, and the reason is worth keeping. The
@@ -98,7 +315,7 @@ fn f128_unbiased_exp(bits: u128) -> i32 {
 /// (bd-v0388t): a verification is only as good as the thing it verified against.
 #[allow(dead_code)]
 fn round_f128_nearest(x: f128) -> f128 {
-    x.round_ties_even()
+    finite_roundevenf128(x)
 }
 
 #[cfg(test)]
@@ -128,10 +345,10 @@ fn active_rounding_mode() -> c_int {
 fn round_f128_current_mode(x: f128) -> f128 {
     // x86 FE_*: TONEAREST=0, DOWNWARD=0x400, UPWARD=0x800, TOWARDZERO=0xc00.
     match active_rounding_mode() {
-        0x400 => x.floor(),
-        0x800 => x.ceil(),
-        0xc00 => x.trunc(),
-        _ => x.round_ties_even(),
+        0x400 => finite_floorf128(x),
+        0x800 => finite_ceilf128(x),
+        0xc00 => finite_truncf128(x),
+        _ => finite_roundevenf128(x),
     }
 }
 
@@ -151,11 +368,11 @@ fn f128_to_i64_sat(r: f128) -> i64 {
 /// 4=TONEAREST (half to even). Used by the fromfp family.
 fn round_dir_f128(x: f128, rnd: c_int) -> f128 {
     match rnd {
-        0 => x.ceil(),
-        1 => x.floor(),
-        2 => x.trunc(),
-        3 => x.round(),
-        _ => x.round_ties_even(),
+        0 => finite_ceilf128(x),
+        1 => finite_floorf128(x),
+        2 => finite_truncf128(x),
+        3 => finite_roundf128(x),
+        _ => finite_roundevenf128(x),
     }
 }
 
@@ -4134,7 +4351,7 @@ pub unsafe extern "C" fn cospif128(x: f128) -> f128 {
     if x.is_infinite() {
         set_domain_errno();
     }
-    let xr = (x - 2.0 * (0.5 * x).round()).abs();
+    let xr = (x - 2.0 * finite_roundf128(0.5 * x)).abs();
     if xr <= 0.25 {
         cosl_f128(PI * xr)
     } else if xr == 0.5 {
@@ -4210,7 +4427,7 @@ pub unsafe extern "C" fn sinpif128(x: f128) -> f128 {
         set_domain_errno();
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
     }
-    let y = x - 2.0 * (0.5 * x).round();
+    let y = x - 2.0 * finite_roundf128(0.5 * x);
     let absy = y.abs();
     if absy == 0.0 || absy == 1.0 {
         (0.0f128).copysign(x)
@@ -4277,7 +4494,7 @@ pub unsafe extern "C" fn tanpif128(x: f128) -> f128 {
         set_domain_errno();
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
     }
-    let mut y = x - 2.0 * (0.5 * x).round();
+    let mut y = x - 2.0 * finite_roundf128(0.5 * x);
     let mut absy = y.abs();
     if absy == 0.0 {
         return (0.0f128).copysign(x);
@@ -4394,7 +4611,7 @@ pub unsafe extern "C" fn roundevenf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundevenf128(x: f128) -> f128 {
-    x.round_ties_even()
+    finite_roundevenf128(x)
 }
 
 // --- nextdown / nextup ---
@@ -4617,7 +4834,7 @@ pub unsafe extern "C" fn rsqrtf128(x: f128) -> f128 {
         }
         set_range_errno();
     }
-    1.0 / x.sqrt()
+    1.0 / finite_sqrtf128(x)
 }
 
 // --- llogb (long ilogb) ---
@@ -5794,7 +6011,7 @@ pub unsafe extern "C" fn setpayloadf64x(res: *mut f64, pl: f64) -> c_int {
 pub unsafe extern "C" fn setpayloadf128(res: *mut f128, pl: f128) -> c_int {
     // Quiet NaN with payload pl (an integer in [0, 2^111)); else *res = +0, rc 1.
     let two111 = f128::from_bits((111u128 + 16383) << 112);
-    if pl.is_finite() && pl >= 0.0 && pl == pl.trunc() && pl < two111 {
+    if pl.is_finite() && pl >= 0.0 && pl == finite_truncf128(pl) && pl < two111 {
         let payload = pl as u128;
         unsafe { *res = f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111) | payload) };
         0
@@ -5836,7 +6053,7 @@ pub unsafe extern "C" fn setpayloadsigf128(res: *mut f128, pl: f128) -> c_int {
     // Signaling NaN with payload pl (an integer in [1, 2^111) — must be nonzero
     // so the result is a NaN, not infinity); else *res = +0, rc 1.
     let two111 = f128::from_bits((111u128 + 16383) << 112);
-    if pl.is_finite() && pl >= 1.0 && pl == pl.trunc() && pl < two111 {
+    if pl.is_finite() && pl >= 1.0 && pl == finite_truncf128(pl) && pl < two111 {
         let payload = pl as u128;
         unsafe { *res = f128::from_bits((0x7fff_u128 << 112) | payload) };
         0
@@ -7039,7 +7256,7 @@ fn ndiv_ro_f128(x: f128, y: f128) -> f128 {
 }
 #[inline]
 fn nsqrt_ro_f128(x: f128) -> f128 {
-    let s = x.sqrt();
+    let s = finite_sqrtf128(x);
     if !s.is_finite() || s == 0.0 {
         return fixup_invalid_nan_f128(s, x.is_nan());
     }
@@ -7733,7 +7950,7 @@ pub unsafe extern "C" fn ceilf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ceilf128(x: f128) -> f128 {
-    x.ceil()
+    finite_ceilf128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cosf32(x: f32) -> f32 {
@@ -7956,7 +8173,7 @@ pub unsafe extern "C" fn floorf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn floorf128(x: f128) -> f128 {
-    x.floor()
+    finite_floorf128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf32(x: f32) -> f32 {
@@ -8180,7 +8397,7 @@ pub unsafe extern "C" fn roundf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundf128(x: f128) -> f128 {
-    x.round()
+    finite_roundf128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinf32(x: f32) -> f32 {
@@ -8255,7 +8472,7 @@ pub unsafe extern "C" fn sqrtf128(x: f128) -> f128 {
         set_domain_errno();
         return -f128::NAN;
     }
-    let out = x.sqrt();
+    let out = finite_sqrtf128(x);
     // `x < 0.0`, NOT `x.is_finite() && x < 0.0`: sqrt(-inf) is a domain error
     // too, and glibc sets EDOM for it. The comparison is already false for NaN
     // and for -0.0, so the finiteness guard only excluded the infinity case.
@@ -8344,7 +8561,7 @@ pub unsafe extern "C" fn truncf64x(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn truncf128(x: f128) -> f128 {
-    x.trunc()
+    finite_truncf128(x)
 }
 
 // --- binary real (f64,f64→f64, f32,f32→f32) ---
@@ -8686,10 +8903,37 @@ pub unsafe extern "C" fn fmaf64(x: f64, y: f64, z: f64) -> f64 {
 pub unsafe extern "C" fn fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
+type HostFmaf128 = unsafe extern "C" fn(f128, f128, f128) -> f128;
+
+fn host_fmaf128() -> Option<HostFmaf128> {
+    static FMAF128: OnceLock<Option<HostFmaf128>> = OnceLock::new();
+    *FMAF128.get_or_init(|| unsafe {
+        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+
+        let dlopen_addr = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
+        let dlsym_addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
+        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
+        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
+        let libm = dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if libm.is_null() {
+            return None;
+        }
+        let symbol = dlsym(libm, c"fmaf128".as_ptr());
+        if symbol.is_null() {
+            return None;
+        }
+        Some(core::mem::transmute(symbol))
+    })
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaf128(x: f128, y: f128, z: f128) -> f128 {
-    // The f128 fused-multiply-add intrinsic is IEEE correctly-rounded.
-    x.mul_add(y, z)
+    if let Some(host_fma) = host_fmaf128() {
+        unsafe { host_fma(x, y, z) }
+    } else {
+        x * y + z
+    }
 }
 
 // --- unary → c_int ---
@@ -8764,7 +9008,7 @@ pub unsafe extern "C" fn lroundf64x(x: f64) -> c_long {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lroundf128(x: f128) -> c_long {
-    f128_to_i64_sat(x.round())
+    f128_to_i64_sat(finite_roundf128(x))
 }
 
 // --- unary → i64 ---
@@ -8806,7 +9050,7 @@ pub unsafe extern "C" fn llroundf64x(x: f64) -> i64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llroundf128(x: f128) -> i64 {
-    f128_to_i64_sat(x.round())
+    f128_to_i64_sat(finite_roundf128(x))
 }
 
 // --- frexp-like (f, *mut c_int → f) ---
@@ -9018,7 +9262,7 @@ fn is_signaling_f128(x: f128) -> bool {
 /// pre-adjusted so ax >= ay >= 0 and squaring ax, ay, (ax-ay) neither overflows
 /// nor underflows. Uses f128 sqrt + correctly-rounded `+ - * /`.
 fn hypot_kernel_f128(ax: f128, ay: f128) -> f128 {
-    let mut h = (ax * ax + ay * ay).sqrt();
+    let mut h = finite_sqrtf128(ax * ax + ay * ay);
     let (t1, t2);
     if h <= 2.0 * ay {
         let delta = h - ay;
@@ -9461,7 +9705,7 @@ fn asin_f128(x: f128) -> f128 {
         return x + x * w;
     }
 
-    let s = t.sqrt();
+    let s = finite_sqrtf128(t);
     let tres;
     if ix >= 0x3ffe_f333 {
         // |x| > 0.975
@@ -9668,7 +9912,7 @@ fn acos_f128(x: f128) -> f128 {
 
     // |x| >= 0.625 via acos = 2·asin(sqrt((1-|x|)/2)).
     let z = (1.0 - absx) * 0.5;
-    let s = z.sqrt();
+    let s = finite_sqrtf128(z);
     // Extended-precision sqrt correction (split f1 = high 64 bits of s).
     let f1 = f128::from_bits(s.to_bits() & (!0u128 << 64));
     let f2 = s - f1;
@@ -10069,7 +10313,7 @@ fn expm1l_f128(x: f128) -> f128 {
 
     // Reduce x = ln2 (k + remainder), |remainder| <= 1/2.
     let ln2 = C1 + C2;
-    let pf = (0.5 + x / ln2).floor();
+    let pf = finite_floorf128(0.5 + x / ln2);
     let k = pf as i32;
     let mut xr = x - pf * C1;
     xr -= pf * C2;
@@ -10614,10 +10858,10 @@ fn acoshl_f128(x: f128) -> f128 {
         return 0.0; // acosh(1) = 0
     } else if hx > 0x4000_0000_0000_0000 {
         let t = x * x;
-        logl_f128(2.0 * x - 1.0 / (x + (t - 1.0).sqrt()))
+        logl_f128(2.0 * x - 1.0 / (x + finite_sqrtf128(t - 1.0)))
     } else {
         let t = x - 1.0;
-        log1pl_f128(t + (2.0 * t + t * t).sqrt())
+        log1pl_f128(t + finite_sqrtf128(2.0 * t + t * t))
     }
 }
 
@@ -10641,10 +10885,10 @@ fn asinhl_f128(x: f128) -> f128 {
         logl_f128(absx) + LN2 // |x| > 2^54
     } else if ix > 0x4000_0000 {
         let t = absx;
-        logl_f128(2.0 * t + 1.0 / ((x * x + 1.0).sqrt() + t)) // 2 < |x| <= 2^54
+        logl_f128(2.0 * t + 1.0 / (finite_sqrtf128(x * x + 1.0) + t)) // 2 < |x| <= 2^54
     } else {
         let t = x * x;
-        log1pl_f128(absx + t / (1.0 + (1.0 + t).sqrt())) // |x| <= 2
+        log1pl_f128(absx + t / (1.0 + finite_sqrtf128(1.0 + t))) // |x| <= 2
     };
     if sign & 0x8000_0000 != 0 { -w } else { w }
 }
@@ -10753,9 +10997,9 @@ fn powl_f128(x: f128, y: f128) -> f128 {
         if iy >= 0x4070_0000 {
             yisint = 2;
         } else if iy >= 0x3fff_0000 {
-            if y.floor() == y {
+            if finite_floorf128(y) == y {
                 let z = 0.5 * y;
-                yisint = if z.floor() == z { 2 } else { 1 };
+                yisint = if finite_floorf128(z) == z { 2 } else { 1 };
             }
         }
     }
@@ -10779,7 +11023,7 @@ fn powl_f128(x: f128, y: f128) -> f128 {
             return x * x; // y == 2
         }
         if hy == 0x3ffe_0000 && hx >= 0 {
-            return x.sqrt(); // y == 0.5, x >= +0
+            return finite_sqrtf128(x); // y == 0.5, x >= +0
         }
     }
 
@@ -10928,7 +11172,7 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     n = 0;
     if i > 0x3ffe_0000 {
         // |z| > 0.5: n = [z + 0.5]
-        n = (z + 0.5).floor() as i32;
+        n = finite_floorf128(z + 0.5) as i32;
         let tn: f128 = n as f128;
         p_h -= tn;
     }
@@ -12333,7 +12577,7 @@ pub unsafe extern "C" fn modff128(x: f128, iptr: *mut f128) -> f128 {
         unsafe { *iptr = x };
         return f128::from_bits(x.to_bits() & (1u128 << 127)); // signed zero
     }
-    let t = x.trunc();
+    let t = finite_truncf128(x);
     unsafe { *iptr = t };
     // The fractional part carries x's sign (so -0 for negative whole numbers).
     (x - t).copysign(x)
@@ -15461,5 +15705,50 @@ mod tests {
             assert_eq!(fmaximumf32(3.0f32, 5.0f32), 5.0f32);
             assert!(fmaximumf(f32::NAN, 1.0f32).is_nan());
         }
+    }
+
+    #[test]
+    fn test_f128_finite_rounding_and_sqrt() {
+        assert_eq!(finite_truncf128(1.75f128), 1.0f128);
+        assert_eq!(finite_truncf128(-1.75f128), -1.0f128);
+        assert_eq!(finite_truncf128(0.5f128), 0.0f128);
+        assert_eq!(finite_truncf128(-0.5f128), -0.0f128);
+        assert!(finite_truncf128(-0.5f128).is_sign_negative());
+
+        assert_eq!(finite_floorf128(1.75f128), 1.0f128);
+        assert_eq!(finite_floorf128(-1.75f128), -2.0f128);
+        assert_eq!(finite_floorf128(-0.5f128), -1.0f128);
+        assert_eq!(finite_floorf128(0.5f128), 0.0f128);
+        assert_eq!(finite_floorf128(-0.0f128), -0.0f128);
+        assert!(finite_floorf128(-0.0f128).is_sign_negative());
+
+        assert_eq!(finite_ceilf128(1.25f128), 2.0f128);
+        assert_eq!(finite_ceilf128(-1.25f128), -1.0f128);
+        assert_eq!(finite_ceilf128(0.5f128), 1.0f128);
+        assert_eq!(finite_ceilf128(-0.5f128), -0.0f128);
+        assert!(finite_ceilf128(-0.5f128).is_sign_negative());
+
+        // round: half away from zero
+        assert_eq!(finite_roundf128(0.5f128), 1.0f128);
+        assert_eq!(finite_roundf128(-0.5f128), -1.0f128);
+        assert_eq!(finite_roundf128(1.5f128), 2.0f128);
+        assert_eq!(finite_roundf128(2.5f128), 3.0f128);
+        assert_eq!(finite_roundf128(-2.5f128), -3.0f128);
+
+        // roundeven: ties to even
+        assert_eq!(finite_roundevenf128(0.5f128), 0.0f128);
+        assert_eq!(finite_roundevenf128(-0.5f128), -0.0f128);
+        assert!(finite_roundevenf128(-0.5f128).is_sign_negative());
+        assert_eq!(finite_roundevenf128(1.5f128), 2.0f128);
+        assert_eq!(finite_roundevenf128(2.5f128), 2.0f128);
+        assert_eq!(finite_roundevenf128(3.5f128), 4.0f128);
+
+        // sqrt
+        assert_eq!(finite_sqrtf128(0.0f128), 0.0f128);
+        assert_eq!(finite_sqrtf128(-0.0f128), -0.0f128);
+        assert!(finite_sqrtf128(-0.0f128).is_sign_negative());
+        assert_eq!(finite_sqrtf128(1.0f128), 1.0f128);
+        assert_eq!(finite_sqrtf128(4.0f128), 2.0f128);
+        assert_eq!(finite_sqrtf128(16.0f128), 4.0f128);
     }
 }
