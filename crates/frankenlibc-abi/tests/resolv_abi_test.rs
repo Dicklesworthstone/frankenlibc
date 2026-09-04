@@ -4193,6 +4193,27 @@ fn ns_sprintrrf_formats_txt_record_with_quoting() {
     );
 }
 
+#[test]
+fn ns_sprintrrf_malformed_txt_short_payload_preserves_partial_quotes_like_glibc() {
+    // A single TXT chunk whose 1-byte length prefix (9) exceeds the remaining
+    // payload (2 bytes). Like live libresolv, fl must keep the partial `""`
+    // emitted before formerr, and append the generic hex representation (bd-zgka7z).
+    let rdata = b"\x09ab";
+    let s = assert_sprintrrf_matches_host(&[], "foo.com", 1, 16 /*TXT*/, 3600, rdata, 512);
+    assert!(s.contains("\"\"\\# 3"), "got: {s}");
+    assert!(s.contains("RR format error"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrrf_malformed_txt_second_chunk_short_preserves_first_chunk_like_glibc() {
+    // First chunk is valid ("ok"); second chunk has length prefix 5 with only 3 bytes.
+    // Preserves `"ok" ""` followed by the generic formerr hex dump.
+    let rdata = b"\x02ok\x05abc";
+    let s = assert_sprintrrf_matches_host(&[], "foo.com", 1, 16 /*TXT*/, 3600, rdata, 512);
+    assert!(s.contains("\"ok\" \"\"\\# 4"), "got: {s}");
+    assert!(s.contains("RR format error"), "got: {s}");
+}
+
 /// The arm previously passed buflen=64 and asserted `TYPE999` / `010203`. Both were wrong, and
 /// the first made the oracle unreachable: glibc needs 80 bytes for this rendering and returns -1
 /// at 64, so `assert_sprintrrf_matches_host` panicked with "host oracle refused" and the arm

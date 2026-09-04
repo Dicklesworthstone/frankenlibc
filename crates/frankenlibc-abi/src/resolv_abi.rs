@@ -5901,20 +5901,20 @@ fn write_type_into(ty: u16, out: &mut String) {
     }
 }
 
-fn format_a_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
+fn format_a_rdata(rdata: &[u8], out: &mut String) -> Result<(), usize> {
     if rdata.len() != 4 {
-        return Err(());
+        return Err(0);
     }
     use std::fmt::Write;
     let _ = write!(out, "{}.{}.{}.{}", rdata[0], rdata[1], rdata[2], rdata[3]);
     Ok(())
 }
 
-fn format_aaaa_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
+fn format_aaaa_rdata(rdata: &[u8], out: &mut String) -> Result<(), usize> {
     if rdata.len() != 16 {
-        return Err(());
+        return Err(0);
     }
-    let bytes: [u8; 16] = rdata.try_into().map_err(|_| ())?;
+    let bytes: [u8; 16] = rdata.try_into().map_err(|_| 0usize)?;
     let v6 = std::net::Ipv6Addr::from(bytes);
     use std::fmt::Write;
     let _ = write!(out, "{v6}");
@@ -5962,21 +5962,23 @@ unsafe fn format_name_rdata(
     Ok(())
 }
 
-fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
+fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), usize> {
     use std::fmt::Write;
     let mut i = 0usize;
     let mut first = true;
     while i < rdata.len() {
+        let chunk_start = i;
         let len = rdata[i] as usize;
         i += 1;
-        if i + len > rdata.len() {
-            return Err(());
-        }
         if !first {
             out.push(' ');
         }
         first = false;
         out.push('"');
+        if i + len > rdata.len() {
+            out.push('"');
+            return Err(chunk_start);
+        }
         for &b in &rdata[i..i + len] {
             if b == b'"' || b == b'\\' {
                 out.push('\\');
@@ -6048,54 +6050,54 @@ fn format_generic_rdata(rdata: &[u8], ty: u16, diagnostic: Option<&str>, out: &m
         out.push('\n');
         // One leading tab, so the hex starts at column 8.
         out.push('\t');
-        let mut column = 8usize;
-        for &b in chunk {
-            let _ = write!(out, "{b:02x} ");
-            column += 3;
+        for &byte in chunk {
+            let _ = write!(out, "{byte:02x} ");
         }
-        // Only a partial final line carries the closing paren.
-        if remaining.is_empty() && chunk.len() < PER_LINE {
+
+        // The BIND quirk: a line that filled all 16 slots DOES NOT get the
+        // closing paren, even if it is the final line of the dump.
+        let is_final = remaining.is_empty();
+        if is_final && chunk.len() < PER_LINE {
             out.push(')');
-            column += 1;
         }
-        while column < COMMENT_COLUMN {
-            out.push('\t');
-            column = (column / 8 + 1) * 8;
-        }
-        out.push_str("; ");
-        for &b in chunk {
-            out.push(if (0x20..0x7f).contains(&b) {
-                b as char
+
+        // Pad to column 56 with tabs.
+        let col = 8
+            + chunk.len() * 3
+            + if is_final && chunk.len() < PER_LINE {
+                1
             } else {
-                '.'
-            });
+                0
+            };
+        let tabs = (COMMENT_COLUMN.saturating_sub(col) + 7) / 8;
+        for _ in 0..tabs {
+            out.push('\t');
+        }
+
+        out.push_str("; ");
+        for &byte in chunk {
+            if (32..127).contains(&byte) {
+                out.push(byte as char);
+            } else {
+                out.push('.');
+            }
         }
     }
 }
 
-/// Run a type-specific formatter, falling back to the generic form if it
-/// cannot parse the rdata.
-///
-/// The discriminator for refusing is an EMBEDDED DOMAIN NAME, not whether we
-/// have a formatter for the type -- see `rdata_embeds_a_domain_name`. So a
-/// formatter that rejects its input tells us only that the type-specific
-/// presentation is unavailable, which is exactly the case RFC 3597's generic
-/// form exists for.
-///
-/// The output is truncated back to `mark` first: a partially-written rendering
-/// from the failed attempt would otherwise be prefixed to the generic form.
-/// `format_txt_rdata` in particular emits each string as it goes and can fail
-/// part way through.
+/// If a specific formatter fails partway through (like `format_txt_rdata` hitting
+/// a truncated chunk where BIND emits `""` before discovering the payload is short),
+/// keep the partial rendering and append the RFC 3597 generic form with
+/// `; RR format error` for the remaining unparsed bytes, matching live libresolv (bd-zgka7z).
 fn specific_or_generic(
-    formatter: fn(&[u8], &mut String) -> Result<(), ()>,
+    formatter: fn(&[u8], &mut String) -> Result<(), usize>,
     rdata: &[u8],
     ty: u16,
     out: &mut String,
 ) -> Result<(), ()> {
-    let mark = out.len();
-    if formatter(rdata, out).is_err() {
-        out.truncate(mark);
-        format_generic_rdata(rdata, ty, Some("RR format error"), out);
+    if let Err(offset) = formatter(rdata, out) {
+        let remaining = &rdata[offset.min(rdata.len())..];
+        format_generic_rdata(remaining, ty, Some("RR format error"), out);
     }
     Ok(())
 }

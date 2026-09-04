@@ -2756,11 +2756,11 @@ fn capture_argp_stream_output(
     write: impl FnOnce(*mut libc::FILE),
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut fds = [0; 2];
-    let pipe_rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    let pipe_rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
     assert_eq!(
         pipe_rc,
         0,
-        "pipe failed: {}",
+        "pipe2 failed: {}",
         std::io::Error::last_os_error()
     );
 
@@ -2926,14 +2926,17 @@ unsafe fn bounded_waitpid(pid: c_int, status: &mut c_int) -> c_int {
     }
 }
 
-
 fn capture_argp_stdout_child_status(
     expected_status: c_int,
     returned_status: c_int,
     child: impl FnOnce(),
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut fds = [0; 2];
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+    assert_eq!(
+        unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) },
+        0,
+        "pipe2 failed"
+    );
 
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0, "fork failed");
@@ -3016,6 +3019,9 @@ unsafe fn argp_exit_probe_stream() -> *mut libc::FILE {
 
 #[test]
 fn abi_argp_parse_empty_argp_matches_glibc_index_contracts() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let argp_struct = empty_argp_storage();
     let prog = b"test\0";
     let extra = b"extra\0";
@@ -3076,6 +3082,9 @@ fn abi_argp_parse_empty_argp_matches_glibc_index_contracts() {
 
 #[test]
 fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let mut argp_struct = empty_argp_storage();
     argp_struct[0] = 1;
     let prog = b"test\0";
@@ -3191,6 +3200,9 @@ fn abi_argp_parse_version_hook_overrides_version_string_without_exit_when_reques
 
 #[test]
 fn abi_argp_help_renders_literal_usage_and_doc_sections() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
     const ARGP_HELP_LONG: c_uint = 0x08;
     const ARGP_HELP_PRE_DOC: c_uint = 0x10;
@@ -3223,6 +3235,9 @@ fn abi_argp_help_renders_literal_usage_and_doc_sections() {
 
 #[test]
 fn abi_argp_help_null_stream_preserves_fixture_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
 
     let args_doc = CString::new("INPUT").unwrap();
@@ -3276,6 +3291,9 @@ fn abi_argp_help_renders_configured_bug_address() {
 
 #[test]
 fn abi_argp_help_ignores_unterminated_literal_text() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
     const ARGP_HELP_LONG: c_uint = 0x08;
     const ARGP_HELP_PRE_DOC: c_uint = 0x10;
@@ -3306,6 +3324,9 @@ fn abi_argp_help_ignores_unterminated_literal_text() {
 
 #[test]
 fn abi_argp_state_help_renders_state_root_usage_and_docs_without_exiting() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
     const ARGP_HELP_SEE: c_uint = 0x04;
     const ARGP_HELP_LONG: c_uint = 0x08;
@@ -3345,6 +3366,9 @@ fn abi_argp_state_help_renders_state_root_usage_and_docs_without_exiting() {
 
 #[test]
 fn abi_argp_state_help_null_state_preserves_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
 
     clear_errno();
@@ -3363,6 +3387,9 @@ fn abi_argp_state_help_null_state_preserves_noop_contract() {
 
 #[test]
 fn abi_argp_usage_renders_usage_to_state_error_stream_without_exiting() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let args_doc = CString::new("INPUT").unwrap();
     let name = CString::new("usage-demo").unwrap();
     let mut argp_struct = empty_argp_storage();
@@ -3382,6 +3409,9 @@ fn abi_argp_usage_renders_usage_to_state_error_stream_without_exiting() {
 
 #[test]
 fn abi_argp_usage_null_state_preserves_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     clear_errno();
     unsafe {
         frankenlibc_abi::unistd_abi::argp_usage(std::ptr::null_mut());
@@ -3392,6 +3422,9 @@ fn abi_argp_usage_null_state_preserves_noop_contract() {
 
 #[test]
 fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let name = CString::new("diag-demo").unwrap();
     let fmt = CString::new("bad %s %d").unwrap();
     let option = CString::new("option").unwrap();
@@ -3416,6 +3449,9 @@ fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
 
 #[test]
 fn abi_argp_error_normalizes_negative_star_width_and_precision() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let name = CString::new("diag-demo").unwrap();
     let fmt = CString::new("bad |%*d| %.*s").unwrap();
     let word = CString::new("abcdef").unwrap();
@@ -3442,6 +3478,9 @@ fn abi_argp_error_normalizes_negative_star_width_and_precision() {
 
 #[test]
 fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let name = CString::new("diag-demo").unwrap();
     let fmt = CString::new("failed item %d").unwrap();
     let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
@@ -3465,6 +3504,9 @@ fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
 
 #[test]
 fn abi_argp_error_exits_with_configured_status_in_child() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     run_argp_exit_probe(
         "argp_error_exits_with_configured_status_probe_process",
         73,
@@ -3492,6 +3534,9 @@ fn argp_error_exits_with_configured_status_probe_process() {
 
 #[test]
 fn abi_argp_failure_exits_with_status_in_child() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     run_argp_exit_probe(
         "argp_failure_exits_with_status_probe_process",
         74,
@@ -3521,6 +3566,9 @@ fn argp_failure_exits_with_status_probe_process() {
 
 #[test]
 fn abi_argp_failure_honors_no_exit_flag() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     run_argp_exit_probe(
         "argp_failure_honors_no_exit_flag_probe_process",
         0,
@@ -3550,6 +3598,9 @@ fn argp_failure_honors_no_exit_flag_probe_process() {
 
 #[test]
 fn abi_argp_error_and_failure_null_state_preserve_fixture_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let fmt = CString::new("ignored %d").unwrap();
 
     clear_errno();
@@ -8860,10 +8911,10 @@ fn setproctitle_default_prefix_includes_progname() {
     unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
 
     // Force the published progname so the prefix is deterministic.
-    let stable_progname = c"myprog";
-    frankenlibc_abi::startup_abi::program_invocation_short_name.store(
-        stable_progname.as_ptr() as *mut c_char,
-        std::sync::atomic::Ordering::Release,
+    static STABLE_PROGNAME: &std::ffi::CStr = c"myprog";
+    let old_progname = frankenlibc_abi::startup_abi::program_invocation_short_name.swap(
+        STABLE_PROGNAME.as_ptr() as *mut c_char,
+        std::sync::atomic::Ordering::AcqRel,
     );
 
     let fmt = c"hello %s";
@@ -8873,6 +8924,9 @@ fn setproctitle_default_prefix_includes_progname() {
     let raw = backing[0].as_ptr();
     let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
     assert_eq!(s, b"myprog: hello world");
+
+    frankenlibc_abi::startup_abi::program_invocation_short_name
+        .store(old_progname, std::sync::atomic::Ordering::Release);
 }
 
 #[test]
