@@ -14,34 +14,149 @@ use std::ffi::{CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::process_abi as fl;
 
-unsafe extern "C" {
-    fn posix_spawn(
-        pid: *mut libc::pid_t,
-        path: *const c_char,
-        file_actions: *const c_void,
-        attrp: *const c_void,
-        argv: *const *mut c_char,
-        envp: *const *mut c_char,
-    ) -> c_int;
-    fn posix_spawnp(
-        pid: *mut libc::pid_t,
-        file: *const c_char,
-        file_actions: *const c_void,
-        attrp: *const c_void,
-        argv: *const *mut c_char,
-        envp: *const *mut c_char,
-    ) -> c_int;
-    fn posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int;
-    fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int;
-    fn posix_spawn_file_actions_addclose(file_actions: *mut c_void, fd: c_int) -> c_int;
-    fn posix_spawn_file_actions_adddup2(
-        file_actions: *mut c_void,
-        oldfd: c_int,
-        newfd: c_int,
-    ) -> c_int;
-    fn posix_spawnattr_init(attrp: *mut c_void) -> c_int;
-    fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int;
-    fn posix_spawnattr_setflags(attrp: *mut c_void, flags: libc::c_short) -> c_int;
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use dlsym_oracle::host_fn;
+
+type PosixSpawnFn = unsafe extern "C" fn(
+    *mut libc::pid_t,
+    *const c_char,
+    *const c_void,
+    *const c_void,
+    *const *mut c_char,
+    *const *mut c_char,
+) -> c_int;
+type PosixSpawnpFn = unsafe extern "C" fn(
+    *mut libc::pid_t,
+    *const c_char,
+    *const c_void,
+    *const c_void,
+    *const *mut c_char,
+    *const *mut c_char,
+) -> c_int;
+type FileActionsInitFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FileActionsDestroyFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FileActionsAddCloseFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+type FileActionsAddDup2Fn = unsafe extern "C" fn(*mut c_void, c_int, c_int) -> c_int;
+type SpawnattrInitFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type SpawnattrDestroyFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type SpawnattrSetflagsFn = unsafe extern "C" fn(*mut c_void, libc::c_short) -> c_int;
+
+fn host_posix_spawn_fn() -> PosixSpawnFn {
+    unsafe { host_fn(c"posix_spawn", fl::posix_spawn as *const ()) }
+}
+fn host_posix_spawnp_fn() -> PosixSpawnpFn {
+    unsafe { host_fn(c"posix_spawnp", fl::posix_spawnp as *const ()) }
+}
+fn host_posix_spawn_file_actions_init_fn() -> FileActionsInitFn {
+    unsafe {
+        host_fn(
+            c"posix_spawn_file_actions_init",
+            fl::posix_spawn_file_actions_init as *const (),
+        )
+    }
+}
+fn host_posix_spawn_file_actions_destroy_fn() -> FileActionsDestroyFn {
+    unsafe {
+        host_fn(
+            c"posix_spawn_file_actions_destroy",
+            fl::posix_spawn_file_actions_destroy as *const (),
+        )
+    }
+}
+fn host_posix_spawn_file_actions_addclose_fn() -> FileActionsAddCloseFn {
+    unsafe {
+        host_fn(
+            c"posix_spawn_file_actions_addclose",
+            fl::posix_spawn_file_actions_addclose as *const (),
+        )
+    }
+}
+fn host_posix_spawn_file_actions_adddup2_fn() -> FileActionsAddDup2Fn {
+    unsafe {
+        host_fn(
+            c"posix_spawn_file_actions_adddup2",
+            fl::posix_spawn_file_actions_adddup2 as *const (),
+        )
+    }
+}
+fn host_posix_spawnattr_init_fn() -> SpawnattrInitFn {
+    unsafe {
+        host_fn(
+            c"posix_spawnattr_init",
+            fl::posix_spawnattr_init as *const (),
+        )
+    }
+}
+fn host_posix_spawnattr_destroy_fn() -> SpawnattrDestroyFn {
+    unsafe {
+        host_fn(
+            c"posix_spawnattr_destroy",
+            fl::posix_spawnattr_destroy as *const (),
+        )
+    }
+}
+fn host_posix_spawnattr_setflags_fn() -> SpawnattrSetflagsFn {
+    unsafe {
+        host_fn(
+            c"posix_spawnattr_setflags",
+            fl::posix_spawnattr_setflags as *const (),
+        )
+    }
+}
+
+unsafe fn posix_spawn(
+    pid: *mut libc::pid_t,
+    path: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+) -> c_int {
+    unsafe { host_posix_spawn_fn()(pid, path, file_actions, attrp, argv, envp) }
+}
+
+unsafe fn posix_spawnp(
+    pid: *mut libc::pid_t,
+    file: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+) -> c_int {
+    unsafe { host_posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp) }
+}
+
+unsafe fn posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int {
+    unsafe { host_posix_spawn_file_actions_init_fn()(file_actions) }
+}
+
+unsafe fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int {
+    unsafe { host_posix_spawn_file_actions_destroy_fn()(file_actions) }
+}
+
+unsafe fn posix_spawn_file_actions_addclose(file_actions: *mut c_void, fd: c_int) -> c_int {
+    unsafe { host_posix_spawn_file_actions_addclose_fn()(file_actions, fd) }
+}
+
+unsafe fn posix_spawn_file_actions_adddup2(
+    file_actions: *mut c_void,
+    oldfd: c_int,
+    newfd: c_int,
+) -> c_int {
+    unsafe { host_posix_spawn_file_actions_adddup2_fn()(file_actions, oldfd, newfd) }
+}
+
+unsafe fn posix_spawnattr_init(attrp: *mut c_void) -> c_int {
+    unsafe { host_posix_spawnattr_init_fn()(attrp) }
+}
+
+unsafe fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int {
+    unsafe { host_posix_spawnattr_destroy_fn()(attrp) }
+}
+
+unsafe fn posix_spawnattr_setflags(attrp: *mut c_void, flags: libc::c_short) -> c_int {
+    unsafe { host_posix_spawnattr_setflags_fn()(attrp, flags) }
 }
 
 const FA_BYTES: usize = 128;
@@ -485,10 +600,10 @@ fn fl_api() -> SpawnApi {
 fn glibc_api() -> SpawnApi {
     let api = SpawnApi {
         name: "glibc",
-        spawn: posix_spawn,
-        attr_init: posix_spawnattr_init,
-        attr_setflags: posix_spawnattr_setflags,
-        attr_destroy: posix_spawnattr_destroy,
+        spawn: host_posix_spawn_fn(),
+        attr_init: host_posix_spawnattr_init_fn(),
+        attr_setflags: host_posix_spawnattr_setflags_fn(),
+        attr_destroy: host_posix_spawnattr_destroy_fn(),
     };
     assert_ne!(
         api.spawn as *const () as usize,
