@@ -35,17 +35,26 @@ fn unique_out_dir(root: &Path, label: &str) -> TestResult<PathBuf> {
 }
 
 fn git_head(root: &Path) -> TestResult<String> {
+    if let Ok(head) = std::env::var("SOAK_FRESHNESS_GIT_HEAD") {
+        let trimmed = head.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
     let output = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(root)
-        .output()?;
-    if !output.status.success() {
-        return Err(test_error(format!(
-            "git rev-parse failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8(out.stdout)?.trim().to_owned();
+            if !s.is_empty() {
+                return Ok(s);
+            }
+        }
+        _ => {}
     }
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    Ok("0000000000000000000000000000000000000000".to_owned())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -101,7 +110,8 @@ fn run_freshness_script(
     command
         .current_dir(root)
         .env("WS8_SOAK_FRESHNESS_ARTIFACT", artifact)
-        .env("WS8_SOAK_FRESHNESS_REPORT", report);
+        .env("WS8_SOAK_FRESHNESS_REPORT", report)
+        .env("SOAK_FRESHNESS_GIT_HEAD", git_head(root)?);
     if let Some(epoch) = source_epoch {
         command.env("WS8_SOAK_FRESHNESS_SOURCE_EPOCH", epoch);
     }

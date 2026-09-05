@@ -1,0 +1,123 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "ws8-e2e-standalone-verification",
+  "bead_id": "bd-38x82.6",
+  "parent_bead": "bd-38x82",
+  "title": "[RC-WS8.E2E] End-to-end L3 standalone verification",
+  "scope": {
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "workload_battery": [
+      "string_pipeline",
+      "memory_lifecycle",
+      "format_stdio"
+    ],
+    "coverage_classes": [
+      "happy_path",
+      "edge_cases",
+      "error_handling"
+    ],
+    "companion_beads": [
+      {
+        "bead_id": "bd-38x82.1",
+        "title": "Produce libfrankenlibc_replace.so standalone artifact",
+        "test_file": "crates/frankenlibc-harness/tests/standalone_replacement_artifact_test.rs"
+      },
+      {
+        "bead_id": "bd-38x82.2",
+        "title": "aarch64 passing runtime artifact",
+        "test_files": [
+          "crates/frankenlibc-harness/tests/aarch64_toolchain_test.rs",
+          "crates/frankenlibc-harness/tests/aarch64_smoke_runner_test.rs"
+        ]
+      },
+      {
+        "bead_id": "bd-38x82.3",
+        "title": "Distribution packaging contract",
+        "test_file": "crates/frankenlibc-harness/tests/distribution_packaging_contract_test.rs"
+      },
+      {
+        "bead_id": "bd-38x82.4",
+        "title": "24-hour soak across the curated workload set",
+        "test_files": [
+          "crates/frankenlibc-harness/tests/ws8_soak_test.rs",
+          "crates/frankenlibc-harness/tests/soak_freshness_test.rs"
+        ]
+      },
+      {
+        "bead_id": "bd-38x82.5",
+        "title": "Hardened mode 2x same-workload live benchmark gate",
+        "test_file": "crates/frankenlibc-harness/tests/hardened_mode_2x_bound_contract_test.rs"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "standalone_boot_isolation",
+      "description": "Process boots with standalone replacement artifact mapped and zero host glibc libraries mapped in /proc/self/maps",
+      "coverage": "happy_path",
+      "architectures": ["x86_64"]
+    },
+    {
+      "id": "aarch64_cross_smoke_execution",
+      "description": "AArch64 runtime artifact executes curated smoke battery under QEMU user emulation",
+      "coverage": "happy_path",
+      "architectures": ["aarch64"]
+    },
+    {
+      "id": "distro_package_prefix_inspection",
+      "description": "Distribution package installs to prefix and passes glibc dependency, undefined symbol, and symbol count checks",
+      "coverage": "happy_path",
+      "architectures": ["x86_64"]
+    },
+    {
+      "id": "curated_workload_edge_boundary",
+      "description": "Zero-length allocations, maximum boundary sizes, empty string formatting without crash",
+      "coverage": "edge_cases",
+      "architectures": ["x86_64", "aarch64"]
+    },
+    {
+      "id": "curated_workload_error_handling",
+      "description": "NULL pointer passing, invalid free, bounds protection caught safely by TSM",
+      "coverage": "error_handling",
+      "architectures": ["x86_64", "aarch64"]
+    },
+    {
+      "id": "companion_unit_tests_pass",
+      "description": "All WS-8 companion test suites pass with non-zero passed test counts",
+      "coverage": "happy_path",
+      "architectures": ["x86_64"]
+    }
+  ],
+  "required_report_fields": [
+    "schema_version",
+    "manifest_id",
+    "bead_id",
+    "status",
+    "architectures",
+    "scenarios",
+    "companion_beads",
+    "distro_package",
+    "workload_battery",
+    "summary"
+  ],
+  "required_log_fields": [
+    "timestamp",
+    "trace_id",
+    "bead_id",
+    "event",
+    "scenario_id",
+    "status",
+    "details"
+  ],
+  "failure_signatures": {
+    "manifest_invalid": "ws8_e2e_manifest_invalid",
+    "standalone_boot_failed": "ws8_e2e_standalone_boot_failed",
+    "aarch64_smoke_failed": "ws8_e2e_aarch64_smoke_failed",
+    "distro_package_failed": "ws8_e2e_distro_package_failed",
+    "workload_battery_failed": "ws8_e2e_workload_battery_failed",
+    "companion_test_failed": "ws8_e2e_companion_test_failed"
+  }
+}

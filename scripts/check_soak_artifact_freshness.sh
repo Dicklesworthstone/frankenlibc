@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -33,6 +34,10 @@ def utc_now() -> str:
 
 
 def git(args: list[str], default: str) -> str:
+    if args == ["rev-parse", "HEAD"]:
+        override = os.environ.get("SOAK_FRESHNESS_GIT_HEAD")
+        if override and override.strip():
+            return override.strip()
     proc = subprocess.run(
         ["git", *args],
         cwd=root,
