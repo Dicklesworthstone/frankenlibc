@@ -28,7 +28,7 @@
 //! — so they are deliberately NOT in this table, and that absence is recorded
 //! here rather than left to be rediscovered.
 
-use std::ffi::{CStr, c_char, c_int, c_long, c_void};
+use std::ffi::{CStr, c_int, c_void};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -42,27 +42,34 @@ struct Outcome {
     errno: c_int,
 }
 
-fn errno_now() -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or_default()
+type ErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+fn glibc_errno_slot() -> *mut c_int {
+    // SAFETY: the resolved address is glibc's `__errno_location`; fl's own
+    // export is the collapse guard, so a self-comparison aborts loudly.
+    unsafe {
+        let addr = dlsym_oracle::host_addr(
+            c"__errno_location",
+            frankenlibc_abi::errno_abi::__errno_location as ErrnoLocationFn as *const (),
+        );
+        core::mem::transmute::<*mut c_void, ErrnoLocationFn>(addr)()
+    }
 }
 
-fn clear_errno() {
-    // SAFETY: writing the thread's own errno slot through libc's accessor.
-    unsafe { *libc::__errno_location() = 0 };
+fn fl_errno_slot() -> *mut c_int {
+    unsafe { frankenlibc_abi::errno_abi::__errno_location() }
 }
 
 /// Call a `fn(c_int, c_ulong) -> c_int` shape with fd = -1.
-fn call_fd_ulong(f: usize) -> Outcome {
+fn call_fd_ulong(f: usize, slot: *mut c_int) -> Outcome {
     // SAFETY: the caller passes an address whose C signature is this shape.
     let f: unsafe extern "C" fn(c_int, libc::c_ulong) -> c_int = unsafe { std::mem::transmute(f) };
-    clear_errno();
+    unsafe { *slot = 0 };
     // SAFETY: fd -1 is invalid by construction; no memory is dereferenced.
     let rc = unsafe { f(-1, 0) };
     Outcome {
         rc: rc as i64,
-        errno: errno_now(),
+        errno: unsafe { *slot },
     }
 }
 
@@ -73,67 +80,72 @@ fn call_fd_ulong(f: usize) -> Outcome {
 /// EINVAL for a NULL params pointer and ENOSYS for a valid one, so a table that
 /// only passed NULL would pin half the contract and a table that only passed a
 /// buffer would have shown fl already correct.
-fn call_fd_buf(f: usize) -> Outcome {
+fn call_fd_buf(f: usize, slot: *mut c_int) -> Outcome {
     // SAFETY: the caller passes an address whose C signature is this shape.
     let f: unsafe extern "C" fn(c_int, *mut c_void) -> c_int = unsafe { std::mem::transmute(f) };
     let mut buf = [0u8; 64];
-    clear_errno();
+    unsafe { *slot = 0 };
     // SAFETY: fd -1 is invalid; neither implementation writes through the
     // pointer before failing, and the buffer outlives the call regardless.
     let rc = unsafe { f(-1, buf.as_mut_ptr().cast()) };
     Outcome {
         rc: rc as i64,
-        errno: errno_now(),
+        errno: unsafe { *slot },
     }
 }
 
 /// Call a `fn(c_int, *mut c_void) -> c_int` shape with fd = -1 and a NULL arg.
-fn call_fd_ptr(f: usize) -> Outcome {
+fn call_fd_ptr(f: usize, slot: *mut c_int) -> Outcome {
     // SAFETY: the caller passes an address whose C signature is this shape.
     let f: unsafe extern "C" fn(c_int, *mut c_void) -> c_int = unsafe { std::mem::transmute(f) };
-    clear_errno();
+    unsafe { *slot = 0 };
     // SAFETY: fd -1 is rejected before the pointer is read on both
     // implementations — which is precisely the property under test, so a
     // divergence here shows up as a differing errno rather than a crash.
     let rc = unsafe { f(-1, std::ptr::null_mut()) };
     Outcome {
         rc: rc as i64,
-        errno: errno_now(),
+        errno: unsafe { *slot },
     }
 }
 
 /// Call `lockf(fd, cmd, len)` with fd = -1.
-fn call_lockf(f: usize) -> Outcome {
+fn call_lockf(f: usize, slot: *mut c_int) -> Outcome {
     // SAFETY: the caller passes `lockf`'s address.
-    let f: unsafe extern "C" fn(c_int, c_int, libc::off_t) -> c_int = unsafe { std::mem::transmute(f) };
-    clear_errno();
+    let f: unsafe extern "C" fn(c_int, c_int, libc::off_t) -> c_int =
+        unsafe { std::mem::transmute(f) };
+    unsafe { *slot = 0 };
     // SAFETY: fd -1 is invalid; F_ULOCK on it touches no memory.
     let rc = unsafe { f(-1, 0, 0) };
     Outcome {
         rc: rc as i64,
-        errno: errno_now(),
+        errno: unsafe { *slot },
     }
 }
 
 /// Call `pwritev2(fd, iov, iovcnt, offset, flags)` with fd = -1.
-fn call_pwritev2(f: usize) -> Outcome {
+fn call_pwritev2(f: usize, slot: *mut c_int) -> Outcome {
     // SAFETY: the caller passes a `pwritev2`-shaped address.
     let f: unsafe extern "C" fn(c_int, *const c_void, c_int, libc::off_t, c_int) -> isize =
         unsafe { std::mem::transmute(f) };
-    clear_errno();
+    unsafe { *slot = 0 };
     // SAFETY: fd -1 with a zero-length iovec array; no memory is read.
     let rc = unsafe { f(-1, std::ptr::null(), 0, 0, 0) };
     Outcome {
         rc: rc as i64,
-        errno: errno_now(),
+        errno: unsafe { *slot },
     }
 }
 
-fn probe(name: &CStr, fl: *const (), call: fn(usize) -> Outcome) -> Option<(Outcome, Outcome)> {
+fn probe(
+    name: &CStr,
+    fl: *const (),
+    call: fn(usize, *mut c_int) -> Outcome,
+) -> Option<(Outcome, Outcome)> {
     // SAFETY: `name` is NUL-terminated; the helper only resolves an address.
     let host = unsafe { host_addr_optional(name, fl) }?;
-    let host_out = call(host as usize);
-    let fl_out = call(fl as usize);
+    let host_out = call(host as usize, glibc_errno_slot());
+    let fl_out = call(fl as usize, fl_errno_slot());
     Some((host_out, fl_out))
 }
 
@@ -164,27 +176,36 @@ fn iovec_calls_treat_a_zero_count_the_way_glibc_does() {
     type V4 = unsafe extern "C" fn(c_int, *const c_void, c_int, libc::off_t) -> isize;
     type V5 = unsafe extern "C" fn(c_int, *const c_void, c_int, libc::off_t, c_int) -> isize;
 
-    let call3 = |f: usize, fd: c_int| -> Outcome {
+    let call3 = |f: usize, fd: c_int, slot: *mut c_int| -> Outcome {
         // SAFETY: the address is a `readv`/`writev`-shaped symbol; a zero count
         // means the NULL vector is never read.
         let f: V3 = unsafe { std::mem::transmute(f) };
-        clear_errno();
+        unsafe { *slot = 0 };
         let rc = unsafe { f(fd, std::ptr::null(), 0) };
-        Outcome { rc: rc as i64, errno: errno_now() }
+        Outcome {
+            rc: rc as i64,
+            errno: unsafe { *slot },
+        }
     };
-    let call4 = |f: usize, fd: c_int| -> Outcome {
+    let call4 = |f: usize, fd: c_int, slot: *mut c_int| -> Outcome {
         // SAFETY: as above, with an offset argument.
         let f: V4 = unsafe { std::mem::transmute(f) };
-        clear_errno();
+        unsafe { *slot = 0 };
         let rc = unsafe { f(fd, std::ptr::null(), 0, 0) };
-        Outcome { rc: rc as i64, errno: errno_now() }
+        Outcome {
+            rc: rc as i64,
+            errno: unsafe { *slot },
+        }
     };
-    let call5 = |f: usize, fd: c_int| -> Outcome {
+    let call5 = |f: usize, fd: c_int, slot: *mut c_int| -> Outcome {
         // SAFETY: as above, with offset and flags.
         let f: V5 = unsafe { std::mem::transmute(f) };
-        clear_errno();
+        unsafe { *slot = 0 };
         let rc = unsafe { f(fd, std::ptr::null(), 0, 0, 0) };
-        Outcome { rc: rc as i64, errno: errno_now() }
+        Outcome {
+            rc: rc as i64,
+            errno: unsafe { *slot },
+        }
     };
 
     #[allow(clippy::type_complexity)]
@@ -194,7 +215,11 @@ fn iovec_calls_treat_a_zero_count_the_way_glibc_does() {
         (c"preadv", frankenlibc_abi::io_abi::preadv as *const (), 4),
         (c"pwritev", frankenlibc_abi::io_abi::pwritev as *const (), 4),
         (c"preadv2", frankenlibc_abi::io_abi::preadv2 as *const (), 5),
-        (c"pwritev2", frankenlibc_abi::io_abi::pwritev2 as *const (), 5),
+        (
+            c"pwritev2",
+            frankenlibc_abi::io_abi::pwritev2 as *const (),
+            5,
+        ),
     ];
 
     let mut compared = 0usize;
@@ -206,9 +231,18 @@ fn iovec_calls_treat_a_zero_count_the_way_glibc_does() {
         };
         for (what, fd) in [("bad fd", -1_i32), ("good fd", good)] {
             let (h, m) = match shape {
-                3 => (call3(host as usize, fd), call3(*fl as usize, fd)),
-                4 => (call4(host as usize, fd), call4(*fl as usize, fd)),
-                _ => (call5(host as usize, fd), call5(*fl as usize, fd)),
+                3 => (
+                    call3(host as usize, fd, glibc_errno_slot()),
+                    call3(*fl as usize, fd, fl_errno_slot()),
+                ),
+                4 => (
+                    call4(host as usize, fd, glibc_errno_slot()),
+                    call4(*fl as usize, fd, fl_errno_slot()),
+                ),
+                _ => (
+                    call5(host as usize, fd, glibc_errno_slot()),
+                    call5(*fl as usize, fd, fl_errno_slot()),
+                ),
             };
             println!("{label} {what}: host {h:?}  fl {m:?}");
             assert_eq!(
@@ -267,17 +301,20 @@ fn boundary_arguments_match_the_host_across_the_fd_family() {
             let label = name.to_str().expect("ASCII symbol name");
             // SAFETY: NUL-terminated name paired with fl's own definition.
             if let Some(host) = unsafe { host_addr_optional(name, $fl) } {
-                let run = |addr: usize| -> Outcome {
+                let run = |addr: usize, slot: *mut c_int| -> Outcome {
                     // SAFETY: the address has the C signature named by `$ty`,
                     // and every call below uses arguments the host was probed
                     // with, so neither implementation reads unmapped memory.
                     let f: $ty = unsafe { std::mem::transmute(addr) };
-                    clear_errno();
+                    unsafe { *slot = 0 };
                     let rc = $body(f);
-                    Outcome { rc: rc as i64, errno: errno_now() }
+                    Outcome {
+                        rc: rc as i64,
+                        errno: unsafe { *slot },
+                    }
                 };
-                let h = run(host as usize);
-                let m = run($fl as usize);
+                let h = run(host as usize, glibc_errno_slot());
+                let m = run($fl as usize, fl_errno_slot());
                 println!("{label}: host {h:?}  fl {m:?}");
                 assert_eq!(m, h, "{label} boundary case: fl {m:?}, host glibc {h:?}");
                 compared += 1;
@@ -286,40 +323,88 @@ fn boundary_arguments_match_the_host_across_the_fd_family() {
     }
 
     // Zero length is a success on a good fd, for the scalar calls too.
-    compare!(c"read", frankenlibc_abi::unistd_abi::read as *const (), Rw,
-             |f: Rw| unsafe { f(good, bufp, 0) });
-    compare!(c"write", frankenlibc_abi::unistd_abi::write as *const (), Rw,
-             |f: Rw| unsafe { f(good, bufp, 0) });
-    compare!(c"pread", frankenlibc_abi::io_abi::pread as *const (), PRw,
-             |f: PRw| unsafe { f(good, bufp, 0, 0) });
-    compare!(c"pwrite", frankenlibc_abi::io_abi::pwrite as *const (), PRw,
-             |f: PRw| unsafe { f(good, bufp, 0, 0) });
+    compare!(
+        c"read",
+        frankenlibc_abi::unistd_abi::read as *const (),
+        Rw,
+        |f: Rw| unsafe { f(good, bufp, 0) }
+    );
+    compare!(
+        c"write",
+        frankenlibc_abi::unistd_abi::write as *const (),
+        Rw,
+        |f: Rw| unsafe { f(good, bufp, 0) }
+    );
+    compare!(
+        c"pread",
+        frankenlibc_abi::io_abi::pread as *const (),
+        PRw,
+        |f: PRw| unsafe { f(good, bufp, 0, 0) }
+    );
+    compare!(
+        c"pwrite",
+        frankenlibc_abi::io_abi::pwrite as *const (),
+        PRw,
+        |f: PRw| unsafe { f(good, bufp, 0, 0) }
+    );
 
     // A NEGATIVE offset is EINVAL, not a wrapped huge unsigned offset.
-    compare!(c"pread", frankenlibc_abi::io_abi::pread as *const (), PRw,
-             |f: PRw| unsafe { f(good, bufp, 8, -1) });
-    compare!(c"pwrite", frankenlibc_abi::io_abi::pwrite as *const (), PRw,
-             |f: PRw| unsafe { f(good, bufp, 8, -1) });
+    compare!(
+        c"pread",
+        frankenlibc_abi::io_abi::pread as *const (),
+        PRw,
+        |f: PRw| unsafe { f(good, bufp, 8, -1) }
+    );
+    compare!(
+        c"pwrite",
+        frankenlibc_abi::io_abi::pwrite as *const (),
+        PRw,
+        |f: PRw| unsafe { f(good, bufp, 8, -1) }
+    );
 
     // Negative length, and a bad fd, on ftruncate.
-    compare!(c"ftruncate", frankenlibc_abi::unistd_abi::ftruncate as *const (), Ftr,
-             |f: Ftr| unsafe { f(good, -1) });
-    compare!(c"ftruncate", frankenlibc_abi::unistd_abi::ftruncate as *const (), Ftr,
-             |f: Ftr| unsafe { f(-1, 0) });
+    compare!(
+        c"ftruncate",
+        frankenlibc_abi::unistd_abi::ftruncate as *const (),
+        Ftr,
+        |f: Ftr| unsafe { f(good, -1) }
+    );
+    compare!(
+        c"ftruncate",
+        frankenlibc_abi::unistd_abi::ftruncate as *const (),
+        Ftr,
+        |f: Ftr| unsafe { f(-1, 0) }
+    );
 
     // Invalid whence, and a negative resulting offset.
-    compare!(c"lseek", frankenlibc_abi::unistd_abi::lseek as *const (), Lseek,
-             |f: Lseek| unsafe { f(good, 0, 99) });
-    compare!(c"lseek", frankenlibc_abi::unistd_abi::lseek as *const (), Lseek,
-             |f: Lseek| unsafe { f(good, -1, libc::SEEK_SET) });
+    compare!(
+        c"lseek",
+        frankenlibc_abi::unistd_abi::lseek as *const (),
+        Lseek,
+        |f: Lseek| unsafe { f(good, 0, 99) }
+    );
+    compare!(
+        c"lseek",
+        frankenlibc_abi::unistd_abi::lseek as *const (),
+        Lseek,
+        |f: Lseek| unsafe { f(good, -1, libc::SEEK_SET) }
+    );
 
     // iovcnt past IOV_MAX is EINVAL even though the vector is NULL.
-    compare!(c"readv", frankenlibc_abi::io_abi::readv as *const (), Rv,
-             |f: Rv| unsafe { f(good, std::ptr::null(), 2000) });
+    compare!(
+        c"readv",
+        frankenlibc_abi::io_abi::readv as *const (),
+        Rv,
+        |f: Rv| unsafe { f(good, std::ptr::null(), 2000) }
+    );
 
     // A bad source fd on dup2.
-    compare!(c"dup2", frankenlibc_abi::io_abi::dup2 as *const (), Dup2,
-             |f: Dup2| unsafe { f(-1, 5) });
+    compare!(
+        c"dup2",
+        frankenlibc_abi::io_abi::dup2 as *const (),
+        Dup2,
+        |f: Dup2| unsafe { f(-1, 5) }
+    );
 
     assert!(
         compared >= 10,
@@ -334,41 +419,41 @@ fn fd_taking_stubs_reject_a_bad_descriptor_the_way_glibc_does() {
     let mut compared = 0usize;
     let mut skipped: Vec<&str> = Vec::new();
 
-    let cases: &[(&CStr, *const (), fn(usize) -> Outcome)] = &[
+    let cases: &[(&CStr, *const (), fn(usize, *mut c_int) -> Outcome)] = &[
         (
             c"fchflags",
             frankenlibc_abi::glibc_internal_abi::fchflags as *const (),
-            call_fd_ulong as fn(usize) -> Outcome,
+            call_fd_ulong as fn(usize, *mut c_int) -> Outcome,
         ),
         (
             c"gtty",
             frankenlibc_abi::glibc_internal_abi::gtty as *const (),
-            call_fd_ptr as fn(usize) -> Outcome,
+            call_fd_ptr as fn(usize, *mut c_int) -> Outcome,
         ),
         (
             c"stty",
             frankenlibc_abi::glibc_internal_abi::stty as *const (),
-            call_fd_ptr as fn(usize) -> Outcome,
+            call_fd_ptr as fn(usize, *mut c_int) -> Outcome,
         ),
         (
             c"gtty",
             frankenlibc_abi::glibc_internal_abi::gtty as *const (),
-            call_fd_buf as fn(usize) -> Outcome,
+            call_fd_buf as fn(usize, *mut c_int) -> Outcome,
         ),
         (
             c"stty",
             frankenlibc_abi::glibc_internal_abi::stty as *const (),
-            call_fd_buf as fn(usize) -> Outcome,
+            call_fd_buf as fn(usize, *mut c_int) -> Outcome,
         ),
         (
             c"lockf",
             frankenlibc_abi::unistd_abi::lockf as *const (),
-            call_lockf as fn(usize) -> Outcome,
+            call_lockf as fn(usize, *mut c_int) -> Outcome,
         ),
         (
             c"pwritev2",
             frankenlibc_abi::io_abi::pwritev2 as *const (),
-            call_pwritev2 as fn(usize) -> Outcome,
+            call_pwritev2 as fn(usize, *mut c_int) -> Outcome,
         ),
     ];
 
