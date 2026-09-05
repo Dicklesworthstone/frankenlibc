@@ -64,10 +64,10 @@ cargo_check_command_for_log() {
   # The gate type-checks Rust aarch64 paths; disabling blake3's NEON C build
   # avoids requiring a worker-local aarch64 C cross-compiler for cargo check.
   if [[ "${RUN_MODE}" == "rch" ]]; then
-    printf 'RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=%s rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check --target %s -p %s' \
+    printf 'RCH_REQUIRE_REMOTE=1 RCH_VISIBILITY=%s rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check -Z build-std=std,panic_abort --target %s -p %s' \
       "${RCH_VISIBILITY:-summary}" "${TARGET}" "${package}"
   else
-    printf 'CARGO_FEATURE_NO_NEON=1 cargo check --target %s -p %s' "${TARGET}" "${package}"
+    printf 'CARGO_FEATURE_NO_NEON=1 cargo check -Z build-std=std,panic_abort --target %s -p %s' "${TARGET}" "${package}"
   fi
 }
 
@@ -75,9 +75,9 @@ run_core_cargo_check() {
   if [[ "${RUN_MODE}" == "rch" ]]; then
       RCH_REQUIRE_REMOTE=1 \
       RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
-      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-core
+      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check -Z build-std=std,panic_abort --target "${TARGET}" -p frankenlibc-core
   else
-    CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-core
+    CARGO_FEATURE_NO_NEON=1 cargo check -Z build-std=std,panic_abort --target "${TARGET}" -p frankenlibc-core
   fi
 }
 
@@ -85,9 +85,9 @@ run_abi_cargo_check() {
   if [[ "${RUN_MODE}" == "rch" ]]; then
       RCH_REQUIRE_REMOTE=1 \
       RCH_VISIBILITY="${RCH_VISIBILITY:-summary}" \
-      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-abi
+      rch exec -- env CARGO_FEATURE_NO_NEON=1 cargo check -Z build-std=std,panic_abort --target "${TARGET}" -p frankenlibc-abi
   else
-    CARGO_FEATURE_NO_NEON=1 cargo check --target "${TARGET}" -p frankenlibc-abi
+    CARGO_FEATURE_NO_NEON=1 cargo check -Z build-std=std,panic_abort --target "${TARGET}" -p frankenlibc-abi
   fi
 }
 

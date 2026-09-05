@@ -21,19 +21,32 @@ export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 cd "$PROJECT_ROOT"
 
 # Build for aarch64
-echo "Building standalone artifact..."
+BUILD_FEATURES=()
+if [[ "${STANDALONE:-0}" == "1" || "${1:-}" == "--standalone" ]]; then
+    echo "Building standalone artifact..."
+    BUILD_FEATURES=(--features "standalone,owned-unwind-stub,owned-tls-cache")
+else
+    echo "Building aarch64 artifact..."
+fi
+
 if command -v rch &>/dev/null; then
-    rch exec -- cargo build \
+    rch exec -- env \
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+        CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+        AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+        cargo build \
         --target aarch64-unknown-linux-gnu \
         --release \
-        --features standalone,owned-unwind-stub,owned-tls-cache \
-        --manifest-path crates/frankenlibc-abi/Cargo.toml
+        ${BUILD_FEATURES[@]+"${BUILD_FEATURES[@]}"} \
+        --manifest-path crates/frankenlibc-abi/Cargo.toml \
+        --target-dir target
 else
     cargo build \
         --target aarch64-unknown-linux-gnu \
         --release \
-        --features standalone,owned-unwind-stub,owned-tls-cache \
-        --manifest-path crates/frankenlibc-abi/Cargo.toml
+        ${BUILD_FEATURES[@]+"${BUILD_FEATURES[@]}"} \
+        --manifest-path crates/frankenlibc-abi/Cargo.toml \
+        --target-dir target
 fi
 
 ARTIFACT="$PROJECT_ROOT/target/aarch64-unknown-linux-gnu/release/libfrankenlibc_abi.so"
