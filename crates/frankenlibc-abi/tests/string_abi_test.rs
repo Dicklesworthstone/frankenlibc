@@ -319,6 +319,7 @@ fn strlen_measures_correctly() {
 
 #[test]
 fn strlen_bounds_tracked_unterminated_input() {
+    signal_runtime_ready_for_tests();
     unsafe {
         let raw = malloc_unterminated(b"hello");
         assert_eq!(
