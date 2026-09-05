@@ -494,6 +494,17 @@ fn is_integral_f64(x: f64) -> bool {
 
 #[inline]
 fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
+    // membrane is provably always-Allow for MathFenv and can never heal a math
+    // result, so `decide()`+`observe()` cannot change the output. Skip them for
+    // the common finite case; finite->non-finite "adverse" results fall through
+    // to the full path so observation (and any future deny/heal) stays reachable.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x);
+        if !(x.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -529,6 +540,13 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
 
 #[inline]
 fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
+    // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x, y);
+        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
     let (mode, decision) = runtime_policy::decide(
@@ -1363,8 +1381,15 @@ pub unsafe extern "C" fn pow10(x: f64) -> f64 {
 // Single-precision (f32) functions
 // ===========================================================================
 
-#[inline]
-fn unary_entry_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
+#[inline(always)]
+fn unary_entry_f32<F: Fn(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
+    // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x);
+        if !(x.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -1406,6 +1431,13 @@ fn unary_entry_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
 
 #[inline]
 fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
+    // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x, y);
+        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
     let (mode, decision) = runtime_policy::decide(

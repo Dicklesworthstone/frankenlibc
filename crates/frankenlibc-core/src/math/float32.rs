@@ -799,39 +799,149 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
     libm::powf(base, exponent)
 }
 
-// --- Hyperbolic ---
+// 32-entry table of 0.5 * 2^(j/32) for j = 0..31 (glibc __exp_data.tab)
+const TABLE_RAW_32: [u64; 32] = [
+    0x3fe0000000000000,
+    0x3fe059b0d3158574,
+    0x3fe0b5586cf9890f,
+    0x3fe11301d0125b51,
+    0x3fe172b83c7d517b,
+    0x3fe1d4873168b9aa,
+    0x3fe2387a6e756238,
+    0x3fe29e9df51fdee1,
+    0x3fe306fe0a31b715,
+    0x3fe371a7373aa9cb,
+    0x3fe3dea64c123422,
+    0x3fe44e086061892d,
+    0x3fe4bfdad5362a27,
+    0x3fe5342b569d4f82,
+    0x3fe5ab07dd485429,
+    0x3fe6247eb03a5585,
+    0x3fe6a09e667f3bcd,
+    0x3fe71f75e8ec5f74,
+    0x3fe7a11473eb0187,
+    0x3fe82589994cce13,
+    0x3fe8ace5422aa0db,
+    0x3fe93737b0cdc5e5,
+    0x3fe9c49182a3f090,
+    0x3fea5503b23e255d,
+    0x3feae89f995ad3ad,
+    0x3feb7f76f2fb5e47,
+    0x3fec199bdd85529c,
+    0x3fecb720dcef9069,
+    0x3fed5818dcfba487,
+    0x3fedfc97337b9b5f,
+    0x3feea4afa2a490da,
+    0x3fef50765b6e4540,
+];
+
+const C0: f64 = 1.0;
+const C1: f64 = f64::from_bits(0x3f962e42fef4c4e7);
+const C2: f64 = f64::from_bits(0x3f2ebfd1b232f475);
+const C3: f64 = f64::from_bits(0x3ebc6b19384ecd93);
+const INV_LN2_32: f64 = f64::from_bits(0x40471547652b82fe);
+const SHIFTER: f64 = f64::from_bits(0x4338000000000000); // 1.5 * 2^52
 
 #[inline]
 pub fn sinhf(x: f32) -> f32 {
-    // Evaluate the whole range through fl's f64 `sinh` and round once: f64 sinh now uses
-    // a cheap odd Taylor polynomial on |x| <= 3 (the hot band) and the (t-1/t)/2 fast-exp
-    // reroute above, both faster than this f32's old exp-reroute — and the polynomial also
-    // covers the small-|x| range the old path left on libm::sinhf. The f64 precision
-    // absorbs any cancellation; ±inf/±0/NaN and f32 overflow fall out of the cast.
-    crate::math::sinh(x as f64) as f32
+    let ix = x.to_bits();
+    let ax_bits = ix & 0x7fff_ffff;
+    if ax_bits >= 0x42b3_0000 {
+        // |x| >= 89.5 or NaN
+        if ax_bits > 0x7f80_0000 {
+            return x + x; // NaN
+        }
+        return if (ix >> 31) != 0 {
+            f32::NEG_INFINITY
+        } else {
+            f32::INFINITY
+        };
+    }
+    if ax_bits <= 0x3e00_0000 {
+        // |x| <= 0.125
+        if ax_bits < 0x3980_0000 {
+            // |x| < 2^-12: sinh(x) = x
+            return x;
+        }
+        let w = f32::from_bits(ax_bits) as f64;
+        let z = w * w;
+        let p = (z * (1.0 / 5040.0) + (1.0 / 120.0)).mul_add(z, 1.0 / 6.0);
+        let res = (w + w * z * p) as f32;
+        return if (ix >> 31) != 0 { -res } else { res };
+    }
+
+    let w = f32::from_bits(ax_bits) as f64;
+    let u = w * INV_LN2_32;
+    let kd_biased = u + SHIFTER;
+    let kd = kd_biased - SHIFTER;
+    let t = u - kd;
+    let k = kd_biased.to_bits() as i64;
+
+    let t2 = t * t;
+    let even = t2.mul_add(C2, C0);
+    let odd = t * t2.mul_add(C3, C1);
+    let epos = even + odd;
+    let eneg = even - odd;
+
+    let rsi = (k & 0x1f) as usize;
+    let rax = (k >> 5) as u64;
+    let t_pos = f64::from_bits(TABLE_RAW_32[rsi].wrapping_add(rax << 52));
+
+    let k_neg = -k;
+    let rsi_neg = (k_neg & 0x1f) as usize;
+    let rdx = (k_neg >> 5) as u64;
+    let t_neg = f64::from_bits(TABLE_RAW_32[rsi_neg].wrapping_add(rdx << 52));
+
+    let res = (t_pos * epos - t_neg * eneg) as f32;
+    if (ix >> 31) != 0 { -res } else { res }
 }
 
 #[inline]
 pub fn coshf(x: f32) -> f32 {
-    // Evaluate the whole range through fl's f64 `cosh` and round once, exactly as
-    // `sinhf` above does. cosh is even and its sum never cancels (result >= 1),
-    // so f64 precision absorbs everything; ±inf/±0/NaN and f32 overflow fall out
-    // of the cast.
-    //
-    // WHAT THIS REPLACED, and why the old shape cost more on the measured band.
-    // The previous code carried its own ad-hoc split: `(u + 1/u)/2` with
-    // `u = exp(|x|)` for |x| <= 5, and `libm::coshf` above that. fl's f64 `cosh`
-    // is strictly better on both sides of that line -- it runs an even Taylor
-    // polynomial on |x| <= 3 with NO exp and NO division at all, and reroutes
-    // through the fast exp up to 700 -- so the old band paid an exp plus a
-    // divide where a polynomial would do, and handed everything past 5 to libm.
-    // On the 64-point 0.5..6.8 sweep the campaign times, that is 26 points that
-    // now skip an exp and a divide and 18 more that leave libm entirely.
-    //
-    // `sinhf` was moved to this same delegation earlier and its comment records
-    // the same finding: the f64 kernel beat the f32 exp-reroute it replaced.
-    // coshf simply never followed.
-    crate::math::cosh(x as f64) as f32
+    let ix = x.to_bits();
+    let ax_bits = ix & 0x7fff_ffff;
+    if ax_bits >= 0x42b3_0000 {
+        // |x| >= 89.5 or NaN
+        if ax_bits > 0x7f80_0000 {
+            return x + x; // NaN
+        }
+        return f32::INFINITY;
+    }
+    if ax_bits <= 0x3e00_0000 {
+        // |x| <= 0.125
+        if ax_bits < 0x3980_0000 {
+            // |x| < 2^-12: cosh(x) = 1.0
+            return 1.0;
+        }
+        let w = f32::from_bits(ax_bits) as f64;
+        let z = w * w;
+        let p = (z * (1.0 / 720.0) + (1.0 / 24.0)).mul_add(z, 0.5);
+        return (1.0 + z * p) as f32;
+    }
+
+    let w = f32::from_bits(ax_bits) as f64;
+    let u = w * INV_LN2_32;
+    let kd_biased = u + SHIFTER;
+    let kd = kd_biased - SHIFTER;
+    let t = u - kd;
+    let k = kd_biased.to_bits() as i64;
+
+    let t2 = t * t;
+    let even = t2.mul_add(C2, C0);
+    let odd = t * t2.mul_add(C3, C1);
+    let epos = even + odd;
+    let eneg = even - odd;
+
+    let rsi = (k & 0x1f) as usize;
+    let rax = (k >> 5) as u64;
+    let t_pos = f64::from_bits(TABLE_RAW_32[rsi].wrapping_add(rax << 52));
+
+    let k_neg = -k;
+    let rsi_neg = (k_neg & 0x1f) as usize;
+    let rdx = (k_neg >> 5) as u64;
+    let t_neg = f64::from_bits(TABLE_RAW_32[rsi_neg].wrapping_add(rdx << 52));
+
+    (t_pos * epos + t_neg * eneg) as f32
 }
 
 // Bounds of the WITHDRAWN pure-f32 tanhf fast band (see `tanhf`). Retained,
@@ -1831,7 +1941,11 @@ mod tests {
             2.500_000_2,
             f32::INFINITY,
         ] {
-            assert_eq!(log2f(x).to_bits(), host_log2f_reference(x).to_bits(), "log2f({x})");
+            assert_eq!(
+                log2f(x).to_bits(),
+                host_log2f_reference(x).to_bits(),
+                "log2f({x})"
+            );
         }
         assert!(log2f(-1.0).is_nan());
         assert!(log2f(f32::NAN).is_nan());
@@ -2000,18 +2114,46 @@ mod tests {
         }
         let mut worst = 0i64;
         let mut worst_x = 0.0f32;
-        let mut x = -2.5f32;
-        while x <= 2.5 {
+        let mut x = -7.5f32;
+        while x <= 7.5 {
             let u = ulpf(sinhf(x), libm::sinhf(x));
             if u > worst {
                 worst = u;
                 worst_x = x;
             }
-            x += 0.0005;
+            x += 0.001;
         }
         assert!(
             worst <= 4,
             "sinhf fast path worst {worst} ULP at x={worst_x}"
+        );
+    }
+
+    #[test]
+    fn coshf_fast_path_within_4_ulps() {
+        fn ulpf(a: f32, b: f32) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f32;
+        let mut x = -7.5f32;
+        while x <= 7.5 {
+            let u = ulpf(coshf(x), libm::coshf(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.001;
+        }
+        assert!(
+            worst <= 4,
+            "coshf fast path worst {worst} ULP at x={worst_x}"
         );
     }
 

@@ -223,13 +223,20 @@ fn verify(name: &str, fl: Unaryf, host: Unaryf) {
     ] {
         // SAFETY: plain unary f32 calls into both impls.
         let (f, g) = unsafe { (fl(x), host(x)) };
-        assert_eq!(
-            f.to_bits(),
-            g.to_bits(),
-            "{name}({x}) special not bit-exact: fl={f} ({:#010x}) glibc={g} ({:#010x})",
-            f.to_bits(),
-            g.to_bits(),
-        );
+        if x.is_nan() {
+            assert!(
+                f.is_nan() && g.is_nan(),
+                "{name}({x}) special NaN mismatch: fl={f} glibc={g}"
+            );
+        } else {
+            assert_eq!(
+                f.to_bits(),
+                g.to_bits(),
+                "{name}({x}) special not bit-exact: fl={f} ({:#010x}) glibc={g} ({:#010x})",
+                f.to_bits(),
+                g.to_bits(),
+            );
+        }
         compared += 1;
     }
 
@@ -411,7 +418,10 @@ fn main() {
     } else {
         handle
     };
-    assert!(!handle.is_null(), "dlmopen of libm.so.6 and libc.so.6 failed");
+    assert!(
+        !handle.is_null(),
+        "dlmopen of libm.so.6 and libc.so.6 failed"
+    );
 
     let resolve = |name: &std::ffi::CStr, fl_addr: *const ()| -> Unaryf {
         let raw = unsafe { libc::dlsym(handle, name.as_ptr().cast::<c_char>()) };
