@@ -6149,8 +6149,11 @@ fn burn_profile_cpu() {
     std::hint::black_box(spin);
 }
 
+static PROFIL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 fn profil_records_pc_samples() {
+    let _lock = PROFIL_TEST_LOCK.lock().unwrap();
     // `profil` owns the process's SIGPROF disposition while it is active.  A
     // fork keeps that global state out of the parallel libtest parent and also
     // proves the observable contract: burning CPU changes a caller buffer.
@@ -6162,7 +6165,7 @@ fn profil_records_pc_samples() {
             profil(
                 samples.as_mut_ptr().cast(),
                 std::mem::size_of_val(&samples),
-                burn_profile_cpu as usize,
+                burn_profile_cpu as *const () as usize,
                 u16::MAX as libc::c_uint,
             )
         };
@@ -6195,6 +6198,7 @@ struct SprofilRegion {
 
 #[test]
 fn sprofil_records_samples_in_the_matching_region_only() {
+    let _lock = PROFIL_TEST_LOCK.lock().unwrap();
     let pid = unsafe { libc::fork() };
     assert!(pid >= 0, "fork failed");
     if pid == 0 {
@@ -6204,7 +6208,7 @@ fn sprofil_records_samples_in_the_matching_region_only() {
             SprofilRegion {
                 base: matching.as_mut_ptr().cast(),
                 size: std::mem::size_of_val(&matching),
-                offset: burn_profile_cpu as usize,
+                offset: burn_profile_cpu as *const () as usize,
                 scale: u16::MAX as libc::c_ulong,
             },
             SprofilRegion {
@@ -6215,7 +6219,15 @@ fn sprofil_records_samples_in_the_matching_region_only() {
             },
         ];
         let mut period = unsafe { std::mem::zeroed::<libc::timeval>() };
-        if unsafe { sprofil(regions.as_ptr().cast_mut().cast(), 2, (&raw mut period).cast(), 0) } != 0 {
+        if unsafe {
+            sprofil(
+                regions.as_ptr().cast_mut().cast(),
+                2,
+                (&raw mut period).cast(),
+                0,
+            )
+        } != 0
+        {
             unsafe { libc::_exit(1) };
         }
         burn_profile_cpu();
@@ -6228,7 +6240,10 @@ fn sprofil_records_samples_in_the_matching_region_only() {
     }
     let mut status = 0;
     assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
-    assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0, "sprofil child failed with status {status:#x}");
+    assert!(
+        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        "sprofil child failed with status {status:#x}"
+    );
 }
 
 // ---------------------------------------------------------------------------
