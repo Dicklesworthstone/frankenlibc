@@ -17,7 +17,9 @@
       "tests/conformance/fixtures/stdio_libio_wave04.json::fscanf_controlled_int_strict",
       "tests/conformance/fixtures/stdio_libio_wave04.json::fscanf_controlled_int_hardened",
       "tests/conformance/fixtures/stdio_libio_wave02.json::isoc99_wscanf_empty_format_strict",
-      "tests/conformance/fixtures/stdio_libio_wave02.json::isoc99_wscanf_empty_format_hardened"
+      "tests/conformance/fixtures/stdio_libio_wave02.json::isoc99_wscanf_empty_format_hardened",
+      "tests/conformance/fixtures/stdio_libio_wave02.json::vsscanf_controlled_int_strict",
+      "tests/conformance/fixtures/stdio_libio_wave02.json::vsscanf_controlled_int_hardened"
     ]
   },
   "policy": {
@@ -74,6 +76,24 @@
       "symbol": "fscanf",
       "module": "stdio_abi",
       "core_path": "crates/frankenlibc-abi/src/stdio_abi.rs::fscanf",
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0
+      },
+      "decision": "proven"
+    },
+    {
+      "symbol": "vsscanf",
+      "module": "stdio_abi",
+      "core_path": "crates/frankenlibc-abi/src/stdio_abi.rs::vsscanf",
       "strict_conformance": {
         "total": 1,
         "passed": 1,

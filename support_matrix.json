@@ -5438,7 +5438,7 @@
     },
     {
       "symbol": "gethostent",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get next /etc/hosts entry",
@@ -28859,7 +28859,7 @@
     },
     {
       "symbol": "fmaf128",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "math_abi",
       "perf_class": "zero_cost",
       "strict_semantics": true,

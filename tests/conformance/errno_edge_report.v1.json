@@ -4,9 +4,9 @@
   "generated_at_utc": "2026-06-03T21:45:00Z",
   "summary": {
     "tracked_symbols": 4119,
-    "total_edge_cases": 3249,
-    "errno_cases": 365,
-    "covered_edge_cases": 3249,
+    "total_edge_cases": 3267,
+    "errno_cases": 358,
+    "covered_edge_cases": 3267,
     "failing_edge_cases": 0,
     "execution_error_cases": 0,
     "missing_execution_cases": 0,
@@ -713,33 +713,6 @@
       ],
       "triage_steps": [
         "Inspect fixture 'euidaccess_null_path_strict' for 'euidaccess' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::euidaccess::strict::euidaccess_null_path_strict."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::spawn_exec_ops::execve::strict::execve_eacces_strict",
-      "symbol": "execve",
-      "symbol_family": "spawn_exec_ops",
-      "owner": "process_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "strict",
-      "case_id": "execve_eacces_strict",
-      "spec_section": "POSIX execve(2)",
-      "edge_class": "error_condition",
-      "expected_output": "-1",
-      "actual_output": "-1",
-      "host_output": "SKIP",
-      "expected_errno": 13,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::execve::strict::execve_eacces_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/spawn_exec_ops.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'execve_eacces_strict' for 'execve' and compare it against conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::execve::strict::execve_eacces_strict."
       ]
     },
     {
@@ -1604,168 +1577,6 @@
       ],
       "triage_steps": [
         "Inspect fixture 'fsetxattr_invalid_fd_strict' for 'fsetxattr' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsetxattr::strict::fsetxattr_invalid_fd_strict."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fsmount::hardened::fsmount_permission_gate_hardened",
-      "symbol": "fsmount",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "hardened",
-      "case_id": "fsmount_permission_gate_hardened",
-      "spec_section": "Linux fsmount unprivileged permission gate",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "actual_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 1,
-      "actual_errno": 1,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::hardened::fsmount_permission_gate_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fsmount_permission_gate_hardened' for 'fsmount' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::hardened::fsmount_permission_gate_hardened."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fsmount::strict::fsmount_permission_gate_strict",
-      "symbol": "fsmount",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "strict",
-      "case_id": "fsmount_permission_gate_strict",
-      "spec_section": "Linux fsmount unprivileged permission gate",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "actual_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 1,
-      "actual_errno": 1,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::strict::fsmount_permission_gate_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fsmount_permission_gate_strict' for 'fsmount' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::strict::fsmount_permission_gate_strict."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fsopen::hardened::fsopen_permission_gate_hardened",
-      "symbol": "fsopen",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "hardened",
-      "case_id": "fsopen_permission_gate_hardened",
-      "spec_section": "Linux fsopen unprivileged permission gate",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "actual_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 1,
-      "actual_errno": 1,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::hardened::fsopen_permission_gate_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fsopen_permission_gate_hardened' for 'fsopen' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::hardened::fsopen_permission_gate_hardened."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fsopen::strict::fsopen_permission_gate_strict",
-      "symbol": "fsopen",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "strict",
-      "case_id": "fsopen_permission_gate_strict",
-      "spec_section": "Linux fsopen unprivileged permission gate",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "actual_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 1,
-      "actual_errno": 1,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::strict::fsopen_permission_gate_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fsopen_permission_gate_strict' for 'fsopen' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::strict::fsopen_permission_gate_strict."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fspick::hardened::fspick_permission_gate_hardened",
-      "symbol": "fspick",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "hardened",
-      "case_id": "fspick_permission_gate_hardened",
-      "spec_section": "Linux fspick unprivileged permission gate",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "actual_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 1,
-      "actual_errno": 1,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::hardened::fspick_permission_gate_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fspick_permission_gate_hardened' for 'fspick' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::hardened::fspick_permission_gate_hardened."
-      ]
-    },
-    {
-      "priority_score": 40,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fspick::strict::fspick_permission_gate_strict",
-      "symbol": "fspick",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "runtime_mode": "strict",
-      "case_id": "fspick_permission_gate_strict",
-      "spec_section": "Linux fspick unprivileged permission gate",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "actual_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 1,
-      "actual_errno": 1,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::strict::fspick_permission_gate_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fspick_permission_gate_strict' for 'fspick' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::strict::fspick_permission_gate_strict."
       ]
     },
     {
@@ -4254,6 +4065,60 @@
     },
     {
       "priority_score": 35,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fcrypt::hardened::fcrypt_null_inputs_hardened",
+      "symbol": "fcrypt",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "hardened",
+      "case_id": "fcrypt_null_inputs_hardened",
+      "spec_section": "libcrypt fcrypt null input failure",
+      "edge_class": "error_condition",
+      "expected_output": "symbol=fcrypt;mode=hardened;expected=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;actual=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;failure_signature=none",
+      "actual_output": "symbol=fcrypt;mode=hardened;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 22,
+      "actual_errno": 22,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::hardened::fcrypt_null_inputs_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fcrypt_null_inputs_hardened' for 'fcrypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::hardened::fcrypt_null_inputs_hardened."
+      ]
+    },
+    {
+      "priority_score": 35,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fcrypt::strict::fcrypt_null_inputs_strict",
+      "symbol": "fcrypt",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "strict",
+      "case_id": "fcrypt_null_inputs_strict",
+      "spec_section": "libcrypt fcrypt null input failure",
+      "edge_class": "error_condition",
+      "expected_output": "symbol=fcrypt;mode=strict;expected=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;actual=FCRYPT_NULL_PTR_TOKEN_*0_EINVAL;failure_signature=none",
+      "actual_output": "symbol=fcrypt;mode=strict;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 22,
+      "actual_errno": 22,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::strict::fcrypt_null_inputs_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fcrypt_null_inputs_strict' for 'fcrypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::strict::fcrypt_null_inputs_strict."
+      ]
+    },
+    {
+      "priority_score": 35,
       "trace_id": "franken_shadow::stdio_file_ops::fopen::strict::fopen_invalid_path_strict",
       "symbol": "fopen",
       "symbol_family": "stdio_file_ops",
@@ -4668,7 +4533,7 @@
       "case_id": "posix_spawn_nonexistent_strict",
       "spec_section": "POSIX posix_spawn(3)",
       "edge_class": "error_condition",
-      "expected_output": "ENOENT",
+      "expected_output": "RC_2",
       "actual_output": "ENOENT",
       "host_output": "SKIP",
       "expected_errno": 2,
@@ -6734,60 +6599,6 @@
       ],
       "triage_steps": [
         "Inspect fixture 'fcntl64_invalid_fd_strict' for 'fcntl64' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcntl64::strict::fcntl64_invalid_fd_strict."
-      ]
-    },
-    {
-      "priority_score": 30,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fcrypt::hardened::fcrypt_null_inputs_hardened",
-      "symbol": "fcrypt",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "hardened",
-      "case_id": "fcrypt_null_inputs_hardened",
-      "spec_section": "libcrypt fcrypt null input failure",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fcrypt;mode=hardened;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
-      "actual_output": "symbol=fcrypt;mode=hardened;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 22,
-      "actual_errno": 22,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::hardened::fcrypt_null_inputs_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fcrypt_null_inputs_hardened' for 'fcrypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::hardened::fcrypt_null_inputs_hardened."
-      ]
-    },
-    {
-      "priority_score": 30,
-      "trace_id": "franken_shadow::unistd/process-filesystem::fcrypt::strict::fcrypt_null_inputs_strict",
-      "symbol": "fcrypt",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "strict",
-      "case_id": "fcrypt_null_inputs_strict",
-      "spec_section": "libcrypt fcrypt null input failure",
-      "edge_class": "error_condition",
-      "expected_output": "symbol=fcrypt;mode=strict;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
-      "actual_output": "symbol=fcrypt;mode=strict;expected=FCRYPT_NULL_PTR_EINVAL;actual=FCRYPT_NULL_PTR_EINVAL;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 22,
-      "actual_errno": 22,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::strict::fcrypt_null_inputs_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'fcrypt_null_inputs_strict' for 'fcrypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fcrypt::strict::fcrypt_null_inputs_strict."
       ]
     },
     {
@@ -9879,7 +9690,7 @@
       "case_id": "acct_privilege_denied_hardened",
       "spec_section": "Linux/POSIX acct invalid filename pointer errno",
       "edge_class": "error_condition",
-      "expected_output": "symbol=acct;mode=hardened;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
+      "expected_output": "symbol=acct;mode=hardened;expected=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;actual=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;failure_signature=none",
       "actual_output": "symbol=acct;mode=hardened;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -9906,7 +9717,7 @@
       "case_id": "acct_privilege_denied_strict",
       "spec_section": "Linux/POSIX acct invalid filename pointer errno",
       "edge_class": "error_condition",
-      "expected_output": "symbol=acct;mode=strict;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
+      "expected_output": "symbol=acct;mode=strict;expected=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;actual=ACCT_BAD_PATH_MATCHES_HOST_RC_-1;failure_signature=none",
       "actual_output": "symbol=acct;mode=strict;expected=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;actual=ACCT_BAD_PATH_RC_-1_ERRNO_EPERM;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -11729,6 +11540,168 @@
       ],
       "triage_steps": [
         "Inspect fixture 'fork_returns_child_or_zero_strict' for 'fork' and compare it against conformance_matrix::trace_id::franken_shadow::process_ops::fork::strict::fork_returns_child_or_zero_strict."
+      ]
+    },
+    {
+      "priority_score": 15,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fsmount::hardened::fsmount_permission_gate_hardened",
+      "symbol": "fsmount",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "fsmount_permission_gate_hardened",
+      "spec_section": "Linux fsmount unprivileged permission gate",
+      "edge_class": "boundary",
+      "expected_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "actual_output": "symbol=fsmount;mode=hardened;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::hardened::fsmount_permission_gate_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fsmount_permission_gate_hardened' for 'fsmount' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::hardened::fsmount_permission_gate_hardened."
+      ]
+    },
+    {
+      "priority_score": 15,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fsmount::strict::fsmount_permission_gate_strict",
+      "symbol": "fsmount",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "fsmount_permission_gate_strict",
+      "spec_section": "Linux fsmount unprivileged permission gate",
+      "edge_class": "boundary",
+      "expected_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSMOUNT_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "actual_output": "symbol=fsmount;mode=strict;expected=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;actual=FSMOUNT_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::strict::fsmount_permission_gate_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fsmount_permission_gate_strict' for 'fsmount' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsmount::strict::fsmount_permission_gate_strict."
+      ]
+    },
+    {
+      "priority_score": 15,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fsopen::hardened::fsopen_permission_gate_hardened",
+      "symbol": "fsopen",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "fsopen_permission_gate_hardened",
+      "spec_section": "Linux fsopen unprivileged permission gate",
+      "edge_class": "boundary",
+      "expected_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "actual_output": "symbol=fsopen;mode=hardened;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::hardened::fsopen_permission_gate_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fsopen_permission_gate_hardened' for 'fsopen' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::hardened::fsopen_permission_gate_hardened."
+      ]
+    },
+    {
+      "priority_score": 15,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fsopen::strict::fsopen_permission_gate_strict",
+      "symbol": "fsopen",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "fsopen_permission_gate_strict",
+      "spec_section": "Linux fsopen unprivileged permission gate",
+      "edge_class": "boundary",
+      "expected_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSOPEN_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "actual_output": "symbol=fsopen;mode=strict;expected=FSOPEN_PERMISSION_GATE_ERROR_EPERM;actual=FSOPEN_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::strict::fsopen_permission_gate_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fsopen_permission_gate_strict' for 'fsopen' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fsopen::strict::fsopen_permission_gate_strict."
+      ]
+    },
+    {
+      "priority_score": 15,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fspick::hardened::fspick_permission_gate_hardened",
+      "symbol": "fspick",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "fspick_permission_gate_hardened",
+      "spec_section": "Linux fspick unprivileged permission gate",
+      "edge_class": "boundary",
+      "expected_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "actual_output": "symbol=fspick;mode=hardened;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::hardened::fspick_permission_gate_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fspick_permission_gate_hardened' for 'fspick' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::hardened::fspick_permission_gate_hardened."
+      ]
+    },
+    {
+      "priority_score": 15,
+      "trace_id": "franken_shadow::unistd/process-filesystem::fspick::strict::fspick_permission_gate_strict",
+      "symbol": "fspick",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "fspick_permission_gate_strict",
+      "spec_section": "Linux fspick unprivileged permission gate",
+      "edge_class": "boundary",
+      "expected_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;actual=FSPICK_PERMISSION_GATE_MATCHES_HOST_ERROR;failure_signature=none",
+      "actual_output": "symbol=fspick;mode=strict;expected=FSPICK_PERMISSION_GATE_ERROR_EPERM;actual=FSPICK_PERMISSION_GATE_ERROR_EPERM;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::strict::fspick_permission_gate_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave12.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'fspick_permission_gate_strict' for 'fspick' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::fspick::strict::fspick_permission_gate_strict."
       ]
     },
     {
@@ -20022,6 +19995,60 @@
     },
     {
       "priority_score": 10,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_rn::hardened::crypt_rn_sha512_class_hardened",
+      "symbol": "crypt_rn",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "hardened",
+      "case_id": "crypt_rn_sha512_class_hardened",
+      "spec_section": "libcrypt crypt_rn bounded-buffer hash class",
+      "edge_class": "boundary",
+      "expected_output": "symbol=crypt_rn;mode=hardened;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "actual_output": "symbol=crypt_rn;mode=hardened;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::hardened::crypt_rn_sha512_class_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_rn_sha512_class_hardened' for 'crypt_rn' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::hardened::crypt_rn_sha512_class_hardened."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_rn::strict::crypt_rn_sha512_class_strict",
+      "symbol": "crypt_rn",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "strict",
+      "case_id": "crypt_rn_sha512_class_strict",
+      "spec_section": "libcrypt crypt_rn bounded-buffer hash class",
+      "edge_class": "boundary",
+      "expected_output": "symbol=crypt_rn;mode=strict;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "actual_output": "symbol=crypt_rn;mode=strict;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::strict::crypt_rn_sha512_class_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_rn_sha512_class_strict' for 'crypt_rn' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::strict::crypt_rn_sha512_class_strict."
+      ]
+    },
+    {
+      "priority_score": 10,
       "trace_id": "franken_shadow::unistd/process-filesystem::daemon::hardened::daemon_isolated_child_exit_hardened",
       "symbol": "daemon",
       "symbol_family": "unistd/process-filesystem",
@@ -20562,6 +20589,33 @@
     },
     {
       "priority_score": 10,
+      "trace_id": "franken_shadow::spawn_exec_ops::execve::strict::execve_eacces_strict",
+      "symbol": "execve",
+      "symbol_family": "spawn_exec_ops",
+      "owner": "process_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "execve_eacces_strict",
+      "spec_section": "POSIX execve(2)",
+      "edge_class": "other_edge",
+      "expected_output": "EXECVE_MATCHES_HOST_RC_-1",
+      "actual_output": "-1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::execve::strict::execve_eacces_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/spawn_exec_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'execve_eacces_strict' for 'execve' and compare it against conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::execve::strict::execve_eacces_strict."
+      ]
+    },
+    {
+      "priority_score": 10,
       "trace_id": "franken_shadow::spawn_exec_ops::execve::strict::execve_replaces_process_strict",
       "symbol": "execve",
       "symbol_family": "spawn_exec_ops",
@@ -20571,7 +20625,7 @@
       "case_id": "execve_replaces_process_strict",
       "spec_section": "POSIX execve(2)",
       "edge_class": "other_edge",
-      "expected_output": "NO_RETURN",
+      "expected_output": "EXECVE_REPLACES_PROCESS_MATCHES_HOST_EXIT_STATUS_0",
       "actual_output": "NO_RETURN",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -21624,7 +21678,7 @@
       "case_id": "freopen_null_path_class_hardened",
       "spec_section": "POSIX freopen null-path mode-change class",
       "edge_class": "boundary",
-      "expected_output": "symbol=freopen;mode=hardened;expected=FREOPEN_NULL_PATH_STREAM_NULL;actual=FREOPEN_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen;mode=hardened;expected=FREOPEN_STREAM_REOPENED;actual=FREOPEN_STREAM_REOPENED;failure_signature=none",
       "actual_output": "symbol=freopen;mode=hardened;expected=FREOPEN_NULL_PATH_STREAM_NULL;actual=FREOPEN_NULL_PATH_STREAM_NULL;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -21651,7 +21705,7 @@
       "case_id": "freopen_null_path_class_strict",
       "spec_section": "POSIX freopen null-path mode-change class",
       "edge_class": "boundary",
-      "expected_output": "symbol=freopen;mode=strict;expected=FREOPEN_NULL_PATH_STREAM_NULL;actual=FREOPEN_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen;mode=strict;expected=FREOPEN_STREAM_REOPENED;actual=FREOPEN_STREAM_REOPENED;failure_signature=none",
       "actual_output": "symbol=freopen;mode=strict;expected=FREOPEN_NULL_PATH_STREAM_NULL;actual=FREOPEN_NULL_PATH_STREAM_NULL;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -21678,7 +21732,7 @@
       "case_id": "freopen64_null_path_class_hardened",
       "spec_section": "GNU freopen64 null-path mode-change class",
       "edge_class": "boundary",
-      "expected_output": "symbol=freopen64;mode=hardened;expected=FREOPEN64_NULL_PATH_STREAM_NULL;actual=FREOPEN64_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen64;mode=hardened;expected=FREOPEN64_STREAM_REOPENED;actual=FREOPEN64_STREAM_REOPENED;failure_signature=none",
       "actual_output": "symbol=freopen64;mode=hardened;expected=FREOPEN64_NULL_PATH_STREAM_NULL;actual=FREOPEN64_NULL_PATH_STREAM_NULL;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -21705,7 +21759,7 @@
       "case_id": "freopen64_null_path_class_strict",
       "spec_section": "GNU freopen64 null-path mode-change class",
       "edge_class": "boundary",
-      "expected_output": "symbol=freopen64;mode=strict;expected=FREOPEN64_NULL_PATH_STREAM_NULL;actual=FREOPEN64_NULL_PATH_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=freopen64;mode=strict;expected=FREOPEN64_STREAM_REOPENED;actual=FREOPEN64_STREAM_REOPENED;failure_signature=none",
       "actual_output": "symbol=freopen64;mode=strict;expected=FREOPEN64_NULL_PATH_STREAM_NULL;actual=FREOPEN64_NULL_PATH_STREAM_NULL;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
@@ -24122,6 +24176,60 @@
       ],
       "triage_steps": [
         "Inspect fixture 'posix_spawnp_null_file_strict' for 'posix_spawnp' and compare it against conformance_matrix::trace_id::franken_shadow::process/spawn::posix_spawnp::strict::posix_spawnp_null_file_strict."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::glibc/internal-bootstrap::profil::hardened::profil_safe_default_hardened",
+      "symbol": "profil",
+      "symbol_family": "glibc/internal-bootstrap",
+      "owner": "glibc_internal_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "hardened",
+      "case_id": "profil_safe_default_hardened",
+      "spec_section": "profil sampling safe-default success no-op",
+      "edge_class": "boundary",
+      "expected_output": "symbol=profil;mode=hardened;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
+      "actual_output": "symbol=profil;mode=hardened;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::hardened::profil_safe_default_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/glibc_internal_bootstrap_wave01.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'profil_safe_default_hardened' for 'profil' and compare it against conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::hardened::profil_safe_default_hardened."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::glibc/internal-bootstrap::profil::strict::profil_safe_default_strict",
+      "symbol": "profil",
+      "symbol_family": "glibc/internal-bootstrap",
+      "owner": "glibc_internal_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "strict",
+      "case_id": "profil_safe_default_strict",
+      "spec_section": "profil sampling safe-default success no-op",
+      "edge_class": "boundary",
+      "expected_output": "symbol=profil;mode=strict;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
+      "actual_output": "symbol=profil;mode=strict;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::strict::profil_safe_default_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/glibc_internal_bootstrap_wave01.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'profil_safe_default_strict' for 'profil' and compare it against conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::strict::profil_safe_default_strict."
       ]
     },
     {
@@ -32901,60 +33009,6 @@
     },
     {
       "priority_score": 5,
-      "trace_id": "franken_shadow::stdio/libio::__isoc99_sscanf::hardened::isoc99_sscanf_controlled_int_hardened",
-      "symbol": "__isoc99_sscanf",
-      "symbol_family": "stdio/libio",
-      "owner": "stdio_abi",
-      "support_status": "WrapsHostLibc",
-      "runtime_mode": "hardened",
-      "case_id": "isoc99_sscanf_controlled_int_hardened",
-      "spec_section": "ISO C99 __isoc99_sscanf controlled integer parse",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=__isoc99_sscanf;mode=hardened;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
-      "actual_output": "symbol=__isoc99_sscanf;mode=hardened;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::hardened::isoc99_sscanf_controlled_int_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/stdio_libio_wave02.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'isoc99_sscanf_controlled_int_hardened' for '__isoc99_sscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::hardened::isoc99_sscanf_controlled_int_hardened."
-      ]
-    },
-    {
-      "priority_score": 5,
-      "trace_id": "franken_shadow::stdio/libio::__isoc99_sscanf::strict::isoc99_sscanf_controlled_int_strict",
-      "symbol": "__isoc99_sscanf",
-      "symbol_family": "stdio/libio",
-      "owner": "stdio_abi",
-      "support_status": "WrapsHostLibc",
-      "runtime_mode": "strict",
-      "case_id": "isoc99_sscanf_controlled_int_strict",
-      "spec_section": "ISO C99 __isoc99_sscanf controlled integer parse",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=__isoc99_sscanf;mode=strict;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
-      "actual_output": "symbol=__isoc99_sscanf;mode=strict;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::strict::isoc99_sscanf_controlled_int_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/stdio_libio_wave02.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'isoc99_sscanf_controlled_int_strict' for '__isoc99_sscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::strict::isoc99_sscanf_controlled_int_strict."
-      ]
-    },
-    {
-      "priority_score": 5,
       "trace_id": "franken_shadow::stdio/libio::__isoc99_vfscanf::hardened::isoc99_vfscanf_controlled_int_hardened",
       "symbol": "__isoc99_vfscanf",
       "symbol_family": "stdio/libio",
@@ -33005,60 +33059,6 @@
       ],
       "triage_steps": [
         "Inspect fixture 'isoc99_vfscanf_controlled_int_strict' for '__isoc99_vfscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vfscanf::strict::isoc99_vfscanf_controlled_int_strict."
-      ]
-    },
-    {
-      "priority_score": 5,
-      "trace_id": "franken_shadow::stdio/libio::__isoc99_vsscanf::hardened::isoc99_vsscanf_controlled_int_hardened",
-      "symbol": "__isoc99_vsscanf",
-      "symbol_family": "stdio/libio",
-      "owner": "stdio_abi",
-      "support_status": "WrapsHostLibc",
-      "runtime_mode": "hardened",
-      "case_id": "isoc99_vsscanf_controlled_int_hardened",
-      "spec_section": "ISO C99 __isoc99_vsscanf controlled integer parse",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=__isoc99_vsscanf;mode=hardened;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
-      "actual_output": "symbol=__isoc99_vsscanf;mode=hardened;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::hardened::isoc99_vsscanf_controlled_int_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/stdio_libio_wave02.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'isoc99_vsscanf_controlled_int_hardened' for '__isoc99_vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::hardened::isoc99_vsscanf_controlled_int_hardened."
-      ]
-    },
-    {
-      "priority_score": 5,
-      "trace_id": "franken_shadow::stdio/libio::__isoc99_vsscanf::strict::isoc99_vsscanf_controlled_int_strict",
-      "symbol": "__isoc99_vsscanf",
-      "symbol_family": "stdio/libio",
-      "owner": "stdio_abi",
-      "support_status": "WrapsHostLibc",
-      "runtime_mode": "strict",
-      "case_id": "isoc99_vsscanf_controlled_int_strict",
-      "spec_section": "ISO C99 __isoc99_vsscanf controlled integer parse",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=__isoc99_vsscanf;mode=strict;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
-      "actual_output": "symbol=__isoc99_vsscanf;mode=strict;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::strict::isoc99_vsscanf_controlled_int_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/stdio_libio_wave02.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'isoc99_vsscanf_controlled_int_strict' for '__isoc99_vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::strict::isoc99_vsscanf_controlled_int_strict."
       ]
     },
     {
@@ -40191,56 +40191,218 @@
     },
     {
       "priority_score": 5,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_rn::hardened::crypt_rn_sha512_class_hardened",
-      "symbol": "crypt_rn",
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt::hardened::crypt_sha512_class_hardened",
+      "symbol": "crypt",
       "symbol_family": "unistd/process-filesystem",
       "owner": "unistd_abi",
-      "support_status": "Implemented",
+      "support_status": "WrapsHostLibc",
       "runtime_mode": "hardened",
-      "case_id": "crypt_rn_sha512_class_hardened",
-      "spec_section": "libcrypt crypt_rn bounded-buffer hash class",
-      "edge_class": "boundary",
-      "expected_output": "symbol=crypt_rn;mode=hardened;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
-      "actual_output": "symbol=crypt_rn;mode=hardened;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "case_id": "crypt_sha512_class_hardened",
+      "spec_section": "GNU/libcrypt crypt SHA-512 method class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt;mode=hardened;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
+      "actual_output": "symbol=crypt;mode=hardened;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
       "actual_errno": null,
       "status": "pass",
       "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::hardened::crypt_rn_sha512_class_hardened",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::hardened::crypt_sha512_class_hardened",
       "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/fixtures/unistd_process_filesystem_wave01.json",
         "tests/conformance/conformance_matrix.v1.json"
       ],
       "triage_steps": [
-        "Inspect fixture 'crypt_rn_sha512_class_hardened' for 'crypt_rn' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::hardened::crypt_rn_sha512_class_hardened."
+        "Inspect fixture 'crypt_sha512_class_hardened' for 'crypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::hardened::crypt_sha512_class_hardened."
       ]
     },
     {
       "priority_score": 5,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_rn::strict::crypt_rn_sha512_class_strict",
-      "symbol": "crypt_rn",
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt::strict::crypt_sha512_class_strict",
+      "symbol": "crypt",
       "symbol_family": "unistd/process-filesystem",
       "owner": "unistd_abi",
-      "support_status": "Implemented",
+      "support_status": "WrapsHostLibc",
       "runtime_mode": "strict",
-      "case_id": "crypt_rn_sha512_class_strict",
-      "spec_section": "libcrypt crypt_rn bounded-buffer hash class",
-      "edge_class": "boundary",
-      "expected_output": "symbol=crypt_rn;mode=strict;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
-      "actual_output": "symbol=crypt_rn;mode=strict;expected=CRYPT_RN_SHA512_CLASS;actual=CRYPT_RN_SHA512_CLASS;failure_signature=none",
+      "case_id": "crypt_sha512_class_strict",
+      "spec_section": "GNU/libcrypt crypt SHA-512 method class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt;mode=strict;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
+      "actual_output": "symbol=crypt;mode=strict;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
       "host_output": "SKIP",
       "expected_errno": 0,
       "actual_errno": null,
       "status": "pass",
       "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::strict::crypt_rn_sha512_class_strict",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::strict::crypt_sha512_class_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave01.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_sha512_class_strict' for 'crypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::strict::crypt_sha512_class_strict."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_preferred_method::hardened::crypt_preferred_method_sha512_prefix_hardened",
+      "symbol": "crypt_preferred_method",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "hardened",
+      "case_id": "crypt_preferred_method_sha512_prefix_hardened",
+      "spec_section": "libcrypt preferred method prefix class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_MATCHES_HOST;actual=CRYPT_PREFERRED_METHOD_MATCHES_HOST;failure_signature=none",
+      "actual_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::hardened::crypt_preferred_method_sha512_prefix_hardened",
       "artifact_refs": [
         "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
         "tests/conformance/conformance_matrix.v1.json"
       ],
       "triage_steps": [
-        "Inspect fixture 'crypt_rn_sha512_class_strict' for 'crypt_rn' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_rn::strict::crypt_rn_sha512_class_strict."
+        "Inspect fixture 'crypt_preferred_method_sha512_prefix_hardened' for 'crypt_preferred_method' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::hardened::crypt_preferred_method_sha512_prefix_hardened."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_preferred_method::strict::crypt_preferred_method_sha512_prefix_strict",
+      "symbol": "crypt_preferred_method",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "strict",
+      "case_id": "crypt_preferred_method_sha512_prefix_strict",
+      "spec_section": "libcrypt preferred method prefix class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_MATCHES_HOST;actual=CRYPT_PREFERRED_METHOD_MATCHES_HOST;failure_signature=none",
+      "actual_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::strict::crypt_preferred_method_sha512_prefix_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_preferred_method_sha512_prefix_strict' for 'crypt_preferred_method' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::strict::crypt_preferred_method_sha512_prefix_strict."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_r::hardened::crypt_r_sha512_class_hardened",
+      "symbol": "crypt_r",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "hardened",
+      "case_id": "crypt_r_sha512_class_hardened",
+      "spec_section": "libcrypt crypt_r reentrant hash class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt_r;mode=hardened;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
+      "actual_output": "symbol=crypt_r;mode=hardened;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::hardened::crypt_r_sha512_class_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_r_sha512_class_hardened' for 'crypt_r' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::hardened::crypt_r_sha512_class_hardened."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_r::strict::crypt_r_sha512_class_strict",
+      "symbol": "crypt_r",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "strict",
+      "case_id": "crypt_r_sha512_class_strict",
+      "spec_section": "libcrypt crypt_r reentrant hash class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt_r;mode=strict;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
+      "actual_output": "symbol=crypt_r;mode=strict;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::strict::crypt_r_sha512_class_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_r_sha512_class_strict' for 'crypt_r' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::strict::crypt_r_sha512_class_strict."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_ra::hardened::crypt_ra_sha512_class_hardened",
+      "symbol": "crypt_ra",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "hardened",
+      "case_id": "crypt_ra_sha512_class_hardened",
+      "spec_section": "libcrypt crypt_ra auto-allocating hash class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt_ra;mode=hardened;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
+      "actual_output": "symbol=crypt_ra;mode=hardened;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::hardened::crypt_ra_sha512_class_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_ra_sha512_class_hardened' for 'crypt_ra' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::hardened::crypt_ra_sha512_class_hardened."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_ra::strict::crypt_ra_sha512_class_strict",
+      "symbol": "crypt_ra",
+      "symbol_family": "unistd/process-filesystem",
+      "owner": "unistd_abi",
+      "support_status": "WrapsHostLibc",
+      "runtime_mode": "strict",
+      "case_id": "crypt_ra_sha512_class_strict",
+      "spec_section": "libcrypt crypt_ra auto-allocating hash class",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=crypt_ra;mode=strict;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
+      "actual_output": "symbol=crypt_ra;mode=strict;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::strict::crypt_ra_sha512_class_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'crypt_ra_sha512_class_strict' for 'crypt_ra' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::strict::crypt_ra_sha512_class_strict."
       ]
     },
     {
@@ -46860,56 +47022,56 @@
     },
     {
       "priority_score": 5,
-      "trace_id": "franken_shadow::spawn_exec_ops::posix_spawn::hardened::posix_spawn_echo_hardened",
+      "trace_id": "franken_shadow::spawn_exec_ops::posix_spawn::hardened::posix_spawn_true_hardened",
       "symbol": "posix_spawn",
       "symbol_family": "spawn_exec_ops",
       "owner": "process_abi",
       "support_status": "WrapsHostLibc",
       "runtime_mode": "hardened",
-      "case_id": "posix_spawn_echo_hardened",
+      "case_id": "posix_spawn_true_hardened",
       "spec_section": "POSIX posix_spawn(3)",
       "edge_class": "other_edge",
-      "expected_output": "0",
-      "actual_output": "0",
-      "host_output": "SKIP",
+      "expected_output": "RC_0_EXIT_STATUS_0",
+      "actual_output": "RC_0_EXIT_STATUS_0",
+      "host_output": "RC_0_EXIT_STATUS_0",
       "expected_errno": 0,
-      "actual_errno": 0,
+      "actual_errno": null,
       "status": "pass",
       "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::hardened::posix_spawn_echo_hardened",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::hardened::posix_spawn_true_hardened",
       "artifact_refs": [
         "tests/conformance/fixtures/spawn_exec_ops.json",
         "tests/conformance/conformance_matrix.v1.json"
       ],
       "triage_steps": [
-        "Inspect fixture 'posix_spawn_echo_hardened' for 'posix_spawn' and compare it against conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::hardened::posix_spawn_echo_hardened."
+        "Inspect fixture 'posix_spawn_true_hardened' for 'posix_spawn' and compare it against conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::hardened::posix_spawn_true_hardened."
       ]
     },
     {
       "priority_score": 5,
-      "trace_id": "franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_echo_strict",
+      "trace_id": "franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_true_strict",
       "symbol": "posix_spawn",
       "symbol_family": "spawn_exec_ops",
       "owner": "process_abi",
       "support_status": "WrapsHostLibc",
       "runtime_mode": "strict",
-      "case_id": "posix_spawn_echo_strict",
+      "case_id": "posix_spawn_true_strict",
       "spec_section": "POSIX posix_spawn(3)",
       "edge_class": "other_edge",
-      "expected_output": "0",
-      "actual_output": "0",
-      "host_output": "SKIP",
+      "expected_output": "RC_0_EXIT_STATUS_0",
+      "actual_output": "RC_0_EXIT_STATUS_0",
+      "host_output": "RC_0_EXIT_STATUS_0",
       "expected_errno": 0,
-      "actual_errno": 0,
+      "actual_errno": null,
       "status": "pass",
       "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_echo_strict",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_true_strict",
       "artifact_refs": [
         "tests/conformance/fixtures/spawn_exec_ops.json",
         "tests/conformance/conformance_matrix.v1.json"
       ],
       "triage_steps": [
-        "Inspect fixture 'posix_spawn_echo_strict' for 'posix_spawn' and compare it against conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_echo_strict."
+        "Inspect fixture 'posix_spawn_true_strict' for 'posix_spawn' and compare it against conformance_matrix::trace_id::franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_true_strict."
       ]
     },
     {
@@ -47342,60 +47504,6 @@
       ],
       "triage_steps": [
         "Inspect fixture 'printf_literal_strict' for 'printf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio_file_ops::printf::strict::printf_literal_strict."
-      ]
-    },
-    {
-      "priority_score": 5,
-      "trace_id": "franken_shadow::glibc/internal-bootstrap::profil::hardened::profil_safe_default_hardened",
-      "symbol": "profil",
-      "symbol_family": "glibc/internal-bootstrap",
-      "owner": "glibc_internal_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "hardened",
-      "case_id": "profil_safe_default_hardened",
-      "spec_section": "profil sampling safe-default success no-op",
-      "edge_class": "boundary",
-      "expected_output": "symbol=profil;mode=hardened;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
-      "actual_output": "symbol=profil;mode=hardened;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::hardened::profil_safe_default_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/glibc_internal_bootstrap_wave01.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'profil_safe_default_hardened' for 'profil' and compare it against conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::hardened::profil_safe_default_hardened."
-      ]
-    },
-    {
-      "priority_score": 5,
-      "trace_id": "franken_shadow::glibc/internal-bootstrap::profil::strict::profil_safe_default_strict",
-      "symbol": "profil",
-      "symbol_family": "glibc/internal-bootstrap",
-      "owner": "glibc_internal_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "strict",
-      "case_id": "profil_safe_default_strict",
-      "spec_section": "profil sampling safe-default success no-op",
-      "edge_class": "boundary",
-      "expected_output": "symbol=profil;mode=strict;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
-      "actual_output": "symbol=profil;mode=strict;expected=PROFIL_RC_0;actual=PROFIL_RC_0;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::strict::profil_safe_default_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/glibc_internal_bootstrap_wave01.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'profil_safe_default_strict' for 'profil' and compare it against conformance_matrix::trace_id::franken_shadow::glibc/internal-bootstrap::profil::strict::profil_safe_default_strict."
       ]
     },
     {
@@ -60927,6 +61035,60 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_matching_failure_returns_zero",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_matching_failure_returns_zero [hardened]",
+      "spec_section": "C11 7.21.6.2 matching failure before any conversion",
+      "edge_class": "boundary",
+      "expected_output": "0:[]",
+      "actual_output": "0:[]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_matching_failure_returns_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_matching_failure_returns_zero' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_matching_failure_returns_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_matching_failure_returns_zero",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_matching_failure_returns_zero [strict]",
+      "spec_section": "C11 7.21.6.2 matching failure before any conversion",
+      "edge_class": "boundary",
+      "expected_output": "0:[]",
+      "actual_output": "0:[]",
+      "host_output": "0:[]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_matching_failure_returns_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_matching_failure_returns_zero' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_matching_failure_returns_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::string/wide::wcscat::hardened::wcscat_empty_dst",
       "symbol": "wcscat",
       "symbol_family": "string/wide",
@@ -63249,6 +63411,60 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::stdio/libio::__isoc99_sscanf::hardened::isoc99_sscanf_controlled_int_hardened",
+      "symbol": "__isoc99_sscanf",
+      "symbol_family": "stdio/libio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "isoc99_sscanf_controlled_int_hardened",
+      "spec_section": "ISO C99 __isoc99_sscanf controlled integer parse",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=__isoc99_sscanf;mode=hardened;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
+      "actual_output": "symbol=__isoc99_sscanf;mode=hardened;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::hardened::isoc99_sscanf_controlled_int_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_libio_wave02.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'isoc99_sscanf_controlled_int_hardened' for '__isoc99_sscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::hardened::isoc99_sscanf_controlled_int_hardened."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdio/libio::__isoc99_sscanf::strict::isoc99_sscanf_controlled_int_strict",
+      "symbol": "__isoc99_sscanf",
+      "symbol_family": "stdio/libio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "isoc99_sscanf_controlled_int_strict",
+      "spec_section": "ISO C99 __isoc99_sscanf controlled integer parse",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=__isoc99_sscanf;mode=strict;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
+      "actual_output": "symbol=__isoc99_sscanf;mode=strict;expected=ISOC99_SSCANF_RC_1_VALUE_99;actual=ISOC99_SSCANF_RC_1_VALUE_99;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::strict::isoc99_sscanf_controlled_int_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_libio_wave02.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'isoc99_sscanf_controlled_int_strict' for '__isoc99_sscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_sscanf::strict::isoc99_sscanf_controlled_int_strict."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::isoc_wide_scanf_ops::__isoc99_swscanf::hardened::isoc99_swscanf_parses_wide_integer",
       "symbol": "__isoc99_swscanf",
       "symbol_family": "isoc_wide_scanf_ops",
@@ -63299,6 +63515,60 @@
       ],
       "triage_steps": [
         "Inspect fixture 'isoc99_swscanf_parses_wide_integer' for '__isoc99_swscanf' and compare it against conformance_matrix::trace_id::franken_shadow::isoc_wide_scanf_ops::__isoc99_swscanf::strict::isoc99_swscanf_parses_wide_integer."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdio/libio::__isoc99_vsscanf::hardened::isoc99_vsscanf_controlled_int_hardened",
+      "symbol": "__isoc99_vsscanf",
+      "symbol_family": "stdio/libio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "isoc99_vsscanf_controlled_int_hardened",
+      "spec_section": "ISO C99 __isoc99_vsscanf controlled integer parse",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=__isoc99_vsscanf;mode=hardened;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "actual_output": "symbol=__isoc99_vsscanf;mode=hardened;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::hardened::isoc99_vsscanf_controlled_int_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_libio_wave02.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'isoc99_vsscanf_controlled_int_hardened' for '__isoc99_vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::hardened::isoc99_vsscanf_controlled_int_hardened."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdio/libio::__isoc99_vsscanf::strict::isoc99_vsscanf_controlled_int_strict",
+      "symbol": "__isoc99_vsscanf",
+      "symbol_family": "stdio/libio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "isoc99_vsscanf_controlled_int_strict",
+      "spec_section": "ISO C99 __isoc99_vsscanf controlled integer parse",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=__isoc99_vsscanf;mode=strict;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "actual_output": "symbol=__isoc99_vsscanf;mode=strict;expected=ISOC99_VSSCANF_RC_1_VALUE_101;actual=ISOC99_VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::strict::isoc99_vsscanf_controlled_int_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_libio_wave02.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'isoc99_vsscanf_controlled_int_strict' for '__isoc99_vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::__isoc99_vsscanf::strict::isoc99_vsscanf_controlled_int_strict."
       ]
     },
     {
@@ -67596,60 +67866,6 @@
     },
     {
       "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt::hardened::crypt_sha512_class_hardened",
-      "symbol": "crypt",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "hardened",
-      "case_id": "crypt_sha512_class_hardened",
-      "spec_section": "GNU/libcrypt crypt SHA-512 method class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt;mode=hardened;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
-      "actual_output": "symbol=crypt;mode=hardened;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::hardened::crypt_sha512_class_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave01.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_sha512_class_hardened' for 'crypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::hardened::crypt_sha512_class_hardened."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt::strict::crypt_sha512_class_strict",
-      "symbol": "crypt",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "strict",
-      "case_id": "crypt_sha512_class_strict",
-      "spec_section": "GNU/libcrypt crypt SHA-512 method class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt;mode=strict;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
-      "actual_output": "symbol=crypt;mode=strict;expected=CRYPT_SHA512_CLASS;actual=CRYPT_SHA512_CLASS;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::strict::crypt_sha512_class_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave01.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_sha512_class_strict' for 'crypt' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt::strict::crypt_sha512_class_strict."
-      ]
-    },
-    {
-      "priority_score": 0,
       "trace_id": "franken_shadow::unistd/process-filesystem::crypt_checksalt::hardened::crypt_checksalt_sha512_class_hardened",
       "symbol": "crypt_checksalt",
       "symbol_family": "unistd/process-filesystem",
@@ -67916,168 +68132,6 @@
       ],
       "triage_steps": [
         "Inspect fixture 'crypt_gensalt_rn_sha512_rounds_class_strict' for 'crypt_gensalt_rn' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_gensalt_rn::strict::crypt_gensalt_rn_sha512_rounds_class_strict."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_preferred_method::hardened::crypt_preferred_method_sha512_prefix_hardened",
-      "symbol": "crypt_preferred_method",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "hardened",
-      "case_id": "crypt_preferred_method_sha512_prefix_hardened",
-      "spec_section": "libcrypt preferred method prefix class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
-      "actual_output": "symbol=crypt_preferred_method;mode=hardened;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::hardened::crypt_preferred_method_sha512_prefix_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_preferred_method_sha512_prefix_hardened' for 'crypt_preferred_method' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::hardened::crypt_preferred_method_sha512_prefix_hardened."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_preferred_method::strict::crypt_preferred_method_sha512_prefix_strict",
-      "symbol": "crypt_preferred_method",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "strict",
-      "case_id": "crypt_preferred_method_sha512_prefix_strict",
-      "spec_section": "libcrypt preferred method prefix class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
-      "actual_output": "symbol=crypt_preferred_method;mode=strict;expected=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;actual=CRYPT_PREFERRED_METHOD_SHA512_PREFIX;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::strict::crypt_preferred_method_sha512_prefix_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_preferred_method_sha512_prefix_strict' for 'crypt_preferred_method' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_preferred_method::strict::crypt_preferred_method_sha512_prefix_strict."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_r::hardened::crypt_r_sha512_class_hardened",
-      "symbol": "crypt_r",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "hardened",
-      "case_id": "crypt_r_sha512_class_hardened",
-      "spec_section": "libcrypt crypt_r reentrant hash class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt_r;mode=hardened;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
-      "actual_output": "symbol=crypt_r;mode=hardened;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::hardened::crypt_r_sha512_class_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_r_sha512_class_hardened' for 'crypt_r' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::hardened::crypt_r_sha512_class_hardened."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_r::strict::crypt_r_sha512_class_strict",
-      "symbol": "crypt_r",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "strict",
-      "case_id": "crypt_r_sha512_class_strict",
-      "spec_section": "libcrypt crypt_r reentrant hash class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt_r;mode=strict;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
-      "actual_output": "symbol=crypt_r;mode=strict;expected=CRYPT_R_SHA512_CLASS;actual=CRYPT_R_SHA512_CLASS;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::strict::crypt_r_sha512_class_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_r_sha512_class_strict' for 'crypt_r' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_r::strict::crypt_r_sha512_class_strict."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_ra::hardened::crypt_ra_sha512_class_hardened",
-      "symbol": "crypt_ra",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "hardened",
-      "case_id": "crypt_ra_sha512_class_hardened",
-      "spec_section": "libcrypt crypt_ra auto-allocating hash class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt_ra;mode=hardened;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
-      "actual_output": "symbol=crypt_ra;mode=hardened;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::hardened::crypt_ra_sha512_class_hardened",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_ra_sha512_class_hardened' for 'crypt_ra' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::hardened::crypt_ra_sha512_class_hardened."
-      ]
-    },
-    {
-      "priority_score": 0,
-      "trace_id": "franken_shadow::unistd/process-filesystem::crypt_ra::strict::crypt_ra_sha512_class_strict",
-      "symbol": "crypt_ra",
-      "symbol_family": "unistd/process-filesystem",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "runtime_mode": "strict",
-      "case_id": "crypt_ra_sha512_class_strict",
-      "spec_section": "libcrypt crypt_ra auto-allocating hash class",
-      "edge_class": "other_edge",
-      "expected_output": "symbol=crypt_ra;mode=strict;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
-      "actual_output": "symbol=crypt_ra;mode=strict;expected=CRYPT_RA_SHA512_CLASS_SIZE_384;actual=CRYPT_RA_SHA512_CLASS_SIZE_384;failure_signature=none",
-      "host_output": "SKIP",
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "pass",
-      "failure_kind": "covered",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::strict::crypt_ra_sha512_class_strict",
-      "artifact_refs": [
-        "tests/conformance/fixtures/unistd_process_filesystem_wave06.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'crypt_ra_sha512_class_strict' for 'crypt_ra' and compare it against conformance_matrix::trace_id::franken_shadow::unistd/process-filesystem::crypt_ra::strict::crypt_ra_sha512_class_strict."
       ]
     },
     {
@@ -85709,6 +85763,438 @@
       ],
       "triage_steps": [
         "Inspect fixture 'twalk_visit_sequence' for 'twalk' and compare it against conformance_matrix::trace_id::franken_shadow::search/ops::twalk::strict::twalk_visit_sequence."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdio/libio::vsscanf::hardened::vsscanf_controlled_int_hardened",
+      "symbol": "vsscanf",
+      "symbol_family": "stdio/libio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_controlled_int_hardened",
+      "spec_section": "POSIX vsscanf controlled integer parse",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=vsscanf;mode=hardened;expected=VSSCANF_RC_1_VALUE_101;actual=VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "actual_output": "symbol=vsscanf;mode=hardened;expected=VSSCANF_RC_1_VALUE_101;actual=VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::vsscanf::hardened::vsscanf_controlled_int_hardened",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_libio_wave02.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_controlled_int_hardened' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::vsscanf::hardened::vsscanf_controlled_int_hardened."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdio/libio::vsscanf::strict::vsscanf_controlled_int_strict",
+      "symbol": "vsscanf",
+      "symbol_family": "stdio/libio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_controlled_int_strict",
+      "spec_section": "POSIX vsscanf controlled integer parse",
+      "edge_class": "other_edge",
+      "expected_output": "symbol=vsscanf;mode=strict;expected=VSSCANF_RC_1_VALUE_101;actual=VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "actual_output": "symbol=vsscanf;mode=strict;expected=VSSCANF_RC_1_VALUE_101;actual=VSSCANF_RC_1_VALUE_101;failure_signature=none",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdio/libio::vsscanf::strict::vsscanf_controlled_int_strict",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_libio_wave02.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_controlled_int_strict' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::stdio/libio::vsscanf::strict::vsscanf_controlled_int_strict."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_d_leading_ws",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_d_leading_ws [hardened]",
+      "spec_section": "C11 7.21.6.2 %d leading whitespace via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "1:[42]",
+      "actual_output": "1:[42]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_d_leading_ws",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_d_leading_ws' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_d_leading_ws."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_d_leading_ws",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_d_leading_ws [strict]",
+      "spec_section": "C11 7.21.6.2 %d leading whitespace via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "1:[42]",
+      "actual_output": "1:[42]",
+      "host_output": "1:[42]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_d_leading_ws",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_d_leading_ws' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_d_leading_ws."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_d_negative",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_d_negative [hardened]",
+      "spec_section": "C11 7.21.6.2 %d negative via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "1:[-123]",
+      "actual_output": "1:[-123]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_d_negative",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_d_negative' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_d_negative."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_d_negative",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_d_negative [strict]",
+      "spec_section": "C11 7.21.6.2 %d negative via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "1:[-123]",
+      "actual_output": "1:[-123]",
+      "host_output": "1:[-123]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_d_negative",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_d_negative' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_d_negative."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_int_then_string_mixed_destinations",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_int_then_string_mixed_destinations [hardened]",
+      "spec_section": "C11 7.21.6.2 mixed destination types via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "2:[42,\"ok\"]",
+      "actual_output": "2:[42,\"ok\"]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_int_then_string_mixed_destinations",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_int_then_string_mixed_destinations' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_int_then_string_mixed_destinations."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_int_then_string_mixed_destinations",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_int_then_string_mixed_destinations [strict]",
+      "spec_section": "C11 7.21.6.2 mixed destination types via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "2:[42,\"ok\"]",
+      "actual_output": "2:[42,\"ok\"]",
+      "host_output": "2:[42,\"ok\"]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_int_then_string_mixed_destinations",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_int_then_string_mixed_destinations' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_int_then_string_mixed_destinations."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_partial_match_stops_early",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_partial_match_stops_early [hardened]",
+      "spec_section": "C11 7.21.6.2 partial match returns the converted count",
+      "edge_class": "other_edge",
+      "expected_output": "1:[5]",
+      "actual_output": "1:[5]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_partial_match_stops_early",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_partial_match_stops_early' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_partial_match_stops_early."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_partial_match_stops_early",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_partial_match_stops_early [strict]",
+      "spec_section": "C11 7.21.6.2 partial match returns the converted count",
+      "edge_class": "other_edge",
+      "expected_output": "1:[5]",
+      "actual_output": "1:[5]",
+      "host_output": "1:[5]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_partial_match_stops_early",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_partial_match_stops_early' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_partial_match_stops_early."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_s_stops_ws",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_s_stops_ws [hardened]",
+      "spec_section": "C11 7.21.6.2 %s stops at whitespace via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "1:[\"hello\"]",
+      "actual_output": "1:[\"hello\"]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_s_stops_ws",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_s_stops_ws' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_s_stops_ws."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_s_stops_ws",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_s_stops_ws [strict]",
+      "spec_section": "C11 7.21.6.2 %s stops at whitespace via va_list",
+      "edge_class": "other_edge",
+      "expected_output": "1:[\"hello\"]",
+      "actual_output": "1:[\"hello\"]",
+      "host_output": "1:[\"hello\"]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_s_stops_ws",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_s_stops_ws' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_s_stops_ws."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_three_ints_advance_va_list",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_three_ints_advance_va_list [hardened]",
+      "spec_section": "C11 7.21.6.2 three conversions advance the va_list",
+      "edge_class": "other_edge",
+      "expected_output": "3:[1,2,3]",
+      "actual_output": "3:[1,2,3]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_three_ints_advance_va_list",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_three_ints_advance_va_list' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_three_ints_advance_va_list."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_three_ints_advance_va_list",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_three_ints_advance_va_list [strict]",
+      "spec_section": "C11 7.21.6.2 three conversions advance the va_list",
+      "edge_class": "other_edge",
+      "expected_output": "3:[1,2,3]",
+      "actual_output": "3:[1,2,3]",
+      "host_output": "3:[1,2,3]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_three_ints_advance_va_list",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_three_ints_advance_va_list' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_three_ints_advance_va_list."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_two_ints_advance_va_list",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "vsscanf_two_ints_advance_va_list [hardened]",
+      "spec_section": "C11 7.21.6.2 multiple conversions advance the va_list",
+      "edge_class": "other_edge",
+      "expected_output": "2:[7,8]",
+      "actual_output": "2:[7,8]",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_two_ints_advance_va_list",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_two_ints_advance_va_list' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::hardened::vsscanf_two_ints_advance_va_list."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_two_ints_advance_va_list",
+      "symbol": "vsscanf",
+      "symbol_family": "vsscanf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "vsscanf_two_ints_advance_va_list [strict]",
+      "spec_section": "C11 7.21.6.2 multiple conversions advance the va_list",
+      "edge_class": "other_edge",
+      "expected_output": "2:[7,8]",
+      "actual_output": "2:[7,8]",
+      "host_output": "2:[7,8]",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_two_ints_advance_va_list",
+      "artifact_refs": [
+        "tests/conformance/fixtures/vsscanf_conformance.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'vsscanf_two_ints_advance_va_list' for 'vsscanf' and compare it against conformance_matrix::trace_id::franken_shadow::vsscanf_conformance::vsscanf::strict::vsscanf_two_ints_advance_va_list."
       ]
     },
     {

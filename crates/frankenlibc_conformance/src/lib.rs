@@ -931,8 +931,15 @@ pub fn execute_fixture_case(
         | "funlockfile" | "fwrite_unlocked" | "getc" | "getc_unlocked" | "getchar"
         | "getchar_unlocked" | "getdelim" | "getline" | "getw" | "mktemp" | "open_memstream"
         | "pclose" | "popen" | "putc" | "putc_unlocked" | "putchar" | "putchar_unlocked"
-        | "puts" | "putw" | "remove" | "rewind" | "scanf" | "vsscanf" => {
+        | "puts" | "putw" | "remove" | "rewind" | "scanf" => {
             execute_stdio_libio_symbols_case(function, inputs, mode)
+        }
+        "vsscanf" => {
+            if inputs.get("symbol").is_some() {
+                execute_stdio_libio_symbols_case(function, inputs, mode)
+            } else {
+                execute_vsscanf_case(inputs, mode)
+            }
         }
         "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
         "compute_relocation" => execute_compute_relocation_case(inputs, mode),
@@ -7051,6 +7058,75 @@ fn execute_sscanf_case(
     })
 }
 
+#[cfg(target_arch = "x86_64")]
+fn execute_vsscanf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let input = parse_string(inputs, "input")?;
+    let format = parse_string(inputs, "format")?;
+    let input_c = CString::new(input.as_str()).map_err(|_| "input contains NUL")?;
+    let format_c = CString::new(format.as_str()).map_err(|_| "format contains NUL")?;
+
+    let specs = count_scanf_specs(&format);
+    if specs > 8 {
+        return Err(format!("too many scanf specs: {specs}"));
+    }
+    let types = detect_scanf_type(&format);
+
+    let (impl_ret, impl_slots) = call_vsscanf_multi(
+        input_c.as_ptr(),
+        format_c.as_ptr(),
+        types.len(),
+        SscanfTarget::Impl,
+    )?;
+    let impl_vals = collect_sscanf_values(impl_ret, &types, &impl_slots)?;
+    let impl_output = format_sscanf_result(impl_ret, &impl_vals);
+
+    if strict {
+        let (host_ret, host_slots) = call_vsscanf_multi(
+            input_c.as_ptr(),
+            format_c.as_ptr(),
+            types.len(),
+            SscanfTarget::Host,
+        )?;
+        let host_vals = collect_sscanf_values(host_ret, &types, &host_slots)?;
+        let host_output = format_sscanf_result(host_ret, &host_vals);
+        let host_parity = host_output == impl_output;
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note: if host_parity {
+                None
+            } else {
+                Some(String::from("vsscanf divergence"))
+            },
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn execute_vsscanf_case(
+    _inputs: &serde_json::Value,
+    _mode: &str,
+) -> Result<DifferentialExecution, String> {
+    Err("vsscanf synthetic va_list executor is only implemented for x86_64 psABI".to_string())
+}
+
 #[derive(Debug, Clone)]
 enum SscanfValue {
     Int(i64),
@@ -7878,6 +7954,60 @@ fn call_sscanf_multi(
                 _ => unreachable!(),
             }
         },
+    };
+    Ok((ret, slots))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+struct VaListTag {
+    gp_offset: c_uint,
+    fp_offset: c_uint,
+    overflow_arg_area: *mut c_void,
+    reg_save_area: *mut c_void,
+}
+
+#[cfg(target_arch = "x86_64")]
+const VA_GP_EXHAUSTED: c_uint = 48;
+#[cfg(target_arch = "x86_64")]
+const VA_FP_EXHAUSTED: c_uint = 304;
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    #[link_name = "vsscanf"]
+    fn host_vsscanf(s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+}
+
+#[cfg(target_arch = "x86_64")]
+fn call_vsscanf_multi(
+    input: *const c_char,
+    format: *const c_char,
+    spec_count: usize,
+    target: SscanfTarget,
+) -> Result<(c_int, [SscanfStorage; 8]), String> {
+    if spec_count > 8 {
+        return Err(format!("too many scanf specs: {spec_count}"));
+    }
+
+    let mut slots = [SscanfStorage::sentinel(); 8];
+    let mut ptrs = [std::ptr::null_mut::<c_void>(); 8];
+    for (slot, ptr) in slots.iter_mut().zip(ptrs.iter_mut()) {
+        *ptr = slot.as_mut_ptr();
+    }
+
+    let mut tag = VaListTag {
+        gp_offset: VA_GP_EXHAUSTED,
+        fp_offset: VA_FP_EXHAUSTED,
+        overflow_arg_area: ptrs.as_mut_ptr().cast(),
+        reg_save_area: std::ptr::null_mut(),
+    };
+    let ap: *mut c_void = (&raw mut tag).cast();
+
+    let ret = unsafe {
+        match target {
+            SscanfTarget::Impl => frankenlibc_abi::stdio_abi::vsscanf(input, format, ap),
+            SscanfTarget::Host => host_vsscanf(input, format, ap),
+        }
     };
     Ok((ret, slots))
 }
@@ -31215,6 +31345,66 @@ mod tests {
         );
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn vsscanf_executor_runs_and_matches_host_through_a_synthesised_va_list() {
+        let cases: &[(serde_json::Value, &str)] = &[
+            (
+                serde_json::json!({ "input": "42", "format": "%d" }),
+                "1:[42]",
+            ),
+            (
+                serde_json::json!({ "input": "-123", "format": "%d" }),
+                "1:[-123]",
+            ),
+            (
+                serde_json::json!({ "input": "ff", "format": "%x" }),
+                "1:[255]",
+            ),
+            (
+                serde_json::json!({ "input": "hello", "format": "%s" }),
+                "1:[\"hello\"]",
+            ),
+            (
+                serde_json::json!({ "input": "7 8", "format": "%d %d" }),
+                "2:[7,8]",
+            ),
+            (
+                serde_json::json!({ "input": "1 2 3", "format": "%d %d %d" }),
+                "3:[1,2,3]",
+            ),
+            (
+                serde_json::json!({ "input": "42 ok", "format": "%d %s" }),
+                "2:[42,\"ok\"]",
+            ),
+            (
+                serde_json::json!({ "input": "abc", "format": "%d" }),
+                "0:[]",
+            ),
+        ];
+
+        for (inputs, expected) in cases {
+            let result = execute_fixture_case("vsscanf", inputs, "strict")
+                .expect("vsscanf fixture should execute");
+            assert_eq!(
+                result.impl_output, *expected,
+                "vsscanf impl output for {inputs}"
+            );
+            assert_eq!(
+                result.host_output, *expected,
+                "host vsscanf oracle for {inputs}"
+            );
+            assert!(result.host_parity, "vsscanf host parity for {inputs}");
+
+            let via_sscanf = execute_fixture_case("sscanf", inputs, "strict")
+                .expect("sscanf fixture should execute");
+            assert_eq!(
+                result.impl_output, via_sscanf.impl_output,
+                "vsscanf and sscanf disagree for {inputs}"
+            );
+        }
+    }
+
     #[test]
     fn string_hotpath_first_wave_invalid_input_clamps_in_hardened_mode() {
         assert_differential_contract(
@@ -35417,12 +35607,10 @@ mod tests {
 
         for _ in 0..8 {
             std::thread::scope(|scope| {
-                let exhausted = scope.spawn(|| {
-                    execute_fixture_case("pthread_key_create", &exhaustion, "strict")
-                });
-                let roundtrip = scope.spawn(|| {
-                    execute_fixture_case("pthread_getspecific", &roundtrip, "strict")
-                });
+                let exhausted = scope
+                    .spawn(|| execute_fixture_case("pthread_key_create", &exhaustion, "strict"));
+                let roundtrip = scope
+                    .spawn(|| execute_fixture_case("pthread_getspecific", &roundtrip, "strict"));
 
                 let exhausted = exhausted
                     .join()

@@ -1,35 +1,35 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-06-04T21:30:23Z",
+  "generated_at": "2026-09-07T23:28:48Z",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
-    "fixture_linked": 1164,
-    "fixture_unlinked": 2955,
+    "fixture_linked": 1165,
+    "fixture_unlinked": 2954,
     "fixture_coverage_pct": 28.3,
-    "total_warnings": 24
+    "total_warnings": 25
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2395,
+      "Implemented": 2388,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1310,
+      "WrapsHostLibc": 1317,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 58.1,
+      "Implemented": 58.0,
       "RawSyscall": 10.1,
-      "WrapsHostLibc": 31.8,
+      "WrapsHostLibc": 32.0,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 68.2
+    "native_coverage_pct": 68.0
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -59,18 +59,18 @@
       "/data/projects/frankenlibc/tests/conformance/rpc_abi_promotion_tranche.v1.json",
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
-    "promotion_proof_symbol_count": 255,
-    "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
-    "promotion_triage_manifest_loaded": true,
+    "promotion_proof_symbol_count": 256,
+    "promotion_triage_manifest_path": null,
+    "promotion_triage_manifest_loaded": false,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 0,
+      "Implemented": -7,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": 0
+      "WrapsHostLibc": 7
     },
-    "native_coverage_pct_delta": -0.0,
-    "reclassified_symbol_count": 0,
+    "native_coverage_pct_delta": -0.17,
+    "reclassified_symbol_count": 13,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -86,20 +86,20 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 0,
+      "total_reclassified": 13,
       "violations": []
     },
     "fixture_coverage_ratchet": {
       "status": "pass",
-      "implemented_promotion_delta": 0,
+      "implemented_promotion_delta": 3,
       "violation_count": 0,
-      "promotion_triage_manifest_loaded": true
+      "promotion_triage_manifest_loaded": false
     }
   },
   "fixture_coverage_ratchet": {
     "schema_version": "fixture_coverage_ratchet.v1",
     "bead": "bd-8t1chf",
-    "promotion_triage_manifest_loaded": true,
+    "promotion_triage_manifest_loaded": false,
     "policy": {
       "high_impact_modules": [
         "math_abi",
@@ -119,8 +119,8 @@
       "mode_requirement": "Implemented promotions require strict and hardened passing conformance, or an explicit triage rationale for downgrade/scanner handling"
     },
     "summary": {
-      "implemented_promotion_delta": 0,
-      "module_count": 0,
+      "implemented_promotion_delta": 3,
+      "module_count": 1,
       "violation_count": 0,
       "status": "pass"
     },
@@ -226,28 +226,32 @@
         }
       },
       "stdio_abi": {
-        "implemented_promotion_delta": 0,
-        "proof_class_counts": {},
+        "implemented_promotion_delta": 3,
+        "proof_class_counts": {
+          "strict_hardened_conformance_proof": 3
+        },
         "mode_deltas": {
           "strict": {
-            "fixture_rows": 0,
-            "passing_conformance_promotions": 0,
+            "fixture_rows": 15,
+            "passing_conformance_promotions": 3,
             "missing_fixture_promotions": 0,
             "missing_passing_conformance_promotions": 0
           },
           "hardened": {
-            "fixture_rows": 0,
-            "passing_conformance_promotions": 0,
+            "fixture_rows": 15,
+            "passing_conformance_promotions": 3,
             "missing_fixture_promotions": 0,
             "missing_passing_conformance_promotions": 0
           }
         },
-        "triage_category_counts": {},
+        "triage_category_counts": {
+          "untriaged": 3
+        },
         "violating_symbols": [],
         "current_module_coverage": {
           "total": 126,
-          "linked": 113,
-          "coverage_pct": 89.7
+          "linked": 114,
+          "coverage_pct": 90.5
         }
       },
       "stdlib_abi": {
@@ -641,14 +645,15 @@
         ]
       },
       "stdio_abi": {
-        "strict_hardened_symbol_count": 2,
+        "strict_hardened_symbol_count": 3,
         "required_modes": [
           "strict",
           "hardened"
         ],
         "symbols": [
           "__isoc99_wscanf",
-          "fscanf"
+          "fscanf",
+          "vsscanf"
         ]
       },
       "string_abi": {
@@ -764,16 +769,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2395,
-      "fixture_linked": 697
+      "count": 2388,
+      "fixture_linked": 693
     },
     "RawSyscall": {
       "count": 414,
       "fixture_linked": 160
     },
     "WrapsHostLibc": {
-      "count": 1310,
-      "fixture_linked": 307
+      "count": 1317,
+      "fixture_linked": 312
     }
   },
   "module_coverage": {
@@ -944,8 +949,8 @@
     },
     "stdio_abi": {
       "total": 126,
-      "linked": 113,
-      "coverage_pct": 89.7
+      "linked": 114,
+      "coverage_pct": 90.5
     },
     "stdlib_abi": {
       "total": 148,
@@ -1364,12 +1369,12 @@
     "__isoc99_fscanf": "WrapsHostLibc",
     "__isoc99_fwscanf": "WrapsHostLibc",
     "__isoc99_scanf": "WrapsHostLibc",
-    "__isoc99_sscanf": "WrapsHostLibc",
+    "__isoc99_sscanf": "Implemented",
     "__isoc99_swscanf": "Implemented",
     "__isoc99_vfscanf": "WrapsHostLibc",
     "__isoc99_vfwscanf": "WrapsHostLibc",
     "__isoc99_vscanf": "WrapsHostLibc",
-    "__isoc99_vsscanf": "WrapsHostLibc",
+    "__isoc99_vsscanf": "Implemented",
     "__isoc99_vswscanf": "Implemented",
     "__isoc99_vwscanf": "WrapsHostLibc",
     "__isoc99_wscanf": "WrapsHostLibc",
@@ -2323,16 +2328,16 @@
     "creat": "RawSyscall",
     "creat64": "WrapsHostLibc",
     "create_module": "WrapsHostLibc",
-    "crypt": "Implemented",
+    "crypt": "WrapsHostLibc",
     "crypt_checksalt": "Implemented",
     "crypt_gensalt": "Implemented",
     "crypt_gensalt_r": "Implemented",
     "crypt_gensalt_ra": "Implemented",
     "crypt_gensalt_rn": "Implemented",
-    "crypt_preferred_method": "Implemented",
-    "crypt_r": "Implemented",
-    "crypt_ra": "Implemented",
-    "crypt_rn": "Implemented",
+    "crypt_preferred_method": "WrapsHostLibc",
+    "crypt_r": "WrapsHostLibc",
+    "crypt_ra": "WrapsHostLibc",
+    "crypt_rn": "WrapsHostLibc",
     "csin": "WrapsHostLibc",
     "csinf": "WrapsHostLibc",
     "csinf128": "WrapsHostLibc",
@@ -2640,7 +2645,7 @@
     "fcloseall": "WrapsHostLibc",
     "fcntl": "RawSyscall",
     "fcntl64": "Implemented",
-    "fcrypt": "Implemented",
+    "fcrypt": "WrapsHostLibc",
     "fcvt": "Implemented",
     "fcvt_r": "Implemented",
     "fdatasync": "RawSyscall",
@@ -2724,7 +2729,7 @@
     "floorl": "Implemented",
     "fma": "Implemented",
     "fmaf": "Implemented",
-    "fmaf128": "Implemented",
+    "fmaf128": "WrapsHostLibc",
     "fmaf32": "Implemented",
     "fmaf32x": "Implemented",
     "fmaf64": "Implemented",
@@ -3864,7 +3869,7 @@
     "process_mrelease": "RawSyscall",
     "process_vm_readv": "RawSyscall",
     "process_vm_writev": "RawSyscall",
-    "profil": "Implemented",
+    "profil": "WrapsHostLibc",
     "program_invocation_name": "Implemented",
     "program_invocation_short_name": "Implemented",
     "pselect": "RawSyscall",
@@ -4848,7 +4853,7 @@
     "vscanf": "WrapsHostLibc",
     "vsnprintf": "WrapsHostLibc",
     "vsprintf": "WrapsHostLibc",
-    "vsscanf": "WrapsHostLibc",
+    "vsscanf": "Implemented",
     "vswprintf": "Implemented",
     "vswscanf": "Implemented",
     "vsyslog": "WrapsHostLibc",
@@ -4952,10 +4957,10 @@
     "writeColdStartFile": "Implemented",
     "writev": "RawSyscall",
     "wscanf": "WrapsHostLibc",
-    "xcrypt": "Implemented",
+    "xcrypt": "WrapsHostLibc",
     "xcrypt_gensalt": "Implemented",
     "xcrypt_gensalt_r": "Implemented",
-    "xcrypt_r": "Implemented",
+    "xcrypt_r": "WrapsHostLibc",
     "xdecrypt": "Implemented",
     "xdr_accepted_reply": "WrapsHostLibc",
     "xdr_array": "WrapsHostLibc",
@@ -5099,7 +5104,297 @@
     "yperr_string": "Implemented",
     "ypprot_err": "Implemented"
   },
-  "reclassified_symbols": [],
+  "reclassified_symbols": [
+    {
+      "symbol": "__isoc99_sscanf",
+      "module": "stdio_abi",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "__isoc99_vsscanf",
+      "module": "stdio_abi",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "crypt",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "crypt_preferred_method",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "crypt_r",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "crypt_ra",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "crypt_rn",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fcrypt",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "fmaf128",
+      "module": "math_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "profil",
+      "module": "glibc_internal_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "vsscanf",
+      "module": "stdio_abi",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 13,
+      "hardened_fixture_count": 13,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "xcrypt",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "xcrypt_r",
+      "module": "unistd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    }
+  ],
   "status_validation_issues": [
     {
       "symbol": "_Exit",
@@ -6270,6 +6565,19 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "vsscanf",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "wcschrnul",
@@ -11580,7 +11888,6 @@
     "vmsplice",
     "vprintf",
     "vscanf",
-    "vsscanf",
     "vswprintf",
     "vswscanf",
     "vsyslog",
