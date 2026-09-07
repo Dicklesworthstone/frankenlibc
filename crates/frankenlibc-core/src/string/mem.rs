@@ -3,7 +3,7 @@
 //! These are safe Rust implementations operating on byte slices.
 //! They correspond to the `<string.h>` memory functions in POSIX/C.
 
-use std::simd::{Simd, cmp::SimdPartialEq};
+use std::simd::{cmp::SimdPartialEq, Simd};
 
 /// Copies `n` bytes from `src` to `dest`.
 ///
@@ -635,14 +635,16 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
                 .simd_eq(Simd::splat(needle))
                 .to_bitmask();
             if mask != 0 {
-                return Some(count - MEMCMP_EXACT_16_BYTES + (63 - mask.leading_zeros() as usize));
+                return Some(
+                    count - MEMCMP_EXACT_16_BYTES + (15 - (mask as u16).leading_zeros() as usize),
+                );
             }
             let head_mask =
                 Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(&hs[..MEMCMP_EXACT_16_BYTES])
                     .simd_eq(Simd::splat(needle))
                     .to_bitmask();
             if head_mask != 0 {
-                return Some(63 - head_mask.leading_zeros() as usize);
+                return Some(15 - (head_mask as u16).leading_zeros() as usize);
             }
             return None;
         }
@@ -656,105 +658,104 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         return hs[..i].iter().rposition(|&b| b == needle);
     }
 
+    let needle_simd = Simd::<u8, SIMD_LANES>::splat(needle);
+
     // 32..=64 bytes: two overlapping 32-lane SIMD panels cover the entire slice
     // without constructing block iterators or walking tier ladders.
     if count <= 64 {
-        if count == MEMCHR_WIDE_LANES {
-            let mask = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(hs)
-                .simd_eq(Simd::splat(needle))
-                .to_bitmask();
-            if mask != 0 {
-                return Some(63 - mask.leading_zeros() as usize);
-            }
-            return None;
-        }
         let tail = &hs[count - SIMD_LANES..];
-        let tail_mask = byte_mask_simd_32(tail, needle);
+        let tail_mask = Simd::<u8, SIMD_LANES>::from_slice(tail)
+            .simd_eq(needle_simd)
+            .to_bitmask();
         if tail_mask != 0 {
-            return Some(count - SIMD_LANES + (63 - tail_mask.leading_zeros() as usize));
+            return Some(count - SIMD_LANES + (31 - (tail_mask as u32).leading_zeros() as usize));
         }
-        let head_mask = byte_mask_simd_32(&hs[..SIMD_LANES], needle);
+        let head_mask = Simd::<u8, SIMD_LANES>::from_slice(&hs[..SIMD_LANES])
+            .simd_eq(needle_simd)
+            .to_bitmask();
         if head_mask != 0 {
-            return Some(63 - head_mask.leading_zeros() as usize);
+            return Some(31 - (head_mask as u32).leading_zeros() as usize);
         }
         return None;
     }
 
-    let needle_wide = Simd::<u8, MEMCHR_WIDE_LANES>::splat(needle);
     let mut end = count;
 
-    while end >= MEMCHR_FOLD_BYTES {
-        let block_start = end - MEMCHR_FOLD_BYTES;
+    while end >= SIMD_FOLD_BYTES {
+        let block_start = end - SIMD_FOLD_BYTES;
         let block = &hs[block_start..end];
-        let v0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..64]);
-        let v1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[64..128]);
-        let v2 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[128..192]);
-        let v3 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[192..256]);
-        let eq0 = v0.simd_eq(needle_wide);
-        let eq1 = v1.simd_eq(needle_wide);
-        let eq2 = v2.simd_eq(needle_wide);
-        let eq3 = v3.simd_eq(needle_wide);
-        if (eq0 | eq1 | eq2 | eq3).any() {
+        let v3 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
+        let v2 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]);
+        let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]);
+        let v0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]);
+        let eq3 = v3.simd_eq(needle_simd);
+        let eq2 = v2.simd_eq(needle_simd);
+        let eq1 = v1.simd_eq(needle_simd);
+        let eq0 = v0.simd_eq(needle_simd);
+        let eq23 = eq2 | eq3;
+        let eq01 = eq0 | eq1;
+        if (eq01 | eq23).any() {
             let m3 = eq3.to_bitmask();
             if m3 != 0 {
-                return Some(block_start + 192 + (63 - m3.leading_zeros() as usize));
+                return Some(
+                    block_start + SIMD_LANES * 3 + (31 - (m3 as u32).leading_zeros() as usize),
+                );
             }
             let m2 = eq2.to_bitmask();
             if m2 != 0 {
-                return Some(block_start + 128 + (63 - m2.leading_zeros() as usize));
+                return Some(
+                    block_start + SIMD_LANES * 2 + (31 - (m2 as u32).leading_zeros() as usize),
+                );
             }
             let m1 = eq1.to_bitmask();
             if m1 != 0 {
-                return Some(block_start + 64 + (63 - m1.leading_zeros() as usize));
+                return Some(
+                    block_start + SIMD_LANES + (31 - (m1 as u32).leading_zeros() as usize),
+                );
             }
             let m0 = eq0.to_bitmask();
-            return Some(block_start + (63 - m0.leading_zeros() as usize));
+            return Some(block_start + (31 - (m0 as u32).leading_zeros() as usize));
         }
         end = block_start;
     }
 
-    if end >= SIMD_FOLD_BYTES {
-        let block_start = end - SIMD_FOLD_BYTES;
+    if end >= MEMCMP_WIDE_LANES {
+        let block_start = end - MEMCMP_WIDE_LANES;
         let block = &hs[block_start..end];
-        let v0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..MEMCHR_WIDE_LANES]);
-        let v1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES..]);
-        let eq0 = v0.simd_eq(needle_wide);
-        let eq1 = v1.simd_eq(needle_wide);
+        let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..]);
+        let v0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]);
+        let eq1 = v1.simd_eq(needle_simd);
+        let eq0 = v0.simd_eq(needle_simd);
         if (eq0 | eq1).any() {
             let m1 = eq1.to_bitmask();
             if m1 != 0 {
-                return Some(block_start + MEMCHR_WIDE_LANES + (63 - m1.leading_zeros() as usize));
+                return Some(
+                    block_start + SIMD_LANES + (31 - (m1 as u32).leading_zeros() as usize),
+                );
             }
             let m0 = eq0.to_bitmask();
-            return Some(block_start + (63 - m0.leading_zeros() as usize));
-        }
-        end = block_start;
-    }
-
-    if end >= MEMCHR_WIDE_LANES {
-        let block_start = end - MEMCHR_WIDE_LANES;
-        let v = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&hs[block_start..end]);
-        let eq = v.simd_eq(needle_wide);
-        if eq.any() {
-            let m = eq.to_bitmask();
-            return Some(block_start + (63 - m.leading_zeros() as usize));
+            return Some(block_start + (31 - (m0 as u32).leading_zeros() as usize));
         }
         end = block_start;
     }
 
     if end >= SIMD_LANES {
         let block_start = end - SIMD_LANES;
-        let mask = byte_mask_simd_32(&hs[block_start..end], needle);
-        if mask != 0 {
-            return Some(block_start + (63 - mask.leading_zeros() as usize));
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&hs[block_start..end]);
+        let eq = v.simd_eq(needle_simd);
+        let m = eq.to_bitmask();
+        if m != 0 {
+            return Some(block_start + (31 - (m as u32).leading_zeros() as usize));
         }
         end = block_start;
     }
 
     if end > 0 {
-        let mask = byte_mask_simd_32(&hs[..SIMD_LANES], needle);
-        if mask != 0 {
-            return Some(63 - mask.leading_zeros() as usize);
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&hs[..SIMD_LANES]);
+        let eq = v.simd_eq(needle_simd);
+        let m = eq.to_bitmask();
+        if m != 0 {
+            return Some(31 - (m as u32).leading_zeros() as usize);
         }
     }
 
@@ -880,7 +881,11 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
 /// away), ASCII lowercase when true.
 #[inline(always)]
 fn fold_case<const ICASE: bool>(b: u8) -> u8 {
-    if ICASE { b.to_ascii_lowercase() } else { b }
+    if ICASE {
+        b.to_ascii_lowercase()
+    } else {
+        b
+    }
 }
 
 fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
