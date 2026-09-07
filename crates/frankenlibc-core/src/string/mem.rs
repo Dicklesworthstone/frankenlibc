@@ -97,8 +97,9 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     if count < MEMCMP_EXACT_16_BYTES {
         let hx = u64_be_from_chunk(&a[..WORD]);
         let hy = u64_be_from_chunk(&b[..WORD]);
-        if hx != hy {
-            return hx.cmp(&hy);
+        let ord = hx.cmp(&hy);
+        if ord != core::cmp::Ordering::Equal {
+            return ord;
         }
         let tx = u64_be_from_chunk(&a[count - WORD..]);
         let ty = u64_be_from_chunk(&b[count - WORD..]);
@@ -181,8 +182,9 @@ fn memcmp_exact_16_words(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 
     let x0 = u64_be_from_chunk(&a[..8]);
     let y0 = u64_be_from_chunk(&b[..8]);
-    if x0 != y0 {
-        return x0.cmp(&y0);
+    let ord = x0.cmp(&y0);
+    if ord != core::cmp::Ordering::Equal {
+        return ord;
     }
     let x1 = u64_be_from_chunk(&a[8..16]);
     let y1 = u64_be_from_chunk(&b[8..16]);
