@@ -174,21 +174,15 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     core::cmp::Ordering::Equal
 }
 
-/// Resolve an exact 16-byte comparison using two 64-bit words compared in big-endian order.
+/// Resolve an exact 16-byte comparison using direct 128-bit big-endian integer comparison.
 #[inline(always)]
 fn memcmp_exact_16_words(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_EXACT_16_BYTES);
     debug_assert_eq!(b.len(), MEMCMP_EXACT_16_BYTES);
 
-    let x0 = u64_be_from_chunk(&a[..8]);
-    let y0 = u64_be_from_chunk(&b[..8]);
-    let ord = x0.cmp(&y0);
-    if ord != core::cmp::Ordering::Equal {
-        return ord;
-    }
-    let x1 = u64_be_from_chunk(&a[8..16]);
-    let y1 = u64_be_from_chunk(&b[8..16]);
-    x1.cmp(&y1)
+    let x = u128::from_be_bytes(a[..MEMCMP_EXACT_16_BYTES].try_into().unwrap());
+    let y = u128::from_be_bytes(b[..MEMCMP_EXACT_16_BYTES].try_into().unwrap());
+    x.cmp(&y)
 }
 
 /// Resolve an exact 32-byte comparison with one 32-lane SIMD inequality control mask.
@@ -208,69 +202,45 @@ fn memcmp_exact_32_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     a[first].cmp(&b[first])
 }
 
-/// Resolve an exact 64-byte comparison with two 32-lane SIMD panels.
+/// Resolve an exact 64-byte comparison with a unified 64-lane SIMD inequality control mask.
 #[inline(always)]
 fn memcmp_exact_64_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_WIDE_LANES);
     debug_assert_eq!(b.len(), MEMCMP_WIDE_LANES);
 
-    let ne0 = Simd::<u8, SIMD_LANES>::from_slice(&a[..SIMD_LANES])
-        .simd_ne(Simd::<u8, SIMD_LANES>::from_slice(&b[..SIMD_LANES]));
-    let d0 = ne0.to_bitmask();
-    if d0 != 0 {
-        let first = d0.trailing_zeros() as usize;
-        return a[first].cmp(&b[first]);
+    let diff_mask = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(a)
+        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(b))
+        .to_bitmask();
+    if diff_mask == 0 {
+        return core::cmp::Ordering::Equal;
     }
 
-    let ne1 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES..])
-        .simd_ne(Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES..]));
-    let d1 = ne1.to_bitmask();
-    if d1 != 0 {
-        let first = SIMD_LANES + d1.trailing_zeros() as usize;
-        return a[first].cmp(&b[first]);
-    }
-
-    core::cmp::Ordering::Equal
+    let first = diff_mask.trailing_zeros() as usize;
+    a[first].cmp(&b[first])
 }
 
-/// Resolve an exact 128-byte comparison with four 32-lane SIMD inequality control masks.
+/// Resolve an exact 128-byte comparison with two 64-lane SIMD inequality control masks.
 #[inline(always)]
 fn memcmp_exact_128_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), SIMD_FOLD_BYTES);
     debug_assert_eq!(b.len(), SIMD_FOLD_BYTES);
 
-    let a0 = Simd::<u8, SIMD_LANES>::from_slice(&a[..SIMD_LANES]);
-    let b0 = Simd::<u8, SIMD_LANES>::from_slice(&b[..SIMD_LANES]);
-    let a1 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES..SIMD_LANES * 2]);
-    let b1 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES..SIMD_LANES * 2]);
-    let a2 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 2..SIMD_LANES * 3]);
-    let b2 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 2..SIMD_LANES * 3]);
-    let a3 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
-    let b3 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
+    let a0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[..MEMCMP_WIDE_LANES]);
+    let b0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[..MEMCMP_WIDE_LANES]);
+    let a1 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES..]);
+    let b1 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[MEMCMP_WIDE_LANES..]);
 
     let ne0 = a0.simd_ne(b0);
     let ne1 = a1.simd_ne(b1);
-    let ne2 = a2.simd_ne(b2);
-    let ne3 = a3.simd_ne(b3);
 
-    if (ne0 | ne1 | ne2 | ne3).any() {
+    if (ne0 | ne1).any() {
         let diff0 = ne0.to_bitmask();
         if diff0 != 0 {
             let first = diff0.trailing_zeros() as usize;
             return a[first].cmp(&b[first]);
         }
         let diff1 = ne1.to_bitmask();
-        if diff1 != 0 {
-            let first = SIMD_LANES + diff1.trailing_zeros() as usize;
-            return a[first].cmp(&b[first]);
-        }
-        let diff2 = ne2.to_bitmask();
-        if diff2 != 0 {
-            let first = SIMD_LANES * 2 + diff2.trailing_zeros() as usize;
-            return a[first].cmp(&b[first]);
-        }
-        let diff3 = ne3.to_bitmask();
-        let first = SIMD_LANES * 3 + diff3.trailing_zeros() as usize;
+        let first = MEMCMP_WIDE_LANES + diff1.trailing_zeros() as usize;
         return a[first].cmp(&b[first]);
     }
 
