@@ -60,55 +60,49 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
-    if count == WORD {
-        let x = u64_from_chunk(a);
-        let y = u64_from_chunk(b);
-        return x.to_be().cmp(&y.to_be());
-    }
-
-    if count == MEMCMP_EXACT_16_BYTES {
-        return memcmp_exact_16_words(a, b);
-    }
-
-    if count == SIMD_LANES {
-        return memcmp_exact_32_mask(a, b);
-    }
-
-    if count == MEMCMP_WIDE_LANES {
-        return memcmp_exact_64_mask(a, b);
-    }
-
-    if count == SIMD_FOLD_BYTES {
-        return memcmp_exact_128_mask(a, b);
-    }
-
-    if count == MEMCMP_EXACT_256_BYTES {
-        return memcmp_exact_256_mask(a, b);
+    match count {
+        0 => return core::cmp::Ordering::Equal,
+        4 => {
+            let x = u32::from_be_bytes(a[..4].try_into().unwrap());
+            let y = u32::from_be_bytes(b[..4].try_into().unwrap());
+            return x.cmp(&y);
+        }
+        WORD => {
+            let x = u64_be_from_chunk(a);
+            let y = u64_be_from_chunk(b);
+            return x.cmp(&y);
+        }
+        MEMCMP_EXACT_16_BYTES => {
+            return memcmp_exact_16_words(a, b);
+        }
+        SIMD_LANES => {
+            return memcmp_exact_32_mask(a, b);
+        }
+        MEMCMP_WIDE_LANES => {
+            return memcmp_exact_64_mask(a, b);
+        }
+        SIMD_FOLD_BYTES => {
+            return memcmp_exact_128_mask(a, b);
+        }
+        MEMCMP_EXACT_256_BYTES => {
+            return memcmp_exact_256_mask(a, b);
+        }
+        _ => {}
     }
 
     if count < WORD {
-        if count == 0 {
-            return core::cmp::Ordering::Equal;
-        }
-        if count == 4 {
-            let mut bx = [0u8; 4];
-            let mut by = [0u8; 4];
-            bx.copy_from_slice(a);
-            by.copy_from_slice(b);
-            return u32::from_be_bytes(bx).cmp(&u32::from_be_bytes(by));
-        }
         return compare_bytes(a, b);
     }
 
     if count < MEMCMP_EXACT_16_BYTES {
-        let hx = u64_from_chunk(&a[..WORD]);
-        let hy = u64_from_chunk(&b[..WORD]);
+        let hx = u64_be_from_chunk(&a[..WORD]);
+        let hy = u64_be_from_chunk(&b[..WORD]);
         if hx != hy {
-            return hx.to_be().cmp(&hy.to_be());
+            return hx.cmp(&hy);
         }
-        let tx = u64_from_chunk(&a[count - WORD..]);
-        let ty = u64_from_chunk(&b[count - WORD..]);
-        return tx.to_be().cmp(&ty.to_be());
+        let tx = u64_be_from_chunk(&a[count - WORD..]);
+        let ty = u64_be_from_chunk(&b[count - WORD..]);
+        return tx.cmp(&ty);
     }
 
     if count < SIMD_LANES {
@@ -185,14 +179,14 @@ fn memcmp_exact_16_words(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_EXACT_16_BYTES);
     debug_assert_eq!(b.len(), MEMCMP_EXACT_16_BYTES);
 
-    let x0 = u64_from_chunk(&a[..8]);
-    let y0 = u64_from_chunk(&b[..8]);
+    let x0 = u64_be_from_chunk(&a[..8]);
+    let y0 = u64_be_from_chunk(&b[..8]);
     if x0 != y0 {
-        return x0.to_be().cmp(&y0.to_be());
+        return x0.cmp(&y0);
     }
-    let x1 = u64_from_chunk(&a[8..16]);
-    let y1 = u64_from_chunk(&b[8..16]);
-    x1.to_be().cmp(&y1.to_be())
+    let x1 = u64_be_from_chunk(&a[8..16]);
+    let y1 = u64_be_from_chunk(&b[8..16]);
+    x1.cmp(&y1)
 }
 
 /// Resolve an exact 32-byte comparison with one 32-lane SIMD inequality control mask.
@@ -340,9 +334,12 @@ fn memcmp_exact_256_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 
 #[inline(always)]
 fn u64_from_chunk(chunk: &[u8]) -> u64 {
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(chunk);
-    u64::from_ne_bytes(bytes)
+    u64::from_ne_bytes(chunk[..WORD].try_into().unwrap())
+}
+
+#[inline(always)]
+fn u64_be_from_chunk(chunk: &[u8]) -> u64 {
+    u64::from_be_bytes(chunk[..WORD].try_into().unwrap())
 }
 
 /// SWAR word size (8 bytes), matching the `chunks_exact(8)` scans in this module.
