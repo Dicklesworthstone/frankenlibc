@@ -3326,3 +3326,46 @@ fn bd_4ibo52_large_memcpy_conformance_and_aliasing() {
         }
     }
 }
+
+#[test]
+fn bd_iiyioy_strchr_unbounded_avx2_conformance() {
+    use frankenlibc_abi::string_abi::{strchr, strchrnul};
+    use std::ffi::{c_char, c_int};
+
+    let lengths = [
+        0, 7, 15, 31, 32, 63, 64, 127, 128, 255, 256, 512, 1024, 4096, 16384,
+    ];
+    for &len in &lengths {
+        for align_offset in [0, 1, 7, 15, 31] {
+            let mut raw_buf = vec![b'x'; len + align_offset + 128];
+            raw_buf[align_offset + len] = 0; // NUL terminator
+            let p = unsafe { raw_buf.as_ptr().add(align_offset).cast::<c_char>() };
+
+            // 1. Target absent
+            let r = unsafe { strchr(p, b'z' as c_int) };
+            assert!(r.is_null(), "expected null for absent byte at len {len}");
+            let r_nul = unsafe { strchrnul(p, b'z' as c_int) };
+            let expected_nul = unsafe { p.add(len) as *mut c_char };
+            assert_eq!(r_nul, expected_nul);
+
+            // 2. Search for NUL terminator
+            let r_zero = unsafe { strchr(p, 0) };
+            assert_eq!(r_zero, expected_nul);
+            let r_zero_nul = unsafe { strchrnul(p, 0) };
+            assert_eq!(r_zero_nul, expected_nul);
+
+            // 3. Target present at various positions
+            if len > 0 {
+                for pos in [0, len / 2, len - 1] {
+                    raw_buf[align_offset + pos] = b'Q';
+                    let r_found = unsafe { strchr(p, b'Q' as c_int) };
+                    let expected = unsafe { p.add(pos) as *mut c_char };
+                    assert_eq!(r_found, expected, "failed at len {len}, pos {pos}");
+                    let r_found_nul = unsafe { strchrnul(p, b'Q' as c_int) };
+                    assert_eq!(r_found_nul, expected);
+                    raw_buf[align_offset + pos] = b'x'; // restore
+                }
+            }
+        }
+    }
+}

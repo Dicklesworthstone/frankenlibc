@@ -2780,14 +2780,13 @@ unsafe fn scan_c_string_for_byte(
     }
 }
 
-/// AVX2 target-or-NUL scanner for unbounded C strings.
+/// AVX2 target-or-NUL scanner for unbounded C strings matching glibc's __strchr_avx2.
 ///
-/// The portable-SIMD fallback emits a 32-byte operation but does not guarantee
-/// AVX2 code generation.  This kernel gives the deployed ABI path the same
-/// `vpcmpeqb`/`vpmovmskb` primitive glibc uses, while preserving the page proof:
-/// the first load is aligned down within `ptr`'s mapped page and every later
-/// 32-byte load begins on a 32-byte boundary.  The 128-byte folded skip is only
-/// used when all four reads remain in that same page.
+/// Uses the mathematical property that `min(v, v ^ target) == 0` iff byte is 0 or target.
+/// Combines four 32-byte vectors with `vpminub` into a single 128-byte check with ONE
+/// `vpcmpeqb` and ONE `vpmovmskb` per 128 bytes.
+/// Aligns the initial load down within `ptr`'s mapped page, bridges to 128-byte alignment,
+/// and runs the 128-byte unrolled loop without per-iteration page checks (128 divides 4096).
 ///
 /// # Safety
 ///
@@ -2798,55 +2797,86 @@ unsafe fn scan_c_string_for_byte(
 unsafe fn scan_c_string_for_byte_avx2(ptr: *const c_char, target: u8) -> (usize, bool) {
     use std::arch::x86_64::*;
 
-    // SAFETY: AVX2 is enabled for this function. Every load is either the
-    // aligned-down first window in ptr's mapped page or a later page-contained
-    // 32-byte window; see the function-level safety contract.
     unsafe {
-        #[inline(always)]
-        unsafe fn target_or_nul_bits(p: *const u8, target: __m256i, zero: __m256i) -> u32 {
-            // SAFETY: caller proves [p, p + 32) is readable.
-            let lanes = unsafe { _mm256_loadu_si256(p.cast()) };
-            let target_bits = _mm256_cmpeq_epi8(lanes, target);
-            let nul_bits = _mm256_cmpeq_epi8(lanes, zero);
-            _mm256_movemask_epi8(_mm256_or_si256(target_bits, nul_bits)) as u32
-        }
-
         let p = ptr.cast::<u8>();
         let target_v = _mm256_set1_epi8(target as i8);
         let zero = _mm256_setzero_si256();
         let align = (p as usize) & 31;
         // SAFETY: rounding down by at most 31 bytes stays inside p's mapped page.
-        let base = unsafe { p.sub(align) };
+        let base = p.sub(align);
+        let v0 = _mm256_load_si256(base.cast());
+        let m0 = _mm256_min_epu8(v0, _mm256_xor_si256(v0, target_v));
+        let bits0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m0, zero)) as u32;
         let head_clear = !((1u32 << align) - 1);
-        let first = unsafe { target_or_nul_bits(base, target_v, zero) } & head_clear;
+        let first = bits0 & head_clear;
         if first != 0 {
             let offset = first.trailing_zeros() as usize;
-            let found_target = (unsafe { *base.add(offset) }) == target;
+            let found_target = *base.add(offset) == target;
             return (offset - align, found_target);
         }
 
         let mut i = 32 - align;
-        loop {
-            if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
-                // SAFETY: the page guard proves all four 32-byte windows are readable.
-                let folded = unsafe { target_or_nul_bits(p.add(i), target_v, zero) }
-                    | unsafe { target_or_nul_bits(p.add(i + 32), target_v, zero) }
-                    | unsafe { target_or_nul_bits(p.add(i + 64), target_v, zero) }
-                    | unsafe { target_or_nul_bits(p.add(i + 96), target_v, zero) };
-                if folded == 0 {
-                    i += 128;
-                    continue;
-                }
-            }
-
-            // SAFETY: p+i is 32-byte aligned, so the load remains in its page.
-            let bits = unsafe { target_or_nul_bits(p.add(i), target_v, zero) };
+        // Bridge to 128-byte alignment using 32-aligned single steps (at most 3 steps).
+        // Since p+i is 32-aligned, each 32B window stays inside one 4096-byte page.
+        while (p as usize + i) & 127 != 0 {
+            let v = _mm256_load_si256(p.add(i).cast());
+            let m = _mm256_min_epu8(v, _mm256_xor_si256(v, target_v));
+            let bits = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m, zero)) as u32;
             if bits != 0 {
                 let offset = bits.trailing_zeros() as usize;
-                let found_target = (unsafe { *p.add(i + offset) }) == target;
+                let found_target = *p.add(i + offset) == target;
                 return (i + offset, found_target);
             }
             i += 32;
+        }
+
+        // 128-byte aligned loop: four 32-byte chunks per iteration.
+        // 128 divides 4096, so [p+i, p+i+128) is guaranteed to stay within the current page.
+        // Single vpcmpeqb + vpmovmskb per 128 bytes, matching glibc's __strchr_avx2.
+        loop {
+            let v0 = _mm256_load_si256(p.add(i).cast());
+            let v1 = _mm256_load_si256(p.add(i + 32).cast());
+            let v2 = _mm256_load_si256(p.add(i + 64).cast());
+            let v3 = _mm256_load_si256(p.add(i + 96).cast());
+
+            let m0 = _mm256_min_epu8(v0, _mm256_xor_si256(v0, target_v));
+            let m1 = _mm256_min_epu8(v1, _mm256_xor_si256(v1, target_v));
+            let m2 = _mm256_min_epu8(v2, _mm256_xor_si256(v2, target_v));
+            let m3 = _mm256_min_epu8(v3, _mm256_xor_si256(v3, target_v));
+
+            let m01 = _mm256_min_epu8(m0, m1);
+            let m23 = _mm256_min_epu8(m2, m3);
+            let min_all = _mm256_min_epu8(m01, m23);
+
+            let mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(min_all, zero)) as u32;
+            if mask == 0 {
+                i += 128;
+                continue;
+            }
+
+            // Hit found in this 128-byte block. Resolve which chunk had the first match:
+            let mask0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m0, zero)) as u32;
+            if mask0 != 0 {
+                let offset = mask0.trailing_zeros() as usize;
+                let found_target = *p.add(i + offset) == target;
+                return (i + offset, found_target);
+            }
+            let mask1 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m1, zero)) as u32;
+            if mask1 != 0 {
+                let offset = mask1.trailing_zeros() as usize;
+                let found_target = *p.add(i + 32 + offset) == target;
+                return (i + 32 + offset, found_target);
+            }
+            let mask2 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m2, zero)) as u32;
+            if mask2 != 0 {
+                let offset = mask2.trailing_zeros() as usize;
+                let found_target = *p.add(i + 64 + offset) == target;
+                return (i + 64 + offset, found_target);
+            }
+            let mask3 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m3, zero)) as u32;
+            let offset = mask3.trailing_zeros() as usize;
+            let found_target = *p.add(i + 96 + offset) == target;
+            return (i + 96 + offset, found_target);
         }
     }
 }
