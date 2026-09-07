@@ -55,7 +55,7 @@ use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
 
-use frankenlibc_bench::{DEPLOYED_PRELOAD_DLOPEN_FLAGS, HostWideBenchmarkGuard};
+use frankenlibc_bench::HostWideBenchmarkGuard;
 use sha2::{Digest, Sha256};
 
 const SAMPLES: usize = 40;
@@ -163,7 +163,8 @@ type StrcasestrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c
 type TreeCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 type TsearchFn =
     unsafe extern "C" fn(*const c_void, *mut *mut c_void, TreeCompareFn) -> *mut c_void;
-type TfindFn = unsafe extern "C" fn(*const c_void, *const *mut c_void, TreeCompareFn) -> *mut c_void;
+type TfindFn =
+    unsafe extern "C" fn(*const c_void, *const *mut c_void, TreeCompareFn) -> *mut c_void;
 type TdeleteFn =
     unsafe extern "C" fn(*const c_void, *mut *mut c_void, TreeCompareFn) -> *mut c_void;
 type GethostbyaddrFn =
@@ -280,11 +281,7 @@ unsafe extern "C" {
     #[link_name = "free"]
     fn linked_host_free(ptr: *mut c_void);
     #[link_name = "fmemopen"]
-    fn linked_host_fmemopen(
-        buffer: *mut c_void,
-        size: usize,
-        mode: *const c_char,
-    ) -> *mut c_void;
+    fn linked_host_fmemopen(buffer: *mut c_void, size: usize, mode: *const c_char) -> *mut c_void;
     #[link_name = "fread"]
     fn linked_host_fread(
         buffer: *mut c_void,
@@ -1141,7 +1138,7 @@ fn parse_args() -> Config {
         } else {
             panic!(
                 "unknown argument {arg:?}; usage: incumbent_coverage_ab \
-                 [--fl-so PATH] [--verify-only] [--pin-quietest N] \
+                 [--fl-so PATH] [--verify-only] [--pin-quietest N] [--fl-deepbind] \
                  [--families a,b,c] \
                  [--family \
                   nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
@@ -1272,7 +1269,8 @@ fn pin_to_quietest(width: usize) {
     // reason enough to fix it: two runs that mean to be the same experiment
     // should not differ in how many cores they own.
     let topology = cpu_core_identity();
-    let mut used_cores: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut used_cores: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
     let mut chosen: Vec<(usize, f64)> = Vec::with_capacity(width);
     // First pass: one logical CPU per physical core, quietest first.
     for &(cpu, fraction) in &ranked {
@@ -1379,9 +1377,7 @@ fn cpu_core_identity() -> std::collections::HashMap<usize, (usize, usize)> {
                 .parse::<usize>()
                 .ok()
         };
-        if let (Some(package), Some(core)) =
-            (read_id("physical_package_id"), read_id("core_id"))
-        {
+        if let (Some(package), Some(core)) = (read_id("physical_package_id"), read_id("core_id")) {
             map.insert(cpu, (package, core));
         }
     }
@@ -1616,6 +1612,35 @@ fn dl_error(context: &str) -> String {
             unsafe { CStr::from_ptr(pointer) }.to_string_lossy()
         )
     }
+}
+
+fn dlopen_fl_so(config: &Config, fl_path: &CStr, symbol: &str) -> *mut c_void {
+    dlopen_fl_so_with_plain_model(config, fl_path, symbol, "plain_dlopen")
+}
+
+fn dlopen_fl_so_with_plain_model(
+    config: &Config,
+    fl_path: &CStr,
+    symbol: &str,
+    plain_model: &str,
+) -> *mut c_void {
+    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
+    if config.fl_deepbind {
+        flags |= libc::RTLD_DEEPBIND;
+    }
+    // SAFETY: fl_path is a NUL-terminated C string pointing to a valid shared library.
+    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
+    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    println!(
+        "FL_LOAD_MODE symbol={symbol} deepbind={} models={}",
+        config.fl_deepbind,
+        if config.fl_deepbind {
+            "ld_preload_deployment"
+        } else {
+            plain_model
+        }
+    );
+    handle
 }
 
 fn median(values: &[f64]) -> f64 {
@@ -2044,11 +2069,7 @@ const TDELETE_CASES: &[TdeleteCase] = &[
 /// implementation, because fl stores its own `RbTreeBox` behind the root pointer
 /// and glibc stores its own node layout, so a tree built by one cannot be handed
 /// to the other.
-fn time_tdelete_batch(
-    tsearch: TsearchFn,
-    tdelete: TdeleteFn,
-    count: usize,
-) -> f64 {
+fn time_tdelete_batch(tsearch: TsearchFn, tdelete: TdeleteFn, count: usize) -> f64 {
     let keys = tree_keys();
     // EQUAL WORK PER BATCH, WHICHEVER TREE SIZE. One build-and-empty cycle of a
     // 64-key tree is only ~3.7 us, small enough that timer granularity and
@@ -2167,8 +2188,7 @@ fn measure_tdelete_case(
     // Report the deletions a batch actually performed, not the tree size: with
     // repeated cycles those differ, and `reps_per_arm` is the row's statement about
     // how much work each timing covers.
-    let deletions_per_batch =
-        TDELETE_DELETIONS_PER_BATCH.div_ceil(case.count).max(1) * case.count;
+    let deletions_per_batch = TDELETE_DELETIONS_PER_BATCH.div_ceil(case.count).max(1) * case.count;
     summarize_case(
         case.label,
         case.note,
@@ -3477,7 +3497,12 @@ fn bounded_len_reps(bound: usize) -> usize {
 }
 
 #[inline(never)]
-fn run_strnlen_batch(function: StrnlenFn, input: *const c_char, bound: usize, reps: usize) -> usize {
+fn run_strnlen_batch(
+    function: StrnlenFn,
+    input: *const c_char,
+    bound: usize,
+    reps: usize,
+) -> usize {
     let mut accumulator = 0usize;
     for _ in 0..reps {
         accumulator ^= unsafe { black_box(function)(black_box(input), black_box(bound)) };
@@ -4113,21 +4138,7 @@ fn run_wcsnrtombs(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbol=wcsnrtombs deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen"
-        }
-    );
+    let handle = dlopen_fl_so(config, &fl_path, "wcsnrtombs");
 
     let fl_symbol = unsafe { libc::dlsym(handle, c"wcsnrtombs".as_ptr()) };
     assert!(
@@ -4169,8 +4180,8 @@ fn run_wcsnrtombs(config: &Config) {
         "FrankenLibC setlocale(LC_ALL, C) failed"
     );
 
-    let incumbent_identity = symbol_object(host as *const () as *const c_void)
-        .expect("identify host wcsnrtombs object");
+    let incumbent_identity =
+        symbol_object(host as *const () as *const c_void).expect("identify host wcsnrtombs object");
     let fl_identity =
         symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC wcsnrtombs object");
     print_identity("INCUMBENT", &incumbent_identity);
@@ -4325,20 +4336,11 @@ fn run_nl_langinfo(config: &Config) {
     // is the one D1 queue-head symbol whose pre-registered contract named the
     // plain mode: the registered row is the plain one, and the deepbind row
     // exists so the caveat is settled by measurement rather than by argument.
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbol=nl_langinfo deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen_registered_contract"
-        }
+    let handle = dlopen_fl_so_with_plain_model(
+        config,
+        &fl_path,
+        "nl_langinfo",
+        "plain_dlopen_registered_contract",
     );
     let fl_symbol = unsafe { libc::dlsym(handle, c"nl_langinfo".as_ptr()) };
     assert!(
@@ -4499,8 +4501,7 @@ fn run_getrandom(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "getrandom");
     let fl_symbol = unsafe { libc::dlsym(handle, c"getrandom".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -4716,21 +4717,7 @@ fn run_tdelete(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbol=tdelete deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen"
-        }
-    );
+    let handle = dlopen_fl_so(config, &fl_path, "tdelete");
 
     // All three entry points come from the SAME object as the tdelete under
     // test. fl keeps an `RbTreeBox` behind the root pointer and glibc keeps its
@@ -4802,7 +4789,7 @@ fn run_tdelete(config: &Config) {
     let keys = tree_keys();
     let probe_count = 256usize;
     let mut comparisons = 0usize;
-    let mut build = |tsearch: TsearchFn| {
+    let build = |tsearch: TsearchFn| {
         let mut root: *mut c_void = std::ptr::null_mut();
         for key in &keys[..probe_count] {
             let inserted = unsafe {
@@ -4967,21 +4954,7 @@ fn run_memrchr(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbol=memrchr deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen"
-        }
-    );
+    let handle = dlopen_fl_so(config, &fl_path, "memrchr");
     let fl_symbol = unsafe { libc::dlsym(handle, c"memrchr".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -5126,12 +5099,12 @@ fn run_memrchr(config: &Config) {
     for case in &cases {
         let host_result = unsafe { host(case.buffer.cast_const(), case.needle, case.len) };
         let fl_result = unsafe { fl(case.buffer.cast_const(), case.needle, case.len) };
-        let host_index = (!host_result.is_null())
-            .then(|| host_result as usize - case.buffer as usize);
-        let fl_index =
-            (!fl_result.is_null()).then(|| fl_result as usize - case.buffer as usize);
+        let host_index =
+            (!host_result.is_null()).then(|| host_result as usize - case.buffer as usize);
+        let fl_index = (!fl_result.is_null()).then(|| fl_result as usize - case.buffer as usize);
         assert_eq!(
-            fl_index, host_index,
+            fl_index,
+            host_index,
             "memrchr position mismatch for {} ({} provenance)",
             case.label,
             case.provenance.label()
@@ -5417,22 +5390,7 @@ fn run_memcpy_strlen(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    // SAFETY: the explicit artifact path names a shared object selected by the caller.
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbols=memcpy,strlen deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen"
-        }
-    );
+    let handle = dlopen_fl_so(config, &fl_path, "memcpy_strlen");
     // SAFETY: `handle` is live and both names are NUL-terminated constants.
     let fl_memcpy_symbol = unsafe { libc::dlsym(handle, c"memcpy".as_ptr()) };
     // SAFETY: as above, for strlen.
@@ -5632,21 +5590,7 @@ fn run_fpclassify(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbol=__fpclassify deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen"
-        }
-    );
+    let handle = dlopen_fl_so(config, &fl_path, "__fpclassify");
     // THE SYMBOL IS `__fpclassify`, NOT `fpclassify`. In C the latter is a macro
     // that expands to a builtin or to this symbol, so a benchmark that resolved
     // "fpclassify" would be timing whatever the compiler inlined at the call
@@ -5749,21 +5693,7 @@ fn run_fpclassifyf(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
-    println!(
-        "FL_LOAD_MODE symbol=__fpclassifyf deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen"
-        }
-    );
+    let handle = dlopen_fl_so(config, &fl_path, "__fpclassifyf");
     let fl_symbol = unsafe { libc::dlsym(handle, c"__fpclassifyf".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -5907,8 +5837,7 @@ fn run_getauxval(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "getauxval");
     let fl_symbol = unsafe { libc::dlsym(handle, c"getauxval".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -6085,8 +6014,7 @@ fn run_sem_post(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "sem_post");
 
     let fl_init_symbol = unsafe { libc::dlsym(handle, c"sem_init".as_ptr()) };
     assert!(
@@ -6325,8 +6253,7 @@ fn run_thrd_current(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "thrd_current");
     let fl_symbol = unsafe { libc::dlsym(handle, c"thrd_current".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -6487,13 +6414,7 @@ fn run_malloc_free(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe {
-        libc::dlopen(
-            fl_path.as_ptr(),
-            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
-        )
-    };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "malloc_free");
     let fl_malloc_symbol = unsafe { libc::dlsym(handle, c"malloc".as_ptr()) };
     let fl_free_symbol = unsafe { libc::dlsym(handle, c"free".as_ptr()) };
     assert!(
@@ -6656,7 +6577,11 @@ fn run_fread_mem_batch(arm: FreadMemArm) -> usize {
         }
         assert_eq!(read, FREAD_MEM_BYTES, "short fread drain during timing");
         // SAFETY: the stream was returned by fmemopen and is closed exactly once.
-        assert_eq!(unsafe { (arm.fclose)(stream) }, 0, "fclose failed during timing");
+        assert_eq!(
+            unsafe { (arm.fclose)(stream) },
+            0,
+            "fclose failed during timing"
+        );
     }
     black_box(accumulator)
 }
@@ -6677,10 +6602,18 @@ fn check_fread_mem_conformance(host: FreadMemArm, fl: FreadMemArm) -> (usize, us
     let mut fl_data = source;
     // SAFETY: both buffers remain live for their matching streams through fclose.
     let host_stream = unsafe {
-        (host.fmemopen)(host_data.as_mut_ptr().cast(), host_data.len(), c"r".as_ptr())
+        (host.fmemopen)(
+            host_data.as_mut_ptr().cast(),
+            host_data.len(),
+            c"r".as_ptr(),
+        )
     };
-    let fl_stream = unsafe { (fl.fmemopen)(fl_data.as_mut_ptr().cast(), fl_data.len(), c"r".as_ptr()) };
-    assert!(!host_stream.is_null() && !fl_stream.is_null(), "fmemopen conformance setup failed");
+    let fl_stream =
+        unsafe { (fl.fmemopen)(fl_data.as_mut_ptr().cast(), fl_data.len(), c"r".as_ptr()) };
+    assert!(
+        !host_stream.is_null() && !fl_stream.is_null(),
+        "fmemopen conformance setup failed"
+    );
 
     let mut comparisons = 0usize;
     let mut mismatches = 0usize;
@@ -6718,8 +6651,16 @@ fn check_fread_mem_conformance(host: FreadMemArm, fl: FreadMemArm) -> (usize, us
         mismatches += 1;
     }
     // SAFETY: both streams were opened above and closed exactly once.
-    assert_eq!(unsafe { (host.fclose)(host_stream) }, 0, "host fclose conformance failed");
-    assert_eq!(unsafe { (fl.fclose)(fl_stream) }, 0, "FrankenLibC fclose conformance failed");
+    assert_eq!(
+        unsafe { (host.fclose)(host_stream) },
+        0,
+        "host fclose conformance failed"
+    );
+    assert_eq!(
+        unsafe { (fl.fclose)(fl_stream) },
+        0,
+        "FrankenLibC fclose conformance failed"
+    );
     (comparisons, mismatches)
 }
 
@@ -6729,22 +6670,29 @@ fn run_fread_mem(config: &Config) {
         "fread_mem requires --fl-deepbind so the FrankenLibC stream lifecycle models LD_PRELOAD deployment"
     );
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
-    let fl_path = CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
     // SAFETY: the explicit artifact is kept loaded until process exit.
-    let handle = unsafe {
-        libc::dlopen(
-            fl_path.as_ptr(),
-            libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
-        )
-    };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "fread_mem");
     // SAFETY: `handle` is live and all names are NUL-terminated constants.
     let fl_fmemopen_symbol = unsafe { libc::dlsym(handle, c"fmemopen".as_ptr()) };
     let fl_fread_symbol = unsafe { libc::dlsym(handle, c"fread".as_ptr()) };
     let fl_fclose_symbol = unsafe { libc::dlsym(handle, c"fclose".as_ptr()) };
-    assert!(!fl_fmemopen_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC fmemopen"));
-    assert!(!fl_fread_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC fread"));
-    assert!(!fl_fclose_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC fclose"));
+    assert!(
+        !fl_fmemopen_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC fmemopen")
+    );
+    assert!(
+        !fl_fread_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC fread")
+    );
+    assert!(
+        !fl_fclose_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC fclose")
+    );
 
     let mut host_data = [0u8; FREAD_MEM_BYTES];
     let mut fl_data = [0u8; FREAD_MEM_BYTES];
@@ -6767,18 +6715,33 @@ fn run_fread_mem(config: &Config) {
     };
     let incumbent_identity = symbol_object(host.fread as *const () as *const c_void)
         .expect("identify host fread object");
-    let fl_identity = symbol_object(fl_fread_symbol.cast_const())
-        .expect("identify FrankenLibC fread object");
+    let fl_identity =
+        symbol_object(fl_fread_symbol.cast_const()).expect("identify FrankenLibC fread object");
     print_identity("INCUMBENT", &incumbent_identity);
     print_identity("FL", &fl_identity);
     println!("INCUMBENT_LINKAGE direct_process_link symbols=fmemopen,fread,fclose");
     println!("FL_LINKAGE explicit_dlopen_local_deepbind symbols=fmemopen,fread,fclose");
     assert_incumbent_is_host_libc(&incumbent_identity, "fread");
-    assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FrankenLibC object differs from supplied object");
-    assert_ne!(incumbent_identity.sha256, fl_identity.sha256, "both providers resolve to byte-identical objects");
-    assert_ne!(host.fmemopen as usize, fl.fmemopen as usize, "fmemopen arms resolve to the same function address");
-    assert_ne!(host.fread as usize, fl.fread as usize, "fread arms resolve to the same function address");
-    assert_ne!(host.fclose as usize, fl.fclose as usize, "fclose arms resolve to the same function address");
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host.fmemopen as usize, fl.fmemopen as usize,
+        "fmemopen arms resolve to the same function address"
+    );
+    assert_ne!(
+        host.fread as usize, fl.fread as usize,
+        "fread arms resolve to the same function address"
+    );
+    assert_ne!(
+        host.fclose as usize, fl.fclose as usize,
+        "fclose arms resolve to the same function address"
+    );
     println!(
         "ARM_DISTINCT symbol=fread_mem incumbent_fmemopen_address={:#x} fl_fmemopen_address={:#x} incumbent_fread_address={:#x} fl_fread_address={:#x} incumbent_fclose_address={:#x} fl_fclose_address={:#x}",
         host.fmemopen as usize,
@@ -6802,7 +6765,10 @@ fn run_fread_mem(config: &Config) {
         }
         return;
     }
-    assert_eq!(mismatches, 0, "fread memory-stream arms diverged; refusing to time them");
+    assert_eq!(
+        mismatches, 0,
+        "fread memory-stream arms diverged; refusing to time them"
+    );
     let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
         eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
         std::process::exit(2);
@@ -6813,7 +6779,10 @@ fn run_fread_mem(config: &Config) {
     });
     println!("{}", pre.contract_line("pre_measurement"));
     let threads_pre = observed_threads();
-    assert_eq!(threads_pre, threads_pre_guard, "fread_mem thread count changed between conformance and measurement");
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "fread_mem thread count changed between conformance and measurement"
+    );
     let result = measure_arm_case_with_reps(
         "fmemopen_4k_fread_64b",
         "4 KiB memory stream: fmemopen, 64 x 64-byte fread, fclose",
@@ -6823,14 +6792,26 @@ fn run_fread_mem(config: &Config) {
         time_fread_mem_batch,
     );
     let threads_post = observed_threads();
-    assert_eq!(threads_post, threads_pre, "fread_mem thread count changed during measurement");
+    assert_eq!(
+        threads_post, threads_pre,
+        "fread_mem thread count changed during measurement"
+    );
     let post = guard.check_quiet().unwrap_or_else(|error| {
         eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
         std::process::exit(2);
     });
     println!("{}", post.contract_line("post_measurement"));
-    result.print("fread_mem", &incumbent_identity.path, threads_pre, threads_post);
-    let verdict = if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" };
+    result.print(
+        "fread_mem",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
     println!(
         "INCUMBENT_COVERAGE_VERDICT symbol=fread_mem verdict={verdict} cases=1 wins={} losses={} undecidable={} headline_case=fmemopen_4k_fread_64b headline_ratio_median={:.6} headline_comparison={} threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
         usize::from(result.comparison == "FL_FASTER"),
@@ -6862,11 +6843,17 @@ fn run_fscanf_fd_batch(arm: FscanfFdArm) -> u64 {
     let mut checksum = 0xcbf2_9ce4_8422_2325u64;
     for _ in 0..FSCANF_FD_REPS {
         let mut byte = 0u8;
-        let rc = unsafe { black_box(arm.fscanf)(black_box(stream), c"%c".as_ptr(), black_box(&mut byte)) };
+        let rc = unsafe {
+            black_box(arm.fscanf)(black_box(stream), c"%c".as_ptr(), black_box(&mut byte))
+        };
         assert_eq!(rc, 1, "fscanf %c reached EOF during timing");
         checksum = checksum.rotate_left(5) ^ u64::from(black_box(byte));
     }
-    assert_eq!(unsafe { (arm.fclose)(stream) }, 0, "fscanf stream close failed");
+    assert_eq!(
+        unsafe { (arm.fclose)(stream) },
+        0,
+        "fscanf stream close failed"
+    );
     black_box(checksum)
 }
 
@@ -6879,7 +6866,10 @@ fn time_fscanf_fd_batch(arm: FscanfFdArm) -> f64 {
 fn check_fscanf_fd_conformance(host: FscanfFdArm, fl: FscanfFdArm) -> (usize, usize) {
     let host_stream = unsafe { (host.fopen)(FSCANF_FD_PATH.as_ptr(), c"r".as_ptr()) };
     let fl_stream = unsafe { (fl.fopen)(FSCANF_FD_PATH.as_ptr(), c"r".as_ptr()) };
-    assert!(!host_stream.is_null() && !fl_stream.is_null(), "fscanf conformance open failed");
+    assert!(
+        !host_stream.is_null() && !fl_stream.is_null(),
+        "fscanf conformance open failed"
+    );
     let mut comparisons = 0;
     let mut mismatches = 0;
     for _ in 0..64 {
@@ -6887,46 +6877,109 @@ fn check_fscanf_fd_conformance(host: FscanfFdArm, fl: FscanfFdArm) -> (usize, us
         let host_rc = unsafe { (host.fscanf)(host_stream, c"%c".as_ptr(), &mut host_byte) };
         let fl_rc = unsafe { (fl.fscanf)(fl_stream, c"%c".as_ptr(), &mut fl_byte) };
         comparisons += 1;
-        if host_rc != fl_rc || host_byte != fl_byte { mismatches += 1; }
+        if host_rc != fl_rc || host_byte != fl_byte {
+            mismatches += 1;
+        }
     }
-    assert_eq!(unsafe { (host.fclose)(host_stream) }, 0, "host fscanf conformance close failed");
-    assert_eq!(unsafe { (fl.fclose)(fl_stream) }, 0, "FL fscanf conformance close failed");
+    assert_eq!(
+        unsafe { (host.fclose)(host_stream) },
+        0,
+        "host fscanf conformance close failed"
+    );
+    assert_eq!(
+        unsafe { (fl.fclose)(fl_stream) },
+        0,
+        "FL fscanf conformance close failed"
+    );
     (comparisons, mismatches)
 }
 
 fn run_fscanf_fd(config: &Config) {
-    assert!(config.fl_deepbind, "fscanf_fd requires --fl-deepbind for FL-owned streams");
+    assert!(
+        config.fl_deepbind,
+        "fscanf_fd requires --fl-deepbind for FL-owned streams"
+    );
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
-    let path = CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &path, "fscanf_fd");
     let fl_fopen = unsafe { libc::dlsym(handle, c"fopen".as_ptr()) };
     let fl_fscanf = unsafe { libc::dlsym(handle, c"fscanf".as_ptr()) };
     let fl_fclose = unsafe { libc::dlsym(handle, c"fclose".as_ptr()) };
-    assert!(!fl_fopen.is_null() && !fl_fscanf.is_null() && !fl_fclose.is_null(), "missing FL fscanf lifecycle symbol");
-    let host = FscanfFdArm { fopen: linked_host_fopen, fscanf: linked_host_fscanf, fclose: linked_host_fclose };
-    let fl = FscanfFdArm { fopen: unsafe { std::mem::transmute(fl_fopen) }, fscanf: unsafe { std::mem::transmute(fl_fscanf) }, fclose: unsafe { std::mem::transmute(fl_fclose) } };
-    let incumbent = symbol_object(host.fscanf as *const () as *const c_void).expect("identify host fscanf");
+    assert!(
+        !fl_fopen.is_null() && !fl_fscanf.is_null() && !fl_fclose.is_null(),
+        "missing FL fscanf lifecycle symbol"
+    );
+    let host = FscanfFdArm {
+        fopen: linked_host_fopen,
+        fscanf: linked_host_fscanf,
+        fclose: linked_host_fclose,
+    };
+    let fl = FscanfFdArm {
+        fopen: unsafe { std::mem::transmute(fl_fopen) },
+        fscanf: unsafe { std::mem::transmute(fl_fscanf) },
+        fclose: unsafe { std::mem::transmute(fl_fclose) },
+    };
+    let incumbent =
+        symbol_object(host.fscanf as *const () as *const c_void).expect("identify host fscanf");
     let fl_identity = symbol_object(fl_fscanf.cast_const()).expect("identify FL fscanf");
-    print_identity("INCUMBENT", &incumbent); print_identity("FL", &fl_identity);
+    print_identity("INCUMBENT", &incumbent);
+    print_identity("FL", &fl_identity);
     assert_incumbent_is_host_libc(&incumbent, "fscanf");
-    assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FL object differs from supplied object");
-    assert_ne!(host.fopen as usize, fl.fopen as usize); assert_ne!(host.fscanf as usize, fl.fscanf as usize); assert_ne!(host.fclose as usize, fl.fclose as usize);
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FL object differs from supplied object"
+    );
+    assert_ne!(host.fopen as usize, fl.fopen as usize);
+    assert_ne!(host.fscanf as usize, fl.fscanf as usize);
+    assert_ne!(host.fclose as usize, fl.fclose as usize);
     println!("INCUMBENT_LINKAGE direct_process_link symbols=fopen,fscanf,fclose");
     println!("FL_LINKAGE explicit_dlopen_local_deepbind symbols=fopen,fscanf,fclose");
     let (comparisons, mismatches) = check_fscanf_fd_conformance(host, fl);
-    println!("INCUMBENT_COVERAGE_CONFORMANCE symbol=fscanf_fd comparisons={comparisons} contract=provider_owned_regular_file_byte_stream verdict={}", if mismatches == 0 { "pass" } else { "fail" });
-    if config.verify_only { if mismatches != 0 { std::process::exit(2); } return; }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=fscanf_fd comparisons={comparisons} contract=provider_owned_regular_file_byte_stream verdict={}",
+        if mismatches == 0 { "pass" } else { "fail" }
+    );
+    if config.verify_only {
+        if mismatches != 0 {
+            std::process::exit(2);
+        }
+        return;
+    }
     assert_eq!(mismatches, 0, "fscanf arms diverged; refusing to time them");
-    let guard = HostWideBenchmarkGuard::new().unwrap(); let pre = guard.check_quiet().unwrap(); println!("{}", pre.contract_line("pre_measurement"));
+    let guard = HostWideBenchmarkGuard::new().unwrap();
+    let pre = guard.check_quiet().unwrap();
+    println!("{}", pre.contract_line("pre_measurement"));
     let threads_pre = observed_threads();
-    let result = measure_arm_case_with_reps("regular_file_char_stream", "FL-owned regular file, repeated fscanf(%c)", FSCANF_FD_REPS, host, fl, time_fscanf_fd_batch);
-    let threads_post = observed_threads(); assert_eq!(threads_pre, threads_post);
-    let post = guard.check_quiet().unwrap(); println!("{}", post.contract_line("post_measurement"));
+    let result = measure_arm_case_with_reps(
+        "regular_file_char_stream",
+        "FL-owned regular file, repeated fscanf(%c)",
+        FSCANF_FD_REPS,
+        host,
+        fl,
+        time_fscanf_fd_batch,
+    );
+    let threads_post = observed_threads();
+    assert_eq!(threads_pre, threads_post);
+    let post = guard.check_quiet().unwrap();
+    println!("{}", post.contract_line("post_measurement"));
     result.print("fscanf_fd", &incumbent.path, threads_pre, threads_post);
-    let verdict = if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" };
-    println!("INCUMBENT_COVERAGE_VERDICT symbol=fscanf_fd verdict={verdict} cases=1 wins={} losses={} undecidable={} headline_case=regular_file_char_stream headline_ratio_median={:.6} headline_comparison={}", usize::from(result.comparison == "FL_FASTER"), usize::from(result.comparison == "FL_SLOWER"), usize::from(!result.decidable()), result.effect_median, result.comparison);
-    if !result.decidable() { std::process::exit(2); }
+    let verdict = if result.decidable() {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=fscanf_fd verdict={verdict} cases=1 wins={} losses={} undecidable={} headline_case=regular_file_char_stream headline_ratio_median={:.6} headline_comparison={}",
+        usize::from(result.comparison == "FL_FASTER"),
+        usize::from(result.comparison == "FL_SLOWER"),
+        usize::from(!result.decidable()),
+        result.effect_median,
+        result.comparison
+    );
+    if !result.decidable() {
+        std::process::exit(2);
+    }
 }
 
 fn verify_mtx_provider(
@@ -6965,8 +7018,7 @@ fn run_mtx_trylock(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "mtx_trylock");
     let fl_init_symbol = unsafe { libc::dlsym(handle, c"mtx_init".as_ptr()) };
     assert!(
         !fl_init_symbol.is_null(),
@@ -7209,8 +7261,7 @@ fn run_getaddrinfo_hosts(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), DEPLOYED_PRELOAD_DLOPEN_FLAGS) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "getaddrinfo");
     let fl_getaddrinfo_symbol = unsafe { libc::dlsym(handle, c"getaddrinfo".as_ptr()) };
     assert!(
         !fl_getaddrinfo_symbol.is_null(),
@@ -7449,8 +7500,7 @@ fn run_gethostbyaddr(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "gethostbyaddr");
     let fl_gethostbyaddr_symbol = unsafe { libc::dlsym(handle, c"gethostbyaddr".as_ptr()) };
     assert!(
         !fl_gethostbyaddr_symbol.is_null(),
@@ -7611,8 +7661,7 @@ fn run_gethostbyname(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "gethostbyname");
     let fl_gethostbyname_symbol = unsafe { libc::dlsym(handle, c"gethostbyname".as_ptr()) };
     assert!(
         !fl_gethostbyname_symbol.is_null(),
@@ -7847,8 +7896,7 @@ fn run_sinhf_coshf(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "sinhf_coshf");
     let fl_sinhf_symbol = unsafe { libc::dlsym(handle, c"sinhf".as_ptr()) };
     assert!(
         !fl_sinhf_symbol.is_null(),
@@ -8045,8 +8093,7 @@ fn run_tanhf(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "tanhf");
     let fl_tanhf_symbol = unsafe { libc::dlsym(handle, c"tanhf".as_ptr()) };
     assert!(
         !fl_tanhf_symbol.is_null(),
@@ -8167,8 +8214,7 @@ fn run_bounded_len(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "bounded_len");
     let fl_strnlen_symbol = unsafe { libc::dlsym(handle, c"strnlen".as_ptr()) };
     let fl_wcsnlen_symbol = unsafe { libc::dlsym(handle, c"wcsnlen".as_ptr()) };
     assert!(
@@ -8276,7 +8322,10 @@ fn run_bounded_len(config: &Config) {
     });
     println!("{}", pre.contract_line("pre_measurement"));
     let threads_pre = observed_threads();
-    assert_eq!(threads_pre, threads_pre_guard, "bounded-length thread count changed before measurement");
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "bounded-length thread count changed before measurement"
+    );
 
     let mut results = Vec::with_capacity(BOUNDED_LEN_CASES.len() * 2);
     for &(str_label, wide_label, bound) in &BOUNDED_LEN_CASES {
@@ -8304,7 +8353,10 @@ fn run_bounded_len(config: &Config) {
     }
 
     let threads_post = observed_threads();
-    assert_eq!(threads_post, threads_pre, "bounded-length thread count changed during measurement");
+    assert_eq!(
+        threads_post, threads_pre,
+        "bounded-length thread count changed during measurement"
+    );
     let post = guard.check_quiet().unwrap_or_else(|error| {
         eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
         std::process::exit(2);
@@ -8314,8 +8366,14 @@ fn run_bounded_len(config: &Config) {
         result.print(symbol, &incumbent_identity.path, threads_pre, threads_post);
     }
 
-    let wins = results.iter().filter(|(_, result)| result.comparison == "FL_FASTER").count();
-    let losses = results.iter().filter(|(_, result)| result.comparison == "FL_SLOWER").count();
+    let wins = results
+        .iter()
+        .filter(|(_, result)| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|(_, result)| result.comparison == "FL_SLOWER")
+        .count();
     let undecidable = results.len() - wins - losses;
     let verdict = if results.iter().all(|(_, result)| result.decidable()) {
         "DECIDABLE"
@@ -8982,8 +9040,7 @@ fn run_snprintf_float(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "snprintf_float");
     let fl_symbol = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -9146,8 +9203,7 @@ fn run_snprintf_fused(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "snprintf_fused");
     let fl_symbol = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -10251,15 +10307,6 @@ fn run_sscanf(config: &Config) {
     // fl's algorithm. `RTLD_DEEPBIND` restores the deployed binding.
     //
     // This is not a detail: the batch scanf path allocated three times per
-    // call, and those allocations are free-ish in glibc's allocator and
-    // expensive in FrankenLibC's tracked one. Which loader mode you pick
-    // decides whether you can see that at all.
-    let mut flags = libc::RTLD_NOW | libc::RTLD_LOCAL;
-    if config.fl_deepbind {
-        flags |= libc::RTLD_DEEPBIND;
-    }
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), flags) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
     // WHICH SYMBOL. Printed, because an arm is a hypothesis about which code
     // runs and this family got that wrong once already (bd-6zt6hf).
     let entry_symbol = if config.sscanf_variadic {
@@ -10268,14 +10315,11 @@ fn run_sscanf(config: &Config) {
         c"vsscanf"
     };
     let entry_name = entry_symbol.to_str().expect("symbol name is ASCII");
-    println!(
-        "FL_LOAD_MODE symbol={entry_name} deepbind={} models={}",
-        config.fl_deepbind,
-        if config.fl_deepbind {
-            "ld_preload_deployment"
-        } else {
-            "plain_dlopen_host_libc_wins_interposition"
-        }
+    let handle = dlopen_fl_so_with_plain_model(
+        config,
+        &fl_path,
+        entry_name,
+        "plain_dlopen_host_libc_wins_interposition",
     );
     let fl_symbol = unsafe { libc::dlsym(handle, entry_symbol.as_ptr()) };
     assert!(
@@ -10296,11 +10340,19 @@ fn run_sscanf(config: &Config) {
         // SAFETY: a NUL-terminated path to a distinct shared object; RTLD_LOCAL
         // keeps it out of the global namespace so it cannot capture the first
         // object's symbols.
-        let handle_b = unsafe { libc::dlopen(path_b_c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-        assert!(!handle_b.is_null(), "{}", dl_error("dlopen second FrankenLibC SO"));
+        let handle_b = dlopen_fl_so_with_plain_model(
+            config,
+            &path_b_c,
+            &format!("{entry_name}_b"),
+            "plain_dlopen_host_libc_wins_interposition",
+        );
         // SAFETY: `handle_b` came from dlopen and the name is NUL-terminated.
         let sym_b = unsafe { libc::dlsym(handle_b, entry_symbol.as_ptr()) };
-        assert!(!sym_b.is_null(), "{}", dl_error("dlsym second FrankenLibC vsscanf"));
+        assert!(
+            !sym_b.is_null(),
+            "{}",
+            dl_error("dlsym second FrankenLibC vsscanf")
+        );
         assert_ne!(
             sym_b, fl_symbol,
             "both fl objects resolved vsscanf to ONE address — the second dlopen \
@@ -10323,8 +10375,8 @@ fn run_sscanf(config: &Config) {
         // SAFETY: the resolved symbol is vsscanf.
         SscanfArm::VaList(unsafe { std::mem::transmute(fl_symbol) })
     };
-    let incumbent_identity = symbol_object(host.address() as *const c_void)
-        .expect("identify host scanf object");
+    let incumbent_identity =
+        symbol_object(host.address() as *const c_void).expect("identify host scanf object");
     let fl_identity =
         symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC scanf object");
     print_identity("INCUMBENT", &incumbent_identity);
@@ -10476,8 +10528,7 @@ fn run_snprintf(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "snprintf");
     let fl_symbol = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
     assert!(
         !fl_symbol.is_null(),
@@ -10648,7 +10699,8 @@ fn run_snprintf(config: &Config) {
     }
 }
 
-const STRCASESTR_HAYSTACK: &[u8] = b"content-type: application/json; charset=UTF-8; x-request-id: 0123456789abcdef\0";
+const STRCASESTR_HAYSTACK: &[u8] =
+    b"content-type: application/json; charset=UTF-8; x-request-id: 0123456789abcdef\0";
 const STRCASESTR_NEEDLE: &[u8] = b"CHARSET=utf-8\0";
 const STRCASESTR_ABSENT_NEEDLE: &[u8] = b"boundary=missing\0";
 const STRCASESTR_REPS: usize = 200_000;
@@ -10725,38 +10777,85 @@ fn check_strcasestr_conformance(host: StrcasestrFn, fl: StrcasestrFn) -> (usize,
 
 fn run_strcasestr(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
-    let path = CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &path, "strcasestr");
     let fl_symbol = unsafe { libc::dlsym(handle, c"strcasestr".as_ptr()) };
-    assert!(!fl_symbol.is_null(), "{}", dl_error("dlsym FrankenLibC strcasestr"));
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC strcasestr")
+    );
     let host: StrcasestrFn = linked_host_strcasestr;
     let fl: StrcasestrFn = unsafe { std::mem::transmute(fl_symbol) };
-    let incumbent = symbol_object(host as *const () as *const c_void).expect("identify host strcasestr");
-    let fl_identity = symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC strcasestr");
+    let incumbent =
+        symbol_object(host as *const () as *const c_void).expect("identify host strcasestr");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC strcasestr");
     print_identity("INCUMBENT", &incumbent);
     print_identity("FL", &fl_identity);
     println!("INCUMBENT_LINKAGE direct_process_link symbol=strcasestr");
     println!("FL_LINKAGE explicit_dlopen_local symbol=strcasestr");
     assert_incumbent_is_host_libc(&incumbent, "strcasestr");
-    assert_eq!(fl_identity.sha256, supplied_fl.sha256, "loaded FrankenLibC object differs from supplied object");
-    assert_ne!(host as usize, fl as usize, "both strcasestr arms resolve to the same address");
-    println!("ARM_DISTINCT symbol=strcasestr incumbent_address={:#x} fl_address={:#x}", host as usize, fl as usize);
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both strcasestr arms resolve to the same address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=strcasestr incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize
+    );
     let (comparisons, matched_offset) = check_strcasestr_conformance(host, fl);
-    println!("INCUMBENT_COVERAGE_CONFORMANCE symbol=strcasestr comparisons={comparisons} matched_offset={matched_offset} verdict=pass");
-    if config.verify_only { return; }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=strcasestr comparisons={comparisons} matched_offset={matched_offset} verdict=pass"
+    );
+    if config.verify_only {
+        return;
+    }
     let guard = HostWideBenchmarkGuard::new().unwrap();
-    let pre = guard.check_quiet().unwrap_or_else(|error| { eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}"); std::process::exit(2) });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2)
+    });
     println!("{}", pre.contract_line("pre_measurement"));
     let threads_before = observed_threads();
-    let result = measure_arm_case_with_reps("header_charset_hit", "mixed-case HTTP header search", STRCASESTR_REPS, host, fl, time_strcasestr_batch);
+    let result = measure_arm_case_with_reps(
+        "header_charset_hit",
+        "mixed-case HTTP header search",
+        STRCASESTR_REPS,
+        host,
+        fl,
+        time_strcasestr_batch,
+    );
     let threads_after = observed_threads();
-    assert_eq!(threads_before, threads_after, "thread count changed during strcasestr measurement");
-    let post = guard.check_quiet().unwrap_or_else(|error| { eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}"); std::process::exit(2) });
+    assert_eq!(
+        threads_before, threads_after,
+        "thread count changed during strcasestr measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2)
+    });
     println!("{}", post.contract_line("post_measurement"));
     result.print("strcasestr", &incumbent.path, threads_before, threads_after);
-    println!("INCUMBENT_COVERAGE_VERDICT symbol=strcasestr verdict={} cases=1 wins={} losses={} undecidable={}", if result.decidable() { "DECIDABLE" } else { "INCOMPLETE" }, usize::from(result.comparison == "FL_FASTER"), usize::from(result.comparison == "FL_SLOWER"), usize::from(!result.decidable()));
-    if !result.decidable() { std::process::exit(2); }
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=strcasestr verdict={} cases=1 wins={} losses={} undecidable={}",
+        if result.decidable() {
+            "DECIDABLE"
+        } else {
+            "INCOMPLETE"
+        },
+        usize::from(result.comparison == "FL_FASTER"),
+        usize::from(result.comparison == "FL_SLOWER"),
+        usize::from(!result.decidable())
+    );
+    if !result.decidable() {
+        std::process::exit(2);
+    }
 }
 
 fn main() {
@@ -11040,8 +11139,7 @@ fn run_fprintf_float(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "fprintf_float");
 
     let fl_fprintf_sym = unsafe { libc::dlsym(handle, c"fprintf".as_ptr()) };
     let fl_fopen_sym = unsafe { libc::dlsym(handle, c"fopen".as_ptr()) };
@@ -11055,7 +11153,11 @@ fn run_fprintf_float(config: &Config) {
         (fl_fclose_sym, "fclose"),
         (fl_setvbuf_sym, "setvbuf"),
     ] {
-        assert!(!sym.is_null(), "{}", dl_error(&format!("dlsym FrankenLibC {what}")));
+        assert!(
+            !sym.is_null(),
+            "{}",
+            dl_error(&format!("dlsym FrankenLibC {what}"))
+        );
     }
 
     // SAFETY: each resolved symbol has the C signature its type names.
@@ -11130,8 +11232,14 @@ fn run_fprintf_float(config: &Config) {
     let host_default_stream = unsafe { host_fopen(devnull.as_ptr(), mode.as_ptr()) };
     // SAFETY: as above, through FrankenLibC's own fopen.
     let fl_default_stream = unsafe { fl_fopen(devnull.as_ptr(), mode.as_ptr()) };
-    assert!(!host_default_stream.is_null(), "glibc fopen default-buffered failed");
-    assert!(!fl_default_stream.is_null(), "FrankenLibC fopen default-buffered failed");
+    assert!(
+        !host_default_stream.is_null(),
+        "glibc fopen default-buffered failed"
+    );
+    assert!(
+        !fl_default_stream.is_null(),
+        "FrankenLibC fopen default-buffered failed"
+    );
 
     let mut host_buffer = vec![0 as c_char; STREAM_BUF_BYTES];
     let mut fl_buffer = vec![0 as c_char; STREAM_BUF_BYTES];
@@ -11139,12 +11247,22 @@ fn run_fprintf_float(config: &Config) {
     // below), and each setvbuf is the one belonging to the stream's own libc.
     unsafe {
         assert_eq!(
-            host_setvbuf(host_stream, host_buffer.as_mut_ptr(), STREAM_IOFBF, STREAM_BUF_BYTES),
+            host_setvbuf(
+                host_stream,
+                host_buffer.as_mut_ptr(),
+                STREAM_IOFBF,
+                STREAM_BUF_BYTES
+            ),
             0,
             "glibc setvbuf failed"
         );
         assert_eq!(
-            fl_setvbuf(fl_stream, fl_buffer.as_mut_ptr(), STREAM_IOFBF, STREAM_BUF_BYTES),
+            fl_setvbuf(
+                fl_stream,
+                fl_buffer.as_mut_ptr(),
+                STREAM_IOFBF,
+                STREAM_BUF_BYTES
+            ),
             0,
             "FrankenLibC setvbuf failed"
         );
@@ -11227,9 +11345,8 @@ fn run_fprintf_float(config: &Config) {
         let fl_flag = unsafe { libc::dlsym(handle, c"__libc_single_threaded".as_ptr()) };
         // SAFETY: RTLD_DEFAULT searches the process's global scope, which is the
         // host glibc's copy.
-        let host_flag = unsafe {
-            libc::dlsym(std::ptr::null_mut(), c"__libc_single_threaded".as_ptr())
-        };
+        let host_flag =
+            unsafe { libc::dlsym(std::ptr::null_mut(), c"__libc_single_threaded".as_ptr()) };
         let read = |p: *mut c_void| -> i32 {
             if p.is_null() {
                 -1
@@ -11403,7 +11520,11 @@ fn check_stream_float_conformance(host: StreamArm, fl: StreamArm) -> (usize, usi
         // SAFETY: `stream` is this arm's own; `format` names one double.
         let returned = unsafe { (arm.fprintf)(stream, format.as_ptr(), value) };
         // SAFETY: closing flushes, which is what makes the bytes observable.
-        assert_eq!(unsafe { (arm.fclose)(stream) }, 0, "conformance fclose failed");
+        assert_eq!(
+            unsafe { (arm.fclose)(stream) },
+            0,
+            "conformance fclose failed"
+        );
         let text = path.to_str().expect("ascii temp path");
         let bytes = std::fs::read(text).expect("read conformance temp file");
         (returned, bytes)
@@ -11421,10 +11542,7 @@ fn check_stream_float_conformance(host: StreamArm, fl: StreamArm) -> (usize, usi
             comparisons += 1;
             // The return value AND the delivered bytes, plus the stream-specific
             // invariant that the count equals what actually reached the file.
-            if host_rc != fl_rc
-                || host_bytes != fl_bytes
-                || fl_rc as usize != fl_bytes.len()
-            {
+            if host_rc != fl_rc || host_bytes != fl_bytes || fl_rc as usize != fl_bytes.len() {
                 mismatches += 1;
             }
         }
@@ -11446,7 +11564,9 @@ fn check_stream_float_conformance(host: StreamArm, fl: StreamArm) -> (usize, usi
 static STDOUT_REDIRECT: Mutex<()> = Mutex::new(());
 
 fn stdout_redirect_lock() -> MutexGuard<'static, ()> {
-    STDOUT_REDIRECT.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    STDOUT_REDIRECT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Clone, Copy)]
@@ -11478,7 +11598,11 @@ fn restore_stdout(saved: c_int) {
             libc::dup2(saved, libc::STDOUT_FILENO) >= 0,
             "restore stdout after redirect failed"
         );
-        assert_eq!(libc::close(saved), 0, "close saved stdout descriptor failed");
+        assert_eq!(
+            libc::close(saved),
+            0,
+            "close saved stdout descriptor failed"
+        );
     }
 }
 
@@ -11496,10 +11620,18 @@ fn capture_stdout_float(arm: StdoutArm, format: &CStr, value: f64) -> (c_int, Ve
     );
     let mut pipe = [-1; 2];
     // SAFETY: `pipe` has exactly two descriptor slots.
-    assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0, "pipe capture failed");
+    assert_eq!(
+        unsafe { libc::pipe(pipe.as_mut_ptr()) },
+        0,
+        "pipe capture failed"
+    );
     let saved = redirect_stdout_to(pipe[1]);
     // fd 1 is now the only writer endpoint needed by this capture.
-    assert_eq!(unsafe { libc::close(pipe[1]) }, 0, "close pipe writer failed");
+    assert_eq!(
+        unsafe { libc::close(pipe[1]) },
+        0,
+        "close pipe writer failed"
+    );
 
     // SAFETY: the format names one f64 and `stdout` belongs to this provider.
     let returned = unsafe { (arm.printf)(format.as_ptr(), value) };
@@ -11513,13 +11645,7 @@ fn capture_stdout_float(arm: StdoutArm, format: &CStr, value: f64) -> (c_int, Ve
     loop {
         // SAFETY: the read endpoint remains open; buffer is writable for its
         // full length.
-        let count = unsafe {
-            libc::read(
-                pipe[0],
-                buffer.as_mut_ptr().cast(),
-                buffer.len(),
-            )
-        };
+        let count = unsafe { libc::read(pipe[0], buffer.as_mut_ptr().cast(), buffer.len()) };
         assert!(count >= 0, "read stdout capture failed");
         if count == 0 {
             break;
@@ -11527,20 +11653,17 @@ fn capture_stdout_float(arm: StdoutArm, format: &CStr, value: f64) -> (c_int, Ve
         bytes.extend_from_slice(&buffer[..count as usize]);
     }
     // SAFETY: this is the still-live read endpoint of `pipe`.
-    assert_eq!(unsafe { libc::close(pipe[0]) }, 0, "close pipe reader failed");
+    assert_eq!(
+        unsafe { libc::close(pipe[0]) },
+        0,
+        "close pipe reader failed"
+    );
     (returned, bytes)
 }
 
 fn check_stdout_float_conformance(host: StdoutArm, fl: StdoutArm) -> (usize, usize) {
     let formats = [
-        c"%.2f",
-        c"%.4f",
-        c"%f",
-        c"%.0f",
-        c"%.9f",
-        c"%.10f",
-        c"%.99f",
-        c"%.100f",
+        c"%.2f", c"%.4f", c"%f", c"%.0f", c"%.9f", c"%.10f", c"%.99f", c"%.100f",
     ];
     let mut comparisons = 0usize;
     let mut mismatches = 0usize;
@@ -11569,7 +11692,10 @@ fn assert_timed_stdout_is_live(arm: StdoutArm, who: &str) {
     // restored, so the tested write reaches the timed sink.
     let flushed = unsafe { (arm.fflush)(arm.stdout) };
     restore_stdout(saved);
-    assert_eq!(returned, 7, "{who} printf on the timed stdout returned {returned}, expected 7");
+    assert_eq!(
+        returned, 7,
+        "{who} printf on the timed stdout returned {returned}, expected 7"
+    );
     assert_eq!(flushed, 0, "{who} fflush on the timed stdout failed");
 }
 
@@ -11580,13 +11706,18 @@ fn run_stdout_float_batch(arm: StdoutArm, format: &CStr) -> u64 {
         let value = FLOAT_TIMING[index & (FLOAT_TIMING.len() - 1)];
         // SAFETY: `format` names one f64; fd 1 is redirected to this arm's
         // sink for the whole batch by the timing wrapper.
-        let returned = unsafe { black_box(arm.printf)(black_box(format.as_ptr()), black_box(value)) };
+        let returned =
+            unsafe { black_box(arm.printf)(black_box(format.as_ptr()), black_box(value)) };
         accumulator ^= black_box(returned) as u64;
         accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
     }
     // SAFETY: this provider owns `stdout`, and flushing is part of the stream
     // work being compared rather than post-measurement cleanup.
-    assert_eq!(unsafe { black_box(arm.fflush)(black_box(arm.stdout)) }, 0, "timed stdout flush failed");
+    assert_eq!(
+        unsafe { black_box(arm.fflush)(black_box(arm.stdout)) },
+        0,
+        "timed stdout flush failed"
+    );
     black_box(accumulator)
 }
 
@@ -11616,8 +11747,7 @@ fn run_printf_float(config: &Config) {
     let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
     let fl_path =
         CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
-    let handle = unsafe { libc::dlopen(fl_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC SO"));
+    let handle = dlopen_fl_so(config, &fl_path, "printf_float");
 
     // SAFETY: `handle` remains live for the runner; all names are NUL-terminated.
     let (fl_printf_symbol, fl_fflush_symbol, fl_stdout_slot) = unsafe {
@@ -11632,12 +11762,20 @@ fn run_printf_float(config: &Config) {
         (fl_fflush_symbol, "fflush"),
         (fl_stdout_slot, "stdout"),
     ] {
-        assert!(!symbol.is_null(), "{}", dl_error(&format!("dlsym FrankenLibC {name}")));
+        assert!(
+            !symbol.is_null(),
+            "{}",
+            dl_error(&format!("dlsym FrankenLibC {name}"))
+        );
     }
     // SAFETY: RTLD_DEFAULT resolves the process-linked glibc `stdout`; the
     // FrankenLibC object was loaded RTLD_LOCAL and cannot satisfy this lookup.
     let host_stdout_slot = unsafe { libc::dlsym(std::ptr::null_mut(), c"stdout".as_ptr()) };
-    assert!(!host_stdout_slot.is_null(), "{}", dl_error("dlsym host stdout"));
+    assert!(
+        !host_stdout_slot.is_null(),
+        "{}",
+        dl_error("dlsym host stdout")
+    );
 
     // SAFETY: all resolved functions have their C signatures, and `stdout` is
     // a FILE* variable in both providers.
@@ -11658,8 +11796,14 @@ fn run_printf_float(config: &Config) {
     print_identity("FL", &fl_identity);
     println!("INCUMBENT_LINKAGE direct_process_link symbol=printf");
     println!("FL_LINKAGE explicit_dlopen_local symbol=printf");
-    assert_ne!(incumbent_identity.sha256, fl_identity.sha256, "both providers resolve to byte-identical objects");
-    assert_ne!(host_printf as usize, fl_printf as usize, "both printf arms resolve to the same function address");
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both providers resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host_printf as usize, fl_printf as usize,
+        "both printf arms resolve to the same function address"
+    );
     println!(
         "ARM_DISTINCT symbol=printf_float incumbent_address={:#x} fl_address={:#x}",
         host_printf as usize, fl_printf as usize,
@@ -11688,19 +11832,33 @@ fn run_printf_float(config: &Config) {
         }
         return;
     }
-    assert_eq!(mismatches, 0, "printf float arms are not observationally equivalent; refusing to time them");
+    assert_eq!(
+        mismatches, 0,
+        "printf float arms are not observationally equivalent; refusing to time them"
+    );
 
     // SAFETY: each descriptor is a private write-only handle to the same
     // discard sink. Opening is outside timed batches and avoids provider-owned
     // FILE layout crossing.
     let host_sink = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
     let fl_sink = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
-    assert!(host_sink >= 0 && fl_sink >= 0, "open /dev/null sinks failed");
-    let host = StdoutArm { sink_fd: host_sink, ..host_base };
-    let fl = StdoutArm { sink_fd: fl_sink, ..fl_base };
+    assert!(
+        host_sink >= 0 && fl_sink >= 0,
+        "open /dev/null sinks failed"
+    );
+    let host = StdoutArm {
+        sink_fd: host_sink,
+        ..host_base
+    };
+    let fl = StdoutArm {
+        sink_fd: fl_sink,
+        ..fl_base
+    };
     assert_timed_stdout_is_live(host, "glibc");
     assert_timed_stdout_is_live(fl, "FrankenLibC");
-    println!("TIMED_STDOUT_LIVE symbol=printf_float checked=return_byte_count_on_redirected_stdout verdict=pass");
+    println!(
+        "TIMED_STDOUT_LIVE symbol=printf_float checked=return_byte_count_on_redirected_stdout verdict=pass"
+    );
 
     let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
         eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
@@ -11713,9 +11871,30 @@ fn run_printf_float(config: &Config) {
     println!("{}", pre.contract_line("pre_measurement"));
     let threads_pre = observed_threads();
     let results = [
-        measure_arm_case_with_reps("stdout_2dp", "printf \"%.2f\" through redirected stdout", PRINTF_FLOAT_REPS, host, fl, time_stdout_2f_batch),
-        measure_arm_case_with_reps("stdout_4dp", "printf \"%.4f\" through redirected stdout", PRINTF_FLOAT_REPS, host, fl, time_stdout_4f_batch),
-        measure_arm_case_with_reps("stdout_6dp", "printf bare \"%f\" through redirected stdout", PRINTF_FLOAT_REPS, host, fl, time_stdout_6f_batch),
+        measure_arm_case_with_reps(
+            "stdout_2dp",
+            "printf \"%.2f\" through redirected stdout",
+            PRINTF_FLOAT_REPS,
+            host,
+            fl,
+            time_stdout_2f_batch,
+        ),
+        measure_arm_case_with_reps(
+            "stdout_4dp",
+            "printf \"%.4f\" through redirected stdout",
+            PRINTF_FLOAT_REPS,
+            host,
+            fl,
+            time_stdout_4f_batch,
+        ),
+        measure_arm_case_with_reps(
+            "stdout_6dp",
+            "printf bare \"%f\" through redirected stdout",
+            PRINTF_FLOAT_REPS,
+            host,
+            fl,
+            time_stdout_6f_batch,
+        ),
     ];
     let threads_post = observed_threads();
     let post = guard.check_quiet().unwrap_or_else(|error| {
@@ -11724,20 +11903,48 @@ fn run_printf_float(config: &Config) {
     });
     println!("{}", post.contract_line("post_measurement"));
     for result in &results {
-        result.print("printf_float", &incumbent_identity.path, threads_pre, threads_post);
+        result.print(
+            "printf_float",
+            &incumbent_identity.path,
+            threads_pre,
+            threads_post,
+        );
     }
-    let wins = results.iter().filter(|result| result.comparison == "FL_FASTER").count();
-    let losses = results.iter().filter(|result| result.comparison == "FL_SLOWER").count();
-    let headline = results.iter().find(|result| result.label == "stdout_2dp").expect("missing stdout_2dp result");
-    let verdict = if results.iter().all(CaseResult::decidable) { "DECIDABLE" } else { "INCOMPLETE" };
+    let wins = results
+        .iter()
+        .filter(|result| result.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|result| result.comparison == "FL_SLOWER")
+        .count();
+    let headline = results
+        .iter()
+        .find(|result| result.label == "stdout_2dp")
+        .expect("missing stdout_2dp result");
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
     println!(
         "INCUMBENT_COVERAGE_VERDICT symbol=printf_float verdict={verdict} cases={} wins={wins} losses={losses} undecidable={} headline_case=stdout_2dp headline_ratio_median={:.6} threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
-        results.len(), results.len() - wins - losses, headline.effect_median,
+        results.len(),
+        results.len() - wins - losses,
+        headline.effect_median,
     );
     // SAFETY: these are the two private descriptors opened above.
     unsafe {
-        assert_eq!(libc::close(host_sink), 0, "close host /dev/null sink failed");
-        assert_eq!(libc::close(fl_sink), 0, "close FrankenLibC /dev/null sink failed");
+        assert_eq!(
+            libc::close(host_sink),
+            0,
+            "close host /dev/null sink failed"
+        );
+        assert_eq!(
+            libc::close(fl_sink),
+            0,
+            "close FrankenLibC /dev/null sink failed"
+        );
     }
     if verdict == "INCOMPLETE" {
         std::process::exit(2);
