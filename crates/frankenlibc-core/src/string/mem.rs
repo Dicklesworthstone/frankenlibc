@@ -348,6 +348,7 @@ fn memcmp_exact_256_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 fn u64_from_chunk(chunk: &[u8]) -> u64 {
     u64::from_ne_bytes(chunk[..WORD].try_into().unwrap())
 }
@@ -366,7 +367,9 @@ const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
 
+#[allow(dead_code)]
 const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
+#[allow(dead_code)]
 const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
 
 /// Mycroft's zero-in-word MASK: the high bit of each byte lane is set iff that lane of
@@ -374,6 +377,7 @@ const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
 /// point of this module's SWAR work is that the mask says *where*, so nothing that has
 /// computed it should ever reduce it to a bool and then rescan to recover the position.
 #[inline(always)]
+#[allow(dead_code)]
 fn zero_byte_mask_u64(word: u64) -> u64 {
     word.wrapping_sub(LO_U64) & !word & HI_U64
 }
@@ -397,6 +401,7 @@ fn zero_byte_mask_u64(word: u64) -> u64 {
 /// chunk byte `k` sits in native byte position `k`; `to_le()` normalises that to the low
 /// end on either endianness, after which `trailing_zeros() / 8` is the chunk index.
 #[inline(always)]
+#[allow(dead_code)]
 fn first_byte_u64(word: u64, byte: u8) -> Option<usize> {
     let mask = zero_byte_mask_u64(word ^ u64::from_ne_bytes([byte; WORD]));
     if mask == 0 {
@@ -410,6 +415,7 @@ fn first_byte_u64(word: u64, byte: u8) -> Option<usize> {
 /// shape with `.rposition()`. The SIMD panel directly above that loop already resolves
 /// from its mask this way (`63 - leading_zeros`); the word loop did not.
 #[inline(always)]
+#[allow(dead_code)]
 fn last_byte_u64(word: u64, byte: u8) -> Option<usize> {
     let mask = zero_byte_mask_u64(word ^ u64::from_ne_bytes([byte; WORD]));
     if mask == 0 {
@@ -502,7 +508,25 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     // clean -- so its low bit is the answer with no masking step. This is the first-match mirror
     // of the argument in `memrchr`, and `MEMCHR_INDEX_SWEEP` exercises exactly this range.
     if count < SIMD_LANES {
-        if count >= MEMCMP_EXACT_16_BYTES {
+        if count == MEMCMP_EXACT_16_BYTES {
+            let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(hs)
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some((mask as u32).trailing_zeros() as usize);
+            }
+            return None;
+        }
+        if count == WORD {
+            let mask = Simd::<u8, WORD>::from_slice(hs)
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some((mask as u32).trailing_zeros() as usize);
+            }
+            return None;
+        }
+        if count > MEMCMP_EXACT_16_BYTES {
             let head_mask =
                 Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(&hs[..MEMCMP_EXACT_16_BYTES])
                     .simd_eq(Simd::splat(needle))
@@ -519,13 +543,13 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             }
             return None;
         }
-        if count == WORD {
-            return first_byte_u64(u64_from_chunk(hs), needle);
-        }
         let mut i = 0usize;
         while count - i >= WORD {
-            if let Some(j) = first_byte_u64(u64_from_chunk(&hs[i..i + WORD]), needle) {
-                return Some(i + j);
+            let mask = Simd::<u8, WORD>::from_slice(&hs[i..i + WORD])
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some(i + (mask as u32).trailing_zeros() as usize);
             }
             i += WORD;
         }
@@ -553,11 +577,14 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         return None;
     }
 
+    let mut chunks = hs.chunks_exact(SIMD_FOLD_BYTES);
     let mut base = 0usize;
 
-    while count - base >= SIMD_FOLD_BYTES {
-        let block_end = base + SIMD_FOLD_BYTES;
-        let block = &hs[base..block_end];
+    for chunk in chunks.by_ref() {
+        let block: &[u8; SIMD_FOLD_BYTES] = match chunk.try_into() {
+            Ok(arr) => arr,
+            Err(_) => break,
+        };
         let v0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]);
         let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]);
         let v2 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]);
@@ -584,14 +611,15 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             let m3 = eq3.to_bitmask();
             return Some(base + SIMD_LANES * 3 + (m3 as u32).trailing_zeros() as usize);
         }
-        base = block_end;
+        base += SIMD_FOLD_BYTES;
     }
 
-    if count - base >= MEMCMP_WIDE_LANES {
-        let block_end = base + MEMCMP_WIDE_LANES;
-        let block = &hs[base..block_end];
-        let v0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]);
-        let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..]);
+    let rem = chunks.remainder();
+    let mut offset = 0usize;
+
+    if rem.len() >= MEMCMP_WIDE_LANES {
+        let v0 = Simd::<u8, SIMD_LANES>::from_slice(&rem[..SIMD_LANES]);
+        let v1 = Simd::<u8, SIMD_LANES>::from_slice(&rem[SIMD_LANES..MEMCMP_WIDE_LANES]);
         let eq0 = v0.simd_eq(needle_simd);
         let eq1 = v1.simd_eq(needle_simd);
         if (eq0 | eq1).any() {
@@ -602,11 +630,12 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             let m1 = eq1.to_bitmask();
             return Some(base + SIMD_LANES + (m1 as u32).trailing_zeros() as usize);
         }
-        base = block_end;
+        base += MEMCMP_WIDE_LANES;
+        offset = MEMCMP_WIDE_LANES;
     }
 
-    if count - base >= SIMD_LANES {
-        let v = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
+    if rem.len() - offset >= SIMD_LANES {
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&rem[offset..offset + SIMD_LANES]);
         let m = v.simd_eq(needle_simd).to_bitmask();
         if m != 0 {
             return Some(base + (m as u32).trailing_zeros() as usize);
@@ -654,9 +683,15 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     // only hold bits below `count - 16` -- a set bit at or above it would name a byte the
     // trailing window just reported clean -- so its high bit is the answer unconditionally.
     if count < SIMD_LANES {
-        // The n=8 operating point is a complete SWAR word. Keep it out of
-        // the general short tail so release code does not construct loop state
-        // and then immediately consume its only iteration.
+        if count == MEMCMP_EXACT_16_BYTES {
+            let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(hs)
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some(31 - (mask as u32).leading_zeros() as usize);
+            }
+            return None;
+        }
         if count == WORD {
             let mask = Simd::<u8, WORD>::from_slice(hs)
                 .simd_eq(Simd::splat(needle))
@@ -666,7 +701,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             }
             return None;
         }
-        if count >= MEMCMP_EXACT_16_BYTES {
+        if count > MEMCMP_EXACT_16_BYTES {
             let tail = &hs[count - MEMCMP_EXACT_16_BYTES..];
             let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(tail)
                 .simd_eq(Simd::splat(needle))
@@ -687,8 +722,11 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         }
         let mut i = count;
         while i >= WORD {
-            if let Some(j) = last_byte_u64(u64_from_chunk(&hs[i - WORD..i]), needle) {
-                return Some(i - WORD + j);
+            let mask = Simd::<u8, WORD>::from_slice(&hs[i - WORD..i])
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some(i - WORD + (31 - (mask as u32).leading_zeros() as usize));
             }
             i -= WORD;
         }
@@ -720,7 +758,10 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 
     while end >= SIMD_FOLD_BYTES {
         let block_start = end - SIMD_FOLD_BYTES;
-        let block = &hs[block_start..end];
+        let block: &[u8; SIMD_FOLD_BYTES] = match hs[block_start..end].try_into() {
+            Ok(arr) => arr,
+            Err(_) => break,
+        };
         let v3 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
         let v2 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]);
         let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]);
