@@ -152,8 +152,7 @@ fn measure(op: &str, n: usize, iters: usize, mut fl: impl FnMut(), mut gl: impl 
         eprintln!(
             "{op:<10} n={n:<6} fl={:8.2}ns glibc={:8.2}ns  fl/glibc={r:6.3}x  A/A_null={null:.3} \
              null_medCI=[{nlo:.3},{nhi:.3}] effect_medCI=[{elo:.3},{ehi:.3}]",
-            fl_best,
-            gl_best,
+            fl_best, gl_best,
         );
     } else {
         eprintln!(
@@ -183,7 +182,7 @@ fn main() {
         let gl_memcmp: MemcmpFn = std::mem::transmute(libc::dlsym(h, c"memcmp".as_ptr()));
         let gl_memmem: MemmemFn = std::mem::transmute(libc::dlsym(h, c"memmem".as_ptr()));
         assert!(
-            gl_memchr as usize != frankenlibc_core::string::mem::memchr as usize,
+            gl_memchr as usize != frankenlibc_core::string::mem::memchr as *const () as usize,
             "arms identical"
         );
 
@@ -247,7 +246,9 @@ fn main() {
                 for pos in 0..len {
                     let mut buf = vec![b'k'; len];
                     buf[pos] = b'z';
-                    if pos > 0 { buf[0] = b'z'; }
+                    if pos > 0 {
+                        buf[0] = b'z';
+                    }
                     let fl = frankenlibc_core::string::mem::memrchr(&buf, b'z', len);
                     let raw = gl_memrchr(buf.as_ptr(), b'z' as i32, len);
                     let gl = (!raw.is_null()).then(|| raw as usize - buf.as_ptr() as usize);
@@ -255,7 +256,9 @@ fn main() {
                     if fl != gl {
                         bad += 1;
                         if bad <= 5 {
-                            eprintln!("MEMRCHR MISMATCH len={len} pos={pos} fl={fl:?} glibc={gl:?}");
+                            eprintln!(
+                                "MEMRCHR MISMATCH len={len} pos={pos} fl={fl:?} glibc={gl:?}"
+                            );
                         }
                     }
                 }
@@ -277,7 +280,9 @@ fn main() {
                 for pos in 0..len {
                     let mut buf = vec![b'k'; len];
                     buf[pos] = b'z';
-                    if pos < len - 1 { buf[len - 1] = b'z'; }
+                    if pos < len - 1 {
+                        buf[len - 1] = b'z';
+                    }
                     let fl = frankenlibc_core::string::mem::memchr(&buf, b'z', len);
                     let raw = gl_memchr(buf.as_ptr(), b'z' as i32, len);
                     let gl = (!raw.is_null()).then(|| raw as usize - buf.as_ptr() as usize);

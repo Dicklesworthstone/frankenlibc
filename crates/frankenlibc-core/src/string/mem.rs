@@ -3,7 +3,7 @@
 //! These are safe Rust implementations operating on byte slices.
 //! They correspond to the `<string.h>` memory functions in POSIX/C.
 
-use std::simd::{cmp::SimdPartialEq, Simd};
+use std::simd::{Simd, cmp::SimdPartialEq};
 
 /// Copies `n` bytes from `src` to `dest`.
 ///
@@ -60,14 +60,14 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let a = &a[..count];
     let b = &b[..count];
 
-    if count == MEMCMP_EXACT_16_BYTES {
-        return memcmp_exact_16_words(a, b);
-    }
-
     if count == WORD {
         let x = u64_from_chunk(a);
         let y = u64_from_chunk(b);
         return x.to_be().cmp(&y.to_be());
+    }
+
+    if count == MEMCMP_EXACT_16_BYTES {
+        return memcmp_exact_16_words(a, b);
     }
 
     if count == SIMD_LANES {
@@ -89,6 +89,13 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     if count < WORD {
         if count == 0 {
             return core::cmp::Ordering::Equal;
+        }
+        if count == 4 {
+            let mut bx = [0u8; 4];
+            let mut by = [0u8; 4];
+            bx.copy_from_slice(a);
+            by.copy_from_slice(b);
+            return u32::from_be_bytes(bx).cmp(&u32::from_be_bytes(by));
         }
         return compare_bytes(a, b);
     }
@@ -124,46 +131,52 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
         return memcmp_exact_32_mask(&a[count - SIMD_LANES..], &b[count - SIMD_LANES..]);
     }
 
-    // Index-based scan (mirrors the parity-class `strcmp` loop, which is faster
-    // than the equivalent `chunks_exact().zip()` form): fold four 32-byte panels
-    // into one equality probe per 128-byte block; an equal block is skipped
-    // wholesale, and the first block holding any difference is resolved in
-    // 32-byte panel order then byte order, preserving the exact first-difference
-    // sign.
     let mut i = 0;
-    while i + SIMD_FOLD_BYTES <= count {
-        if ne_simd_folded_128(&a[i..i + SIMD_FOLD_BYTES], &b[i..i + SIMD_FOLD_BYTES]) {
-            while i + SIMD_LANES <= count {
-                // Resolve from the mask; see `first_diff_simd_32`.
-                if let Some(j) = first_diff_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
-                    return a[i + j].cmp(&b[i + j]);
-                }
-                i += SIMD_LANES;
-            }
+    while i + MEMCMP_EXACT_256_BYTES <= count {
+        let a_blk = &a[i..i + MEMCMP_EXACT_256_BYTES];
+        let b_blk = &b[i..i + MEMCMP_EXACT_256_BYTES];
+        let ord = memcmp_exact_256_mask(a_blk, b_blk);
+        if ord != core::cmp::Ordering::Equal {
+            return ord;
+        }
+        i += MEMCMP_EXACT_256_BYTES;
+    }
+
+    if i + SIMD_FOLD_BYTES <= count {
+        let a_blk = &a[i..i + SIMD_FOLD_BYTES];
+        let b_blk = &b[i..i + SIMD_FOLD_BYTES];
+        let ord = memcmp_exact_128_mask(a_blk, b_blk);
+        if ord != core::cmp::Ordering::Equal {
+            return ord;
         }
         i += SIMD_FOLD_BYTES;
     }
 
-    // Remaining 32-byte panels, resolved from the mask rather than rescanned.
-    while i + SIMD_LANES <= count {
-        if let Some(j) = first_diff_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
-            return a[i + j].cmp(&b[i + j]);
+    if i + MEMCMP_WIDE_LANES <= count {
+        let a_blk = &a[i..i + MEMCMP_WIDE_LANES];
+        let b_blk = &b[i..i + MEMCMP_WIDE_LANES];
+        let ord = memcmp_exact_64_mask(a_blk, b_blk);
+        if ord != core::cmp::Ordering::Equal {
+            return ord;
+        }
+        i += MEMCMP_WIDE_LANES;
+    }
+
+    if i + SIMD_LANES <= count {
+        let a_blk = &a[i..i + SIMD_LANES];
+        let b_blk = &b[i..i + SIMD_LANES];
+        let ord = memcmp_exact_32_mask(a_blk, b_blk);
+        if ord != core::cmp::Ordering::Equal {
+            return ord;
         }
         i += SIMD_LANES;
     }
 
-    // Tail: the sub-32B remainder, 8 bytes at a time then byte-wise. Differing words
-    // are ordered directly from big-endian integer comparison without rescanning.
-    while i + WORD <= count {
-        let x = u64_from_chunk(&a[i..i + WORD]);
-        let y = u64_from_chunk(&b[i..i + WORD]);
-        if x != y {
-            return x.to_be().cmp(&y.to_be());
-        }
-        i += WORD;
+    if i < count {
+        return memcmp_exact_32_mask(&a[count - SIMD_LANES..], &b[count - SIMD_LANES..]);
     }
 
-    compare_bytes(&a[i..], &b[i..])
+    core::cmp::Ordering::Equal
 }
 
 /// Resolve an exact 16-byte comparison using two 64-bit words compared in big-endian order.
@@ -196,82 +209,81 @@ fn memcmp_exact_32_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     }
 
     let first = diff_mask.trailing_zeros() as usize;
-    if a[first] < b[first] {
-        core::cmp::Ordering::Less
-    } else {
-        core::cmp::Ordering::Greater
-    }
+    a[first].cmp(&b[first])
 }
 
-/// Resolve an exact 64-byte comparison with one 64-lane SIMD inequality control mask.
+/// Resolve an exact 64-byte comparison with two 32-lane SIMD panels.
 #[inline(always)]
 fn memcmp_exact_64_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_WIDE_LANES);
     debug_assert_eq!(b.len(), MEMCMP_WIDE_LANES);
 
-    let diff_mask = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(a)
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(b))
-        .to_bitmask();
-    if diff_mask == 0 {
-        return core::cmp::Ordering::Equal;
+    let ne0 = Simd::<u8, SIMD_LANES>::from_slice(&a[..SIMD_LANES])
+        .simd_ne(Simd::<u8, SIMD_LANES>::from_slice(&b[..SIMD_LANES]));
+    let d0 = ne0.to_bitmask();
+    if d0 != 0 {
+        let first = d0.trailing_zeros() as usize;
+        return a[first].cmp(&b[first]);
     }
 
-    let first = diff_mask.trailing_zeros() as usize;
-    if a[first] < b[first] {
-        core::cmp::Ordering::Less
-    } else {
-        core::cmp::Ordering::Greater
+    let ne1 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES..])
+        .simd_ne(Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES..]));
+    let d1 = ne1.to_bitmask();
+    if d1 != 0 {
+        let first = SIMD_LANES + d1.trailing_zeros() as usize;
+        return a[first].cmp(&b[first]);
     }
+
+    core::cmp::Ordering::Equal
 }
 
-/// Resolve an exact 128-byte comparison with two 64-lane SIMD inequality control masks.
+/// Resolve an exact 128-byte comparison with four 32-lane SIMD inequality control masks.
 #[inline(always)]
 fn memcmp_exact_128_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), SIMD_FOLD_BYTES);
     debug_assert_eq!(b.len(), SIMD_FOLD_BYTES);
 
-    let diff_mask0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[..MEMCMP_WIDE_LANES])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
-            &b[..MEMCMP_WIDE_LANES],
-        ))
-        .to_bitmask();
-    if diff_mask0 != 0 {
-        let first = diff_mask0.trailing_zeros() as usize;
-        if a[first] < b[first] {
-            return core::cmp::Ordering::Less;
-        } else {
-            return core::cmp::Ordering::Greater;
-        }
-    }
+    let a0 = Simd::<u8, SIMD_LANES>::from_slice(&a[..SIMD_LANES]);
+    let b0 = Simd::<u8, SIMD_LANES>::from_slice(&b[..SIMD_LANES]);
+    let a1 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES..SIMD_LANES * 2]);
+    let b1 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES..SIMD_LANES * 2]);
+    let a2 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 2..SIMD_LANES * 3]);
+    let b2 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 2..SIMD_LANES * 3]);
+    let a3 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
+    let b3 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
 
-    let diff_mask1 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES..])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
-            &b[MEMCMP_WIDE_LANES..],
-        ))
-        .to_bitmask();
-    if diff_mask1 != 0 {
-        let first = MEMCMP_WIDE_LANES + diff_mask1.trailing_zeros() as usize;
-        if a[first] < b[first] {
-            return core::cmp::Ordering::Less;
-        } else {
-            return core::cmp::Ordering::Greater;
+    let ne0 = a0.simd_ne(b0);
+    let ne1 = a1.simd_ne(b1);
+    let ne2 = a2.simd_ne(b2);
+    let ne3 = a3.simd_ne(b3);
+
+    if (ne0 | ne1 | ne2 | ne3).any() {
+        let diff0 = ne0.to_bitmask();
+        if diff0 != 0 {
+            let first = diff0.trailing_zeros() as usize;
+            return a[first].cmp(&b[first]);
         }
+        let diff1 = ne1.to_bitmask();
+        if diff1 != 0 {
+            let first = SIMD_LANES + diff1.trailing_zeros() as usize;
+            return a[first].cmp(&b[first]);
+        }
+        let diff2 = ne2.to_bitmask();
+        if diff2 != 0 {
+            let first = SIMD_LANES * 2 + diff2.trailing_zeros() as usize;
+            return a[first].cmp(&b[first]);
+        }
+        let diff3 = ne3.to_bitmask();
+        let first = SIMD_LANES * 3 + diff3.trailing_zeros() as usize;
+        return a[first].cmp(&b[first]);
     }
 
     core::cmp::Ordering::Equal
 }
 
 /// First differing byte of a 32-byte panel, or `None` if the panels are equal.
-///
-/// The `simd_ne` control mask already names the differing lanes, so the ordering answer is
-/// one `trailing_zeros` away. `memcmp`'s panel resolver previously asked `eq_simd_32` for a
-/// bool and then handed the whole 32-byte panel to `compare_bytes`, which re-walks it a byte
-/// at a time to recover the position the mask had just discarded. That scalar walk dominated
-/// short comparisons: `memcmp` at n=64 measured 21.39ns against live glibc's 4.46ns
-/// (4.707x), while n=16 -- which already resolves from a mask via `memcmp_exact_16_mask` --
-/// was only 1.540x. Same defect class as the probe-then-rescan removed from
-/// `memchr`/`memrchr`.
 #[inline(always)]
+#[allow(dead_code)]
 fn first_diff_simd_32(a: &[u8], b: &[u8]) -> Option<usize> {
     debug_assert_eq!(a.len(), SIMD_LANES);
     debug_assert_eq!(b.len(), SIMD_LANES);
@@ -313,71 +325,20 @@ fn ne_simd_folded_128(a: &[u8], b: &[u8]) -> bool {
     (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
-/// Resolves an exact 256-byte comparison from four ordered 64-byte control masks.
-///
-/// The previous exact-size path only certified equality. A non-equal pair then entered the
-/// general 128-byte fold and re-compared its panels to find the first difference. At 256 bytes
-/// with a late difference that means probing the whole input once, then walking most of it again.
-/// Keeping each 64-byte mask makes the exact-size path its own ordered resolver: equal inputs
-/// still make the same four wide comparisons, while a differing input returns directly from the
-/// first mask that names a lane.
+/// Resolves an exact 256-byte comparison from two ordered 128-byte control blocks.
 #[inline(always)]
 fn memcmp_exact_256_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_EXACT_256_BYTES);
     debug_assert_eq!(b.len(), MEMCMP_EXACT_256_BYTES);
 
-    let diff0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[..64])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[..64]))
-        .to_bitmask();
-    if diff0 != 0 {
-        let first = diff0.trailing_zeros() as usize;
-        return if a[first] < b[first] {
-            core::cmp::Ordering::Less
-        } else {
-            core::cmp::Ordering::Greater
-        };
+    let ord0 = memcmp_exact_128_mask(&a[..SIMD_FOLD_BYTES], &b[..SIMD_FOLD_BYTES]);
+    if ord0 != core::cmp::Ordering::Equal {
+        return ord0;
     }
-
-    let diff1 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[64..128])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[64..128]))
-        .to_bitmask();
-    if diff1 != 0 {
-        let first = 64 + diff1.trailing_zeros() as usize;
-        return if a[first] < b[first] {
-            core::cmp::Ordering::Less
-        } else {
-            core::cmp::Ordering::Greater
-        };
-    }
-
-    let diff2 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[128..192])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[128..192]))
-        .to_bitmask();
-    if diff2 != 0 {
-        let first = 128 + diff2.trailing_zeros() as usize;
-        return if a[first] < b[first] {
-            core::cmp::Ordering::Less
-        } else {
-            core::cmp::Ordering::Greater
-        };
-    }
-
-    let diff3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[192..256])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[192..256]))
-        .to_bitmask();
-    if diff3 != 0 {
-        let first = 192 + diff3.trailing_zeros() as usize;
-        return if a[first] < b[first] {
-            core::cmp::Ordering::Less
-        } else {
-            core::cmp::Ordering::Greater
-        };
-    }
-
-    core::cmp::Ordering::Equal
+    memcmp_exact_128_mask(&a[SIMD_FOLD_BYTES..], &b[SIMD_FOLD_BYTES..])
 }
 
-#[inline]
+#[inline(always)]
 fn u64_from_chunk(chunk: &[u8]) -> u64 {
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(chunk);
@@ -463,6 +424,7 @@ fn byte_mask_simd_32(chunk: &[u8], byte: u8) -> u64 {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
     let mask = byte_mask_simd_32(chunk, byte);
     if mask == 0 {
@@ -473,6 +435,7 @@ fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
     let needle = Simd::splat(byte);
@@ -584,89 +547,83 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         return None;
     }
 
+    let needle_wide = Simd::<u8, MEMCHR_WIDE_LANES>::splat(needle);
     let mut base = 0usize;
 
     while count - base >= MEMCHR_FOLD_BYTES {
         let block_end = base + MEMCHR_FOLD_BYTES;
         let block = &hs[base..block_end];
-        let m0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..64])
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
-        if m0 != 0 {
-            return Some(base + m0.trailing_zeros() as usize);
-        }
-        let m1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[64..128])
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
-        if m1 != 0 {
-            return Some(base + 64 + m1.trailing_zeros() as usize);
-        }
-        let m2 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[128..192])
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
-        if m2 != 0 {
-            return Some(base + 128 + m2.trailing_zeros() as usize);
-        }
-        let m3 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[192..256])
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
-        if m3 != 0 {
+        let v0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..64]);
+        let v1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[64..128]);
+        let v2 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[128..192]);
+        let v3 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[192..256]);
+        let eq0 = v0.simd_eq(needle_wide);
+        let eq1 = v1.simd_eq(needle_wide);
+        let eq2 = v2.simd_eq(needle_wide);
+        let eq3 = v3.simd_eq(needle_wide);
+        if (eq0 | eq1 | eq2 | eq3).any() {
+            let m0 = eq0.to_bitmask();
+            if m0 != 0 {
+                return Some(base + m0.trailing_zeros() as usize);
+            }
+            let m1 = eq1.to_bitmask();
+            if m1 != 0 {
+                return Some(base + 64 + m1.trailing_zeros() as usize);
+            }
+            let m2 = eq2.to_bitmask();
+            if m2 != 0 {
+                return Some(base + 128 + m2.trailing_zeros() as usize);
+            }
+            let m3 = eq3.to_bitmask();
             return Some(base + 192 + m3.trailing_zeros() as usize);
         }
         base = block_end;
     }
 
-    while count - base >= SIMD_FOLD_BYTES {
+    if count - base >= SIMD_FOLD_BYTES {
         let block_end = base + SIMD_FOLD_BYTES;
         let block = &hs[base..block_end];
-        let m0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..MEMCHR_WIDE_LANES])
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
-        if m0 != 0 {
-            return Some(base + m0.trailing_zeros() as usize);
-        }
-        let m1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES..])
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
-        if m1 != 0 {
+        let v0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..MEMCHR_WIDE_LANES]);
+        let v1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES..]);
+        let eq0 = v0.simd_eq(needle_wide);
+        let eq1 = v1.simd_eq(needle_wide);
+        if (eq0 | eq1).any() {
+            let m0 = eq0.to_bitmask();
+            if m0 != 0 {
+                return Some(base + m0.trailing_zeros() as usize);
+            }
+            let m1 = eq1.to_bitmask();
             return Some(base + MEMCHR_WIDE_LANES + m1.trailing_zeros() as usize);
         }
         base = block_end;
     }
 
-    // `chunks_exact` rather than `&hs[base..base + LANES]`, matching how `memrchr` below
-    // already walks its tail. Manual slicing makes each iteration re-prove that the slice
-    // is in bounds: the emitted word loop carried `lea 0x8(%r8); mov; or $0x7; cmp; jae`
-    // — five instructions and a panic edge per iteration, on top of three more recomputing
-    // `count - base` — around seven instructions of actual SWAR. The iterator carries that
-    // proof once, in its own construction.
-    let mut simd_chunks = hs[base..].chunks_exact(SIMD_LANES);
-    for chunk in simd_chunks.by_ref() {
-        if let Some(j) = first_byte_simd_32(chunk, needle) {
-            return Some(base + j);
+    if count - base >= MEMCHR_WIDE_LANES {
+        let v = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&hs[base..base + MEMCHR_WIDE_LANES]);
+        let eq = v.simd_eq(needle_wide);
+        if eq.any() {
+            return Some(base + eq.to_bitmask().trailing_zeros() as usize);
+        }
+        base += MEMCHR_WIDE_LANES;
+    }
+
+    if count - base >= SIMD_LANES {
+        let mask = byte_mask_simd_32(&hs[base..base + SIMD_LANES], needle);
+        if mask != 0 {
+            return Some(base + mask.trailing_zeros() as usize);
         }
         base += SIMD_LANES;
     }
 
-    let mut word_chunks = simd_chunks.remainder().chunks_exact(WORD);
-    for chunk in word_chunks.by_ref() {
-        // Resolve straight from the SWAR mask. This used to probe with `has_byte_u64` and
-        // then re-walk the eight bytes with `.position()` to find what the mask already
-        // encoded — an entire scalar loop to recompute a known answer, and it dominated
-        // short scans: `memchr` over 8 bytes measured 107.97 Ir against live glibc's 29.00.
-        if let Some(j) = first_byte_u64(u64_from_chunk(chunk), needle) {
-            return Some(base + j);
+    if base < count {
+        let tail_start = count - SIMD_LANES;
+        let tail_mask = byte_mask_simd_32(&hs[tail_start..], needle);
+        if tail_mask != 0 {
+            return Some(tail_start + tail_mask.trailing_zeros() as usize);
         }
-        base += WORD;
     }
 
-    // The scalar tail is `word_chunks.remainder()`, but `base` is what the callers of this
-    // arm index from, so keep resolving against it rather than re-slicing `hs`.
-    word_chunks
-        .remainder()
-        .iter()
-        .position(|&b| b == needle)
-        .map(|j| base + j)
+    None
 }
 
 /// Scans the first `n` bytes of `haystack` for the last occurrence of `needle`.
@@ -733,6 +690,15 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     // 32..=64 bytes: two overlapping 32-lane SIMD panels cover the entire slice
     // without constructing block iterators or walking tier ladders.
     if count <= 64 {
+        if count == MEMCHR_WIDE_LANES {
+            let mask = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(hs)
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some(63 - mask.leading_zeros() as usize);
+            }
+            return None;
+        }
         let tail = &hs[count - SIMD_LANES..];
         let tail_mask = byte_mask_simd_32(tail, needle);
         if tail_mask != 0 {
@@ -745,84 +711,85 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         return None;
     }
 
-    let mut simd_blocks = hs.rchunks_exact(SIMD_FOLD_BYTES);
+    let needle_wide = Simd::<u8, MEMCHR_WIDE_LANES>::splat(needle);
     let mut end = count;
 
-    for block in simd_blocks.by_ref() {
-        if has_byte_simd_folded(block, needle) {
-            let mut panel_end = end;
-            for chunk in block.rchunks_exact(SIMD_LANES) {
-                // Resolve from the lane mask, not a scalar re-scan. The old form
-                // asked `has_byte_simd_32` (a SIMD compare whose mask was then
-                // thrown away) and re-walked the same 32 bytes with `rposition`,
-                // so the cost grew with the needle's distance from the chunk end.
-                // Measured (callgrind two-point vs live glibc in the same process
-                // image, needle pinned in the last chunk so chunk count is fixed):
-                // glibc flat at 18 Ir for every position, fl 93 -> 186 Ir as the
-                // needle moved from offset 31 to 0 -- exactly +3 Ir per byte of
-                // backward scan, and 10.32x at the worst position. `leading_zeros`
-                // on the same mask is O(1) and position-independent.
-                let mask = byte_mask_simd_32(chunk, needle);
-                if mask != 0 {
-                    let j = 63 - mask.leading_zeros() as usize;
-                    return Some(panel_end - SIMD_LANES + j);
-                }
-                panel_end -= SIMD_LANES;
+    while end >= MEMCHR_FOLD_BYTES {
+        let block_start = end - MEMCHR_FOLD_BYTES;
+        let block = &hs[block_start..end];
+        let v0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..64]);
+        let v1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[64..128]);
+        let v2 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[128..192]);
+        let v3 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[192..256]);
+        let eq0 = v0.simd_eq(needle_wide);
+        let eq1 = v1.simd_eq(needle_wide);
+        let eq2 = v2.simd_eq(needle_wide);
+        let eq3 = v3.simd_eq(needle_wide);
+        if (eq0 | eq1 | eq2 | eq3).any() {
+            let m3 = eq3.to_bitmask();
+            if m3 != 0 {
+                return Some(block_start + 192 + (63 - m3.leading_zeros() as usize));
             }
+            let m2 = eq2.to_bitmask();
+            if m2 != 0 {
+                return Some(block_start + 128 + (63 - m2.leading_zeros() as usize));
+            }
+            let m1 = eq1.to_bitmask();
+            if m1 != 0 {
+                return Some(block_start + 64 + (63 - m1.leading_zeros() as usize));
+            }
+            let m0 = eq0.to_bitmask();
+            return Some(block_start + (63 - m0.leading_zeros() as usize));
         }
-        end -= SIMD_FOLD_BYTES;
+        end = block_start;
     }
 
-    let hs = simd_blocks.remainder();
-    let mut simd_chunks = hs.rchunks_exact(SIMD_LANES);
+    if end >= SIMD_FOLD_BYTES {
+        let block_start = end - SIMD_FOLD_BYTES;
+        let block = &hs[block_start..end];
+        let v0 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[..MEMCHR_WIDE_LANES]);
+        let v1 = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES..]);
+        let eq0 = v0.simd_eq(needle_wide);
+        let eq1 = v1.simd_eq(needle_wide);
+        if (eq0 | eq1).any() {
+            let m1 = eq1.to_bitmask();
+            if m1 != 0 {
+                return Some(block_start + MEMCHR_WIDE_LANES + (63 - m1.leading_zeros() as usize));
+            }
+            let m0 = eq0.to_bitmask();
+            return Some(block_start + (63 - m0.leading_zeros() as usize));
+        }
+        end = block_start;
+    }
 
-    for chunk in simd_chunks.by_ref() {
-        // Same O(1) mask resolve as the folded panel above.
-        let mask = byte_mask_simd_32(chunk, needle);
+    if end >= MEMCHR_WIDE_LANES {
+        let block_start = end - MEMCHR_WIDE_LANES;
+        let v = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&hs[block_start..end]);
+        let eq = v.simd_eq(needle_wide);
+        if eq.any() {
+            let m = eq.to_bitmask();
+            return Some(block_start + (63 - m.leading_zeros() as usize));
+        }
+        end = block_start;
+    }
+
+    if end >= SIMD_LANES {
+        let block_start = end - SIMD_LANES;
+        let mask = byte_mask_simd_32(&hs[block_start..end], needle);
         if mask != 0 {
-            let j = 63 - mask.leading_zeros() as usize;
-            return Some(end - SIMD_LANES + j);
+            return Some(block_start + (63 - mask.leading_zeros() as usize));
         }
-        end -= SIMD_LANES;
+        end = block_start;
     }
 
-    // 16-byte tier between the 32-lane panels and the 8-byte words.
-    //
-    // A 16..=31 byte reverse scan took two SWAR word steps where one SIMD compare answers
-    // it. `memcmp` has had this tier since it was written (`memcmp_exact_16_mask`); the
-    // reverse scanner did not. Resolves from the mask's HIGH set bit, matching the 32-lane
-    // panels directly above, because this is a last-occurrence search.
-    //
-    // The reslice lives INSIDE the branch on purpose: a first version put
-    // `&hs[..end.min(hs.len())]` on the shared path, which n=8 pays without ever reaching
-    // this tier.
-    let mut hs = simd_chunks.remainder();
-    if hs.len() >= MEMCMP_EXACT_16_BYTES {
-        let chunk = &hs[hs.len() - MEMCMP_EXACT_16_BYTES..];
-        let mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(chunk)
-            .simd_eq(Simd::splat(needle))
-            .to_bitmask();
+    if end > 0 {
+        let mask = byte_mask_simd_32(&hs[..SIMD_LANES], needle);
         if mask != 0 {
-            let j = 63 - mask.leading_zeros() as usize;
-            return Some(end - MEMCMP_EXACT_16_BYTES + j);
+            return Some(63 - mask.leading_zeros() as usize);
         }
-        end -= MEMCMP_EXACT_16_BYTES;
-        hs = &hs[..hs.len() - MEMCMP_EXACT_16_BYTES];
     }
 
-    let mut chunks = hs.rchunks_exact(WORD);
-
-    for chunk in chunks.by_ref() {
-        // Resolve from the mask, matching the SIMD panel above rather than re-walking the
-        // eight bytes with `.rposition()` to recompute what the probe already encoded.
-        if let Some(j) = last_byte_u64(u64_from_chunk(chunk), needle) {
-            return Some(end - WORD + j);
-        }
-        end -= WORD;
-    }
-
-    // `rchunks_exact` leaves its remainder at the front (indices `0..rem_len`).
-    chunks.remainder().iter().rposition(|&b| b == needle)
+    None
 }
 
 /// Searches `haystack` (first `n` bytes) for the byte sequence `needle` (of length `needle_len`).
@@ -944,11 +911,7 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
 /// away), ASCII lowercase when true.
 #[inline(always)]
 fn fold_case<const ICASE: bool>(b: u8) -> u8 {
-    if ICASE {
-        b.to_ascii_lowercase()
-    } else {
-        b
-    }
+    if ICASE { b.to_ascii_lowercase() } else { b }
 }
 
 fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
