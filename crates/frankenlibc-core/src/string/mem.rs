@@ -658,7 +658,13 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         // the general short tail so release code does not construct loop state
         // and then immediately consume its only iteration.
         if count == WORD {
-            return last_byte_u64(u64_from_chunk(hs), needle);
+            let mask = Simd::<u8, WORD>::from_slice(hs)
+                .simd_eq(Simd::splat(needle))
+                .to_bitmask();
+            if mask != 0 {
+                return Some(31 - (mask as u32).leading_zeros() as usize);
+            }
+            return None;
         }
         if count >= MEMCMP_EXACT_16_BYTES {
             let tail = &hs[count - MEMCMP_EXACT_16_BYTES..];
@@ -667,7 +673,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
                 .to_bitmask();
             if mask != 0 {
                 return Some(
-                    count - MEMCMP_EXACT_16_BYTES + (15 - (mask as u16).leading_zeros() as usize),
+                    count - MEMCMP_EXACT_16_BYTES + (31 - (mask as u32).leading_zeros() as usize),
                 );
             }
             let head_mask =
@@ -675,7 +681,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
                     .simd_eq(Simd::splat(needle))
                     .to_bitmask();
             if head_mask != 0 {
-                return Some(15 - (head_mask as u16).leading_zeros() as usize);
+                return Some(31 - (head_mask as u32).leading_zeros() as usize);
             }
             return None;
         }
