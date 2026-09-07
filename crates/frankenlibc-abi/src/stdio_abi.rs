@@ -10763,6 +10763,16 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
         return -1;
     }
 
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { strict_single_char_scan_format(format) }
+    {
+        // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
+        let destination = unsafe { args.next_arg::<*mut c_char>() };
+        let rc = unsafe { strict_scan_stream_single_char(stdin_ptr, destination) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
+        return rc;
+    }
+
     let (input_buf, scanf_seek_base) = read_stream_for_scanf(STDIN_SENTINEL, 8192);
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);

@@ -230,3 +230,71 @@ fn fscanf_exact_char_on_an_fl_owned_stream_matches_glibc_cursor_and_eof() {
         "FL-owned stream exact %c sequence diverged from glibc: got {got:?}, want {want:?}"
     );
 }
+
+#[test]
+fn scanf_and_its_isoc_aliases_exact_char_matches_glibc_on_stdin() {
+    type ScanfFn = unsafe extern "C" fn(*const c_char, ...) -> c_int;
+
+    let glibc_scanf: ScanfFn = unsafe {
+        host_fn(
+            c"__isoc23_scanf",
+            frankenlibc_abi::isoc_abi::__isoc23_scanf as *const (),
+        )
+    };
+
+    fn child_verdict(child: impl FnOnce() -> bool) -> bool {
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let ok = child();
+            unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+        }
+        let mut status: c_int = 0;
+        let w = unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert_eq!(w, pid, "waitpid failed");
+        assert!(libc::WIFEXITED(status), "child did not exit normally");
+        libc::WEXITSTATUS(status) == 0
+    }
+
+    let run_arm = |s_fn: ScanfFn| -> bool {
+        child_verdict(|| {
+            let mut pipe_fds = [0i32; 2];
+            if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+                return false;
+            }
+            let input = b"xy";
+            if unsafe { libc::write(pipe_fds[1], input.as_ptr().cast(), input.len()) }
+                != input.len() as isize
+            {
+                return false;
+            }
+            unsafe { libc::close(pipe_fds[1]) };
+            if unsafe { libc::dup2(pipe_fds[0], libc::STDIN_FILENO) } != libc::STDIN_FILENO {
+                return false;
+            }
+            unsafe { libc::close(pipe_fds[0]) };
+
+            let mut first = 0u8;
+            let mut second = 0u8;
+            let mut eof = 0u8;
+            let r1 = unsafe { s_fn(c"%c".as_ptr(), (&mut first as *mut u8).cast::<c_char>()) };
+            let r2 = unsafe { s_fn(c"%c".as_ptr(), (&mut second as *mut u8).cast::<c_char>()) };
+            let r3 = unsafe { s_fn(c"%c".as_ptr(), (&mut eof as *mut u8).cast::<c_char>()) };
+            r1 == 1 && first == b'x' && r2 == 1 && second == b'y' && r3 == libc::EOF
+        })
+    };
+
+    assert!(run_arm(glibc_scanf), "glibc scanf oracle failed");
+    assert!(
+        run_arm(frankenlibc_abi::stdio_abi::scanf as ScanfFn),
+        "fl scanf failed"
+    );
+    assert!(
+        run_arm(frankenlibc_abi::stdio_abi::__isoc99_scanf as ScanfFn),
+        "fl __isoc99_scanf failed"
+    );
+    assert!(
+        run_arm(frankenlibc_abi::isoc_abi::__isoc23_scanf as ScanfFn),
+        "fl __isoc23_scanf failed"
+    );
+}
