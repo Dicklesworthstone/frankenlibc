@@ -3,7 +3,7 @@
 //! These are safe Rust implementations operating on byte slices.
 //! They correspond to the `<string.h>` memory functions in POSIX/C.
 
-use std::simd::{Simd, cmp::SimdPartialEq};
+use std::simd::{cmp::SimdPartialEq, Simd};
 
 /// Copies `n` bytes from `src` to `dest`.
 ///
@@ -105,7 +105,8 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     }
 
     if count < SIMD_LANES {
-        let head_ord = memcmp_exact_16_words(&a[..MEMCMP_EXACT_16_BYTES], &b[..MEMCMP_EXACT_16_BYTES]);
+        let head_ord =
+            memcmp_exact_16_words(&a[..MEMCMP_EXACT_16_BYTES], &b[..MEMCMP_EXACT_16_BYTES]);
         if head_ord != core::cmp::Ordering::Equal {
             return head_ord;
         }
@@ -230,7 +231,9 @@ fn memcmp_exact_128_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(b.len(), SIMD_FOLD_BYTES);
 
     let diff_mask0 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[..MEMCMP_WIDE_LANES])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[..MEMCMP_WIDE_LANES]))
+        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
+            &b[..MEMCMP_WIDE_LANES],
+        ))
         .to_bitmask();
     if diff_mask0 != 0 {
         let first = diff_mask0.trailing_zeros() as usize;
@@ -242,7 +245,9 @@ fn memcmp_exact_128_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     }
 
     let diff_mask1 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[MEMCMP_WIDE_LANES..])
-        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[MEMCMP_WIDE_LANES..]))
+        .simd_ne(Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
+            &b[MEMCMP_WIDE_LANES..],
+        ))
         .to_bitmask();
     if diff_mask1 != 0 {
         let first = MEMCMP_WIDE_LANES + diff_mask1.trailing_zeros() as usize;
@@ -279,7 +284,6 @@ fn first_diff_simd_32(a: &[u8], b: &[u8]) -> Option<usize> {
         Some(mask.trailing_zeros() as usize)
     }
 }
-
 
 #[inline(always)]
 #[allow(dead_code)]
@@ -480,7 +484,6 @@ fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
         Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_FOLD_BYTES]).simd_eq(needle);
     (p0 | p1 | p2 | p3).any()
 }
-
 
 #[inline]
 fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
@@ -941,7 +944,11 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
 /// away), ASCII lowercase when true.
 #[inline(always)]
 fn fold_case<const ICASE: bool>(b: u8) -> u8 {
-    if ICASE { b.to_ascii_lowercase() } else { b }
+    if ICASE {
+        b.to_ascii_lowercase()
+    } else {
+        b
+    }
 }
 
 fn two_way_search(hay: &[u8], ndl: &[u8]) -> Option<usize> {
@@ -1423,6 +1430,55 @@ mod tests {
                 "difference at index {index}"
             );
             b[index] = 0x41;
+        }
+    }
+
+    #[test]
+    fn test_memcmp_exact_sizes_and_sub_panel_sweep() {
+        for len in 0..=300usize {
+            let a = vec![0x33u8; len];
+            let b = a.clone();
+            assert_eq!(
+                memcmp(&a, &b, len),
+                core::cmp::Ordering::Equal,
+                "equal at len={len}"
+            );
+
+            for pos in 0..len {
+                for &(x, y) in &[(b'a', b'b'), (b'b', b'a'), (0u8, 255u8), (255u8, 0u8)] {
+                    let mut p = a.clone();
+                    let mut q = a.clone();
+                    p[pos] = x;
+                    q[pos] = y;
+                    let expected = scalar_memcmp(&p, &q, len);
+                    let actual = memcmp(&p, &q, len);
+                    assert_eq!(
+                        actual, expected,
+                        "mismatch at len={len}, pos={pos}, ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_memchr_exact_sizes_sweep() {
+        for len in 0..=300usize {
+            let mut buf = vec![b'a'; len];
+            assert_eq!(memchr(&buf, b'z', len), None, "absent at len={len}");
+
+            for pos in 0..len {
+                buf[pos] = b'z';
+                if pos < len.saturating_sub(1) {
+                    buf[len - 1] = b'z';
+                }
+                assert_eq!(
+                    memchr(&buf, b'z', len),
+                    Some(pos),
+                    "match at len={len}, pos={pos}"
+                );
+                buf.fill(b'a');
+            }
         }
     }
 
