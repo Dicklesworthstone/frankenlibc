@@ -3849,53 +3849,64 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
             // flag masks are OR-combined so the all-equal common case takes a SINGLE branch
             // and advances 128B. Byte-identical: the first set bit across the four masks (in
             // order) is the exact first differing-or-s1-NUL byte the 32B/SWAR tail resolves to.
-            if i + 128 <= bound
-                && (p1 as usize + i) & 0xFFF <= 0x1000 - 128
-                && (p2 as usize + i) & 0xFFF <= 0x1000 - 128
-            {
+            let o1 = (p1 as usize + i) & 0xFFF;
+            let o2 = (p2 as usize + i) & 0xFFF;
+            let safe_bytes = (0x1000 - o1).min(0x1000 - o2);
+            let limit = i + safe_bytes.min(bound.saturating_sub(i));
+
+            while i + 128 <= limit {
                 use core::simd::Simd;
                 use core::simd::cmp::SimdPartialEq;
                 let zero = Simd::<u8, 32>::splat(0);
-                // SAFETY: the 128B window [i, i+128) stays within both mapped pages and bound.
-                let cmp = |off: usize| -> u64 {
-                    let a = Simd::<u8, 32>::from_slice(unsafe {
-                        core::slice::from_raw_parts(p1.add(i + off), 32)
-                    });
-                    let b = Simd::<u8, 32>::from_slice(unsafe {
-                        core::slice::from_raw_parts(p2.add(i + off), 32)
-                    });
-                    (a.simd_ne(b) | a.simd_eq(zero)).to_bitmask()
-                };
-                // EARLY-OUT PER PANEL. OR-combining all four masks gives the
-                // all-equal case a single branch, but it also prices four panels
-                // when the answer is in the first one — and the page guard admits
-                // this window for a 5-byte string, so EVERY compare under 128 bytes
-                // paid all four. Measured (callgrind two-point vs live glibc in the
-                // same process image): a flat ~99 Ir from L=4 to L=32 against
-                // glibc's 20, a fixed ~79-instruction floor at 4.95x. Testing each
-                // mask as it is produced lets a short or early-differing compare
-                // leave after one panel; the all-equal case still executes the same
-                // four compares, trading its single branch for four predictable
-                // ones. NOTE: this is an INSTRUCTION-COUNT trade — the OR form also
-                // lets the four loads issue without an intervening branch, which a
-                // cycle-accurate measurement may value differently for long strings.
-                let f0 = cmp(0);
-                if f0 != 0 {
-                    return (i + f0.trailing_zeros() as usize, false);
-                }
-                let f1 = cmp(32);
-                if f1 != 0 {
-                    return (i + 32 + f1.trailing_zeros() as usize, false);
-                }
-                let f2 = cmp(64);
-                let f3 = cmp(96);
-                if f2 | f3 == 0 {
+                let a0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i), 32)
+                });
+                let b0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i), 32)
+                });
+                let a1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + 32), 32)
+                });
+                let b1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + 32), 32)
+                });
+                let a2 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + 64), 32)
+                });
+                let b2 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + 64), 32)
+                });
+                let a3 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + 96), 32)
+                });
+                let b3 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + 96), 32)
+                });
+
+                let diff0 = a0.simd_ne(b0) | a0.simd_eq(zero);
+                let diff1 = a1.simd_ne(b1) | a1.simd_eq(zero);
+                let diff2 = a2.simd_ne(b2) | a2.simd_eq(zero);
+                let diff3 = a3.simd_ne(b3) | a3.simd_eq(zero);
+
+                let diff_all = (diff0 | diff1) | (diff2 | diff3);
+                if !diff_all.any() {
                     i += 128;
                     continue;
                 }
+
+                let f0 = diff0.to_bitmask();
+                if f0 != 0 {
+                    return (i + f0.trailing_zeros() as usize, false);
+                }
+                let f1 = diff1.to_bitmask();
+                if f1 != 0 {
+                    return (i + 32 + f1.trailing_zeros() as usize, false);
+                }
+                let f2 = diff2.to_bitmask();
                 if f2 != 0 {
                     return (i + 64 + f2.trailing_zeros() as usize, false);
                 }
+                let f3 = diff3.to_bitmask();
                 return (i + 96 + f3.trailing_zeros() as usize, false);
             }
             // Wide 32-byte portable-SIMD fast path: skip whole equal, NUL-free panels
