@@ -18,6 +18,13 @@ use frankenlibc_abi::malloc_abi::{free, malloc};
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 fn compile_self_contained_test_dso() -> PathBuf {
+    compile_native_test_dso(
+        "__attribute__((visibility(\"default\"))) int franken_native_answer(void) { return 4242; }\n\
+         __attribute__((visibility(\"default\"))) int franken_native_increment(void) { static int value; return ++value; }\n",
+    )
+}
+
+fn compile_native_test_dso(code: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -29,12 +36,7 @@ fn compile_self_contained_test_dso() -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let source = dir.join("native_answer.c");
     let output = dir.join("libfranken_native_answer.so");
-    std::fs::write(
-        &source,
-        "__attribute__((visibility(\"default\"))) int franken_native_answer(void) { return 4242; }\n\
-         __attribute__((visibility(\"default\"))) int franken_native_increment(void) { static int value; return ++value; }\n",
-    )
-    .unwrap();
+    std::fs::write(&source, code).unwrap();
 
     let cc_output = Command::new("cc")
         .args([
@@ -64,6 +66,188 @@ struct DlIterateProbe {
     count: usize,
     saw_nonnull_info: bool,
     saw_nonzero_size: bool,
+}
+
+fn open_native_fixture(path: &std::path::Path, flags: c_int) -> *mut c_void {
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: the fixture path remains a valid C string for this call.
+    let handle = unsafe { dlopen(name.as_ptr(), flags) };
+    assert!(
+        native_dso_handle_for_tests(handle),
+        "native open failed: {path:?}"
+    );
+    handle
+}
+
+#[test]
+fn native_dso_relocation_chain_retains_closed_providers() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let provider = compile_native_test_dso("int chain_leaf(void) { return 40; }");
+    let middle = compile_native_test_dso(
+        "extern int chain_leaf(void); int chain_middle(void) { return chain_leaf() + 1; }",
+    );
+    let consumer = compile_native_test_dso(
+        "extern int chain_middle(void); int chain_result(void) { return chain_middle() + 1; }",
+    );
+    let provider = open_native_fixture(&provider, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let middle = open_native_fixture(&middle, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let consumer = open_native_fixture(&consumer, libc::RTLD_NOW | libc::RTLD_LOCAL);
+    // SAFETY: compiled fixtures declare the exact function ABI below. The
+    // consumer's open reference must retain its providers throughout the call.
+    unsafe {
+        let symbol = dlsym(consumer, c"chain_result".as_ptr());
+        assert!(!symbol.is_null());
+        let result: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(result(), 42);
+        assert_eq!(dlclose(provider), 0);
+        assert_eq!(dlclose(middle), 0);
+        assert!(native_dso_handle_for_tests(provider));
+        assert!(native_dso_handle_for_tests(middle));
+        assert_eq!(result(), 42);
+        assert_eq!(dlclose(consumer), 0);
+        assert!(!native_dso_handle_for_tests(consumer));
+        assert!(!native_dso_handle_for_tests(middle));
+        assert!(!native_dso_handle_for_tests(provider));
+    }
+}
+
+#[test]
+fn native_dso_local_provider_requires_global_promotion() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let provider = compile_native_test_dso("int visibility_value(void) { return 73; }");
+    let consumer = compile_native_test_dso(
+        "extern int visibility_value(void); int visibility_result(void) { return visibility_value(); }",
+    );
+    let handle = open_native_fixture(&provider, libc::RTLD_NOW | libc::RTLD_LOCAL);
+    let consumer_name = CString::new(consumer.as_os_str().as_bytes()).unwrap();
+    // SAFETY: paths/symbol names are live C strings and the function is invoked
+    // while its consumer handle is open.
+    unsafe {
+        assert!(dlopen(consumer_name.as_ptr(), libc::RTLD_NOW).is_null());
+        assert!(
+            !dlerror().is_null(),
+            "LOCAL must not satisfy an unrelated load"
+        );
+        let promoted = open_native_fixture(
+            &provider,
+            libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_GLOBAL,
+        );
+        assert_eq!(promoted, handle);
+        let consumer = open_native_fixture(&consumer, libc::RTLD_NOW);
+        let symbol = dlsym(consumer, c"visibility_result".as_ptr());
+        assert!(!symbol.is_null());
+        let result: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(result(), 73);
+        assert_eq!(dlclose(handle), 0);
+        assert_eq!(dlclose(promoted), 0);
+        assert!(native_dso_handle_for_tests(handle));
+        assert_eq!(result(), 73);
+        assert_eq!(dlclose(consumer), 0);
+        assert!(!native_dso_handle_for_tests(handle));
+    }
+}
+
+#[test]
+fn native_dso_failed_relocation_does_not_pin_provider() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let provider = compile_native_test_dso("int available_value(void) { return 12; }");
+    let consumer = compile_native_test_dso(
+        "extern int available_value(void); extern int absent_value(void); int broken_result(void) { return available_value() + absent_value(); }",
+    );
+    let provider = open_native_fixture(&provider, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let name = CString::new(consumer.as_os_str().as_bytes()).unwrap();
+    // SAFETY: the failing object is never executed; this checks load rollback.
+    unsafe {
+        assert!(dlopen(name.as_ptr(), libc::RTLD_NOW).is_null());
+        assert!(!dlerror().is_null());
+        assert_eq!(dlclose(provider), 0);
+    }
+    assert!(!native_dso_handle_for_tests(provider));
+}
+
+#[test]
+fn native_dso_shared_provider_waits_for_last_consumer() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let provider = compile_native_test_dso("int shared_value(void) { return 19; }");
+    let code = "extern int shared_value(void); int shared_result(void) { return shared_value(); }";
+    let first = compile_native_test_dso(code);
+    let second = compile_native_test_dso(code);
+    let provider = open_native_fixture(&provider, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let first = open_native_fixture(&first, libc::RTLD_NOW);
+    let second = open_native_fixture(&second, libc::RTLD_NOW);
+    // SAFETY: the remaining consumer owns the compiled callable function and
+    // must retain the shared provider after the other consumer is unloaded.
+    unsafe {
+        assert_eq!(dlclose(provider), 0);
+        assert_eq!(dlclose(first), 0);
+        assert!(!native_dso_handle_for_tests(first));
+        assert!(native_dso_handle_for_tests(provider));
+        let symbol = dlsym(second, c"shared_result".as_ptr());
+        assert!(!symbol.is_null());
+        let result: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(result(), 19);
+        assert_eq!(dlclose(second), 0);
+        assert!(!native_dso_handle_for_tests(provider));
+    }
+}
+
+#[test]
+fn native_dso_nodelete_consumer_retains_provider() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let provider =
+        compile_native_test_dso("int retained_value(void) { static int value; return ++value; }");
+    let consumer = compile_native_test_dso(
+        "extern int retained_value(void); int retained_result(void) { return retained_value(); }",
+    );
+    let provider = open_native_fixture(&provider, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let handle = open_native_fixture(&consumer, libc::RTLD_NOW | libc::RTLD_NODELETE);
+    // SAFETY: function calls occur with an open consumer reference. NODELETE
+    // intentionally retains both the consumer image and its provider state.
+    unsafe {
+        let symbol = dlsym(handle, c"retained_result".as_ptr());
+        assert!(!symbol.is_null());
+        let result: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(result(), 1);
+        assert_eq!(dlclose(provider), 0);
+        assert_eq!(dlclose(handle), 0);
+        assert!(native_dso_handle_for_tests(provider));
+        let reopened = open_native_fixture(&consumer, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(reopened, handle);
+        assert_eq!(result(), 2);
+        assert_eq!(dlclose(reopened), 0);
+        assert!(native_dso_handle_for_tests(provider));
+    }
+}
+
+#[test]
+fn native_dso_unload_preserves_global_symbol_precedence() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let decoy = compile_native_test_dso("int unrelated_value(void) { return 0; }");
+    let first = compile_native_test_dso("int precedence_value(void) { return 11; }");
+    let second = compile_native_test_dso("int precedence_value(void) { return 22; }");
+    let consumer = compile_native_test_dso(
+        "extern int precedence_value(void); int precedence_result(void) { return precedence_value(); }",
+    );
+    let decoy = open_native_fixture(&decoy, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let first = open_native_fixture(&first, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let second = open_native_fixture(&second, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    // SAFETY: every close consumes an open reference and the resolved function
+    // is called before its consumer is closed.
+    unsafe {
+        assert_eq!(dlclose(decoy), 0);
+        let consumer = open_native_fixture(&consumer, libc::RTLD_NOW);
+        let symbol = dlsym(consumer, c"precedence_result".as_ptr());
+        assert!(!symbol.is_null());
+        let result: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(result(), 11);
+        assert_eq!(dlclose(first), 0);
+        assert_eq!(dlclose(second), 0);
+        assert!(!native_dso_handle_for_tests(second));
+        assert!(native_dso_handle_for_tests(first));
+        assert_eq!(result(), 11);
+        assert_eq!(dlclose(consumer), 0);
+        assert!(!native_dso_handle_for_tests(first));
+    }
 }
 
 unsafe extern "C" fn record_first_phdr(

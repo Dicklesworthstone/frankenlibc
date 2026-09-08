@@ -274,6 +274,10 @@ struct NativeDso {
     _file: std::fs::File,
     references: usize,
     nodelete: bool,
+    global: bool,
+    // Providers selected by successful external relocations. These mappings
+    // must outlive this consumer even after their explicit opens are closed.
+    dependencies: Vec<usize>,
     base: usize,
     map_len: usize,
     object: LoadedObject,
@@ -337,6 +341,7 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     {
         dso.references = dso.references.checked_add(1)?;
         dso.nodelete |= (flags & dlfcn_core::RTLD_NODELETE) != 0;
+        dso.global |= (flags & dlfcn_core::RTLD_GLOBAL) != 0;
         return Some(native_dso_handle(dso.id));
     }
     if (flags & dlfcn_core::RTLD_NOLOAD) != 0 {
@@ -369,6 +374,7 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     {
         dso.references = dso.references.checked_add(1)?;
         dso.nodelete |= (flags & dlfcn_core::RTLD_NODELETE) != 0;
+        dso.global |= (flags & dlfcn_core::RTLD_GLOBAL) != 0;
         return Some(native_dso_handle(dso.id));
     }
 
@@ -397,6 +403,7 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
         let object = loader.parse(&bytes).ok()?;
         let resolver = NativeDsoResolver {
             dsos: registry.as_slice(),
+            providers: std::cell::RefCell::new(Vec::new()),
         };
         let relocation_report = loader.apply_relocations_with_policy(
             &object,
@@ -407,6 +414,9 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
         if !relocation_report_succeeded(&relocation_report.events) {
             return None;
         }
+        // Publish these edges only after the entire load succeeds. A failed
+        // relocation or protection change must not pin any provider.
+        let dependencies = resolver.providers.into_inner();
 
         for segment in &image.segments {
             let offset = usize::try_from(segment.map_addr).ok()?;
@@ -444,6 +454,8 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
             _file: file,
             references: 1,
             nodelete: (flags & dlfcn_core::RTLD_NODELETE) != 0,
+            global: (flags & dlfcn_core::RTLD_GLOBAL) != 0,
+            dependencies,
             base: base as usize,
             map_len,
             object,
@@ -480,6 +492,7 @@ fn relocation_report_succeeded(events: &[frankenlibc_core::elf::RelocationTraceE
 
 struct NativeDsoResolver<'a> {
     dsos: &'a [NativeDso],
+    providers: std::cell::RefCell<Vec<usize>>,
 }
 
 impl SymbolLookup for NativeDsoResolver<'_> {
@@ -489,7 +502,14 @@ impl SymbolLookup for NativeDsoResolver<'_> {
 
     fn lookup_versioned(&self, name: &str, version: Option<&str>) -> Option<u64> {
         for dso in self.dsos {
+            if !dso.global {
+                continue;
+            }
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
+                let mut providers = self.providers.borrow_mut();
+                if !providers.contains(&dso.id) {
+                    providers.push(dso.id);
+                }
                 return Some(dso.object.base + symbol.st_value);
             }
         }
@@ -530,19 +550,37 @@ fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
     if dso.references == 0 {
         return Some(-1);
     }
-    if dso.references > 1 || dso.nodelete {
-        dso.references -= 1;
-        return Some(0);
-    }
-    // SAFETY: this is the final open reference to this mapping. The registry
-    // lock excludes concurrent open/close until unmapping and removal finish.
-    match unsafe { raw_syscall::sys_munmap(dso.base as *mut u8, dso.map_len) } {
-        Ok(()) => {
-            dsos.swap_remove(index);
-            Some(0)
+    dso.references -= 1;
+    let mut pending = vec![id];
+    while let Some(candidate) = pending.pop() {
+        let Some(index) = dsos.iter().position(|dso| dso.id == candidate) else {
+            continue;
+        };
+        let dso = &dsos[index];
+        if dso.references != 0
+            || dso.nodelete
+            || dsos
+                .iter()
+                .any(|consumer| consumer.dependencies.contains(&candidate))
+        {
+            continue;
         }
-        Err(_) => Some(-1),
+        // SAFETY: no open or resident consumer references this mapping. The
+        // registry lock excludes binding/publication and close until removal.
+        if unsafe { raw_syscall::sys_munmap(dso.base as *mut u8, dso.map_len) }.is_err() {
+            if candidate == id {
+                dsos[index].references += 1;
+                return Some(-1);
+            }
+            // A dependency that cannot be unmapped remains resident; do not
+            // release its own dependencies or invalidate its retained image.
+            continue;
+        }
+        // Keep global lookup order stable when retiring an unrelated object.
+        let retired = dsos.remove(index);
+        pending.extend(retired.dependencies);
     }
+    Some(0)
 }
 
 // ---------------------------------------------------------------------------
