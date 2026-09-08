@@ -163,7 +163,24 @@ fn gate_script_passes_and_emits_artifacts() {
         );
     }
 
+    let out_dir = std::env::temp_dir().join(format!(
+        "frankenlibc-healing-gate-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    // The enclosing gate builds these artifacts. Execute the actual verification
+    // here without recursively starting Cargo or another remote worker.
     let output = Command::new(&script)
+        .arg("--verify-only")
+        .env("FRANKENLIBC_HEALING_OUT_DIR", &out_dir)
+        .env(
+            "FRANKENLIBC_HARNESS_BIN",
+            std::env::var_os("FRANKENLIBC_HARNESS_BIN")
+                .unwrap_or_else(|| env!("CARGO_BIN_EXE_harness").into()),
+        )
         .current_dir(&root)
         .output()
         .expect("failed to run healing oracle gate");
@@ -174,8 +191,8 @@ fn gate_script_passes_and_emits_artifacts() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let report_path = root.join("target/conformance/healing_oracle_gate.report.json");
-    let log_path = root.join("target/conformance/healing_oracle_gate.log.jsonl");
+    let report_path = out_dir.join("healing_oracle_gate.report.json");
+    let log_path = out_dir.join("healing_oracle_gate.log.jsonl");
     assert!(report_path.exists(), "missing {}", report_path.display());
     assert!(log_path.exists(), "missing {}", log_path.display());
 

@@ -7,14 +7,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 # Compilation stays on the worker. Retrieve the actual report AND subprocess
 # evidence, including failure artifacts; never substitute a synthetic log.
-if [[ "${1:-}" != "--worker" ]]; then
+if [[ "${1:-}" != "--worker" && "${1:-}" != "--verify-only" ]]; then
   command -v rch >/dev/null || { echo "FAIL: rch is required" >&2; exit 1; }
   # This job includes cold compilation plus tests. RCH's generic five-minute
   # job budget killed compilation in observed runs; fault timeouts stay at 10s.
   export RCH_BUILD_TIMEOUT_SEC="${RCH_BUILD_TIMEOUT_SEC:-1800}"
   exec rch exec --job --result-dir target/conformance -- bash scripts/check_healing_oracle.sh --worker
 fi
-OUT_DIR="${ROOT}/target/conformance"
+OUT_DIR="${FRANKENLIBC_HEALING_OUT_DIR:-${ROOT}/target/conformance}"
 BASELINE="${ROOT}/tests/conformance/healing_oracle_report.v1.json"
 CURRENT="${OUT_DIR}/healing_oracle.current.v1.json"
 REPORT="${OUT_DIR}/healing_oracle_gate.report.json"
@@ -24,19 +24,22 @@ SOURCE_MANIFEST="${OUT_DIR}/healing_build_sources.sha256"
 
 mkdir -p "${OUT_DIR}"
 
-# Bind this invocation to actual source bytes, including dirty working-tree
+if [[ "${1:-}" != "--verify-only" ]]; then
+# Bind a build invocation to actual source bytes, including dirty working-tree
 # changes. A revision alone would incorrectly identify an uncommitted fix.
 {
   sha256sum Cargo.toml Cargo.lock rust-toolchain.toml scripts/check_healing_oracle.sh tests/integration/fixture_malloc.c
   rg --files -0 crates .cargo | sort -z | xargs -0 sha256sum
 } > "${SOURCE_MANIFEST}"
 git rev-parse HEAD > "${OUT_DIR}/healing_source_revision.txt"
+fi
 
 if [[ ! -f "${BASELINE}" ]]; then
   echo "FAIL: baseline report missing at ${BASELINE}" >&2
   exit 1
 fi
 
+if [[ "${1:-}" != "--verify-only" ]]; then
 BUILD_DIR="${CARGO_TARGET_DIR:-${ROOT}/target}"
 # Bound compiler memory on shared workers; this does not change test coverage.
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
@@ -45,14 +48,25 @@ cargo build -p frankenlibc-harness --bin harness --target-dir "${BUILD_DIR}"
 cc -O0 -fno-builtin -Wall -Wextra tests/integration/fixture_malloc.c -ldl -o "${OUT_DIR}/healing_probe"
 export FRANKENLIBC_HEALING_LIBRARY="${BUILD_DIR}/release/libfrankenlibc_abi.so"
 export FRANKENLIBC_HEALING_PROBE="${OUT_DIR}/healing_probe"
+export FRANKENLIBC_HARNESS_BIN="${BUILD_DIR}/debug/harness"
 cargo test -p frankenlibc-harness --lib healing_oracle --target-dir "${BUILD_DIR}" \
   2>&1 | tee "${OUT_DIR}/healing_unit_tests.log"
 rg -q 'test result: ok\. [1-9][0-9]* passed;' "${OUT_DIR}/healing_unit_tests.log"
 cargo test -p frankenlibc-harness --test verify_membrane_cli_contract_test --target-dir "${BUILD_DIR}" \
   2>&1 | tee "${OUT_DIR}/healing_cli_tests.log"
 rg -q 'test result: ok\. [1-9][0-9]* passed;' "${OUT_DIR}/healing_cli_tests.log"
+cargo test -p frankenlibc-harness --test healing_oracle_test --target-dir "${BUILD_DIR}" \
+  2>&1 | tee "${OUT_DIR}/healing_integration_tests.log"
+rg -q 'test result: ok\. [1-9][0-9]* passed;' "${OUT_DIR}/healing_integration_tests.log"
+fi
 
-RUN_CMD=("${BUILD_DIR}/debug/harness" verify-membrane
+# Verification-only still executes every C case and checks every observation.
+# It requires explicit artifacts and makes no claim that it built them.
+: "${FRANKENLIBC_HARNESS_BIN:?explicit harness binary required}"
+: "${FRANKENLIBC_HEALING_LIBRARY:?explicit release ABI library required}"
+: "${FRANKENLIBC_HEALING_PROBE:?explicit compiled C probe required}"
+
+RUN_CMD=("${FRANKENLIBC_HARNESS_BIN}" verify-membrane
   --library "${FRANKENLIBC_HEALING_LIBRARY}"
   --probe "${FRANKENLIBC_HEALING_PROBE}"
   --mode both
@@ -61,7 +75,9 @@ RUN_CMD=("${BUILD_DIR}/debug/harness" verify-membrane
 )
 
 "${RUN_CMD[@]}" --output "${CURRENT}" --log "${LOG}"
-sha256sum --check --quiet "${SOURCE_MANIFEST}"
+if [[ "${1:-}" != "--verify-only" ]]; then
+  sha256sum --check --quiet "${SOURCE_MANIFEST}"
+fi
 
 if [[ ! -s "${CURRENT}" ]]; then
   echo "FAIL: generated current report missing or empty at ${CURRENT}" >&2
