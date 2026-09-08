@@ -3601,6 +3601,9 @@ fn forge_mode_blocks_artifact_when_required_inspection_tool_is_missing() {
                 .as_str()
                 .expect("tool evidence path should be present"),
         );
+        // The report uses workspace-relative paths when RCH places TMPDIR
+        // inside the checkout. libtest runs from the crate directory instead.
+        let evidence_path = root.join(evidence_path);
         let evidence = std::fs::read_to_string(evidence_path).expect("tool evidence should exist");
         assert!(
             evidence.contains(missing_tool),

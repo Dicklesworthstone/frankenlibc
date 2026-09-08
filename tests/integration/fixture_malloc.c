@@ -202,7 +202,151 @@ static int test_realloc_null(void) {
     return 0;
 }
 
+/* These are deployed-ABI observations, not standalone proof. The controller
+ * must reject host-libc mappings before claiming isolation. Observer I/O and
+ * JSON serialization may use the host; every workload operation is resolved
+ * below and its address is included for independent mapping verification. */
+static void ws8_json_string(const char *s) {
+    putchar('"');
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (*p == '"' || *p == '\\') printf("\\%c", *p);
+        else if (*p < 32 || *p >= 127) printf("\\u%04x", *p);
+        else putchar(*p);
+    }
+    putchar('"');
+}
+
+static int ws8_probe(const char *id, const char *library) {
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (!mode || (strcmp(mode, "strict") && strcmp(mode, "hardened"))) return 2;
+    int kind = !strcmp(id, "string_pipeline") ? 1 :
+               !strcmp(id, "memory_lifecycle") ? 2 :
+               !strcmp(id, "format_stdio") ? 3 :
+               !strcmp(id, "edge_boundary") ? 4 :
+               !strcmp(id, "error_handling") ? 5 : 0;
+    if (!kind || (kind == 5 && strcmp(mode, "hardened"))) return 2;
+    const char *symbols[] = {"malloc", "free", "calloc", "realloc", "strlen",
+        "memcpy", "memmove", "strcmp", "snprintf",
+        "__frankenlibc_healing_action_count", "__frankenlibc_is_runtime_ready"};
+    void *addresses[sizeof(symbols) / sizeof(symbols[0])];
+    for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
+        addresses[i] = probe_symbol(symbols[i], library);
+        if (!addresses[i]) return 2;
+    }
+    void *(*allocate)(size_t) = addresses[0];
+    void (*release)(void *) = addresses[1];
+    void *(*zero_allocate)(size_t, size_t) = addresses[2];
+    void *(*resize)(void *, size_t) = addresses[3];
+    size_t (*length)(const char *) = addresses[4];
+    void *(*copy)(void *, const void *, size_t) = addresses[5];
+    void *(*move)(void *, const void *, size_t) = addresses[6];
+    int (*compare)(const char *, const char *) = addresses[7];
+    int (*format)(char *, size_t, const char *, ...) = addresses[8];
+    uint64_t (*counter)(unsigned) = addresses[9];
+    int (*ready)(void) = addresses[10];
+    const char *names[16];
+    int passed[16], count = 0;
+#define WS8_CHECK(name, outcome) do { names[count] = (name); passed[count++] = !!(outcome); } while (0)
+    WS8_CHECK("runtime_ready", ready());
+    if (kind == 1) {
+        char buffer[32] = {0};
+        void *copied = copy(buffer, "abcdef", 7);
+        WS8_CHECK("copy_exact", copied == buffer && compare(buffer, "abcdef") == 0);
+        WS8_CHECK("length_exact", length(buffer) == 6);
+        void *moved = move(buffer + 1, buffer, 7);
+        WS8_CHECK("overlap_move", moved == buffer + 1 && compare(buffer, "aabcdef") == 0);
+    } else if (kind == 2) {
+        unsigned char *p = zero_allocate(16, 1);
+        int zeroed = p != NULL;
+        if (p) for (size_t i = 0; i < 16; i++) if (p[i]) zeroed = 0;
+        WS8_CHECK("calloc_zeroed", zeroed);
+        if (p) for (size_t i = 0; i < 16; i++) p[i] = (unsigned char)(i + 1);
+        unsigned char *q = p ? resize(p, 64) : NULL;
+        int preserved = q != NULL;
+        if (q) for (size_t i = 0; i < 16; i++) if (q[i] != i + 1) preserved = 0;
+        WS8_CHECK("realloc_grow_preserves", preserved);
+        if (q) p = q;
+        q = p ? resize(p, 8) : NULL;
+        preserved = q != NULL;
+        if (q) for (size_t i = 0; i < 8; i++) if (q[i] != i + 1) preserved = 0;
+        WS8_CHECK("realloc_shrink_preserves", preserved);
+        release(q ? q : p);
+    } else if (kind == 3) {
+        char full[32], small[5];
+        int n = format(full, sizeof(full), "%s:%d", "ws8", 42);
+        WS8_CHECK("format_exact", n == 6 && compare(full, "ws8:42") == 0);
+        n = format(small, sizeof(small), "%s:%d", "ws8", 42);
+        WS8_CHECK("format_truncation", n == 6 && small[4] == 0 && compare(small, "ws8:") == 0);
+    } else if (kind == 4) {
+        char byte = 'Q';
+        int n = format(&byte, 0, "%s", "abc");
+        WS8_CHECK("format_zero_capacity", n == 3 && byte == 'Q');
+        n = format(&byte, 1, "%s", "");
+        WS8_CHECK("empty_format", n == 0 && byte == 0);
+        WS8_CHECK("empty_string", length("") == 0 && compare("", "") == 0);
+        void *p = allocate(0);
+        /* NULL is a conforming malloc(0) result. The observable obligation is
+         * safe release; subsequent real allocation checks allocator liveness. */
+        release(p);
+        unsigned char *q = allocate(1);
+        if (q) q[0] = 73;
+        WS8_CHECK("zero_allocation_then_live_allocation", q && q[0] == 73);
+        release(q);
+    } else {
+        uint64_t before = counter(6);
+        size_t n = length(NULL);
+        uint64_t after = counter(6);
+        WS8_CHECK("null_strlen_healed", n == 0 && after > before);
+        unsigned char foreign[8] = {17, 18, 19, 20, 21, 22, 23, 24};
+        before = counter(4);
+        release(foreign);
+        after = counter(4);
+        int intact = 1;
+        for (size_t i = 0; i < 8; i++) if (foreign[i] != 17 + i) intact = 0;
+        WS8_CHECK("foreign_free_healed", after > before && intact);
+        void *p = allocate(32);
+        WS8_CHECK("double_free_allocation", p != NULL);
+        if (p) {
+            release(p);
+            before = counter(3);
+            release(p);
+            after = counter(3);
+            WS8_CHECK("double_free_healed", after > before);
+        } else WS8_CHECK("double_free_healed", 0);
+    }
+    /* Read maps in this process after the workload, never via a shell child.
+     * Reject truncation rather than accidentally hiding a late host mapping. */
+    char maps[131072];
+    FILE *file = fopen("/proc/self/maps", "r");
+    size_t used = file ? fread(maps, 1, sizeof(maps) - 1, file) : 0;
+    int maps_ok = file && used > 0 && !ferror(file) && feof(file);
+    if (file && fclose(file) != 0) maps_ok = 0;
+    maps[used] = 0;
+    WS8_CHECK("child_maps_complete", maps_ok);
+    int ok = 1;
+    for (int i = 0; i < count; i++) if (!passed[i]) ok = 0;
+    printf("{\"case_id\":"); ws8_json_string(id);
+    printf(",\"mode\":"); ws8_json_string(mode);
+    printf(",\"checks\":[");
+    for (int i = 0; i < count; i++) {
+        printf("%s{\"name\":", i ? "," : ""); ws8_json_string(names[i]);
+        printf(",\"passed\":%s}", passed[i] ? "true" : "false");
+    }
+    printf("],\"providers\":[");
+    for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
+        printf("%s{\"symbol\":", i ? "," : ""); ws8_json_string(symbols[i]);
+        printf(",\"address\":\"%p\"}", addresses[i]);
+    }
+    printf("],\"maps\":"); ws8_json_string(maps);
+    printf(",\"status\":\"%s\",\"executed\":%d}\n", ok ? "pass" : "fail", count);
+#undef WS8_CHECK
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 4 && !strcmp(argv[1], "--ws8-case")) {
+        return ws8_probe(argv[2], argv[3]);
+    }
     if (argc == 4 && !strcmp(argv[1], "--healing-case")) {
         return healing_probe(argv[2], argv[3]);
     }
