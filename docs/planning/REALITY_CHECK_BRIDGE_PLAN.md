@@ -1,5 +1,147 @@
 # FrankenLibC — Reality-Check Bridge Plan
 
+## Current assessment — 2026-09-08
+
+Audited source: `e8d0b444d640895d6bf830355527551a74879503`, initially clean worktree.
+This section supersedes the May assessment below as a statement of current state;
+the historical workstreams remain for context, not as fresh measurements.
+
+**Verdict:** a substantial, runnable Linux interposition library, not a demonstrated
+full standalone glibc replacement. The implementation has advanced since May.
+The evidence system still permits important claims to pass without executing the
+claimed behavior. Finishing the existing active queue alone would not close that gap.
+
+### Scope and evidence standard
+
+Read the complete repository AGENTS.md and README.md, suite-wide AGENTS.md, main
+porting plan, proposed architecture, feature parity, compatibility, deployment,
+existing bridge plan, stdio replacement plan, parity coverage, and architecture
+investigation ledger. Traced representative deployed paths through startup,
+runtime policy, allocator, string operations, pointer validation, pthread and
+dynamic loading, plus the healing and standalone verification pipelines.
+This is a goal-oriented assessment, not an exhaustive audit of every symbol,
+historical report, or runtime-math theorem. Status below is deliberately scoped.
+
+Evidence classes must stay separate: source inspection; model/unit test; artifact
+schema check; actual deployed ABI execution; standalone execution; formal proof;
+and same-invocation incumbent performance comparison. One cannot substitute for
+another. In particular, a hash chain authenticates recorded bytes, not the truth
+of a producer's claims. Deterministic missing-evidence failures should not wait
+for a statistical alarm. These corrections supersede historical WS-0's claim
+that cryptography or runtime math can make self-authored evidence truthful.
+
+### Vision-to-reality map
+
+| Goal | Current evidence and status | Existing active queue sufficient? |
+|---|---|---|
+| Usable LD_PRELOAD library | **WORKING on the tested smoke subset.** Fresh release builds; 60 pass / 0 fail / 4 skip, including Python, BusyBox, SQLite, C link fixture and coreutils in both modes. | Preserve this capability; broaden workloads. |
+| Full POSIX/GNU behavior | **PARTIAL.** Symbol presence is not behavioral completeness. Current wordexp command-substitution defect already has `bd-uu1wvp`. | No: that defect is only one family/behavior. |
+| Native, host-independent implementation | **PARTIAL.** Symbol rows classify 2,388 Implemented + 414 RawSyscall + 1,317 WrapsHostLibc = 4,119. These are classifications, not independently proven native coverage. | No: `bd-38x82` names the destination but its implementation prerequisites are closed. |
+| Owned loader/startup/threading | **PARTIAL.** Native pathname DSO loading and native threading exist. Bare SONAME loading still delegates; standalone dlopen rejects non-null filenames. Do not repeat May's claim that all loading/thread creation delegates. | No: closed `bd-73h55.2` promised arbitrary transitive DSO loading. |
+| Transparent hardened repairs | **PARTIAL / insufficient end-to-end evidence.** Real bounds/repair paths exist, but verify-membrane's reported observations are policy-model calculations. | No: `bd-l93x.4` is closed. |
+| Live adaptive runtime math | **PARTIAL.** Startup now arms runtime readiness. Production strict high-frequency paths bypass the kernel; production hardened high-frequency paths return a Full profile without consulting it. Test configuration differs. | No: `bd-06bxm` and its live E2E bead are closed. |
+| Temporal and spatial safety guarantees | **UNPROVEN at the advertised universal scope.** Raw-address validation lacks caller-generation provenance; strict memcpy explicitly skips the membrane. | No active task resolves the universal-claim/actual-observation boundary. |
+| ABI/symbol/version compatibility | **PARTIAL.** Release artifact and C/preload smoke run; no exhaustive versioned-export or every-symbol behavioral proof was executed here. | No: needs deployed, version-aware family coverage. |
+| Conformance depth | **PARTIAL.** Fresh maintenance inventory links fixtures to 1,165/4,119 symbols (28.3%); linkage is not a pass rate, and unlinked is not synonymous with untested. | No active broad differential-coverage task. |
+| Formal guarantees | **DEFERRED, not proved.** All 24 binder obligations say deferred; the existing owner decision chose honest reframing. Build also explicitly skipped the stdio SMT solver. | Honor that decision; do not silently reopen a proof program or count deferred proofs as complete. |
+| Performance targets | **WORKING for this curated smoke bound; UNPROVEN globally.** Both-mode 2x smoke gate passes in this run; live allocator/perf beads document unresolved gaps. | Existing perf tasks help, but do not establish all-family budgets. |
+| Standalone, aarch64, packages, 24-hour reliability | **UNPROVEN as a combined deliverable.** No standalone/architecture/package/soak execution was observed in this audit. Existing WS-8 gate contains unconditional passes. | No: blocked parent/soak plus closed contract tasks do not supply the missing execution. |
+| Tooling boundary and maintainability | **PARTIAL evidence.** Cargo declares companion harness dependencies in tooling features; release builds. Whole-workspace checks and test-target health need separate results, not inference from that build. | `bd-blnp4u` already covers accidental probe targets; retain it. |
+
+### High-confidence gaps
+
+1. **The healing oracle is tautological.** In
+   `crates/frankenlibc-harness/src/healing_oracle.rs:293`, expected and observed
+   both call `hardened_action_for_condition`. It sets detected, posix_valid and
+   evidence_logged to true, and uses a fixed generation timestamp. CLI dispatch
+   in `src/bin/harness.rs:1940` calls this report builder without an ABI runner.
+   This proves policy consistency, not fault detection or repair of a C process.
+2. **Standalone E2E can report success without standalone execution.**
+   `scripts/check_ws8_e2e_standalone_verification.sh` accepts absent x86 artifacts
+   with `verified_by_bd_38x82.1_contract`; aarch64 failures fall back to pass;
+   workload outcomes are constants; companion test success means files exist
+   and contain lines. The x86 nm check ignores its exit status and does not boot
+   a process. This is a concrete gate defect, not a claim that every other
+   standalone checker is equally defective.
+3. **The support matrix contradicts itself.** Its symbol rows and maintenance
+   dashboard count 2,388/414/1,317; top-level rollups, README and replacement
+   assessment retain 2,395/414/1,310. Seven rows' difference survives an otherwise
+   green maintenance gate. Zero GlibcCallThrough is not zero host dependency.
+4. **Deployment and test semantics diverge.** `runtime_policy.rs:2079` disables
+   strict passthrough in tests; `:2260` explicitly skips the hardened production
+   fast path in tests. `string_abi.rs:4217` bypasses validation for strict memcpy.
+   Startup readiness is genuinely wired now. The required remedy is deployed
+   coverage and an explicit routing contract, not an unsupported declaration
+   that all kernels are dormant or that hardened bounds checks are absent.
+5. **Universal safety language exceeds the interface's observable information.**
+   `ptr_validator.rs:676` accepts an address, while `:1317` compares current header
+   and arena generations. A stale raw pointer and a new pointer with identical
+   address carry no distinct caller generation to this API. Quarantine and
+   metadata consistency are useful but do not establish detection of every
+   post-reuse UAF. This is an interface-level inference, not a reproduced exploit.
+6. **Planning completion is repeatedly mistaken for capability delivery.**
+   The initial JSONL census is 7,428 records: 7,410 closed, 11 in progress,
+   3 blocked, 4 tombstones, zero open. Several goals have historical beads,
+   so the accurate diagnosis is missing *active executable coverage*, not
+   "nobody ever created a bead." Do not blindly reopen legitimate scoped
+   deferrals such as `bd-e4phe.2`.
+
+### Observed verification
+
+Commands use isolated Cargo target directories and the repository's rch entrypoint.
+No runtime source, thresholds, goldens, or canonical support data were changed.
+
+| Check | Observed outcome |
+|---|---|
+| `rch exec -- cargo build -p frankenlibc-abi --release` | Exit 0, release finished in 56.60s; warnings present, including missing SMT solver. |
+| Fresh `scripts/ld_preload_smoke.sh`, defaults | 60 pass / 0 fail / 4 skip. Redis and nginx tools missing in both modes. |
+| Same fresh artifact, `ENFORCE_PARITY_MODES=strict,hardened ENFORCE_PERF_MODES=strict,hardened` | 60 pass / 0 fail / 4 skip; no perf/signature failures. Same-invocation baseline; single-run smoke, not a banked microbenchmark win or universal latency proof. |
+| `scripts/check_support_matrix_maintenance.sh` | Fresh result recorded below after completion; symbol-row inventory is 2,388/414/1,317 and fixture linkage 28.3%. |
+
+Smoke artifacts: `target/ld_preload_smoke/20260908T043437Z-327204/` and
+`target/ld_preload_smoke/20260908T043539Z-337524/`. Fresh library:
+`/data/tmp/rch_target_frankenlibc_reality_build_20260908/release/libfrankenlibc_abi.so`.
+Check logs: `/data/tmp/frankenlibc-reality-20260908-{check,clippy,fmt,maintenance}.log`.
+These local artifacts are reproducibility aids, not durable release evidence.
+
+### Execution bridge and ordering
+
+Use independent, bounded tracks. Evidence repair must block *promotion claims*,
+not all unrelated implementation work. Keep safety, compatibility, runtime-math
+liveness and speed distinct; never restore liveness by reintroducing bootstrap
+deadlocks, or obtain speed by silently discarding required safety behavior.
+
+| Track | Concrete deliverable and acceptance | Complexity |
+|---|---|---|
+| A: executable evidence | Replace WS-8 fallbacks with fail/blocked; boot actual artifacts, observe maps/providers, execute workloads and tests. Missing tool/artifact, nonzero exit, malformed result, zero tests and stale receipt must never pass. | L |
+| B: deployed healing | Keep model tests labeled as such; dispatch fault fixtures into isolated C subprocesses against the release ABI. Independently assert output, memory boundaries, errno and observed audit events for each supported repair. | L |
+| C: taxonomy integrity | Derive all rollups from symbol rows; gate contradictory counts and reachable host-backed paths by configuration. No blanket native promotion or canonical regeneration without evidence. | M |
+| D: runtime-math contract | Enumerate family/mode/bootstrap/reentry/certificate paths; prove actual observations and decision influence with production cfg, and strict semantic preservation. Measure costs with incumbent in the same run. | L |
+| E: owned replacement | Retain `bd-38x82`; supply live prerequisites for loader transitive dependencies and owned startup/TLS/unwind/service integration. Default/preload success is not standalone proof. | XL |
+| F: behavioral coverage | Build executable symbol/family/mode/version inventory, then fill high-risk holes with real differentials and hardened fault pairs, including ABI aliases, errno, fenv, locale, concurrency and process behavior. | XL |
+| G: safety/proof scope | Define owned/foreign/interior/stale/reused/racing-pointer preconditions; add reuse and boundary probes. Preserve owner-approved deferred proofs and distinguish tested models from theorems. | L |
+| H: workload/release proof | Extend real workloads past version banners; execute architecture, package and soak gates with actual artifacts. Integrate existing allocator/perf tasks without relabeling smoke as universal performance. | XL |
+| I: coherent claims | Reconcile README, plan "now" claims, compatibility, replacement levels and formal language from the preceding evidence. Correct the lattice diagram and deployed allocator description; preserve the full vision as a target. | M |
+
+Every implementation task includes happy/edge/error unit tests, a deployed E2E
+gate, a deliberate negative control, and structured logs containing source/build
+identity, features, mode, architecture, command, exit, nonzero executed case count,
+expected/observed values and artifact references. Task closure quotes compilation
+and execution evidence; blockers close only when their named probe succeeds.
+Existing `bd-blnp4u`, `bd-uu1wvp`, allocator/performance and stale-win audit tasks
+remain relevant and are reused rather than duplicated.
+
+### Planning refinement record
+
+Initial bridge: tracks A-I above; all original non-negotiable goals retained.
+Ambition and bead-refinement deltas, assigned IDs, and final verification results
+are appended below as the plan is validated. Implementation is subsequent work;
+creating this plan does not itself discharge any capability or proof obligation.
+
+---
+
+## Historical assessment — 2026-05-20 (not current measurements)
+
 > Generated 2026-05-20 from a comprehensive reality check (5-agent code investigation).
 > Purpose: close every gap between the *implemented code* and the *L3 standalone-replacement vision*.
 > Iterated through ambition + refinement passes, then converted into beads.
