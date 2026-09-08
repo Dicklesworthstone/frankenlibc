@@ -353,7 +353,10 @@ fn native_dso_reopens_share_state_and_noload_references() {
         assert_eq!(dlclose(first), 0);
         assert_eq!(dlclose(second), 0);
         assert!(native_dso_handle_for_tests(resident));
-        assert_eq!(dlsym(resident, c"franken_native_increment".as_ptr()), symbol);
+        assert_eq!(
+            dlsym(resident, c"franken_native_increment".as_ptr()),
+            symbol
+        );
         assert_eq!(increment(), 2);
         assert_eq!(dlclose(resident), 0);
         assert!(!native_dso_handle_for_tests(resident));
@@ -363,7 +366,11 @@ fn native_dso_reopens_share_state_and_noload_references() {
         let symbol = dlsym(fresh, c"franken_native_increment".as_ptr());
         assert!(!symbol.is_null());
         let increment: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
-        assert_eq!(increment(), 1, "final close must release non-NODELETE state");
+        assert_eq!(
+            increment(),
+            1,
+            "final close must release non-NODELETE state"
+        );
         assert_eq!(dlclose(fresh), 0);
     }
 }
@@ -382,13 +389,19 @@ fn native_dso_nodelete_promotion_preserves_state_after_final_close() {
         assert!(!symbol.is_null());
         let increment: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
         assert_eq!(increment(), 1);
-        let promoted = dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_NODELETE);
+        let promoted = dlopen(
+            name.as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_NODELETE,
+        );
         assert_eq!(promoted, first);
         assert_eq!(dlclose(first), 0);
         assert_eq!(dlclose(promoted), 0);
         let reopened = dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
         assert_eq!(reopened, first);
-        assert_eq!(dlsym(reopened, c"franken_native_increment".as_ptr()), symbol);
+        assert_eq!(
+            dlsym(reopened, c"franken_native_increment".as_ptr()),
+            symbol
+        );
         assert_eq!(increment(), 2, "NODELETE must preserve DSO data");
         assert_eq!(dlclose(reopened), 0);
     }
@@ -417,9 +430,55 @@ fn native_dso_concurrent_first_opens_publish_one_mapping() {
             })
         })
         .collect();
-    let handles: Vec<_> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+    let handles: Vec<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
     assert!(handles.iter().all(|handle| *handle == handles[0]));
     assert!(!native_dso_handle_for_tests(handles[0] as *mut c_void));
+}
+
+#[test]
+fn native_dso_fifo_is_rejected_without_blocking_loader() {
+    const CHILD_PATH: &str = "FRANKENLIBC_DSO_FIFO_TEST_PATH";
+    if let Some(path) = std::env::var_os(CHILD_PATH) {
+        let name = CString::new(path.as_bytes()).unwrap();
+        // SAFETY: a valid, live pathname; the FIFO must be rejected without
+        // waiting for a writer, before taking the native loader registry lock.
+        unsafe {
+            assert!(dlopen(name.as_ptr(), libc::RTLD_NOW).is_null());
+            assert!(!dlerror().is_null());
+        }
+        return;
+    }
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = compile_self_contained_test_dso().with_file_name("not-an-elf.fifo");
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: creates a FIFO at a unique fixture path; no existing file is
+    // overwritten or removed. The parent never opens the FIFO.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "native_dso_fifo_is_rejected_without_blocking_loader",
+            "--nocapture",
+        ])
+        .env(CHILD_PATH, &path)
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "FIFO rejection child failed: {status}");
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("native dlopen blocked on a FIFO without a writer");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 #[test]

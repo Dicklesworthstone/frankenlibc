@@ -9,6 +9,7 @@ use std::ffi::{c_char, c_int, c_void};
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
@@ -318,8 +319,17 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     // name the same loaded object. Metadata and bytes come from one descriptor
     // so replacing the pathname cannot associate an image with another inode.
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(name));
-    let mut file = std::fs::File::open(path).ok()?;
+    // Nonblocking open prevents a FIFO from hanging before we can reject its
+    // file type. O_NONBLOCK has no effect on ordinary regular-file reads.
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
     let metadata = file.metadata().ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
     let mut registry = native_dso_registry().lock().ok()?;
     if let Some(dso) = registry
         .iter_mut()
@@ -332,12 +342,9 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     if (flags & dlfcn_core::RTLD_NOLOAD) != 0 {
         return None;
     }
+    drop(registry);
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
-
-    // Serialize publication with lookup/close, including concurrent first
-    // opens. The supported subset has no constructors, IFUNC or TLS callbacks;
-    // never invoke object code while holding this registry lock.
 
     let preview_loader = ElfLoader::new(0);
     let preview_object = preview_loader.parse(&bytes).ok()?;
@@ -349,6 +356,20 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
         .ok()?;
     if image.low_vaddr != 0 || image.memory.is_empty() {
         return None;
+    }
+
+    // Reading and parsing may block or allocate substantially. Recheck identity
+    // after those operations, then serialize mapping/publication with close.
+    // The supported subset never invokes constructors, IFUNC or TLS callbacks
+    // while holding this registry lock.
+    let mut registry = native_dso_registry().lock().ok()?;
+    if let Some(dso) = registry
+        .iter_mut()
+        .find(|dso| dso.device == metadata.dev() && dso.inode == metadata.ino())
+    {
+        dso.references = dso.references.checked_add(1)?;
+        dso.nodelete |= (flags & dlfcn_core::RTLD_NODELETE) != 0;
+        return Some(native_dso_handle(dso.id));
     }
 
     let map_len = image.memory.len();
