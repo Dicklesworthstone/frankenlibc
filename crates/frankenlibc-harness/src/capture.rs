@@ -180,7 +180,7 @@ fn validate_capture_timestamp_utc(value: &str) -> Result<(), String> {
     }
 }
 
-fn format_utc_from_unix_seconds(seconds: u64) -> String {
+pub(crate) fn format_utc_from_unix_seconds(seconds: u64) -> String {
     let days = seconds / 86_400;
     let seconds_of_day = seconds % 86_400;
     let days_i64 = i64::try_from(days).unwrap_or(i64::MAX);

@@ -156,6 +156,12 @@ enum Command {
     },
     /// Run membrane-specific verification tests.
     VerifyMembrane {
+        /// Exact deployed release library to preload (required; never uses a model).
+        #[arg(long)]
+        library: PathBuf,
+        /// Compiled tests/integration/fixture_malloc.c executable.
+        #[arg(long)]
+        probe: PathBuf,
         /// Runtime mode to test (`strict`, `hardened`, or `both`).
         #[arg(long, default_value = "both")]
         mode: String,
@@ -171,8 +177,8 @@ enum Command {
         /// Logical campaign identifier used in trace ids.
         #[arg(long, default_value = "healing_oracle")]
         campaign: String,
-        /// Return non-zero when any oracle case fails.
-        #[arg(long)]
+        /// Return non-zero when any oracle case fails (always enabled).
+        #[arg(long, default_value_t = true)]
         fail_on_mismatch: bool,
     },
     /// Validate a structured-log + artifact-index evidence bundle.
@@ -1938,6 +1944,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Command::VerifyMembrane {
+            library,
+            probe,
             mode,
             output,
             log,
@@ -1952,8 +1960,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let suite = frankenlibc_harness::healing_oracle::HealingOracleSuite::canonical();
             let report = frankenlibc_harness::healing_oracle::build_healing_oracle_report(
-                &suite, mode, &campaign,
-            );
+                &suite, mode, &campaign, &probe, &library,
+            )?;
             let body = serde_json::to_string_pretty(&report)?;
             if let Some(parent) = output.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -6160,7 +6168,7 @@ fn emit_healing_oracle_logs(
                 .with_mode(row.mode.clone())
                 .with_api(row.api_family.clone(), row.symbol.clone())
                 .with_outcome(outcome)
-                .with_errno(0)
+                .with_errno(row.observation.as_ref().map_or(0, |raw| raw.errno))
                 .with_latency_ns(0)
                 .with_healing_action(row.observed_action.clone())
                 .with_artifacts(artifact_refs.clone())
@@ -6172,7 +6180,17 @@ fn emit_healing_oracle_logs(
                     "detected": row.detected,
                     "repaired": row.repaired,
                     "posix_valid": row.posix_valid,
+                    "contract_valid": row.contract_valid,
                     "evidence_logged": row.evidence_logged,
+                    "evidence_kind": row.evidence_kind,
+                    "input_kind": row.input_kind,
+                    "observation": row.observation,
+                    "command": row.command,
+                    "exit_code": row.exit_code,
+                    "note": row.note,
+                    "library_sha256": report.library_sha256,
+                    "probe_sha256": report.probe_sha256,
+                    "latency_measured": false,
                     "decision_path": "healing_oracle->case_result"
                 })),
         )?;

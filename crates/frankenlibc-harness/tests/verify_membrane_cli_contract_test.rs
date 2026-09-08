@@ -80,18 +80,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn tmp_dir() -> TestResult<PathBuf> {
@@ -113,7 +116,15 @@ fn run_verify(
     fail_on_mismatch: bool,
 ) -> TestResult<std::process::Output> {
     let mut cmd = Command::new(bin);
+    let library = std::env::var_os("FRANKENLIBC_HEALING_LIBRARY")
+        .ok_or("set FRANKENLIBC_HEALING_LIBRARY to the fresh release ABI library")?;
+    let probe = std::env::var_os("FRANKENLIBC_HEALING_PROBE")
+        .ok_or("set FRANKENLIBC_HEALING_PROBE to fixture_malloc compiled with -fno-builtin -ldl")?;
     cmd.arg("verify-membrane")
+        .arg("--library")
+        .arg(library)
+        .arg("--probe")
+        .arg(probe)
         .arg("--output")
         .arg(out)
         .arg("--log")
@@ -183,16 +194,20 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
             "policy.fail_on_mismatch_promotes_any_case_failure_to_nonzero_exit must be true (manifest pin)",
         ),
         (
-            "default_invocation_succeeds_with_zero_failed_cases",
-            "policy.default_invocation_succeeds_with_zero_failed_cases must be true (manifest pin)",
+            "default_invocation_with_artifacts_succeeds_with_zero_failed_cases",
+            "valid explicit artifacts must produce a successful default run",
+        ),
+        (
+            "missing_artifacts_or_observations_fail_by_default",
+            "missing evidence must fail without an optional flag",
         ),
         (
             "unknown_mode_rejected_with_nonzero_exit",
             "policy.unknown_mode_rejected_with_nonzero_exit must be true (manifest pin)",
         ),
         (
-            "deterministic_given_same_mode_campaign",
-            "policy.deterministic_given_same_mode_campaign must be true (manifest pin)",
+            "deterministic_contract_outcomes_given_same_artifacts_mode_campaign",
+            "contract outcomes must be deterministic for the same artifacts and inputs",
         ),
         (
             "all_cases_pass_under_canonical_suite",
@@ -259,10 +274,7 @@ fn harness_source_registers_verify_membrane_subcommand() -> TestResult {
 
 #[test]
 fn cli_default_invocation_succeeds_with_zero_failures() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("harness binary not built; gracefully skipping");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out = dir.join("report.json");
     let log = dir.join("trace.jsonl");
@@ -294,7 +306,7 @@ fn cli_default_invocation_succeeds_with_zero_failures() -> TestResult {
         .and_then(Value::as_array)
         .ok_or("missing cases array")?;
     require(
-        cases.len() == json_usize(summary, "total_cases")?,
+        cases.len() == 28 && cases.len() == json_usize(summary, "total_cases")?,
         "summary.total_cases must equal cases length",
     )?;
     Ok(())
@@ -302,9 +314,7 @@ fn cli_default_invocation_succeeds_with_zero_failures() -> TestResult {
 
 #[test]
 fn cli_mode_strict_only_passes_strict_rows() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out = dir.join("strict.json");
     let log = dir.join("strict.jsonl");
@@ -321,6 +331,10 @@ fn cli_mode_strict_only_passes_strict_rows() -> TestResult {
         .get("cases")
         .and_then(Value::as_array)
         .ok_or("missing cases array")?;
+    require(
+        cases.len() == 14,
+        "strict gate must execute fourteen controls",
+    )?;
     for case in cases {
         require(
             json_string(case, "mode")? == "strict",
@@ -332,9 +346,7 @@ fn cli_mode_strict_only_passes_strict_rows() -> TestResult {
 
 #[test]
 fn cli_mode_hardened_only_passes_hardened_rows() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out = dir.join("hardened.json");
     let log = dir.join("hardened.jsonl");
@@ -351,6 +363,10 @@ fn cli_mode_hardened_only_passes_hardened_rows() -> TestResult {
         .get("cases")
         .and_then(Value::as_array)
         .ok_or("missing cases array")?;
+    require(
+        cases.len() == 14,
+        "hardened gate must execute fourteen faults",
+    )?;
     for case in cases {
         require(
             json_string(case, "mode")? == "hardened",
@@ -362,9 +378,7 @@ fn cli_mode_hardened_only_passes_hardened_rows() -> TestResult {
 
 #[test]
 fn cli_unknown_mode_rejected_with_nonzero_exit() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out = dir.join("bogus.json");
     let log = dir.join("bogus.jsonl");
@@ -378,9 +392,7 @@ fn cli_unknown_mode_rejected_with_nonzero_exit() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_mode_campaign() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out_a = dir.join("det_a.json");
     let out_b = dir.join("det_b.json");
@@ -398,6 +410,16 @@ fn cli_deterministic_given_same_mode_campaign() -> TestResult {
         if let Some(obj) = v.as_object_mut() {
             obj.remove("generated_at_utc");
         }
+        // ASLR-dependent allocation canaries are raw evidence, not a stable
+        // answer. Each execution separately checks that its canary is intact.
+        if let Some(cases) = v.get_mut("cases").and_then(Value::as_array_mut) {
+            for case in cases {
+                if let Some(raw) = case.get_mut("observation").and_then(Value::as_object_mut) {
+                    raw.remove("guard_before");
+                    raw.remove("guard_after");
+                }
+            }
+        }
         v
     };
     require(
@@ -409,9 +431,7 @@ fn cli_deterministic_given_same_mode_campaign() -> TestResult {
 
 #[test]
 fn cli_summary_total_cases_equals_rows_length() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out = dir.join("tally.json");
     let log = dir.join("tally.jsonl");
@@ -429,4 +449,68 @@ fn cli_summary_total_cases_equals_rows_length() -> TestResult {
         "summary.total_cases must equal cases length",
     )?;
     Ok(())
+}
+
+#[test]
+fn cli_missing_artifacts_is_not_a_green_default() -> TestResult {
+    let output = Command::new(find_harness_binary()?)
+        .arg("verify-membrane")
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(!output.status.success(), "missing artifacts must fail")
+}
+
+#[test]
+fn cli_empty_observations_fail_even_without_fail_flag() -> TestResult {
+    let dir = tmp_dir()?;
+    let report = dir.join("empty.json");
+    let output = Command::new(find_harness_binary()?)
+        .args([
+            "verify-membrane",
+            "--library",
+            "/bin/true",
+            "--probe",
+            "/bin/true",
+        ])
+        .arg("--output")
+        .arg(&report)
+        .arg("--log")
+        .arg(dir.join("empty.jsonl"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(
+        !output.status.success(),
+        "zero-exit empty output must fail by default",
+    )?;
+    let body = load_json(&report)?;
+    require(
+        body["summary"]["passed"] == 0 && body["summary"]["failed"] == 28,
+        "every unobserved case must fail",
+    )
+}
+
+#[test]
+fn cli_wrong_provider_fails_real_probe() -> TestResult {
+    let dir = tmp_dir()?;
+    let probe = std::env::var_os("FRANKENLIBC_HEALING_PROBE")
+        .ok_or("set FRANKENLIBC_HEALING_PROBE for the live provider-negative gate")?;
+    let report = dir.join("wrong-provider.json");
+    let output = Command::new(find_harness_binary()?)
+        .args(["verify-membrane", "--library", "/bin/true", "--probe"])
+        .arg(probe)
+        .arg("--output")
+        .arg(&report)
+        .arg("--log")
+        .arg(dir.join("wrong-provider.jsonl"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(
+        !output.status.success(),
+        "host execution must not pass as FrankenLibC",
+    )?;
+    let body = load_json(&report)?;
+    require(
+        body["summary"]["passed"] == 0 && body["summary"]["failed"] == 28,
+        "wrong-provider cases must all fail",
+    )
 }

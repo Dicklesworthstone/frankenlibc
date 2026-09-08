@@ -5019,6 +5019,36 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     // Look up old allocation to get its size
     let old_addr = ptr as usize;
     let old_size = match arena.lookup(old_addr) {
+        Some(slot) if slot.user_base == old_addr && !slot.state.is_live() => {
+            // Arena lookup deliberately includes quarantined blocks. They are
+            // evidence of a retired allocation, not permission to read its bytes
+            // or return it from the in-place shrink path.
+            global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
+            );
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(6, size),
+                true,
+            );
+            // Allocate through the already-held pipeline, avoiding allocator
+            // reentry and never copying from the retired pointer.
+            let out: *mut c_void = pipeline
+                .allocate(size)
+                .map_or(std::ptr::null_mut(), |p| p.cast());
+            if !out.is_null() {
+                record_alloc_stats(Some(reentry_guard.slot), size);
+            } else {
+                // SAFETY: errno is local to the calling thread.
+                unsafe { set_abi_errno(ENOMEM as c_int) };
+            }
+            return out;
+        }
         Some(slot) if slot.user_base == old_addr => slot.user_size,
         Some(_) => {
             // Inner pointer or metadata pointer. Invalid to realloc.

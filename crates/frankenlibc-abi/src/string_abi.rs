@@ -5115,6 +5115,9 @@ pub unsafe extern "C" fn __memrchr(s: *const c_void, c: c_int, n: usize) -> *mut
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     if s.is_null() {
+        if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
+            global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+        }
         return 0;
     }
 
@@ -5444,6 +5447,9 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
 unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
+        if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
+            global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+        }
         record_string_stage_outcome(
             &ordering,
             aligned,

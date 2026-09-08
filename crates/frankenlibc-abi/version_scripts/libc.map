@@ -13,6 +13,7 @@ GLIBC_2.2.5 {
         __frankenlibc_decision_count;
         __frankenlibc_healing_double_free_count;
         __frankenlibc_healing_foreign_free_count;
+        __frankenlibc_healing_action_count;
         __frankenlibc_is_runtime_math_enabled;
 
         /* C++ ABI / stack protection */

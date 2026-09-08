@@ -1,48 +1,67 @@
 #!/usr/bin/env bash
-# check_healing_oracle.sh — deterministic healing-oracle gate (bd-l93x.4)
+# check_healing_oracle.sh — live deployed-ABI healing gate (bd-l93x.4)
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT}"
+# Compilation stays on the worker. Retrieve the actual report AND subprocess
+# evidence, including failure artifacts; never substitute a synthetic log.
+if [[ "${1:-}" != "--worker" ]]; then
+  command -v rch >/dev/null || { echo "FAIL: rch is required" >&2; exit 1; }
+  # This job includes cold compilation plus tests. RCH's generic five-minute
+  # job budget killed compilation in observed runs; fault timeouts stay at 10s.
+  export RCH_BUILD_TIMEOUT_SEC="${RCH_BUILD_TIMEOUT_SEC:-1800}"
+  exec rch exec --job --result-dir target/conformance -- bash scripts/check_healing_oracle.sh --worker
+fi
 OUT_DIR="${ROOT}/target/conformance"
 BASELINE="${ROOT}/tests/conformance/healing_oracle_report.v1.json"
 CURRENT="${OUT_DIR}/healing_oracle.current.v1.json"
 REPORT="${OUT_DIR}/healing_oracle_gate.report.json"
 LOG="${OUT_DIR}/healing_oracle.log.jsonl"
 GATE_LOG="${OUT_DIR}/healing_oracle_gate.log.jsonl"
+SOURCE_MANIFEST="${OUT_DIR}/healing_build_sources.sha256"
 
 mkdir -p "${OUT_DIR}"
+
+# Bind this invocation to actual source bytes, including dirty working-tree
+# changes. A revision alone would incorrectly identify an uncommitted fix.
+{
+  sha256sum Cargo.toml Cargo.lock rust-toolchain.toml scripts/check_healing_oracle.sh tests/integration/fixture_malloc.c
+  rg --files -0 crates .cargo | sort -z | xargs -0 sha256sum
+} > "${SOURCE_MANIFEST}"
+git rev-parse HEAD > "${OUT_DIR}/healing_source_revision.txt"
 
 if [[ ! -f "${BASELINE}" ]]; then
   echo "FAIL: baseline report missing at ${BASELINE}" >&2
   exit 1
 fi
 
-echo "--- generating healing oracle report ---"
-RUN_CMD=(cargo run -p frankenlibc-harness --bin harness -- verify-membrane
+BUILD_DIR="${CARGO_TARGET_DIR:-${ROOT}/target}"
+# Bound compiler memory on shared workers; this does not change test coverage.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+cargo build -p frankenlibc-abi --release --target-dir "${BUILD_DIR}"
+cargo build -p frankenlibc-harness --bin harness --target-dir "${BUILD_DIR}"
+cc -O0 -fno-builtin -Wall -Wextra tests/integration/fixture_malloc.c -ldl -o "${OUT_DIR}/healing_probe"
+export FRANKENLIBC_HEALING_LIBRARY="${BUILD_DIR}/release/libfrankenlibc_abi.so"
+export FRANKENLIBC_HEALING_PROBE="${OUT_DIR}/healing_probe"
+cargo test -p frankenlibc-harness --lib healing_oracle --target-dir "${BUILD_DIR}" \
+  2>&1 | tee "${OUT_DIR}/healing_unit_tests.log"
+rg -q 'test result: ok\. [1-9][0-9]* passed;' "${OUT_DIR}/healing_unit_tests.log"
+cargo test -p frankenlibc-harness --test verify_membrane_cli_contract_test --target-dir "${BUILD_DIR}" \
+  2>&1 | tee "${OUT_DIR}/healing_cli_tests.log"
+rg -q 'test result: ok\. [1-9][0-9]* passed;' "${OUT_DIR}/healing_cli_tests.log"
+
+RUN_CMD=("${BUILD_DIR}/debug/harness" verify-membrane
+  --library "${FRANKENLIBC_HEALING_LIBRARY}"
+  --probe "${FRANKENLIBC_HEALING_PROBE}"
   --mode both
   --campaign healing_oracle
   --fail-on-mismatch
 )
 
-if command -v rch >/dev/null 2>&1; then
-  cat <<'EOS' | rch exec -- bash -s > "${CURRENT}"
-set -euo pipefail
-tmp_current="$(mktemp)"
-tmp_log="$(mktemp)"
-cargo run -p frankenlibc-harness --bin harness -- verify-membrane \
-  --mode both \
-  --campaign healing_oracle \
-  --fail-on-mismatch \
-  --output "${tmp_current}" \
-  --log "${tmp_log}" >/dev/null
-cat "${tmp_current}"
-EOS
-  printf '%s\n' '{"event":"healing_oracle.remote_log_not_copied"}' > "${LOG}"
-else
-  echo "WARN: rch not found; running local cargo fallback" >&2
-  "${RUN_CMD[@]}" --output "${CURRENT}" --log "${LOG}" >/dev/null
-fi
+"${RUN_CMD[@]}" --output "${CURRENT}" --log "${LOG}"
+sha256sum --check --quiet "${SOURCE_MANIFEST}"
 
 if [[ ! -s "${CURRENT}" ]]; then
   echo "FAIL: generated current report missing or empty at ${CURRENT}" >&2
@@ -210,6 +229,12 @@ if summary_mismatches:
     sys.exit(1)
 if not mode_coverage_ok:
     print("FAIL: strict+hardened coverage missing in current report", file=sys.stderr)
+    sys.exit(1)
+if len(rows) != 28 or computed["failed"] != 0:
+    print("FAIL: expected 28 executed, passing live ABI cases", file=sys.stderr)
+    sys.exit(1)
+if any(not row.get("observation") or row.get("exit_code") != 0 for row in rows):
+    print("FAIL: missing successful subprocess observations", file=sys.stderr)
     sys.exit(1)
 
 print(

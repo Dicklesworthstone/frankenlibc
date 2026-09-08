@@ -4,10 +4,10 @@
   "bead": "bd-ofe1b",
   "generated_utc": "2026-05-13T00:00:00Z",
   "source_commit": "9b1290a4",
-  "purpose": "Pin the harness binary 'verify-membrane' subcommand which exposes the healing-oracle harness pipeline. The subcommand runs HealingOracleSuite::canonical() through build_healing_oracle_report() at each requested SafetyLevel mode and writes a deterministic HealingOracleReport JSON to --output plus a paired JSONL trace log to --log. The --fail-on-mismatch flag promotes any failing oracle case into a non-zero exit so this can gate CI.",
+  "purpose": "Pin live verify-membrane execution against an explicitly selected release ABI library and compiled C probe. Strict mode runs valid controls; hardened mode injects faults. Contract outcomes are deterministic, while timestamps and allocation canaries are observed per run. Every case requires independent memory/return/errno checks and isolated action-counter evidence. Missing observations and mismatches fail by default; reports and paired logs retain artifact hashes and subprocess commands.",
   "subcommand_name": "verify-membrane",
   "binary_target": "harness",
-  "required_flags": [],
+  "required_flags": ["--library", "--probe"],
   "optional_flags": [
     "--mode",
     "--output",
@@ -29,6 +29,9 @@
       "generated_at_utc",
       "campaign",
       "mode",
+      "library",
+      "library_sha256",
+      "probe_sha256",
       "summary",
       "cases"
     ],
@@ -55,7 +58,13 @@
       "repaired",
       "posix_valid",
       "evidence_logged",
-      "status"
+      "status",
+      "contract_valid",
+      "evidence_kind",
+      "input_kind",
+      "observation",
+      "command",
+      "exit_code"
     ]
   },
   "mode_enum": [
@@ -75,9 +84,10 @@
     "summary_total_cases_equals_rows_length_per_active_mode": true,
     "mode_both_runs_strict_and_hardened_passes": true,
     "fail_on_mismatch_promotes_any_case_failure_to_nonzero_exit": true,
-    "default_invocation_succeeds_with_zero_failed_cases": true,
+    "default_invocation_with_artifacts_succeeds_with_zero_failed_cases": true,
+    "missing_artifacts_or_observations_fail_by_default": true,
     "unknown_mode_rejected_with_nonzero_exit": true,
-    "deterministic_given_same_mode_campaign": true,
+    "deterministic_contract_outcomes_given_same_artifacts_mode_campaign": true,
     "all_cases_pass_under_canonical_suite": true
   },
   "rejected_evidence_kinds": [

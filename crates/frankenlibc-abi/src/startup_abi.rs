@@ -1517,6 +1517,25 @@ pub unsafe extern "C" fn __frankenlibc_healing_foreign_free_count() -> u64 {
         .load(Ordering::Relaxed)
 }
 
+/// Read an existing healing counter without resetting or manufacturing evidence.
+/// Action IDs: 1 clamp, 2 null truncation, 3 double free, 4 foreign free,
+/// 5 realloc-as-malloc, 6 safe default, 7 safe variant. Unknown IDs return MAX.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn __frankenlibc_healing_action_count(action: u32) -> u64 {
+    let policy = frankenlibc_membrane::heal::global_healing_policy();
+    let counter = match action {
+        1 => &policy.size_clamps,
+        2 => &policy.null_truncations,
+        3 => &policy.double_frees,
+        4 => &policy.foreign_frees,
+        5 => &policy.realloc_as_mallocs,
+        6 => &policy.safe_defaults,
+        7 => &policy.variant_upgrades,
+        _ => return u64::MAX,
+    };
+    counter.load(Ordering::Relaxed)
+}
+
 /// FFI export to check if runtime-math kernels are enabled.
 /// Returns 1 if enabled (default), 0 if disabled via FRANKENLIBC_RUNTIME_MATH=off.
 /// Used by e2e tests to verify kill-switch works (bd-06bxm.9).
