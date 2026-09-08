@@ -83,8 +83,10 @@ that cryptography or runtime math can make self-authored evidence truthful.
    The initial JSONL census is 7,428 records: 7,410 closed, 11 in progress,
    3 blocked, 4 tombstones, zero open. Several goals have historical beads,
    so the accurate diagnosis is missing *active executable coverage*, not
-   "nobody ever created a bead." Do not blindly reopen legitimate scoped
-   deferrals such as `bd-e4phe.2`.
+   "nobody ever created a bead." This is a raw local-file census, not a project
+   completion denominator: 1,195 records have non-`bd-` prefixes, including
+   `frankenjax-mmk4` with ambiguous `source_repo="."`. Do not blindly reopen
+   legitimate scoped deferrals such as `bd-e4phe.2`.
 
 ### Observed verification
 
@@ -96,7 +98,11 @@ No runtime source, thresholds, goldens, or canonical support data were changed.
 | `rch exec -- cargo build -p frankenlibc-abi --release` | Exit 0, release finished in 56.60s; warnings present, including missing SMT solver. |
 | Fresh `scripts/ld_preload_smoke.sh`, defaults | 60 pass / 0 fail / 4 skip. Redis and nginx tools missing in both modes. |
 | Same fresh artifact, `ENFORCE_PARITY_MODES=strict,hardened ENFORCE_PERF_MODES=strict,hardened` | 60 pass / 0 fail / 4 skip; no perf/signature failures. Same-invocation baseline; single-run smoke, not a banked microbenchmark win or universal latency proof. |
-| `scripts/check_support_matrix_maintenance.sh` | Fresh result recorded below after completion; symbol-row inventory is 2,388/414/1,317 and fixture linkage 28.3%. |
+| `scripts/check_support_matrix_maintenance.sh` | Exit 0, PASS, 4,119/4,119 statuses validated, 28.3% fixture linkage. Still misses contradictory top-level matrix rollups. |
+| `rch exec -- cargo test -p frankenlibc-membrane --lib lattice -- --nocapture` | Remote compilation and execution observed: `test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 1371 filtered out`. This is lattice testing, not a universal safety proof. |
+| `rch exec -- cargo check --workspace --all-targets --keep-going` | Exit 0; finished with warnings. Checks do not establish that integration targets link or execute. |
+| `rch exec -- cargo clippy --workspace --all-targets --keep-going -- -D warnings` | Exit 101; membrane lib and lib-test targets report 29 and 32 errors respectively, with overlap. Do not sum these as independent defects or claim downstream lint coverage. |
+| `rch exec -- cargo fmt --check` | Exit 1; existing formatting drift across examples, tests and source. No formatting changes applied during this audit. |
 
 Smoke artifacts: `target/ld_preload_smoke/20260908T043437Z-327204/` and
 `target/ld_preload_smoke/20260908T043539Z-337524/`. Fresh library:
@@ -131,12 +137,120 @@ and execution evidence; blockers close only when their named probe succeeds.
 Existing `bd-blnp4u`, `bd-uu1wvp`, allocator/performance and stale-win audit tasks
 remain relevant and are reused rather than duplicated.
 
+**Ambition round 1 — executable counterfactuals.** A positive receipt is not enough:
+every promotion gate must reject an intentionally missing/wrong artifact or broken
+implementation. Production feature/mode selection, independent provider identity,
+and zero-test rejection are explicit requirements. Scope checks must be fail-closed
+without turning missing evidence into a fabricated product regression.
+
+**Ambition round 2 — integration depth and availability.** Split the replacement
+integration into owned startup/TLS/unwind, native stdio, and locale/NSS/resolver
+deliverables. Add bootstrap/signal/fork and concurrent-free coverage, not merely
+steady-state success. Treat lint/format health and ambiguous tracker ownership
+as separate bounded tasks; do not let these become a prerequisite for every
+useful implementation change. Universal safety claims require a precise boundary,
+not another sophisticated-sounding controller or a finite-test proof claim.
+
 ### Planning refinement record
 
 Initial bridge: tracks A-I above; all original non-negotiable goals retained.
-Ambition and bead-refinement deltas, assigned IDs, and final verification results
-are appended below as the plan is validated. Implementation is subsequent work;
-creating this plan does not itself discharge any capability or proof obligation.
+Two ambition passes added counterfactual execution requirements and decomposed
+owned integration. Five subsequent refinement passes checked the resulting beads:
+
+1. **Evidence class and closure:** distinguish a repaired gate's correct blocked
+   result from actual L3 success; retain an executed supported positive fixture.
+2. **Test independence:** separate external memory/errno/process observations
+   from telemetry; forbid instrumentation that changes production routing.
+3. **Dependency usability:** `br ready` revealed that blocking the integration
+   parent on the loader also blocked independent children. Moved that edge to
+   release acceptance; startup, stdio and service implementation are now ready.
+4. **Scope and user impact:** include misleading theorem comments in tests;
+   permit immediate honest documentation while implementation remains unfinished.
+5. **Final graph and completeness check:** all 16 new records are open and have
+   self-contained context and acceptance criteria; no further change identified
+   in this pass. Both active and archived cycle checks return zero. `bv` final
+   triage agrees on the two P0 evidence defects as the first picks.
+
+### Assigned work
+
+All IDs below share prefix **`bd-reality-202609-lx578q`**. The root and `.6` are
+epics; there are 14 implementation/defect tasks, 16 records total.
+
+| Suffix | Deliverable |
+|---|---|
+| `.1` | P0: executable, fail-closed standalone evidence |
+| `.2` | P0: real ABI healing observations |
+| `.3` | Consistent support rollups and configuration-aware classifications |
+| `.4` | Production runtime-math liveness and causal influence |
+| `.5` | Standalone loader search and transitive DSO behavior |
+| `.6.1` | Owned CRT, TLS, thread and unwind integration |
+| `.6.2` | Native standalone stdio lifecycle |
+| `.6.3` | Native locale/conversion, NSS and resolver integration |
+| `.7` | Independent behavioral coverage and defect follow-through |
+| `.8` | Explicit safety guarantee boundary and correctly scoped proof claims |
+| `.9` | Actual workload, architecture, package and soak release evidence |
+| `.10` | Current documentation/claim reconciliation |
+| `.11` | Observed lint and formatting baseline repair |
+| `.12` | Scoped tracker ownership/counting without deleting records |
+
+Existing `bd-38x82` now depends on the relevant executable prerequisites, and its
+notes cite the newly observed blockers. Historical predecessors are related links,
+not newly asserted completions. Release `.9` depends on `.1`, `.5` and `.6`;
+independent child implementation is not serialized behind an evidence framework.
+`br ready --limit 0 --json` exposes 13 ready new leaf tasks. No task was closed.
+
+Final graph evidence: `br dep cycles --include-closed --json` reports
+`cycles=[]`, `total_count=0`; `bv --robot-triage` reports 16 open, 11 in progress,
+3 blocked, `has_cycles=false`. Its raw cross-project totals remain unsuitable as
+a project completion percentage. Triage receipt:
+`/data/tmp/frankenlibc-reality-20260908-triage-final.json`.
+
+Implementation is subsequent work; creating this plan does not discharge any
+capability or proof obligation. No full workspace test execution, exhaustive
+4119-symbol audit, formal proof run, standalone boot, aarch64 execution, package
+installation, 24-hour soak, or universal performance validation is claimed here.
+The changes made by this assessment are planning and tracker changes only;
+runtime sources, test sources, gates and canonical performance/support artifacts
+were left unchanged. Concurrent local commits captured parts of the planning
+updates; the audited runtime source remained the initial revision.
+
+### Implementation checkpoint — deployed healing, 2026-09-08
+
+This subsection records subsequent implementation, not additional credit for the
+planning assessment above. Active task: `bd-reality-202609-lx578q.2`.
+
+- [x] Replace synthetic observations with isolated C subprocess calls against an
+  explicitly supplied release ABI; check the actual symbol provider.
+- [x] Observe return values, errno, destination prefixes/NULs, trailing canaries,
+  realloc pointer identity, and the existing atomic healing counters independently.
+- [x] Require explicit CLI library/probe paths; fail missing/empty observations
+  by default. Strict cases are valid controls, not invalid-input POSIX claims.
+- [x] Fix the exposed hardened realloc bug: quarantined slots must not enter the
+  live in-place/copy path. Allocate fresh storage without reading retired bytes.
+- [x] Record the previously missing hardened strlen/strcmp null-repair counters.
+- [x] Compile the release ABI and the C probe; execute all 14 cases in both modes.
+- [x] Compile a pre-fix ABI with only the diagnostic counter added, and run the
+  same probe against it: five missing hardened counter increments, including two
+  shrink cases returning the retired pointer. The fixed ABI passes these checks.
+- [x] Run the broader preload smoke against the fixed ABI: 60 pass, 0 fail,
+  4 skipped optional workloads (Redis/nginx unavailable).
+- [ ] Observe the final oracle-unit and CLI-contract targets compile, link and
+  execute nonzero test counts, including missing-provider/output and child failures.
+- [ ] Run the complete existing healing gate and retain its live report, logs and
+  checked source-file hash manifest; replay the gate against the pre-fix library.
+- [ ] Finish workspace check and distinguish new failures from existing lint/fmt
+  debt; inspect the final diff and perform a fresh acceptance self-review.
+- [ ] Close `.2` only on the cited execution evidence; then proceed to `.1` and
+  the independently ready implementation tracks above. Other tasks remain open.
+
+Direct comparison: `/data/tmp/frankenlibc-healing-live-comparison.jsonl`.
+Smoke: `target/ld_preload_smoke/20260908T053208Z-811177/`.
+Reproduction entrypoint: `bash scripts/check_healing_oracle.sh` (remote build,
+real C fixture, default tooling features, ten-second fault subprocess limits).
+The general remote build budget was increased after two observed five-minute
+compilation timeouts; no fault timeout or acceptance tolerance was relaxed.
+This is representative owned-allocation repair coverage, not all-symbol
+conformance, post-address-reuse UAF detection, standalone execution, or a perf win.
 
 ---
 
