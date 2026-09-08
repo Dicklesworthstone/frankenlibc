@@ -327,7 +327,7 @@ pub struct ResolvedSymbol {
     pub object_index: usize,
     /// Dynamic symbol table index.
     pub symbol_index: usize,
-    /// Runtime address, `object.base + st_value`.
+    /// Runtime address, unbiased for SHN_ABS and load-biased otherwise.
     pub address: u64,
     /// Parsed GNU version string, if present.
     pub version: Option<String>,
@@ -665,6 +665,12 @@ impl<'a> ScopedSymbolResolver<'a> {
                 let Some(symbol) = link_object.object.dynsym.get(symbol_index) else {
                     continue;
                 };
+                let address = symbol.definition_address(link_object.object.base).ok_or(
+                    ElfError::InvalidOffset {
+                        kind: "symbol address",
+                        offset: symbol.st_value,
+                    },
+                )?;
                 trace.push(SymbolLookupTraceEvent {
                     object_index,
                     object_name: link_map_object_name(link_object, object_index),
@@ -675,7 +681,7 @@ impl<'a> ScopedSymbolResolver<'a> {
                     symbol: Some(ResolvedSymbol {
                         object_index,
                         symbol_index,
-                        address: link_object.object.base + symbol.st_value,
+                        address,
                         version: link_object
                             .object
                             .symbol_version_by_index(symbol_index)
@@ -1299,7 +1305,7 @@ impl ElfLoader {
 
             if sym.is_defined() {
                 // Symbol defined in this object
-                let symbol_address = match self.ctx.base.checked_add(sym.st_value) {
+                let symbol_address = match sym.definition_address(self.ctx.base) {
                     Some(value) => value,
                     None => return (RelocationResult::Overflow, 0),
                 };
@@ -2667,6 +2673,38 @@ mod tests {
         };
         assert_eq!(next.object_index, 3);
         assert_eq!(next.address, 0x4040);
+        Ok(())
+    }
+
+    #[test]
+    fn absolute_symbol_relocation_ignores_load_bias() -> ElfResult<()> {
+        let base = 0x7f00_0000_0000;
+        let loader = ElfLoader::new(base);
+        let mut obj = object_with_symbols(base, None, &[], &[("absolute", 0x4242, None)])?;
+        obj.dynsym[1].st_shndx = super::super::symbol::section_index::SHN_ABS;
+        obj.rela_dyn = vec![Elf64Rela {
+            r_offset: 0,
+            r_info: (1u64 << 32) | 1, // R_X86_64_64: S + A
+            r_addend: 7,
+        }];
+        let mut memory = [0u8; 8];
+        let results = loader.apply_relocations(&obj, &mut memory, &NullSymbolLookup);
+        assert_eq!(results, vec![(0, RelocationResult::Applied)]);
+        assert_eq!(u64::from_le_bytes(memory), 0x4249);
+        Ok(())
+    }
+
+    #[test]
+    fn absolute_symbol_scoped_lookup_ignores_load_bias() -> ElfResult<()> {
+        let mut obj = object_with_symbols(u64::MAX, None, &[], &[("absolute", 0x4242, None)])?;
+        obj.dynsym[1].st_shndx = super::super::symbol::section_index::SHN_ABS;
+        let resolver = ScopedSymbolResolver::new(vec![LinkMapObject {
+            name: "absolute-provider",
+            object: &obj,
+            visibility: RtldVisibility::Global,
+        }])?;
+        let resolved = resolver.resolve("absolute", None, RtldLookupScope::Global)?;
+        assert_eq!(resolved.map(|symbol| symbol.address), Some(0x4242));
         Ok(())
     }
 

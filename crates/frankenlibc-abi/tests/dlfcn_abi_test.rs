@@ -80,6 +80,43 @@ fn open_native_fixture(path: &std::path::Path, flags: c_int) -> *mut c_void {
 }
 
 #[test]
+fn native_dso_absolute_symbols_keep_their_unbiased_value() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let provider = compile_native_test_dso(
+        "__asm__(\".globl franken_absolute_value\\n.set franken_absolute_value, 0x4242\");\n\
+         extern char franken_absolute_value;\n\
+         void *absolute_slot = &franken_absolute_value;\n\
+         unsigned long own_absolute_value(void) { return (unsigned long)absolute_slot; }",
+    );
+    let consumer = compile_native_test_dso(
+        "extern char franken_absolute_value;\n\
+         void *external_absolute_slot = &franken_absolute_value;\n\
+         unsigned long external_absolute_value(void) { return (unsigned long)external_absolute_slot; }",
+    );
+    let provider = open_native_fixture(&provider, libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let consumer = open_native_fixture(&consumer, libc::RTLD_NOW | libc::RTLD_LOCAL);
+    // SAFETY: fixture functions have the declared ABI and their mappings remain
+    // open. The absolute symbol is a numeric value, never dereferenced.
+    unsafe {
+        assert_eq!(
+            dlsym(provider, c"franken_absolute_value".as_ptr()) as usize,
+            0x4242
+        );
+        for (handle, name) in [
+            (provider, c"own_absolute_value"),
+            (consumer, c"external_absolute_value"),
+        ] {
+            let symbol = dlsym(handle, name.as_ptr());
+            assert!(!symbol.is_null());
+            let value: unsafe extern "C" fn() -> libc::c_ulong = std::mem::transmute(symbol);
+            assert_eq!(value(), 0x4242);
+        }
+        assert_eq!(dlclose(consumer), 0);
+        assert_eq!(dlclose(provider), 0);
+    }
+}
+
+#[test]
 fn native_dso_relocation_chain_retains_closed_providers() {
     let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let provider = compile_native_test_dso("int chain_leaf(void) { return 40; }");

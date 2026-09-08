@@ -506,11 +506,12 @@ impl SymbolLookup for NativeDsoResolver<'_> {
                 continue;
             }
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
+                let address = symbol.definition_address(dso.object.base)?;
                 let mut providers = self.providers.borrow_mut();
                 if !providers.contains(&dso.id) {
                     providers.push(dso.id);
                 }
-                return Some(dso.object.base + symbol.st_value);
+                return Some(address);
             }
         }
         let exported = resolve_exported_symbol(name.as_bytes());
@@ -538,7 +539,8 @@ fn resolve_native_dso_symbol(
     Some(
         dso.object
             .lookup_symbol_versioned(symbol, version)
-            .map(|sym| (dso.object.base + sym.st_value) as *mut c_void),
+            .and_then(|sym| sym.definition_address(dso.object.base))
+            .map(|address| address as *mut c_void),
     )
 }
 

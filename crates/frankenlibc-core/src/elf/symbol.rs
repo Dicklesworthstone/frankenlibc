@@ -176,6 +176,18 @@ impl Elf64Symbol {
         self.st_shndx == section_index::SHN_UNDEF
     }
 
+    /// Address of a defined, non-TLS symbol at the given load bias.
+    ///
+    /// SHN_ABS values are invariant under relocation. Section-relative values
+    /// include the bias, with overflow rejected rather than wrapped.
+    pub fn definition_address(&self, base: u64) -> Option<u64> {
+        if self.st_shndx == section_index::SHN_ABS {
+            Some(self.st_value)
+        } else {
+            base.checked_add(self.st_value)
+        }
+    }
+
     /// Check if this is a function symbol.
     pub fn is_function(&self) -> bool {
         matches!(self.symbol_type(), SymbolType::Func)
@@ -317,6 +329,18 @@ mod tests {
         assert_eq!(sym.st_value, 0x1000);
         assert_eq!(sym.st_size, 0x100);
         assert!(matches!(sym.visibility(), SymbolVisibility::Default));
+    }
+
+    #[test]
+    fn definition_address_preserves_absolute_values_and_checks_relative_overflow() {
+        let mut sym = Elf64Symbol::parse(&make_global_func_symbol()).unwrap();
+        assert_eq!(sym.definition_address(0x4000), Some(0x5000));
+        assert_eq!(sym.definition_address(u64::MAX), None);
+        sym.st_shndx = section_index::SHN_ABS;
+        for value in [0, 0x4242, u64::MAX] {
+            sym.st_value = value;
+            assert_eq!(sym.definition_address(u64::MAX), Some(value));
+        }
     }
 
     #[test]
