@@ -6,6 +6,9 @@
 //! delegating back into the host loader.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::io::Read;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
@@ -263,6 +266,13 @@ const NATIVE_DSO_HANDLE_MASK: usize = 0xff;
 #[derive(Debug)]
 struct NativeDso {
     id: usize,
+    device: u64,
+    inode: u64,
+    // Anonymous image mappings do not pin the backing inode. Keep the file
+    // alive so unlink/recreation cannot recycle its identity while resident.
+    _file: std::fs::File,
+    references: usize,
+    nodelete: bool,
     base: usize,
     map_len: usize,
     object: LoadedObject,
@@ -304,11 +314,30 @@ fn is_pathname(name: &[u8]) -> bool {
 }
 
 fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
+    // Use the opened file's identity, not its spelling: symlinks and hard links
+    // name the same loaded object. Metadata and bytes come from one descriptor
+    // so replacing the pathname cannot associate an image with another inode.
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(name));
+    let mut file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    let mut registry = native_dso_registry().lock().ok()?;
+    if let Some(dso) = registry
+        .iter_mut()
+        .find(|dso| dso.device == metadata.dev() && dso.inode == metadata.ino())
+    {
+        dso.references = dso.references.checked_add(1)?;
+        dso.nodelete |= (flags & dlfcn_core::RTLD_NODELETE) != 0;
+        return Some(native_dso_handle(dso.id));
+    }
     if (flags & dlfcn_core::RTLD_NOLOAD) != 0 {
         return None;
     }
-    let path = std::str::from_utf8(name).ok()?;
-    let bytes = std::fs::read(path).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+
+    // Serialize publication with lookup/close, including concurrent first
+    // opens. The supported subset has no constructors, IFUNC or TLS callbacks;
+    // never invoke object code while holding this registry lock.
 
     let preview_loader = ElfLoader::new(0);
     let preview_object = preview_loader.parse(&bytes).ok()?;
@@ -345,7 +374,6 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
 
         let loader = ElfLoader::new(base as u64);
         let object = loader.parse(&bytes).ok()?;
-        let registry = native_dso_registry().lock().ok()?;
         let resolver = NativeDsoResolver {
             dsos: registry.as_slice(),
         };
@@ -358,7 +386,6 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
         if !relocation_report_succeeded(&relocation_report.events) {
             return None;
         }
-        drop(registry);
 
         for segment in &image.segments {
             let offset = usize::try_from(segment.map_addr).ok()?;
@@ -389,8 +416,13 @@ fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
         }
 
         let id = NEXT_NATIVE_DSO_ID.fetch_add(1, Ordering::Relaxed);
-        native_dso_registry().lock().ok()?.push(NativeDso {
+        registry.push(NativeDso {
             id,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            _file: file,
+            references: 1,
+            nodelete: (flags & dlfcn_core::RTLD_NODELETE) != 0,
             base: base as usize,
             map_len,
             object,
@@ -473,10 +505,21 @@ fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
     let id = native_dso_id_from_handle(handle)?;
     let mut dsos = native_dso_registry().lock().ok()?;
     let index = dsos.iter().position(|dso| dso.id == id)?;
-    let dso = dsos.swap_remove(index);
-    // SAFETY: base/map_len were created by load_native_dso and are still owned by this handle.
+    let dso = &mut dsos[index];
+    if dso.references == 0 {
+        return Some(-1);
+    }
+    if dso.references > 1 || dso.nodelete {
+        dso.references -= 1;
+        return Some(0);
+    }
+    // SAFETY: this is the final open reference to this mapping. The registry
+    // lock excludes concurrent open/close until unmapping and removal finish.
     match unsafe { raw_syscall::sys_munmap(dso.base as *mut u8, dso.map_len) } {
-        Ok(()) => Some(0),
+        Ok(()) => {
+            dsos.swap_remove(index);
+            Some(0)
+        }
         Err(_) => Some(-1),
     }
 }

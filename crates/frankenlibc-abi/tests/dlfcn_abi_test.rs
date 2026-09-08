@@ -31,7 +31,8 @@ fn compile_self_contained_test_dso() -> PathBuf {
     let output = dir.join("libfranken_native_answer.so");
     std::fs::write(
         &source,
-        "__attribute__((visibility(\"default\"))) int franken_native_answer(void) { return 4242; }\n",
+        "__attribute__((visibility(\"default\"))) int franken_native_answer(void) { return 4242; }\n\
+         __attribute__((visibility(\"default\"))) int franken_native_increment(void) { static int value; return ++value; }\n",
     )
     .unwrap();
 
@@ -323,6 +324,102 @@ fn dlopen_pathname_self_contained_shared_object_uses_native_loader() {
         !native_dso_handle_for_tests(handle),
         "dlclose should retire the native DSO handle"
     );
+}
+
+#[test]
+fn native_dso_reopens_share_state_and_noload_references() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = compile_self_contained_test_dso();
+    let alias = path.with_file_name("hardlink.so");
+    std::fs::hard_link(&path, &alias).unwrap();
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let alias = CString::new(alias.as_os_str().as_bytes()).unwrap();
+    // SAFETY: names are live C strings; returned symbols are called only while
+    // an open reference owns the compiled, self-contained DSO mapping.
+    unsafe {
+        assert!(dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null());
+        assert!(!dlerror().is_null());
+        let first = dlopen(name.as_ptr(), libc::RTLD_NOW);
+        assert!(native_dso_handle_for_tests(first));
+        let second = dlopen(alias.as_ptr(), libc::RTLD_NOW);
+        assert_eq!(first, second, "hard-link aliases must share one mapping");
+        let resident = dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(first, resident);
+        assert!(dlerror().is_null());
+        let symbol = dlsym(first, c"franken_native_increment".as_ptr());
+        assert!(!symbol.is_null());
+        let increment: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(increment(), 1);
+        assert_eq!(dlclose(first), 0);
+        assert_eq!(dlclose(second), 0);
+        assert!(native_dso_handle_for_tests(resident));
+        assert_eq!(dlsym(resident, c"franken_native_increment".as_ptr()), symbol);
+        assert_eq!(increment(), 2);
+        assert_eq!(dlclose(resident), 0);
+        assert!(!native_dso_handle_for_tests(resident));
+        assert!(dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null());
+        let fresh = dlopen(name.as_ptr(), libc::RTLD_NOW);
+        assert!(native_dso_handle_for_tests(fresh));
+        let symbol = dlsym(fresh, c"franken_native_increment".as_ptr());
+        assert!(!symbol.is_null());
+        let increment: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(increment(), 1, "final close must release non-NODELETE state");
+        assert_eq!(dlclose(fresh), 0);
+    }
+}
+
+#[test]
+fn native_dso_nodelete_promotion_preserves_state_after_final_close() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = compile_self_contained_test_dso();
+    let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: the fixture exports this exact function ABI; all calls occur
+    // while an open reference is held. NODELETE intentionally retains memory.
+    unsafe {
+        let first = dlopen(name.as_ptr(), libc::RTLD_NOW);
+        assert!(native_dso_handle_for_tests(first));
+        let symbol = dlsym(first, c"franken_native_increment".as_ptr());
+        assert!(!symbol.is_null());
+        let increment: unsafe extern "C" fn() -> c_int = std::mem::transmute(symbol);
+        assert_eq!(increment(), 1);
+        let promoted = dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_NODELETE);
+        assert_eq!(promoted, first);
+        assert_eq!(dlclose(first), 0);
+        assert_eq!(dlclose(promoted), 0);
+        let reopened = dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        assert_eq!(reopened, first);
+        assert_eq!(dlsym(reopened, c"franken_native_increment".as_ptr()), symbol);
+        assert_eq!(increment(), 2, "NODELETE must preserve DSO data");
+        assert_eq!(dlclose(reopened), 0);
+    }
+}
+
+#[test]
+fn native_dso_concurrent_first_opens_publish_one_mapping() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = compile_self_contained_test_dso();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+                barrier.wait();
+                // SAFETY: the filename is a live C string. This thread keeps
+                // its open reference until every other thread has opened too.
+                let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) };
+                barrier.wait();
+                assert!(native_dso_handle_for_tests(handle));
+                // SAFETY: this thread owns one successful open reference.
+                assert_eq!(unsafe { dlclose(handle) }, 0);
+                handle as usize
+            })
+        })
+        .collect();
+    let handles: Vec<_> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+    assert!(handles.iter().all(|handle| *handle == handles[0]));
+    assert!(!native_dso_handle_for_tests(handles[0] as *mut c_void));
 }
 
 #[test]
