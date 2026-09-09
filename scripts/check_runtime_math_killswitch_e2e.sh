@@ -12,6 +12,8 @@
 # mode. It never runs the intentionally oversized copy against strict libc.
 # --thread-signal exercises concurrent sockets and writes from a signal handler;
 # delivery is between socket calls, not proof of interruption inside a lock.
+# --policy-cost measures warm socket+close batches against live glibc in the
+# SAME process. Raw times are advisory, not a routing-influence or speedup gate.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -63,6 +65,8 @@ FIXTURE_SRC="${OUT_DIR}/fixture_killswitch.c"
 FIXTURE_BIN="${OUT_DIR}/fixture_killswitch"
 
 cat > "${FIXTURE_SRC}" <<'ENDC'
+#define _GNU_SOURCE
+#include <dlfcn.h>
 /* fixture_killswitch.c — verify FRANKENLIBC_RUNTIME_MATH kill-switch */
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +76,7 @@ cat > "${FIXTURE_SRC}" <<'ENDC'
 #include <pthread.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
@@ -282,6 +287,121 @@ static int policy_history(int adverse) {
     return 0;
 }
 
+typedef int (*socket_fn)(int, int, int);
+typedef int (*close_fn)(int);
+typedef int (*clock_fn)(clockid_t, struct timespec*);
+
+/* Whole socket+close pairs, not per-socket latency or an isolated kernel cost.
+ * Both lanes use indirect calls, identical inputs, and their own errno slot.
+ * Checking success/errno is included symmetrically in the measured work. */
+static int socket_batch(socket_fn open_socket, close_fn close_socket, int *error,
+                        clock_fn clock_now, uint64_t *elapsed) {
+    struct timespec begin, end;
+    if (clock_now(CLOCK_MONOTONIC_RAW, &begin) != 0) return 2;
+    for (int i = 0; i < 8192; ++i) {
+        *error = 0;
+        int fd = open_socket(AF_UNIX, SOCK_STREAM, 0);
+        int socket_error = *error;
+        if (fd < 0) return 2;
+        int closed = close_socket(fd);
+        if (socket_error != 0 || closed != 0 || *error != 0) return 2;
+    }
+    if (clock_now(CLOCK_MONOTONIC_RAW, &end) != 0) return 2;
+    int64_t ns = (int64_t)(end.tv_sec - begin.tv_sec) * INT64_C(1000000000)
+               + end.tv_nsec - begin.tv_nsec;
+    if (ns <= 0) return 2;
+    *elapsed = (uint64_t)ns;
+    return 0;
+}
+
+static int policy_cost(void) {
+    /* An isolated namespace prevents the incumbent's internal calls from
+     * resolving back into FrankenLibC. Keep the handle live until process exit. */
+    /* FrankenLibC's dlmopen currently ignores lmid; do not mistake that path
+     * for an isolated incumbent. Resolve the host loader explicitly. */
+    void *(*host_dlmopen)(Lmid_t, const char*, int) =
+        (void*(*)(Lmid_t, const char*, int))dlsym(RTLD_NEXT, "dlmopen");
+    int (*host_dlinfo)(void*, int, void*) =
+        (int(*)(void*, int, void*))dlsym(RTLD_NEXT, "dlinfo");
+    if (!host_dlmopen || !host_dlinfo || host_dlmopen == dlmopen || host_dlinfo == dlinfo) {
+        fprintf(stderr, "FAIL: host loader not resolved\n");
+        return 2;
+    }
+    void *host = host_dlmopen(LM_ID_NEWLM, "libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!host) { fprintf(stderr, "FAIL: isolated live glibc unavailable\n"); return 2; }
+    socket_fn host_socket = (socket_fn)dlsym(host, "socket");
+    close_fn host_close = (close_fn)dlsym(host, "close");
+    clock_fn host_clock = (clock_fn)dlsym(host, "clock_gettime");
+    int *(*host_errno)(void) = (int*(*)(void))dlsym(host, "__errno_location");
+    const char *(*host_version)(void) = (const char*(*)(void))dlsym(host, "gnu_get_libc_version");
+    int (*host_dladdr)(const void*, Dl_info*) = (int(*)(const void*, Dl_info*))dlsym(host, "dladdr");
+    Lmid_t namespace_id = LM_ID_BASE;
+    Dl_info hs = {0}, hc = {0}, hv = {0}, fs = {0}, fc = {0}, diagnostic = {0};
+    if (!host_socket || !host_close || !host_clock || !host_errno || !host_version || !host_dladdr ||
+        host_dlinfo(host, RTLD_DI_LMID, &namespace_id) != 0 || namespace_id == LM_ID_BASE ||
+        !host_dladdr((void*)host_socket, &hs) || !host_dladdr((void*)host_close, &hc) ||
+        !host_dladdr((void*)host_version, &hv) || !host_dladdr((void*)socket, &fs) ||
+        !host_dladdr((void*)close, &fc) || !host_dladdr((void*)__frankenlibc_decision_count, &diagnostic) ||
+        hs.dli_fbase != hv.dli_fbase || hc.dli_fbase != hv.dli_fbase ||
+        fs.dli_fbase != diagnostic.dli_fbase || fc.dli_fbase != diagnostic.dli_fbase ||
+        hs.dli_fbase == fs.dli_fbase) {
+        fprintf(stderr, "FAIL: incumbent/candidate symbol identity not established namespace=%ld symbols=%p/%p/%p/%p/%p/%p bases=%p/%p/%p/%p/%p/%p\n",
+                (long)namespace_id, (void*)host_socket, (void*)host_close, (void*)host_clock,
+                (void*)host_errno, (void*)host_version, (void*)host_dladdr,
+                hs.dli_fbase, hc.dli_fbase, hv.dli_fbase, fs.dli_fbase, fc.dli_fbase, diagnostic.dli_fbase);
+        return 2;
+    }
+    int *errors[2] = {&errno, host_errno()};
+    if (!errors[1] || errors[0] == errors[1]) return 2;
+    socket_fn opens[2] = {socket, host_socket};
+    close_fn closes[2] = {close, host_close};
+    /* Prove that each errno pointer observes its own implementation's errors;
+     * two permanently-zero or wrongly selected slots must not pass parity. */
+    for (int lane = 0; lane < 2; ++lane) {
+        *errors[lane] = 0;
+        int fd = opens[lane](AF_UNIX, -1, 0);
+        int invalid_errno = *errors[lane];
+        if (fd >= 0) (void)closes[lane](fd);
+        if (fd != -1 || invalid_errno != EINVAL) {
+            fprintf(stderr, "FAIL: errno negative control lane=%d result=%d errno=%d\n", lane, fd, invalid_errno);
+            return 2;
+        }
+    }
+    int enabled = __frankenlibc_is_runtime_math_enabled();
+    /* Initialize diagnostics before collecting deltas. No diagnostic is in
+     * the timed region, and the clock itself comes from the isolated glibc. */
+    (void)__frankenlibc_decision_count();
+    printf("policy_cost candidate=%s incumbent=%s glibc=%s namespace=%ld math=%d errno_control=EINVAL pairs=8192 warmup=3 min_samples=24 min_timed_ns=10000000000\n",
+           fs.dli_fname, hs.dli_fname, host_version(), (long)namespace_id, enabled);
+    uint64_t total = 0;
+    int round = 0;
+    while (round < 27 || total < UINT64_C(10000000000)) {
+        uint64_t elapsed[2], decisions[2];
+        for (int turn = 0; turn < 2; ++turn) {
+            int lane = (round + turn) % 2;
+            uint64_t before = __frankenlibc_decision_count();
+            if (socket_batch(opens[lane], closes[lane], errors[lane], host_clock, &elapsed[lane]) != 0) {
+                fprintf(stderr, "FAIL: socket-pair result/errno/clock round=%d lane=%d\n", round, lane);
+                return 2;
+            }
+            decisions[lane] = __frankenlibc_decision_count() - before;
+            if (decisions[lane] != (uint64_t)(lane == 0 ? enabled * 8192 : 0)) {
+                fprintf(stderr, "FAIL: unexpected consultation count round=%d lane=%d count=%lu\n",
+                        round, lane, decisions[lane]);
+                return 2;
+            }
+        }
+        if (round >= 3) {
+            total += elapsed[0] + elapsed[1];
+            printf("cost_sample=%d first=%s pairs=8192 franken_ns=%lu glibc_ns=%lu franken_decisions=%lu glibc_decisions=%lu result=success errno=0\n",
+                   round - 3, round % 2 ? "glibc" : "franken", elapsed[0], elapsed[1], decisions[0], decisions[1]);
+        }
+        ++round;
+    }
+    printf("cost_complete samples=%d timed_ns=%lu verdict=ADVISORY routing_influence=unproven\n", round - 3, total);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     /* Same valid constructor/thread/signal workload against live host libc,
      * without requiring FrankenLibC-only diagnostic exports. */
@@ -299,6 +419,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (argc == 2) {
+        if (strcmp(argv[1], "--policy-cost") == 0) return policy_cost();
         if (strcmp(argv[1], "--thread-signal") == 0) return thread_signal_probe();
         if (strcmp(argv[1], "--healing-counter-first-use") == 0) {
             if (!__frankenlibc_healing_action_count) return 2;
@@ -351,10 +472,10 @@ echo "--- Compiling fixture ---"
 if [[ "${1:-}" == "--compile-fixture" ]]; then
   # Internal RCH job entry: generate the source on the worker because target/
   # is deliberately excluded from source synchronization.
-  gcc -O2 -pthread -fPIE -pie -Wl,-init,probe_elf_init -o "${FIXTURE_BIN}" "${FIXTURE_SRC}" || exit $?
+  gcc -O2 -pthread -fPIE -pie -Wl,-init,probe_elf_init -o "${FIXTURE_BIN}" "${FIXTURE_SRC}" -ldl || exit $?
   # PIC code keeps weak diagnostic imports dynamically resolvable even though
   # -no-pie makes the executable itself fixed-address (ELF ET_EXEC).
-  gcc -O2 -pthread -fPIC -no-pie -Wl,-init,probe_elf_init -o "${FIXTURE_BIN}_nonpie" "${FIXTURE_SRC}"
+  gcc -O2 -pthread -fPIC -no-pie -Wl,-init,probe_elf_init -o "${FIXTURE_BIN}_nonpie" "${FIXTURE_SRC}" -ldl
   exit $?
 fi
 if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killswitch_e2e -- bash scripts/check_runtime_math_killswitch_e2e.sh --compile-fixture; then
@@ -363,6 +484,22 @@ if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killsw
 fi
 echo "Compiled: ${FIXTURE_BIN}"
 echo ""
+
+if [[ "${1:-}" == "--policy-cost" ]]; then
+  for probe_mode in strict hardened; do
+    for math in off on; do
+      echo "Cost probe: ${probe_mode}/${math}"
+      timeout 120 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE="${probe_mode}" LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "$1"
+      rc=$?
+      if [[ ${rc} -ne 0 ]]; then
+        echo "FAIL: ${probe_mode}/${math} cost probe (rc=${rc})"
+        exit 1
+      fi
+    done
+  done
+  echo "PASS: matched socket-pair results and consultation counts; timings remain advisory"
+  exit 0
+fi
 
 if [[ "${1:-}" == "--thread-signal" ]]; then
   for probe_bin in "${FIXTURE_BIN}" "${FIXTURE_BIN}_nonpie"; do
