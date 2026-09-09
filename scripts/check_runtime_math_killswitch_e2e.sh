@@ -10,6 +10,8 @@
 # checks consultation and liveness, not whether action/profile influence exists.
 # --bounds-repair checks source-bound clamping with math off and on in hardened
 # mode. It never runs the intentionally oversized copy against strict libc.
+# --thread-signal exercises concurrent sockets and writes from a signal handler;
+# delivery is between socket calls, not proof of interruption inside a lock.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -67,6 +69,8 @@ cat > "${FIXTURE_SRC}" <<'ENDC'
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -74,6 +78,70 @@ extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
 extern int __frankenlibc_is_runtime_math_enabled(void) __attribute__((weak));
 extern uint64_t __frankenlibc_decision_count(void) __attribute__((weak));
 extern uint64_t __frankenlibc_healing_action_count(unsigned) __attribute__((weak));
+
+static int signal_pipe[2];
+static int constructor_result = -1;
+static int constructor_ready = -1;
+static int constructor_calls;
+
+__attribute__((constructor)) static void probe_constructor(void) {
+    ++constructor_calls;
+    const char *enabled = getenv("FRANKENLIBC_PROBE_CONSTRUCTOR");
+    if (!enabled || enabled[0] != '1') return;
+    if (__frankenlibc_is_runtime_ready) constructor_ready = __frankenlibc_is_runtime_ready();
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    constructor_result = fd >= 0 && close(fd) == 0;
+}
+
+static void probe_signal_handler(int signum) {
+    (void)signum;
+    int saved_errno = errno;
+    /* Only an async-signal-safe operation in the handler. Four workers emit
+     * 64 bytes each, below the pipe capacity; failures are detected by count. */
+    if (write(signal_pipe[1], "S", 1) != 1) _exit(3);
+    errno = saved_errno;
+}
+
+static void *probe_thread(void *unused) {
+    (void)unused;
+    for (int i = 0; i < 64; ++i) {
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0 || close(fd) != 0 || raise(SIGUSR1) != 0) return (void*)1;
+    }
+    return NULL;
+}
+
+static int thread_signal_probe(void) {
+    if (constructor_calls != 1 || constructor_result != 1) {
+        fprintf(stderr, "FAIL: constructor socket probe did not succeed (calls=%d result=%d ready=%d)\n",
+                constructor_calls, constructor_result, constructor_ready);
+        return 2;
+    }
+    if (pipe(signal_pipe) != 0) return 2;
+    struct sigaction action = {0};
+    action.sa_handler = probe_signal_handler;
+    if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGUSR1, &action, NULL) != 0) return 2;
+    pthread_t threads[4];
+    for (int i = 0; i < 4; ++i) if (pthread_create(&threads[i], NULL, probe_thread, NULL) != 0) return 2;
+    for (int i = 0; i < 4; ++i) {
+        void *result;
+        if (pthread_join(threads[i], &result) != 0 || result != NULL) return 2;
+    }
+    if (close(signal_pipe[1]) != 0) return 2;
+    unsigned char bytes[256];
+    size_t total = 0;
+    for (;;) {
+        ssize_t count = read(signal_pipe[0], bytes, sizeof(bytes));
+        if (count < 0) return 2;
+        if (count == 0) break;
+        for (ssize_t i = 0; i < count; ++i) if (bytes[i] != 'S') return 2;
+        total += (size_t)count;
+    }
+    if (close(signal_pipe[0]) != 0 || total != 256) return 2;
+    printf("constructor_socket=1 constructor_ready=%d threads=4 sockets=256 signal_bytes=%zu joined=4\n",
+           constructor_ready, total);
+    return 0;
+}
 
 static int bounds_repair(void) {
     if (!__frankenlibc_healing_action_count) return 2;
@@ -185,6 +253,10 @@ static int policy_history(int adverse) {
 }
 
 int main(int argc, char** argv) {
+    /* Same valid constructor/thread/signal workload against live host libc,
+     * without requiring FrankenLibC-only diagnostic exports. */
+    if (argc == 2 && strcmp(argv[1], "--constructor-host-control") == 0)
+        return thread_signal_probe();
     if (!__frankenlibc_is_runtime_ready || !__frankenlibc_is_runtime_math_enabled ||
         !__frankenlibc_decision_count) {
         fprintf(stderr, "FAIL: FFI symbols not resolved\n");
@@ -197,6 +269,14 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (argc == 2) {
+        if (strcmp(argv[1], "--thread-signal") == 0) return thread_signal_probe();
+        if (strcmp(argv[1], "--healing-counter-first-use") == 0) {
+            if (!__frankenlibc_healing_action_count) return 2;
+            uint64_t count = __frankenlibc_healing_action_count(1);
+            if (__frankenlibc_healing_action_count(1) != count) return 2;
+            printf("first_use_healing_counter=%lu repeated_read=stable\n", count);
+            return 0;
+        }
         if (strcmp(argv[1], "--bounds-repair") == 0) return bounds_repair();
         if (strcmp(argv[1], "--successful-history") == 0) return policy_history(0);
         if (strcmp(argv[1], "--adverse-history") == 0) return policy_history(1);
@@ -239,7 +319,7 @@ echo "--- Compiling fixture ---"
 if [[ "${1:-}" == "--compile-fixture" ]]; then
   # Internal RCH job entry: generate the source on the worker because target/
   # is deliberately excluded from source synchronization.
-  gcc -O2 -o "${FIXTURE_BIN}" "${FIXTURE_SRC}"
+  gcc -O2 -pthread -o "${FIXTURE_BIN}" "${FIXTURE_SRC}"
   exit $?
 fi
 if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killswitch_e2e -- bash scripts/check_runtime_math_killswitch_e2e.sh --compile-fixture; then
@@ -249,16 +329,37 @@ fi
 echo "Compiled: ${FIXTURE_BIN}"
 echo ""
 
-if [[ "${1:-}" == "--bounds-repair" ]]; then
+if [[ "${1:-}" == "--thread-signal" ]]; then
+  timeout 15 env -u LD_PRELOAD FRANKENLIBC_PROBE_CONSTRUCTOR=1 "${FIXTURE_BIN}" --constructor-host-control
+  rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+    echo "FAIL: host constructor/thread/signal control (rc=${rc})"
+    exit 1
+  fi
+  for probe_mode in strict hardened; do
+    for math in off on; do
+      timeout 15 env FRANKENLIBC_PROBE_CONSTRUCTOR=1 FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE="${probe_mode}" LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "$1"
+      rc=$?
+      if [[ ${rc} -ne 0 ]]; then
+        echo "FAIL: ${probe_mode}/${math} thread-signal probe (rc=${rc})"
+        exit 1
+      fi
+    done
+  done
+  echo "PASS: thread joins and signal writes in both modes and switch states"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--bounds-repair" || "${1:-}" == "--healing-counter-first-use" ]]; then
   for math in off on; do
-    timeout 15 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --bounds-repair
+    timeout 15 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "$1"
     rc=$?
     if [[ ${rc} -ne 0 ]]; then
-      echo "FAIL: ${math} hardened bounds repair (rc=${rc})"
+      echo "FAIL: ${math} hardened $1 (rc=${rc})"
       exit 1
     fi
   done
-  echo "PASS: source-bound repair remains active with runtime math off and on"
+  echo "PASS: $1 with runtime math off and on"
   exit 0
 fi
 
