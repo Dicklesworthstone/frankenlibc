@@ -179,7 +179,7 @@ impl AdaptiveController {
 
         if self
             .disabled_remaining
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -917,6 +917,48 @@ fn duration_to_nanos(duration: Duration) -> u64 {
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn disabled_countdown_reopens_without_underflow() {
+        let controller = AdaptiveController::default();
+        controller.disabled_remaining.store(2, Ordering::Relaxed);
+
+        assert!(!controller.begin().allowed);
+        assert_eq!(controller.disabled_remaining.load(Ordering::Relaxed), 1);
+        assert!(!controller.begin().allowed);
+        assert_eq!(controller.disabled_remaining.load(Ordering::Relaxed), 0);
+        assert!(controller.begin().allowed);
+        assert!(controller.begin().allowed);
+        assert_eq!(controller.disabled_remaining.load(Ordering::Relaxed), 0);
+        assert_eq!(controller.disabled_skips.load(Ordering::Relaxed), 2);
+        assert_eq!(controller.observed.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn concurrent_countdown_consumes_each_disabled_attempt_once() {
+        let controller = Arc::new(AdaptiveController::default());
+        controller.disabled_remaining.store(7, Ordering::Relaxed);
+        let ready = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let controller = Arc::clone(&controller);
+            let ready = Arc::clone(&ready);
+            handles.push(std::thread::spawn(move || {
+                ready.wait();
+                (0..8).filter(|_| !controller.begin().allowed).count()
+            }));
+        }
+        let denied: usize = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("countdown worker joins"))
+            .sum();
+
+        assert_eq!(denied, 7);
+        assert_eq!(controller.disabled_remaining.load(Ordering::Relaxed), 0);
+        assert_eq!(controller.disabled_skips.load(Ordering::Relaxed), 7);
+        assert_eq!(controller.observed.load(Ordering::Relaxed), 32);
+        assert!(controller.begin().allowed);
+    }
 
     #[test]
     fn publish_then_pop_claims_parked_value() {
