@@ -553,9 +553,9 @@ mod tests {
         monitor.count = SIG_WINDOW;
         monitor.write_pos = 0;
 
-        for i in 0..SIG_WINDOW {
+        for (i, sample) in monitor.window.iter_mut().enumerate() {
             let v = if i < SIG_WINDOW / 2 { 100.0 } else { -100.0 };
-            monitor.window[i] = [v, -v, v, -v];
+            *sample = [v, -v, v, -v];
         }
 
         monitor.recompute();

@@ -432,8 +432,7 @@ mod tests {
     #[test]
     fn test_all_stages_represented() {
         let oracle = CheckOracle::new();
-        for ctx_idx in 0..NUM_CONTEXTS {
-            let ordering = &oracle.orderings[ctx_idx];
+        for (ctx_idx, ordering) in oracle.orderings[..NUM_CONTEXTS].iter().enumerate() {
             let mut seen = [false; NUM_STAGES];
             for &stage in ordering {
                 seen[stage as usize] = true;
