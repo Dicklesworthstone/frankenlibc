@@ -8,6 +8,8 @@
 # 4. Invalid values fall back to on
 # --policy-history runs matched 512-call histories and reports decisions; it
 # checks consultation and liveness, not whether action/profile influence exists.
+# --bounds-repair checks source-bound clamping with math off and on in hardened
+# mode. It never runs the intentionally oversized copy against strict libc.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -71,6 +73,50 @@ cat > "${FIXTURE_SRC}" <<'ENDC'
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
 extern int __frankenlibc_is_runtime_math_enabled(void) __attribute__((weak));
 extern uint64_t __frankenlibc_decision_count(void) __attribute__((weak));
+extern uint64_t __frankenlibc_healing_action_count(unsigned) __attribute__((weak));
+
+static int bounds_repair(void) {
+    if (!__frankenlibc_healing_action_count) return 2;
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (!mode || strcmp(mode, "hardened") != 0) {
+        fprintf(stderr, "FAIL: bounds fault probe requires hardened mode\n");
+        return 2;
+    }
+    void *(*volatile copy)(void*, const void*, size_t) = memcpy;
+    unsigned char *src = malloc(8), *dst = malloc(32);
+    if (!src || !dst) return 2;
+    for (size_t i = 0; i < 8; ++i) ((volatile unsigned char*)src)[i] = 'A' + i;
+    for (size_t i = 0; i < 32; ++i) ((volatile unsigned char*)dst)[i] = 'J';
+
+    /* Valid counterpart first; initialize through the guarded libc operation,
+     * not through a diagnostic that may lazily initialize healing itself. */
+    if (copy(dst, src, 8) != dst) return 2;
+    for (size_t i = 0; i < 8; ++i) if (dst[i] != 'A' + i) return 2;
+    for (size_t i = 0; i < 32; ++i) ((volatile unsigned char*)dst)[i] = 'J';
+    uint64_t heals_before = __frankenlibc_healing_action_count(1);
+    uint64_t decisions_before = __frankenlibc_decision_count();
+    if (copy(dst, src, 8) != dst ||
+        __frankenlibc_healing_action_count(1) != heals_before) return 2;
+    for (size_t i = 0; i < 8; ++i) if (dst[i] != 'A' + i) return 2;
+    for (size_t i = 8; i < 32; ++i) if (dst[i] != 'J') return 2;
+    for (size_t i = 0; i < 32; ++i) ((volatile unsigned char*)dst)[i] = 'J';
+
+    /* Deliberate source over-read request in this isolated hardened process.
+     * Every inspection below stays INSIDE the allocated destination. A raw
+     * copy overwrites the sentinel suffix; a no-op fails the prefix check. */
+    if (copy(dst, src, 32) != dst) return 2;
+    uint64_t heals_after = __frankenlibc_healing_action_count(1);
+    uint64_t decisions_after = __frankenlibc_decision_count();
+    for (size_t i = 0; i < 8; ++i) if (dst[i] != 'A' + i) return 2;
+    for (size_t i = 8; i < 32; ++i) if (dst[i] != 'J') return 2;
+    if (heals_after != heals_before + 1) return 2;
+    if (!__frankenlibc_is_runtime_math_enabled() && decisions_after != decisions_before) return 2;
+    printf("bounds_repair=clamp prefix=8 untouched_suffix=24 heals=%lu decisions=%lu\n",
+           heals_after - heals_before, decisions_after - decisions_before);
+    free(dst);
+    free(src);
+    return 0;
+}
 
 struct decision_snapshot {
     uint64_t evidence_seqno;
@@ -151,6 +197,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (argc == 2) {
+        if (strcmp(argv[1], "--bounds-repair") == 0) return bounds_repair();
         if (strcmp(argv[1], "--successful-history") == 0) return policy_history(0);
         if (strcmp(argv[1], "--adverse-history") == 0) return policy_history(1);
         return 2;
@@ -201,6 +248,19 @@ if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killsw
 fi
 echo "Compiled: ${FIXTURE_BIN}"
 echo ""
+
+if [[ "${1:-}" == "--bounds-repair" ]]; then
+  for math in off on; do
+    timeout 15 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --bounds-repair
+    rc=$?
+    if [[ ${rc} -ne 0 ]]; then
+      echo "FAIL: ${math} hardened bounds repair (rc=${rc})"
+      exit 1
+    fi
+  done
+  echo "PASS: source-bound repair remains active with runtime math off and on"
+  exit 0
+fi
 
 if [[ "${1:-}" == "--policy-history" ]]; then
   for math in off on; do
