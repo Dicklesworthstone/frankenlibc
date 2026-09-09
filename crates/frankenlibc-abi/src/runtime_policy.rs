@@ -272,6 +272,13 @@ fn runtime_math_enabled() -> bool {
     if cached == RUNTIME_MATH_OFF {
         return false;
     }
+    // Interposed calls can arrive before the loader publishes environ. Do not
+    // permanently cache the default then: defer adaptive work until the actual
+    // process setting can be read, just as during recursive resolution below.
+    // SAFETY: reading the process-owned environment table pointer; no dereference.
+    if unsafe { environ.is_null() } {
+        return false;
+    }
     // Need to resolve
     if RUNTIME_MATH_STATE
         .compare_exchange(
@@ -2348,6 +2355,14 @@ fn decide_strict_observation(
         bloom_negative,
     };
 
+    // Strict observation is still a kernel consultation. Honor the same
+    // immutable switch as hardened routing before entering the kernel.
+    if runtime_math_disabled() {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    }
+
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         let decision = passthrough_decision();
         record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
@@ -2542,6 +2557,10 @@ pub(crate) fn observe(
     // observation entirely pay nothing.
     let _errno_transparency = ErrnoTransparencyGuard::capture();
 
+    if runtime_math_disabled() {
+        return;
+    }
+
     let mode = mode();
     if runtime_kernel_passthrough_family(family) {
         let _ = (profile, estimated_cost_ns, adverse, mode);
@@ -2576,6 +2595,9 @@ pub(crate) fn check_ordering(
     aligned: bool,
     recent_page: bool,
 ) -> [CheckStage; 7] {
+    if runtime_math_disabled() {
+        return PASSTHROUGH_ORDERING;
+    }
     if runtime_kernel_passthrough_family(family) {
         let _ = (aligned, recent_page);
         return PASSTHROUGH_ORDERING;
@@ -2626,6 +2648,9 @@ pub(crate) fn note_check_order_outcome(
     ordering_used: &[CheckStage; 7],
     exit_stage: Option<usize>,
 ) {
+    if runtime_math_disabled() {
+        return;
+    }
     if runtime_kernel_passthrough_family(family) {
         let _ = (aligned, recent_page, ordering_used, exit_stage);
         return;
@@ -2965,6 +2990,49 @@ mod tests {
         _lock: RuntimePolicyTestGuard,
         previous_ready: u8,
         previous_mode_log_ready: u8,
+    }
+
+    #[test]
+    fn math_off_stops_strict_observation_and_feedback_without_hiding_counters() {
+        let _lock = runtime_policy_test_lock();
+        let _mode = set_mode_state_for_tests(MODE_STRICT);
+        let _ready = enable_runtime_kernel_for_tests();
+        struct RestoreMathState(u8);
+        impl Drop for RestoreMathState {
+            fn drop(&mut self) {
+                RUNTIME_MATH_STATE.store(self.0, AtomicOrdering::SeqCst);
+            }
+        }
+        let _restore =
+            RestoreMathState(RUNTIME_MATH_STATE.swap(RUNTIME_MATH_ON, AtomicOrdering::SeqCst));
+        let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS).expect("kernel ready");
+        let before = k.decision_telemetry_snapshot().decisions;
+        let (_, decision) = decide_strict_observation(ApiFamily::Socket, 1, 0, false, true, 0);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert!(k.decision_telemetry_snapshot().decisions > before);
+
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
+        let baseline = k.snapshot(SafetyLevel::Strict);
+        for _ in 0..32 {
+            let (_, decision) = decide_strict_observation(ApiFamily::Socket, 1, 0, false, true, 0);
+            assert_eq!(decision.action, MembraneAction::Allow);
+            assert_eq!(decision.evidence_seqno, 0);
+            observe(ApiFamily::Socket, ValidationProfile::Full, 1000, true);
+            assert_eq!(
+                check_ordering(ApiFamily::Socket, true, false),
+                PASSTHROUGH_ORDERING
+            );
+            note_check_order_outcome(
+                ApiFamily::Socket,
+                true,
+                false,
+                &PASSTHROUGH_ORDERING,
+                Some(0),
+            );
+        }
+        assert_eq!(k.snapshot(SafetyLevel::Strict), baseline);
+        // Diagnostics still expose the real, already initialized kernel.
+        assert_eq!(runtime_decision_count(), Some(baseline.decisions));
     }
 
     impl Drop for RuntimeReadyGuard {
