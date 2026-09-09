@@ -740,10 +740,10 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
 
 #[inline]
 fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
-    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let (simd_chunks, tail) = s.as_chunks::<SIMD_LANES>();
     let mut base = 0usize;
 
-    for chunk in simd_chunks.by_ref() {
+    for chunk in simd_chunks {
         if has_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
             for (j, &byte) in chunk.iter().enumerate() {
                 if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
@@ -754,7 +754,7 @@ fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+    for (j, &byte) in tail.iter().enumerate() {
         if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
             return base + j;
         }
@@ -765,10 +765,10 @@ fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
 
 #[inline]
 fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
-    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let (simd_chunks, tail) = s.as_chunks::<SIMD_LANES>();
     let mut base = 0usize;
 
-    for chunk in simd_chunks.by_ref() {
+    for chunk in simd_chunks {
         if has_non_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
             for (j, &byte) in chunk.iter().enumerate() {
                 if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
@@ -779,7 +779,7 @@ fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+    for (j, &byte) in tail.iter().enumerate() {
         if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
             return base + j;
         }
@@ -824,10 +824,10 @@ where
     F: Fn(Simd<u8, SIMD_LANES>) -> Mask<i8, SIMD_LANES>,
 {
     let zero = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let (simd_chunks, tail) = s.as_chunks::<SIMD_LANES>();
     let mut base = 0usize;
 
-    for chunk in simd_chunks.by_ref() {
+    for chunk in simd_chunks {
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let nul = lanes.simd_eq(zero);
         let member = in_set(lanes);
@@ -846,7 +846,7 @@ where
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+    for (j, &byte) in tail.iter().enumerate() {
         if byte == 0 || (table[byte as usize] == stop_in_set) {
             return base + j;
         }
@@ -943,8 +943,8 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
     let lower = Simd::<u8, SIMD_LANES>::splat(lo);
     let upper = Simd::<u8, SIMD_LANES>::splat(hi);
     let zero = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut chunks = s[base..].chunks_exact(SIMD_LANES);
-    for chunk in chunks.by_ref() {
+    let (chunks, tail) = s[base..].as_chunks::<SIMD_LANES>();
+    for chunk in chunks {
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let member = lanes.simd_ge(lower) & lanes.simd_le(upper);
         let stop = if stop_in_set {
@@ -962,7 +962,7 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in chunks.remainder().iter().enumerate() {
+    for (j, &byte) in tail.iter().enumerate() {
         if byte == 0 || (table[byte as usize] == stop_in_set) {
             return base + j;
         }
@@ -2293,8 +2293,12 @@ mod tests {
             }
             s.len()
         }
-        // Sets of size 5,8,9,16,17,20 (exercise padded-8 / padded-16 / scalar).
+        // Exercise four-byte, padded-8, padded-16, contiguous-range and scalar
+        // paths. Noncontiguous sets must not all route through span_range.
         let sets: &[&[u8]] = &[
+            b"abcd\0",
+            b"acegi\0",
+            b"acegikmoq\0",
             b"abcde\0",
             b"abcdefgh\0",
             b"abcdefghi\0",
@@ -2303,7 +2307,9 @@ mod tests {
             b"0123456789abcdefghij\0",
         ];
         for set in sets {
-            for len in [0usize, 1, 7, 31, 32, 33, 65, 200] {
+            for len in [
+                0usize, 1, 7, 31, 32, 33, 65, 200, 255, 256, 257, 287, 288, 289, 511, 512, 513,
+            ] {
                 for stop_pos in [usize::MAX, 0, 1, 30, 31, 32, 64, len.saturating_sub(1)] {
                     // Vary fill/interloper membership so both directions get
                     // non-trivial scans: 'a' is in every set, 'x' in none,

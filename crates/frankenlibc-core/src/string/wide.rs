@@ -215,10 +215,10 @@ fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
 /// this module only invoke it with a non-NUL first needle character.
 fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
     debug_assert_ne!(needle, 0);
-    let mut chunks = s.chunks_exact(WIDE_FIND_SIMD_LANES);
+    let (chunks, tail) = s.as_chunks::<WIDE_FIND_SIMD_LANES>();
     let mut base = 0usize;
 
-    for chunk in chunks.by_ref() {
+    for chunk in chunks {
         if has_wide_or_nul_simd(chunk, needle) {
             for (j, &ch) in chunk.iter().enumerate() {
                 if ch == needle || ch == 0 {
@@ -229,7 +229,7 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
         base += WIDE_FIND_SIMD_LANES;
     }
 
-    for (j, &ch) in chunks.remainder().iter().enumerate() {
+    for (j, &ch) in tail.iter().enumerate() {
         if ch == needle || ch == 0 {
             return base + j;
         }
@@ -314,8 +314,8 @@ pub fn wcslen(s: &[u32]) -> usize {
     }
 
     // Tail (< 256 wide chars): 16-lane chunks, then scalar.
-    let mut chunks = s[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
-    for chunk in chunks.by_ref() {
+    let (chunks, tail) = s[base..].as_chunks::<WIDE_NUL_SIMD_LANES>();
+    for chunk in chunks {
         let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
         if lanes.simd_eq(Simd::splat(0)).any() {
             for (j, &ch) in chunk.iter().enumerate() {
@@ -327,7 +327,7 @@ pub fn wcslen(s: &[u32]) -> usize {
         base += WIDE_NUL_SIMD_LANES;
     }
 
-    for (j, &ch) in chunks.remainder().iter().enumerate() {
+    for (j, &ch) in tail.iter().enumerate() {
         if ch == 0 {
             return base + j;
         }
@@ -520,8 +520,8 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
         base += BLOCK;
     }
 
-    let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
-    for chunk in chunks.by_ref() {
+    let (chunks, tail) = scan[base..].as_chunks::<WIDE_NUL_SIMD_LANES>();
+    for chunk in chunks {
         let m = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk)
             .simd_eq(Simd::splat(0))
             .to_bitmask();
@@ -530,7 +530,7 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
         }
         base += WIDE_NUL_SIMD_LANES;
     }
-    for (j, &ch) in chunks.remainder().iter().enumerate() {
+    for (j, &ch) in tail.iter().enumerate() {
         if ch == 0 {
             return base + j;
         }
@@ -775,10 +775,10 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
 
     let mut last = None;
     if s.len() >= WIDE_FIND_LONG_SIMD_LANES {
-        let mut chunks = s.chunks_exact(WIDE_FIND_LONG_SIMD_LANES);
+        let (chunks, tail) = s.as_chunks::<WIDE_FIND_LONG_SIMD_LANES>();
         let mut base = 0usize;
 
-        for chunk in chunks.by_ref() {
+        for chunk in chunks {
             if !has_wide_or_nul_long_simd(chunk, c) {
                 base += WIDE_FIND_LONG_SIMD_LANES;
                 continue;
@@ -796,7 +796,7 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
             base += WIDE_FIND_LONG_SIMD_LANES;
         }
 
-        for (j, &ch) in chunks.remainder().iter().enumerate() {
+        for (j, &ch) in tail.iter().enumerate() {
             if ch == 0 {
                 return last;
             }
@@ -808,10 +808,10 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
         return last;
     }
 
-    let mut chunks = s.chunks_exact(WIDE_FIND_SIMD_LANES);
+    let (chunks, tail) = s.as_chunks::<WIDE_FIND_SIMD_LANES>();
     let mut base = 0usize;
 
-    for chunk in chunks.by_ref() {
+    for chunk in chunks {
         if !has_wide_or_nul_simd(chunk, c) {
             base += WIDE_FIND_SIMD_LANES;
             continue;
@@ -829,7 +829,7 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
         base += WIDE_FIND_SIMD_LANES;
     }
 
-    for (j, &ch) in chunks.remainder().iter().enumerate() {
+    for (j, &ch) in tail.iter().enumerate() {
         if ch == 0 {
             return last;
         }
@@ -1065,10 +1065,10 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let a_all = &s1[..count];
     let b_all = &s2[..count];
 
-    let mut a_pairs = a_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
-    let mut b_pairs = b_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+    let (a_pairs, a_rest) = a_all.as_chunks::<WIDE_COMPARE_UNROLL_LANES>();
+    let (b_pairs, b_rest) = b_all.as_chunks::<WIDE_COMPARE_UNROLL_LANES>();
 
-    for (a_pair, b_pair) in a_pairs.by_ref().zip(b_pairs.by_ref()) {
+    for (a_pair, b_pair) in a_pairs.iter().zip(b_pairs) {
         let (a_first, a_second) = a_pair.split_at(WIDE_COMPARE_SIMD_LANES);
         let (b_first, b_second) = b_pair.split_at(WIDE_COMPARE_SIMD_LANES);
 
@@ -1091,10 +1091,10 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         }
     }
 
-    let mut a_chunks = a_pairs.remainder().chunks_exact(WIDE_COMPARE_SIMD_LANES);
-    let mut b_chunks = b_pairs.remainder().chunks_exact(WIDE_COMPARE_SIMD_LANES);
+    let (a_chunks, a_tail) = a_rest.as_chunks::<WIDE_COMPARE_SIMD_LANES>();
+    let (b_chunks, b_tail) = b_rest.as_chunks::<WIDE_COMPARE_SIMD_LANES>();
 
-    for (a_chunk, b_chunk) in a_chunks.by_ref().zip(b_chunks.by_ref()) {
+    for (a_chunk, b_chunk) in a_chunks.iter().zip(b_chunks) {
         let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_chunk);
         let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_chunk);
         if av.simd_eq(bv).all() {
@@ -1106,7 +1106,7 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         }
     }
 
-    for (a, b) in a_chunks.remainder().iter().zip(b_chunks.remainder().iter()) {
+    for (a, b) in a_tail.iter().zip(b_tail) {
         let a = *a as i32;
         let b = *b as i32;
         if a != b {
@@ -1200,8 +1200,8 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
 
     // Tail (< 256 wide chars): 16-lane chunks, then scalar.
     let t16 = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
-    let mut chunks = scan[base..].chunks_exact(WIDE_MEMCHR_SIMD_LANES);
-    for chunk in chunks.by_ref() {
+    let (chunks, tail) = scan[base..].as_chunks::<WIDE_MEMCHR_SIMD_LANES>();
+    for chunk in chunks {
         let m = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk)
             .simd_eq(t16)
             .to_bitmask();
@@ -1211,7 +1211,7 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
         base += WIDE_MEMCHR_SIMD_LANES;
     }
 
-    for (j, &x) in chunks.remainder().iter().enumerate() {
+    for (j, &x) in tail.iter().enumerate() {
         if x == c {
             return Some(base + j);
         }
@@ -2506,6 +2506,80 @@ mod tests {
         let mut c = a.clone();
         c[10] = 999;
         assert_eq!(wmemcmp(&a, &c, 8), 0);
+    }
+
+    #[test]
+    fn test_wmemcmp_first_signed_difference_across_tails() {
+        for len in [
+            0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
+        ] {
+            let left = vec![1u32; len];
+            assert_eq!(wmemcmp(&left, &left, usize::MAX), 0);
+            for pos in 0..len {
+                let mut right = left.clone();
+                right[pos] = 0x8000_0000;
+                if pos + 1 < len {
+                    // Opposite ordering later must not override the first mismatch.
+                    right[pos + 1] = 2;
+                }
+                assert_eq!(wmemcmp(&left, &right, usize::MAX), 1, "len={len} pos={pos}");
+                assert_eq!(
+                    wmemcmp(&right, &left, usize::MAX),
+                    -1,
+                    "len={len} pos={pos}"
+                );
+                assert_eq!(wmemcmp(&left, &right, pos), 0);
+                assert_eq!(wmemcmp(&left, &right, pos + 1), 1);
+                assert_eq!(wmemcmp(&left, &right[..pos], usize::MAX), 0);
+                assert_eq!(wmemcmp(&right[..pos], &left, usize::MAX), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_wide_scans_preserve_nul_precedence_and_tail_bounds() {
+        const NEEDLE: u32 = 0xfeed_beef;
+        for len in [
+            0, 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 255, 256, 257, 271, 272, 273, 511, 512, 513,
+        ] {
+            let empty_scan = vec![0x1234u32; len];
+            assert_eq!(find_wide_or_nul(&empty_scan, NEEDLE), len);
+            assert_eq!(wcslen(&empty_scan), len);
+            assert_eq!(wcschr(&empty_scan, NEEDLE), None);
+            assert_eq!(wcsrchr(&empty_scan, NEEDLE), None);
+            assert_eq!(wmemchr(&empty_scan, NEEDLE, usize::MAX), None);
+            for pos in 0..len {
+                for stop in [0, NEEDLE] {
+                    let mut s = empty_scan.clone();
+                    s[pos] = stop;
+                    if pos + 1 < len {
+                        s[pos + 1] = NEEDLE;
+                    }
+                    let nul = s.iter().position(|&ch| ch == 0).unwrap_or(len);
+                    assert_eq!(find_wide_or_nul(&s, NEEDLE), pos);
+                    assert_eq!(wcslen(&s), nul);
+                    assert_eq!(
+                        wcschr(&s, NEEDLE),
+                        s[..nul].iter().position(|&ch| ch == NEEDLE)
+                    );
+                    assert_eq!(
+                        wcsrchr(&s, NEEDLE),
+                        s[..nul].iter().rposition(|&ch| ch == NEEDLE)
+                    );
+                    for bound in [pos, pos + 1, len, usize::MAX] {
+                        let scan = &s[..bound.min(len)];
+                        assert_eq!(
+                            wcsnlen(&s, bound),
+                            scan.iter().position(|&ch| ch == 0).unwrap_or(scan.len())
+                        );
+                        assert_eq!(
+                            wmemchr(&s, NEEDLE, bound),
+                            scan.iter().position(|&ch| ch == NEEDLE)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

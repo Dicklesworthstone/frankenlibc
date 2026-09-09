@@ -1350,23 +1350,23 @@ pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
     // Equality-only SIMD scan: fold 128-byte blocks, then 32-byte panels, then
     // the byte tail. Unlike memcmp, bcmp never reports ordering, so the first
     // differing block can return `1` immediately without resolving which byte.
-    let mut a_blocks = a.chunks_exact(SIMD_FOLD_BYTES);
-    let mut b_blocks = b.chunks_exact(SIMD_FOLD_BYTES);
-    for (a_block, b_block) in a_blocks.by_ref().zip(b_blocks.by_ref()) {
+    let (a_blocks, a_rest) = a.as_chunks::<SIMD_FOLD_BYTES>();
+    let (b_blocks, b_rest) = b.as_chunks::<SIMD_FOLD_BYTES>();
+    for (a_block, b_block) in a_blocks.iter().zip(b_blocks) {
         if ne_simd_folded_128(a_block, b_block) {
             return 1;
         }
     }
 
-    let mut a_panels = a_blocks.remainder().chunks_exact(SIMD_LANES);
-    let mut b_panels = b_blocks.remainder().chunks_exact(SIMD_LANES);
-    for (a_chunk, b_chunk) in a_panels.by_ref().zip(b_panels.by_ref()) {
+    let (a_panels, a_tail) = a_rest.as_chunks::<SIMD_LANES>();
+    let (b_panels, b_tail) = b_rest.as_chunks::<SIMD_LANES>();
+    for (a_chunk, b_chunk) in a_panels.iter().zip(b_panels) {
         if !eq_simd_32(a_chunk, b_chunk) {
             return 1;
         }
     }
 
-    for (x, y) in a_panels.remainder().iter().zip(b_panels.remainder().iter()) {
+    for (x, y) in a_tail.iter().zip(b_tail) {
         if x != y {
             return 1;
         }
@@ -1958,6 +1958,30 @@ mod tests {
             left.push(0x11);
             right.push(0x22);
             assert_eq!(bcmp(&left, &right, len), 0);
+        }
+    }
+
+    #[test]
+    fn test_bcmp_block_panel_and_tail_bounds() {
+        for len in [
+            0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 159, 160, 161, 255, 256, 257,
+        ] {
+            let left = vec![0xa5; len];
+            let mut right = left.clone();
+            assert_eq!(bcmp(&left, &right, usize::MAX), 0, "len={len}");
+            for pos in 0..len {
+                right[pos] = 0x5a;
+                assert_eq!(bcmp(&left, &right, usize::MAX), 1, "len={len} pos={pos}");
+                assert_eq!(bcmp(&left, &right, pos), 0, "excluded mismatch at {pos}");
+                assert_eq!(
+                    bcmp(&left, &right, pos + 1),
+                    1,
+                    "included mismatch at {pos}"
+                );
+                assert_eq!(bcmp(&left, &right[..pos], usize::MAX), 0);
+                assert_eq!(bcmp(&right[..pos], &left, usize::MAX), 0);
+                right[pos] = left[pos];
+            }
         }
     }
 
