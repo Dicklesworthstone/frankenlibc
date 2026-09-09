@@ -100,10 +100,8 @@ fn is_alphabet(c: u8) -> bool {
 pub fn parse(setting: &[u8]) -> Option<YescryptSetting<'_>> {
     let (prefix_len, rest) = if let Some(rest) = setting.strip_prefix(b"$gy$") {
         (4usize, rest)
-    } else if let Some(rest) = setting.strip_prefix(b"$y$") {
-        (3usize, rest)
     } else {
-        return None;
+        (3usize, setting.strip_prefix(b"$y$")?)
     };
 
     let params_end = rest.iter().position(|&c| c == b'$')?;
@@ -137,7 +135,8 @@ mod tests {
     /// back exactly as they went in.
     #[test]
     fn parses_settings_generated_by_libxcrypt() {
-        let cases: &[(&[u8], &[u8], &[u8], &[u8])] = &[
+        type SettingCase<'a> = (&'a [u8], &'a [u8], &'a [u8], &'a [u8]);
+        let cases: &[SettingCase<'_>] = &[
             (
                 b"$y$j9T$/6k.2IU/5UE08g.1Bsk1E2V2HEF3KQ",
                 b"$y$",

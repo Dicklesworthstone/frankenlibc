@@ -101,7 +101,7 @@ pub fn scrypt_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
     let n_log2 = value_of(rest[0])?;
     // N is used as a shift below; anything at or past the word size is not a
     // parameter this build can honour, and clamping would silently weaken it.
-    if n_log2 < 1 || n_log2 > 63 {
+    if !(1..=63).contains(&n_log2) {
         return None;
     }
     let r = decode_param(&rest[1..1 + PARAM_CHARS])?;
@@ -165,6 +165,10 @@ mod tests {
 
     #[test]
     fn malformed_settings_are_refused() {
+        assert!(
+            scrypt_crypt(b"pw", b"$7$./..../....salt").is_none(),
+            "zero N exponent"
+        );
         assert!(scrypt_crypt(b"pw", b"$5$notscrypt").is_none());
         assert!(scrypt_crypt(b"pw", b"$7$").is_none());
         assert!(

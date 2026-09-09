@@ -100,7 +100,7 @@ impl Blowfish {
         let mut r = 0u32;
         let mut salt_pos = 0usize;
 
-        let mut next_salt_pair = |salt_pos: &mut usize| -> (u32, u32) {
+        let next_salt_pair = |salt_pos: &mut usize| -> (u32, u32) {
             if salt.is_empty() {
                 return (0, 0);
             }

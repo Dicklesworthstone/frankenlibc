@@ -207,7 +207,8 @@ mod tests {
     /// independent implementation agreeing with the document.
     #[test]
     fn scrypt_matches_rfc7914_vectors() {
-        let cases: &[(&[u8], &[u8], usize, usize, usize, &str)] = &[
+        type ScryptVector<'a> = (&'a [u8], &'a [u8], usize, usize, usize, &'a str);
+        let cases: &[ScryptVector<'_>] = &[
             (
                 b"",
                 b"",

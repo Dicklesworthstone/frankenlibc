@@ -522,7 +522,7 @@ mod tests {
             );
         }
         // ...and the five shadow-record characters are refused anywhere.
-        for bad in [b'!', b'*', b':', b';', b'\\'] {
+        for bad in *b"!*:;\\" {
             let setting = [b'a', b'b', bad];
             assert!(
                 des_crypt(b"password", &setting).is_none(),
