@@ -170,15 +170,19 @@ where
 
     // Fallback: if radix lane did not commit, try natural fast lane for widths 4 and 8
     // up to 1 << 22.
-    if width == 4 && num > I32_FAST_LANE_MAX && num <= (1 << 22) {
-        if try_qsort_i32_natural_fast_lane(base, num, compare) {
-            return true;
-        }
+    if width == 4
+        && num > I32_FAST_LANE_MAX
+        && num <= (1 << 22)
+        && try_qsort_i32_natural_fast_lane(base, num, compare)
+    {
+        return true;
     }
-    if width == 8 && num > I64_FAST_LANE_MAX && num <= (1 << 22) {
-        if try_qsort_i64_natural_fast_lane(base, num, compare) {
-            return true;
-        }
+    if width == 8
+        && num > I64_FAST_LANE_MAX
+        && num <= (1 << 22)
+        && try_qsort_i64_natural_fast_lane(base, num, compare)
+    {
+        return true;
     }
 
     false
@@ -215,8 +219,7 @@ where
     let active = &mut base[..active_len];
     let mut original = Vec::with_capacity(num);
     let mut values = Vec::with_capacity(num);
-    for chunk in active.chunks_exact(4) {
-        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+    for &bytes in active.as_chunks::<4>().0 {
         original.push(bytes);
         values.push(i32::from_ne_bytes(bytes));
     }
@@ -224,7 +227,7 @@ where
     // See the 8-byte lane for the full rationale; this is the 4-byte analog.
     macro_rules! commit_if_ordered {
         () => {{
-            for (chunk, value) in active.chunks_exact_mut(4).zip(&values) {
+            for (chunk, value) in active.as_chunks_mut::<4>().0.iter_mut().zip(&values) {
                 chunk.copy_from_slice(&value.to_ne_bytes());
             }
             if qsort_i32_candidate_is_ordered(active, compare) {
@@ -244,13 +247,13 @@ where
     // when a key has the top bit set; `*v as u32` reinterprets the bits with no
     // new allocation.
     if values.iter().any(|&v| v < 0) {
-        values.sort_unstable_by(|a, b| (*a as u32).cmp(&(*b as u32)));
+        values.sort_unstable_by_key(|&v| v as u32);
         commit_if_ordered!();
         values.reverse();
         commit_if_ordered!();
     }
 
-    for (chunk, bytes) in active.chunks_exact_mut(4).zip(original) {
+    for (chunk, bytes) in active.as_chunks_mut::<4>().0.iter_mut().zip(original) {
         chunk.copy_from_slice(&bytes);
     }
     false
@@ -261,7 +264,7 @@ where
     F: Fn(&[u8], &[u8]) -> i32,
 {
     let mut prev = &active[..4];
-    for current in active[4..].chunks_exact(4) {
+    for current in active[4..].as_chunks::<4>().0 {
         if compare(prev, current) > 0 {
             return false;
         }
@@ -278,10 +281,7 @@ where
     let active = &mut base[..active_len];
     let mut original = Vec::with_capacity(num);
     let mut values = Vec::with_capacity(num);
-    for chunk in active.chunks_exact(8) {
-        let bytes = [
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ];
+    for &bytes in active.as_chunks::<8>().0 {
         original.push(bytes);
         values.push(i64::from_ne_bytes(bytes));
     }
@@ -293,7 +293,7 @@ where
     // bytes restored, exactly as before.
     macro_rules! commit_if_ordered {
         () => {{
-            for (chunk, value) in active.chunks_exact_mut(8).zip(&values) {
+            for (chunk, value) in active.as_chunks_mut::<8>().0.iter_mut().zip(&values) {
                 chunk.copy_from_slice(&value.to_ne_bytes());
             }
             if qsort_i64_candidate_is_ordered(active, compare) {
@@ -319,13 +319,13 @@ where
     // pays nothing extra. `*v as u64` reinterprets the bits (an `as` cast between
     // equal-width ints is bit-preserving), reusing the buffer with no allocation.
     if values.iter().any(|&v| v < 0) {
-        values.sort_unstable_by(|a, b| (*a as u64).cmp(&(*b as u64)));
+        values.sort_unstable_by_key(|&v| v as u64);
         commit_if_ordered!();
         values.reverse();
         commit_if_ordered!();
     }
 
-    for (chunk, bytes) in active.chunks_exact_mut(8).zip(original) {
+    for (chunk, bytes) in active.as_chunks_mut::<8>().0.iter_mut().zip(original) {
         chunk.copy_from_slice(&bytes);
     }
     false
@@ -336,7 +336,7 @@ where
     F: Fn(&[u8], &[u8]) -> i32,
 {
     let mut prev = &active[..8];
-    for current in active[8..].chunks_exact(8) {
+    for current in active[8..].as_chunks::<8>().0 {
         if compare(prev, current) > 0 {
             return false;
         }
@@ -376,9 +376,9 @@ fn qsort_u64_prefix_is_duplicate_dense(active: &[u8]) -> bool {
     let mut unique = [0u64; MAX_UNIQUE];
     let mut unique_len = 0usize;
     let mut sampled = 0usize;
-    for chunk in active.chunks_exact(8).take(SAMPLE_KEYS) {
+    for &chunk in active.as_chunks::<8>().0.iter().take(SAMPLE_KEYS) {
         sampled += 1;
-        let key = u64::from_ne_bytes(chunk.try_into().unwrap());
+        let key = u64::from_ne_bytes(chunk);
         if !unique[..unique_len].contains(&key) {
             if unique_len == MAX_UNIQUE {
                 return false;
@@ -418,7 +418,7 @@ where
             }
         }
         let mut prev = &active[..1];
-        for cur in active[1..].chunks_exact(1) {
+        for cur in active[1..].as_chunks::<1>().0 {
             if compare(prev, cur) > 0 {
                 return false;
             }
@@ -826,10 +826,10 @@ where
     if compare(get(big), get(small)) >= 0 {
         return false;
     }
-    if let (Some(h), Some(l)) = (h_idx, l_idx) {
-        if compare(get(h), get(l)) >= 0 {
-            return false;
-        }
+    if let (Some(h), Some(l)) = (h_idx, l_idx)
+        && compare(get(h), get(l)) >= 0
+    {
+        return false;
     }
     true
 }
@@ -864,7 +864,7 @@ where
 
     for pos in (0..WIDTH).rev() {
         let mut count = [0usize; 256];
-        for chunk in active.chunks_exact(WIDTH) {
+        for chunk in active.as_chunks::<WIDTH>().0 {
             count[chunk[pos] as usize] += 1;
         }
         if count.contains(&num) {
@@ -878,7 +878,7 @@ where
             sum += cur;
         }
 
-        for chunk in active.chunks_exact(WIDTH) {
+        for chunk in active.as_chunks::<WIDTH>().0 {
             let d = chunk[pos] as usize;
             let dst = count[d] * WIDTH;
             aux[dst..dst + WIDTH].copy_from_slice(chunk);
@@ -888,7 +888,7 @@ where
     }
 
     let mut prev = &active[..WIDTH];
-    for current in active[WIDTH..].chunks_exact(WIDTH) {
+    for current in active[WIDTH..].as_chunks::<WIDTH>().0 {
         if compare(prev, current) > 0 {
             active.copy_from_slice(&original);
             return false;
@@ -1542,10 +1542,10 @@ mod sort_variant_tests {
                 let key = u32::from_ne_bytes(e[..4].try_into().unwrap());
                 assert!(key >= prev, "width {width}: not sorted at {i}");
                 prev = key;
-                for b in 4..width {
+                for (b, &byte) in e.iter().enumerate().skip(4) {
                     let want = (key as u8).wrapping_mul(b as u8).wrapping_add(0x5a);
                     assert_eq!(
-                        e[b], want,
+                        byte, want,
                         "width {width}: element {i} (key {key}) lost its payload at byte {b} — \
                          swap_chunks moved only part of the element"
                     );
@@ -1700,8 +1700,10 @@ mod sort_variant_tests {
         qsort(&mut buf, 8, counting);
 
         let out: Vec<i64> = buf
-            .chunks_exact(8)
-            .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&c| i64::from_ne_bytes(c))
             .collect();
         assert!(out.windows(2).all(|w| w[0] <= w[1]), "output is not sorted");
         assert_eq!(out[0], 0);
@@ -1731,7 +1733,9 @@ mod sort_variant_tests {
         };
         qsort(&mut wide, 16, wide_cmp);
         let wide_out: Vec<i64> = wide
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|c| i64::from_ne_bytes(c[..8].try_into().unwrap()))
             .collect();
         assert!(
@@ -1801,8 +1805,10 @@ mod sort_variant_tests {
         qsort(&mut buf, 8, rotated);
 
         let out: Vec<i64> = buf
-            .chunks_exact(8)
-            .map(|c| i64::from_ne_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&c| i64::from_ne_bytes(c))
             .collect();
         assert!(
             out.windows(2).all(|w| key(w[0]) <= key(w[1])),
@@ -1859,15 +1865,19 @@ mod sort_variant_tests {
 
     fn unflatten_i32_ne(bytes: &[u8]) -> Vec<i32> {
         bytes
-            .chunks_exact(4)
-            .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| i32::from_ne_bytes(c))
             .collect()
     }
 
     fn unflatten_u32(bytes: &[u8]) -> Vec<u32> {
         bytes
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_le_bytes(c))
             .collect()
     }
 
@@ -1877,6 +1887,42 @@ mod sort_variant_tests {
     }
 
     // ---- cross-sort/search metamorphic invariants ----
+
+    #[test]
+    fn qsort_preserves_partial_element_tails_across_lane_thresholds() {
+        for width in [1usize, 2, 4, 8, 16] {
+            for num in [0usize, 1, 63, 64, 257, 2049] {
+                let mut seed = 0x7a21_b943_d650_8ecfu64;
+                let elements: Vec<Vec<u8>> = (0..num)
+                    .map(|_| (0..width).map(|_| (lcg(&mut seed) >> 56) as u8).collect())
+                    .collect();
+                for descending in [false, true] {
+                    let compare = |a: &[u8], b: &[u8]| {
+                        if descending { b.cmp(a) } else { a.cmp(b) }
+                    };
+                    let mut reference = elements.clone();
+                    reference.sort_unstable_by(|a, b| compare(a, b));
+                    let expected: Vec<u8> = reference.into_iter().flatten().collect();
+                    for tail_len in 0..width {
+                        let tail: Vec<u8> = (0..tail_len).map(|i| 0xa5 ^ i as u8).collect();
+                        let mut buf: Vec<u8> = elements.iter().flatten().copied().collect();
+                        buf.extend_from_slice(&tail);
+                        qsort(&mut buf, width, |a, b| compare(a, b) as i32);
+                        assert_eq!(
+                            &buf[..num * width],
+                            expected,
+                            "width={width} num={num} tail={tail_len} descending={descending}"
+                        );
+                        assert_eq!(
+                            &buf[num * width..],
+                            tail,
+                            "partial element overwritten: width={width} num={num} tail={tail_len}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn qsort_permutation_invariance_matches_reversed_input() {
@@ -1914,7 +1960,9 @@ mod sort_variant_tests {
 
         qsort(&mut buf, 8, |a, b| cmp_u32_le(&a[..4], &b[..4]));
         let sorted: Vec<(u32, u32)> = buf
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|chunk| {
                 (
                     u32::from_le_bytes(chunk[..4].try_into().unwrap()),
@@ -2007,7 +2055,9 @@ mod sort_variant_tests {
         }
         mergesort(&mut buf, 8, |a, b| cmp_u32_le(&a[..4], &b[..4]));
         let sorted: Vec<(u32, u32)> = buf
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|c| {
                 (
                     u32::from_le_bytes(c[0..4].try_into().unwrap()),
