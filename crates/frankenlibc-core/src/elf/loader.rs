@@ -1619,12 +1619,11 @@ fn section_name<'a>(section: &Elf64SectionHeader, shstrtab: &'a [u8]) -> Option<
 }
 
 fn parse_u64_array(data: &[u8]) -> Vec<u64> {
-    data.chunks_exact(8)
-        .map(|chunk| {
-            u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ])
-        })
+    data.as_chunks::<8>()
+        .0
+        .iter()
+        .copied()
+        .map(u64::from_le_bytes)
         .collect()
 }
 
@@ -1709,7 +1708,7 @@ fn parse_dynamic_metadata(
 }
 
 fn parse_dynamic_entries(data: &[u8]) -> impl Iterator<Item = DynamicEntry> + '_ {
-    data.chunks_exact(16).map(|chunk| DynamicEntry {
+    data.as_chunks::<16>().0.iter().map(|chunk| DynamicEntry {
         tag: i64::from_le_bytes([
             chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
         ]),
@@ -1738,8 +1737,11 @@ fn parse_symbol_versions(
             SectionType::GnuVersym => {
                 if let Some(bytes) = section_data(data, section) {
                     versym = bytes
-                        .chunks_exact(2)
-                        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .copied()
+                        .map(u16::from_le_bytes)
                         .collect();
                 }
             }
@@ -1955,6 +1957,70 @@ mod tests {
     use super::super::section::SectionFlags;
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn fixed_width_arrays_and_dynamic_entries_ignore_only_partial_tails() {
+        let mut data = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88,
+        ];
+        data.extend_from_slice(&(-2i64).to_le_bytes());
+        data.extend_from_slice(&0x1234_5678_9abc_def0u64.to_le_bytes());
+        let words = [
+            0x0807_0605_0403_0201,
+            0x8899_aabb_ccdd_eeff,
+            u64::MAX - 1,
+            0x1234_5678_9abc_def0,
+        ];
+        let entries = [
+            DynamicEntry {
+                tag: 0x0807_0605_0403_0201,
+                value: 0x8899_aabb_ccdd_eeff,
+            },
+            DynamicEntry {
+                tag: -2,
+                value: 0x1234_5678_9abc_def0,
+            },
+        ];
+        for len in 0..=data.len() {
+            assert_eq!(parse_u64_array(&data[..len]), words[..len / 8], "len={len}");
+            assert_eq!(
+                parse_dynamic_entries(&data[..len]).collect::<Vec<_>>(),
+                entries[..len / 16],
+                "len={len}"
+            );
+        }
+    }
+
+    #[test]
+    fn symbol_versions_preserve_complete_words_and_hidden_bit() {
+        let mut data = vec![0; 68];
+        data[..7].copy_from_slice(&[0, 0, 0x23, 0x81, 0x23, 1, 0xff]);
+        // One version definition: index 0x123, auxiliary record at +20,
+        // name at string-table offset 1. Hidden and visible references agree.
+        data[20..22].copy_from_slice(&0x123u16.to_le_bytes());
+        data[28..32].copy_from_slice(&20u32.to_le_bytes());
+        data[36..40].copy_from_slice(&1u32.to_le_bytes());
+        data[64..68].copy_from_slice(b"\0V2\0");
+        let mut definition = dynamic_section(16, 28, 2);
+        definition.sh_type = SectionType::GnuVerdef;
+        for len in 0..=7 {
+            let mut versym = dynamic_section(0, len, 0);
+            versym.sh_type = SectionType::GnuVersym;
+            let sections = [versym, definition, strtab_section(64, 4)];
+            let expected = vec![
+                None,
+                (len >= 4).then(|| "V2".to_owned()),
+                (len >= 6).then(|| "V2".to_owned()),
+                None,
+            ];
+            assert_eq!(
+                parse_symbol_versions(&data, &sections, 4),
+                expected,
+                "len={len}"
+            );
+            assert_eq!(parse_symbol_versions(&data, &sections, 1), vec![None]);
+        }
+    }
 
     #[allow(dead_code)]
     struct TestResolver {

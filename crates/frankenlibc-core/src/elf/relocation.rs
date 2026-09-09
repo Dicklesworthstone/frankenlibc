@@ -479,12 +479,11 @@ pub fn parse_relr_entries(data: &[u8], offset: u64, size: u64) -> ElfResult<Vec<
     }
 
     Ok(data[offset..end]
-        .chunks_exact(8)
-        .map(|chunk| {
-            u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ])
-        })
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .copied()
+        .map(u64::from_le_bytes)
         .collect())
 }
 
@@ -714,6 +713,36 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parse_relr_entries_preserves_section_bounds_and_endianness() {
+        let data = [
+            0xaa, 1, 2, 3, 4, 5, 6, 7, 8, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0xbb,
+        ];
+        let expected = [0x0807_0605_0403_0201, 0x8899_aabb_ccdd_eeff];
+        for size in 0..=16 {
+            let result = parse_relr_entries(&data, 1, size);
+            if size.is_multiple_of(8) {
+                assert_eq!(result.unwrap(), expected[..size as usize / 8]);
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(ElfError::InvalidOffset {
+                            kind: "RELR section size",
+                            ..
+                        })
+                    ),
+                    "size={size}"
+                );
+            }
+        }
+        assert!(matches!(
+            parse_relr_entries(&data, 3, 16),
+            Err(ElfError::BufferTooSmall { .. })
+        ));
+        assert!(parse_relr_entries(&data, u64::MAX, 8).is_err());
     }
 
     #[test]

@@ -281,8 +281,8 @@ fn parse_u32_words(data: &[u8]) -> Option<Vec<u32>> {
     }
 
     let mut words = Vec::with_capacity(data.len() / 4);
-    for chunk in data.chunks_exact(4) {
-        words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    for &chunk in data.as_chunks::<4>().0 {
+        words.push(u32::from_le_bytes(chunk));
     }
     Some(words)
 }
@@ -293,10 +293,8 @@ fn parse_u64_words(data: &[u8]) -> Option<Vec<u64>> {
     }
 
     let mut words = Vec::with_capacity(data.len() / 8);
-    for chunk in data.chunks_exact(8) {
-        words.push(u64::from_le_bytes([
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]));
+    for &chunk in data.as_chunks::<8>().0 {
+        words.push(u64::from_le_bytes(chunk));
     }
     Some(words)
 }
@@ -311,6 +309,29 @@ fn symbol_name_matches(dynsym: &[Elf64Symbol], dynstr: &[u8], sym_idx: usize, na
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_parsers_reject_every_partial_word() {
+        let data = [
+            1, 2, 3, 4, 5, 6, 7, 8, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88,
+        ];
+        let words32 = [0x0403_0201, 0x0807_0605, 0xccdd_eeff, 0x8899_aabb];
+        let words64 = [0x0807_0605_0403_0201, 0x8899_aabb_ccdd_eeff];
+        for len in 0..=data.len() {
+            let expected32 = if len.is_multiple_of(4) {
+                Some(words32[..len / 4].to_vec())
+            } else {
+                None
+            };
+            let expected64 = if len.is_multiple_of(8) {
+                Some(words64[..len / 8].to_vec())
+            } else {
+                None
+            };
+            assert_eq!(parse_u32_words(&data[..len]), expected32, "len={len}");
+            assert_eq!(parse_u64_words(&data[..len]), expected64, "len={len}");
+        }
+    }
 
     #[test]
     fn test_elf_hash() {
