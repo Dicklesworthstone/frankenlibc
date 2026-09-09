@@ -282,7 +282,7 @@ where
             self.total_passes.fetch_add(1, Ordering::Relaxed);
             let _ =
                 self.max_batch_size
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                         if batch_size > current {
                             Some(batch_size)
                         } else {

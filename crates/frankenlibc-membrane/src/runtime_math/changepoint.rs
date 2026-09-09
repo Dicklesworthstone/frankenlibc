@@ -271,9 +271,9 @@ impl ChangepointController {
         // Track MAP run length.
         let mut map_rl = 0_usize;
         let mut map_prob = 0.0_f64;
-        for r in 0..=new_max_rl {
-            if self.run_length_probs[r] > map_prob {
-                map_prob = self.run_length_probs[r];
+        for (r, &prob) in self.run_length_probs[..=new_max_rl].iter().enumerate() {
+            if prob > map_prob {
+                map_prob = prob;
                 map_rl = r;
             }
         }
@@ -555,8 +555,8 @@ mod tests {
         let mut ctrl = ChangepointController::new();
         ctrl.current_max_rl = 12;
         ctrl.run_length_probs[0] = 1.0;
-        for r in 1..=12 {
-            ctrl.run_length_probs[r] = MIN_ACTIVE_PROB * 0.1;
+        for prob in &mut ctrl.run_length_probs[1..=12] {
+            *prob = MIN_ACTIVE_PROB * 0.1;
         }
 
         ctrl.observe(false);

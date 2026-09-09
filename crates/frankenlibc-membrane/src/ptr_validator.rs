@@ -295,7 +295,7 @@ impl Drop for ValidationExecutionGuard {
             depth.set(depth.get().saturating_sub(1));
         });
         #[cfg(feature = "owned-tls-cache")]
-        let _ = VALIDATION_DEPTH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             Some(current.saturating_sub(1))
         });
     }
@@ -307,7 +307,7 @@ fn enter_validation_execution_context() -> ValidationExecutionGuard {
         depth.set(depth.get().saturating_add(1));
     });
     #[cfg(feature = "owned-tls-cache")]
-    let _ = VALIDATION_DEPTH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+    let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
         Some(current.saturating_add(1))
     });
     ValidationExecutionGuard
@@ -2205,7 +2205,7 @@ mod tests {
             assert_eq!(abs.state, SafetyState::Valid);
             assert_eq!(abs.remaining, Some(256));
         } else {
-            panic!("expected abstraction");
+            panic!("expected abstraction"); // ubs:ignore — unit-test failure assertion, never a production path.
         }
 
         let result = pipeline.free(ptr);

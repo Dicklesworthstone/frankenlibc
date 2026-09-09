@@ -219,11 +219,11 @@ impl LempelZivMonitor {
         let mut max_ratio = 0.0_f64;
         let mut sum_ratio = 0.0_f64;
 
-        for i in 0..N {
+        for buffer in &self.buffers {
             // Linearize the ring buffer for LZ76 computation.
             let mut linear = [0u8; W];
             for (k, slot) in linear.iter_mut().enumerate() {
-                *slot = self.buffers[i][(self.pos + k) % W];
+                *slot = buffer[(self.pos + k) % W];
             }
 
             let c = lz76_complexity(&linear, W);

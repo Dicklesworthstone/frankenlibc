@@ -226,8 +226,7 @@ impl SpectralMonitor {
         // Per-column variance for whitening. This prevents unit-scale skew
         // (e.g., latency_ns dwarfing hit_rate) from triggering fake transitions.
         let mut variances = [0.0f64; OBS_DIM];
-        for i in 0..n {
-            let obs = &self.window[i];
+        for obs in &self.window[..n] {
             for j in 0..OBS_DIM {
                 let d = obs.values[j] - means[j];
                 variances[j] += d * d;
@@ -244,8 +243,7 @@ impl SpectralMonitor {
         // Normalized covariance (correlation) matrix:
         // C = (1/n) Σ z_i z_i^T, z_j = (x_j - μ_j)/σ_j.
         let mut cov = [[0.0f64; OBS_DIM]; OBS_DIM];
-        for i in 0..n {
-            let obs = &self.window[i];
+        for obs in &self.window[..n] {
             let mut z = [0.0f64; OBS_DIM];
             for j in 0..OBS_DIM {
                 z[j] = (obs.values[j] - means[j]) / stddev[j];

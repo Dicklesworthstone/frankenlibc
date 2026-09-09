@@ -210,11 +210,11 @@ impl HurstExponentMonitor {
         let mut max_h = 0.0_f64;
         let mut sum_h = 0.0_f64;
 
-        for i in 0..N {
+        for buffer in &self.buffers {
             // Linearize the ring buffer.
             let mut linear = [0.0_f64; W];
             for (k, slot) in linear.iter_mut().enumerate() {
-                *slot = self.buffers[i][(self.pos + k) % W];
+                *slot = buffer[(self.pos + k) % W];
             }
 
             let rs = rescaled_range(&linear, W);

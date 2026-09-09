@@ -158,13 +158,13 @@ impl PairTracker {
         // Decay all bins and increment the observed one.
         for x_n in 0..K {
             for x_c in 0..K {
-                for y_c in 0..K {
+                for (y_c, probability) in self.joint[x_n][x_c].iter_mut().enumerate() {
                     let target_val = if x_n == x_next && x_c == x_curr && y_c == y_curr {
                         1.0
                     } else {
                         0.0
                     };
-                    self.joint[x_n][x_c][y_c] += alpha * (target_val - self.joint[x_n][x_c][y_c]);
+                    *probability += alpha * (target_val - *probability);
                 }
                 let target_marginal = if x_n == x_next && x_c == x_curr {
                     1.0

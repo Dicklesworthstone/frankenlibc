@@ -148,9 +148,9 @@ impl TransitionTracker {
 
     /// Update with an observed transition.
     fn update(&mut self, from: usize, to: usize, alpha: f64) {
-        for s in 0..K {
+        for (s, probability) in self.matrix[from].iter_mut().enumerate() {
             let target = if s == to { 1.0 } else { 0.0 };
-            self.matrix[from][s] += alpha * (target - self.matrix[from][s]);
+            *probability += alpha * (target - *probability);
         }
     }
 

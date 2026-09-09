@@ -274,8 +274,8 @@ impl CommitmentAuditController {
     /// Check if `transition_hash` appears in the replay ring buffer.
     fn check_replay(&self, transition_hash: u64) -> bool {
         // Only scan filled entries.
-        for i in 0..self.replay_fill {
-            if self.replay_ring[i] == transition_hash {
+        for &hash in &self.replay_ring[..self.replay_fill] {
+            if hash == transition_hash {
                 return true;
             }
         }

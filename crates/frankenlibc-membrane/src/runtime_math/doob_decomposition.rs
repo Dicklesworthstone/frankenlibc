@@ -195,9 +195,9 @@ impl DoobDecompositionMonitor {
                 step_drift_sum += increment.abs();
 
                 // Update transition matrix for this controller.
-                for s in 0..K {
+                for (s, probability) in self.transitions[i][from].iter_mut().enumerate() {
                     let target = if s == to { 1.0 } else { 0.0 };
-                    self.transitions[i][from][s] += alpha * (target - self.transitions[i][from][s]);
+                    *probability += alpha * (target - *probability);
                 }
             }
 

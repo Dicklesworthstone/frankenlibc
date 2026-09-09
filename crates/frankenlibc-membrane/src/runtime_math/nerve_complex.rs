@@ -257,8 +257,8 @@ impl NerveComplexMonitor {
     pub fn summary(&self) -> NerveSummary {
         // Recount edges from cached correlations.
         let mut edge_count = 0u32;
-        for idx in 0..PAIRS {
-            if self.corr[idx] >= CORR_THRESHOLD {
+        for &correlation in &self.corr {
+            if correlation >= CORR_THRESHOLD {
                 edge_count += 1;
             }
         }

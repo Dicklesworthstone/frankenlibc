@@ -202,10 +202,10 @@ impl ParetoController {
     #[must_use]
     pub fn exhausted_family_count(&self, mode: SafetyLevel) -> u32 {
         let mut exhausted = 0u32;
-        for idx in 0..ApiFamily::COUNT {
+        for (idx, regret) in self.cumulative_regret_milli.iter().enumerate() {
             let family = family_from_index(idx);
             let cap = regret_cap_milli(mode, family);
-            let current = self.cumulative_regret_milli[idx].load(Ordering::Relaxed);
+            let current = regret.load(Ordering::Relaxed);
             if current >= cap {
                 exhausted += 1;
             }

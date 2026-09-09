@@ -181,8 +181,8 @@ impl FamilyTracker {
         // Sort a copy of the active scores
         let n = self.count;
         let mut sorted = Vec::with_capacity(n);
-        for i in 0..n {
-            sorted.push(self.scores[i]);
+        for &score in &self.scores[..n] {
+            sorted.push(score);
         }
         sorted.sort_unstable();
 

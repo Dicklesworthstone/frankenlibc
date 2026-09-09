@@ -137,8 +137,8 @@ impl ConformalRiskController {
         // Step 2: compute conformal p-value against current calibration window.
         let count_ge = if self.fill > 0 {
             let mut count = 0u64;
-            for i in 0..self.fill {
-                if self.scores[i] >= score {
+            for &calibration_score in &self.scores[..self.fill] {
+                if calibration_score >= score {
                     count += 1;
                 }
             }

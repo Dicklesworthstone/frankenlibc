@@ -79,7 +79,7 @@ impl ContentionSignal {
     pub fn free_begin(&self) {
         let previous = self
             .concurrent_frees
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                 Some(x.saturating_add(1))
             })
             .unwrap_or_else(|x| x);
@@ -91,7 +91,7 @@ impl ContentionSignal {
     pub fn free_end(&self) {
         let _ = self
             .concurrent_frees
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                 Some(x.saturating_sub(1))
             });
     }

@@ -126,10 +126,10 @@ impl ControllerJoint {
 
     /// Update with a transition observation.
     fn update(&mut self, from: usize, to: usize, alpha: f64) {
-        for next in 0..K {
-            for curr in 0..K {
+        for (next, row) in self.joint.iter_mut().enumerate() {
+            for (curr, probability) in row.iter_mut().enumerate() {
                 let target = if next == to && curr == from { 1.0 } else { 0.0 };
-                self.joint[next][curr] += alpha * (target - self.joint[next][curr]);
+                *probability += alpha * (target - *probability);
             }
         }
     }

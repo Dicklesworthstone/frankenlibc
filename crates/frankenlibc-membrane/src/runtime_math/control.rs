@@ -40,7 +40,7 @@ impl PrimalDualController {
     pub fn observe(&self, estimated_cost_ns: u64, adverse: bool) {
         let prev_calls = self
             .observed_calls
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                 Some(x.saturating_add(1))
             })
             .unwrap_or_else(|x| x);
@@ -48,13 +48,13 @@ impl PrimalDualController {
 
         let _ = self
             .total_cost_ns
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                 Some(x.saturating_add(estimated_cost_ns))
             });
         if adverse {
             let _ = self
                 .adverse_events
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                     Some(x.saturating_add(1))
                 });
         }
@@ -74,7 +74,7 @@ impl PrimalDualController {
 
             let _ = self
                 .lambda_latency
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                     Some(
                         x.saturating_add((latency_err / 4).clamp(-64, 64))
                             .clamp(-2_000_000, 2_000_000),
@@ -82,7 +82,7 @@ impl PrimalDualController {
                 });
             let _ = self
                 .lambda_risk
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                     Some(
                         x.saturating_add((risk_err / 256).clamp(-128, 128))
                             .clamp(-2_000_000, 2_000_000),

@@ -114,12 +114,10 @@ impl GrobnerConstraint {
     #[must_use]
     fn evaluate(&self, state: &[u8; NUM_VARIABLES]) -> i32 {
         let mut val = i32::from(self.constant);
-        for i in 0..usize::from(self.num_linear) {
-            let (idx, coeff) = self.linear[i];
+        for &(idx, coeff) in &self.linear[..usize::from(self.num_linear)] {
             val += i32::from(coeff) * i32::from(state[idx as usize]);
         }
-        for i in 0..usize::from(self.num_quadratic) {
-            let (idx_i, idx_j, coeff) = self.quadratic[i];
+        for &(idx_i, idx_j, coeff) in &self.quadratic[..usize::from(self.num_quadratic)] {
             val += i32::from(coeff)
                 * i32::from(state[idx_i as usize])
                 * i32::from(state[idx_j as usize]);

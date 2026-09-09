@@ -58,7 +58,7 @@ impl L2Bitmap {
     fn set(&self, page_within_chunk: usize) -> bool {
         // Saturating increment
         self.counts[page_within_chunk]
-            .fetch_update(Ordering::Release, Ordering::Relaxed, |x| {
+            .try_update(Ordering::Release, Ordering::Relaxed, |x| {
                 Some(if x == u32::MAX { u32::MAX } else { x + 1 })
             })
             .is_ok_and(|previous| previous == 0)
@@ -71,7 +71,7 @@ impl L2Bitmap {
     fn clear(&self, page_within_chunk: usize) -> bool {
         // Saturating decrement
         self.counts[page_within_chunk]
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |x| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |x| {
                 match x {
                     0 => Some(0),               // Should not happen if balanced
                     u32::MAX => Some(u32::MAX), // Saturated, sticky
@@ -228,6 +228,33 @@ impl Default for PageOracle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn l2_refcounts_report_only_ownership_transitions() {
+        let bitmap = L2Bitmap::new();
+        assert!(!bitmap.clear(0));
+        assert!(!bitmap.get(0));
+        assert!(bitmap.set(0));
+        assert!(!bitmap.set(0));
+        assert!(!bitmap.clear(0));
+        assert!(bitmap.get(0));
+        assert!(bitmap.clear(0));
+        assert!(!bitmap.get(0));
+        assert!(!bitmap.clear(0));
+    }
+
+    #[test]
+    fn l2_saturated_refcount_stays_owned() {
+        let bitmap = L2Bitmap::new();
+        bitmap.counts[0].store(u32::MAX - 1, Ordering::Relaxed);
+        assert!(!bitmap.set(0));
+        assert_eq!(bitmap.counts[0].load(Ordering::Acquire), u32::MAX);
+        assert!(!bitmap.set(0));
+        assert!(!bitmap.clear(0));
+        assert_eq!(bitmap.counts[0].load(Ordering::Acquire), u32::MAX);
+        assert!(bitmap.get(0));
+        assert!(!bitmap.get(1));
+    }
 
     #[test]
     fn insert_and_query() {
