@@ -331,13 +331,20 @@ impl ValidationPipeline {
     /// Create a new validation pipeline.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_runtime_math(true)
+    }
+
+    /// Create a pipeline using the caller's resolved process-level math switch.
+    /// Allocation metadata, integrity checks and healing remain enabled.
+    #[must_use]
+    pub fn with_runtime_math(enabled: bool) -> Self {
         let logging_enabled = std::env::var_os("FRANKENLIBC_LOG").is_some();
         let collector = std::sync::Arc::new(crate::ebr::QuarantineEbr::new(4));
         Self {
             arena: AllocationArena::new(),
             bloom: PointerBloomFilter::new(),
             page_oracle: std::sync::Arc::new(PageOracle::new()),
-            runtime_math: RuntimeMathKernel::new(),
+            runtime_math: RuntimeMathKernel::new_with_routing(safety_level(), enabled),
             collector,
             validation_logging_enabled: AtomicBool::new(logging_enabled),
             validation_log_decision_seq: AtomicU64::new(0),
@@ -2451,6 +2458,25 @@ mod tests {
 
         let second = pipeline.free(ptr);
         assert_eq!(second, FreeResult::DoubleFree);
+    }
+
+    #[test]
+    fn disabled_routing_keeps_pointer_integrity_checks() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let healthy = pipeline.allocate(16).expect("healthy allocation");
+        let corrupt = pipeline.allocate(32).expect("corrupt allocation");
+        assert!(pipeline.validate(healthy as usize).can_read());
+        assert!(pipeline.inject_trailing_canary_corruption(corrupt as usize, 32, 0xFF));
+        assert!(matches!(
+            pipeline.validate(corrupt as usize),
+            ValidationOutcome::TemporalViolation(_)
+        ));
+        assert_eq!(pipeline.runtime_math.decision_count(), 0);
+        assert_eq!(pipeline.free(healthy), FreeResult::Freed);
+        assert_eq!(
+            pipeline.free(corrupt),
+            FreeResult::FreedWithCanaryCorruption
+        );
     }
 
     #[test]

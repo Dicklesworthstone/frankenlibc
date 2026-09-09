@@ -1091,9 +1091,17 @@ pub struct RuntimeMathKernel {
     cached_sobol_index: AtomicU64,
     cached_sobol_augmented_mask: AtomicU64,
     decisions: AtomicU64,
+    /// Immutable routing/feedback switch; basic pointer checks live outside this kernel.
+    routing_enabled: bool,
 }
 
 impl RuntimeMathKernel {
+    /// Read the consultation count without initializing, locking, or changing telemetry.
+    #[must_use]
+    pub fn decision_count(&self) -> u64 {
+        self.decisions.load(Ordering::Relaxed)
+    }
+
     /// Create a new runtime kernel.
     #[must_use]
     pub fn new() -> Self {
@@ -1106,6 +1114,13 @@ impl RuntimeMathKernel {
     /// deterministic harness scenarios.
     #[must_use]
     pub fn new_for_mode(mode: SafetyLevel) -> Self {
+        Self::new_with_routing(mode, true)
+    }
+
+    /// Create a kernel with immutable per-call routing and feedback enablement.
+    /// Disabled routing requests full basic validation, never a fast-path bypass.
+    #[must_use]
+    pub fn new_with_routing(mode: SafetyLevel, routing_enabled: bool) -> Self {
         // The observe() hot path uses a cached probe mask to decide which heavy
         // monitors should run. The microbench for observe() constructs a fresh
         // kernel and never calls decide(), so we must seed a budget-feasible
@@ -1323,6 +1338,7 @@ impl RuntimeMathKernel {
             cached_sobol_index: AtomicU64::new(0),
             cached_sobol_augmented_mask: AtomicU64::new(0),
             decisions: AtomicU64::new(0),
+            routing_enabled,
         }
     }
 
@@ -1381,6 +1397,15 @@ impl RuntimeMathKernel {
     /// Decide runtime validation/repair strategy for one call context.
     #[must_use]
     pub fn decide(&self, mode: SafetyLevel, ctx: RuntimeContext) -> RuntimeDecision {
+        if !self.routing_enabled {
+            return RuntimeDecision {
+                action: MembraneAction::FullValidate,
+                profile: ValidationProfile::Full,
+                policy_id: 0,
+                risk_upper_bound_ppm: 0,
+                evidence_seqno: 0,
+            };
+        }
         let sequence = self.decisions.fetch_add(1, Ordering::Relaxed) + 1;
         // Cadence-gate expensive sampling/oracle updates. Strict mode prioritizes
         // latency stability over reactivity; hardened can resample more often.
@@ -2594,6 +2619,9 @@ impl RuntimeMathKernel {
         aligned: bool,
         recent_page: bool,
     ) -> [CheckStage; 7] {
+        if !self.routing_enabled {
+            return crate::check_oracle::DEFAULT_ORDER;
+        }
         let _ = recent_page;
         let family_idx = (family as usize).min(7);
         let aligned_idx = if aligned { 1 } else { 0 };
@@ -2615,6 +2643,9 @@ impl RuntimeMathKernel {
         ordering_used: &[CheckStage; 7],
         exit_stage: Option<usize>,
     ) {
+        if !self.routing_enabled {
+            return;
+        }
         let ctx = CheckContext {
             family: family as u8,
             aligned,
@@ -2638,7 +2669,7 @@ impl RuntimeMathKernel {
     #[must_use]
     #[inline]
     pub fn validation_feedback_enabled(&self) -> bool {
-        observe_feedback_enabled()
+        self.routing_enabled && observe_feedback_enabled()
     }
 
     /// Feed observed runtime outcome back into online controllers.
@@ -2651,7 +2682,7 @@ impl RuntimeMathKernel {
         estimated_cost_ns: u64,
         adverse: bool,
     ) {
-        if !observe_feedback_enabled() {
+        if !self.validation_feedback_enabled() {
             let _ = (mode, family, profile, estimated_cost_ns, adverse);
             return;
         }
@@ -5998,6 +6029,44 @@ mod tests {
             line.contains(&expected),
             "schema doc drift: expected `{expected}` line, got: {line}"
         );
+    }
+
+    #[test]
+    fn disabled_routing_preserves_basic_validation_without_feedback() {
+        for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+            let kernel = RuntimeMathKernel::new_with_routing(mode, false);
+            let before = kernel.snapshot(mode);
+            assert!(!kernel.validation_feedback_enabled());
+            for _ in 0..1024 {
+                let decision =
+                    kernel.decide(mode, RuntimeContext::pointer_validation(0x1000, false));
+                assert!(decision.requires_full_validation());
+                assert_eq!(decision.action, MembraneAction::FullValidate);
+                let order = kernel.check_ordering(ApiFamily::PointerValidation, true, true);
+                assert_eq!(order, crate::check_oracle::DEFAULT_ORDER);
+                kernel.note_check_order_outcome(
+                    mode,
+                    ApiFamily::PointerValidation,
+                    true,
+                    true,
+                    &order,
+                    Some(2),
+                );
+                kernel.observe_validation_result(
+                    mode,
+                    ApiFamily::PointerValidation,
+                    ValidationProfile::Full,
+                    100_000,
+                    true,
+                );
+            }
+            assert_eq!(kernel.decision_count(), 0);
+            assert_eq!(kernel.snapshot(mode), before);
+
+            let enabled = RuntimeMathKernel::new_with_routing(mode, true);
+            let _ = enabled.decide(mode, RuntimeContext::pointer_validation(0x1000, false));
+            assert_eq!(enabled.decision_count(), 1);
+        }
     }
 
     #[test]

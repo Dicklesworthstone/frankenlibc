@@ -44,6 +44,8 @@ pub(crate) fn try_global_pipeline() -> Option<&'static ValidationPipeline> {
         return None;
     }
 
+    let runtime_math_enabled = crate::runtime_policy::resolved_runtime_math_enabled()?;
+
     if PIPELINE_STATE
         .compare_exchange(
             STATE_UNINIT,
@@ -61,7 +63,7 @@ pub(crate) fn try_global_pipeline() -> Option<&'static ValidationPipeline> {
         };
     }
 
-    let pipeline = Box::new(ValidationPipeline::new());
+    let pipeline = Box::new(ValidationPipeline::with_runtime_math(runtime_math_enabled));
     let ptr = Box::into_raw(pipeline);
     PIPELINE_PTR.store(ptr, Ordering::Release);
     PIPELINE_STATE.store(STATE_READY, Ordering::Release);

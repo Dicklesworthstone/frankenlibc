@@ -314,6 +314,17 @@ pub(crate) fn runtime_math_disabled() -> bool {
     !runtime_math_enabled()
 }
 
+/// Only latch a pipeline's immutable switch once process resolution has finished.
+/// Reentrant/concurrent resolution must defer pipeline creation, not freeze OFF.
+pub(crate) fn resolved_runtime_math_enabled() -> Option<bool> {
+    let _ = runtime_math_enabled();
+    match RUNTIME_MATH_STATE.load(AtomicOrdering::Acquire) {
+        RUNTIME_MATH_ON => Some(true),
+        RUNTIME_MATH_OFF => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FfiPccCertificate {
     symbol: &'static str,
@@ -3054,6 +3065,12 @@ mod tests {
         }
         let _restore =
             RestoreMathState(RUNTIME_MATH_STATE.swap(RUNTIME_MATH_ON, AtomicOrdering::SeqCst));
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_RESOLVING, AtomicOrdering::SeqCst);
+        assert_eq!(resolved_runtime_math_enabled(), None);
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
+        assert_eq!(resolved_runtime_math_enabled(), Some(false));
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_ON, AtomicOrdering::SeqCst);
+        assert_eq!(resolved_runtime_math_enabled(), Some(true));
         let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS).expect("kernel ready");
         let before = k.decision_telemetry_snapshot().decisions;
         let (_, decision) = decide_strict_observation(ApiFamily::Socket, 1, 0, false, true, 0);

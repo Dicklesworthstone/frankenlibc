@@ -1645,12 +1645,15 @@ pub unsafe extern "C" fn __frankenlibc_is_feedback_enabled() -> c_int {
     }
 }
 
-/// FFI export to get the total decision count from the runtime-math kernel.
-/// Returns the number of decide() calls processed, or 0 if kernel not ready.
+/// FFI export to get total consultations across ABI and pointer-validation kernels.
+/// An uninitialized pointer pipeline contributes zero and is never initialized here.
 /// Used by e2e tests to verify kernel is active (bd-06bxm.2).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __frankenlibc_decision_count() -> u64 {
-    crate::runtime_policy::runtime_decision_count().unwrap_or(0)
+    let abi = crate::runtime_policy::runtime_decision_count().unwrap_or(0);
+    let pointers = crate::membrane_state::ready_pipeline()
+        .map_or(0, |pipeline| pipeline.runtime_math.decision_count());
+    abi.saturating_add(pointers)
 }
 
 pub use crate::runtime_policy::RuntimeDecisionSnapshot;

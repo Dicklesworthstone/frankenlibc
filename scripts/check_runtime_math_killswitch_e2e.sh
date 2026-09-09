@@ -191,13 +191,13 @@ static int bounds_repair(void) {
     for (size_t i = 0; i < 8; ++i) ((volatile unsigned char*)src)[i] = 'A' + i;
     for (size_t i = 0; i < 32; ++i) ((volatile unsigned char*)dst)[i] = 'J';
 
+    uint64_t decisions_before = __frankenlibc_decision_count();
     /* Valid counterpart first; initialize through the guarded libc operation,
      * not through a diagnostic that may lazily initialize healing itself. */
     if (copy(dst, src, 8) != dst) return 2;
     for (size_t i = 0; i < 8; ++i) if (dst[i] != 'A' + i) return 2;
     for (size_t i = 0; i < 32; ++i) ((volatile unsigned char*)dst)[i] = 'J';
     uint64_t heals_before = __frankenlibc_healing_action_count(1);
-    uint64_t decisions_before = __frankenlibc_decision_count();
     if (copy(dst, src, 8) != dst ||
         __frankenlibc_healing_action_count(1) != heals_before) return 2;
     for (size_t i = 0; i < 8; ++i) if (dst[i] != 'A' + i) return 2;
@@ -213,7 +213,15 @@ static int bounds_repair(void) {
     for (size_t i = 0; i < 8; ++i) if (dst[i] != 'A' + i) return 2;
     for (size_t i = 8; i < 32; ++i) if (dst[i] != 'J') return 2;
     if (heals_after != heals_before + 1) return 2;
-    if (!__frankenlibc_is_runtime_math_enabled() && decisions_after != decisions_before) return 2;
+    if (!__frankenlibc_is_runtime_math_enabled() && decisions_after != decisions_before) {
+        fprintf(stderr, "FAIL: math-off bounds probe consulted a runtime kernel (%lu decisions)\n",
+                decisions_after - decisions_before);
+        return 2;
+    }
+    if (__frankenlibc_is_runtime_math_enabled() && decisions_after <= decisions_before) {
+        fprintf(stderr, "FAIL: math-on bounds control never consulted the pointer kernel\n");
+        return 2;
+    }
     printf("bounds_repair=clamp prefix=8 untouched_suffix=24 heals=%lu decisions=%lu\n",
            heals_after - heals_before, decisions_after - decisions_before);
     free(dst);
