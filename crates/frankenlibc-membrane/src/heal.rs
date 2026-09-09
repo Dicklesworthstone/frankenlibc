@@ -357,6 +357,14 @@ pub fn global_healing_policy() -> &'static HealingPolicy {
     &GLOBAL_POLICY
 }
 
+/// Inspect the policy without starting or waiting for its initialization.
+/// Diagnostic readers must not initialize it: configuration reads can reenter
+/// libc string operations that themselves need the healing policy.
+#[must_use]
+pub fn initialized_healing_policy() -> Option<&'static HealingPolicy> {
+    LazyLock::get(&GLOBAL_POLICY)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

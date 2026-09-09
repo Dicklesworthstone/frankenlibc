@@ -83,8 +83,33 @@ static int signal_pipe[2];
 static int constructor_result = -1;
 static int constructor_ready = -1;
 static int constructor_calls;
+static int init_order;
+static int init_order_failed;
+static int init_argc;
+static char **init_argv;
+static char **init_envp;
+
+static void probe_preinit(int argc, char **argv, char **envp) {
+    if (init_order++ != 0) init_order_failed = 1;
+    init_argc = argc;
+    init_argv = argv;
+    init_envp = envp;
+}
+__attribute__((section(".preinit_array"), used))
+static void (*const preinit_entry)(int, char **, char **) = probe_preinit;
+
+/* Selected as DT_INIT by the fixture link command. */
+void probe_elf_init(int argc, char **argv, char **envp) {
+    if (init_order++ != 1 || argc != init_argc || argv != init_argv || envp != init_envp)
+        init_order_failed = 1;
+}
+
+__attribute__((constructor(101))) static void probe_early_constructor(void) {
+    if (init_order++ != 2) init_order_failed = 1;
+}
 
 __attribute__((constructor)) static void probe_constructor(void) {
+    if (init_order++ != 3) init_order_failed = 1;
     ++constructor_calls;
     const char *enabled = getenv("FRANKENLIBC_PROBE_CONSTRUCTOR");
     if (!enabled || enabled[0] != '1') return;
@@ -112,6 +137,11 @@ static void *probe_thread(void *unused) {
 }
 
 static int thread_signal_probe(void) {
+    if (init_order != 4 || init_order_failed || init_argc != 2 || !init_argv || !init_envp) {
+        fprintf(stderr, "FAIL: constructor order/arguments (order=%d failed=%d argc=%d)\n",
+                init_order, init_order_failed, init_argc);
+        return 2;
+    }
     if (constructor_calls != 1 || constructor_result != 1) {
         fprintf(stderr, "FAIL: constructor socket probe did not succeed (calls=%d result=%d ready=%d)\n",
                 constructor_calls, constructor_result, constructor_ready);
@@ -274,6 +304,8 @@ int main(int argc, char** argv) {
             if (!__frankenlibc_healing_action_count) return 2;
             uint64_t count = __frankenlibc_healing_action_count(1);
             if (__frankenlibc_healing_action_count(1) != count) return 2;
+            if (__frankenlibc_healing_action_count(0) != UINT64_MAX ||
+                __frankenlibc_healing_action_count(UINT32_MAX) != UINT64_MAX) return 2;
             printf("first_use_healing_counter=%lu repeated_read=stable\n", count);
             return 0;
         }
@@ -319,7 +351,10 @@ echo "--- Compiling fixture ---"
 if [[ "${1:-}" == "--compile-fixture" ]]; then
   # Internal RCH job entry: generate the source on the worker because target/
   # is deliberately excluded from source synchronization.
-  gcc -O2 -pthread -o "${FIXTURE_BIN}" "${FIXTURE_SRC}"
+  gcc -O2 -pthread -fPIE -pie -Wl,-init,probe_elf_init -o "${FIXTURE_BIN}" "${FIXTURE_SRC}" || exit $?
+  # PIC code keeps weak diagnostic imports dynamically resolvable even though
+  # -no-pie makes the executable itself fixed-address (ELF ET_EXEC).
+  gcc -O2 -pthread -fPIC -no-pie -Wl,-init,probe_elf_init -o "${FIXTURE_BIN}_nonpie" "${FIXTURE_SRC}"
   exit $?
 fi
 if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killswitch_e2e -- bash scripts/check_runtime_math_killswitch_e2e.sh --compile-fixture; then
@@ -330,23 +365,26 @@ echo "Compiled: ${FIXTURE_BIN}"
 echo ""
 
 if [[ "${1:-}" == "--thread-signal" ]]; then
-  timeout 15 env -u LD_PRELOAD FRANKENLIBC_PROBE_CONSTRUCTOR=1 "${FIXTURE_BIN}" --constructor-host-control
-  rc=$?
-  if [[ ${rc} -ne 0 ]]; then
-    echo "FAIL: host constructor/thread/signal control (rc=${rc})"
-    exit 1
-  fi
-  for probe_mode in strict hardened; do
-    for math in off on; do
-      timeout 15 env FRANKENLIBC_PROBE_CONSTRUCTOR=1 FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE="${probe_mode}" LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "$1"
-      rc=$?
-      if [[ ${rc} -ne 0 ]]; then
-        echo "FAIL: ${probe_mode}/${math} thread-signal probe (rc=${rc})"
-        exit 1
-      fi
+  for probe_bin in "${FIXTURE_BIN}" "${FIXTURE_BIN}_nonpie"; do
+    echo "Constructor fixture: ${probe_bin}"
+    timeout 15 env -u LD_PRELOAD FRANKENLIBC_PROBE_CONSTRUCTOR=1 "${probe_bin}" --constructor-host-control
+    rc=$?
+    if [[ ${rc} -ne 0 ]]; then
+      echo "FAIL: host constructor/thread/signal control (rc=${rc})"
+      exit 1
+    fi
+    for probe_mode in strict hardened; do
+      for math in off on; do
+        timeout 15 env FRANKENLIBC_PROBE_CONSTRUCTOR=1 FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE="${probe_mode}" LD_PRELOAD="${LIB_PATH}" "${probe_bin}" "$1"
+        rc=$?
+        if [[ ${rc} -ne 0 ]]; then
+          echo "FAIL: ${probe_mode}/${math} thread-signal probe (rc=${rc})"
+          exit 1
+        fi
+      done
     done
   done
-  echo "PASS: thread joins and signal writes in both modes and switch states"
+  echo "PASS: PIE/non-PIE constructor order/arguments, thread joins and signal writes in both modes and switch states"
   exit 0
 fi
 

@@ -186,6 +186,7 @@ pub enum StartupFailureReason {
     UnterminatedEnvp = 6,
     UnterminatedAuxv = 7,
     HostDelegateUnavailable = 8,
+    InvalidExecutableInit = 9,
 }
 
 static LAST_ARGC: AtomicUsize = AtomicUsize::new(0);
@@ -273,6 +274,9 @@ fn decode_failure_reason(raw: u8) -> StartupFailureReason {
         }
         x if x == StartupFailureReason::HostDelegateUnavailable as u8 => {
             StartupFailureReason::HostDelegateUnavailable
+        }
+        x if x == StartupFailureReason::InvalidExecutableInit as u8 => {
+            StartupFailureReason::InvalidExecutableInit
         }
         _ => StartupFailureReason::None,
     }
@@ -681,6 +685,127 @@ unsafe fn read_auxv_pairs(stack_end: *mut c_void, max_pairs: usize) -> Vec<(usiz
     out
 }
 
+/// Invoke the main ELF64 executable's constructors after relocation and runtime
+/// bootstrap. The interpreter has already handled DSO constructors and the
+/// executable's preinit array; neither belongs in this pass.
+///
+/// SAFETY: `auxv` is the real kernel startup vector, not a phase-0 fixture.
+/// Its program headers describe the still-mapped main executable. The caller
+/// invokes this once, only when no legacy csu init callback was supplied.
+unsafe fn call_executable_init(
+    auxv: &[(usize, usize)],
+    argc: c_int,
+    argv: *mut *mut c_char,
+    envp: *mut *mut c_char,
+) -> Result<(), ()> {
+    type InitFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char);
+    let aux = |key| auxv.iter().find(|&&(k, _)| k == key).map(|&(_, v)| v);
+    let phdr_addr = aux(libc::AT_PHDR as usize).ok_or(())?;
+    let phnum = aux(libc::AT_PHNUM as usize).ok_or(())?;
+    let phent = aux(libc::AT_PHENT as usize).ok_or(())?;
+    if std::mem::size_of::<usize>() != 8
+        || phent != std::mem::size_of::<libc::Elf64_Phdr>()
+        || phdr_addr == 0
+        || !phdr_addr.is_multiple_of(std::mem::align_of::<libc::Elf64_Phdr>())
+        || phnum == 0
+        || phnum > MAX_STARTUP_SCAN
+    {
+        return Err(());
+    }
+    // SAFETY: AT_PHDR/PHNUM come from the real kernel auxv; the entry layout and
+    // bounded length were checked above. The loader keeps these headers mapped.
+    let phdrs = unsafe { std::slice::from_raw_parts(phdr_addr as *const libc::Elf64_Phdr, phnum) };
+    let Some(dynamic) = phdrs.iter().find(|p| p.p_type == libc::PT_DYNAMIC) else {
+        return Ok(());
+    };
+    // PT_PHDR provides the link-time address of the header table for both PIE
+    // and fixed-address executables. Reject an unsupported layout explicitly
+    // rather than guessing a bias and calling an unrelated address.
+    let header = phdrs.iter().find(|p| p.p_type == libc::PT_PHDR).ok_or(())?;
+    let bias = phdr_addr.checked_sub(header.p_vaddr as usize).ok_or(())?;
+    let mapped = |addr: usize, len: usize, flags: u32| {
+        let Some(end) = addr.checked_add(len) else {
+            return false;
+        };
+        phdrs.iter().any(|p| {
+            if p.p_type != libc::PT_LOAD || p.p_flags & flags != flags {
+                return false;
+            }
+            let Some(start) = bias.checked_add(p.p_vaddr as usize) else {
+                return false;
+            };
+            let Some(limit) = start.checked_add(p.p_memsz as usize) else {
+                return false;
+            };
+            addr >= start && end <= limit
+        })
+    };
+    let dynamic_addr = bias.checked_add(dynamic.p_vaddr as usize).ok_or(())?;
+    let dynamic_len = dynamic.p_memsz as usize;
+    if !mapped(dynamic_addr, dynamic_len, libc::PF_R) {
+        return Err(());
+    }
+    let mut init = 0usize;
+    let mut array = 0usize;
+    let mut array_bytes = 0usize;
+    let mut terminated = false;
+    for offset in (0..dynamic_len / 16).map(|i| i * 16) {
+        // SAFETY: each complete ELF64 dynamic entry lies in the checked readable
+        // PT_DYNAMIC range. Unaligned reads do not impose extra ELF alignment.
+        let [tag, value] =
+            unsafe { std::ptr::read_unaligned((dynamic_addr + offset) as *const [u64; 2]) };
+        match tag {
+            0 => {
+                terminated = true;
+                break;
+            }
+            12 => init = value as usize,        // DT_INIT
+            25 => array = value as usize,       // DT_INIT_ARRAY
+            27 => array_bytes = value as usize, // DT_INIT_ARRAYSZ
+            _ => {}
+        }
+    }
+    if !terminated || !array_bytes.is_multiple_of(std::mem::size_of::<usize>()) {
+        return Err(());
+    }
+    let init_addr = if init == 0 {
+        0
+    } else {
+        bias.checked_add(init).ok_or(())?
+    };
+    if init_addr != 0 && !mapped(init_addr, 1, libc::PF_X) {
+        return Err(());
+    }
+    let array_addr = bias.checked_add(array).ok_or(())?;
+    if array_bytes != 0 && (array == 0 || !mapped(array_addr, array_bytes, libc::PF_R)) {
+        return Err(());
+    }
+    if init_addr != 0 {
+        // SAFETY: DT_INIT names executable code in this loaded image. The SysV
+        // startup convention supplies argc/argv/envp, also accepted by void hooks.
+        let callback: InitFn = unsafe { std::mem::transmute(init_addr) };
+        // SAFETY: arguments retain the real startup vectors for process lifetime.
+        unsafe { callback(argc, argv, envp) };
+    }
+    for offset in
+        (0..array_bytes / std::mem::size_of::<usize>()).map(|i| i * std::mem::size_of::<usize>())
+    {
+        // SAFETY: the array's entire storage was checked above. The interpreter
+        // has relocated its function pointers, which may point into another DSO;
+        // unlike the dynamic tag, these entries must NOT receive the load bias.
+        let address = unsafe { std::ptr::read_unaligned((array_addr + offset) as *const usize) };
+        if address == 0 || address == usize::MAX {
+            continue;
+        }
+        // SAFETY: the loaded executable's init-array ABI declares function
+        // pointers of this calling convention, resolved by the interpreter.
+        let callback: InitFn = unsafe { std::mem::transmute(address) };
+        // SAFETY: same live startup vectors as for DT_INIT above.
+        unsafe { callback(argc, argv, envp) };
+    }
+    Ok(())
+}
+
 unsafe fn startup_phase0_impl(
     main: Option<MainFn>,
     argc: c_int,
@@ -873,6 +998,37 @@ unsafe fn startup_phase0_impl(
         path.push(StartupCheckpoint::CallInitHook);
         // SAFETY: callback pointer provided by caller.
         unsafe { init_fn() };
+    } else if publish_environment {
+        path.push(StartupCheckpoint::CallInitHook);
+        // SAFETY: only real __libc_start_main reaches this branch. The kernel
+        // auxv follows the original environment terminator, NOT stack_end
+        // (whose auxv interpretation is an exported phase-0 fixture convention).
+        let executable_auxv =
+            unsafe { read_auxv_pairs(envp.add(env_count + 1).cast(), MAX_STARTUP_SCAN) };
+        // SAFETY: real kernel auxv and startup vectors; legacy init is absent.
+        if unsafe {
+            call_executable_init(
+                &executable_auxv,
+                normalized_argc as c_int,
+                ubp_av,
+                resolved_envp,
+            )
+        }
+        .is_err()
+        {
+            path.push(StartupCheckpoint::Deny);
+            // SAFETY: writes TLS errno; do not run main after incomplete init.
+            unsafe { set_abi_errno(libc::ENOEXEC) };
+            record_phase0_outcome(
+                &path,
+                StartupPolicyDecision::Deny,
+                StartupInvariantStatus::Invalid,
+                StartupFailureReason::InvalidExecutableInit,
+                secure_evidence.state,
+                started,
+            );
+            return -1;
+        }
     }
 
     path.push(StartupCheckpoint::CallMain);
@@ -1519,20 +1675,14 @@ pub unsafe extern "C" fn __frankenlibc_runtime_decision_snapshot(
 /// Returns the number of double-free heals, used to verify PCC soundness (bd-06bxm.5).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __frankenlibc_healing_double_free_count() -> u64 {
-    use std::sync::atomic::Ordering;
-    frankenlibc_membrane::heal::global_healing_policy()
-        .double_frees
-        .load(Ordering::Relaxed)
+    __frankenlibc_healing_action_count(3)
 }
 
 /// FFI export to get the count of foreign-free heals from the healing policy.
 /// Returns the number of foreign pointer free heals (bd-06bxm.5 diagnostic).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __frankenlibc_healing_foreign_free_count() -> u64 {
-    use std::sync::atomic::Ordering;
-    frankenlibc_membrane::heal::global_healing_policy()
-        .foreign_frees
-        .load(Ordering::Relaxed)
+    __frankenlibc_healing_action_count(4)
 }
 
 /// Read an existing healing counter without resetting or manufacturing evidence.
@@ -1540,7 +1690,15 @@ pub unsafe extern "C" fn __frankenlibc_healing_foreign_free_count() -> u64 {
 /// 5 realloc-as-malloc, 6 safe default, 7 safe variant. Unknown IDs return MAX.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn __frankenlibc_healing_action_count(action: u32) -> u64 {
-    let policy = frankenlibc_membrane::heal::global_healing_policy();
+    if !(1..=7).contains(&action) {
+        return u64::MAX;
+    }
+    // A diagnostic must not trigger configuration parsing (which can reenter
+    // memcpy and wait on this same policy). Before initialization completes,
+    // no operation has obtained this policy to record a healing action.
+    let Some(policy) = frankenlibc_membrane::heal::initialized_healing_policy() else {
+        return 0;
+    };
     let counter = match action {
         1 => &policy.size_clamps,
         2 => &policy.null_truncations,

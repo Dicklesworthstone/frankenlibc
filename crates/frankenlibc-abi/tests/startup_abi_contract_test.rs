@@ -706,11 +706,34 @@ fn libc_start_main_default_owned_startup_does_not_delegate_to_host() {
     reset_test_counters();
     let arg0 = seeded_cstring("arg", 20);
     let env0 = seeded_cstring("env", 20);
-    let mut argv_env = vec![
-        arg0.as_ptr().cast_mut(),
-        ptr::null_mut(),
-        env0.as_ptr().cast_mut(),
-        ptr::null_mut(),
+    // Unlike the exported phase-0 helper, __libc_start_main consumes the kernel
+    // layout: auxv immediately follows the environment terminator. Describe a
+    // synthetic image without PT_DYNAMIC so this test never dispatches the
+    // test runner's constructors. Real DT_INIT/array dispatch is covered by the
+    // paired host/release PIE and non-PIE C executable gate.
+    let headers = [libc::Elf64_Phdr {
+        p_type: libc::PT_NULL,
+        p_flags: 0,
+        p_offset: 0,
+        p_vaddr: 0,
+        p_paddr: 0,
+        p_filesz: 0,
+        p_memsz: 0,
+        p_align: 0,
+    }];
+    let mut argv_env_auxv = vec![
+        arg0.as_ptr() as usize,
+        0,
+        env0.as_ptr() as usize,
+        0,
+        libc::AT_PHDR as usize,
+        headers.as_ptr() as usize,
+        libc::AT_PHNUM as usize,
+        headers.len(),
+        libc::AT_PHENT as usize,
+        std::mem::size_of::<libc::Elf64_Phdr>(),
+        AT_NULL,
+        0,
     ];
     let mut auxv = vec![AT_NULL, 0usize];
 
@@ -722,7 +745,7 @@ fn libc_start_main_default_owned_startup_does_not_delegate_to_host() {
                     __libc_start_main(
                         Some(test_main as MainFn),
                         1,
-                        argv_env.as_mut_ptr(),
+                        argv_env_auxv.as_mut_ptr().cast(),
                         None,
                         None,
                         None,
