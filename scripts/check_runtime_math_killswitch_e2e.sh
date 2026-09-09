@@ -6,6 +6,8 @@
 # 2. Basic operations still run when math is disabled (not a bounds-check proof)
 # 3. FRANKENLIBC_RUNTIME_MATH=on (or absent) enables runtime-math
 # 4. Invalid values fall back to on
+# --policy-history runs matched 512-call histories and reports decisions; it
+# checks consultation and liveness, not whether action/profile influence exists.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -62,12 +64,79 @@ cat > "${FIXTURE_SRC}" <<'ENDC'
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
 extern int __frankenlibc_is_runtime_math_enabled(void) __attribute__((weak));
 extern uint64_t __frankenlibc_decision_count(void) __attribute__((weak));
+
+struct decision_snapshot {
+    uint64_t evidence_seqno;
+    uint32_t family, profile, action, risk_upper_bound_ppm, policy_id, reserved;
+};
+extern int __frankenlibc_runtime_decision_snapshot(struct decision_snapshot*) __attribute__((weak));
+
+/* Matched process histories: identical decision contexts, differing syscall
+ * outcomes. The final probe is the SAME valid socket call in both processes. */
+static int policy_history(int adverse) {
+    if (!__frankenlibc_runtime_decision_snapshot) {
+        fprintf(stderr, "FAIL: decision snapshot export missing\n");
+        return 2;
+    }
+    int failures = 0;
+    for (int i = 0; i < 512; ++i) {
+        int fd = socket(AF_UNIX, adverse ? -1 : SOCK_STREAM, 0);
+        if (fd < 0) ++failures;
+        else if (close(fd) != 0) return 2;
+    }
+    if (failures != (adverse ? 512 : 0)) {
+        fprintf(stderr, "FAIL: unexpected history outcomes: %d\n", failures);
+        return 2;
+    }
+    /* Initialize the separate counter diagnostic before the operation whose
+     * thread-local record we want: its first kernel initialization can itself
+     * make interposed calls, unlike this snapshot's non-initializing read. */
+    uint64_t before = __frankenlibc_decision_count();
+    errno = 0;
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int saved_errno = errno;
+    struct decision_snapshot snapshot, repeated;
+    int got = __frankenlibc_runtime_decision_snapshot(&snapshot);
+    int again = __frankenlibc_runtime_decision_snapshot(&repeated);
+    uint64_t after = __frankenlibc_decision_count();
+    if (got != 1 || again != 1 ||
+        memcmp(&snapshot, &repeated, sizeof(snapshot)) != 0 ||
+        snapshot.family != 13 || snapshot.reserved != 0) {
+        fprintf(stderr, "FAIL: snapshot missing, stale family, or mutating read (got=%d again=%d family=%u)\n", got, again, got == 1 ? snapshot.family : 999);
+        return 2;
+    }
+    if (fd < 0 || saved_errno != 0) {
+        fprintf(stderr, "FAIL: valid final socket changed result or errno\n");
+        return 2;
+    }
+    if (close(fd) != 0) return 2;
+    int enabled = __frankenlibc_is_runtime_math_enabled();
+    if (after - before != (uint64_t)enabled) {
+        fprintf(stderr, "FAIL: probe plus diagnostic reads did not produce exactly %d decision(s)\n", enabled);
+        return 2;
+    }
+    /* Exercise comparison results too: a Deny path returning zero must not
+     * masquerade as a successful equal-snapshot comparison. */
+    int (*volatile compare)(const void*, const void*, size_t) = memcmp;
+    const unsigned char low[] = {1, 2, 3, 4}, high[] = {1, 2, 3, 5};
+    if (compare(low, high, sizeof(low)) >= 0 ||
+        compare(high, low, sizeof(low)) <= 0 ||
+        compare(low, high, 0) != 0) return 2;
+    printf("history=%s failures=%d result=%d errno=%d sequence=%lu profile=%u action=%u risk=%u policy=%u\n",
+           adverse ? "adverse" : "successful", failures, fd < 0 ? -1 : 0,
+           saved_errno, snapshot.evidence_seqno, snapshot.profile, snapshot.action,
+           snapshot.risk_upper_bound_ppm, snapshot.policy_id);
+    /* Evidence publication is sampled every 16384 ordinary decisions. Its
+     * sequence can be zero even when the exact counter delta above is one. */
+    return 0;
+}
 
 int main(int argc, char** argv) {
     if (!__frankenlibc_is_runtime_ready || !__frankenlibc_is_runtime_math_enabled ||
@@ -79,6 +148,11 @@ int main(int argc, char** argv) {
     int ready = __frankenlibc_is_runtime_ready();
     if (!ready) {
         fprintf(stderr, "FAIL: runtime is not active\n");
+        return 2;
+    }
+    if (argc == 2) {
+        if (strcmp(argv[1], "--successful-history") == 0) return policy_history(0);
+        if (strcmp(argv[1], "--adverse-history") == 0) return policy_history(1);
         return 2;
     }
     int math_enabled = __frankenlibc_is_runtime_math_enabled();
@@ -127,6 +201,21 @@ if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killsw
 fi
 echo "Compiled: ${FIXTURE_BIN}"
 echo ""
+
+if [[ "${1:-}" == "--policy-history" ]]; then
+  for math in off on; do
+    for history in successful adverse; do
+      timeout 15 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "--${history}-history"
+      rc=$?
+      if [[ ${rc} -ne 0 ]]; then
+        echo "FAIL: ${math}/${history} history probe (rc=${rc})"
+        exit 1
+      fi
+    done
+  done
+  echo "History observations only: compare action/profile; counters or risk alone do not prove policy influence."
+  exit 0
+fi
 
 # The old gate only checked hardened mode and the switch accessor. Strict mode
 # has a separate observation path; require its actual counter to remain still.

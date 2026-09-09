@@ -1497,6 +1497,24 @@ pub unsafe extern "C" fn __frankenlibc_decision_count() -> u64 {
     crate::runtime_policy::runtime_decision_count().unwrap_or(0)
 }
 
+pub use crate::runtime_policy::RuntimeDecisionSnapshot;
+
+/// Copies an already-recorded decision without consulting the kernel, allocating
+/// JSON, consuming the record, or enabling recording in strict mode.
+/// Returns 1 for a record, 0 if unavailable (leaving `out` untouched), or -1 for
+/// NULL. The record is the last recorded call, not necessarily the last libc
+/// operation: production fast paths may bypass recording entirely.
+///
+/// # Safety
+/// A non-null `out` must be aligned and writable for one `RuntimeDecisionSnapshot`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_runtime_decision_snapshot(
+    out: *mut RuntimeDecisionSnapshot,
+) -> c_int {
+    // SAFETY: forwards the caller's output-object contract without extra work.
+    unsafe { crate::runtime_policy::read_decision_snapshot(out) }
+}
+
 /// FFI export to get the count of double-free heals from the healing policy.
 /// Returns the number of double-free heals, used to verify PCC soundness (bd-06bxm.5).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

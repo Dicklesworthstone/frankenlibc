@@ -4688,6 +4688,14 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 #[cold]
 #[inline(never)]
 unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    // Healing-policy initialization reads the environment, which can call our
+    // memcpy. Hold the same guard as memcpy/memmove before entering any policy
+    // code, or that nested copy can wait on the initializer owned by this call.
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        // SAFETY: the caller supplies two readable n-byte regions; this nested
+        // path must not consult the membrane whose initialization is in flight.
+        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
+    };
     let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     let (mode, decision) = runtime_policy::decide(

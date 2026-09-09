@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
-use std::ffi::c_char;
+use std::ffi::{c_char, c_int};
 #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
@@ -1452,6 +1452,55 @@ pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
 #[must_use]
 pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
     with_last_explainability(|slot| *slot).flatten()
+}
+
+/// Read-only projection of the calling thread's existing hardened decision.
+/// Evidence sequences are cadence-gated: zero does not establish whether the
+/// kernel ran. Family uses `ApiFamily` IDs (Socket = 13); profile is
+/// 0=Fast, 1=Full; action is 0=Allow, 1=FullValidate, 2=Repair, 3=Deny.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeDecisionSnapshot {
+    pub evidence_seqno: u64,
+    pub family: u32,
+    pub profile: u32,
+    pub action: u32,
+    pub risk_upper_bound_ppm: u32,
+    pub policy_id: u32,
+    pub reserved: u32,
+}
+
+/// # Safety
+/// A non-null `out` must be aligned and writable for one snapshot.
+pub(crate) unsafe fn read_decision_snapshot(out: *mut RuntimeDecisionSnapshot) -> c_int {
+    if out.is_null() {
+        // SAFETY: sets the calling thread's errno for an invalid output pointer.
+        unsafe { crate::errno_abi::set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    let Some(decision) = peek_last_explainability() else {
+        return 0;
+    };
+    let snapshot = RuntimeDecisionSnapshot {
+        evidence_seqno: decision.evidence_seqno,
+        family: u32::from(decision.family as u8),
+        profile: match decision.profile {
+            ValidationProfile::Fast => 0,
+            ValidationProfile::Full => 1,
+        },
+        action: match decision.action {
+            MembraneAction::Allow => 0,
+            MembraneAction::FullValidate => 1,
+            MembraneAction::Repair(_) => 2,
+            MembraneAction::Deny => 3,
+        },
+        risk_upper_bound_ppm: decision.risk_upper_bound_ppm,
+        policy_id: decision.policy_id,
+        reserved: 0,
+    };
+    // SAFETY: caller guarantees a properly aligned, writable output object.
+    unsafe { out.write(snapshot) };
+    1
 }
 
 fn next_decision_span_seq() -> u64 {
@@ -3033,6 +3082,87 @@ mod tests {
         assert_eq!(k.snapshot(SafetyLevel::Strict), baseline);
         // Diagnostics still expose the real, already initialized kernel.
         assert_eq!(runtime_decision_count(), Some(baseline.decisions));
+    }
+
+    #[test]
+    fn decision_snapshot_reads_existing_tls_without_consuming_or_consulting() {
+        let _lock = runtime_policy_test_lock();
+        let previous = take_last_explainability();
+        struct RestoreRecord(Option<DecisionExplainability>);
+        impl Drop for RestoreRecord {
+            fn drop(&mut self) {
+                with_last_explainability(|slot| *slot = self.0);
+            }
+        }
+        let _restore = RestoreRecord(previous);
+        let mut out = RuntimeDecisionSnapshot {
+            evidence_seqno: u64::MAX,
+            ..RuntimeDecisionSnapshot::default()
+        };
+        let untouched = out;
+        let kernel_state = KERNEL_STATE.load(AtomicOrdering::Acquire);
+        // SAFETY: out is a live, aligned, writable snapshot object.
+        assert_eq!(unsafe { read_decision_snapshot(&mut out) }, 0);
+        assert_eq!(out, untouched);
+        assert_eq!(KERNEL_STATE.load(AtomicOrdering::Acquire), kernel_state);
+        // SAFETY: NULL is an explicitly supported error input.
+        assert_eq!(unsafe { read_decision_snapshot(std::ptr::null_mut()) }, -1);
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EFAULT
+        );
+
+        let ctx = RuntimeContext {
+            family: ApiFamily::Socket,
+            addr_hint: 1,
+            requested_bytes: 0,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: true,
+        };
+        // Mapping-only unit test; release workloads separately prove the source
+        // of these fields is an actual runtime decision, not this test input.
+        for (action, action_id) in [
+            (MembraneAction::Allow, 0),
+            (MembraneAction::FullValidate, 1),
+            (
+                MembraneAction::Repair(frankenlibc_membrane::HealingAction::ReturnSafeDefault),
+                2,
+            ),
+            (MembraneAction::Deny, 3),
+        ] {
+            let decision = RuntimeDecision {
+                profile: ValidationProfile::Full,
+                action,
+                policy_id: 17,
+                risk_upper_bound_ppm: 123_456,
+                evidence_seqno: 42,
+            };
+            record_last_explainability(
+                SafetyLevel::Hardened,
+                ctx,
+                decision,
+                DECISION_GATE_RUNTIME_POLICY,
+            );
+            let record = peek_last_explainability();
+            // SAFETY: out is a live, aligned, writable snapshot object.
+            assert_eq!(unsafe { read_decision_snapshot(&mut out) }, 1);
+            assert_eq!(
+                out,
+                RuntimeDecisionSnapshot {
+                    evidence_seqno: 42,
+                    family: 13,
+                    profile: 1,
+                    action: action_id,
+                    risk_upper_bound_ppm: 123_456,
+                    policy_id: 17,
+                    reserved: 0,
+                }
+            );
+            assert_eq!(peek_last_explainability(), record);
+            assert_eq!(KERNEL_STATE.load(AtomicOrdering::Acquire), kernel_state);
+        }
     }
 
     impl Drop for RuntimeReadyGuard {
