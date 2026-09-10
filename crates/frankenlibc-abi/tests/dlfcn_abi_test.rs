@@ -13,6 +13,9 @@ use frankenlibc_abi::dlfcn_abi::{
 };
 use frankenlibc_abi::malloc_abi::{free, malloc};
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
 /// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
 /// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static TEST_GUARD: Mutex<()> = Mutex::new(());
@@ -826,7 +829,26 @@ fn dlvsym_host_handle_resolves_symbol() {
         !sym.is_null(),
         "dlvsym should resolve symbols on host handles"
     );
-    unsafe { dlclose(handle) };
+    // A non-null symbol alone cannot distinguish host delegation from a
+    // candidate export. Require the actual host address before calling it.
+    // SAFETY: the oracle resolves malloc's code address, not allocation data.
+    let host = unsafe { dlsym_oracle::host_addr(c"malloc", malloc as *const ()) };
+    assert_eq!(sym, host, "host handle must resolve the host allocator");
+    assert!(!native_dso_handle_for_tests(handle));
+    // SAFETY: the checked address has malloc's exact C signature. Release its
+    // allocation with the explicitly resolved matching host free function.
+    let allocate: unsafe extern "C" fn(usize) -> *mut c_void =
+        unsafe { std::mem::transmute(sym) };
+    let release: unsafe extern "C" fn(*mut c_void) =
+        unsafe { dlsym_oracle::host_fn(c"free", free as *const ()) };
+    let allocation = unsafe { allocate(32) };
+    assert!(!allocation.is_null());
+    unsafe {
+        allocation.cast::<u8>().write_bytes(0x5a, 32);
+        assert_eq!(*allocation.cast::<u8>().add(31), 0x5a);
+        release(allocation);
+        assert_eq!(dlclose(handle), 0);
+    }
 }
 
 #[test]
