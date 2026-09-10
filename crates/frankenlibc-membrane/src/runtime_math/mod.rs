@@ -13,6 +13,133 @@
 
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 
+// Hardware boundary: policy arithmetic must not alter the C caller's fenv.
+// Kept here (rather than only in the ABI guard) because pointer validation owns
+// a separate kernel. This implementation covers the supported x86_64 ABI.
+#[allow(unsafe_code)]
+mod floating_environment {
+    pub struct Guard {
+        #[cfg(target_arch = "x86_64")]
+        x87: [u32; 7],
+        #[cfg(target_arch = "x86_64")]
+        mxcsr: u32,
+        // Restoring another thread's environment would be incorrect.
+        _thread_bound: core::marker::PhantomData<*mut ()>,
+    }
+
+    impl Guard {
+        #[inline]
+        pub fn enter() -> Self {
+            let mut guard = Self {
+                #[cfg(target_arch = "x86_64")]
+                x87: [0; 7],
+                #[cfg(target_arch = "x86_64")]
+                mxcsr: 0,
+                _thread_bound: core::marker::PhantomData,
+            };
+            #[cfg(target_arch = "x86_64")]
+            {
+                let control = 0x037fu16;
+                let mxcsr = 0x1f80u32;
+                // SAFETY: fnstenv writes exactly 28 bytes to our live array;
+                // stmxcsr writes four bytes. All input words are valid hardware
+                // settings. Mask/clear exceptions and use nearest rounding for
+                // internal arithmetic, without changing the x87 register stack.
+                unsafe {
+                    core::arch::asm!(
+                        "fnstenv [{env}]", "stmxcsr [{saved_mxcsr}]",
+                        "fnclex", "fldcw [{control}]", "ldmxcsr [{mxcsr}]",
+                        env = in(reg) guard.x87.as_mut_ptr(),
+                        saved_mxcsr = in(reg) &mut guard.mxcsr,
+                        control = in(reg) &control,
+                        mxcsr = in(reg) &mxcsr,
+                        options(nostack, preserves_flags),
+                    );
+                }
+            }
+            guard
+        }
+    }
+
+    impl Drop for Guard {
+        #[inline]
+        fn drop(&mut self) {
+            #[cfg(target_arch = "x86_64")]
+            // SAFETY: these are the exact hardware-produced bytes saved on
+            // this thread at entry. Restore sticky flags as well as controls,
+            // including on unwinding. Internal x87 exceptions are masked
+            // before restoration.
+            unsafe {
+                core::arch::asm!(
+                    "fldenv [{env}]", "ldmxcsr [{mxcsr}]",
+                    env = in(reg) self.x87.as_ptr(),
+                    mxcsr = in(reg) &self.mxcsr,
+                    options(nostack, preserves_flags),
+                );
+            }
+        }
+    }
+
+    #[cfg(all(test, target_arch = "x86_64"))]
+    mod tests {
+        use super::Guard;
+
+        fn settings() -> (u32, u16, u16) {
+            let (mut mxcsr, mut cw, mut sw) = (0u32, 0u16, 0u16);
+            // SAFETY: each hardware store targets a live, correctly sized word.
+            unsafe {
+                core::arch::asm!(
+                    "stmxcsr [{mxcsr}]", "fnstcw [{cw}]", "fnstsw [{sw}]",
+                    mxcsr = in(reg) &mut mxcsr,
+                    cw = in(reg) &mut cw,
+                    sw = in(reg) &mut sw,
+                    options(nostack, preserves_flags),
+                );
+            }
+            (mxcsr, cw, sw)
+        }
+
+        fn exercise(unwind: bool) {
+            let _restore_test_thread = Guard::enter();
+            let mut seeded = Guard::enter();
+            seeded.mxcsr = 0x7f81; // toward zero, pre-existing invalid flag
+            seeded.x87[0] |= 0x0c00; // same x87 rounding direction
+            seeded.x87[1] |= 1; // preserve a pre-existing x87 invalid flag
+            drop(seeded);
+            let before = settings();
+            let mut inside = (0, 0, 0);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _scope = Guard::enter();
+                inside = settings();
+                if unwind {
+                    panic!("exercise floating environment restoration");
+                }
+            }));
+            let after = settings();
+            assert_eq!(inside.0, 0x1f80);
+            assert_eq!(inside.1, 0x037f);
+            assert_eq!(inside.2 & 0x3f, 0);
+            assert_eq!(before, after);
+            assert_eq!(result.is_err(), unwind);
+        }
+
+        #[test]
+        fn floating_environment_restores_flags_and_rounding() {
+            exercise(false);
+        }
+
+        #[test]
+        fn floating_environment_restores_on_unwind() {
+            exercise(true);
+        }
+    }
+}
+
+/// Thread-bound scope preserving caller floating-point state around internal
+/// runtime-math work, including ABI-side allocation and compiler-generated
+/// copies during initialization. Hardware preservation is currently x86_64-only.
+pub use floating_environment::Guard as RuntimeMathEnvironmentGuard;
+
 pub mod admm_budget;
 pub mod alpha_investing;
 pub mod approachability;
@@ -1121,6 +1248,7 @@ impl RuntimeMathKernel {
     /// Disabled routing requests full basic validation, never a fast-path bypass.
     #[must_use]
     pub fn new_with_routing(mode: SafetyLevel, routing_enabled: bool) -> Self {
+        let _floating_environment = floating_environment::Guard::enter();
         // The observe() hot path uses a cached probe mask to decide which heavy
         // monitors should run. The microbench for observe() constructs a fresh
         // kernel and never calls decide(), so we must seed a budget-feasible
@@ -1406,6 +1534,7 @@ impl RuntimeMathKernel {
                 evidence_seqno: 0,
             };
         }
+        let _floating_environment = floating_environment::Guard::enter();
         let sequence = self.decisions.fetch_add(1, Ordering::Relaxed) + 1;
         // Cadence-gate expensive sampling/oracle updates. Strict mode prioritizes
         // latency stability over reactivity; hardened can resample more often.
@@ -2646,6 +2775,7 @@ impl RuntimeMathKernel {
         if !self.routing_enabled {
             return;
         }
+        let _floating_environment = floating_environment::Guard::enter();
         let ctx = CheckContext {
             family: family as u8,
             aligned,
@@ -2700,6 +2830,7 @@ impl RuntimeMathKernel {
         estimated_cost_ns: u64,
         adverse: bool,
     ) {
+        let _floating_environment = floating_environment::Guard::enter();
         let probe_mask = self.cached_probe_mask.load(Ordering::Relaxed) as u32;
         self.risk.observe(family, adverse);
         self.router
@@ -4559,6 +4690,7 @@ impl RuntimeMathKernel {
         if !RUNTIME_MATH_PRODUCTION_ENABLED {
             return;
         }
+        let _floating_environment = floating_environment::Guard::enter();
         let mut barrier = self.sos_barrier.lock();
         barrier.evaluate_size_class(requested_size, mapped_class_size, class_membership_valid);
         let barrier_code = match barrier.state() {
@@ -4588,6 +4720,7 @@ impl RuntimeMathKernel {
     /// Point-in-time kernel snapshot.
     #[must_use]
     pub fn snapshot(&self, mode: SafetyLevel) -> RuntimeKernelSnapshot {
+        let _floating_environment = floating_environment::Guard::enter();
         let limits = self.controller.limits(mode);
         let tropical_full_wcl_ns = self.tropical.lock().worst_case_bound(PipelinePath::Full);
         let spectral_sig = self.spectral.lock().signature();
@@ -4960,6 +5093,7 @@ impl RuntimeMathKernel {
     /// Export structured decision-card JSON from the runtime evidence log.
     #[must_use]
     pub fn export_decision_cards_json(&self) -> String {
+        let _floating_environment = floating_environment::Guard::enter();
         self.evidence_log.export_decision_cards_json()
     }
 
@@ -4978,6 +5112,7 @@ impl RuntimeMathKernel {
         bead_id: &str,
         run_id: &str,
     ) -> String {
+        let _floating_environment = floating_environment::Guard::enter();
         let cards = self.evidence_log.decision_cards_snapshot_sorted();
         let snapshot_capture_started = std::time::Instant::now();
         let snapshot = self.snapshot(mode);
