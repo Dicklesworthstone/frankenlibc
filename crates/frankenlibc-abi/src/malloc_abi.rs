@@ -4887,11 +4887,17 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
     // realloc(NULL, size) == malloc(size)
     if ptr.is_null() {
+        // Delegate without making malloc mistake this call for allocator
+        // recursion and bypass the initialized native/policy path.
+        drop(reentry_guard);
         return unsafe { malloc(size) };
     }
 
     // realloc(ptr, 0) == free(ptr), return NULL
     if size == 0 {
+        // Free must classify the allocation through its normal ownership path,
+        // not the bootstrap fallback selected by our still-held guard.
+        drop(reentry_guard);
         unsafe { free(ptr) };
         return std::ptr::null_mut();
     }
@@ -5110,6 +5116,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                     runtime_policy::scaled_cost(6, size),
                     true,
                 );
+                // This repair is a new allocation, not allocator recursion.
+                // Let malloc retain its normal membrane ownership and policy.
+                drop(reentry_guard);
                 return unsafe { malloc(size) };
             }
             // Strict mode: cannot determine old size; treat as malloc
@@ -5125,6 +5134,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 runtime_policy::scaled_cost(6, size),
                 true,
             );
+            // Preserve normal allocation routing for this delegation too.
+            drop(reentry_guard);
             return unsafe { malloc(size) };
         }
     };

@@ -136,9 +136,66 @@ fn malloc_edge_contracts_match_glibc() {
             "strict small allocation must use a native segment"
         );
     }
+    let _ = fl::take_last_decision_gate_for_tests();
+    // SAFETY: a null input requests a new allocation, paired with fl::free.
+    let from_null = unsafe { fl::realloc(std::ptr::null_mut(), 64) };
+    assert!(!from_null.is_null());
+    let decision = fl::take_last_decision_gate_for_tests();
+    let segment_owned = fl::malloc_segment_owned_for_tests(from_null);
+    // SAFETY: from_null is a live allocation returned by fl::realloc.
+    unsafe { fl::free(from_null) };
+    if std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened") {
+        assert!(
+            decision.is_some(),
+            "realloc(NULL, n) must run allocator policy"
+        );
+    } else if !cfg!(feature = "standalone") {
+        assert!(
+            segment_owned,
+            "realloc(NULL, n) must use the native small path"
+        );
+    }
     // SAFETY: probe pairs each allocation with the same allocator's operations.
     let initialized = unsafe { probe(fl::malloc, fl::free, fl::realloc, fl::calloc) };
     assert_eq!(initialized, gp, "initialized allocator edge contracts");
+
+    if std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened") {
+        // Establish actual membrane ownership, not just an outer policy decision.
+        // SAFETY: allocate and release through the same candidate provider.
+        let native = unsafe { fl::malloc(96) };
+        assert!(!native.is_null());
+        let native_fallback = fl::fallback_size_for_bench(native);
+        let native_remaining = fl::malloc_known_remaining_for_tests(native);
+        unsafe { fl::free(native) };
+        assert_eq!(native_fallback, None, "native readiness precondition");
+        assert_eq!(native_remaining, Some(96));
+
+        // A live host allocation is foreign to the membrane. Hardened repair
+        // allocates a replacement without reading or releasing the old block.
+        // SAFETY: resolve exact host signatures; keep the original host-owned.
+        let host_malloc: unsafe extern "C" fn(usize) -> *mut c_void =
+            unsafe { dlsym_oracle::host_fn(c"malloc", fl::malloc as *const ()) };
+        let host_free: unsafe extern "C" fn(*mut c_void) =
+            unsafe { dlsym_oracle::host_fn(c"free", fl::free as *const ()) };
+        let foreign = unsafe { host_malloc(96) };
+        assert!(!foreign.is_null());
+        assert_eq!(fl::malloc_known_remaining_for_tests(foreign), None);
+        // SAFETY: foreign is a live host malloc allocation. Hardened mode's
+        // documented foreign-pointer repair leaves its ownership unchanged.
+        let repaired = unsafe { fl::realloc(foreign, 128) };
+        assert!(!repaired.is_null());
+        let repaired_fallback = fl::fallback_size_for_bench(repaired);
+        let repaired_remaining = fl::malloc_known_remaining_for_tests(repaired);
+        unsafe {
+            fl::free(repaired);
+            host_free(foreign);
+        }
+        assert_eq!(
+            repaired_fallback, None,
+            "repair must not use bootstrap malloc"
+        );
+        assert_eq!(repaired_remaining, Some(128));
+    }
 }
 
 #[test]
