@@ -24,12 +24,17 @@
 //!
 //! `0x1000_0044` is an `alloc_stream_id` value, not an address.
 //!
-//! Every assertion here is a NEGATIVE case: before the fix each one drove glibc
-//! into dereferencing a small integer, so the pre-fix failure is a SIGSEGV, not
-//! a wrong return value. A run that merely completes already proves something.
+//! The stale-id cases must reject handles without dereferencing a small integer.
+//! The positive mixed-provider case also requires real I/O through both native
+//! ids and host FILE pointers; refusing every foreign handle is not a solution.
 
 use std::ffi::{CString, c_int, c_void};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::fs::FileExt;
 use std::sync::{Mutex, MutexGuard};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
 
 /// Serialise the arms in this file.
 ///
@@ -102,6 +107,92 @@ fn fl_fopen_returns_a_synthetic_handle_not_a_pointer() {
 }
 
 #[test]
+fn native_and_host_streams_perform_real_io_through_fl() {
+    let _guard = gate_lock();
+    exercise_native_and_host_stream_io(false);
+    // Explicitly test the initialized path too. This hook is not evidence that
+    // a deployed C program reaches runtime readiness through its startup code.
+    fl::signal_runtime_ready_for_tests();
+    exercise_native_and_host_stream_io(true);
+}
+
+fn exercise_native_and_host_stream_io(runtime_ready: bool) {
+    type Fdopen = unsafe extern "C" fn(c_int, *const libc::c_char) -> *mut File;
+    // SAFETY: Fdopen matches the C signature; the resolver rejects fl's address.
+    let host_fdopen: Fdopen = unsafe { dlsym_oracle::host_fn(c"fdopen", fl::fdopen as *const ()) };
+
+    for (provider, open, synthetic) in [
+        ("native", fl::fdopen as Fdopen, true),
+        ("host", host_fdopen, false),
+    ] {
+        // SAFETY: memfd_create takes a terminated name and valid flags. The
+        // anonymous backing object avoids creating or deleting filesystem paths.
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_memfd_create,
+                c"stdio-provider-gate".as_ptr(),
+                libc::MFD_CLOEXEC,
+            )
+        };
+        assert!(fd >= 0, "{provider}: memfd_create failed");
+        // SAFETY: the successful syscall returned a new owned descriptor.
+        let backing = unsafe { std::fs::File::from_raw_fd(fd as c_int) };
+        let stream_fd = backing.try_clone().expect("duplicate backing descriptor");
+        let _ = fl::take_last_decision_gate_for_tests();
+        // SAFETY: stream_fd is live and read/write; the mode is terminated.
+        let stream = unsafe { open(stream_fd.as_raw_fd(), c"w+".as_ptr()) };
+        assert!(!stream.is_null(), "{provider}: fdopen failed");
+        let bound_fd = stream_fd.into_raw_fd(); // the successful stream owns it
+        assert_eq!(is_synthetic_handle(stream), synthetic, "{provider}");
+        if runtime_ready
+            && synthetic
+            && std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened")
+        {
+            assert!(
+                fl::take_last_decision_gate_for_tests().is_some(),
+                "initialized hardened fdopen must record a policy decision"
+            );
+        }
+        // SAFETY: stream is a live handle from the selected provider.
+        assert_eq!(unsafe { fl::fileno(stream) }, bound_fd, "{provider}");
+
+        let written = b"stdio-provider";
+        // SAFETY: written is readable for its length and stream is writable.
+        assert_eq!(
+            unsafe { fl::fwrite(written.as_ptr().cast(), 1, written.len(), stream) },
+            written.len(),
+            "{provider}: fwrite"
+        );
+        // SAFETY: stream is still live; flushing exposes bytes to the backing fd.
+        assert_eq!(unsafe { fl::fflush(stream) }, 0, "{provider}: fflush");
+        let mut actual = [0u8; 14];
+        backing.read_exact_at(&mut actual, 0).expect("read backing");
+        assert_eq!(&actual, written, "{provider}: physical write bytes");
+
+        let replacement = b"physical-bytes";
+        backing.write_all_at(replacement, 0).expect("write backing");
+        // SAFETY: the live stream supports seeking; this also switches to reading.
+        assert_eq!(unsafe { fl::fseek(stream, 0, SEEK_SET) }, 0, "{provider}");
+        actual.fill(0);
+        // SAFETY: actual is writable for its length and stream is readable.
+        assert_eq!(
+            unsafe { fl::fread(actual.as_mut_ptr().cast(), 1, actual.len(), stream) },
+            actual.len(),
+            "{provider}: fread"
+        );
+        assert_eq!(&actual, replacement, "{provider}: physical read bytes");
+        // SAFETY: close the stream exactly once; backing owns a distinct fd.
+        assert_eq!(unsafe { fl::fclose(stream) }, 0, "{provider}: fclose");
+        // SAFETY: F_GETFD only queries the descriptor; it cannot dereference it.
+        assert_eq!(
+            unsafe { libc::syscall(libc::SYS_fcntl, bound_fd, libc::F_GETFD, 0usize) },
+            -1,
+            "{provider}: fclose must actually close its descriptor"
+        );
+    }
+}
+
+#[test]
 fn double_fclose_reports_eof_instead_of_reaching_glibc() {
     let _guard = gate_lock();
     let f = open_devnull();
@@ -130,7 +221,7 @@ fn fclose_after_fcloseall_reports_eof_instead_of_reaching_glibc() {
     let b = open_devnull();
     assert!(is_synthetic_handle(a) && is_synthetic_handle(b));
 
-    assert_eq!(unsafe { fl::fcloseall() }, 0, "fcloseall should report 0");
+    assert_eq!(fl::fcloseall(), 0, "fcloseall should report 0");
 
     for (name, f) in [("a", a), ("b", b)] {
         assert_eq!(
@@ -154,12 +245,8 @@ fn repeated_fcloseall_is_safe() {
     let _guard = gate_lock();
     // The second fcloseall walks a registry whose non-standard entries are gone.
     let _ = open_devnull();
-    assert_eq!(unsafe { fl::fcloseall() }, 0);
-    assert_eq!(
-        unsafe { fl::fcloseall() },
-        0,
-        "second fcloseall must be safe"
-    );
+    assert_eq!(fl::fcloseall(), 0);
+    assert_eq!(fl::fcloseall(), 0, "second fcloseall must be safe");
     assert_eq!(unsafe { fl::fflush(std::ptr::null_mut()) }, 0);
 }
 
@@ -192,7 +279,7 @@ fn every_stdio_entry_point_refuses_a_stale_fl_handle() {
     fn stale_handle() -> *mut File {
         let f = open_devnull_rw();
         assert!(is_synthetic_handle(f));
-        assert_eq!(unsafe { fl::fcloseall() }, 0, "fcloseall should report 0");
+        assert_eq!(fl::fcloseall(), 0, "fcloseall should report 0");
         f
     }
 

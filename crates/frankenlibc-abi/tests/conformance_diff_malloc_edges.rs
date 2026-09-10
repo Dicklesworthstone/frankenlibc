@@ -112,6 +112,32 @@ fn malloc_edge_contracts_match_glibc() {
         (true, true, true, true, true, true, true),
         "glibc reference contracts"
     );
+
+    // Environment selection alone does not leave allocator bootstrap. Exercise
+    // the initialized path explicitly; this is not deployed-startup evidence.
+    fl::signal_runtime_ready_for_tests();
+    let _ = fl::take_last_decision_gate_for_tests();
+    // SAFETY: request a small allocation and release it through its own provider.
+    let witness = unsafe { fl::malloc(64) };
+    assert!(!witness.is_null(), "initialized allocator must allocate");
+    let decision = fl::take_last_decision_gate_for_tests();
+    let segment_owned = fl::malloc_segment_owned_for_tests(witness);
+    // SAFETY: witness is live and was returned by fl::malloc above.
+    unsafe { fl::free(witness) };
+    if std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened") {
+        assert!(
+            decision.is_some(),
+            "hardened allocator must record a decision"
+        );
+    } else if !cfg!(feature = "standalone") {
+        assert!(
+            segment_owned,
+            "strict small allocation must use a native segment"
+        );
+    }
+    // SAFETY: probe pairs each allocation with the same allocator's operations.
+    let initialized = unsafe { probe(fl::malloc, fl::free, fl::realloc, fl::calloc) };
+    assert_eq!(initialized, gp, "initialized allocator edge contracts");
 }
 
 #[test]
