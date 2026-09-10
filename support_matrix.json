@@ -2790,8 +2790,8 @@
       "status": "WrapsHostLibc",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
-      "hardened_semantics": "Native phase-1 loader: invalid flags heal to RTLD_NOW; NULL and recognized libc NOLOAD aliases return a local main-program handle; self-contained pathname ELF64 DSOs are mapped, relocated, and returned as native handles; unsupported pathname libraries return NULL with thread-local dlerror",
+      "strict_semantics": "Without standalone: NULL/empty names and recognized libc NOLOAD aliases use a local main-program handle; supported self-contained pathname ELF64 DSOs use native mapping/relocation; bare SONAME loads delegate to host glibc; unsupported pathname DSOs fail. With standalone: only NULL opens the main-program handle; named loads are unavailable",
+      "hardened_semantics": "Same feature-dependent provider split as strict. Outside bootstrap, invalid flags can recover only a NULL main-program request; bootstrap rejects invalid flags on named requests. The standalone feature still rejects named loads. Native pathname loading excludes dependencies, TLS, constructors/destructors and unsupported relocations",
       "default_stub": false
     },
     {
@@ -3646,8 +3646,8 @@
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
-      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
+      "strict_semantics": "Registered native streams flush and close through native stream state; without standalone, host FILE pointers delegate to host fclose. Stale native stream IDs are rejected rather than handed to glibc; standalone compiles out host delegation",
+      "hardened_semantics": "Same feature- and stream-ownership-dependent close paths as strict; hardened mode does not turn host FILE pointers into native streams",
       "default_stub": false,
       "standalone_ready": true
     },
@@ -4415,8 +4415,8 @@
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
-      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
+      "strict_semantics": "Registered native streams read through native buffers, memory/cookie state or fd syscalls; without standalone, host FILE pointers delegate to host fread. Stale native stream IDs are rejected; standalone compiles out host delegation",
+      "hardened_semantics": "Same feature- and stream-ownership-dependent providers as strict; host FILE delegation precedes the slow native runtime-policy decision. Hardened mode is not a claim that every fread path performs membrane validation",
       "default_stub": false,
       "standalone_ready": true
     },
@@ -4932,8 +4932,8 @@
       "status": "WrapsHostLibc",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
-      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
+      "strict_semantics": "Registered native streams write through native buffers, memory/cookie state or fd syscalls; without standalone, host FILE pointers delegate to host fwrite. Stale native stream IDs are rejected; standalone compiles out host delegation",
+      "hardened_semantics": "Same feature- and stream-ownership-dependent providers as strict. The slow hardened path consults runtime policy, while bootstrap and native cache paths can bypass it; host FILE pointers remain host-backed",
       "default_stub": false,
       "standalone_ready": true
     },
@@ -7899,8 +7899,8 @@
       "status": "WrapsHostLibc",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native bump allocator in standalone mode; host delegation otherwise",
-      "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
+      "strict_semantics": "Without standalone: after runtime readiness, eligible small requests use native segments; bootstrap/reentry and segment misses use the host allocator, with owned bump fallback if host resolution is unavailable or recursive. With standalone: the strict segment/host shortcut is disabled, using the membrane arena or owned bootstrap fallback",
+      "hardened_semantics": "Uses the membrane arena when available and runtime policy may deny allocation; bootstrap/reentry or unavailable-pipeline paths retain fallback allocation. Fallback is host-backed without standalone (owned bump on host-resolution failure/reentry), and owned bump with standalone. These paths do not establish complete standalone replacement support",
       "default_stub": false
     },
     {
