@@ -122,8 +122,9 @@ fn malloc_edge_contracts_match_glibc() {
     assert!(!witness.is_null(), "initialized allocator must allocate");
     let decision = fl::take_last_decision_gate_for_tests();
     let segment_owned = fl::malloc_segment_owned_for_tests(witness);
-    // SAFETY: witness is live and was returned by fl::malloc above.
-    unsafe { fl::free(witness) };
+    // SAFETY: witness is live and was returned by fl::malloc above. Starting
+    // with malloc (not realloc(NULL, n)) also exercises native-owned teardown.
+    assert!(unsafe { fl::realloc(witness, 0) }.is_null());
     if std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened") {
         assert!(
             decision.is_some(),
