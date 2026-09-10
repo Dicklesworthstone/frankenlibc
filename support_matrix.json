@@ -33171,22 +33171,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2395,
+    "implemented": 2388,
     "raw_syscall": 414,
-    "wraps_host_libc": 1310,
+    "wraps_host_libc": 1317,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2395,
+  "implemented": 2388,
   "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2395,
+    "implemented": 2388,
     "raw_syscall": 414,
     "glibc_call_through": 0,
     "stub": 0,
-    "wraps_host_libc": 1310
+    "wraps_host_libc": 1317
   },
-  "wraps_host_libc": 1310
+  "wraps_host_libc": 1317
 }

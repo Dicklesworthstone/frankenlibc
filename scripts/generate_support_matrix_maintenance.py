@@ -142,9 +142,66 @@ HOST_RESOLVE_SINGLE_USE_PATTERN = re.compile(
 )
 
 
+def validate_matrix_rollups(matrix):
+    """Reject contradictory ownership counts; this does not prove ABI parity."""
+    status_fields = {
+        "Implemented": "implemented",
+        "RawSyscall": "raw_syscall",
+        "WrapsHostLibc": "wraps_host_libc",
+        "GlibcCallThrough": "glibc_call_through",
+        "Stub": "stub",
+    }
+    if not isinstance(matrix, dict):
+        raise ValueError("support matrix must be an object")
+    symbols = matrix.get("symbols")
+    if not isinstance(symbols, list) or not symbols:
+        raise ValueError("support matrix symbols must be a nonempty array")
+    counts = dict.fromkeys(status_fields.values(), 0)
+    seen = set()
+    for index, row in enumerate(symbols):
+        if not isinstance(row, dict):
+            raise ValueError(f"symbols[{index}] must be an object")
+        name = row.get("symbol")
+        if not isinstance(name, str) or not name.strip() or name in seen:
+            raise ValueError(f"symbols[{index}] has an empty or duplicate symbol: {name!r}")
+        seen.add(name)
+        status = row.get("status")
+        if not isinstance(status, str) or status not in status_fields:
+            raise ValueError(f"symbols[{index}] has invalid status: {status!r}")
+        counts[status_fields[status]] += 1
+
+    def check_count(section, key, expected, prefix):
+        actual = section.get(key)
+        if type(actual) is not int or actual != expected:
+            raise ValueError(f"{prefix}{key}: declared {actual!r}, rows require {expected}")
+
+    total = len(symbols)
+    check_count(matrix, "total_exported", total, "")
+    for section_name in (None, "counts", "summary"):
+        section = matrix if section_name is None else matrix.get(section_name)
+        prefix = "" if section_name is None else f"{section_name}."
+        if not isinstance(section, dict):
+            raise ValueError(f"{section_name} must be an object")
+        for key, count in counts.items():
+            check_count(section, key, count, prefix)
+        if section_name == "summary":
+            check_count(section, "total", total, prefix)
+        # Existing matrices need not store a percentage. If supplied, it must
+        # use the same one-decimal convention as the generated dashboard.
+        if "native_coverage_pct" in section:
+            expected = round((counts["implemented"] + counts["raw_syscall"]) / total * 100, 1)
+            actual = section["native_coverage_pct"]
+            if type(actual) not in (int, float) or actual != expected:
+                raise ValueError(
+                    f"{prefix}native_coverage_pct: declared {actual!r}, rows require {expected}"
+                )
+
+
 def load_matrix():
     with open(MATRIX_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        matrix = json.load(f)
+    validate_matrix_rollups(matrix)
+    return matrix
 
 
 def load_fixtures():
@@ -1556,8 +1613,88 @@ def main():
     sys.exit(0)
 
 
+def test_matrix_rollups():
+    """Hand-counted positive inputs and single-defect negative controls."""
+    from copy import deepcopy
+
+    counts = {
+        "implemented": 1, "raw_syscall": 1, "wraps_host_libc": 1,
+        "glibc_call_through": 0, "stub": 0,
+    }
+    valid = {
+        "symbols": [
+            {"symbol": "native", "status": "Implemented"},
+            {"symbol": "syscall", "status": "RawSyscall"},
+            {"symbol": "host", "status": "WrapsHostLibc"},
+        ],
+        "total_exported": 3,
+        **counts,
+        "counts": dict(counts),
+        "summary": {"total": 3, **counts},
+    }
+    passed = 0
+
+    def reject(candidate, diagnostic):
+        nonlocal passed
+        try:
+            validate_matrix_rollups(candidate)
+        except ValueError as error:
+            if diagnostic not in str(error):
+                raise AssertionError(f"wrong rejection: {error}") from error
+        else:
+            raise AssertionError(f"invalid matrix accepted: {diagnostic}")
+        passed += 1
+
+    validate_matrix_rollups(valid)
+    passed += 1
+    for section_name in (None, "counts", "summary"):
+        prefix = "" if section_name is None else f"{section_name}."
+        for field in counts:
+            candidate = deepcopy(valid)
+            section = candidate if section_name is None else candidate[section_name]
+            section[field] += 1
+            reject(candidate, f"{prefix}{field}:")
+        candidate = deepcopy(valid)
+        section = candidate if section_name is None else candidate[section_name]
+        section["native_coverage_pct"] = 66.7
+        validate_matrix_rollups(candidate)
+        passed += 1
+        section["native_coverage_pct"] = 66.6
+        reject(candidate, f"{prefix}native_coverage_pct:")
+
+    for value in (None, True, 3.0, "3", 4):
+        candidate = deepcopy(valid)
+        candidate["total_exported"] = value
+        reject(candidate, "total_exported:")
+    candidate = deepcopy(valid)
+    candidate["summary"]["total"] = 4
+    reject(candidate, "summary.total:")
+    for field in ("counts", "summary"):
+        candidate = deepcopy(valid)
+        candidate[field] = []
+        reject(candidate, f"{field} must be an object")
+    reject([], "must be an object")
+    for rows in (None, [], {}):
+        candidate = deepcopy(valid)
+        candidate["symbols"] = rows
+        reject(candidate, "symbols must be a nonempty array")
+    for row in (None, {}, {"symbol": " "}, {"symbol": "native", "status": "Stub"}):
+        candidate = deepcopy(valid)
+        candidate["symbols"][1] = row
+        reject(candidate, "symbols[1]")
+    for status in (None, "", "Native", [], True):
+        candidate = deepcopy(valid)
+        candidate["symbols"][0]["status"] = status
+        reject(candidate, "invalid status")
+    candidate = deepcopy(valid)
+    candidate["symbols"][0]["status"] = "WrapsHostLibc"
+    reject(candidate, "implemented:")
+    print(f"Self-test: matrix rollups: {passed} cases passed")
+
+
 def run_self_test():
     """Exercise the loader and the taxonomy checks that protect native claims."""
+    test_matrix_rollups()
     print("Self-test: loading matrix...")
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
