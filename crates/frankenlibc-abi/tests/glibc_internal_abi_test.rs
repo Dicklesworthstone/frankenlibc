@@ -5293,6 +5293,62 @@ fn test_call_tls_dtors_lifo_order() {
 }
 
 #[test]
+fn test_call_tls_dtors_nested_registration_preserves_lifo() {
+    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+
+    static ORDER: AtomicUsize = AtomicUsize::new(0);
+    static AFTER_FIRST: AtomicUsize = AtomicUsize::new(0);
+    static REGISTER_RC: AtomicI32 = AtomicI32::new(0);
+
+    unsafe extern "C" fn nested_dtor(obj: *mut std::ffi::c_void) {
+        // The pointer carries an integer tag only; it is never dereferenced.
+        let tag = obj as usize;
+        ORDER.store(ORDER.load(Ordering::SeqCst) * 10 + tag, Ordering::SeqCst);
+        if tag == 2 {
+            // SAFETY: the callback is valid and its integer tag is not dereferenced.
+            let rc = unsafe {
+                frankenlibc_abi::startup_abi::register_tls_dtor_for_tests(
+                    nested_dtor,
+                    3usize as *mut std::ffi::c_void,
+                )
+            };
+            REGISTER_RC.store(rc, Ordering::SeqCst);
+        }
+    }
+
+    extern "C" fn entry(_arg: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+        ORDER.store(0, Ordering::SeqCst);
+        AFTER_FIRST.store(0, Ordering::SeqCst);
+        REGISTER_RC.store(0, Ordering::SeqCst);
+        frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
+        for tag in 1usize..=2 {
+            // SAFETY: the callback is valid and its integer tag is not dereferenced.
+            let rc = unsafe {
+                frankenlibc_abi::startup_abi::register_tls_dtor_for_tests(
+                    nested_dtor,
+                    tag as *mut std::ffi::c_void,
+                )
+            };
+            if rc != 0 {
+                REGISTER_RC.store(rc, Ordering::SeqCst);
+                return std::ptr::dangling_mut::<std::ffi::c_void>();
+            }
+        }
+        // SAFETY: this thread registered all callbacks and their object tags.
+        unsafe { __call_tls_dtors() };
+        AFTER_FIRST.store(ORDER.load(Ordering::SeqCst), Ordering::SeqCst);
+        // SAFETY: a repeated drain must be a no-op after the first completes.
+        unsafe { __call_tls_dtors() };
+        std::ptr::null_mut()
+    }
+
+    run_tls_dtor_test_thread(entry);
+    assert_eq!(REGISTER_RC.load(Ordering::SeqCst), 0);
+    assert_eq!(AFTER_FIRST.load(Ordering::SeqCst), 231);
+    assert_eq!(ORDER.load(Ordering::SeqCst), 231);
+}
+
+#[test]
 fn test_call_tls_dtors_drains_list() {
     use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 

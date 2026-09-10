@@ -16,15 +16,8 @@
 
 use std::ffi::c_void;
 
-mod g {
-    use super::*;
-    unsafe extern "C" {
-        pub fn malloc(n: usize) -> *mut c_void;
-        pub fn free(p: *mut c_void);
-        pub fn realloc(p: *mut c_void, n: usize) -> *mut c_void;
-        pub fn calloc(nmemb: usize, size: usize) -> *mut c_void;
-    }
-}
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
 use frankenlibc_abi::malloc_abi as fl;
 
 /// Run the full edge-contract suite against one allocator; returns a tuple of
@@ -96,7 +89,18 @@ unsafe fn probe(
 
 #[test]
 fn malloc_edge_contracts_match_glibc() {
-    let gp = unsafe { probe(g::malloc, g::free, g::realloc, g::calloc) };
+    // Resolve the oracle from explicit host-library handles and reject any
+    // address that aliases the candidate. Link-time extern declarations alone
+    // do not establish which allocator this binary actually calls.
+    // SAFETY: probe's parameter types specify each symbol's C signature.
+    let gp = unsafe {
+        probe(
+            dlsym_oracle::host_fn(c"malloc", fl::malloc as *const ()),
+            dlsym_oracle::host_fn(c"free", fl::free as *const ()),
+            dlsym_oracle::host_fn(c"realloc", fl::realloc as *const ()),
+            dlsym_oracle::host_fn(c"calloc", fl::calloc as *const ()),
+        )
+    };
     let fp = unsafe { probe(fl::malloc, fl::free, fl::realloc, fl::calloc) };
     assert_eq!(
         fp, gp,
@@ -107,5 +111,24 @@ fn malloc_edge_contracts_match_glibc() {
         gp,
         (true, true, true, true, true, true, true),
         "glibc reference contracts"
+    );
+}
+
+#[test]
+fn malloc_oracle_rejects_identical_candidate_provider() {
+    // SAFETY: only resolve/compare code addresses; no mismatched call is made.
+    let host = unsafe { dlsym_oracle::host_addr(c"malloc", fl::malloc as *const ()) };
+    let rejected = std::panic::catch_unwind(|| unsafe {
+        dlsym_oracle::host_addr(c"malloc", host.cast());
+    });
+    let error = rejected.expect_err("an identical candidate/oracle provider must be rejected");
+    let message = error
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| error.downcast_ref::<&str>().copied())
+        .expect("provider rejection must report a diagnostic");
+    assert!(
+        message.contains("IS fl's own definition"),
+        "expected the provider-identity rejection, got: {message}"
     );
 }

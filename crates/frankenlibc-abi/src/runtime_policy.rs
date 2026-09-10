@@ -913,6 +913,11 @@ fn push_mode_event(
         return;
     }
 
+    // Logging can format timestamps and allocate through interposed helpers,
+    // including when adaptive math is disabled. None of that work may change
+    // the caller's floating-point flags or rounding mode.
+    let _floating_environment =
+        frankenlibc_membrane::runtime_math::RuntimeMathEnvironmentGuard::enter();
     let decision_id = MODE_LOG_DECISION_SEQ.fetch_add(1, AtomicOrdering::Relaxed) + 1;
     let trace_id = format!("runtime_policy::mode::{decision_id:016x}");
     let requested_mode = requested_mode
@@ -1812,6 +1817,11 @@ fn kernel() -> Option<&'static RuntimeMathKernel> {
     }
 
     // We own the init. Allocate kernel on heap (leaked, lives forever).
+    // The constructor restores its own arithmetic, but moving/boxing its large
+    // result can call interposed memcpy after that scope ends. Keep initialization
+    // transparent through those hardened helper calls too.
+    let _floating_environment =
+        frankenlibc_membrane::runtime_math::RuntimeMathEnvironmentGuard::enter();
     ensure_minimal_panic_hook();
     let kernel = match runtime_policy_guard(RuntimeMathKernel::new) {
         Ok(k) => Box::new(k),

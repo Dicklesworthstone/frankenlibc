@@ -6,7 +6,7 @@
 # 2. Basic operations still run when math is disabled (not a bounds-check proof)
 # 3. FRANKENLIBC_RUNTIME_MATH=on (or absent) enables runtime-math
 # 4. Invalid values fall back to on
-# --policy-history runs matched 512-call histories and reports decisions; it
+# --policy-history runs matched histories across fixed horizons and reports decisions; it
 # checks consultation and liveness, not whether action/profile influence exists.
 # --bounds-repair checks source-bound clamping with math off and on in hardened
 # mode. It never runs the intentionally oversized copy against strict libc.
@@ -14,6 +14,9 @@
 # delivery is between socket calls, not proof of interruption inside a lock.
 # --policy-cost measures warm socket+close batches against live glibc in the
 # SAME process. Raw times are advisory, not a routing-influence or speedup gate.
+# --socket-mxcsr checks x86_64 caller flags, rounding, and inexact trap masks
+# against live host and both modes/switch states; also runs in the default suite.
+# --startup-auxv compares owned-startup metadata with the original kernel vector.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -uo pipefail
@@ -83,6 +86,11 @@ extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
 extern int __frankenlibc_is_runtime_math_enabled(void) __attribute__((weak));
 extern uint64_t __frankenlibc_decision_count(void) __attribute__((weak));
 extern uint64_t __frankenlibc_healing_action_count(unsigned) __attribute__((weak));
+struct startup_snapshot {
+    size_t argc, argv_count, env_count, auxv_count;
+    int secure_mode;
+};
+extern int __frankenlibc_startup_snapshot(struct startup_snapshot*) __attribute__((weak));
 
 static int signal_pipe[2];
 static int constructor_result = -1;
@@ -237,18 +245,18 @@ extern int __frankenlibc_runtime_decision_snapshot(struct decision_snapshot*) __
 
 /* Matched process histories: identical decision contexts, differing syscall
  * outcomes. The final probe is the SAME valid socket call in both processes. */
-static int policy_history(int adverse) {
+static int policy_history(int adverse, int calls) {
     if (!__frankenlibc_runtime_decision_snapshot) {
         fprintf(stderr, "FAIL: decision snapshot export missing\n");
         return 2;
     }
     int failures = 0;
-    for (int i = 0; i < 512; ++i) {
+    for (int i = 0; i < calls; ++i) {
         int fd = socket(AF_UNIX, adverse ? -1 : SOCK_STREAM, 0);
         if (fd < 0) ++failures;
         else if (close(fd) != 0) return 2;
     }
-    if (failures != (adverse ? 512 : 0)) {
+    if (failures != (adverse ? calls : 0)) {
         fprintf(stderr, "FAIL: unexpected history outcomes: %d\n", failures);
         return 2;
     }
@@ -286,8 +294,8 @@ static int policy_history(int adverse) {
     if (compare(low, high, sizeof(low)) >= 0 ||
         compare(high, low, sizeof(low)) <= 0 ||
         compare(low, high, 0) != 0) return 2;
-    printf("history=%s failures=%d result=%d errno=%d sequence=%lu profile=%u action=%u risk=%u policy=%u\n",
-           adverse ? "adverse" : "successful", failures, fd < 0 ? -1 : 0,
+    printf("history=%s calls=%d failures=%d result=%d errno=%d sequence=%lu profile=%u action=%u risk=%u policy=%u\n",
+           adverse ? "adverse" : "successful", calls, failures, fd < 0 ? -1 : 0,
            saved_errno, snapshot.evidence_seqno, snapshot.profile, snapshot.action,
            snapshot.risk_upper_bound_ppm, snapshot.policy_id);
     /* Evidence publication is sampled every 16384 ordinary decisions. Its
@@ -411,6 +419,47 @@ static int policy_cost(void) {
 }
 
 int main(int argc, char** argv) {
+    /* Diagnostic uses hardware directly so the fenv ABI under investigation
+     * cannot conceal a change. A separate host flag prevents failed preloading
+     * from silently satisfying the candidate gate with host libc. */
+    int mxcsr_host = argc == 2 && strcmp(argv[1], "--socket-mxcsr-host-control") == 0;
+    if (argc == 2 && (strcmp(argv[1], "--socket-mxcsr") == 0 || mxcsr_host)) {
+        /* This accessor is an atomic read, not kernel initialization: preserve
+         * coverage of the FIRST socket's initialization/boxing path. */
+        if (!mxcsr_host && (!__frankenlibc_is_runtime_ready ||
+                           !__frankenlibc_decision_count ||
+                           !__frankenlibc_is_runtime_ready())) {
+            fprintf(stderr, "FAIL: MXCSR candidate runtime is not loaded/ready\n");
+            return 2;
+        }
+#if defined(__x86_64__)
+        unsigned saved, after = 0, expected = 0;
+        int failed = 0, sample = 0;
+        __asm__ volatile ("stmxcsr %0" : "=m" (saved));
+        for (unsigned trap_inexact = 0; trap_inexact < 2 && !failed; ++trap_inexact) {
+            for (unsigned rounding = 0; rounding < 4 && !failed; ++rounding) {
+                for (unsigned seeded = 0; seeded < 2 && !failed; ++seeded) {
+                    expected = (0x1f80u & ~(trap_inexact << 12)) | (rounding << 13) | seeded;
+                    for (sample = 0; sample < 4096; ++sample) {
+                        __asm__ volatile ("ldmxcsr %0" : : "m" (expected) : "memory");
+                        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+                        __asm__ volatile ("stmxcsr %0" : "=m" (after) : : "memory");
+                        if (fd < 0 || after != expected) failed = 1;
+                        if (fd >= 0 && close(fd) != 0) failed = 1;
+                        if (failed) break;
+                    }
+                }
+            }
+        }
+        __asm__ volatile ("ldmxcsr %0" : : "m" (saved) : "memory");
+        printf("socket_mxcsr expected=%#x actual=%#x sample=%d result=%s\n",
+               expected, after, sample, failed ? "FAIL" : "PASS");
+        return failed ? 1 : 0;
+#else
+        fprintf(stderr, "socket MXCSR diagnostic requires x86_64\n");
+        return 77;
+#endif
+    }
     /* Same valid constructor/thread/signal workload against live host libc,
      * without requiring FrankenLibC-only diagnostic exports. */
     if (argc == 2 && strcmp(argv[1], "--constructor-host-control") == 0)
@@ -426,7 +475,42 @@ int main(int argc, char** argv) {
         fprintf(stderr, "FAIL: runtime is not active\n");
         return 2;
     }
+    if ((argc == 2 || argc == 3) &&
+        (strcmp(argv[1], "--successful-history") == 0 ||
+         strcmp(argv[1], "--adverse-history") == 0)) {
+        int calls = 512;
+        if (argc == 3) {
+            /* Bounded diagnostic horizon, not a runtime policy override. */
+            char *end;
+            errno = 0;
+            long parsed = strtol(argv[2], &end, 10);
+            if (errno || end == argv[2] || *end || parsed < 1 || parsed > 16384)
+                return 2;
+            calls = (int)parsed;
+        }
+        return policy_history(strcmp(argv[1], "--adverse-history") == 0, calls);
+    }
     if (argc == 2) {
+        if (strcmp(argv[1], "--startup-auxv") == 0) {
+            if (!__frankenlibc_startup_snapshot || !init_envp) return 2;
+            size_t env_count = 0, pairs = 0;
+            while (init_envp[env_count]) ++env_count;
+            const uintptr_t *auxv = (const uintptr_t*)(init_envp + env_count + 1);
+            int secure = -1;
+            for (; pairs < 256; ++pairs) {
+                if (auxv[2 * pairs] == 23) secure = auxv[2 * pairs + 1] != 0;
+                if (auxv[2 * pairs] == 0) break;
+            }
+            struct startup_snapshot snapshot;
+            if (pairs == 256 || secure < 0 || __frankenlibc_startup_snapshot(&snapshot) != 0)
+                return 2;
+            int ok = snapshot.argc == (size_t)argc && snapshot.argv_count == (size_t)argc &&
+                     snapshot.env_count == env_count && snapshot.auxv_count == pairs &&
+                     snapshot.secure_mode == secure;
+            printf("startup_auxv expected=%zu observed=%zu secure_expected=%d secure_observed=%d result=%s\n",
+                   pairs, snapshot.auxv_count, secure, snapshot.secure_mode, ok ? "PASS" : "FAIL");
+            return ok ? 0 : 1;
+        }
         if (strcmp(argv[1], "--policy-cost") == 0) return policy_cost();
         if (strcmp(argv[1], "--thread-signal") == 0) return thread_signal_probe();
         if (strcmp(argv[1], "--healing-counter-first-use") == 0) {
@@ -439,10 +523,9 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (strcmp(argv[1], "--bounds-repair") == 0) return bounds_repair();
-        if (strcmp(argv[1], "--successful-history") == 0) return policy_history(0);
-        if (strcmp(argv[1], "--adverse-history") == 0) return policy_history(1);
         return 2;
     }
+    if (argc != 1) return 2;
     int math_enabled = __frankenlibc_is_runtime_math_enabled();
     uint64_t decisions = __frankenlibc_decision_count();
 
@@ -492,6 +575,34 @@ if ! RCH_REQUIRE_REMOTE=1 rch exec --job --result-dir target/runtime_math_killsw
 fi
 echo "Compiled: ${FIXTURE_BIN}"
 echo ""
+
+if [[ "${1:-}" == "--startup-auxv" ]]; then
+  for probe_bin in "${FIXTURE_BIN}" "${FIXTURE_BIN}_nonpie"; do
+    for probe_mode in strict hardened; do
+      timeout 15 env -u FRANKENLIBC_STARTUP_DELEGATE FRANKENLIBC_MODE="${probe_mode}" LD_PRELOAD="${LIB_PATH}" "${probe_bin}" --startup-auxv || exit 1
+    done
+  done
+  exit 0
+fi
+
+if [[ -z "${1:-}" || "${1:-}" == "--socket-mxcsr" ]]; then
+  echo "--- Socket MXCSR preservation: live host control ---"
+  timeout 30 env -u LD_PRELOAD "${FIXTURE_BIN}" --socket-mxcsr-host-control || exit 1
+  # A missing preload must be red, even though the host control is green.
+  timeout 30 env -u LD_PRELOAD "${FIXTURE_BIN}" --socket-mxcsr
+  rc=$?
+  if [[ ${rc} -ne 2 ]]; then
+    echo "FAIL: missing-preload negative control (rc=${rc})"
+    exit 1
+  fi
+  for probe_mode in strict hardened; do
+    for math in off on; do
+      echo "MXCSR probe: ${probe_mode}/${math}"
+      timeout 30 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE="${probe_mode}" LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --socket-mxcsr || exit 1
+    done
+  done
+  if [[ "${1:-}" == "--socket-mxcsr" ]]; then exit 0; fi
+fi
 
 if [[ "${1:-}" == "--policy-cost" ]]; then
   for probe_mode in strict hardened; do
@@ -548,16 +659,19 @@ fi
 
 if [[ "${1:-}" == "--policy-history" ]]; then
   for math in off on; do
-    for history in successful adverse; do
-      timeout 15 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "--${history}-history"
-      rc=$?
-      if [[ ${rc} -ne 0 ]]; then
-        echo "FAIL: ${math}/${history} history probe (rc=${rc})"
-        exit 1
-      fi
+    for calls in 64 256 512 4096 16384; do
+      for history in successful adverse; do
+        echo "History probe: math=${math} calls=${calls} outcomes=${history}"
+        timeout 15 env FRANKENLIBC_RUNTIME_MATH="${math}" FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" "--${history}-history" "${calls}"
+        rc=$?
+        if [[ ${rc} -ne 0 ]]; then
+          echo "FAIL: ${math}/${history}/${calls} history probe (rc=${rc})"
+          exit 1
+        fi
+      done
     done
   done
-  echo "History observations only: compare action/profile; counters or risk alone do not prove policy influence."
+  echo "History observations only: compare action/profile; socket consumes Deny but not Repair. A changed decision alone does not prove changed syscall routing."
   exit 0
 fi
 
@@ -656,6 +770,7 @@ cat > "${SUMMARY_FILE}" <<EOF
   "lib_path": "${LIB_PATH}",
   "fixture_bin": "${FIXTURE_BIN}",
   "tests": {
+    "socket_mxcsr_preserved": "pass",
     "strict_off_stops_decisions": "pass",
     "strict_on_exercises_decisions": "pass",
     "off_disables_math": "pass",

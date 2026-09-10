@@ -672,7 +672,7 @@ unsafe fn read_auxv_pairs(stack_end: *mut c_void, max_pairs: usize) -> Vec<(usiz
 
     for idx in 0..max_pairs {
         let off = idx.saturating_mul(2);
-        // SAFETY: caller provides a readable auxv-like key/value array in phase-0 fixtures.
+        // SAFETY: caller provides a readable kernel or fixture auxv key/value array.
         let key = unsafe { *auxv_ptr.add(off) };
         // SAFETY: same as above; key/value pairs are adjacent entries.
         let value = unsafe { *auxv_ptr.add(off + 1) };
@@ -943,8 +943,17 @@ unsafe fn startup_phase0_impl(
     };
 
     path.push(StartupCheckpoint::ScanAuxvVector);
-    // SAFETY: `stack_end` is treated as an auxv key/value array in controlled fixtures.
-    let auxv_pairs = unsafe { read_auxv_pairs(stack_end, MAX_STARTUP_SCAN) };
+    let auxv_start = if publish_environment {
+        // SAFETY: real process startup places auxv immediately after the
+        // original envp terminator. stack_end is a stack boundary, not auxv.
+        unsafe { envp.add(env_count + 1).cast() }
+    } else {
+        // The exported phase-0 fixture explicitly supplies auxv in stack_end.
+        stack_end
+    };
+    // SAFETY: the selected source is the real kernel vector or the fixture's
+    // caller-provided readable key/value array.
+    let auxv_pairs = unsafe { read_auxv_pairs(auxv_start, MAX_STARTUP_SCAN) };
     let secure_evidence = classify_secure_mode(&auxv_pairs, MAX_STARTUP_SCAN);
     if secure_evidence.truncated {
         path.push(StartupCheckpoint::Deny);
@@ -1000,19 +1009,10 @@ unsafe fn startup_phase0_impl(
         unsafe { init_fn() };
     } else if publish_environment {
         path.push(StartupCheckpoint::CallInitHook);
-        // SAFETY: only real __libc_start_main reaches this branch. The kernel
-        // auxv follows the original environment terminator, NOT stack_end
-        // (whose auxv interpretation is an exported phase-0 fixture convention).
-        let executable_auxv =
-            unsafe { read_auxv_pairs(envp.add(env_count + 1).cast(), MAX_STARTUP_SCAN) };
-        // SAFETY: real kernel auxv and startup vectors; legacy init is absent.
+        // SAFETY: use the same real kernel auxv validated and classified above,
+        // along with the startup vectors; legacy init is absent.
         if unsafe {
-            call_executable_init(
-                &executable_auxv,
-                normalized_argc as c_int,
-                ubp_av,
-                resolved_envp,
-            )
+            call_executable_init(&auxv_pairs, normalized_argc as c_int, ubp_av, resolved_envp)
         }
         .is_err()
         {
@@ -1334,17 +1334,10 @@ fn push_tls_atexit_entry(entry: TlsAtExitEntry) {
     }
 }
 
-fn take_tls_atexit_entries() -> Vec<TlsAtExitEntry> {
+fn pop_tls_atexit_entry() -> Option<TlsAtExitEntry> {
     #[cfg(feature = "owned-tls-cache")]
     {
-        STARTUP_OWNED_TLS.with(|tls| {
-            let mut entries = tls.atexit_list.borrow_mut();
-            let mut drained = Vec::new();
-            while let Some(entry) = entries.pop() {
-                drained.push(entry);
-            }
-            drained
-        })
+        STARTUP_OWNED_TLS.with(|tls| tls.atexit_list.borrow_mut().pop())
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
@@ -1353,15 +1346,9 @@ fn take_tls_atexit_entries() -> Vec<TlsAtExitEntry> {
         // in the non-unwinding ABI callback, whereas an unavailable fallback
         // list is already drained from this thread's perspective.
         TLS_ATEXIT_LIST
-            .try_with(|list| {
-                let mut entries = list.borrow_mut();
-                let mut drained = Vec::new();
-                while let Some(entry) = entries.pop() {
-                    drained.push(entry);
-                }
-                drained
-            })
-            .unwrap_or_default()
+            .try_with(|list| list.borrow_mut().pop())
+            .ok()
+            .flatten()
     }
 }
 
@@ -1493,7 +1480,10 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
 /// Called by `__call_tls_dtors` in `glibc_internal_abi`. Each destructor is
 /// invoked exactly once with its registered object pointer, then removed.
 pub(crate) fn invoke_tls_dtors() {
-    for entry in take_tls_atexit_entries() {
+    // Pop only the next entry and release the TLS borrow/cache lock before
+    // invoking it. A callback may register another destructor, which must run
+    // before older entries and within this same drain.
+    while let Some(entry) = pop_tls_atexit_entry() {
         // SAFETY: caller registered a valid function pointer and object.
         unsafe { (entry.dtor)(entry.obj) };
     }
