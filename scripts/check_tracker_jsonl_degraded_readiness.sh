@@ -154,9 +154,31 @@ def is_permissioned(issue: dict[str, Any], markers: list[str]) -> tuple[bool, li
     return bool(hits), hits
 
 
-def is_cross_project(issue: dict[str, Any], markers: list[str]) -> tuple[bool, list[str]]:
+def is_cross_project(
+    issue: dict[str, Any], markers: list[str], id_prefixes: list[str]
+) -> tuple[bool, list[str]]:
+    """Decide whether a record belongs to this project, and on what evidence.
+
+    TWO EVIDENCE SOURCES, and the weaker one used to be the only one. The marker
+    scan reads the text; it therefore misses a record whose id is foreign but
+    whose prose carries no marker, which is exactly the shape of the 414
+    `frankenjax-*` rows in this tracker: the marker list named the sibling
+    projects but not that one, so an open frankenjax record was classified as
+    libc backlog and could even appear as a blocker of libc work
+    (bd-reality-202609-lx578q.12, measured 2026-09-11).
+
+    An id whose prefix is not one of the workspace's own prefixes is foreign by
+    construction, so that is checked FIRST and recorded as its own evidence
+    string. Marker hits keep their bare form, because downstream consumers
+    (negative controls, report readers) match the marker names themselves.
+    """
     text = issue_text(issue)
     hits = [marker for marker in markers if marker.lower() in text]
+    issue_id = issue.get("id")
+    if isinstance(issue_id, str) and issue_id:
+        prefix = issue_id.split("-", 1)[0]
+        if prefix and prefix not in id_prefixes and f"id-prefix:{prefix}" not in hits:
+            hits.append(f"id-prefix:{prefix}")
     return bool(hits), hits
 
 
@@ -569,6 +591,9 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
     cross_project_markers = [
         str(marker) for marker in contract.get("cross_project_markers", []) if str(marker).strip()
     ]
+    issue_id_prefixes = [
+        str(prefix) for prefix in contract.get("issue_id_prefixes", ["bd"]) if str(prefix).strip()
+    ]
     artifact_prefixes = [
         str(prefix) for prefix in contract.get("artifact_reference_prefixes", []) if str(prefix).strip()
     ]
@@ -606,7 +631,7 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
             continue
         blockers = dependency_blockers(issue, issue_by_id)
         permissioned, markers = is_permissioned(issue, permission_markers)
-        cross_project, cross_markers = is_cross_project(issue, cross_project_markers)
+        cross_project, cross_markers = is_cross_project(issue, cross_project_markers, issue_id_prefixes)
         if status == "open":
             if blockers:
                 blocked_open.append(project_issue(issue, extra={"blockers": blockers}))
@@ -673,10 +698,63 @@ def analyze(rows: list[dict[str, Any]], contract: dict[str, Any]) -> dict[str, A
         status = str(issue.get("status") or "unknown")
         counts[status] = counts.get(status, 0) + 1
 
+    # Ownership census. The raw record count in this tracker has never been a
+    # libc backlog denominator: it carries the sibling projects' rows under other
+    # id prefixes, and the `source_repo` field does not separate them (4,843 local
+    # records and all 1,195 foreign ones are "." — measured 2026-09-11). So the
+    # two counts are reported separately and the ambiguous middle is named rather
+    # than folded into either side (bd-reality-202609-lx578q.12).
+    own_prefix_total = 0
+    foreign_prefix_total = 0
+    ambiguous_origin_total = 0
+    ownership_by_id: dict[str, bool] = {}
+    for issue in rows:
+        issue_id = str(issue.get("id") or "")
+        prefix = issue_id.split("-", 1)[0] if issue_id else ""
+        foreign = bool(prefix) and prefix not in issue_id_prefixes
+        ownership_by_id[issue_id] = foreign
+        if foreign:
+            foreign_prefix_total += 1
+        else:
+            own_prefix_total += 1
+        origin = issue.get("source_repo")
+        if not isinstance(origin, str) or not origin.strip() or origin.strip() == ".":
+            ambiguous_origin_total += 1
+
+    # Edges that cross the ownership boundary are the ones a backlog query must
+    # not silently drop: an own-prefix record can be blocked by, or parented to,
+    # a foreign one, and counting either side alone hides that.
+    cross_project_dependency_edges = 0
+    for issue in rows:
+        issue_id = str(issue.get("id") or "")
+        dependencies = issue.get("dependencies")
+        if not isinstance(dependencies, list):
+            continue
+        for dep in dependencies:
+            if not isinstance(dep, dict):
+                continue
+            other = dep.get("depends_on_id")
+            if not isinstance(other, str) or not other:
+                continue
+            other_foreign = ownership_by_id.get(other)
+            if other_foreign is None:
+                # The referenced record may not be in this snapshot (archived or
+                # filtered out); the id prefix is still decisive evidence, and
+                # silently treating an unknown id as ours is how a cross-project
+                # edge gets dropped from a scoped count.
+                other_prefix = other.split("-", 1)[0]
+                other_foreign = bool(other_prefix) and other_prefix not in issue_id_prefixes
+            if ownership_by_id.get(issue_id, False) != other_foreign:
+                cross_project_dependency_edges += 1
+
     return {
         "summary": {
             "total_issues": len(rows),
             "status_counts": counts,
+            "own_prefix_total": own_prefix_total,
+            "foreign_prefix_total": foreign_prefix_total,
+            "ambiguous_origin_total": ambiguous_origin_total,
+            "cross_project_dependency_edges": cross_project_dependency_edges,
             "ready_total": len(ready),
             "safe_ready_total": len(safe_ready),
             "permissioned_ready_total": len(permissioned_ready),
@@ -1343,6 +1421,124 @@ def run_negative_controls(rows: list[dict[str, Any]], contract: dict[str, Any]) 
             "name": "action_reports_no_claimable_work_for_empty_queue",
             "expected_signature": "no_claimable_work",
             "status": "pass" if action.get("decision") == "no_claimable_work" else "fail",
+        }
+    )
+
+    # ---------------------------------------------------------------------
+    # Ownership evidence (bd-reality-202609-lx578q.12). Four controls, one per
+    # claim the report makes about who owns a record: a foreign ID is foreign
+    # even when its prose carries no marker; an own-prefix record with a
+    # worktree-alias origin is still ours; the ambiguous middle is counted
+    # rather than folded into either side; and an edge that crosses the split is
+    # reported rather than dropped.
+    # ---------------------------------------------------------------------
+    ownership_rows = deepcopy(rows)
+    ownership_rows.append(
+        {
+            "id": "frankenjax-negative-unmarked-open",
+            "title": "port optimizer pass",
+            "description": "no sibling-project marker anywhere in this text",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    ownership_analysis = analyze(ownership_rows, contract)
+    ownership_ids = {row["id"] for row in ownership_analysis["cross_project_review"]}
+    controls.append(
+        {
+            "name": "foreign_id_prefix_is_cross_project",
+            "expected_signature": "foreign_id_prefix_not_libc_backlog",
+            "status": "pass" if "frankenjax-negative-unmarked-open" in ownership_ids else "fail",
+        }
+    )
+
+    worktree_rows = deepcopy(rows)
+    worktree_rows.append(
+        {
+            "id": "bd-jsonl-negative-worktree-alias",
+            "title": "worktree specific lint cleanup",
+            "description": "ordinary libc work filed from a worktree",
+            "status": "open",
+            "source_repo": "frankenlibc-feature-x",
+            "source_repo_path": "/data/projects/frankenlibc-feature-x",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    worktree_analysis = analyze(worktree_rows, contract)
+    worktree_cross = {row["id"] for row in worktree_analysis["cross_project_review"]}
+    worktree_ready = {row["id"] for row in worktree_analysis["ready"]}
+    controls.append(
+        {
+            "name": "own_prefix_with_worktree_alias_stays_local",
+            "expected_signature": "worktree_alias_is_not_foreign",
+            "status": "pass"
+            if "bd-jsonl-negative-worktree-alias" not in worktree_cross
+            and "bd-jsonl-negative-worktree-alias" in worktree_ready
+            else "fail",
+        }
+    )
+
+    ambiguous_rows = deepcopy(rows)
+    ambiguous_rows.append(
+        {
+            "id": "bd-jsonl-negative-dot-origin",
+            "title": "dot origin record",
+            "status": "open",
+            "source_repo": ".",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    ambiguous_rows.append(
+        {
+            "id": "bd-jsonl-negative-missing-origin",
+            "title": "missing origin record",
+            "status": "open",
+            "updated_at": "2026-05-17T00:00:00Z",
+        }
+    )
+    baseline_ambiguous = analyze(deepcopy(rows), contract)["summary"]["ambiguous_origin_total"]
+    ambiguous_total = analyze(ambiguous_rows, contract)["summary"]["ambiguous_origin_total"]
+    controls.append(
+        {
+            "name": "ambiguous_origin_is_counted_separately",
+            "expected_signature": "dot_and_missing_origin_are_ambiguous",
+            "status": "pass" if ambiguous_total == baseline_ambiguous + 2 else "fail",
+        }
+    )
+
+    edge_rows = deepcopy(ownership_rows)
+    edge_rows.append(
+        {
+            "id": "bd-jsonl-negative-edge-owner",
+            "title": "libc work blocked by sibling project work",
+            "status": "open",
+            "source_repo": "frankenlibc",
+            "updated_at": "2026-05-17T00:00:00Z",
+            "dependencies": [
+                {
+                    "issue_id": "bd-jsonl-negative-edge-owner",
+                    "depends_on_id": "frankenjax-negative-unmarked-open",
+                    "type": "blocks",
+                }
+            ],
+        }
+    )
+    edge_analysis = analyze(edge_rows, contract)
+    # The referenced record can be absent from the snapshot (archived), and the
+    # id prefix must still classify it — otherwise an unknown id silently counts
+    # as ours and the edge disappears from the report.
+    edge_analysis_without_row = analyze(
+        [row for row in edge_rows if row.get("id") != "frankenjax-negative-unmarked-open"],
+        contract,
+    )
+    controls.append(
+        {
+            "name": "cross_project_dependency_edge_is_reported",
+            "expected_signature": "cross_ownership_edge_counted",
+            "status": "pass"
+            if edge_analysis["summary"]["cross_project_dependency_edges"] >= 1
+            and edge_analysis_without_row["summary"]["cross_project_dependency_edges"] >= 1
+            else "fail",
         }
     )
     return controls

@@ -40,6 +40,7 @@
   "cross_project_markers": [
     "frankenfs",
     "frankentorch",
+    "frankenjax",
     "frankenpandas",
     "franken_networkx",
     "frankenredis",
@@ -48,6 +49,16 @@
     "fuse_e2e",
     "permissioned large host"
   ],
+  "issue_id_prefixes": [
+    "bd"
+  ],
+  "issue_id_prefix_note": "Ids whose prefix (text before the first '-') is absent from issue_id_prefixes are foreign by construction and are reported as cross-project with the evidence string 'id-prefix:<prefix>'. This is the stronger of the two evidence sources: a marker scan reads prose and misses a foreign id whose text carries no marker, which is the shape of the frankenjax rows in this tracker (bd-reality-202609-lx578q.12). Marker hits are reported verbatim alongside it.",
+  "ownership_summary_fields": {
+    "own_prefix_total": "records whose id prefix is in issue_id_prefixes (raw count, all statuses)",
+    "foreign_prefix_total": "records whose id prefix is NOT in issue_id_prefixes (raw count, all statuses) - these are not a libc backlog denominator",
+    "ambiguous_origin_total": "records whose source_repo is missing, empty or '.', i.e. origin evidence that does not establish ownership either way; treat as unknown, never as libc or as complete",
+    "cross_project_dependency_edges": "dependency edges whose two endpoints fall on opposite sides of the ownership split; reported so a scoped query cannot silently drop them"
+  },
   "artifact_reference_prefixes": [
     "scripts/",
     "tests/",
@@ -162,7 +173,11 @@
     "action_claims_safe_ready_before_permissioned",
     "action_requests_permission_for_permissioned_only",
     "action_points_to_blockers_when_no_ready",
-    "action_reports_no_claimable_work_for_empty_queue"
+    "action_reports_no_claimable_work_for_empty_queue",
+    "foreign_id_prefix_is_cross_project",
+    "own_prefix_with_worktree_alias_stays_local",
+    "ambiguous_origin_is_counted_separately",
+    "cross_project_dependency_edge_is_reported"
   ],
   "validation_commands": [
     "jq empty tests/conformance/tracker_jsonl_degraded_readiness.v1.json",

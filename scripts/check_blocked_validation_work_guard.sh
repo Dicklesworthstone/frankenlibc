@@ -441,6 +441,20 @@ for control in contract.get("negative_controls", []):
         )
         continue
     elif control_id == "safe_ready_changes_decision":
+        # ISOLATE THE EFFECT BEING CONTROLLED. This arm substitutes a synthetic
+        # safe-ready row and expects the decision to follow it. Leaving the REAL
+        # stale_in_progress list in place confounds that: stale recovery outranks
+        # safe-ready claiming, so the arm failed on any tracker that carried a
+        # stale in-progress row and the expectation was never exercised. Measured
+        # 2026-09-11 (bd-reality-202609-lx578q.12): with the live tracker
+        # (stale_in_progress_count = 12) the arm observed
+        # `recover_stale_in_progress_before_new_discovery`; with the same tracker
+        # filtered to zero in-progress rows it observed the expected
+        # `claim_safe_ready_before_new_discovery`. Clearing the stale list here is
+        # what the neighbouring no_waiting_dependents_removes_guard arm already
+        # does, and the expectation below is unchanged — the arm is not weakened,
+        # it is finally exercising the decision it names.
+        mutated_readiness["stale_in_progress"] = []
         mutated_readiness["safe_ready"] = [
             {
                 "id": "bd-example-safe-ready",
