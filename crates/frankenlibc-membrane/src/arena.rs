@@ -2,8 +2,9 @@
 //!
 //! Every allocation gets a slot in the arena with a generation counter.
 //! When freed, the slot enters a quarantine queue rather than being
-//! immediately recycled. This ensures use-after-free is detected with
-//! probability 1 (generation mismatch).
+//! immediately recycled. Lookups can identify quarantined allocations, but
+//! a raw address does not carry the caller's allocation generation: after
+//! same-address reuse it identifies the current allocation, not its history.
 //!
 //! Thread-safe via sharded no-poison mutexes.
 
@@ -728,19 +729,10 @@ mod tests {
         assert_eq!(shard.quarantine_bytes, 0, "cleanup must fully drain bytes");
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // FORMAL PROOF: Use-After-Free Detection (P=1)
-    //
-    // Theorem: After free(), any lookup of the freed pointer
-    // returns a Quarantined state with a strictly higher generation
-    // counter. A stale reference holding the old generation will
-    // always detect the mismatch, giving P(detect UAF) = 1.
-    //
-    // The mechanism: free() atomically bumps the slot's generation
-    // and transitions state to Quarantined. Any validation
-    // comparing a stale generation with the slot's current
-    // generation will find generation_stale < generation_current.
-    // ═══════════════════════════════════════════════════════════════
+    // Regression test for retained quarantine metadata, not a formal proof
+    // or a guarantee about address-only validation after memory reuse.
+    // The historical name is selected by existing completion-contract gates;
+    // retaining that selector does not endorse its probability-one claim.
 
     #[test]
     fn proof_uaf_detection_probability_one() {
@@ -755,6 +747,8 @@ mod tests {
 
         // Free: slot transitions to Quarantined with bumped generation
         let (result, drained) = arena.free(ptr.ptr);
+        // SAFETY: these entries were drained by this free and have not been
+        // handed to deferred reclamation or deallocated elsewhere.
         unsafe {
             AllocationArena::deallocate_drained(&drained);
         }
@@ -772,13 +766,76 @@ mod tests {
             freed_slot.generation
         );
 
-        // The UAF detection mechanism: a stale pointer would carry
-        // live_gen, but the slot now has freed_gen > live_gen.
-        // Generation mismatch is always detected.
+        // Only this test retained live_gen; an ordinary C pointer does not.
         assert_ne!(
             live_gen, freed_slot.generation,
-            "Generation mismatch must be detectable (P=1)"
+            "The recorded allocation generation must differ after free"
         );
+    }
+
+    #[test]
+    fn same_address_reissue_model_lookup_returns_current_generation() {
+        let arena = AllocationArena::new();
+        let allocation = arena.allocate(128).expect("allocation");
+        let stale_addr = allocation.ptr as usize;
+        let old_generation = arena.lookup(stale_addr).unwrap().generation;
+        let (result, drained) = arena.free(allocation.ptr);
+        assert_eq!(result, FreeResult::Freed);
+        assert!(drained.is_empty(), "one small allocation stays quarantined");
+        assert_eq!(
+            arena.lookup(stale_addr).unwrap().state,
+            SafetyState::Quarantined
+        );
+
+        // Deterministic arena-state model: reissue the still-owned backing
+        // block without asking the host allocator to choose the same address.
+        // This is not a deployed allocator/validator test or a stale dereference.
+        // Supply the next generation as model input. No allocation or free
+        // follows reissue, so this model need not change the global counter.
+        let generation = arena
+            .lookup(stale_addr)
+            .unwrap()
+            .generation
+            .checked_add(1)
+            .unwrap();
+        {
+            let mut shard = arena.shards[arena.shard_for(stale_addr)].lock();
+            let entry = shard
+                .quarantine
+                .pop_front()
+                .expect("retained backing block");
+            assert_eq!(entry.user_base, stale_addr);
+            shard.quarantine_bytes -= entry.total_size;
+            let slot_idx = shard.addr_to_slot[&stale_addr];
+            shard.slots[slot_idx].generation = generation;
+            shard.slots[slot_idx].state = SafetyState::Valid;
+            // Ownership transfers from the quarantine entry back to the live
+            // slot; ArenaShard::drop will reclaim this backing block once.
+        }
+        let fp = AllocationFingerprint::compute(stale_addr, 128, generation);
+        // SAFETY: the original allocation remains mapped and exclusively owned
+        // by this test. Both metadata regions are within its original layout.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                fp.to_bytes().as_ptr(),
+                (stale_addr - FINGERPRINT_SIZE) as *mut u8,
+                FINGERPRINT_SIZE,
+            );
+            std::ptr::copy_nonoverlapping(
+                fp.canary().to_bytes().as_ptr(),
+                (stale_addr + 128) as *mut u8,
+                CANARY_SIZE,
+            );
+        }
+        let current_addr = allocation.ptr as usize;
+        let current = arena.lookup(current_addr).unwrap();
+        let stale_lookup = arena.lookup(stale_addr).unwrap();
+        assert_eq!(current_addr, stale_addr);
+        assert_eq!(current.state, SafetyState::Valid);
+        assert!(arena.verify_canary_for_slot(&current));
+        assert_ne!(old_generation, current.generation);
+        assert_eq!(stale_lookup.generation, current.generation);
+        assert_eq!(stale_lookup.state, SafetyState::Valid);
     }
 
     // ═══════════════════════════════════════════════════════════════

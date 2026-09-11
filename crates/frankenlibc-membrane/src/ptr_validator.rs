@@ -175,7 +175,11 @@ impl ValidationOutcome {
         }
     }
 
-    /// Returns true if the pointer can be safely used for reads.
+    /// Whether this classification permits reads under the validation policy.
+    ///
+    /// This is a snapshot, not a lifetime guard: a later free can invalidate
+    /// the allocation. `Foreign` and `Bypassed` permit reads without proving
+    /// that the address is mapped or that the requested range is accessible.
     #[must_use]
     pub fn can_read(&self) -> bool {
         match self {
@@ -186,7 +190,10 @@ impl ValidationOutcome {
         }
     }
 
-    /// Returns true if the pointer can be safely used for writes.
+    /// Whether this classification permits writes under the validation policy.
+    ///
+    /// Like `can_read`, this does not retain allocation ownership or prove
+    /// accessibility of foreign memory. Callers must uphold access preconditions.
     #[must_use]
     pub fn can_write(&self) -> bool {
         match self {
@@ -2261,6 +2268,109 @@ mod tests {
         let outcome = pipeline.validate(addr);
         assert!(!outcome.can_read());
         assert!(!outcome.can_write());
+    }
+
+    #[test]
+    fn concurrent_free_invalidates_reader_cache_but_not_prior_snapshot() {
+        use std::sync::{Barrier, mpsc};
+
+        // Real pipeline calls and threads, with deterministic before/after
+        // ordering. The middle phase races validation with free, without
+        // dereferencing caller memory or claiming every interleaving is covered.
+        for runtime_math_enabled in [false, true] {
+            for logging_enabled in [false, true] {
+                let pipeline = ValidationPipeline::with_runtime_math(runtime_math_enabled);
+                pipeline.set_validation_logging_enabled(logging_enabled);
+                let ptr = pipeline.allocate(128).expect("allocation");
+                let addr = ptr as usize;
+                let start = Barrier::new(2);
+
+                std::thread::scope(|scope| {
+                    let (ready_tx, ready_rx) = mpsc::channel();
+                    let (freed_tx, freed_rx) = mpsc::channel();
+                    let pipeline = &pipeline;
+                    let start = &start;
+                    let reader = scope.spawn(move || {
+                        let snapshot = {
+                            // Release this test-only lock before the writer
+                            // starts: free itself takes it to bump the epoch.
+                            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+                            assert!(pipeline.validate(addr).can_read());
+                            let cached = pipeline.validate(addr);
+                            assert!(matches!(cached, ValidationOutcome::CachedValid(_)));
+                            cached
+                        };
+                        ready_tx.send(()).expect("writer awaiting cache warmup");
+                        start.wait();
+                        for _ in 0..128 {
+                            let outcome = pipeline.validate(addr);
+                            assert!(
+                                matches!(
+                                    outcome,
+                                    ValidationOutcome::CachedValid(_)
+                                        | ValidationOutcome::Validated(_)
+                                        | ValidationOutcome::TemporalViolation(_)
+                                ),
+                                "retained allocation must be live or quarantined: {outcome:?}"
+                            );
+                        }
+                        freed_rx.recv().expect("free completed");
+                        let after_free = pipeline.validate(addr);
+                        assert!(matches!(
+                            after_free,
+                            ValidationOutcome::TemporalViolation(_)
+                        ));
+                        assert!(!after_free.can_read());
+                        assert!(!after_free.can_write());
+
+                        // The old Copy value remains permissive; it is not a
+                        // revocable capability or permission to dereference.
+                        assert!(snapshot.can_read());
+                        assert!(snapshot.can_write());
+                    });
+                    ready_rx.recv().expect("reader warmed its own TLS cache");
+                    start.wait();
+                    assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+                    freed_tx.send(()).expect("reader awaiting free completion");
+                    reader.join().expect("reader assertions");
+                });
+                assert_eq!(
+                    pipeline.runtime_math.decision_count() > 0,
+                    runtime_math_enabled,
+                    "routing enablement must be observed, not just requested"
+                );
+                eprintln!(
+                    "concurrent-free mode={:?} runtime_math={runtime_math_enabled} logging={logging_enabled}: cached-before, denied-after, prior-snapshot-unchanged",
+                    safety_level()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn allocation_size_overflow_rejection_preserves_live_bounds() {
+        let pipeline = ValidationPipeline::with_runtime_math(false);
+        let live = pipeline.allocate(128).expect("positive allocation control");
+        let addr = live as usize;
+        assert_eq!(
+            pipeline.validate(addr).abstraction().unwrap().remaining,
+            Some(128)
+        );
+
+        // All requests fail in size/layout validation, before asking the host
+        // allocator for enormous memory. No allocation-failure injection used.
+        assert!(pipeline.allocate(usize::MAX).is_none());
+        assert!(pipeline.allocate(usize::MAX - CANARY_SIZE).is_none());
+        assert!(pipeline.allocate_aligned(usize::MAX - 63, 64).is_none());
+        assert!(pipeline.allocate_aligned(128, 48).is_none());
+
+        let outcome = pipeline.validate(addr + 127);
+        assert!(outcome.can_read());
+        assert!(outcome.can_write());
+        let bounds = outcome.abstraction().expect("owned bounds");
+        assert_eq!(bounds.alloc_base, Some(addr));
+        assert_eq!(bounds.remaining, Some(1));
+        assert_eq!(pipeline.free(live), FreeResult::Freed);
     }
 
     #[test]

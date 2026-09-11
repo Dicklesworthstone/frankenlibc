@@ -449,10 +449,10 @@ Requests > 32 KB bypass the slab system:
 | Quarantine capacity | **64 MB** (`QUARANTINE_MAX_BYTES`) |
 | Shard count | **16** (`NUM_SHARDS`) |
 | Per-allocation metadata | raw base, user base, user size, `u64` generation, `SafetyState` |
-| UAF detection | Generation counter mismatch on same-slot reuse — probability **1.0** |
+| UAF detection | Quarantine-state lookup before reuse; raw addresses cannot identify an old generation after same-address reuse |
 | Temporal lifecycle | Live → Freed → Quarantine → Recycle |
 
-Freed allocations enter the quarantine queue before their memory is recycled. The window makes use-after-free detectable even if the slot is reused, because the generation counter will have incremented.
+Freed allocations enter the quarantine queue before their memory is recycled. While the record remains quarantined, arena lookup exposes that state. After same-address reuse, an old raw pointer and a new pointer supply identical address bits. The validator compares the current header with current arena metadata; neither supplies the caller's original generation. Generation changes alone therefore do not guarantee detection after reuse. This metadata check also does not protect direct C memory accesses outside libc or establish safety for a concurrent free racing with a later access.
 
 ### Fingerprint and Canary
 
@@ -1859,7 +1859,7 @@ The 64-objects-per-class threshold is chosen so that bulk transfers amortize the
 - Each allocation is a separate `mmap` with 4096-byte page alignment
 - Base address starts at `0x1_0000_0000` to visually segregate the address space
 - Tracked metadata: `(base, mapped_size, user_size)`, where `mapped_size` may exceed `user_size` due to page rounding
-- `munmap` returns the pages directly to the kernel; the membrane records the deallocation in the arena's quarantine ledger so use-after-free against recycled mappings is still detectable
+- `munmap` returns pages directly to the kernel. Retained deallocation metadata does not distinguish an old raw pointer from a new allocation if the same address is mapped again.
 
 ### Pre-TLS bump allocator
 
@@ -1902,11 +1902,11 @@ Every allocation moves through a deterministic lifecycle:
 
 Three properties of this lifecycle matter:
 
-1. **Generation counters never reuse.** The `u64` generation increments on each `Freed → Recycle` cycle, so a re-allocated slot has a different generation than any prior live mapping for the same address. A pointer carrying the old generation cannot validate against the new occupant: generation mismatch detects use-after-free with probability 1.0.
-2. **Quarantine residence makes UAF observable.** While in `Quarantined`, the address is still mapped (no segfault), but the membrane refuses to admit any operation against it. This lets the failure surface deterministically as a *typed error* rather than an unpredictable signal.
-3. **Drain is bounded.** `QUARANTINE_MAX_BYTES = 64 MB` caps the working-set cost; drain is triggered by either capacity pressure or EBR epoch progress, whichever fires first.
+1. **Generation counters identify arena events, not pointer provenance.** Allocation and free advance a `u64` counter (which can wrap). A separately retained old generation can be compared with current metadata, but ordinary C pointers carry only an address. After same-address reuse, address-only lookup returns the new occupant. The arena's quarantine regression test and deterministic reissue model exercise this boundary; they are unit evidence, not a formal proof or a deployed reuse test.
+2. **Quarantine residence makes freed state observable to validation.** A retained arena record identifies the allocation as `Quarantined`. That does not intercept direct caller accesses or ABI paths that bypass validation, including strict `memcpy`. The normal hardened copy path separately checks known bounds and can clamp its copy length; this is not an all-path temporal guarantee.
+3. **Quarantine draining has per-shard limits.** The arena drains when a shard exceeds `QUARANTINE_MAX_BYTES = 64 MB` or the controller's entry-count limit. This is not a global memory cap: live allocations and blocks awaiting deferred reclamation are additional memory.
 
-The drain itself runs under the EBR (epoch-based reclamation) primitive, so concurrent readers cannot observe a half-recycled slot. The flat-combining primitive funnels concurrent drain requests through a single thread to amortize the work.
+Arena draining updates metadata under the shard lock. The validation pipeline then retires drained backing blocks through EBR (epoch-based reclamation); its full arena-validation path pins an epoch while reading metadata. That guard ends with validation and does not protect a later caller memory access from a racing free.
 
 ---
 
@@ -2664,7 +2664,7 @@ These five buckets live in `tests/conformance/support_semantic_overlay.v1.json`.
    Pointer returned ◄────────────────────────
 ```
 
-Three tiers because workloads are bimodal: most allocations are small and short-lived (favor thread-local magazines), some are large and slab-incompatible (favor `mmap`), and the central allocator only needs to handle the spillover. Within each tier, the membrane's metadata discipline is identical (fingerprint, canary, arena, bloom), so the failure-detection guarantees don't depend on which tier serviced the allocation.
+Three tiers because workloads are bimodal: most allocations are small and short-lived (favor thread-local magazines), some are large and slab-incompatible (favor `mmap`), and the central allocator only needs to handle the spillover. Safety evidence must identify the actual allocation provider, metadata registration, runtime mode, and validation path. The tier name alone does not establish equivalent failure detection, especially for bootstrap and host-backed allocations.
 
 ---
 
