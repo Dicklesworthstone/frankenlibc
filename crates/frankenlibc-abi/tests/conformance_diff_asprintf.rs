@@ -9,12 +9,29 @@
 //! Filed under [bd-xn6p8] follow-up — extending host-libc parity coverage
 //! into the printf family.
 
-use std::ffi::{CStr, c_char, c_int};
+use std::ffi::{CStr, c_char, c_int, c_void};
 
-unsafe extern "C" {
-    fn asprintf(strp: *mut *mut c_char, fmt: *const c_char, ...) -> c_int;
-    // fl's asprintf is exported via stdio_abi (extern "C") so we link to
-    // the fl library by directly invoking via FFI.
+use frankenlibc_abi::stdio_abi as fl;
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+/// Host `asprintf`, resolved through the oracle rather than declared at link
+/// time: fl exports `asprintf` into this same binary, so a link-time declaration
+/// is only an oracle while the linker happens to pick libc.so.6 (bd-v0388t).
+///
+/// The variadic tail is what makes this worth spelling out: the argument list
+/// differs per call, so the pointer is typed as variadic and each call site must
+/// pass exactly what the format string consumes.
+type Asprintf = unsafe extern "C" fn(*mut *mut c_char, *const c_char, ...) -> c_int;
+
+fn host_asprintf() -> Asprintf {
+    // SAFETY: Asprintf is the declared prototype of asprintf, and host_fn
+    // rejects a resolution that lands on fl's own definition.
+    static P: std::sync::LazyLock<Asprintf> = std::sync::LazyLock::new(|| unsafe {
+        dlsym_oracle::host_fn(c"asprintf", fl::asprintf as *const ())
+    });
+    *P
 }
 
 #[derive(Debug)]
@@ -69,11 +86,21 @@ fn run_diff_pair(
             });
         }
     }
+    // EACH PROVIDER'S BLOCK IS RELEASED BY THAT PROVIDER. In an interposed
+    // process this distinction does not exist — the loader routes both calls
+    // through fl, and fl's free recognises a foreign pointer. In a test binary
+    // there is no interposition: `libc::free` is glibc's, and handing it fl's
+    // segment-backed pointer aborts the process with "free(): invalid size"
+    // before any assertion runs. That abort is what this file did until
+    // bd-reality-202609-lx578q.7 — it made the differential unreadable and it
+    // hid every divergence behind a crash in the cleanup path.
     if !fl_p.is_null() {
-        unsafe { libc::free(fl_p as *mut libc::c_void) };
+        // SAFETY: fl_p came from fl's asprintf, so fl's free releases it.
+        unsafe { frankenlibc_abi::malloc_abi::free(fl_p as *mut c_void) };
     }
     if !lc_p.is_null() {
-        unsafe { libc::free(lc_p as *mut libc::c_void) };
+        // SAFETY: lc_p came from host glibc's asprintf, so host free releases it.
+        unsafe { libc::free(lc_p as *mut c_void) };
     }
 }
 
@@ -85,7 +112,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "literal",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"hello world".as_ptr()) },
-        |p| unsafe { asprintf(p, c"hello world".as_ptr()) },
+        |p| unsafe { (host_asprintf())(p, c"hello world".as_ptr()) },
         &mut divs,
     );
 
@@ -93,7 +120,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "%d=42",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"%d".as_ptr(), 42) },
-        |p| unsafe { asprintf(p, c"%d".as_ptr(), 42) },
+        |p| unsafe { (host_asprintf())(p, c"%d".as_ptr(), 42) },
         &mut divs,
     );
 
@@ -101,7 +128,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "%s=hello",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"%s".as_ptr(), c"hello".as_ptr()) },
-        |p| unsafe { asprintf(p, c"%s".as_ptr(), c"hello".as_ptr()) },
+        |p| unsafe { (host_asprintf())(p, c"%s".as_ptr(), c"hello".as_ptr()) },
         &mut divs,
     );
 
@@ -109,7 +136,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "%08x=0xCAFE",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"%08x".as_ptr(), 0xCAFEu32) },
-        |p| unsafe { asprintf(p, c"%08x".as_ptr(), 0xCAFEu32) },
+        |p| unsafe { (host_asprintf())(p, c"%08x".as_ptr(), 0xCAFEu32) },
         &mut divs,
     );
 
@@ -124,7 +151,7 @@ fn diff_asprintf_format_specifiers() {
                 30,
             )
         },
-        |p| unsafe { asprintf(p, c"name=%s age=%d".as_ptr(), c"alice".as_ptr(), 30) },
+        |p| unsafe { (host_asprintf())(p, c"name=%s age=%d".as_ptr(), c"alice".as_ptr(), 30) },
         &mut divs,
     );
 
@@ -132,7 +159,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "empty",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"".as_ptr()) },
-        |p| unsafe { asprintf(p, c"".as_ptr()) },
+        |p| unsafe { (host_asprintf())(p, c"".as_ptr()) },
         &mut divs,
     );
 
@@ -140,7 +167,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "long padding",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"%200d".as_ptr(), 1) },
-        |p| unsafe { asprintf(p, c"%200d".as_ptr(), 1) },
+        |p| unsafe { (host_asprintf())(p, c"%200d".as_ptr(), 1) },
         &mut divs,
     );
 
@@ -148,7 +175,7 @@ fn diff_asprintf_format_specifiers() {
     run_diff_pair(
         "100%% done",
         |p| unsafe { frankenlibc_abi::stdio_abi::asprintf(p, c"100%% done".as_ptr()) },
-        |p| unsafe { asprintf(p, c"100%% done".as_ptr()) },
+        |p| unsafe { (host_asprintf())(p, c"100%% done".as_ptr()) },
         &mut divs,
     );
 

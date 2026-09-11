@@ -1006,8 +1006,38 @@ unsafe fn ensure_environ_owned() -> bool {
     }
     unsafe { *new_array.add(count) = std::ptr::null_mut() };
     unsafe { HOST_ENVIRON = new_array };
+    publish_environ_aliases();
     ENVIRON_OWNED.store(true, Ordering::Release);
     true
+}
+
+/// Point the exported `environ` aliases at the array the rest of fl indexes.
+///
+/// glibc exports `environ`, `_environ` and `__environ` as ONE variable, so a
+/// program may read or walk any of them and always see the live environment.
+/// Three Rust statics cannot share one address, so the next-best guarantee is
+/// published here instead: all three are updated together whenever the array
+/// MOVES. Without this, the aliases keep pointing at the array handed to fl at
+/// startup while `setenv`/`putenv` realloc a new one, and a caller that
+/// enumerates the environment — or hands it to `execve` — silently misses every
+/// variable added after the first growth (bd-reality-202609-lx578q.7).
+///
+/// In the interposed library `HOST_ENVIRON` and `__environ` are already the same
+/// storage, so writing both is idempotent; in a test binary (where fl's exports
+/// are not `no_mangle`) they are distinct and this is what keeps fl's own
+/// bookkeeping coherent.
+///
+/// Callers hold `ENVIRON_LOCK`, or are the single-threaded startup path.
+pub(crate) fn publish_environ_aliases() {
+    // SAFETY: HOST_ENVIRON is the live array; the aliases are exported statics
+    // that no other thread may be mid-write through, because every writer holds
+    // ENVIRON_LOCK.
+    let published = unsafe { HOST_ENVIRON };
+    unsafe {
+        crate::glibc_internal_abi::environ = published;
+        crate::glibc_internal_abi::_environ = published;
+        crate::glibc_internal_abi::__environ = published;
+    }
 }
 
 /// Native setenv: scan environ for NAME=, replace or append.
@@ -1119,6 +1149,7 @@ unsafe fn native_setenv(
         *HOST_ENVIRON.add(count) = new_entry;
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
+    publish_environ_aliases();
     0
 }
 
@@ -1201,6 +1232,7 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
         *HOST_ENVIRON.add(count) = string;
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
+    publish_environ_aliases();
     0
 }
 

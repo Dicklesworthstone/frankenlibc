@@ -34,7 +34,11 @@
 
 use frankenlibc_abi::math_abi as m;
 use frankenlibc_abi::math_abi::{CDoubleComplex, CFloatComplex};
-use std::ffi::c_int;
+use std::ffi::{CString, c_int};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use dlsym_oracle::{host_addr, host_fn};
 
 type F32 = unsafe extern "C" fn(f32) -> f32;
 type F64 = unsafe extern "C" fn(f64) -> f64;
@@ -1156,4 +1160,405 @@ fn floatn_nan_aliases_match_base() {
             "nanf64({tag:?}): alias {a64:?}, base {b64:?}"
         );
     }
+}
+
+// ===========================================================================
+// Host-glibc differential for the BIT-DEFINED members of the alias surface
+// (bd-reality-202609-lx578q.7)
+//
+// WHY THIS ARM EXISTS, AND WHY IT STOPS WHERE IT DOES. Every arm above proves
+// an alias is wired to its own base *inside fl*. That is a real property — a
+// copy-paste typo in a one-line alias is exactly what it catches — but it is not
+// a comparison against glibc, so `scripts/audit_oracle_arms.py --no-host-arm`
+// lists this file among the differentials that never call the host, and the
+// coverage it appears to contribute is not coverage.
+//
+// Most of the surface cannot be compared bit-for-bit with glibc, and the reason
+// is worth stating rather than working around: `sinf32` may legally return any
+// value within 1 ulp of the true sine, so fl and glibc differ on ordinary inputs
+// with neither being wrong. The functions below are the subset the standard
+// leaves NO freedom in once the inputs are fixed — `nextup`/`nextdown`/
+// `nextafter`, the C23 `fmaximum`/`fminimum` cluster, `copysign`,
+// `canonicalize`, `roundeven` and the payload accessors. For those, any
+// disagreement with glibc is a defect, so the comparison is exact: the same rule
+// the alias-vs-base arms use, now anchored to an independent provider.
+//
+// NaN is compared as NaN where the standard leaves the payload free (a NaN
+// input propagated through `nextup` or `fmaximum` may legitimately carry a
+// different payload), and bit-exactly everywhere else — including the payload
+// accessors, whose entire purpose is the payload.
+//
+// Resolution goes through `common/dlsym_oracle`; glibc's C23 aliases live in
+// libm.so.6, and fl exports all of them into this same binary.
+// ===========================================================================
+
+type U32 = unsafe extern "C" fn(f32) -> f32;
+type B32 = unsafe extern "C" fn(f32, f32) -> f32;
+type U64 = unsafe extern "C" fn(f64) -> f64;
+type B64 = unsafe extern "C" fn(f64, f64) -> f64;
+type Canon32 = unsafe extern "C" fn(*mut f32, *const f32) -> c_int;
+type Canon64 = unsafe extern "C" fn(*mut f64, *const f64) -> c_int;
+type Getp32 = unsafe extern "C" fn(*const f32) -> f32;
+type Getp64 = unsafe extern "C" fn(*const f64) -> f64;
+type Setp32 = unsafe extern "C" fn(*mut f32, f32) -> c_int;
+type Setp64 = unsafe extern "C" fn(*mut f64, f64) -> c_int;
+
+/// Resolve a host glibc symbol from a `&str`, so the tables below stay readable.
+///
+/// # Safety
+///
+/// `F` must match the C prototype of `name`, and `fl_def` must be fl's own
+/// definition of the same symbol — `host_fn` refuses a resolution that lands on
+/// it, which is what keeps this comparison from silently becoming fl-vs-fl.
+unsafe fn host_of<F: Copy>(name: &str, fl_def: *const ()) -> F {
+    let c = CString::new(name).expect("symbol names never contain NUL");
+    unsafe { host_fn(c.as_c_str(), fl_def) }
+}
+
+/// f32 bit patterns covering both sides of every classification these functions
+/// branch on: signed zeros, the subnormal/normal boundary, the largest finite
+/// magnitudes, both infinities and the NaN shapes (quiet, negative and
+/// signalling), plus deterministic pseudo-random patterns.
+fn f32_grid() -> Vec<f32> {
+    let mut v: Vec<f32> = vec![
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.0,
+        1e-30,
+        1e30,
+        f32::MIN_POSITIVE,
+        f32::from_bits(1),
+        f32::from_bits(0x007f_ffff),
+        f32::from_bits(0x0080_0000),
+        f32::MAX,
+        f32::MIN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        f32::from_bits(0x7fc0_0001),
+        f32::from_bits(0xffc0_0000),
+        f32::from_bits(0x7f80_0001),
+    ];
+    let mut s = 0x2545_f491u32;
+    for _ in 0..64 {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        v.push(f32::from_bits(s));
+    }
+    v
+}
+
+/// The f64 counterpart, same shapes.
+fn f64_grid() -> Vec<f64> {
+    let mut v: Vec<f64> = vec![
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.0,
+        1e-300,
+        1e300,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),
+        f64::from_bits(0x000f_ffff_ffff_ffff),
+        f64::from_bits(0x0010_0000_0000_0000),
+        f64::MAX,
+        f64::MIN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        f64::from_bits(0x7ff8_0000_0000_0001),
+        f64::from_bits(0xfff8_0000_0000_0000),
+        f64::from_bits(0x7ff0_0000_0000_0001),
+    ];
+    let mut s = 0x2545_f491u64;
+    for _ in 0..64 {
+        s = s
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        v.push(f64::from_bits(s));
+    }
+    v
+}
+
+#[test]
+fn floatn_bit_defined_aliases_match_host_glibc() {
+    let grid32 = f32_grid();
+    let grid64 = f64_grid();
+    let mut checked = 0usize;
+    let mut divs: Vec<String> = Vec::new();
+
+    macro_rules! unary32 {
+        ($($name:literal => $def:expr),* $(,)?) => {$({
+            let fl_f: U32 = $def;
+            // SAFETY: U32 is the declared prototype of each of these symbols.
+            let host_f: U32 = unsafe { host_of($name, fl_f as *const ()) };
+            for &x in &grid32 {
+                // SAFETY: both are resolved extern "C" functions of this shape.
+                let (a, b) = unsafe { (fl_f(x), host_f(x)) };
+                checked += 1;
+                if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
+                    divs.push(format!(
+                        "{}(x=0x{:08x}): fl=0x{:08x} glibc=0x{:08x}",
+                        $name,
+                        x.to_bits(),
+                        a.to_bits(),
+                        b.to_bits()
+                    ));
+                }
+            }
+        })*};
+    }
+    macro_rules! binary32 {
+        ($($name:literal => $def:expr),* $(,)?) => {$({
+            let fl_f: B32 = $def;
+            // SAFETY: B32 is the declared prototype of each of these symbols.
+            let host_f: B32 = unsafe { host_of($name, fl_f as *const ()) };
+            for &x in &grid32 {
+                for &y in &grid32 {
+                    // SAFETY: as above.
+                    let (a, b) = unsafe { (fl_f(x, y), host_f(x, y)) };
+                    checked += 1;
+                    if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
+                        divs.push(format!(
+                            "{}(0x{:08x},0x{:08x}): fl=0x{:08x} glibc=0x{:08x}",
+                            $name,
+                            x.to_bits(),
+                            y.to_bits(),
+                            a.to_bits(),
+                            b.to_bits()
+                        ));
+                    }
+                }
+            }
+        })*};
+    }
+    macro_rules! unary64 {
+        ($($name:literal => $def:expr),* $(,)?) => {$({
+            let fl_f: U64 = $def;
+            // SAFETY: U64 is the declared prototype of each of these symbols.
+            let host_f: U64 = unsafe { host_of($name, fl_f as *const ()) };
+            for &x in &grid64 {
+                // SAFETY: both are resolved extern "C" functions of this shape.
+                let (a, b) = unsafe { (fl_f(x), host_f(x)) };
+                checked += 1;
+                if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
+                    divs.push(format!(
+                        "{}(x=0x{:016x}): fl=0x{:016x} glibc=0x{:016x}",
+                        $name,
+                        x.to_bits(),
+                        a.to_bits(),
+                        b.to_bits()
+                    ));
+                }
+            }
+        })*};
+    }
+    macro_rules! binary64 {
+        ($($name:literal => $def:expr),* $(,)?) => {$({
+            let fl_f: B64 = $def;
+            // SAFETY: B64 is the declared prototype of each of these symbols.
+            let host_f: B64 = unsafe { host_of($name, fl_f as *const ()) };
+            for &x in &grid64 {
+                for &y in &grid64 {
+                    // SAFETY: as above.
+                    let (a, b) = unsafe { (fl_f(x, y), host_f(x, y)) };
+                    checked += 1;
+                    if a.to_bits() != b.to_bits() && !(a.is_nan() && b.is_nan()) {
+                        divs.push(format!(
+                            "{}(0x{:016x},0x{:016x}): fl=0x{:016x} glibc=0x{:016x}",
+                            $name,
+                            x.to_bits(),
+                            y.to_bits(),
+                            a.to_bits(),
+                            b.to_bits()
+                        ));
+                    }
+                }
+            }
+        })*};
+    }
+
+    unary32!(
+        "nextupf32" => m::nextupf32,
+        "nextdownf32" => m::nextdownf32,
+        "roundevenf32" => m::roundevenf32,
+    );
+    binary32!(
+        "copysignf32" => m::copysignf32,
+        "nextafterf32" => m::nextafterf32,
+        "fmaximumf32" => m::fmaximumf32,
+        "fmaximum_numf32" => m::fmaximum_numf32,
+        "fmaximum_magf32" => m::fmaximum_magf32,
+        "fmaximum_mag_numf32" => m::fmaximum_mag_numf32,
+        "fminimumf32" => m::fminimumf32,
+        "fminimum_numf32" => m::fminimum_numf32,
+        "fminimum_magf32" => m::fminimum_magf32,
+        "fminimum_mag_numf32" => m::fminimum_mag_numf32,
+    );
+    unary64!(
+        "nextupf64" => m::nextupf64,
+        "nextdownf64" => m::nextdownf64,
+        "roundevenf64" => m::roundevenf64,
+    );
+    binary64!(
+        "copysignf64" => m::copysignf64,
+        "nextafterf64" => m::nextafterf64,
+        "fmaximumf64" => m::fmaximumf64,
+        "fmaximum_numf64" => m::fmaximum_numf64,
+        "fmaximum_magf64" => m::fmaximum_magf64,
+        "fmaximum_mag_numf64" => m::fmaximum_mag_numf64,
+        "fminimumf64" => m::fminimumf64,
+        "fminimum_numf64" => m::fminimum_numf64,
+        "fminimum_magf64" => m::fminimum_magf64,
+        "fminimum_mag_numf64" => m::fminimum_mag_numf64,
+    );
+
+    // The out-pointer and payload accessors, which are pure bit operations and
+    // therefore compared exactly: their whole purpose is the payload, so a
+    // NaN-tolerant rule would hide the only bug they can have.
+    // SAFETY: each fl definition is passed as its own symbol's definition; the
+    // resolved host address is rejected if it aliases fl's export.
+    unsafe {
+        let fl_canon32: Canon32 = m::canonicalizef32;
+        let host_canon32: Canon32 = host_of("canonicalizef32", fl_canon32 as *const ());
+        let fl_getp32: Getp32 = m::getpayloadf32;
+        let host_getp32: Getp32 = host_of("getpayloadf32", fl_getp32 as *const ());
+        let fl_setp32: Setp32 = m::setpayloadf32;
+        let host_setp32: Setp32 = host_of("setpayloadf32", fl_setp32 as *const ());
+        let fl_setsig32: Setp32 = m::setpayloadsigf32;
+        let host_setsig32: Setp32 = host_of("setpayloadsigf32", fl_setsig32 as *const ());
+
+        for &x in &grid32 {
+            checked += 4;
+            let (mut a, mut b) = (f32::from_bits(0xdead_beef), f32::from_bits(0xdead_beef));
+            let (ra, rb) = (fl_canon32(&mut a, &x), host_canon32(&mut b, &x));
+            if (ra, a.to_bits()) != (rb, b.to_bits()) {
+                divs.push(format!(
+                    "canonicalizef32(0x{:08x}): fl=({ra},0x{:08x}) glibc=({rb},0x{:08x})",
+                    x.to_bits(),
+                    a.to_bits(),
+                    b.to_bits()
+                ));
+            }
+            let (ga, gb) = (fl_getp32(&x), host_getp32(&x));
+            if ga.to_bits() != gb.to_bits() {
+                divs.push(format!(
+                    "getpayloadf32(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}",
+                    x.to_bits(),
+                    ga.to_bits(),
+                    gb.to_bits()
+                ));
+            }
+            for (name, f, h) in [
+                ("setpayloadf32", fl_setp32, host_setp32),
+                ("setpayloadsigf32", fl_setsig32, host_setsig32),
+            ] {
+                let mut ra_out = f32::from_bits(0xdead_beef);
+                let mut rb_out = f32::from_bits(0xdead_beef);
+                let (ca, cb) = (f(&mut ra_out, x), h(&mut rb_out, x));
+                if (ca, ra_out.to_bits()) != (cb, rb_out.to_bits()) {
+                    divs.push(format!(
+                        "{name}(0x{:08x}): fl=({ca},0x{:08x}) glibc=({cb},0x{:08x})",
+                        x.to_bits(),
+                        ra_out.to_bits(),
+                        rb_out.to_bits()
+                    ));
+                }
+            }
+        }
+
+        let fl_canon64: Canon64 = m::canonicalizef64;
+        let host_canon64: Canon64 = host_of("canonicalizef64", fl_canon64 as *const ());
+        let fl_getp64: Getp64 = m::getpayloadf64;
+        let host_getp64: Getp64 = host_of("getpayloadf64", fl_getp64 as *const ());
+        let fl_setp64: Setp64 = m::setpayloadf64;
+        let host_setp64: Setp64 = host_of("setpayloadf64", fl_setp64 as *const ());
+        let fl_setsig64: Setp64 = m::setpayloadsigf64;
+        let host_setsig64: Setp64 = host_of("setpayloadsigf64", fl_setsig64 as *const ());
+
+        for &x in &grid64 {
+            checked += 4;
+            let (mut a, mut b) = (
+                f64::from_bits(0xdead_beef_dead_beef),
+                f64::from_bits(0xdead_beef_dead_beef),
+            );
+            let (ra, rb) = (fl_canon64(&mut a, &x), host_canon64(&mut b, &x));
+            if (ra, a.to_bits()) != (rb, b.to_bits()) {
+                divs.push(format!(
+                    "canonicalizef64(0x{:016x}): fl=({ra},0x{:016x}) glibc=({rb},0x{:016x})",
+                    x.to_bits(),
+                    a.to_bits(),
+                    b.to_bits()
+                ));
+            }
+            let (ga, gb) = (fl_getp64(&x), host_getp64(&x));
+            if ga.to_bits() != gb.to_bits() {
+                divs.push(format!(
+                    "getpayloadf64(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}",
+                    x.to_bits(),
+                    ga.to_bits(),
+                    gb.to_bits()
+                ));
+            }
+            for (name, f, h) in [
+                ("setpayloadf64", fl_setp64, host_setp64),
+                ("setpayloadsigf64", fl_setsig64, host_setsig64),
+            ] {
+                let mut ra_out = f64::from_bits(0xdead_beef_dead_beef);
+                let mut rb_out = f64::from_bits(0xdead_beef_dead_beef);
+                let (ca, cb) = (f(&mut ra_out, x), h(&mut rb_out, x));
+                if (ca, ra_out.to_bits()) != (cb, rb_out.to_bits()) {
+                    divs.push(format!(
+                        "{name}(0x{:016x}): fl=({ca},0x{:016x}) glibc=({cb},0x{:016x})",
+                        x.to_bits(),
+                        ra_out.to_bits(),
+                        rb_out.to_bits()
+                    ));
+                }
+            }
+        }
+    }
+
+    // Non-vacuity: 86 values per grid x 3 unary + 10 binary f32 arms, plus the
+    // same for f64, plus 4 payload probes per value.
+    assert!(
+        checked > 100_000,
+        "comparison corpus is too small to be evidence: {checked} probes"
+    );
+    assert!(
+        divs.is_empty(),
+        "{} divergences from host glibc (first 20):\n{}",
+        divs.len(),
+        divs.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+    );
+}
+
+/// The provider-identity control for this file: a "glibc" arm that IS fl must be
+/// refused rather than compared, which is what makes the differential above
+/// evidence instead of a tautology.
+#[test]
+fn floatn_oracle_rejects_identical_candidate_provider() {
+    // SAFETY: only resolves and compares code addresses; no mismatched call.
+    let host = unsafe { host_addr(c"nextupf32", m::nextupf32 as *const ()) };
+    let rejected = std::panic::catch_unwind(|| unsafe {
+        host_addr(c"nextupf32", host.cast());
+    });
+    let error = rejected.expect_err("an identical candidate/oracle provider must be rejected");
+    let message = error
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| error.downcast_ref::<&str>().copied())
+        .expect("provider rejection must report a diagnostic");
+    assert!(
+        message.contains("IS fl's own definition"),
+        "expected the provider-identity rejection, got: {message}"
+    );
 }

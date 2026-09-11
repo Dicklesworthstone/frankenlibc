@@ -712,3 +712,319 @@ fn differential_suite_is_only_evidence_with_debug_assertions_on() {
          profile, or resolve the oracle with dlsym as conformance_diff_fma does."
     );
 }
+
+// ---------------------------------------------------------------------------
+// The NONE class, and why it has to be named rather than counted
+// (bd-reality-202609-lx578q.7)
+// ---------------------------------------------------------------------------
+
+/// Differential gates that legitimately never reach the host, with the reason
+/// each one cannot.
+///
+/// `scripts/audit_oracle_arms.py --no-host-arm` reports this class, and it is
+/// the one class the script cannot distinguish from a defect: a file named
+/// `conformance_diff_*` that never calls glibc may be a golden-values test
+/// wearing a differential name (a defect, because a coverage audit counts it as
+/// a live comparison) or it may be an INTERNAL invariant that has no host
+/// counterpart at all (legitimate, but not conformance evidence either).
+///
+/// Only the second kind belongs here, and only with a reason. Three gates were
+/// removed from this list by giving them the host arm they were missing —
+/// `conformance_diff_fgetpos`, `conformance_diff_sigmask` and
+/// `conformance_diff_floatn_aliases` (the last only for its bit-defined subset;
+/// the rest of that surface has no bit-exact oracle and stays aliased to its own
+/// base).
+///
+/// Removing an entry is the point of the list; adding one asserts that no host
+/// arm exists AND that the file does not claim conformance it cannot deliver.
+const INTERNAL_INVARIANT_GATES: &[(&str, &str)] = &[
+    (
+        "conformance_diff_known_remaining_stack.rs",
+        "internal membrane property: whether a stack address reports a remaining \
+         length. There is no C function to call; the question is about fl's own \
+         arena lookup, and the host has no equivalent to compare against.",
+    ),
+    (
+        "conformance_diff_malloc_stats_binning.rs",
+        "internal allocator histogram invariant across size-class boundaries. \
+         glibc has no observable equivalent of fl's per-class accumulator.",
+    ),
+    (
+        "conformance_diff_mergesort.rs",
+        "glibc does not export `mergesort` at all (it is a BSD/musl entry point), \
+         so there is no host arm to have. The file compares fl's in-place index \
+         sort against a reference stable sort — a metamorphic invariant, not \
+         conformance.",
+    ),
+    (
+        "conformance_diff_scan_c_string.rs",
+        "internal SWAR scanner behind strcpy/stpcpy/strncat, checked against a \
+         byte-at-a-time reference. `bench_scan_c_string` is not a libc function.",
+    ),
+    (
+        "conformance_diff_segment_free_st_elision.rs",
+        "internal allocator property: every live allocation has a distinct \
+         address across free-and-reuse cycles. Asserting it against glibc would \
+         be asserting glibc's allocator, not fl's.",
+    ),
+];
+
+/// Linker/loader plumbing that is present in almost every gate without making
+/// it a differential: capturing test output, driving subprocesses, or reading
+/// errno. Deliberately the same list the Python audit uses, so the two cannot
+/// disagree about what counts.
+const INFRASTRUCTURE_SYMBOLS: &[&str] = &[
+    "dlopen",
+    "dlsym",
+    "dlvsym",
+    "dlclose",
+    "dladdr",
+    "dlerror",
+    "fork",
+    "waitpid",
+    "_exit",
+    "raise",
+    "abort",
+    "kill",
+    "__errno_location",
+    "pipe",
+    "close",
+    "read",
+    "write",
+    "unlink",
+    "mkstemp",
+    "signal",
+    "sigaction",
+    "sigprocmask",
+    "sigemptyset",
+    "sigaddset",
+    "sigismember",
+    "feclearexcept",
+    "fetestexcept",
+];
+
+/// Remove Rust comments so prose cannot be mistaken for a declaration.
+///
+/// The Python audit learned this the hard way: a gate that correctly documents
+/// the `unsafe extern "C"` block it replaced matches a naive scan of that block,
+/// so the better a gate is annotated the more certainly it is reported as
+/// unfixed. Comments are stripped before classification for the same reason.
+fn strip_rust_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let b = src.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+            }
+            // A `//` inside a string literal is not a comment; skipping strings
+            // keeps a URL or a format string from truncating the file.
+            b'"' => {
+                out.push('"');
+                i += 1;
+                while i < b.len() {
+                    let c = b[i];
+                    out.push(c as char);
+                    i += 1;
+                    if c == b'\\' {
+                        if i < b.len() {
+                            out.push(b[i] as char);
+                            i += 1;
+                        }
+                    } else if c == b'"' {
+                        break;
+                    }
+                }
+            }
+            c => {
+                out.push(c as char);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Does this gate reach the host at all, by any of the mechanisms the suite
+/// actually uses?
+///
+/// Deliberately BROADER than the Python audit's classification: an in-file
+/// `unsafe extern "C"` declaration counts when its symbol is not infrastructure
+/// plumbing, and so does `libc::<name>(..)`, because both are `extern "C"`
+/// imports the linker resolves the same way. What this function decides is only
+/// whether the file reaches a host arm of SOME kind; whether that arm can be
+/// captured by a local provider is the audit's question, tracked separately by
+/// the curated probes above.
+fn gate_reaches_a_host_arm(src: &str) -> bool {
+    if src.contains("dlsym") || src.contains("dlvsym") || src.contains("host_addr") {
+        return true;
+    }
+    if src.contains("Command::new") {
+        return true;
+    }
+    for block in src.split("extern \"C\" {").skip(1) {
+        let Some(end) = block.find("\n}") else {
+            continue;
+        };
+        for line in block[..end].lines() {
+            let t = line.trim();
+            let Some(rest) = t.strip_prefix("fn ").or_else(|| t.strip_prefix("pub fn ")) else {
+                continue;
+            };
+            let Some(symbol) = rest.split(['(', '<', ' ']).next() else {
+                continue;
+            };
+            if !symbol.is_empty() && !INFRASTRUCTURE_SYMBOLS.contains(&symbol) {
+                return true;
+            }
+        }
+    }
+    for (idx, _) in src.match_indices("libc::") {
+        let rest = &src[idx + "libc::".len()..];
+        let symbol: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !symbol.is_empty() && !INFRASTRUCTURE_SYMBOLS.contains(&symbol.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Every `conformance_diff_*` gate reaches the host, or is named here as an
+/// internal invariant with a reason.
+///
+/// This is the half of the oracle-arm audit that can be enforced WITHOUT running
+/// the gates. The provenance probes above ask "does this arm reach glibc?" for a
+/// curated list of symbols; this asks the strictly weaker question "does this
+/// file reach the host at all?" for every gate, and fails when the answer is no
+/// and nobody has said why. Without it, a new `conformance_diff_*` file that
+/// compares fl against frozen literals is counted as differential coverage by
+/// every audit downstream, which is precisely the promotion .7 forbids.
+#[test]
+fn every_differential_gate_reaches_a_host_arm_or_is_a_declared_invariant() {
+    let dir = std::path::Path::new("tests");
+    let mut scanned = 0usize;
+    let mut offenders: Vec<String> = Vec::new();
+    let mut allowlisted: Vec<String> = Vec::new();
+
+    for entry in std::fs::read_dir(dir).expect("read tests/ -- test CWD is the package root") {
+        let path = entry.expect("readable dir entry").path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if !name.starts_with("conformance_diff_") || !name.ends_with(".rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        scanned += 1;
+        if gate_reaches_a_host_arm(&strip_rust_comments(&text)) {
+            continue;
+        }
+        if let Some((_, reason)) = INTERNAL_INVARIANT_GATES
+            .iter()
+            .find(|(file, _)| *file == name)
+        {
+            assert!(
+                reason.len() > 40,
+                "the reason for {name} must actually explain why no host arm exists"
+            );
+            allowlisted.push(name);
+            continue;
+        }
+        offenders.push(name);
+    }
+
+    assert!(
+        scanned > 500,
+        "only {scanned} differentials scanned; the glob is wrong"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these gates are named conformance_diff_* but never reach host glibc, \
+         so nothing in them is a comparison against the reference. Give the file \
+         a real oracle (see common/dlsym_oracle.rs) or add it to \
+         INTERNAL_INVARIANT_GATES with the reason it cannot have one:\n{}",
+        offenders.join("\n")
+    );
+    // A stale allowlist entry is not a defect in the gate, but it is exactly the
+    // silent drift this file keeps warning about, so it is checked too.
+    for (file, _) in INTERNAL_INVARIANT_GATES {
+        assert!(
+            allowlisted.contains(&file.to_string()),
+            "{file} is allowlisted as an internal invariant but now reaches a \
+             host arm; remove it from INTERNAL_INVARIANT_GATES"
+        );
+    }
+}
+
+/// Negative control for the classifier the gate above rests on.
+///
+/// The gate is only worth its runtime if `gate_reaches_a_host_arm` answers
+/// FALSE for the shape it exists to catch and TRUE for the shapes it must not
+/// report. That discrimination is asserted here on synthetic sources, so a
+/// classifier that degenerated to "everything reaches the host" (which would
+/// make the gate silently vacuous) fails loudly instead.
+#[test]
+fn host_arm_classifier_discriminates_the_golden_values_shape() {
+    // Frozen literals only: no host arm, and this is the class that must be
+    // reported rather than counted as differential coverage.
+    assert!(!gate_reaches_a_host_arm(
+        "let got = frankenlibc_abi::string_abi::strlen(p);\nassert_eq!(got, 3);\n"
+    ));
+    // An `unsafe extern "C"` declaration of a real libc entry point is a host
+    // arm (whether it can be CAPTURED is the audit's separate question).
+    assert!(gate_reaches_a_host_arm(
+        "unsafe extern \"C\" {\n    fn strchr(s: *const c_char, c: c_int) -> *mut c_char;\n}\n"
+    ));
+    // A `libc::foo(..)` call is the same kind of import.
+    assert!(gate_reaches_a_host_arm(
+        "let a = unsafe { libc::strcmp(x, y) };\n"
+    ));
+    // Loader plumbing is not a differential. `free` is deliberately NOT in this
+    // list — the allocator gates compare it as a real oracle — so the plumbing
+    // here is the process/errno plumbing the suite uses to capture output.
+    assert!(!gate_reaches_a_host_arm(
+        "unsafe extern \"C\" {\n    fn close(fd: c_int) -> c_int;\n    fn read(fd: c_int, b: *mut c_void, n: usize) -> isize;\n}\n"
+    ));
+    // ... while an allocator entry point IS a host arm, which is the same
+    // distinction `scripts/audit_oracle_arms.py` draws with the same list.
+    assert!(gate_reaches_a_host_arm(
+        "unsafe extern \"C\" {\n    fn malloc(n: usize) -> *mut c_void;\n}\n"
+    ));
+    // Runtime resolution is a host arm by definition.
+    assert!(gate_reaches_a_host_arm(
+        "let f = unsafe { dlsym_oracle::host_fn(c\"strchr\", fl::strchr as *const ()) };\n"
+    ));
+    // A subprocess oracle is still an oracle.
+    assert!(gate_reaches_a_host_arm(
+        "let out = std::process::Command::new(\"hostprobe\").output().unwrap();\n"
+    ));
+    // Prose is not code: documenting the declaration a gate replaced must not
+    // make the gate look like it still has one. This is the failure mode the
+    // Python audit hit, and it punished the best-documented conversions.
+    assert!(!gate_reaches_a_host_arm(&strip_rust_comments(
+        "// A link-time `unsafe extern \"C\" { fn strchr(..) }` is not reliably\n\
+         // glibc in an abi test binary.\n"
+    )));
+    // A `//` inside a string literal is not a comment, and a URL must not
+    // truncate the rest of the file.
+    assert!(gate_reaches_a_host_arm(&strip_rust_comments(
+        "let u = \"http://example.invalid\";\nunsafe extern \"C\" {\n    fn strchr(s: *const c_char, c: c_int) -> *mut c_char;\n}\n"
+    )));
+}

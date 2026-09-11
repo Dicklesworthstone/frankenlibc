@@ -40,8 +40,20 @@ WHAT A CLEAN GATE LOOKS LIKE. Resolve the host arm with `dlsym` on an explicit
 and assert the resolved address is NOT fl's own function address. That is correct
 in every build profile and turns the remaining doubt into a failing test.
 
-EXIT STATUS: 0 always. This reports; it does not gate. Wiring it into CI as a
-hard gate would need the allowlist below to be complete first.
+EXIT STATUS: 0 always. This reports; it does not gate. Wiring the AT RISK and
+REVIEW classes into CI as a hard gate would need the allowlist below to be
+complete first.
+
+WHAT *IS* GATED. The `--no-host-arm` class — gates named `conformance_diff_*`
+that reach host glibc by no mechanism at all — is now enforced from the Rust
+side, not here: `every_differential_gate_reaches_a_host_arm_or_is_a_declared_invariant`
+in crates/frankenlibc-abi/tests/conformance_diff_oracle_arm_provenance.rs
+classifies every gate with the same mechanisms and fails unless each one either
+reaches a host arm or is named in `INTERNAL_INVARIANT_GATES` with the reason it
+cannot have one. That test also fails when an allowlisted file starts reaching a
+host arm, so the list cannot rot in the other direction. This script remains the
+independent, per-gate report over the whole population — the two are expected to
+agree, and a disagreement is itself the finding.
 
 USAGE
     python3 scripts/audit_oracle_arms.py             # summary + per-file detail
