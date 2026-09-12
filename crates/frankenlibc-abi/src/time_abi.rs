@@ -3114,11 +3114,25 @@ pub unsafe extern "C" fn __clock_nanosleep(
 /// C11 `timespec_get` — get the current calendar time based on a given time base.
 ///
 /// Returns `base` on success, 0 on failure.
-/// TIME_UTC (1) maps to CLOCK_REALTIME.
+///
+/// THE BASE IS ONE ABOVE THE CLOCK ID, which is what makes the host's answers
+/// coherent: measured on glibc 2.42, `timespec_get(ts, b)` returns `b` exactly
+/// when `clock_gettime(b - 1, ts)` succeeds — `TIME_UTC` (1) reads
+/// `CLOCK_REALTIME` (0), base 2 reads `CLOCK_MONOTONIC`, base 12 reads
+/// `CLOCK_TAI` (11), and the "holes" line up (base 11 maps to clock id 10, which
+/// does not exist, and the host answers 0 there). fl used to accept only
+/// `TIME_UTC` and answer 0 for everything else, which was two failing rows in
+/// conformance_diff_timespec. A null `ts` still returns 0 here, which is fl's
+/// documented defensive contract (glibc dereferences it).
+///
+/// NOTE ON NEGATIVE BASES: glibc's negative clock ids are its own CPU-clock
+/// encoding (`(~pid << 3) | clock`), which a raw `clock_gettime` syscall cannot
+/// express, so fl answers 0 where the host answers the base. The C standard
+/// defines only `TIME_UTC`, so that divergence is outside the contract rather
+/// than a defect; the gate states it explicitly instead of hiding it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c_int {
-    const TIME_UTC: c_int = 1;
-    if ts.is_null() || base != TIME_UTC {
+    if ts.is_null() || base == 0 {
         return 0;
     }
     // Hot output-fit check (stack-local `ts` skips the arena lookup); same vein as
@@ -3126,7 +3140,11 @@ pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c
     if !tracked_required_hot_output_fits(ts.cast_const()) {
         return 0;
     }
-    let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, ts) };
+    if base < 0 {
+        // See the note above: negative bases are glibc's CPU-clock encoding.
+        return 0;
+    }
+    let rc = unsafe { raw_clock_gettime(base - 1, ts) };
     if rc == 0 { base } else { 0 }
 }
 
@@ -3139,7 +3157,6 @@ pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c
 /// Returns `base` on success, 0 on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -> c_int {
-    const TIME_UTC: c_int = 1;
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Time,
         ts as usize,
@@ -3153,7 +3170,13 @@ pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -
         return 0;
     }
 
-    if base != TIME_UTC {
+    // Same base numbering as `timespec_get` above: the base is one above the
+    // clock id, so the resolution reported is that of `base - 1` and the base is
+    // echoed only when that clock exists (measured on glibc 2.42: bases through
+    // 10, 12 are echoed, 11 and 99 answer 0 — exactly the clock-id holes). fl used
+    // to accept only TIME_UTC (1) and answer 0 for everything else, which was two
+    // failing rows in conformance_diff_timespec.
+    if base == 0 {
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return 0;
     }
@@ -3162,12 +3185,11 @@ pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
         return base;
     }
-    if !tracked_required_object_fits(ts.cast_const()) {
+    if !tracked_required_object_fits(ts.cast_const()) || base < 0 {
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return 0;
     }
-    let result = match unsafe { raw_syscall::sys_clock_getres(libc::CLOCK_REALTIME, ts as *mut u8) }
-    {
+    let result = match unsafe { raw_syscall::sys_clock_getres(base - 1, ts as *mut u8) } {
         Ok(()) => base,
         Err(_) => 0,
     };

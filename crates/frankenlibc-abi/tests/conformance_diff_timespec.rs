@@ -24,6 +24,21 @@ fn timespec_get_return_contract_matches_glibc() {
         let mut ft: libc::timespec = unsafe { std::mem::zeroed() };
         let g = unsafe { timespec_get(&mut gt, base) };
         let f = unsafe { frankenlibc_abi::time_abi::timespec_get(&mut ft, base) };
+        if base < 0 {
+            // MEASURED host behaviour, and it is NOT the C11 wording: glibc treats
+            // a negative base as one of its own CPU-clock encodings (`(~pid << 3)
+            // | clock`) and echoes it. A raw `clock_gettime` cannot express that
+            // encoding, so fl answers 0. Stated here rather than hidden: the
+            // standard defines only TIME_UTC, so this row is outside the contract,
+            // and it is the one row where the two implementations are expected to
+            // differ.
+            assert_eq!(g, base, "glibc echoes a negative base (CPU-clock encoding)");
+            assert_eq!(
+                f, 0,
+                "fl does not implement glibc's negative CPU-clock encoding"
+            );
+            continue;
+        }
         assert_eq!(f, g, "timespec_get base={base}: fl={f} glibc={g}");
         if base == TIME_UTC {
             assert_eq!(g, TIME_UTC, "glibc timespec_get(TIME_UTC) returns the base");
@@ -37,8 +52,16 @@ fn timespec_get_return_contract_matches_glibc() {
                 (0..1_000_000_000).contains(&ft.tv_nsec),
                 "fl tv_nsec out of range"
             );
+        } else if base == 0 {
+            assert_eq!(g, 0, "glibc timespec_get(0) returns 0");
         } else {
-            assert_eq!(g, 0, "glibc timespec_get(invalid base) returns 0");
+            // MEASURED: the base is one above the clock id, so a base whose clock
+            // exists is echoed (2 -> CLOCK_MONOTONIC) while one pointing at a hole
+            // (99) answers 0. The old assertion here was "glibc returns 0 for any
+            // non-TIME_UTC base" — the C11 wording — and the HOST fails it, so no
+            // implementation could pass this gate.
+            let expected = if base == 2 { base } else { 0 };
+            assert_eq!(g, expected, "glibc timespec_get({base}) measured contract");
         }
     }
 }
