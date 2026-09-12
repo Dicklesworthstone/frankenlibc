@@ -5618,11 +5618,19 @@ pub unsafe extern "C" fn cfree(ptr: *mut c_void) {
 /// Every other parameter is accepted (returns 1), matching glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mallopt(param: c_int, value: c_int) -> c_int {
-    const M_MXFAST: c_int = 1;
-    let max_fast_size = 80 * std::mem::size_of::<usize>() as c_int / 4;
-    if param == M_MXFAST && !(0..=max_fast_size).contains(&value) {
-        return 0;
-    }
+    // glibc's modern malloc treats `mallopt` as a PERMISSIVE NO-OP, and the ABI
+    // contract is the host's answer. Measured on host glibc 2.42: every input
+    // probed returns 1 — all documented knob ids (-8..=8), unknown ids (99,
+    // -99), INT_MIN/INT_MAX values, and the values M_CHECK_ACTION/M_PERTURB are
+    // documented to validate against. fl used to invent a range rule for
+    // M_MXFAST (accept 0..=160, reject outside) and answered 0 there, which was
+    // seven rows of divergence in conformance_diff_mallopt (-100, -1, 161, 162,
+    // 1024, 131072, INT_MAX) while every other arm matched.
+    //
+    // The parameters are accepted and ignored, exactly as the host ignores them.
+    // If fl ever honours a knob, the RETURN CONTRACT must stay 1 for every
+    // input the host accepts, or this gate is the thing that will say so.
+    let _ = (param, value);
     1
 }
 
