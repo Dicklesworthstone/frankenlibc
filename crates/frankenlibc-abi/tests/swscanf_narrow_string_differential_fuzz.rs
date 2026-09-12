@@ -124,7 +124,16 @@ fn swscanf_narrow_string_differential_fuzz_vs_glibc() {
             swscanf(inp.as_ptr(), wf.as_ptr(), lb.as_mut_ptr() as *mut c_char)
         };
         compared += 1;
-        if (nfl != nlc || fb != lb) && divs.len() < 40 {
+        // RETURN CODES MUST ALWAYS MATCH; buffer contents are compared only when
+        // the conversion SUCCEEDED (n >= 0). On a failing `%Nc` the two
+        // implementations leave different bytes behind - glibc keeps the
+        // characters it managed to read, fl leaves the caller's buffer untouched -
+        // and neither POSIX nor C specifies the destination after a failed
+        // conversion, so comparing those bytes would pin an implementation detail
+        // rather than a contract (measured on glibc 2.42; bd-7ilguh). The sentinel
+        // pre-fill still makes the successful rows catch an over- or under-write.
+        let diverged = nfl != nlc || (nfl >= 0 && fb != lb);
+        if diverged && divs.len() < 40 {
             let ins: String = inp[..inp.len() - 1]
                 .iter()
                 .map(|&c| char::from_u32(c as u32).unwrap_or('?'))
