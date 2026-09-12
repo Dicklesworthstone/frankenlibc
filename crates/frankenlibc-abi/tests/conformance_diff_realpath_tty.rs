@@ -182,7 +182,9 @@ fn diff_canonicalize_file_name_known_path() {
             .into_owned();
         assert_eq!(s_fl, s_lc, "canonicalize_file_name divergence");
         unsafe {
-            libc::free(r_fl as *mut libc::c_void);
+            // fl's canonicalize_file_name allocates through fl's allocator
+            // entrypoint; only glibc's own result belongs to glibc's free.
+            frankenlibc_abi::malloc_abi::free(r_fl as *mut libc::c_void);
             libc::free(r_lc as *mut libc::c_void);
         }
     }

@@ -347,8 +347,12 @@ fn host2netname_creates_valid_name() {
     let s = unsafe { CStr::from_ptr(name) }.to_str().unwrap();
     assert_eq!(s, "unix.myhost@example.com");
 
-    // Free the allocated name
-    unsafe { libc::free(name.cast()) };
+    // Free through the SAME provider that allocated: host2netname/user2netname
+    // route through fl's allocator entrypoint, and `libc::free` is glibc's in a
+    // test binary (there is no interposition here), so the pair would be
+    // mismatched and glibc aborts with "free(): invalid size" — which is what
+    // this target did before bd-reality-202609-lx578q.7.
+    unsafe { free(name.cast()) };
 }
 
 #[test]
@@ -361,7 +365,12 @@ fn host2netname_null_defaults() {
     let s = unsafe { CStr::from_ptr(name) }.to_str().unwrap();
     assert_eq!(s, "unix.localhost@localhost");
 
-    unsafe { libc::free(name.cast()) };
+    // Free through the SAME provider that allocated: host2netname/user2netname
+    // route through fl's allocator entrypoint, and `libc::free` is glibc's in a
+    // test binary (there is no interposition here), so the pair would be
+    // mismatched and glibc aborts with "free(): invalid size" — which is what
+    // this target did before bd-reality-202609-lx578q.7.
+    unsafe { free(name.cast()) };
 }
 
 #[test]
@@ -420,7 +429,12 @@ fn user2netname_formats_correctly() {
     let s = unsafe { CStr::from_ptr(name) }.to_str().unwrap();
     assert_eq!(s, "unix.42@example.com");
 
-    unsafe { libc::free(name.cast()) };
+    // Free through the SAME provider that allocated: host2netname/user2netname
+    // route through fl's allocator entrypoint, and `libc::free` is glibc's in a
+    // test binary (there is no interposition here), so the pair would be
+    // mismatched and glibc aborts with "free(): invalid size" — which is what
+    // this target did before bd-reality-202609-lx578q.7.
+    unsafe { free(name.cast()) };
 }
 
 // ===========================================================================

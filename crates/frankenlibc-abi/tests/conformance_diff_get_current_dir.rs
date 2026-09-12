@@ -141,9 +141,12 @@ fn diff_get_current_dir_name_match() {
     let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
     let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
     assert_eq!(s_fl, s_lc, "cwd mismatch");
-    // Both impls must use libc::malloc per fl's bd-zgifl convention so we
-    // can free both with libc::free.
-    unsafe { libc::free(p_fl as *mut libc::c_void) };
+    // EACH PROVIDER'S BLOCK IS RELEASED BY THAT PROVIDER. fl's
+    // get_current_dir_name routes through fl's allocator entrypoint, and
+    // `libc::free` in a test binary is glibc's — there is no interposition here —
+    // so one shared free aborts the whole target with "free(): invalid size",
+    // which is what this gate did before bd-reality-202609-lx578q.7.
+    unsafe { frankenlibc_abi::malloc_abi::free(p_fl as *mut libc::c_void) };
     unsafe { libc::free(p_lc as *mut libc::c_void) };
 }
 
@@ -202,7 +205,9 @@ fn diff_getcwd_null_buf_glibc_extension_match() {
         let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
         let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
         assert_eq!(s_fl, s_lc);
-        unsafe { libc::free(p_fl as *mut libc::c_void) };
+        // Same rule as above: fl's getcwd(NULL, 0) allocates through fl's
+        // allocator entrypoint, so it is released through fl's free.
+        unsafe { frankenlibc_abi::malloc_abi::free(p_fl as *mut libc::c_void) };
         unsafe { libc::free(p_lc as *mut libc::c_void) };
     }
 }

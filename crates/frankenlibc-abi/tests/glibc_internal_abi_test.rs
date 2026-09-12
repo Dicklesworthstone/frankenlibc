@@ -4959,6 +4959,15 @@ fn test_inet6_scopeid_pton_invalid_name() {
 // ===========================================================================
 // IDNA encoding/decoding tests (native Punycode, RFC 3492)
 // ===========================================================================
+//
+// EVERY BUFFER THESE TESTS RECEIVE IS RELEASED WITH `frankenlibc_abi::malloc_abi::free`,
+// not `libc::free`. `__idna_to_dns_encoding`/`__idna_from_dns_encoding` allocate
+// through fl's allocator entrypoint (the segment heap), and in a test binary
+// `libc::free` is glibc's — there is no interposition here — so a shared free
+// hands glibc a chunk header it never wrote and the process aborts with
+// "free(): invalid size", which is what this section did before
+// bd-reality-202609-lx578q.7. A deployed caller under LD_PRELOAD sees `free()`
+// resolve to fl's own, which is why the ABI contract itself is unchanged.
 
 #[test]
 fn test_idna_to_dns_ascii_passthrough() {
@@ -4972,7 +4981,7 @@ fn test_idna_to_dns_ascii_passthrough() {
         .to_str()
         .unwrap();
     assert_eq!(out, "example.com");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -4987,7 +4996,7 @@ fn test_idna_to_dns_unicode_label() {
         .to_str()
         .unwrap();
     assert_eq!(out, "xn--mnchen-3ya.de");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -5003,7 +5012,7 @@ fn test_idna_to_dns_chinese() {
         .unwrap();
     // "中文" in Punycode is "fiq228c".
     assert_eq!(out, "xn--fiq228c.com");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -5053,7 +5062,7 @@ fn test_idna_from_dns_ascii_passthrough() {
         .to_str()
         .unwrap();
     assert_eq!(out, "example.com");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -5068,7 +5077,7 @@ fn test_idna_from_dns_punycode_label() {
         .to_str()
         .unwrap();
     assert_eq!(out, "münchen.de");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -5083,7 +5092,7 @@ fn test_idna_from_dns_chinese_punycode() {
         .to_str()
         .unwrap();
     assert_eq!(out, "中文.com");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -5110,8 +5119,8 @@ fn test_idna_roundtrip_unicode() {
     assert_eq!(result, original);
 
     unsafe {
-        libc::free(encoded as *mut std::ffi::c_void);
-        libc::free(decoded as *mut std::ffi::c_void);
+        frankenlibc_abi::malloc_abi::free(encoded as *mut std::ffi::c_void);
+        frankenlibc_abi::malloc_abi::free(decoded as *mut std::ffi::c_void);
     }
 }
 
@@ -5134,7 +5143,7 @@ fn test_idna_from_dns_case_insensitive_prefix() {
         .to_str()
         .unwrap();
     assert_eq!(out, "münchen.de");
-    unsafe { libc::free(result as *mut std::ffi::c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(result as *mut std::ffi::c_void) };
 }
 
 #[test]
@@ -5163,8 +5172,8 @@ fn test_idna_roundtrip_japanese() {
     assert_eq!(result, original);
 
     unsafe {
-        libc::free(encoded as *mut std::ffi::c_void);
-        libc::free(decoded as *mut std::ffi::c_void);
+        frankenlibc_abi::malloc_abi::free(encoded as *mut std::ffi::c_void);
+        frankenlibc_abi::malloc_abi::free(decoded as *mut std::ffi::c_void);
     }
 }
 

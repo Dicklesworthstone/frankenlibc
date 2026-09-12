@@ -170,6 +170,27 @@ unsafe extern "C" {
     fn setlocale(category: c_int, locale: *const c_char) -> *const c_char;
     fn newlocale(category_mask: c_int, locale: *const c_char, base: *mut c_void) -> *mut c_void;
     fn freelocale(loc: *mut c_void);
+
+    // PROBE SUBJECTS, not oracles (bd-reality-202609-lx578q.7).
+    //
+    // The census below asks what the LINKER binds a link-time arm to, and the
+    // `libc` crate does not expose these eleven names, so they are declared here
+    // to be measured. They are never called — only their addresses are taken and
+    // handed to `dladdr` — so the prototypes do not have to be exact, and a
+    // capture reported against one of them is the finding, not a defect in this
+    // file. Gates that reach these names by hand-declaring them are exactly the
+    // population this measures.
+    // `rawmemchr` is already declared above; it is the same kind of subject.
+    fn strsep(stringp: *mut *mut c_char, delim: *const c_char) -> *mut c_char;
+    fn index(s: *const c_char, c: c_int) -> *mut c_char;
+    fn rindex(s: *const c_char, c: c_int) -> *mut c_char;
+    fn bzero(s: *mut c_void, n: usize);
+    fn bcopy(src: *const c_void, dst: *mut c_void, n: usize);
+    fn bcmp(a: *const c_void, b: *const c_void, n: usize) -> c_int;
+    fn wcsstr(haystack: *const libc::wchar_t, needle: *const libc::wchar_t) -> *mut libc::wchar_t;
+    fn wmemcpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
+    fn wmemset(dst: *mut libc::wchar_t, c: libc::wchar_t, n: usize) -> *mut libc::wchar_t;
+    fn wmemcmp(a: *const libc::wchar_t, b: *const libc::wchar_t, n: usize) -> c_int;
 }
 
 /// Where this thread is running right now: logical CPU, the physical core it
@@ -577,7 +598,7 @@ fn audit_arms(probes: &[(*const c_void, *const c_void, &str)], class: &str) {
 ///   reports `__libc_free` in the declared-arm probe.
 #[test]
 fn libc_crate_oracle_arms_resolve_to_host_glibc_not_to_fl() {
-    let probes: [(*const c_void, *const c_void, &str); 20] = [
+    let probes: [(*const c_void, *const c_void, &str); 51] = [
         (
             libc::memcpy as *const c_void,
             frankenlibc_abi::string_abi::memcpy as *const c_void,
@@ -677,6 +698,182 @@ fn libc_crate_oracle_arms_resolve_to_host_glibc_not_to_fl() {
             libc::atoi as *const c_void,
             frankenlibc_abi::stdlib_abi::atoi as *const c_void,
             "atoi",
+        ),
+        // THE REST OF THE MEM/STR/WIDE SURFACE (bd-reality-202609-lx578q.7).
+        //
+        // The 20 symbols above were a sample. The rest of this family is the
+        // part of the suite where a hollow arm would hide the most — it is the
+        // most heavily hand-optimised code in the repo, and it is also exactly
+        // what a LOCAL provider other than fl supplies: `compiler_builtins`
+        // defines memcpy/memmove/memset/memcmp/bcmp/strlen, so "fl exports
+        // nothing in this profile" was never sufficient to conclude the arm
+        // reaches glibc. Censusing the family settles it by address.
+        //
+        // The first group goes through the `libc` crate, which is how the gates
+        // themselves reach these symbols. The second group is reached through the
+        // PROBE declarations in the extern block at the top of this file, because
+        // the crate does not expose those names — those declarations are the
+        // probe's SUBJECT, not an oracle this file relies on: the question the
+        // measurement answers is precisely what the linker binds them to.
+        (
+            libc::memchr as *const c_void,
+            frankenlibc_abi::string_abi::memchr as *const c_void,
+            "memchr",
+        ),
+        (
+            libc::memrchr as *const c_void,
+            frankenlibc_abi::string_abi::memrchr as *const c_void,
+            "memrchr",
+        ),
+        (
+            rawmemchr as *const c_void,
+            frankenlibc_abi::string_abi::rawmemchr as *const c_void,
+            "rawmemchr",
+        ),
+        (
+            libc::mempcpy as *const c_void,
+            frankenlibc_abi::string_abi::mempcpy as *const c_void,
+            "mempcpy",
+        ),
+        (
+            libc::memmem as *const c_void,
+            frankenlibc_abi::string_abi::memmem as *const c_void,
+            "memmem",
+        ),
+        (
+            libc::strcpy as *const c_void,
+            frankenlibc_abi::string_abi::strcpy as *const c_void,
+            "strcpy",
+        ),
+        (
+            libc::stpcpy as *const c_void,
+            frankenlibc_abi::string_abi::stpcpy as *const c_void,
+            "stpcpy",
+        ),
+        (
+            libc::strncpy as *const c_void,
+            frankenlibc_abi::string_abi::strncpy as *const c_void,
+            "strncpy",
+        ),
+        (
+            libc::stpncpy as *const c_void,
+            frankenlibc_abi::string_abi::stpncpy as *const c_void,
+            "stpncpy",
+        ),
+        (
+            libc::strcat as *const c_void,
+            frankenlibc_abi::string_abi::strcat as *const c_void,
+            "strcat",
+        ),
+        (
+            libc::strncat as *const c_void,
+            frankenlibc_abi::string_abi::strncat as *const c_void,
+            "strncat",
+        ),
+        (
+            libc::strtok as *const c_void,
+            frankenlibc_abi::string_abi::strtok as *const c_void,
+            "strtok",
+        ),
+        (
+            strsep as *const c_void,
+            frankenlibc_abi::string_abi::strsep as *const c_void,
+            "strsep",
+        ),
+        (
+            libc::strdup as *const c_void,
+            frankenlibc_abi::string_abi::strdup as *const c_void,
+            "strdup",
+        ),
+        (
+            libc::strndup as *const c_void,
+            frankenlibc_abi::string_abi::strndup as *const c_void,
+            "strndup",
+        ),
+        (
+            libc::strcspn as *const c_void,
+            frankenlibc_abi::string_abi::strcspn as *const c_void,
+            "strcspn",
+        ),
+        (
+            libc::strpbrk as *const c_void,
+            frankenlibc_abi::string_abi::strpbrk as *const c_void,
+            "strpbrk",
+        ),
+        (
+            libc::strcasestr as *const c_void,
+            frankenlibc_abi::string_abi::strcasestr as *const c_void,
+            "strcasestr",
+        ),
+        (
+            libc::strcoll as *const c_void,
+            frankenlibc_abi::string_abi::strcoll as *const c_void,
+            "strcoll",
+        ),
+        (
+            libc::strxfrm as *const c_void,
+            frankenlibc_abi::string_abi::strxfrm as *const c_void,
+            "strxfrm",
+        ),
+        // The BSD compat aliases and the legacy byte routines. These are the
+        // symbols a link-time gate is most likely to declare by hand (the crate
+        // does not offer them), which makes them the ones worth probing.
+        (
+            index as *const c_void,
+            frankenlibc_abi::string_abi::index as *const c_void,
+            "index",
+        ),
+        (
+            rindex as *const c_void,
+            frankenlibc_abi::string_abi::rindex as *const c_void,
+            "rindex",
+        ),
+        (
+            bzero as *const c_void,
+            frankenlibc_abi::string_abi::bzero as *const c_void,
+            "bzero",
+        ),
+        (
+            bcopy as *const c_void,
+            frankenlibc_abi::string_abi::bcopy as *const c_void,
+            "bcopy",
+        ),
+        (
+            bcmp as *const c_void,
+            frankenlibc_abi::string_abi::bcmp as *const c_void,
+            "bcmp",
+        ),
+        // The wide family, same hazard: `wmemcpy`/`wmemset`/`wmemcmp`/`wmemchr`
+        // are the wide spellings of the compiler_builtins-supplied set.
+        (
+            libc::wcslen as *const c_void,
+            frankenlibc_abi::wchar_abi::wcslen as *const c_void,
+            "wcslen",
+        ),
+        (
+            wcsstr as *const c_void,
+            frankenlibc_abi::wchar_abi::wcsstr as *const c_void,
+            "wcsstr",
+        ),
+        (
+            wmemcpy as *const c_void,
+            frankenlibc_abi::wchar_abi::wmemcpy as *const c_void,
+            "wmemcpy",
+        ),
+        (
+            wmemset as *const c_void,
+            frankenlibc_abi::wchar_abi::wmemset as *const c_void,
+            "wmemset",
+        ),
+        (
+            wmemcmp as *const c_void,
+            frankenlibc_abi::wchar_abi::wmemcmp as *const c_void,
+            "wmemcmp",
+        ),
+        (
+            libc::wmemchr as *const c_void,
+            frankenlibc_abi::wchar_abi::wmemchr as *const c_void,
+            "wmemchr",
         ),
     ];
 

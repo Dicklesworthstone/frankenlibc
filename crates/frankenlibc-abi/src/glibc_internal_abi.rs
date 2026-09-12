@@ -1765,30 +1765,43 @@ pub unsafe extern "C" fn __res_send(
 // We provide a minimal opaque struct in TLS. Callers that only check for
 // non-null or pass it to __res_n* will work correctly since our __res_n*
 // implementations ignore the state pointer.
+//
+// ALIGNMENT IS LOAD-BEARING. `__res_state()` hands this address to the caller as
+// a `struct __res_state *`, and that struct is pointers, ints and longs — a
+// caller reading or writing any field does a pointer-width access. A bare
+// `[u8; 640]` has align 1, so the struct the caller sees can begin at any
+// address the TLS block happens to give. Same class as the re_comp buffer below
+// and the getmntent buffer in unistd_abi, both of which aborted with
+// `misaligned pointer dereference` before their first assertion;
+// `#[repr(C, align(8))]` pins offset 0 and the alignment so a pointer cast to the
+// wrapper is also a valid pointer to its bytes.
+#[repr(C, align(8))]
+struct ResStateBuf([u8; 640]);
+
 #[cfg(feature = "owned-tls-cache")]
-static RES_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 640]> =
+static RES_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ResStateBuf> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_res_state);
 
 #[cfg(feature = "owned-tls-cache")]
-fn empty_res_state() -> [u8; 640] {
-    [0u8; 640]
+fn empty_res_state() -> ResStateBuf {
+    ResStateBuf([0u8; 640])
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static RES_STATE: std::cell::UnsafeCell<[u8; 640]> =
-        const { std::cell::UnsafeCell::new([0u8; 640]) };
+    static RES_STATE: std::cell::UnsafeCell<ResStateBuf> =
+        const { std::cell::UnsafeCell::new(ResStateBuf([0u8; 640])) };
 }
 
 #[inline]
 fn res_state_ptr() -> *mut c_void {
     #[cfg(feature = "owned-tls-cache")]
     {
-        RES_STATE_OWNED_TLS.with(|state| state.as_mut_ptr().cast::<c_void>())
+        RES_STATE_OWNED_TLS.with(|state| state.0.as_mut_ptr().cast::<c_void>())
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RES_STATE.with(|state| state.get().cast::<c_void>())
+        RES_STATE.with(|state| state.get().cast::<u8>().cast::<c_void>())
     }
 }
 

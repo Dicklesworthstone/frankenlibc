@@ -25,9 +25,10 @@ unsafe extern "C" {
 
 /// Read all lines from a fmemopen-backed buffer, returning the sequence
 /// of (line, return_value) tuples.
-fn collect_lines<F>(content: &[u8], reader: F) -> Vec<(Vec<u8>, isize)>
+fn collect_lines<F, R>(content: &[u8], reader: F, release: R) -> Vec<(Vec<u8>, isize)>
 where
     F: Fn(*mut *mut c_char, *mut usize, *mut libc::FILE) -> isize,
+    R: Fn(*mut c_char),
 {
     let mut owned = content.to_vec();
     let fp = unsafe {
@@ -52,7 +53,13 @@ where
         out.push((bytes, r));
     }
     if !line.is_null() {
-        unsafe { libc::free(line as *mut libc::c_void) };
+        // RELEASED BY THE PROVIDER THAT MAY HAVE ALLOCATED IT. fl's getline
+        // allocates its own buffer for a native stream and delegates (returning
+        // host storage) for a host stream, so freeing through fl's entrypoint is
+        // correct in both cases and glibc's free is only correct for the host
+        // arm. One shared `libc::free` here is what aborted this target with
+        // "free(): invalid size" before bd-reality-202609-lx578q.7.
+        release(line);
     }
     unsafe { fclose(fp) };
     out
@@ -61,10 +68,16 @@ where
 #[test]
 fn diff_getline_via_fmemopen() {
     let content = b"first line\nsecond line\nlast no newline";
-    let fl_lines = collect_lines(content, |lp, n, fp| unsafe {
-        frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void)
-    });
-    let lc_lines = collect_lines(content, |lp, n, fp| unsafe { getline(lp, n, fp) });
+    let fl_lines = collect_lines(
+        content,
+        |lp, n, fp| unsafe { frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void) },
+        |p| unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) },
+    );
+    let lc_lines = collect_lines(
+        content,
+        |lp, n, fp| unsafe { getline(lp, n, fp) },
+        |p| unsafe { libc::free(p.cast()) },
+    );
     assert_eq!(
         fl_lines.len(),
         lc_lines.len(),
@@ -81,12 +94,18 @@ fn diff_getline_via_fmemopen() {
 #[test]
 fn diff_getdelim_with_colon_delimiter() {
     let content = b"alpha:beta:gamma:delta";
-    let fl_lines = collect_lines(content, |lp, n, fp| unsafe {
-        frankenlibc_abi::stdio_abi::getdelim(lp, n, b':' as c_int, fp as *mut c_void)
-    });
-    let lc_lines = collect_lines(content, |lp, n, fp| unsafe {
-        getdelim(lp, n, b':' as c_int, fp)
-    });
+    let fl_lines = collect_lines(
+        content,
+        |lp, n, fp| unsafe {
+            frankenlibc_abi::stdio_abi::getdelim(lp, n, b':' as c_int, fp as *mut c_void)
+        },
+        |p| unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) },
+    );
+    let lc_lines = collect_lines(
+        content,
+        |lp, n, fp| unsafe { getdelim(lp, n, b':' as c_int, fp) },
+        |p| unsafe { libc::free(p.cast()) },
+    );
     assert_eq!(fl_lines.len(), lc_lines.len(), "field count mismatch");
     for (i, (fl, lc)) in fl_lines.iter().zip(lc_lines.iter()).enumerate() {
         assert_eq!(fl.0, lc.0, "field {i} bytes");
@@ -97,10 +116,16 @@ fn diff_getdelim_with_colon_delimiter() {
 #[test]
 fn diff_getline_empty_input() {
     let content = b"";
-    let fl_lines = collect_lines(content, |lp, n, fp| unsafe {
-        frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void)
-    });
-    let lc_lines = collect_lines(content, |lp, n, fp| unsafe { getline(lp, n, fp) });
+    let fl_lines = collect_lines(
+        content,
+        |lp, n, fp| unsafe { frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void) },
+        |p| unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) },
+    );
+    let lc_lines = collect_lines(
+        content,
+        |lp, n, fp| unsafe { getline(lp, n, fp) },
+        |p| unsafe { libc::free(p.cast()) },
+    );
     assert_eq!(fl_lines, lc_lines);
 }
 
@@ -110,10 +135,16 @@ fn diff_getline_single_long_line() {
     let line: Vec<u8> = std::iter::repeat_n(b'x', 200)
         .chain(std::iter::once(b'\n'))
         .collect();
-    let fl_lines = collect_lines(&line, |lp, n, fp| unsafe {
-        frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void)
-    });
-    let lc_lines = collect_lines(&line, |lp, n, fp| unsafe { getline(lp, n, fp) });
+    let fl_lines = collect_lines(
+        &line,
+        |lp, n, fp| unsafe { frankenlibc_abi::stdio_abi::getline(lp, n, fp as *mut c_void) },
+        |p| unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) },
+    );
+    let lc_lines = collect_lines(
+        &line,
+        |lp, n, fp| unsafe { getline(lp, n, fp) },
+        |p| unsafe { libc::free(p.cast()) },
+    );
     assert_eq!(fl_lines.len(), 1);
     assert_eq!(fl_lines[0].0, line);
     assert_eq!(fl_lines, lc_lines);

@@ -15864,19 +15864,33 @@ pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char
 ///
 /// glibc uses a static internal mntent + string buffer per-thread.
 /// Layout: first 48 bytes = struct mntent, rest = string data.
+///
+/// ALIGNMENT IS LOAD-BEARING, and this is why the storage is a wrapper rather
+/// than a bare `[u8; N]`. The first 48 bytes are written as a `struct mntent`
+/// (four `char *`, then two `int`), so they must be aligned for a pointer. A
+/// bare byte array has align 1, and the thread-local's address is whatever the
+/// TLS block hands out: measured on a real run at `0x7971075fd604` — 4 mod 8 —
+/// where `*ent.add(4) = fields.freq` became a misaligned pointer-width store.
+/// Debug builds abort on that check and take the whole test binary with them
+/// (conformance_diff_getmntent aborted the suite census), and a target that
+/// faults on unaligned stores would crash for real rather than abort.
+/// bd-reality-202609-lx578q.7.
 const GETMNTENT_BUFSIZE: usize = 4096;
 
-const fn empty_getmntent_buf() -> [u8; GETMNTENT_BUFSIZE] {
-    [0u8; GETMNTENT_BUFSIZE]
+#[repr(align(8))]
+struct GetmntentBuf([u8; GETMNTENT_BUFSIZE]);
+
+const fn empty_getmntent_buf() -> GetmntentBuf {
+    GetmntentBuf([0u8; GETMNTENT_BUFSIZE])
 }
 
 #[cfg(feature = "owned-tls-cache")]
-static GETMNTENT_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; GETMNTENT_BUFSIZE]> =
+static GETMNTENT_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetmntentBuf> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_getmntent_buf);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GETMNTENT_BUF: std::cell::UnsafeCell<[u8; GETMNTENT_BUFSIZE]> =
+    static GETMNTENT_BUF: std::cell::UnsafeCell<GetmntentBuf> =
         const { std::cell::UnsafeCell::new(empty_getmntent_buf()) };
 }
 
@@ -15884,7 +15898,7 @@ std::thread_local! {
 fn with_getmntent_buf<R>(f: impl FnOnce(&mut [u8; GETMNTENT_BUFSIZE]) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
-        GETMNTENT_BUF_OWNED_TLS.with(f)
+        GETMNTENT_BUF_OWNED_TLS.with(|buf| f(&mut buf.0))
     }
 
     #[cfg(not(feature = "owned-tls-cache"))]
@@ -15892,7 +15906,7 @@ fn with_getmntent_buf<R>(f: impl FnOnce(&mut [u8; GETMNTENT_BUFSIZE]) -> R) -> R
         GETMNTENT_BUF.with(|cell| {
             // SAFETY: GETMNTENT_BUF is per-thread storage and this callback
             // keeps the mutable reference scoped to the thread-local access.
-            f(unsafe { &mut *cell.get() })
+            f(unsafe { &mut (*cell.get()).0 })
         })
     }
 }
@@ -26193,7 +26207,15 @@ pub unsafe extern "C" fn obstack_vprintf(
     unsafe {
         std::ptr::copy_nonoverlapping(result_ptr as *const u8, (*h).next_free, data_len);
         (*h).next_free = (*h).next_free.add(data_len);
-        crate::malloc_abi::raw_free(result_ptr as *mut c_void);
+        // RELEASE THROUGH THE ALLOCATOR THAT PRODUCED IT. `vasprintf` allocates
+        // through the exported `malloc`, i.e. fl's segment heap, so the matching
+        // release is the exported `free`. `raw_free` deliberately pairs with
+        // `raw_alloc`'s HOST allocation path and calls the host free directly, so
+        // handing it a segment pointer gives glibc a chunk header it never wrote:
+        // "free(): invalid size", aborting whichever process called
+        // obstack_printf (measured on the obstack gates in
+        // glibc_internal_abi_test, bd-reality-202609-lx578q.7).
+        crate::malloc_abi::free(result_ptr as *mut c_void);
     }
     len
 }

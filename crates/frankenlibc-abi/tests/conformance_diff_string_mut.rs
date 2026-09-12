@@ -425,7 +425,9 @@ fn diff_strdup_cases() {
                 });
             }
             unsafe {
-                libc::free(p_fl as *mut c_void);
+                // strdup is the provider's own allocation: fl's result goes back
+                // through fl's free, glibc's through glibc's.
+                frankenlibc_abi::malloc_abi::free(p_fl as *mut c_void);
                 libc::free(p_lc as *mut c_void);
             }
         }
@@ -468,7 +470,9 @@ fn diff_strndup_cases() {
                     });
                 }
                 unsafe {
-                    libc::free(p_fl as *mut c_void);
+                    // strndup is the provider's own allocation: fl's result goes
+                    // back through fl's free, glibc's through glibc's.
+                    frankenlibc_abi::malloc_abi::free(p_fl as *mut c_void);
                     libc::free(p_lc as *mut c_void);
                 }
             }

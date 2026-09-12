@@ -2584,31 +2584,38 @@ pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
 
 // rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
 // This is 24 bytes on x86_64 (4 + padding + 16 for rpc_err).
-// We allocate 32 bytes to be safe for alignment.
+// We allocate 32 bytes to be safe for SIZE — and, since callers receive this
+// address as a `struct rpc_createerr *` and write `cf_stat`/`cf_error` fields
+// through it, for ALIGNMENT too: a bare `[u8; 32]` has align 1, which is the
+// class that aborted `re_comp` and `getmntent` with misaligned pointer
+// dereference. `#[repr(C, align(8))]` is what actually makes the cast safe.
+#[repr(C, align(8))]
+struct RpcCreateErrBuf([u8; 32]);
+
 #[cfg(feature = "owned-tls-cache")]
-static RPC_CREATEERR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 32]> =
+static RPC_CREATEERR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcCreateErrBuf> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_createerr);
 
 #[cfg(feature = "owned-tls-cache")]
-fn empty_rpc_createerr() -> [u8; 32] {
-    [0u8; 32]
+fn empty_rpc_createerr() -> RpcCreateErrBuf {
+    RpcCreateErrBuf([0u8; 32])
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RPC_CREATEERR_TLS: std::cell::UnsafeCell<[u8; 32]> =
-        const { std::cell::UnsafeCell::new([0u8; 32]) };
+    static RPC_CREATEERR_TLS: std::cell::UnsafeCell<RpcCreateErrBuf> =
+        const { std::cell::UnsafeCell::new(RpcCreateErrBuf([0u8; 32])) };
 }
 
 #[inline]
 fn rpc_createerr_ptr() -> *mut c_void {
     #[cfg(feature = "owned-tls-cache")]
     {
-        RPC_CREATEERR_OWNED_TLS.with(|buf| buf.as_mut_ptr().cast())
+        RPC_CREATEERR_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RPC_CREATEERR_TLS.with(|cell| cell.get().cast())
+        RPC_CREATEERR_TLS.with(|cell| cell.get().cast::<u8>().cast())
     }
 }
 
@@ -2623,30 +2630,41 @@ pub unsafe extern "C" fn __rpc_thread_createerr() -> *mut c_void {
 
 // fd_set size derived from FD_SETSIZE (1024 on Linux → 128 bytes).
 const RPC_FD_SET_BYTES: usize = libc::FD_SETSIZE / 8;
+
+// ALIGNMENT IS LOAD-BEARING. `fd_set` is an array of `__fd_mask` (`long`), and
+// `__rpc_thread_svc_fdset()` hands this address to C code whose FD_SET/FD_ISSET/
+// FD_CLR write pointer-width words through it — and whose `select()` is handed the
+// same pointer, so the kernel reads it as `unsigned long[]` too. A bare
+// `[u8; N]` has align 1 and the TLS block can place it anywhere, which is the
+// class that aborted `re_comp` and `getmntent` with `misaligned pointer
+// dereference`. `#[repr(C, align(8))]` pins offset 0 and the alignment.
+#[repr(C, align(8))]
+struct RpcSvcFdSetBuf([u8; RPC_FD_SET_BYTES]);
+
 #[cfg(feature = "owned-tls-cache")]
-static RPC_SVC_FDSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; RPC_FD_SET_BYTES]> =
+static RPC_SVC_FDSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcSvcFdSetBuf> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_svc_fdset);
 
 #[cfg(feature = "owned-tls-cache")]
-fn empty_rpc_svc_fdset() -> [u8; RPC_FD_SET_BYTES] {
-    [0u8; RPC_FD_SET_BYTES]
+fn empty_rpc_svc_fdset() -> RpcSvcFdSetBuf {
+    RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RPC_SVC_FDSET_TLS: std::cell::UnsafeCell<[u8; RPC_FD_SET_BYTES]> =
-        const { std::cell::UnsafeCell::new([0u8; RPC_FD_SET_BYTES]) };
+    static RPC_SVC_FDSET_TLS: std::cell::UnsafeCell<RpcSvcFdSetBuf> =
+        const { std::cell::UnsafeCell::new(RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])) };
 }
 
 #[inline]
 fn rpc_svc_fdset_ptr() -> *mut c_void {
     #[cfg(feature = "owned-tls-cache")]
     {
-        RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.as_mut_ptr().cast())
+        RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RPC_SVC_FDSET_TLS.with(|cell| cell.get().cast())
+        RPC_SVC_FDSET_TLS.with(|cell| cell.get().cast::<u8>().cast())
     }
 }
 
