@@ -324,6 +324,27 @@ fn setrlimit_preserves_kernel_errno_on_failed_raise() {
         *libc::__errno_location() = 0;
     }
     let libc_rc = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &attempted) };
+    if libc_rc == 0 {
+        // PRIVILEGED HOST: the premise does not hold, and it is a property of the
+        // process's privileges rather than of either library. Measured on an rch
+        // worker running as root, the host's OWN setrlimit accepts this raise, so
+        // there is no kernel failure for either implementation to preserve errno
+        // across. Restore the limit the call just moved (it had a side effect) and
+        // report the skip instead of asserting an unprivileged outcome; a gate
+        // that fails because the host is privileged measures the host, not fl
+        // (bd-7ilguh).
+        let restore = libc::rlimit {
+            rlim_cur: current.rlim_cur,
+            rlim_max: current.rlim_max,
+        };
+        let restored = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &restore) };
+        eprintln!(
+            "setrlimit_preserves_kernel_errno_on_failed_raise: SKIPPED — the host \
+             accepted a hard-limit raise (privileged process), so no kernel failure \
+             exists to compare errno against (restore rc={restored})"
+        );
+        return;
+    }
     assert_eq!(
         libc_rc, -1,
         "host libc should reject an unprivileged hard-limit raise"

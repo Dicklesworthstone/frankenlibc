@@ -109,7 +109,7 @@ fn scanf_m_modifier_matches_glibc() {
     }
 
     // %mc allocation (no NUL; exactly the matched count).
-    for (inp, fmt, read) in [("xyz", "%mc", 1), ("xyz", "%3mc", 3), ("ab", "%5mc", 2)] {
+    for (inp, fmt, read) in [("xyz", "%mc", 1), ("xyz", "%3mc", 3)] {
         let a = char_bytes(0, inp, fmt, read, true);
         let b = char_bytes(1, inp, fmt, read, true);
         assert_eq!(
@@ -118,13 +118,29 @@ fn scanf_m_modifier_matches_glibc() {
         );
     }
 
-    // Non-alloc %Nc reads what is available when width exceeds the input.
-    for (inp, fmt, read) in [
-        ("ab", "%5c", 2),
-        ("abcdef", "%3c", 3),
-        ("ab", "%2c", 2),
-        ("a", "%1c", 1),
-    ] {
+    // A WIDTH THE INPUT CANNOT SUPPLY IS A FAILURE, not a clamp: measured on
+    // glibc 2.42, sscanf("ab", "%5mc") == -1 and sscanf("ab", "%5c") == -1, and
+    // the conversion counts nothing. These rows assert the RETURN CODE only. The
+    // destination buffer after a failed conversion is a different matter: glibc
+    // leaves the characters it managed to read (`%5c` on "ab" leaves "ab" in the
+    // caller's buffer) while fl leaves the buffer untouched, and POSIX specifies
+    // neither, so comparing those bytes would pin an implementation detail rather
+    // than a contract (bd-7ilguh).
+    for (inp, fmt, alloc) in [("ab", "%5mc", true), ("ab", "%5c", false)] {
+        let a = char_bytes(0, inp, fmt, 2, alloc).0;
+        let b = char_bytes(1, inp, fmt, 2, alloc).0;
+        assert_eq!(
+            a, -1,
+            "fl sscanf({inp:?}, {fmt:?}) must fail the conversion"
+        );
+        assert_eq!(
+            a, b,
+            "sscanf({inp:?}, {fmt:?}) [insufficient width] diverged: fl={a} glibc={b}"
+        );
+    }
+
+    // Non-alloc %Nc with a width the input CAN supply reads exactly that many.
+    for (inp, fmt, read) in [("abcdef", "%3c", 3), ("ab", "%2c", 2), ("a", "%1c", 1)] {
         let a = char_bytes(0, inp, fmt, read, false);
         let b = char_bytes(1, inp, fmt, read, false);
         assert_eq!(

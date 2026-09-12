@@ -1064,8 +1064,35 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                 match result {
                     None => {
                         // Matching failure or input exhaustion.
+                        //
+                        // `%c`/`%mc`/`%lc` ARE DIFFERENT: their width is a
+                        // REQUIREMENT, so running short of it is input exhaustion
+                        // and glibc answers EOF, not a matching failure. Measured
+                        // on glibc 2.42: sscanf("ab", "%5c") == -1,
+                        // sscanf("ab", "%5mc") == -1, sscanf("", "%1c") == -1,
+                        // while sscanf("ab", "%2c") == 1 and consumes both bytes.
+                        // Without this the engine reported a match failure and the
+                        // caller returned 0 where the host returns EOF (bd-7ilguh).
                         let exhausted_before_conversion = if spec.skips_leading_whitespace() {
                             skip_ws(input, pos, spec.wide_input) >= input.len()
+                        } else if spec.conversion == b'c' {
+                            let needed = spec.width.unwrap_or(1).max(1);
+                            let available = if spec.wide_input {
+                                let mut count = 0usize;
+                                let mut i = pos;
+                                while i < input.len() {
+                                    let len = utf8_seq_len(input[i]);
+                                    if i + len > input.len() {
+                                        break;
+                                    }
+                                    i += len;
+                                    count += 1;
+                                }
+                                count
+                            } else {
+                                input.len() - pos
+                            };
+                            available < needed
                         } else {
                             pos >= input.len()
                         };
@@ -1858,41 +1885,41 @@ fn scan_char(
     // WIDE characters — read `n` complete UTF-8 sequences either way so a width
     // never splits a multibyte character.
     if wide_input || matches!(spec.length, LengthMod::L) {
-        // Read UP TO `n` complete UTF-8 sequences. Like glibc, a `%Nc` whose
-        // width exceeds the available input reads what IS there and still
-        // succeeds; only a total absence of input is a matching failure.
+        // REQUIRE THE FULL WIDTH. glibc FAILS the conversion when the input runs
+        // out before `n` characters — measured on glibc 2.42: swscanf(L"ab",
+        // L"%5lc") == -1 (and sscanf("ab", "%5c") == -1 for the narrow form
+        // below), while swscanf(L"ab", L"%2lc") == 1 with both characters. An
+        // earlier revision of this branch read UP TO `n` and still succeeded, on
+        // the claim that glibc clamps; that claim is wrong and the differential
+        // gate caught it (bd-7ilguh).
         let mut end = pos;
         let mut read = 0usize;
         while read < n && end < input.len() {
             let next = end.checked_add(utf8_seq_len(input[end]))?;
             if next > input.len() {
-                break; // incomplete trailing sequence — stop here
+                break; // incomplete trailing sequence — cannot complete `n` chars
             }
             end = next;
             read += 1;
         }
-        if read == 0 {
+        if read < n {
             return None;
         }
-        return Some((Some(ScanValue::Char(ScanBytes::from_slice(&input[pos..end]))), end));
+        return Some((
+            Some(ScanValue::Char(ScanBytes::from_slice(&input[pos..end]))),
+            end,
+        ));
     }
     // Guard against pathological widths that overflow pos + n. Under
     // debug_assertions `usize` add panics; in release it wraps and
     // would skip the bounds check below, reading past input. (bd-35vob)
     let want_end = pos.checked_add(n)?;
-    // CLAMP to what is available rather than failing. glibc's `%Nc` reads what
-    // IS there and succeeds — sscanf("ab", "%5mc") returns 1 having read "ab",
-    // not EOF. fl required the full width and so failed the conversion, which
-    // is the bug this fixes; the WIDE branch above already had the clamping
-    // behaviour, so the two paths were inconsistent with each other as well as
-    // with glibc.
-    //
-    // A total absence of input is still a matching failure (read == 0), which
-    // the engine reports as EOF because nothing remained to convert.
-    let end = want_end.min(input.len());
-    if end == pos {
+    // The width is a REQUIREMENT, not a budget: if the input cannot supply `n`
+    // bytes the conversion fails and the engine reports it the way glibc does.
+    if want_end > input.len() {
         return None;
     }
+    let end = want_end;
     let chars = input[pos..end].to_vec();
     Some((Some(ScanValue::Char(ScanBytes::from_slice(&chars))), end))
 }
