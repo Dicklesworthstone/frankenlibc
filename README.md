@@ -3921,7 +3921,7 @@ To keep the runtime artifact lean, several capabilities live in companion crates
 | DSR (release infrastructure) | `/dp/dsr` (companion) | Release tooling |
 | UBS (ultimate bug scanner) | `/dp/ubs` (companion) | Pre-commit scanner |
 
-The repo `/data/projects/frankenlibc` contains only what's needed to *build, test, and run* FrankenLibC. The companion crates are pulled in via their published crates.io versions (`asupersync-conformance = "0.3.1"`, `ftui-harness = "0.3.1"`) as build-tooling dependencies, never as runtime libc dependencies.
+The repo `/data/projects/frankenlibc` contains only what's needed to *build, test, and run* FrankenLibC. The companion crates are pulled in via their published crates.io versions (`asupersync-conformance = "=0.5.0"`, `ftui-harness = "0.3.1"`) as build-tooling dependencies, never as runtime libc dependencies.
 
 This separation also makes the safety claim cleaner: "the runtime libc artifact depends on `parking_lot`, `blake3`, `sha2`, `libc` (types only), `libm`", and nothing else from outside the workspace.
 

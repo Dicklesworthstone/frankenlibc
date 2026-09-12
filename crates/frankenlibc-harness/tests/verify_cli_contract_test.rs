@@ -238,7 +238,7 @@ fn manifest_anchors_to_verify_subcommand() -> TestResult {
         "manifest_id mismatch",
     )?;
     require(
-        json_string(&m, "bead")? == "pending-tracker-verify-cli-contract",
+        json_string(&m, "bead")? == "bd-yjz2d",
         "bead mismatch",
     )?;
     require(
