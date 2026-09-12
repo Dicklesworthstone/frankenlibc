@@ -1723,7 +1723,24 @@ pub fn ynf(n: i32, x: f32) -> f32 {
     match n {
         0 => y0f(x),
         1 => y1f(x),
-        -1 => -y1f(x),
+        -1 => {
+            // THE IDENTITY'S SIGN FLIP MUST NOT CREATE A NEGATIVE ZERO. glibc's
+            // float Y_n returns +0.0 at +inf, and negating that would hand the
+            // caller -0.0 — a bit-pattern divergence in a case where both values
+            // compare equal, which is exactly the kind that survives review
+            // (measured: ynf(-1, +inf) is +0.0 on host glibc 2.42, and this
+            // module returned -0.0 — bd-7ilguh, found by the differential gate
+            // conformance_diff_bessel_jn_yn).
+            //
+            // Note the reference implementation is INCONSISTENT here: its double
+            // yn(-1, +inf) really is -0.0. The ABI contract is per-symbol, and
+            // the float symbol is the one this function backs, so the exception
+            // is deliberately narrower than "non-finite": it covers only the
+            // +inf zero, leaving the NaN behaviour at -inf unchanged (that
+            // already matches, sign bit included).
+            let y = y1f(x);
+            if x == f32::INFINITY { y } else { -y }
+        }
         _ => {
             raise_y_special_f32(x);
             libm::ynf(n, x)
