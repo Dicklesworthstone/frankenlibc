@@ -973,10 +973,17 @@ unsafe fn environ_len() -> usize {
 /// Deep-copies the host environ into our own allocation so setenv/unsetenv can
 /// safely realloc. Safe to call multiple times (idempotent). Must be called
 /// after `init_environment_globals` has set the environ aliases.
+///
+/// REPUBLISHES UNCONDITIONALLY, even when the array is already ours. The copy
+/// path publishes as a side effect of moving the array, but a caller that runs
+/// after something ELSE moved it — a host `setenv` through Rust's std, say —
+/// needs the aliases re-pointed at the live array, and the early return would
+/// otherwise leave them stale while reporting success.
 pub fn take_environ_ownership() {
     let _lock = environ_lock_guard();
     // SAFETY: we hold the environ lock.
     let _ = unsafe { ensure_environ_owned() };
+    publish_environ_aliases();
 }
 
 /// Ensure environ is in our own allocation so we can grow it.

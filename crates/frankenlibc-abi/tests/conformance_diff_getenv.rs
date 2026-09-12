@@ -80,8 +80,21 @@ fn f_get(name: &str) -> Option<String> {
     }
 }
 
+/// Serializes the three tests below.
+///
+/// All three mutate PROCESS-GLOBAL state — the environ array and the pointer it
+/// hangs from — so running them concurrently is a data race on data no lock of
+/// theirs protects. That is not hypothetical: with them parallel, the alias test's
+/// ownership transfer landed between another test's `set_var` and its `getenv`,
+/// and the chunked census caught the result (`glibc getenv must see fl::putenv`
+/// failing in one run and passing in another, bd-reality-202609-lx578q.7).
+/// Holding this for the whole test makes the mutations strictly ordered, which is
+/// the property each of them assumes.
+static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn getenv_matches_glibc() {
+    let _serial = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // A var we control, set via the platform setenv (writes the shared environ).
     unsafe { std::env::set_var("FL_GETENV_PROBE", "value-42") };
     for name in [
@@ -105,6 +118,7 @@ fn getenv_matches_glibc() {
 
 #[test]
 fn putenv_then_getenv_cross_impl() {
+    let _serial = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Insert via fl::putenv; both impls' getenv must see it (shared environ).
     // putenv keeps the caller's pointer in environ, so the string is moved into
     // a process-lifetime store rather than leaked.
@@ -201,6 +215,7 @@ fn fl_alias_array(name: &str) -> *mut *mut c_char {
 
 #[test]
 fn environ_aliases_track_the_live_environment_like_glibc() {
+    let _serial = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let fl_aliases = ["environ", "_environ", "__environ"];
 
     // A test binary starts through the HOST `__libc_start_main`, so fl's own
