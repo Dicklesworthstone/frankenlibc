@@ -38,6 +38,22 @@ fn hex(bytes: &[u8]) -> String {
 
 #[test]
 fn mbsnrtowcs_wcsnrtombs_simd_golden() {
+    // A MULTIBYTE CORPORA NEEDS A MULTIBYTE LOCALE, and the gate must establish it
+    // rather than inherit it. In the C locale every non-ASCII byte is EILSEQ — glibc
+    // does exactly the same, and fl's converters mirror it — so running this corpus
+    // under the worker's default locale measures the C-locale rejection path instead
+    // of the SIMD widening this gate exists to pin. Measured on the 2026-09-11
+    // census: `café` failed at the é, and the converter's error return was then fed
+    // back as `nwc`, which aborted the process inside `slice::from_raw_parts`
+    // (bd-7ilguh). Assert the locale TOOK EFFECT: a host without C.UTF-8 must fail
+    // loudly here rather than silently measure the wrong path.
+    let locale =
+        unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    assert!(
+        !locale.is_null(),
+        "C.UTF-8 must be available to exercise multibyte conversion"
+    );
+
     let mut src = corpus();
     src.push(0);
     let nbytes = src.len() - 1;
@@ -54,6 +70,17 @@ fn mbsnrtowcs_wcsnrtombs_simd_golden() {
             std::ptr::null_mut(),
         )
     };
+    // `mbsnrtowcs` returns `(size_t)-1` on error, and feeding that back as `nwc`
+    // is what made this gate abort the process inside the converter rather than
+    // report a result (bd-7ilguh). Assert the conversion succeeded BEFORE using
+    // its return value: an unchecked error return turns a failing conversion into
+    // an unreadable crash.
+    assert_ne!(
+        nw,
+        usize::MAX,
+        "mbsnrtowcs failed on the corpus (EILSEQ or tracked-source underrun), so \
+         everything below would be measuring an error path"
+    );
     wide.truncate(nw);
     let wide_bytes: Vec<u8> = wide.iter().flat_map(|w| w.to_le_bytes()).collect();
     let wide_hash = hex(&wide_bytes);

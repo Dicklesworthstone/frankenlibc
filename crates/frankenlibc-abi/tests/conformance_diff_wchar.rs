@@ -1960,7 +1960,7 @@ fn diff_wcsdup_cases() {
                 glibc: format!("{}", lc_p.is_null()),
             });
             if !fl_p.is_null() {
-                unsafe { libc::free(fl_p as *mut libc::c_void) };
+                unsafe { frankenlibc_abi::malloc_abi::free(fl_p as *mut libc::c_void) };
             }
             if !lc_p.is_null() {
                 unsafe { libc::free(lc_p as *mut libc::c_void) };
@@ -1991,7 +1991,7 @@ fn diff_wcsdup_cases() {
                     break;
                 }
             }
-            unsafe { libc::free(fl_p as *mut libc::c_void) };
+            unsafe { frankenlibc_abi::malloc_abi::free(fl_p as *mut libc::c_void) };
             unsafe { libc::free(lc_p as *mut libc::c_void) };
         }
     }

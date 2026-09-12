@@ -7840,9 +7840,18 @@ pub unsafe extern "C" fn mbsnrtowcs(
         // codepoint, and the run stops at the first NUL / multibyte lead so every
         // terminator / multibyte / error case stays in the scalar step below.
         if state_initial {
-            // SAFETY: `s` points to at least `remaining` readable bytes — the same
-            // window `mbrtowc` is given below.
-            let src_window = unsafe { std::slice::from_raw_parts(s as *const u8, remaining) };
+            // A byte limit large enough that the window would exceed `isize::MAX`
+            // is not a real request — no C string is that long — but handing it to
+            // `from_raw_parts` anyway aborts the process on Rust's UB check
+            // ("slice::from_raw_parts requires ... the total size of the slice not
+            // to exceed isize::MAX"), which is what happened to this converter's
+            // sibling in golden_wchar_nrt_simd (bd-7ilguh). Clamp the WINDOW, not
+            // the logical `nms` limit, so the scalar step below still honours it.
+            let window_bytes = remaining.min(isize::MAX as usize);
+            // SAFETY: `s` points to at least `window_bytes` readable bytes — the
+            // same window `mbrtowc` is given below, capped so the slice is
+            // constructible.
+            let src_window = unsafe { std::slice::from_raw_parts(s as *const u8, window_bytes) };
             // (chars consumed, bytes consumed) — equal for the ASCII-only write
             // path, distinct for the count path which also fast-forwards contiguous
             // multibyte runs.
@@ -7963,6 +7972,16 @@ pub unsafe extern "C" fn wcsnrtombs(
     let source_bound = known_remaining(s as usize).map(bytes_to_wchars);
     let max_wchars = source_bound.map(|bound| bound.min(nwc)).unwrap_or(nwc);
 
+    // A wide-char limit above `isize::MAX / 4` cannot describe a real string and
+    // cannot be turned into a slice, so every window below clamps it: a caller
+    // that passes `(size_t)-1` (typically by using an error return it never
+    // checked) used to abort the process inside `slice::from_raw_parts` instead of
+    // getting a real conversion. Measured on golden_wchar_nrt_simd; the caller's
+    // unchecked `(size_t)-1` is a bug in its own right, but converting it into a
+    // process abort is not the library's job (bd-7ilguh).
+    const MAX_CONSTRUCTIBLE_WCHARS: usize = isize::MAX as usize / std::mem::size_of::<u32>();
+    let max_wchars = max_wchars.min(MAX_CONSTRUCTIBLE_WCHARS);
+
     // Count-only mode (dst == NULL): SIMD-sum the UTF-8 byte length over the
     // bounded char window instead of the scalar per-char `wcrtomb` count loop
     // below (which only bulk-counted the ASCII prefix and paid `wcrtomb` per
@@ -8017,8 +8036,16 @@ pub unsafe extern "C" fn wcsnrtombs(
         // byte-for-byte identical (an ASCII wchar narrows 1:1 to the same byte)
         // and the bd-2g7oyh.186 dest-full / EILSEQ-on-truncation logic is intact.
         let remaining_wc = max_wchars - wchars_consumed;
-        // SAFETY: `s` points to at least `remaining_wc` readable wide chars.
-        let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, remaining_wc) };
+        // Same clamp as the byte-window converter above, and for the same reason:
+        // `nwc` can be `(size_t)-1` (which is what a caller passes after an error
+        // return it did not check), and a slice of that many `u32`s is both
+        // unconstructible and unsatisfiable, so the UB check aborts the process
+        // instead of the call returning an error. Clamp the WINDOW, not the logical
+        // limit, so the scalar step below still honours `nwc`.
+        let window_wc = remaining_wc.min(isize::MAX as usize / std::mem::size_of::<u32>());
+        // SAFETY: `s` points to at least `window_wc` readable wide chars, capped so
+        // the slice is constructible.
+        let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, window_wc) };
         // Count mode (dst == NULL) returned above via the SIMD `wcs_encoded_len`
         // fast path, so `dst` is non-null here — this is the write path.
         // SAFETY: `dst` has >= `len` bytes; `written <= len`.
