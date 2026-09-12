@@ -2926,6 +2926,18 @@ unsafe fn flush_slot_stats(slot: &AllocatorReentrySlot, global: &FlatCombiningSt
 /// non-atomically in the slot, skipping the combiner-lock CAS.
 #[inline]
 fn record_stats(slot: Option<&AllocatorReentrySlot>, op: usize, size: usize) {
+    // TEMPORARY DIAGNOSTIC (bd-7ilguh, reverted in the same commit): prints one
+    // line per recorded alloc/free so the histogram-liveness failure can be
+    // attributed instead of guessed at.
+    if std::env::var_os("FL_MALLOC_STATS_TRACE").is_some() {
+        eprintln!(
+            "STATTRA {}{} size={} bin={}",
+            if op == FC_OP_ALLOC { "alloc" } else { "free " },
+            if slot.is_some() { " slot" } else { " glob" },
+            size,
+            stats_bin_for_size(size)
+        );
+    }
     record_stats_binned(slot, op, size, StatsBin::for_size(size));
 }
 
@@ -2984,6 +2996,18 @@ impl StatsBin {
 
 #[inline(always)]
 fn record_stats_binned(slot: Option<&AllocatorReentrySlot>, op: usize, size: usize, bin: StatsBin) {
+    // TEMPORARY DIAGNOSTIC (bd-7ilguh, reverted in the same commit): prints one
+    // line per recorded alloc/free so the histogram-liveness failure can be
+    // attributed instead of guessed at. Every caller funnels through here.
+    if std::env::var_os("FL_MALLOC_STATS_TRACE").is_some() {
+        eprintln!(
+            "STATTRA {} size={} bin={} slot={}",
+            if op == FC_OP_ALLOC { "alloc" } else { "free " },
+            size,
+            bin.get(),
+            slot.is_some(),
+        );
+    }
     if size == 0 {
         return;
     }
@@ -3055,15 +3079,29 @@ fn record_free_stats_binned(slot: Option<&AllocatorReentrySlot>, size: usize, cl
 /// [`snapshot_alloc_stats`] does, so a caller that has been allocating on the
 /// lean slot-local path still sees its own work.
 fn per_size_class_counts() -> [usize; MALLOC_STATS_BIN_COUNT] {
+    // TEMPORARY DIAGNOSTIC (bd-7ilguh, reverted): what the reader actually sees.
+    let trace = std::env::var_os("FL_MALLOC_STATS_TRACE").is_some();
+    let before = global_alloc_stats()
+        .map(|g| g.per_size_class_snapshot())
+        .unwrap_or([0; MALLOC_STATS_BIN_COUNT]);
+    let mut flushed = false;
     if let Some(global) = global_alloc_stats()
         && let Some(guard) = enter_allocator_reentry_guard()
     {
-        // SAFETY: the guard grants exclusive access to `guard.slot.segment_local`.
+        flushed = true;
         unsafe { flush_slot_stats(guard.slot, global) };
     }
-    global_alloc_stats()
-        .map(FlatCombiningStats::per_size_class_snapshot)
-        .unwrap_or([0; MALLOC_STATS_BIN_COUNT])
+    let out = global_alloc_stats()
+        .map(|g| g.per_size_class_snapshot())
+        .unwrap_or([0; MALLOC_STATS_BIN_COUNT]);
+    if trace {
+        eprintln!(
+            "STATREAD flushed={flushed} before_sum={} after_sum={}",
+            before.iter().sum::<usize>(),
+            out.iter().sum::<usize>()
+        );
+    }
+    out
 }
 
 fn snapshot_alloc_stats() -> MallocStatsSnapshot {
