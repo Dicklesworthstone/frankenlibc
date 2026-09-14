@@ -2081,11 +2081,33 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
     // Strict-mode fast path (DEFAULT deployed): strict passthrough has both bounds
     // == None, so both scans terminate (not adverse) — byte-identical to the strict
     // full body below; skips the decide + observe membrane tax.
+    //
+    // TRACKED INVALID INPUT REFUSES (bd-7ilguh): a wide string whose TRACKED
+    // allocation carries no NUL is not a string; scanning past the tracked extent
+    // (glibc UB parity) reads heap garbage and can "match" it, inventing a
+    // substring the caller never wrote. When the allocator knows the extent and
+    // the scan hits the end without a terminator, the deterministic repair is to
+    // refuse: return NULL ("not found"), never a match inside invented data.
+    // Untracked pointers (string literals, stack arrays) keep byte-identical
+    // glibc semantics — no bound is knowable, so nothing changes.
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
-            let (needle_len, _) = scan_w_string(needle, None);
+            let needle_track = known_remaining(needle as usize).map(bytes_to_wchars);
+            let (needle_len, needle_terminated) = scan_w_string(needle, needle_track);
+            if needle_track.is_some() && !needle_terminated {
+                return std::ptr::null_mut();
+            }
             if needle_len == 0 {
                 return haystack as *mut u32;
+            }
+            // A tracked haystack without a terminator refuses too; untracked
+            // haystacks keep the fused no-prescan path (no bound is knowable).
+            let hay_track = known_remaining(haystack as usize).map(bytes_to_wchars);
+            if let Some(bound) = hay_track {
+                let (_, hay_terminated) = scan_w_string(haystack, Some(bound));
+                if !hay_terminated {
+                    return std::ptr::null_mut();
+                }
             }
             // FUSED page-chunked search — no whole-haystack pre-scan, returns at the
             // first match (mirrors the byte strstr fused path). The strict path already
@@ -2138,16 +2160,25 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
         let mut out_local = std::ptr::null_mut();
         let mut work_local = 0usize;
 
-        if needle_len == 0 {
+        // TRACKED INVALID INPUT REFUSES (bd-7ilguh): mirrors the strict fast
+        // path. A bounded scan that hit its tracked extent without a NUL means
+        // the caller handed us a non-string; searching the clamped extent would
+        // invent a match inside data the caller never NUL-terminated. Refuse
+        // (NULL) and let the existing truncation-evidence recording below audit
+        // the refusal — do NOT search the clamped extent.
+        let tracked_invalid = (needle_bound.is_some() && !needle_terminated)
+            || (hay_bound.is_some() && !hay_terminated);
+        if tracked_invalid {
+            work_local = hay_len.max(needle_len);
+        } else if needle_len == 0 {
             out_local = haystack as *mut u32;
             work_local = 1;
         } else if hay_len >= needle_len {
-            // Route to the core wide Two-Way searcher (O(hay+needle)) instead of the
-            // old SIMD-prefilter-then-verify / naive double loop, both of which were
-            // O(hay_len * needle_len) on adversarial inputs (hay="aaaa…",
-            // needle="aaa…c") — measured 16-32x slower than core wcsstr (and a CPU-DoS
-            // vector). `hay_len`/`needle_len` already bake in any membrane clamp, so
-            // the bounded slices are safe. Byte-identical leftmost match.
+            // Route to the core wide Two-Way searcher (O(hay+needle)) instead of
+            // the old O(hay_len * needle_len) double loop (CPU-DoS vector on
+            // adversarial inputs). `hay_len`/`needle_len` already bake in any
+            // membrane clamp, so the bounded slices are safe. Byte-identical
+            // leftmost match.
             let hay_slice = std::slice::from_raw_parts(haystack, hay_len);
             let needle_slice = std::slice::from_raw_parts(needle, needle_len);
             match wide_core::wcsstr(hay_slice, needle_slice) {

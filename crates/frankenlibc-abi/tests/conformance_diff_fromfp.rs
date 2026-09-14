@@ -123940,16 +123940,59 @@ fn host() -> HostArm {
     // Getting this wrong is the one thing no assertion here could catch, and it
     // is also the defect the golden table exists to pin (bd-8f6gck), so the
     // return width is the part to read twice.
+    //
+    // The arm is VERSION-PINNED (@GLIBC_2.25), and that is load-bearing, not
+    // decoration: glibc 2.43 re-cut this family so the DEFAULT version
+    // (`fromfp@@GLIBC_2.43` ...) returns the result in the FLOATING argument's
+    // type (XMM0), while the @GLIBC_2.25 compat symbols keep the intmax_t-in-RAX
+    // contract this file's golden freezes and fl ships. A plain dlsym returns
+    // the default version, so the arm read a stale RAX and "returned" garbage
+    // that tracked the caller's register state: measured 2026-09-14,
+    // fromfp(+0.0, mode, width) came back 0xfffffc01 across the board
+    // (bd-7ilguh). The pin restores a real oracle; if the host ever drops the
+    // 2.25 symbols the resolution panics instead of silently degrading.
     unsafe {
         HostArm {
-            fromfp: dlsym_oracle::host_fn(c"fromfp", fl::fromfp as *const ()),
-            fromfpx: dlsym_oracle::host_fn(c"fromfpx", fl::fromfpx as *const ()),
-            fromfpf: dlsym_oracle::host_fn(c"fromfpf", fl::fromfpf as *const ()),
-            fromfpxf: dlsym_oracle::host_fn(c"fromfpxf", fl::fromfpxf as *const ()),
-            ufromfp: dlsym_oracle::host_fn(c"ufromfp", fl::ufromfp as *const ()),
-            ufromfpx: dlsym_oracle::host_fn(c"ufromfpx", fl::ufromfpx as *const ()),
-            ufromfpf: dlsym_oracle::host_fn(c"ufromfpf", fl::ufromfpf as *const ()),
-            ufromfpxf: dlsym_oracle::host_fn(c"ufromfpxf", fl::ufromfpxf as *const ()),
+            fromfp: dlsym_oracle::host_fn_versioned(
+                c"fromfp",
+                c"GLIBC_2.25",
+                fl::fromfp as *const (),
+            ),
+            fromfpx: dlsym_oracle::host_fn_versioned(
+                c"fromfpx",
+                c"GLIBC_2.25",
+                fl::fromfpx as *const (),
+            ),
+            fromfpf: dlsym_oracle::host_fn_versioned(
+                c"fromfpf",
+                c"GLIBC_2.25",
+                fl::fromfpf as *const (),
+            ),
+            fromfpxf: dlsym_oracle::host_fn_versioned(
+                c"fromfpxf",
+                c"GLIBC_2.25",
+                fl::fromfpxf as *const (),
+            ),
+            ufromfp: dlsym_oracle::host_fn_versioned(
+                c"ufromfp",
+                c"GLIBC_2.25",
+                fl::ufromfp as *const (),
+            ),
+            ufromfpx: dlsym_oracle::host_fn_versioned(
+                c"ufromfpx",
+                c"GLIBC_2.25",
+                fl::ufromfpx as *const (),
+            ),
+            ufromfpf: dlsym_oracle::host_fn_versioned(
+                c"ufromfpf",
+                c"GLIBC_2.25",
+                fl::ufromfpf as *const (),
+            ),
+            ufromfpxf: dlsym_oracle::host_fn_versioned(
+                c"ufromfpxf",
+                c"GLIBC_2.25",
+                fl::ufromfpxf as *const (),
+            ),
         }
     }
 }

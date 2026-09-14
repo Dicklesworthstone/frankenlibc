@@ -2364,7 +2364,30 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// and sets it to NULL, preventing glibc from iterating invalid structures.
 /// Our own `_IO_list_all` (exported via `#[no_mangle]`) handles all stdio
 /// stream tracking for binaries that do have COPY relocations.
+///
+/// The patch is applied ONLY when fl's stdio ABI actually interposed the
+/// host's — the C-visible `stdout` resolves to fl's exported global instead of
+/// glibc's own cell. When fl is linked statically into a consumer (rlib: every
+/// conformance test binary), glibc's `_IO_list_all` is the LIVE chain of the
+/// REAL streams, and NULLing it orphaned every host stream from `fflush(NULL)`
+/// and from glibc's exit flush for the rest of the process. Measured
+/// (bd-7ilguh): host `fputs` buffered "MARKER" into `_IO_2_1_stdout_`, the
+/// next `fflush(NULL)` returned 0 while the stream still held the bytes, and
+/// they were never written — `_IO_flush_all` walked the emptied list. In that
+/// mode fl's registry is separate machinery and the host chain must stay
+/// untouched.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
+    // The C-visible `stdout` cell: RTLD_DEFAULT resolves through the global
+    // scope, where an interposing fl precedes libc.
+    let visible = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"stdout".as_ptr().cast()) };
+    let Some(glibc_cell) = crate::host_resolve::resolve_host_symbol_raw("stdout") else {
+        // No resolvable host stdout: not an interpose deployment; nothing to patch.
+        return;
+    };
+    let interposed = !visible.is_null() && visible != glibc_cell as *mut c_void;
+    if !interposed {
+        return;
+    }
     if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
         // ptr is the address of glibc's _IO_list_all variable (a FILE*).
         // Set it to NULL to prevent glibc's exit handler from iterating.

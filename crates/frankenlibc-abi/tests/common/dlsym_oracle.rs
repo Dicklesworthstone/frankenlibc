@@ -190,3 +190,81 @@ pub unsafe fn host_fn<F: Copy>(name: &CStr, fl_definition: *const ()) -> F {
         *(&raw const addr).cast::<F>()
     }
 }
+
+/// Resolve `name` at a SPECIFIC symbol version, as a raw code address.
+///
+/// `dlsym` returns the DEFAULT (newest) version of a symbol. That is not always
+/// the contract a gate pins: glibc 2.43 re-cut the whole fromfp family with a
+/// CHANGED ABI — `fromfp@@GLIBC_2.43` and friends return their result in the
+/// FLOATING argument's type (XMM0), while the compat symbols this suite's
+/// golden froze (`fromfp@GLIBC_2.25`, `fromfpf128@GLIBC_2.26`) keep the
+/// documented C23 `intmax_t`-in-RAX contract. A `dlsym`-resolved arm for those
+/// symbols reads a stale integer register and "returns" garbage that depends on
+/// the caller's register state (measured 2026-09-14, bd-7ilguh:
+/// `fromfp(+0.0, 0, 8)` read `0xfffffc01` — the ABI did not move, the DEFAULT
+/// VERSION did). Pinning the version is the only way to reach the contract the
+/// golden records.
+///
+/// # Safety
+///
+/// Same contract as [`host_addr`]: the caller must transmute the result to a
+/// function type matching the C declaration of `name` at `version`.
+pub unsafe fn host_addr_versioned(
+    name: &CStr,
+    version: &CStr,
+    fl_definition: *const (),
+) -> *mut c_void {
+    let mut resolved = std::ptr::null_mut();
+    for h in handles() {
+        if h.is_null() {
+            continue;
+        }
+        // SAFETY: `h` came from dlopen; name and version are NUL-terminated.
+        let sym = unsafe { libc::dlvsym(h, name.as_ptr(), version.as_ptr()) };
+        if !sym.is_null() {
+            resolved = sym;
+            break;
+        }
+    }
+    assert!(
+        !resolved.is_null(),
+        "dlvsym({name:?}, {version:?}) found nothing in libc.so.6, libm.so.6 or \
+         libresolv.so.2 — the pinned oracle is unavailable, so this gate cannot \
+         run. If the host dropped that version, the contract the gate pins moved \
+         and the gate needs a decision, not a fallback"
+    );
+    assert_ne!(
+        resolved as usize, fl_definition as usize,
+        "the resolved oracle for {name:?}@{version:?} IS fl's own definition — \
+         this gate would compare fl against itself and pass unconditionally \
+         (bd-v0388t)"
+    );
+    resolved
+}
+
+/// Resolve `name` at a specific symbol version as a callable function pointer.
+///
+/// The versioned counterpart of [`host_fn`]; see
+/// [`host_addr_versioned`] for why the pin exists.
+///
+/// # Safety
+///
+/// `F` must be an `unsafe extern "C" fn` type matching the C declaration of
+/// `name` at `version` exactly — no check here can catch a mismatch.
+pub unsafe fn host_fn_versioned<F: Copy>(
+    name: &CStr,
+    version: &CStr,
+    fl_definition: *const (),
+) -> F {
+    assert_eq!(
+        std::mem::size_of::<F>(),
+        std::mem::size_of::<*mut c_void>(),
+        "host_fn_versioned::<F> requires a plain function pointer"
+    );
+    // SAFETY: caller guarantees `F` matches the symbol's C signature at
+    // `version`; the size assertion above rejects non-thin pointers.
+    unsafe {
+        let addr = host_addr_versioned(name, version, fl_definition);
+        *(&raw const addr).cast::<F>()
+    }
+}
