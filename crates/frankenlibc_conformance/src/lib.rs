@@ -28440,6 +28440,13 @@ unsafe extern "C" {
         ...
     ) -> c_int;
     fn shim_vwprintf_chk(flag: c_int, fmt: *const i32, ...) -> c_int;
+    fn shim_drive_vfprintf(
+        impl_fn: *mut c_void,
+        stream: *mut c_void,
+        flag: c_int,
+        fmt: *const c_char,
+        ...
+    ) -> c_int;
 }
 
 fn execute_fortify_checked_wrapper_wave06_case(
@@ -28550,15 +28557,7 @@ fn fortify_vfprintf_tmpfile_actual() -> Result<String, String> {
     let impl_fn = frankenlibc_abi::fortify_abi::__vfprintf_chk as *const ();
     // SAFETY: the %d argument matches the format; the stream and the target
     // implementation are both fl-native.
-    let rc = unsafe {
-        shim_drive_vfprintf(
-            impl_fn.cast_mut(),
-            stream,
-            0,
-            fmt.as_ptr(),
-            34_i32,
-        )
-    };
+    let rc = unsafe { shim_drive_vfprintf(impl_fn.cast_mut(), stream, 0, fmt.as_ptr(), 34_i32) };
     unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
     Ok(format!("VFPRINTF_TMPFILE_RC_{rc}"))
 }
