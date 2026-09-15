@@ -1313,6 +1313,14 @@ pub fn execute_fixture_case(
         | "__recv_chk" | "__recvfrom_chk" | "__snprintf_chk" | "__sprintf_chk" => {
             execute_fortify_checked_wrapper_wave04_case(function, inputs, mode)
         }
+        // fortify checked wrappers wave-05 (bd-reality-202609-lx578q.6.1):
+        // the contained-stdout printf/wprintf members and the four
+        // wide-to-multibyte conversion members. The __v* variadic members
+        // still need a C va_list forwarder shim (wave-06).
+        "__printf_chk" | "__wcstombs_chk" | "__wcsnrtombs_chk" | "__wcsrtombs_chk"
+        | "__wctomb_chk" | "__wprintf_chk" => {
+            execute_fortify_checked_wrapper_wave05_case(function, inputs, mode)
+        }
         // wchar / locale encoding wave-01
         "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
         | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
@@ -28380,6 +28388,182 @@ fn fortify_readlink_missing_actual(marker_prefix: &str) -> Result<String, String
     };
     let errno = fortify_wave04_errno();
     Ok(format!("{marker_prefix}_RC_{rc}_ERRNO_{errno}"))
+}
+
+// ---------------------------------------------------------------------------
+// fortify checked wrappers wave-05 (bd-reality-202609-lx578q.6.1)
+//
+// Six residual members whose scenarios are deterministic without ambient
+// capture: __printf_chk and __wprintf_chk write to the HARNESS SUBPROCESS's
+// piped stdout (contained by the parent — never redirected into a fixture
+// capture), and the four wide-to-multibyte conversions are pure in-memory
+// replays over the C/POSIX default locale. Markers embed rc and content.
+// ---------------------------------------------------------------------------
+
+fn execute_fortify_checked_wrapper_wave05_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "fortify checked-wrapper wave05 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = fortify_checked_wrapper_wave05_actual(function, inputs)?;
+    Ok(non_host_execution(fortify_checked_wrapper_wave05_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn fortify_checked_wrapper_wave05_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn fortify_checked_wrapper_wave05_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__printf_chk", "contained_stdout_format_write") => fortify_printf_contained_actual(),
+        ("__wprintf_chk", "contained_wide_stdout_format_write") => {
+            fortify_wprintf_contained_actual()
+        }
+        ("__wcstombs_chk", "bounded_wide_to_multibyte_without_capture") => {
+            fortify_wcstombs_bounded_actual()
+        }
+        ("__wcsrtombs_chk", "bounded_wide_sequence_without_capture") => {
+            fortify_wcsrtombs_bounded_actual()
+        }
+        ("__wcsnrtombs_chk", "bounded_wide_count_without_capture") => {
+            fortify_wcsnrtombs_bounded_actual()
+        }
+        ("__wctomb_chk", "single_wide_char_without_capture") => fortify_wctomb_single_actual(),
+        other => Err(format!(
+            "fortify checked-wrapper wave05 has no scenario handler for {other:?}"
+        )),
+    }
+}
+
+fn fortify_wave05_reset_errno() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+}
+
+fn fortify_printf_contained_actual() -> Result<String, String> {
+    let fmt = CString::new("chk=%d").map_err(|_| "printf fmt NUL".to_string())?;
+    // SAFETY: the %d argument matches the format; stdout is the harness
+    // subprocess's pipe, contained by the parent.
+    let rc = unsafe { frankenlibc_abi::fortify_abi::__printf_chk(0, fmt.as_ptr(), 5_i32) };
+    Ok(format!("PRINTF_CHK_RC_{rc}"))
+}
+
+fn fortify_wprintf_contained_actual() -> Result<String, String> {
+    // Wide format L"w=%d" as a WcharT (c_int on x86_64) array with NUL.
+    let fmt: [i32; 5] = [b'w' as i32, b'=' as i32, b'%' as i32, b'd' as i32, 0];
+    // SAFETY: the %d argument matches the wide format; stdout is piped.
+    let rc = unsafe { frankenlibc_abi::fortify_abi::__wprintf_chk(0, fmt.as_ptr(), 7_i32) };
+    Ok(format!("WPRINTF_CHK_RC_{rc}"))
+}
+
+fn fortify_wcstombs_bounded_actual() -> Result<String, String> {
+    let src: [i32; 3] = [b'A' as i32, b'B' as i32, 0];
+    let mut dest = [0u8; 16];
+    fortify_wave05_reset_errno();
+    // SAFETY: dest has destlen bytes; src is NUL-terminated; n <= destlen
+    // passes the _chk bound.
+    let n = unsafe {
+        frankenlibc_abi::fortify_abi::__wcstombs_chk(
+            dest.as_mut_ptr().cast(),
+            src.as_ptr(),
+            8,
+            dest.len(),
+        )
+    };
+    if n == usize::MAX {
+        return Err("wcstombs hit EILSEQ".to_string());
+    }
+    let content = std::str::from_utf8(&dest[..n]).map_err(|_| "wcstombs not UTF-8".to_string())?;
+    Ok(format!("WCSTOMBS_CHK_RC_{n};BUF={content}"))
+}
+
+fn fortify_wcsrtombs_bounded_actual() -> Result<String, String> {
+    let src: [i32; 3] = [b'A' as i32, b'B' as i32, 0];
+    let mut src_ptr: *const u32 = src.as_ptr();
+    let mut dest = [0u8; 16];
+    fortify_wave05_reset_errno();
+    // SAFETY: dest has n bytes; src points at a NUL-terminated wide string;
+    // the C/POSIX default state is the all-zero restartable initial state.
+    let n = unsafe {
+        frankenlibc_abi::fortify_abi::__wcsrtombs_chk(
+            dest.as_mut_ptr().cast(),
+            &mut src_ptr,
+            dest.len(),
+            std::ptr::null_mut(),
+            dest.len(),
+        )
+    };
+    if n == usize::MAX {
+        return Err("wcsrtombs hit EILSEQ".to_string());
+    }
+    let content = std::str::from_utf8(&dest[..n]).map_err(|_| "wcsrtombs not UTF-8".to_string())?;
+    Ok(format!("WCSRTOMBS_CHK_RC_{n};BUF={content}"))
+}
+
+fn fortify_wcsnrtombs_bounded_actual() -> Result<String, String> {
+    let src: [i32; 3] = [b'A' as i32, b'B' as i32, 0];
+    let mut src_ptr: *const u32 = src.as_ptr();
+    let mut dest = [0u8; 16];
+    fortify_wave05_reset_errno();
+    // SAFETY: dest has n bytes; exactly nwc wide chars are consumed from the
+    // NUL-terminated sequence under the initial conversion state.
+    let n = unsafe {
+        frankenlibc_abi::fortify_abi::__wcsnrtombs_chk(
+            dest.as_mut_ptr().cast(),
+            &mut src_ptr,
+            2,
+            dest.len(),
+            std::ptr::null_mut(),
+            dest.len(),
+        )
+    };
+    if n == usize::MAX {
+        return Err("wcsnrtombs hit EILSEQ".to_string());
+    }
+    let content =
+        std::str::from_utf8(&dest[..n]).map_err(|_| "wcsnrtombs not UTF-8".to_string())?;
+    Ok(format!("WCSNRTOMBS_CHK_RC_{n};BUF={content}"))
+}
+
+fn fortify_wctomb_single_actual() -> Result<String, String> {
+    let mut buf = [0u8; 16];
+    // SAFETY: buf has buflen (16 >= MB_CUR_MAX) bytes; L'A' is a single-byte
+    // character in the C/POSIX locale.
+    let rc = unsafe {
+        frankenlibc_abi::fortify_abi::__wctomb_chk(buf.as_mut_ptr().cast(), b'A' as i32, buf.len())
+    };
+    if rc != 1 || buf[0] != b'A' {
+        return Err(format!(
+            "wctomb unexpected: rc={rc}, byte={}",
+            char::from(buf[0])
+        ));
+    }
+    Ok("WCTOMB_CHK_RC_1;BUF=A".to_string())
 }
 
 fn fortify_recv_bad_fd_actual(function: &str) -> Result<String, String> {
