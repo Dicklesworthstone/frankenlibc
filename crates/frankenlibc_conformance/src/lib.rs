@@ -28441,7 +28441,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn shim_vwprintf_chk(flag: c_int, fmt: *const i32, ...) -> c_int;
     fn shim_drive_vfprintf(
-        impl_fn: *mut c_void,
+        impl_fn: *const c_void,
         stream: *mut c_void,
         flag: c_int,
         fmt: *const c_char,
@@ -28554,10 +28554,10 @@ fn fortify_vfprintf_tmpfile_actual() -> Result<String, String> {
     // stream is fl-native, so the host's __vfprintf_chk would segfault on it
     // (bd-6cynxn class). Passing the implementation as a function pointer is
     // the production-truth pattern for an interposed C caller.
-    let impl_fn = frankenlibc_abi::fortify_abi::__vfprintf_chk as *const ();
+    let impl_fn = frankenlibc_abi::fortify_abi::__vfprintf_chk as *const c_void;
     // SAFETY: the %d argument matches the format; the stream and the target
     // implementation are both fl-native.
-    let rc = unsafe { shim_drive_vfprintf(impl_fn.cast_mut(), stream, 0, fmt.as_ptr(), 34_i32) };
+    let rc = unsafe { shim_drive_vfprintf(impl_fn, stream, 0, fmt.as_ptr(), 34_i32) };
     unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
     Ok(format!("VFPRINTF_TMPFILE_RC_{rc}"))
 }
