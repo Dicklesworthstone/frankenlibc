@@ -28442,7 +28442,7 @@ fn fortify_checked_wrapper_wave05_actual(
     let scenario = parse_string(inputs, "scenario")?;
     match (function, scenario.as_str()) {
         ("__printf_chk", "contained_stdout_format_write") => fortify_printf_contained_actual(),
-        ("__wprintf_chk", "contained_wide_stdout_format_write") => {
+        ("__wprintf_chk", "contained_wide_stdout_format_write_to_devnull") => {
             fortify_wprintf_contained_actual()
         }
         ("__wcstombs_chk", "bounded_wide_to_multibyte_without_capture") => {
@@ -28474,10 +28474,15 @@ fn fortify_printf_contained_actual() -> Result<String, String> {
 }
 
 fn fortify_wprintf_contained_actual() -> Result<String, String> {
-    // Wide format L"w=%d" as a WcharT (c_int on x86_64) array with NUL.
+    // Wide format L"w=%d" as a WcharT (c_int on x86_64) array with NUL. The
+    // write goes to /dev/null through the existing stdio redirect helper: the
+    // JSON envelope shares the subprocess's real stdout, so an uncontained
+    // wide write corrupts the envelope channel (bd-reality-202609-lx578q.6.1,
+    // measured: stdout=w=7 prefixed to the payload).
     let fmt: [i32; 5] = [b'w' as i32, b'=' as i32, b'%' as i32, b'd' as i32, 0];
-    // SAFETY: the %d argument matches the wide format; stdout is piped.
-    let rc = unsafe { frankenlibc_abi::fortify_abi::__wprintf_chk(0, fmt.as_ptr(), 7_i32) };
+    let rc = run_with_stdout_redirected_to_devnull(|| unsafe {
+        frankenlibc_abi::fortify_abi::__wprintf_chk(0, fmt.as_ptr(), 7_i32)
+    })?;
     Ok(format!("WPRINTF_CHK_RC_{rc}"))
 }
 

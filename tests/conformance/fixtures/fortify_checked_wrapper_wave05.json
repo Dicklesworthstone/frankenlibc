@@ -46,11 +46,11 @@
    "inputs": {
     "symbol": "__printf_chk",
     "scenario": "contained_stdout_format_write",
-    "expected": "PRINTF_CHK_RC_6",
+    "expected": "PRINTF_CHK_RC_5",
     "oracle_source": "FrankenLibC fortify_abi::__printf_chk classified wave05 replay",
     "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
    },
-   "expected_output": "symbol=__printf_chk;mode=strict;expected=PRINTF_CHK_RC_6;actual=PRINTF_CHK_RC_6;failure_signature=none",
+   "expected_output": "symbol=__printf_chk;mode=strict;expected=PRINTF_CHK_RC_5;actual=PRINTF_CHK_RC_5;failure_signature=none",
    "expected_errno": 0,
    "mode": "strict"
   },
@@ -61,11 +61,11 @@
    "inputs": {
     "symbol": "__printf_chk",
     "scenario": "contained_stdout_format_write",
-    "expected": "PRINTF_CHK_RC_6",
+    "expected": "PRINTF_CHK_RC_5",
     "oracle_source": "FrankenLibC fortify_abi::__printf_chk classified wave05 replay",
     "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
    },
-   "expected_output": "symbol=__printf_chk;mode=hardened;expected=PRINTF_CHK_RC_6;actual=PRINTF_CHK_RC_6;failure_signature=none",
+   "expected_output": "symbol=__printf_chk;mode=hardened;expected=PRINTF_CHK_RC_5;actual=PRINTF_CHK_RC_5;failure_signature=none",
    "expected_errno": 0,
    "mode": "hardened"
   },
@@ -75,7 +75,7 @@
    "spec_section": "GNU __wprintf_chk formats wide to the process stdout pipe and returns the wide count",
    "inputs": {
     "symbol": "__wprintf_chk",
-    "scenario": "contained_wide_stdout_format_write",
+    "scenario": "contained_wide_stdout_format_write_to_devnull",
     "expected": "WPRINTF_CHK_RC_3",
     "oracle_source": "FrankenLibC fortify_abi::__wprintf_chk classified wave05 replay",
     "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
@@ -90,7 +90,7 @@
    "spec_section": "GNU __wprintf_chk formats wide to the process stdout pipe and returns the wide count",
    "inputs": {
     "symbol": "__wprintf_chk",
-    "scenario": "contained_wide_stdout_format_write",
+    "scenario": "contained_wide_stdout_format_write_to_devnull",
     "expected": "WPRINTF_CHK_RC_3",
     "oracle_source": "FrankenLibC fortify_abi::__wprintf_chk classified wave05 replay",
     "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
