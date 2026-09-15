@@ -1219,11 +1219,21 @@ pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd 
         unsafe { set_abi_errno(libc::EINVAL) };
         return INVALID_NL_CATD;
     };
-    // An empty name is NOT special-cased. glibc does not reject it up front; it
-    // simply tries to open "", and the kernel answers ENOENT. Returning EINVAL
-    // here made `catopen("")` report errno 22 where glibc reports 2, which is
-    // what the caller branches on. Letting the open below produce the errno is
-    // both simpler and what the host actually does.
+    // An empty name is rejected with EINVAL, matching live host glibc 2.43.
+    // PROVENANCE OF THIS FLIP-FLOP — read before "fixing" it again:
+    //   * 56cbe3fc8: fl rejected "" with EINVAL.
+    //   * fb7d7cc03 (bd-rp1e32): glibc-then opened "" and got the kernel's
+    //     ENOENT, so fl dropped the special case to match (measured live).
+    //   * NOW (bd-7ilguh batch, 2026-09-14): glibc 2.43 rejects "" with
+    //     EINVAL up front — the host moved back under us, the same release
+    //     that re-cut fromfp. Measured live through the gate's dlsym'd host
+    //     arm: catopen("") errno fl=2 (ENOENT via the kernel open) vs
+    //     glibc=22 (EINVAL). The lesson of both flips is the same: this
+    //     errno is a host-version behavior, and the gate must be the arbiter.
+    if name_bytes.is_empty() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return INVALID_NL_CATD;
+    }
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&name_bytes));
     if path.is_dir() {
         unsafe { set_abi_errno(libc::EINVAL) };
@@ -1493,7 +1503,13 @@ mod tests {
     /// The lesson is the one bd-fix-shipped-ungated records: assert what the
     /// ORACLE produces, and make sure the assertion actually runs.
     #[test]
-    fn catopen_empty_name_sets_enoent() {
+    fn catopen_empty_name_sets_einval() {
+        // Host glibc 2.43 rejects "" with EINVAL up front (measured live
+        // through the differential gate's dlsym'd host arm, bd-7ilguh batch).
+        // History: 56cbe3fc8 EINVAL -> fb7d7cc03/bd-rp1e32 ENOENT (matching
+        // glibc-then) -> EINVAL again now that the host flipped back. The
+        // flip-flop itself is documented at the catopen branch; this test
+        // pins the CURRENT host contract and the differential gate arbitrates.
         let empty = b"\0";
         unsafe { set_abi_errno(0) };
         // SAFETY: The catalog name pointer is NUL-terminated.
@@ -1501,8 +1517,8 @@ mod tests {
         assert_eq!(catd, INVALID_NL_CATD);
         assert_eq!(
             unsafe { *crate::errno_abi::__errno_location() },
-            libc::ENOENT,
-            "catopen(\"\") must report ENOENT like glibc (fb7d7cc03, bd-rp1e32)"
+            libc::EINVAL,
+            "catopen(\"\") must report EINVAL like live glibc 2.43"
         );
     }
 
