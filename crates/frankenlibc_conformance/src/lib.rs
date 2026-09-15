@@ -1304,6 +1304,14 @@ pub fn execute_fixture_case(
         | "__poll_chk" | "__ppoll_chk" | "__pread64_chk" => {
             execute_fortify_checked_wrapper_wave03_case(function, inputs, mode)
         }
+        // fortify checked wrappers wave-04 (bd-reality-202609-lx578q.6.1):
+        // deterministic bad-fd / missing-path / bounded-buffer scenarios that
+        // capture no ambient state. The variadic and wide-stream members of
+        // the missing-25 (the __v* family, __wprintf_chk, __syslog_chk) need
+        // a C va_list shim and are deliberately NOT here yet.
+        "__pread_chk" | "__read_chk" | "__readlink_chk" | "__readlinkat_chk"
+        | "__realpath_chk" | "__recv_chk" | "__recvfrom_chk" | "__snprintf_chk"
+        | "__sprintf_chk" => execute_fortify_checked_wrapper_wave04_case(function, inputs, mode),
         // wchar / locale encoding wave-01
         "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
         | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
@@ -28172,6 +28180,242 @@ fn fortify_confstr_len_actual() -> Result<String, String> {
         Ok(String::from("CONFSTR_PATH_LEN_ZERO"))
     }
 }
+// ---------------------------------------------------------------------------
+// fortify checked wrappers wave-04 (bd-reality-202609-lx578q.6.1)
+//
+// Nine deterministic scenarios for the residual fortify symbols: bad fds,
+// missing paths, and bounded buffers. Every scenario is capture-free (no
+// stdout/stderr/fd/filesystem residue) per the wave ambient-state policy,
+// and every marker embeds the return code and errno so a wrong-semantics
+// implementation cannot pass by producing the right shape. The variadic
+// __v* members and the wide-stream members are NOT here: Rust cannot
+// construct a va_list, so they need a small C forwarder shim (recorded on
+// the .6.1 bead as the wave04 slice-2 prerequisite).
+// ---------------------------------------------------------------------------
+
+fn execute_fortify_checked_wrapper_wave04_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "fortify checked-wrapper wave04 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = fortify_checked_wrapper_wave04_actual(function, inputs)?;
+    Ok(non_host_execution(fortify_checked_wrapper_wave04_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn fortify_checked_wrapper_wave04_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn fortify_checked_wrapper_wave04_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__snprintf_chk", "bounded_format_truncates_without_capture") => {
+            fortify_snprintf_bounded_actual()
+        }
+        ("__sprintf_chk", "in_bounds_format_writes_without_capture") => {
+            fortify_sprintf_inbounds_actual()
+        }
+        ("__read_chk", "bad_fd_fails_without_capture") => fortify_read_bad_fd_actual(),
+        ("__pread_chk", "bad_fd_fails_without_capture") => fortify_pread_bad_fd_actual(),
+        ("__readlink_chk", "missing_path_fails_without_capture") => {
+            fortify_readlink_missing_actual("READLINK_MISSING")
+        }
+        ("__readlinkat_chk", "missing_path_fails_without_capture") => {
+            fortify_readlink_missing_actual("READLINKAT_MISSING")
+        }
+        ("__recv_chk", "bad_fd_fails_without_capture") => {
+            fortify_recv_bad_fd_actual("__recv_chk")
+        }
+        ("__recvfrom_chk", "bad_fd_fails_without_capture") => {
+            fortify_recv_bad_fd_actual("__recvfrom_chk")
+        }
+        ("__realpath_chk", "missing_path_fails_without_capture") => {
+            fortify_realpath_missing_actual()
+        }
+        other => Err(format!(
+            "fortify checked-wrapper wave04 has no scenario handler for {other:?}"
+        )),
+    }
+}
+
+/// Set errno to a sentinel so a handler that forgets to set it cannot pass
+/// by reading a stale zero.
+fn fortify_wave04_errno() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn fortify_wave04_reset_errno() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+}
+
+fn fortify_snprintf_bounded_actual() -> Result<String, String> {
+    let mut buf = [0u8; 8];
+    let fmt = CString::new("value=%d").map_err(|_| "snprintf fmt NUL".to_string())?;
+    fortify_wave04_reset_errno();
+    // SAFETY: buf has maxlen bytes; the %d argument matches the format.
+    let rc = unsafe {
+        frankenlibc_abi::fortify_abi::__snprintf_chk(
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            0,
+            buf.len(),
+            fmt.as_ptr(),
+            4211_i32,
+        )
+    };
+    // "value=4211" is 9 bytes: truncated to 7 chars + NUL, rc reports the
+    // would-be length per the C contract.
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    let content = s.to_str().map_err(|_| "snprintf buf not UTF-8".to_string())?;
+    if content != "value=4" {
+        return Err(format!("snprintf truncated content wrong: {content:?}"));
+    }
+    Ok(format!("SNPRINTF_BOUNDED_RC_{rc};BUF={content}"))
+}
+
+fn fortify_sprintf_inbounds_actual() -> Result<String, String> {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("x=%d").map_err(|_| "sprintf fmt NUL".to_string())?;
+    fortify_wave04_reset_errno();
+    // SAFETY: buf has buflen bytes; the %d argument matches the format.
+    let rc = unsafe {
+        frankenlibc_abi::fortify_abi::__sprintf_chk(
+            buf.as_mut_ptr().cast(),
+            0,
+            buf.len(),
+            fmt.as_ptr(),
+            7_i32,
+        )
+    };
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    let content = s.to_str().map_err(|_| "sprintf buf not UTF-8".to_string())?;
+    if content != "x=7" {
+        return Err(format!("sprintf content wrong: {content:?}"));
+    }
+    Ok(format!("SPRINTF_INBOUNDS_RC_{rc};BUF={content}"))
+}
+
+fn fortify_read_bad_fd_actual() -> Result<String, String> {
+    let mut buf = [0u8; 4];
+    fortify_wave04_reset_errno();
+    // SAFETY: buflen == nbytes bounds the buffer; fd -1 fails without I/O.
+    let rc = unsafe { frankenlibc_abi::fortify_abi::__read_chk(-1, buf.as_mut_ptr().cast(), 4, 4) };
+    let errno = fortify_wave04_errno();
+    Ok(format!("READ_BAD_FD_RC_{rc}_ERRNO_{errno}"))
+}
+
+fn fortify_pread_bad_fd_actual() -> Result<String, String> {
+    let mut buf = [0u8; 4];
+    fortify_wave04_reset_errno();
+    // SAFETY: buflen == nbytes bounds the buffer; fd -1 fails without I/O.
+    let rc =
+        unsafe { frankenlibc_abi::fortify_abi::__pread_chk(-1, buf.as_mut_ptr().cast(), 4, 0, 4) };
+    let errno = fortify_wave04_errno();
+    Ok(format!("PREAD_BAD_FD_RC_{rc}_ERRNO_{errno}"))
+}
+
+fn fortify_readlink_missing_actual(marker_prefix: &str) -> Result<String, String> {
+    let path = CString::new("/nonexistent-goldcoast-wave04/zz")
+        .map_err(|_| "readlink path NUL".to_string())?;
+    let mut buf = [0u8; 64];
+    fortify_wave04_reset_errno();
+    // SAFETY: buf has buflen bytes; the path is a constant missing path, so
+    // the call fails ENOENT without touching the filesystem.
+    let rc = if marker_prefix == "READLINK_MISSING" {
+        unsafe {
+            frankenlibc_abi::fortify_abi::__readlink_chk(
+                path.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                buf.len(),
+            )
+        }
+    } else {
+        unsafe {
+            frankenlibc_abi::fortify_abi::__readlinkat_chk(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                buf.len(),
+            )
+        }
+    };
+    let errno = fortify_wave04_errno();
+    Ok(format!("{marker_prefix}_RC_{rc}_ERRNO_{errno}"))
+}
+
+fn fortify_recv_bad_fd_actual(function: &str) -> Result<String, String> {
+    let mut buf = [0u8; 4];
+    let mut addrlen: u32 = 0;
+    fortify_wave04_reset_errno();
+    // SAFETY: buflen == len bounds the buffer; fd -1 fails EBADF before any
+    // address bookkeeping, so the NULL src-addr slots are never dereferenced
+    // (kernel recvfrom semantics fl's raw syscall inherits).
+    let rc = if function == "__recvfrom_chk" {
+        unsafe {
+            frankenlibc_abi::fortify_abi::__recvfrom_chk(
+                -1,
+                buf.as_mut_ptr().cast(),
+                4,
+                4,
+                0,
+                std::ptr::null_mut(),
+                &mut addrlen,
+            )
+        }
+    } else {
+        unsafe {
+            frankenlibc_abi::fortify_abi::__recv_chk(-1, buf.as_mut_ptr().cast(), 4, 4, 0)
+        }
+    };
+    let errno = fortify_wave04_errno();
+    Ok(format!("RECV_BAD_FD_RC_{rc}_ERRNO_{errno}"))
+}
+
+fn fortify_realpath_missing_actual() -> Result<String, String> {
+    let path = CString::new("/nonexistent-goldcoast-wave04/zz")
+        .map_err(|_| "realpath path NUL".to_string())?;
+    let mut buf = [0u8; 4096];
+    fortify_wave04_reset_errno();
+    // SAFETY: resolved has resolvedlen bytes (>= FORTIFY_PATH_MAX passes the
+    // _chk bound); the missing path fails ENOENT without filesystem residue.
+    let got = unsafe {
+        frankenlibc_abi::fortify_abi::__realpath_chk(
+            path.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    let errno = fortify_wave04_errno();
+    Ok(format!("REALPATH_MISSING_NULL_{}_ERRNO_{errno}", got.is_null()))
+}
+
 
 fn fortify_dprintf_bad_fd_actual() -> Result<String, String> {
     let fmt =

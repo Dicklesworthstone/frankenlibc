@@ -1,0 +1,321 @@
+{
+ "version": "v1",
+ "family": "fortify/checked-wrapper",
+ "captured_at": "2026-09-15T02:30:00Z",
+ "description": "Wave-04 residual fortify checked wrappers: deterministic bad-fd, missing-path, and bounded-buffer scenarios with positive and negative behavior, raw buffer addresses never compared, FILE pointers never captured, filesystem paths restricted to constants that do not exist, stdout bytes never captured, stderr bytes never captured, fd numbers fixed at -1, allocated pointer values never compared, process ids never captured, wall-clock timing never captured.",
+ "spec_reference": "GNU _FORTIFY_SOURCE object-size checked wrappers: __pread_chk, __printf_chk, __read_chk, __readlink_chk, __readlinkat_chk, __realpath_chk, __recv_chk, __recvfrom_chk, __snprintf_chk, __sprintf_chk, __syslog_chk, __vasprintf_chk, __vdprintf_chk, __vfprintf_chk, __vfwprintf_chk, __vprintf_chk, __vsnprintf_chk, __vsprintf_chk, __vsyslog_chk, __vwprintf_chk, __wcsnrtombs_chk, __wcsrtombs_chk, __wcstombs_chk, __wctomb_chk, __wprintf_chk reserve their full object-size contract; this wave pins the nine deterministic members whose scenarios capture no ambient state.",
+ "campaign": {
+  "bead": "bd-reality-202609-lx578q.6.1",
+  "campaign_id": "fcq-fortify-bounds",
+  "wave_id": "wave-04-fortify-checked-wrapper-residual",
+  "source_artifact": "tests/conformance/support_matrix_promotion_triage.v1.json",
+  "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+  "first_wave_symbols": [
+   "__pread_chk",
+   "__read_chk",
+   "__readlink_chk",
+   "__readlinkat_chk",
+   "__realpath_chk",
+   "__recv_chk",
+   "__recvfrom_chk",
+   "__snprintf_chk",
+   "__sprintf_chk"
+  ],
+  "residual_symbols": [
+   "__syslog_chk",
+   "__vasprintf_chk",
+   "__vdprintf_chk",
+   "__vfprintf_chk",
+   "__vfwprintf_chk",
+   "__vprintf_chk",
+   "__vsnprintf_chk",
+   "__vsprintf_chk",
+   "__vsyslog_chk",
+   "__vwprintf_chk",
+   "__wcsnrtombs_chk",
+   "__wcsrtombs_chk",
+   "__wcstombs_chk",
+   "__wctomb_chk",
+   "__wprintf_chk"
+  ]
+ },
+ "structured_log_fields": [
+  "symbol",
+  "mode",
+  "expected",
+  "actual",
+  "failure_signature"
+ ],
+ "cases": [
+  {
+   "name": "__snprintf_chk_bounded_truncate_strict",
+   "function": "__snprintf_chk",
+   "spec_section": "GNU __snprintf_chk bounded format truncates and reports the would-be length",
+   "inputs": {
+    "symbol": "__snprintf_chk",
+    "scenario": "bounded_format_truncates_without_capture",
+    "expected": "SNPRINTF_BOUNDED_RC_10;BUF=value=4",
+    "oracle_source": "FrankenLibC fortify_abi::__snprintf_chk classified bounded-format replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__snprintf_chk;mode=strict;expected=SNPRINTF_BOUNDED_RC_10;BUF=value=4;actual=SNPRINTF_BOUNDED_RC_10;BUF=value=4;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__snprintf_chk_bounded_truncate_hardened",
+   "function": "__snprintf_chk",
+   "spec_section": "GNU __snprintf_chk bounded format truncates and reports the would-be length",
+   "inputs": {
+    "symbol": "__snprintf_chk",
+    "scenario": "bounded_format_truncates_without_capture",
+    "expected": "SNPRINTF_BOUNDED_RC_10;BUF=value=4",
+    "oracle_source": "FrankenLibC fortify_abi::__snprintf_chk classified bounded-format replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__snprintf_chk;mode=hardened;expected=SNPRINTF_BOUNDED_RC_10;BUF=value=4;actual=SNPRINTF_BOUNDED_RC_10;BUF=value=4;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__sprintf_chk_in_bounds_strict",
+   "function": "__sprintf_chk",
+   "spec_section": "GNU __sprintf_chk in-bounds format writes the formatted bytes and returns the length",
+   "inputs": {
+    "symbol": "__sprintf_chk",
+    "scenario": "in_bounds_format_writes_without_capture",
+    "expected": "SPRINTF_INBOUNDS_RC_3;BUF=x=7",
+    "oracle_source": "FrankenLibC fortify_abi::__sprintf_chk classified in-bounds replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__sprintf_chk;mode=strict;expected=SPRINTF_INBOUNDS_RC_3;BUF=x=7;actual=SPRINTF_INBOUNDS_RC_3;BUF=x=7;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__sprintf_chk_in_bounds_hardened",
+   "function": "__sprintf_chk",
+   "spec_section": "GNU __sprintf_chk in-bounds format writes the formatted bytes and returns the length",
+   "inputs": {
+    "symbol": "__sprintf_chk",
+    "scenario": "in_bounds_format_writes_without_capture",
+    "expected": "SPRINTF_INBOUNDS_RC_3;BUF=x=7",
+    "oracle_source": "FrankenLibC fortify_abi::__sprintf_chk classified in-bounds replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__sprintf_chk;mode=hardened;expected=SPRINTF_INBOUNDS_RC_3;BUF=x=7;actual=SPRINTF_INBOUNDS_RC_3;BUF=x=7;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__read_chk_bad_fd_strict",
+   "function": "__read_chk",
+   "spec_section": "GNU __read_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__read_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "READ_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__read_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__read_chk;mode=strict;expected=READ_BAD_FD_RC_-1_ERRNO_9;actual=READ_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__read_chk_bad_fd_hardened",
+   "function": "__read_chk",
+   "spec_section": "GNU __read_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__read_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "READ_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__read_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__read_chk;mode=hardened;expected=READ_BAD_FD_RC_-1_ERRNO_9;actual=READ_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__pread_chk_bad_fd_strict",
+   "function": "__pread_chk",
+   "spec_section": "GNU __pread_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__pread_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "PREAD_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__pread_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__pread_chk;mode=strict;expected=PREAD_BAD_FD_RC_-1_ERRNO_9;actual=PREAD_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__pread_chk_bad_fd_hardened",
+   "function": "__pread_chk",
+   "spec_section": "GNU __pread_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__pread_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "PREAD_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__pread_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__pread_chk;mode=hardened;expected=PREAD_BAD_FD_RC_-1_ERRNO_9;actual=PREAD_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__readlink_chk_missing_path_strict",
+   "function": "__readlink_chk",
+   "spec_section": "GNU __readlink_chk propagates ENOENT for a missing path within the object-size bound",
+   "inputs": {
+    "symbol": "__readlink_chk",
+    "scenario": "missing_path_fails_without_capture",
+    "expected": "READLINK_MISSING_RC_-1_ERRNO_2",
+    "oracle_source": "FrankenLibC fortify_abi::__readlink_chk classified missing-path replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__readlink_chk;mode=strict;expected=READLINK_MISSING_RC_-1_ERRNO_2;actual=READLINK_MISSING_RC_-1_ERRNO_2;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__readlink_chk_missing_path_hardened",
+   "function": "__readlink_chk",
+   "spec_section": "GNU __readlink_chk propagates ENOENT for a missing path within the object-size bound",
+   "inputs": {
+    "symbol": "__readlink_chk",
+    "scenario": "missing_path_fails_without_capture",
+    "expected": "READLINK_MISSING_RC_-1_ERRNO_2",
+    "oracle_source": "FrankenLibC fortify_abi::__readlink_chk classified missing-path replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__readlink_chk;mode=hardened;expected=READLINK_MISSING_RC_-1_ERRNO_2;actual=READLINK_MISSING_RC_-1_ERRNO_2;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__readlinkat_chk_missing_path_strict",
+   "function": "__readlinkat_chk",
+   "spec_section": "GNU __readlinkat_chk propagates ENOENT for a missing path within the object-size bound",
+   "inputs": {
+    "symbol": "__readlinkat_chk",
+    "scenario": "missing_path_fails_without_capture",
+    "expected": "READLINKAT_MISSING_RC_-1_ERRNO_2",
+    "oracle_source": "FrankenLibC fortify_abi::__readlinkat_chk classified missing-path replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__readlinkat_chk;mode=strict;expected=READLINKAT_MISSING_RC_-1_ERRNO_2;actual=READLINKAT_MISSING_RC_-1_ERRNO_2;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__readlinkat_chk_missing_path_hardened",
+   "function": "__readlinkat_chk",
+   "spec_section": "GNU __readlinkat_chk propagates ENOENT for a missing path within the object-size bound",
+   "inputs": {
+    "symbol": "__readlinkat_chk",
+    "scenario": "missing_path_fails_without_capture",
+    "expected": "READLINKAT_MISSING_RC_-1_ERRNO_2",
+    "oracle_source": "FrankenLibC fortify_abi::__readlinkat_chk classified missing-path replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__readlinkat_chk;mode=hardened;expected=READLINKAT_MISSING_RC_-1_ERRNO_2;actual=READLINKAT_MISSING_RC_-1_ERRNO_2;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__recv_chk_bad_fd_strict",
+   "function": "__recv_chk",
+   "spec_section": "GNU __recv_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__recv_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "RECV_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__recv_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__recv_chk;mode=strict;expected=RECV_BAD_FD_RC_-1_ERRNO_9;actual=RECV_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__recv_chk_bad_fd_hardened",
+   "function": "__recv_chk",
+   "spec_section": "GNU __recv_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__recv_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "RECV_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__recv_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__recv_chk;mode=hardened;expected=RECV_BAD_FD_RC_-1_ERRNO_9;actual=RECV_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__recvfrom_chk_bad_fd_strict",
+   "function": "__recvfrom_chk",
+   "spec_section": "GNU __recvfrom_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__recvfrom_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "RECV_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__recvfrom_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__recvfrom_chk;mode=strict;expected=RECV_BAD_FD_RC_-1_ERRNO_9;actual=RECV_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__recvfrom_chk_bad_fd_hardened",
+   "function": "__recvfrom_chk",
+   "spec_section": "GNU __recvfrom_chk propagates EBADF for an invalid descriptor within the object-size bound",
+   "inputs": {
+    "symbol": "__recvfrom_chk",
+    "scenario": "bad_fd_fails_without_capture",
+    "expected": "RECV_BAD_FD_RC_-1_ERRNO_9",
+    "oracle_source": "FrankenLibC fortify_abi::__recvfrom_chk classified bad-fd replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__recvfrom_chk;mode=hardened;expected=RECV_BAD_FD_RC_-1_ERRNO_9;actual=RECV_BAD_FD_RC_-1_ERRNO_9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__realpath_chk_missing_path_strict",
+   "function": "__realpath_chk",
+   "spec_section": "GNU __realpath_chk propagates ENOENT for a missing path within the object-size bound",
+   "inputs": {
+    "symbol": "__realpath_chk",
+    "scenario": "missing_path_fails_without_capture",
+    "expected": "REALPATH_MISSING_NULL_true_ERRNO_2",
+    "oracle_source": "FrankenLibC fortify_abi::__realpath_chk classified missing-path replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__realpath_chk;mode=strict;expected=REALPATH_MISSING_NULL_true_ERRNO_2;actual=REALPATH_MISSING_NULL_true_ERRNO_2;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__realpath_chk_missing_path_hardened",
+   "function": "__realpath_chk",
+   "spec_section": "GNU __realpath_chk propagates ENOENT for a missing path within the object-size bound",
+   "inputs": {
+    "symbol": "__realpath_chk",
+    "scenario": "missing_path_fails_without_capture",
+    "expected": "REALPATH_MISSING_NULL_true_ERRNO_2",
+    "oracle_source": "FrankenLibC fortify_abi::__realpath_chk classified missing-path replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__realpath_chk;mode=hardened;expected=REALPATH_MISSING_NULL_true_ERRNO_2;actual=REALPATH_MISSING_NULL_true_ERRNO_2;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  }
+ ]
+}
