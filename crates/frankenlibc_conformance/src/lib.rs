@@ -1321,6 +1321,16 @@ pub fn execute_fixture_case(
         | "__wctomb_chk" | "__wprintf_chk" => {
             execute_fortify_checked_wrapper_wave05_case(function, inputs, mode)
         }
+        // fortify checked wrappers wave-06 (bd-reality-202609-lx578q.6.1):
+        // the __v* variadic members, driven through the C va_list forwarder
+        // shim (src/fortify_va_shim.c) because Rust cannot construct a
+        // va_list. __vfwprintf_chk (wide FILE) and the syslog pair are
+        // deferred: the former needs a wide-FILE seam, the latter a
+        // deterministic syslog transport.
+        "__vasprintf_chk" | "__vdprintf_chk" | "__vfprintf_chk" | "__vprintf_chk"
+        | "__vsnprintf_chk" | "__vsprintf_chk" | "__vwprintf_chk" => {
+            execute_fortify_checked_wrapper_wave06_case(function, inputs, mode)
+        }
         // wchar / locale encoding wave-01
         "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
         | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
@@ -28390,6 +28400,236 @@ fn fortify_readlink_missing_actual(marker_prefix: &str) -> Result<String, String
     Ok(format!("{marker_prefix}_RC_{rc}_ERRNO_{errno}"))
 }
 
+// ---------------------------------------------------------------------------
+// fortify checked wrappers wave-06 (bd-reality-202609-lx578q.6.1)
+//
+// The __v* variadic residual members, driven through the C va_list
+// forwarder shim (src/fortify_va_shim.c): Rust cannot construct a C
+// va_list, so each fixture handler calls a shim_* forwarder with plain
+// varargs and the shim opens the va_list over them exactly the way a C
+// caller would. Deferred from this wave: __vfwprintf_chk (needs a wide
+// FILE seam) and the syslog pair (needs a deterministic transport).
+// ---------------------------------------------------------------------------
+
+/// Opaque C stream handle for the vfprintf member (fl's own FILE on the
+/// conformance link).
+#[repr(C)]
+struct ShimFile {
+    _private: [u8; 0],
+}
+
+#[link(name = "fortify_va_shim")]
+unsafe extern "C" {
+    fn shim_vasprintf_chk(strp: *mut *mut c_char, flag: c_int, fmt: *const c_char, ...) -> c_int;
+    fn shim_vdprintf_chk(fd: c_int, flag: c_int, fmt: *const c_char, ...) -> c_int;
+    fn shim_vfprintf_chk(stream: *mut ShimFile, flag: c_int, fmt: *const c_char, ...) -> c_int;
+    fn shim_vprintf_chk(flag: c_int, fmt: *const c_char, ...) -> c_int;
+    fn shim_vsnprintf_chk(
+        buf: *mut c_char,
+        maxlen: usize,
+        flag: c_int,
+        buflen: usize,
+        fmt: *const c_char,
+        ...
+    ) -> c_int;
+    fn shim_vsprintf_chk(
+        buf: *mut c_char,
+        flag: c_int,
+        buflen: usize,
+        fmt: *const c_char,
+        ...
+    ) -> c_int;
+    fn shim_vwprintf_chk(flag: c_int, fmt: *const i32, ...) -> c_int;
+}
+
+fn execute_fortify_checked_wrapper_wave06_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "fortify checked-wrapper wave06 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = fortify_checked_wrapper_wave06_actual(function, inputs)?;
+    Ok(non_host_execution(fortify_checked_wrapper_wave06_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn fortify_checked_wrapper_wave06_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn fortify_checked_wrapper_wave06_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__vasprintf_chk", "literal_allocates_via_shim_without_capture") => {
+            fortify_vasprintf_shim_actual()
+        }
+        ("__vdprintf_chk", "bad_fd_fails_via_shim_without_capture") => {
+            fortify_vdprintf_bad_fd_actual()
+        }
+        ("__vfprintf_chk", "tmpfile_append_via_shim_without_capture") => {
+            fortify_vfprintf_tmpfile_actual()
+        }
+        ("__vprintf_chk", "contained_devnull_format_write") => fortify_vprintf_devnull_actual(),
+        ("__vsnprintf_chk", "bounded_format_via_shim_without_capture") => {
+            fortify_vsnprintf_bounded_actual()
+        }
+        ("__vsprintf_chk", "in_bounds_format_via_shim_without_capture") => {
+            fortify_vsprintf_inbounds_actual()
+        }
+        ("__vwprintf_chk", "contained_devnull_wide_write") => fortify_vwprintf_devnull_actual(),
+        other => Err(format!(
+            "fortify checked-wrapper wave06 has no scenario handler for {other:?}"
+        )),
+    }
+}
+
+fn fortify_vasprintf_shim_actual() -> Result<String, String> {
+    let fmt = CString::new("wave06=%d").map_err(|_| "vasprintf fmt NUL".to_string())?;
+    let mut out: *mut c_char = std::ptr::null_mut();
+    // SAFETY: strp receives the allocated buffer; the %d argument matches the
+    // format. The buffer is freed through the ownership lattice below.
+    let rc = unsafe { shim_vasprintf_chk(&mut out, 0, fmt.as_ptr(), 4602_i32) };
+    if rc < 0 || out.is_null() {
+        return Ok(format!("VASPRINTF_SHIM_RC_{rc};BUF=NONE"));
+    }
+    let rendered = unsafe { CStr::from_ptr(out) }
+        .to_string_lossy()
+        .into_owned();
+    // Lattice-aware free (bd-6cynxn): the buffer is fl-issued.
+    unsafe { frankenlibc_abi::malloc_abi::free(out.cast()) };
+    Ok(format!("VASPRINTF_SHIM_RC_{rc};BUF={rendered}"))
+}
+
+fn fortify_vdprintf_bad_fd_actual() -> Result<String, String> {
+    let fmt = CString::new("vd=%d").map_err(|_| "vdprintf fmt NUL".to_string())?;
+    // SAFETY: fd -1 fails EBADF before any output; the %d argument matches.
+    let rc = unsafe { shim_vdprintf_chk(-1, 0, fmt.as_ptr(), 88_i32) };
+    Ok(format!("VDPRINTF_BAD_FD_RC_{rc}"))
+}
+
+fn fortify_vfprintf_tmpfile_actual() -> Result<String, String> {
+    // SAFETY: tmpfile() creates an fl-owned stream; writes and reads stay
+    // inside the subprocess and the stream is closed before return.
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    if stream.is_null() {
+        return Ok(String::from("VFPRINTF_TMPFILE_NULL"));
+    }
+    let first = CString::new("ab").map_err(|_| "vfprintf write NUL".to_string())?;
+    unsafe {
+        frankenlibc_abi::stdio_abi::fputs(first.as_ptr(), stream);
+        frankenlibc_abi::stdio_abi::rewind(stream);
+    }
+    let fmt = CString::new("cd%d").map_err(|_| "vfprintf fmt NUL".to_string())?;
+    // Drive FL'S OWN __vfprintf_chk through the C va_list forwarder: the
+    // stream is fl-native, so the host's __vfprintf_chk would segfault on it
+    // (bd-6cynxn class). Passing the implementation as a function pointer is
+    // the production-truth pattern for an interposed C caller.
+    let impl_fn = frankenlibc_abi::fortify_abi::__vfprintf_chk as *const ();
+    // SAFETY: the %d argument matches the format; the stream and the target
+    // implementation are both fl-native.
+    let rc = unsafe {
+        shim_drive_vfprintf(
+            impl_fn.cast_mut(),
+            stream,
+            0,
+            fmt.as_ptr(),
+            34_i32,
+        )
+    };
+    unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+    Ok(format!("VFPRINTF_TMPFILE_RC_{rc}"))
+}
+
+fn fortify_vprintf_devnull_actual() -> Result<String, String> {
+    let fmt = CString::new("vp=%d").map_err(|_| "vprintf fmt NUL".to_string())?;
+    // The write itself lands in /dev/null through the redirect helper; the
+    // JSON envelope shares the subprocess's real stdout and must stay clean.
+    let rc = run_with_stdout_redirected_to_devnull(|| unsafe {
+        shim_vprintf_chk(0, fmt.as_ptr(), 6101_i32)
+    })?;
+    Ok(format!("VPRINTF_DEVNULL_RC_{rc}"))
+}
+
+fn fortify_vsnprintf_bounded_actual() -> Result<String, String> {
+    let mut buf = [0u8; 8];
+    let fmt = CString::new("v=%d").map_err(|_| "vsnprintf fmt NUL".to_string())?;
+    // SAFETY: buf has maxlen bytes; the %d argument matches the format.
+    let rc = unsafe {
+        shim_vsnprintf_chk(
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            0,
+            buf.len(),
+            fmt.as_ptr(),
+            42_i32,
+        )
+    };
+    let content = std::str::from_utf8(&buf[..4]).map_err(|_| "vsnprintf not UTF-8".to_string())?;
+    Ok(format!("VSNPRINTF_BOUNDED_RC_{rc};BUF={content}"))
+}
+
+fn fortify_vsprintf_inbounds_actual() -> Result<String, String> {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("vs=%s").map_err(|_| "vsprintf fmt NUL".to_string())?;
+    let arg = CString::new("ok").map_err(|_| "vsprintf arg NUL".to_string())?;
+    // SAFETY: buf has buflen bytes; the %s argument points at a
+    // NUL-terminated string.
+    let rc = unsafe {
+        shim_vsprintf_chk(
+            buf.as_mut_ptr().cast(),
+            0,
+            buf.len(),
+            fmt.as_ptr(),
+            arg.as_ptr(),
+        )
+    };
+    let content = std::str::from_utf8(&buf[..5]).map_err(|_| "vsprintf not UTF-8".to_string())?;
+    Ok(format!("VSPRINTF_INBOUNDS_RC_{rc};BUF={content}"))
+}
+
+fn fortify_vwprintf_devnull_actual() -> Result<String, String> {
+    // Wide format L"wv=%d" as a WcharT (c_int on x86_64) array with NUL. The
+    // write lands in /dev/null through the redirect helper — the JSON
+    // envelope shares the subprocess's real stdout.
+    let fmt: [i32; 6] = [
+        b'w' as i32,
+        b'v' as i32,
+        b'=' as i32,
+        b'%' as i32,
+        b'd' as i32,
+        0,
+    ];
+    let rc = run_with_stdout_redirected_to_devnull(|| unsafe {
+        shim_vwprintf_chk(0, fmt.as_ptr(), 9_i32)
+    })?;
+    Ok(format!("VWPRINTF_DEVNULL_RC_{rc}"))
+}
+
+// ---------------------------------------------------------------------------
+// fortify checked wrappers wave-05 (bd-reality-202609-lx578q.6.1)
 // ---------------------------------------------------------------------------
 // fortify checked wrappers wave-05 (bd-reality-202609-lx578q.6.1)
 //

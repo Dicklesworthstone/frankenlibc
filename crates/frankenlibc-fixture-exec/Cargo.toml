@@ -13,6 +13,9 @@ default = ["asupersync-tooling"]
 asupersync-tooling = ["dep:asupersync_conformance"]
 frankentui-ui = ["dep:ftui_harness"]
 
+[build-dependencies]
+cc = "1.2.60"
+
 [dependencies]
 clap = { workspace = true }
 serde = { workspace = true }
