@@ -273,15 +273,16 @@ fn fortify_checked_wrapper_wave05_logs_without_ambient_leaks() -> Result<(), Str
 #[test]
 fn fortify_checked_wrapper_wave05_respects_ambient_policy_scenarios() -> Result<(), String> {
     let fixture = load_fixture()?;
-    // Every wave05 scenario must be a capture-free replay: bad fds, missing
-    // constant paths, or bounded in-memory buffers. A FILE*-taking or stdout-
-    // writing scenario in this wave would reintroduce the contamination class
-    // bd-ug42ol measured.
+    // Wave05 scenarios are either capture-free replays (bad fds, constant
+    // missing paths, bounded in-memory buffers) or explicitly CONTAINED
+    // writes to the harness subprocess's own piped stdout, which the parent
+    // collects and discards. Anything else would reintroduce the
+    // contamination class bd-ug42ol measured.
     for case in &fixture.cases {
         let scenario = case.inputs["scenario"].as_str().unwrap_or_default();
         assert!(
-            scenario.ends_with("_without_capture"),
-            "case {} scenario {scenario:?} must be capture-free",
+            scenario.ends_with("_without_capture") || scenario.starts_with("contained_"),
+            "case {} scenario {scenario:?} must be capture-free or contained",
             case.name
         );
     }

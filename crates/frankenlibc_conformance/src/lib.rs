@@ -28504,7 +28504,7 @@ fn fortify_wcstombs_bounded_actual() -> Result<String, String> {
 
 fn fortify_wcsrtombs_bounded_actual() -> Result<String, String> {
     let src: [i32; 3] = [b'A' as i32, b'B' as i32, 0];
-    let mut src_ptr: *const u32 = src.as_ptr();
+    let mut src_ptr: *const i32 = src.as_ptr();
     let mut dest = [0u8; 16];
     fortify_wave05_reset_errno();
     // SAFETY: dest has n bytes; src points at a NUL-terminated wide string;
@@ -28527,7 +28527,7 @@ fn fortify_wcsrtombs_bounded_actual() -> Result<String, String> {
 
 fn fortify_wcsnrtombs_bounded_actual() -> Result<String, String> {
     let src: [i32; 3] = [b'A' as i32, b'B' as i32, 0];
-    let mut src_ptr: *const u32 = src.as_ptr();
+    let mut src_ptr: *const i32 = src.as_ptr();
     let mut dest = [0u8; 16];
     fortify_wave05_reset_errno();
     // SAFETY: dest has n bytes; exactly nwc wide chars are consumed from the
