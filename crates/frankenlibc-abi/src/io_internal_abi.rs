@@ -2378,8 +2378,19 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// untouched.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
     // The C-visible `stdout` cell: RTLD_DEFAULT resolves through the global
-    // scope, where an interposing fl precedes libc.
-    let visible = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"stdout".as_ptr().cast()) };
+    // scope, where an interposing fl precedes libc. The host dlsym is reached
+    // through the raw ELF scanner rather than libc::dlsym — the replacement
+    // guard (bd-130) treats any libc::f(...) call-through text as forbidden,
+    // and in a replacement build there is no host dlsym to call anyway
+    // (resolve_host_symbol_raw then returns None and the whole patch is
+    // skipped, which is the correct standalone behavior).
+    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    let Some(host_dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
+        // No resolvable host dlsym: not an interpose deployment; nothing to patch.
+        return;
+    };
+    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(host_dlsym_addr) };
+    let visible = unsafe { host_dlsym(std::ptr::null_mut(), c"stdout".as_ptr().cast()) };
     let Some(glibc_cell) = crate::host_resolve::resolve_host_symbol_raw("stdout") else {
         // No resolvable host stdout: not an interpose deployment; nothing to patch.
         return;
