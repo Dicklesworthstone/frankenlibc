@@ -33224,9 +33224,9 @@
  ],
  "summary": {
   "total": 4119,
-  "implemented": 2388,
+  "implemented": 2441,
   "raw_syscall": 414,
-  "wraps_host_libc": 1317,
+  "wraps_host_libc": 1264,
   "glibc_call_through": 0,
   "stub": 0
  },
