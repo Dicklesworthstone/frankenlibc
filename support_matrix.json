@@ -720,12 +720,13 @@
   },
   {
    "symbol": "__printf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__progname",
@@ -969,30 +970,33 @@
   },
   {
    "symbol": "__vasprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vdprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vfprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vfwprintf_chk",
@@ -1005,30 +1009,33 @@
   },
   {
    "symbol": "__vprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vsnprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vsprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vswprintf_chk",
@@ -1050,12 +1057,13 @@
   },
   {
    "symbol": "__vwprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__wcscat_chk",
@@ -1095,39 +1103,43 @@
   },
   {
    "symbol": "__wcsnrtombs_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__wcsrtombs_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__wcstombs_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__wctomb_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__wmemcpy_chk",
@@ -1158,12 +1170,13 @@
   },
   {
    "symbol": "__wprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__xpg_basename",
@@ -33208,22 +33221,22 @@
  ],
  "summary": {
   "total": 4119,
-  "implemented": 2425,
+  "implemented": 2438,
   "raw_syscall": 414,
-  "wraps_host_libc": 1280,
+  "wraps_host_libc": 1267,
   "glibc_call_through": 0,
   "stub": 0
  },
- "implemented": 2425,
+ "implemented": 2438,
  "raw_syscall": 414,
  "glibc_call_through": 0,
  "stub": 0,
  "counts": {
-  "implemented": 2425,
+  "implemented": 2438,
   "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
-  "wraps_host_libc": 1280
+  "wraps_host_libc": 1267
  },
- "wraps_host_libc": 1280
+ "wraps_host_libc": 1267
 }
