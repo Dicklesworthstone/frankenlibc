@@ -83,6 +83,19 @@ const SP: &[f64] = &[
     -2.5,
     123.875,
     -123.875,
+    // Negative half-integer lattice (bd-8htzay): lgamma_r has a closed form
+    // there (|Gamma(1/2-n)| = 4^n n! sqrt(pi)/(2n)!); glibc is correctly
+    // rounded on it. These rows pin fl's lattice branch against the live host.
+    -0.5,
+    -1.5,
+    -2.5,
+    -3.5,
+    -4.5,
+    -9.5,
+    -19.5,
+    -63.5,
+    -255.5,
+    -1023.5,
 ];
 
 #[test]

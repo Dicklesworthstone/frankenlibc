@@ -316,6 +316,162 @@ mod tgamma_lanczos_research {
         }
     }
 }
+// ---------------------------------------------------------------------------
+// Negative half-integer lattice (bd-8htzay)
+//
+// x = 1/2 - n (n >= 1, integral) has the closed form
+//     |Gamma(1/2 - n)| = 4^n n! sqrt(pi) / (2n)!
+//     lgamma(x)        = n*ln4 + ln(n!) + (1/2)*ln(pi) - ln((2n)!)
+//     signgam          = (-1)^n
+// (checked: n = 3 gives ln(8*sqrt(pi)/15) = -0.0562437164976740506...).
+//
+// glibc 2.43's lgamma_r is CORRECTLY ROUNDED on this lattice (mpmath at 60
+// digits, n = 1..24), and a correctly rounded value is host-proof, unlike
+// algorithm mimicry: the same release's fromfp re-cut (bd-7ilguh) showed how
+// fragile matching-a-particular-algorithm is across host upgrades. The branch
+// below evaluates the closed form in double-double (~106-bit significand):
+// every term is an exact-argument log, the DD sum accumulates <= 2^-90
+// relative error at the n cap, and the final f64 rounding is therefore the
+// correctly rounded one — CR now, and on whatever glibc ships next. O(n) DD
+// log terms, capped at n <= 4096 (larger |x| stays on the libm-crate
+// deferral in `lgamma_r`, unchanged).
+mod lgamma_half_integer {
+    /// Double-double: (hi, lo) with |lo| <= ulp(hi)/2.
+    type Dd = (f64, f64);
+
+    /// Split of ln(2) to 106-bit precision.
+    const LN2: Dd = (
+        0.693_147_180_559_945_286_226_763_982_995_180_413_126_945_495_605_468_75e0,
+        2.319_046_813_846_299_615_494_855_463_875_39e-17,
+    );
+    /// Split of (1/2) ln(pi) to 106-bit precision.
+    const HALF_LN_PI: Dd = (
+        0.572_364_942_924_700_087_071_713_675_676_529_355_823_647_406_457_66e0,
+        5.132_975_581_353_913_12e-18,
+    );
+    /// Split of ln(4) to 106-bit precision.
+    const LN4: Dd = (1.386_294_361_119_890_571_8, 4.638_093_627_692_599_23e-17);
+
+    #[inline]
+    fn quick_two_sum(a: f64, b: f64) -> Dd {
+        let s = a + b;
+        (s, b - (s - a))
+    }
+
+    #[inline]
+    fn two_sum(a: f64, b: f64) -> Dd {
+        let s = a + b;
+        let av = s - b;
+        let bv = s - av;
+        (s, (a - av) + (b - bv))
+    }
+
+    #[inline]
+    fn two_prod(a: f64, b: f64) -> Dd {
+        let p = a * b;
+        (p, a.mul_add(b, -p))
+    }
+
+    #[inline]
+    fn dd_neg(a: Dd) -> Dd {
+        (-a.0, -a.1)
+    }
+
+    #[inline]
+    fn dd_add(a: Dd, b: Dd) -> Dd {
+        let (s, se) = two_sum(a.0, b.0);
+        let (t, te) = two_sum(a.1, b.1);
+        let (hi, mid) = quick_two_sum(s, se + t);
+        quick_two_sum(hi, mid + te)
+    }
+
+    #[inline]
+    fn dd_mul(a: Dd, b: Dd) -> Dd {
+        let (p, pe) = two_prod(a.0, b.0);
+        quick_two_sum(p, pe + a.0 * b.1 + a.1 * b.0)
+    }
+
+    #[inline]
+    fn dd_mul_f64(a: Dd, b: f64) -> Dd {
+        let (p, pe) = two_prod(a.0, b);
+        quick_two_sum(p, pe + a.1 * b)
+    }
+
+    #[inline]
+    fn dd_div(a: Dd, b: Dd) -> Dd {
+        let q1 = a.0 / b.0;
+        // r = a - q1 * b, in DD. (p, pe) carries q1*b.0 to DD precision; only
+        // the q1*b.1 tail is subtracted separately. Subtracting q1*b twice
+        // collapses r to -a and the quotient to ~0 (caught by the standalone
+        // DD probe, bd-8htzay).
+        let (p, pe) = two_prod(q1, b.0);
+        let r = dd_add(dd_add(a, dd_neg((p, pe))), dd_mul_f64((b.1, 0.0), -q1));
+        dd_add((q1, 0.0), dd_mul_f64(r, 1.0 / b.0))
+    }
+
+    #[inline]
+    fn dd_sqrt(x: Dd) -> Dd {
+        let s = x.0.sqrt();
+        // One DD Newton step: s' = s + (x - s^2) / (2 s).
+        let (p, pe) = two_prod(s, s);
+        let corr = dd_mul_f64(dd_add(x, dd_neg((p, pe))), 0.5 / s);
+        dd_add((s, 0.0), corr)
+    }
+
+    /// ln(x) for finite x > 0, ~2^-105 relative error.
+    ///
+    /// x = m * 2^k with m in [sqrt(1/2), sqrt(2)); five squarings bring m
+    /// into [~0.9975, ~1.0025], where the atanh series converges in a handful
+    /// of DD terms: ln m = 32 * ln(m^(1/32)) = 64 * atanh(u) with
+    /// u = (m^(1/32) - 1) / (m^(1/32) + 1).
+    fn dd_ln(x: f64) -> Dd {
+        debug_assert!(x > 0.0 && x.is_finite());
+        let bits = x.to_bits();
+        let mut k = (((bits >> 52) & 0x7ff) as i64) - 1023;
+        let mut m = f64::from_bits((bits & !(0x7ffu64 << 52)) | (1023u64 << 52));
+        if m < core::f64::consts::FRAC_1_SQRT_2 {
+            m *= 2.0;
+            k -= 1;
+        }
+        let mut s = (m, 0.0);
+        for _ in 0..5 {
+            s = dd_sqrt(s);
+        }
+        let u = dd_div(dd_add(s, (-1.0, 0.0)), dd_add(s, (1.0, 0.0)));
+        let u2 = dd_mul(u, u);
+        let mut term = u;
+        let mut acc = (0.0, 0.0);
+        let mut i = 1.0;
+        loop {
+            acc = dd_add(acc, dd_div(term, (i, 0.0)));
+            term = dd_mul(term, u2);
+            i += 2.0;
+            if term.0 == 0.0 || i > 47.0 {
+                break;
+            }
+        }
+        // 2 (atanh factor) * 32 (squarings).
+        let ln_m = dd_mul_f64(acc, 64.0);
+        dd_add(ln_m, dd_mul_f64(LN2, k as f64))
+    }
+
+    /// ln|Gamma(1/2 - n)| for integral n in [1, 4096], correctly rounded.
+    pub(crate) fn lgamma_neg_half_integer(n: u32) -> (f64, i32) {
+        // L = n*ln4 + (1/2)ln(pi) + ln(n!) - ln((2n)!). The ln(n!) terms
+        // cancel against the first n terms of ln((2n)!), leaving exactly
+        // L = n*ln4 + (1/2)ln(pi) - sum_{k=n+1}^{2n} ln k. (A first version
+        // added the k <= n terms instead of dropping them — double-counting
+        // ln(n!) — which the mpmath goldens caught immediately.)
+        let mut l = dd_add(dd_mul_f64(LN4, n as f64), HALF_LN_PI);
+        for k in (n + 1)..=(2 * n) {
+            l = dd_add(l, dd_neg(dd_ln(k as f64)));
+        }
+        let (value, _) = quick_two_sum(l.0, l.1);
+        // Gamma(1/2 - n) = (-4)^n n! sqrt(pi) / (2n)!: the sign is (-1)^n.
+        let sign = if n % 2 == 0 { 1 } else { -1 };
+        (value, sign)
+    }
+}
 
 #[inline]
 pub fn lgamma(x: f64) -> f64 {
@@ -388,6 +544,17 @@ pub fn lgamma_r(x: f64) -> (f64, i32) {
         s = s.mul_add(w, 1.0 / 12.0);
         s *= inv;
         return (((hi - x) + (HALF_LN_2PI + s)) + lo, 1);
+    }
+    // Negative half-integer lattice: closed form via the exact reflection
+    // |Gamma(1/2-n)| = 4^n n! sqrt(pi)/(2n)! (see lgamma_half_integer above).
+    // n = 1/2 - x is exact f64 arithmetic on this range; integers fail the
+    // integrality test (1/2 - integer is never integral) and keep the pole
+    // handling in the libm-crate deferral below.
+    if x < 0.0 {
+        let nh = 0.5 - x;
+        if nh >= 1.0 && nh <= 4096.0 && nh == nh.trunc() {
+            return lgamma_half_integer::lgamma_neg_half_integer(nh as u32);
+        }
     }
     libm::lgamma_r(x)
 }
@@ -569,6 +736,40 @@ mod tests {
         assert!((jn(0, 2.5) - j0(2.5)).abs() < 1e-12);
         // Jn(1, x) == J1(x)
         assert!((jn(1, 2.5) - j1(2.5)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn lgamma_r_neg_half_integer_lattice_matches_cr() {
+        // The closed form |Gamma(1/2-n)| = 4^n n! sqrt(pi)/(2n)! evaluated in
+        // double-double must reproduce the CORRECTLY ROUNDED lgamma at every
+        // lattice point. Goldens: mpmath.loggamma at 60 digits, rounded to
+        // f64 (bd-8htzay); glibc 2.43 agrees bit-for-bit on this lattice
+        // (verified live by conformance_diff_math_multi_output).
+        const GOLDEN: [(u32, f64); 12] = [
+            (1, 1.265_512_123_484_645_4),
+            (2, 0.860_047_015_376_481),
+            (3, -0.056_243_716_497_674_054),
+            (4, -1.309_006_684_993_042),
+            (5, -2.813_084_081_769_316),
+            (6, -4.517_832_174_007_741),
+            (7, -6.389_634_350_909_333),
+            (8, -8.404_537_371_451_598),
+            (9, -10.544_603_534_947_868),
+            (10, -12.795_895_333_554_363),
+            (11, -15.147_270_590_717_842),
+            (12, -17.589_617_626_087_044),
+        ];
+        for &(n, want) in &GOLDEN {
+            let (got, sign) = lgamma_r(0.5 - n as f64);
+            assert_eq!(got.to_bits(), want.to_bits(), "lgamma_r(1/2-{n})");
+            let want_sign = if n % 2 == 0 { 1 } else { -1 };
+            assert_eq!(sign, want_sign, "signgam(1/2-{n})");
+        }
+        // Non-lattice negative x keeps the deferral contract (value unchanged
+        // by the branch): -2.6 is not on the lattice.
+        let (v, s) = lgamma_r(-2.6);
+        let (lv, ls) = libm::lgamma_r(-2.6);
+        assert_eq!((v.to_bits(), s), (lv.to_bits(), ls));
     }
 
     #[test]
