@@ -1,0 +1,223 @@
+{
+ "version": "v1",
+ "family": "fortify/checked-wrapper",
+ "captured_at": "2026-09-15T04:30:00Z",
+ "description": "Wave-05 residual fortify checked wrappers: contained-stdout format writes (the harness subprocess pipe contains them; nothing is redirected into a fixture capture) and bounded wide-to-multibyte conversions over the C/POSIX default locale, with raw buffer addresses never compared, FILE pointers never captured, filesystem paths never touched, process ids never captured, wall-clock timing never captured.",
+ "spec_reference": "GNU _FORTIFY_SOURCE object-size checked wrappers: __printf_chk, __wprintf_chk, __wcstombs_chk, __wcsrtombs_chk, __wcsnrtombs_chk, __wctomb_chk reserve their full object-size contract; this wave pins the six deterministic members following wave04's nine (bd-reality-202609-lx578q.6.1).",
+ "campaign": {
+  "bead": "bd-reality-202609-lx578q.6.1",
+  "campaign_id": "fcq-fortify-bounds",
+  "wave_id": "wave-05-fortify-checked-wrapper-conversions",
+  "source_artifact": "tests/conformance/support_matrix_promotion_triage.v1.json",
+  "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+  "first_wave_symbols": [
+   "__printf_chk",
+   "__wprintf_chk",
+   "__wcstombs_chk",
+   "__wcsrtombs_chk",
+   "__wcsnrtombs_chk",
+   "__wctomb_chk"
+  ],
+  "residual_symbols": [
+   "__syslog_chk",
+   "__vasprintf_chk",
+   "__vdprintf_chk",
+   "__vfprintf_chk",
+   "__vfwprintf_chk",
+   "__vprintf_chk",
+   "__vsnprintf_chk",
+   "__vsprintf_chk",
+   "__vsyslog_chk",
+   "__vwprintf_chk"
+  ]
+ },
+ "structured_log_fields": [
+  "symbol",
+  "mode",
+  "expected",
+  "actual",
+  "failure_signature"
+ ],
+ "cases": [
+  {
+   "name": "__printf_chk_contained_stdout_format_write_strict",
+   "function": "__printf_chk",
+   "spec_section": "GNU __printf_chk formats to the process stdout pipe and returns the byte count",
+   "inputs": {
+    "symbol": "__printf_chk",
+    "scenario": "contained_stdout_format_write",
+    "expected": "PRINTF_CHK_RC_6",
+    "oracle_source": "FrankenLibC fortify_abi::__printf_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__printf_chk;mode=strict;expected=PRINTF_CHK_RC_6;actual=PRINTF_CHK_RC_6;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__printf_chk_contained_stdout_format_write_hardened",
+   "function": "__printf_chk",
+   "spec_section": "GNU __printf_chk formats to the process stdout pipe and returns the byte count",
+   "inputs": {
+    "symbol": "__printf_chk",
+    "scenario": "contained_stdout_format_write",
+    "expected": "PRINTF_CHK_RC_6",
+    "oracle_source": "FrankenLibC fortify_abi::__printf_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__printf_chk;mode=hardened;expected=PRINTF_CHK_RC_6;actual=PRINTF_CHK_RC_6;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__wprintf_chk_contained_wide_stdout_format_write_strict",
+   "function": "__wprintf_chk",
+   "spec_section": "GNU __wprintf_chk formats wide to the process stdout pipe and returns the wide count",
+   "inputs": {
+    "symbol": "__wprintf_chk",
+    "scenario": "contained_wide_stdout_format_write",
+    "expected": "WPRINTF_CHK_RC_3",
+    "oracle_source": "FrankenLibC fortify_abi::__wprintf_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wprintf_chk;mode=strict;expected=WPRINTF_CHK_RC_3;actual=WPRINTF_CHK_RC_3;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__wprintf_chk_contained_wide_stdout_format_write_hardened",
+   "function": "__wprintf_chk",
+   "spec_section": "GNU __wprintf_chk formats wide to the process stdout pipe and returns the wide count",
+   "inputs": {
+    "symbol": "__wprintf_chk",
+    "scenario": "contained_wide_stdout_format_write",
+    "expected": "WPRINTF_CHK_RC_3",
+    "oracle_source": "FrankenLibC fortify_abi::__wprintf_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wprintf_chk;mode=hardened;expected=WPRINTF_CHK_RC_3;actual=WPRINTF_CHK_RC_3;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__wcstombs_chk_bounded_wide_to_multibyte_without_capture_strict",
+   "function": "__wcstombs_chk",
+   "spec_section": "GNU __wcstombs_chk converts bounded wide chars to multibyte within the destination bound",
+   "inputs": {
+    "symbol": "__wcstombs_chk",
+    "scenario": "bounded_wide_to_multibyte_without_capture",
+    "expected": "WCSTOMBS_CHK_RC_2;BUF=AB",
+    "oracle_source": "FrankenLibC fortify_abi::__wcstombs_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wcstombs_chk;mode=strict;expected=WCSTOMBS_CHK_RC_2;BUF=AB;actual=WCSTOMBS_CHK_RC_2;BUF=AB;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__wcstombs_chk_bounded_wide_to_multibyte_without_capture_hardened",
+   "function": "__wcstombs_chk",
+   "spec_section": "GNU __wcstombs_chk converts bounded wide chars to multibyte within the destination bound",
+   "inputs": {
+    "symbol": "__wcstombs_chk",
+    "scenario": "bounded_wide_to_multibyte_without_capture",
+    "expected": "WCSTOMBS_CHK_RC_2;BUF=AB",
+    "oracle_source": "FrankenLibC fortify_abi::__wcstombs_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wcstombs_chk;mode=hardened;expected=WCSTOMBS_CHK_RC_2;BUF=AB;actual=WCSTOMBS_CHK_RC_2;BUF=AB;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__wcsrtombs_chk_bounded_wide_sequence_without_capture_strict",
+   "function": "__wcsrtombs_chk",
+   "spec_section": "GNU __wcsrtombs_chk converts a restartable wide sequence within the destination bound",
+   "inputs": {
+    "symbol": "__wcsrtombs_chk",
+    "scenario": "bounded_wide_sequence_without_capture",
+    "expected": "WCSRTOMBS_CHK_RC_2;BUF=AB",
+    "oracle_source": "FrankenLibC fortify_abi::__wcsrtombs_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wcsrtombs_chk;mode=strict;expected=WCSRTOMBS_CHK_RC_2;BUF=AB;actual=WCSRTOMBS_CHK_RC_2;BUF=AB;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__wcsrtombs_chk_bounded_wide_sequence_without_capture_hardened",
+   "function": "__wcsrtombs_chk",
+   "spec_section": "GNU __wcsrtombs_chk converts a restartable wide sequence within the destination bound",
+   "inputs": {
+    "symbol": "__wcsrtombs_chk",
+    "scenario": "bounded_wide_sequence_without_capture",
+    "expected": "WCSRTOMBS_CHK_RC_2;BUF=AB",
+    "oracle_source": "FrankenLibC fortify_abi::__wcsrtombs_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wcsrtombs_chk;mode=hardened;expected=WCSRTOMBS_CHK_RC_2;BUF=AB;actual=WCSRTOMBS_CHK_RC_2;BUF=AB;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__wcsnrtombs_chk_bounded_wide_count_without_capture_strict",
+   "function": "__wcsnrtombs_chk",
+   "spec_section": "GNU __wcsnrtombs_chk converts at most nwc wide chars within the destination bound",
+   "inputs": {
+    "symbol": "__wcsnrtombs_chk",
+    "scenario": "bounded_wide_count_without_capture",
+    "expected": "WCSNRTOMBS_CHK_RC_2;BUF=AB",
+    "oracle_source": "FrankenLibC fortify_abi::__wcsnrtombs_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wcsnrtombs_chk;mode=strict;expected=WCSNRTOMBS_CHK_RC_2;BUF=AB;actual=WCSNRTOMBS_CHK_RC_2;BUF=AB;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__wcsnrtombs_chk_bounded_wide_count_without_capture_hardened",
+   "function": "__wcsnrtombs_chk",
+   "spec_section": "GNU __wcsnrtombs_chk converts at most nwc wide chars within the destination bound",
+   "inputs": {
+    "symbol": "__wcsnrtombs_chk",
+    "scenario": "bounded_wide_count_without_capture",
+    "expected": "WCSNRTOMBS_CHK_RC_2;BUF=AB",
+    "oracle_source": "FrankenLibC fortify_abi::__wcsnrtombs_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wcsnrtombs_chk;mode=hardened;expected=WCSNRTOMBS_CHK_RC_2;BUF=AB;actual=WCSNRTOMBS_CHK_RC_2;BUF=AB;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__wctomb_chk_single_wide_char_without_capture_strict",
+   "function": "__wctomb_chk",
+   "spec_section": "GNU __wctomb_chk converts one wide char within the MB_CUR_MAX buffer bound",
+   "inputs": {
+    "symbol": "__wctomb_chk",
+    "scenario": "single_wide_char_without_capture",
+    "expected": "WCTOMB_CHK_RC_1;BUF=A",
+    "oracle_source": "FrankenLibC fortify_abi::__wctomb_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wctomb_chk;mode=strict;expected=WCTOMB_CHK_RC_1;BUF=A;actual=WCTOMB_CHK_RC_1;BUF=A;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__wctomb_chk_single_wide_char_without_capture_hardened",
+   "function": "__wctomb_chk",
+   "spec_section": "GNU __wctomb_chk converts one wide char within the MB_CUR_MAX buffer bound",
+   "inputs": {
+    "symbol": "__wctomb_chk",
+    "scenario": "single_wide_char_without_capture",
+    "expected": "WCTOMB_CHK_RC_1;BUF=A",
+    "oracle_source": "FrankenLibC fortify_abi::__wctomb_chk classified wave05 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__wctomb_chk;mode=hardened;expected=WCTOMB_CHK_RC_1;BUF=A;actual=WCTOMB_CHK_RC_1;BUF=A;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  }
+ ]
+}
