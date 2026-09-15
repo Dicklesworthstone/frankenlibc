@@ -1309,9 +1309,10 @@ pub fn execute_fixture_case(
         // capture no ambient state. The variadic and wide-stream members of
         // the missing-25 (the __v* family, __wprintf_chk, __syslog_chk) need
         // a C va_list shim and are deliberately NOT here yet.
-        "__pread_chk" | "__read_chk" | "__readlink_chk" | "__readlinkat_chk"
-        | "__realpath_chk" | "__recv_chk" | "__recvfrom_chk" | "__snprintf_chk"
-        | "__sprintf_chk" => execute_fortify_checked_wrapper_wave04_case(function, inputs, mode),
+        "__pread_chk" | "__read_chk" | "__readlink_chk" | "__readlinkat_chk" | "__realpath_chk"
+        | "__recv_chk" | "__recvfrom_chk" | "__snprintf_chk" | "__sprintf_chk" => {
+            execute_fortify_checked_wrapper_wave04_case(function, inputs, mode)
+        }
         // wchar / locale encoding wave-01
         "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
         | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
@@ -23823,7 +23824,9 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
                 0
             };
             if !line.is_null() {
-                unsafe { libc::free(line.cast::<c_void>()) };
+                // Lattice-aware free: the line buffer is fl-issued
+                // (bd-6cynxn — host libc::free aborts on it under 2.43).
+                unsafe { frankenlibc_abi::malloc_abi::free(line.cast::<c_void>()) };
             }
             Ok(format!("GETDELIM_N_{n}_DELIM_{delim_seen}"))
         }),
@@ -23841,7 +23844,9 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
                 0
             };
             if !line.is_null() {
-                unsafe { libc::free(line.cast::<c_void>()) };
+                // Lattice-aware free: the line buffer is fl-issued
+                // (bd-6cynxn — host libc::free aborts on it under 2.43).
+                unsafe { frankenlibc_abi::malloc_abi::free(line.cast::<c_void>()) };
             }
             Ok(format!("GETLINE_N_{n}_NEWLINE_{newline_seen}"))
         }),
@@ -23893,7 +23898,9 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             let close_rc = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
             let size_class = if size == 3 { "SIZE_3" } else { "SIZE_OTHER" };
             if !out.is_null() {
-                unsafe { libc::free(out.cast::<c_void>()) };
+                // Lattice-aware free: the memstream buffer is fl-issued
+                // (bd-6cynxn — host libc::free aborts on it under 2.43).
+                unsafe { frankenlibc_abi::malloc_abi::free(out.cast::<c_void>()) };
             }
             Ok(format!(
                 "OPEN_MEMSTREAM_FLUSH_{flush_rc}_CLOSE_{close_rc}_{size_class}"
@@ -28164,7 +28171,10 @@ fn fortify_asprintf_literal_actual() -> Result<String, String> {
     let rendered = unsafe { CStr::from_ptr(out) }
         .to_string_lossy()
         .into_owned();
-    unsafe { libc::free(out.cast()) };
+    // The buffer belongs to whichever heap fl's vasprintf used; routing the
+    // free through fl's ownership lattice (bd-6cynxn) is the matching
+    // counterpart. glibc 2.43's free aborts on the mismatch outright.
+    unsafe { frankenlibc_abi::malloc_abi::free(out.cast()) };
     if rendered == "fortify-wave" {
         Ok(String::from("ASPRINTF_LITERAL_ALLOCATED_TEXT_OK"))
     } else {
@@ -28248,9 +28258,7 @@ fn fortify_checked_wrapper_wave04_actual(
         ("__readlinkat_chk", "missing_path_fails_without_capture") => {
             fortify_readlink_missing_actual("READLINKAT_MISSING")
         }
-        ("__recv_chk", "bad_fd_fails_without_capture") => {
-            fortify_recv_bad_fd_actual("__recv_chk")
-        }
+        ("__recv_chk", "bad_fd_fails_without_capture") => fortify_recv_bad_fd_actual("__recv_chk"),
         ("__recvfrom_chk", "bad_fd_fails_without_capture") => {
             fortify_recv_bad_fd_actual("__recvfrom_chk")
         }
@@ -28291,7 +28299,9 @@ fn fortify_snprintf_bounded_actual() -> Result<String, String> {
     // "value=4211" is 9 bytes: truncated to 7 chars + NUL, rc reports the
     // would-be length per the C contract.
     let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
-    let content = s.to_str().map_err(|_| "snprintf buf not UTF-8".to_string())?;
+    let content = s
+        .to_str()
+        .map_err(|_| "snprintf buf not UTF-8".to_string())?;
     if content != "value=4" {
         return Err(format!("snprintf truncated content wrong: {content:?}"));
     }
@@ -28313,7 +28323,9 @@ fn fortify_sprintf_inbounds_actual() -> Result<String, String> {
         )
     };
     let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
-    let content = s.to_str().map_err(|_| "sprintf buf not UTF-8".to_string())?;
+    let content = s
+        .to_str()
+        .map_err(|_| "sprintf buf not UTF-8".to_string())?;
     if content != "x=7" {
         return Err(format!("sprintf content wrong: {content:?}"));
     }
@@ -28390,9 +28402,7 @@ fn fortify_recv_bad_fd_actual(function: &str) -> Result<String, String> {
             )
         }
     } else {
-        unsafe {
-            frankenlibc_abi::fortify_abi::__recv_chk(-1, buf.as_mut_ptr().cast(), 4, 4, 0)
-        }
+        unsafe { frankenlibc_abi::fortify_abi::__recv_chk(-1, buf.as_mut_ptr().cast(), 4, 4, 0) }
     };
     let errno = fortify_wave04_errno();
     Ok(format!("RECV_BAD_FD_RC_{rc}_ERRNO_{errno}"))
@@ -28413,9 +28423,11 @@ fn fortify_realpath_missing_actual() -> Result<String, String> {
         )
     };
     let errno = fortify_wave04_errno();
-    Ok(format!("REALPATH_MISSING_NULL_{}_ERRNO_{errno}", got.is_null()))
+    Ok(format!(
+        "REALPATH_MISSING_NULL_{}_ERRNO_{errno}",
+        got.is_null()
+    ))
 }
-
 
 fn fortify_dprintf_bad_fd_actual() -> Result<String, String> {
     let fmt =
