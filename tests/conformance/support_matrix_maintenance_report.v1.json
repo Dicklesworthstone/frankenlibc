@@ -1,35 +1,35 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-09-15T21:52:22Z",
+  "generated_at": "2026-09-16T03:19:55Z",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
-    "fixture_linked": 1187,
-    "fixture_unlinked": 2932,
-    "fixture_coverage_pct": 28.8,
-    "total_warnings": 75
+    "fixture_linked": 1190,
+    "fixture_unlinked": 2929,
+    "fixture_coverage_pct": 28.9,
+    "total_warnings": 78
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2438,
+      "Implemented": 2441,
       "RawSyscall": 414,
-      "WrapsHostLibc": 1267,
+      "WrapsHostLibc": 1264,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 59.2,
+      "Implemented": 59.3,
       "RawSyscall": 10.1,
-      "WrapsHostLibc": 30.8,
+      "WrapsHostLibc": 30.7,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 69.2
+    "native_coverage_pct": 69.3
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -64,13 +64,13 @@
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 13,
+      "Implemented": 3,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": -13
+      "WrapsHostLibc": -3
     },
-    "native_coverage_pct_delta": 0.34,
-    "reclassified_symbol_count": 13,
+    "native_coverage_pct_delta": 0.11,
+    "reclassified_symbol_count": 3,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -86,12 +86,12 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 13,
+      "total_reclassified": 3,
       "violations": []
     },
     "fixture_coverage_ratchet": {
       "status": "pass",
-      "implemented_promotion_delta": 13,
+      "implemented_promotion_delta": 3,
       "violation_count": 0,
       "promotion_triage_manifest_loaded": true
     }
@@ -119,39 +119,39 @@
       "mode_requirement": "Implemented promotions require strict and hardened passing conformance, or an explicit triage rationale for downgrade/scanner handling"
     },
     "summary": {
-      "implemented_promotion_delta": 13,
+      "implemented_promotion_delta": 3,
       "module_count": 1,
       "violation_count": 0,
       "status": "pass"
     },
     "module_deltas": {
       "fortify_abi": {
-        "implemented_promotion_delta": 13,
+        "implemented_promotion_delta": 3,
         "proof_class_counts": {
-          "strict_hardened_conformance_proof": 13
+          "strict_hardened_conformance_proof": 3
         },
         "mode_deltas": {
           "strict": {
-            "fixture_rows": 13,
-            "passing_conformance_promotions": 13,
+            "fixture_rows": 3,
+            "passing_conformance_promotions": 3,
             "missing_fixture_promotions": 0,
             "missing_passing_conformance_promotions": 0
           },
           "hardened": {
-            "fixture_rows": 13,
-            "passing_conformance_promotions": 13,
+            "fixture_rows": 3,
+            "passing_conformance_promotions": 3,
             "missing_fixture_promotions": 0,
             "missing_passing_conformance_promotions": 0
           }
         },
         "triage_category_counts": {
-          "prove-now": 13
+          "prove-now": 3
         },
         "violating_symbols": [],
         "current_module_coverage": {
           "total": 78,
-          "linked": 58,
-          "coverage_pct": 74.4
+          "linked": 61,
+          "coverage_pct": 78.2
         }
       },
       "glibc_internal_abi": {
@@ -769,15 +769,15 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2438,
-      "fixture_linked": 743
+      "count": 2441,
+      "fixture_linked": 746
     },
     "RawSyscall": {
       "count": 414,
       "fixture_linked": 160
     },
     "WrapsHostLibc": {
-      "count": 1267,
+      "count": 1264,
       "fixture_linked": 284
     }
   },
@@ -819,8 +819,8 @@
     },
     "fortify_abi": {
       "total": 78,
-      "linked": 58,
-      "coverage_pct": 74.4
+      "linked": 61,
+      "coverage_pct": 78.2
     },
     "glibc_internal_abi": {
       "total": 568,
@@ -1731,7 +1731,7 @@
     "__swprintf_chk": "Implemented",
     "__sysconf": "WrapsHostLibc",
     "__sysctl": "WrapsHostLibc",
-    "__syslog_chk": "WrapsHostLibc",
+    "__syslog_chk": "Implemented",
     "__sysv_signal": "Implemented",
     "__tdelete": "Implemented",
     "__tfind": "Implemented",
@@ -1756,14 +1756,14 @@
     "__vfork": "WrapsHostLibc",
     "__vfprintf_chk": "Implemented",
     "__vfscanf": "WrapsHostLibc",
-    "__vfwprintf_chk": "WrapsHostLibc",
+    "__vfwprintf_chk": "Implemented",
     "__vprintf_chk": "Implemented",
     "__vsnprintf": "WrapsHostLibc",
     "__vsnprintf_chk": "Implemented",
     "__vsprintf_chk": "Implemented",
     "__vsscanf": "Implemented",
     "__vswprintf_chk": "Implemented",
-    "__vsyslog_chk": "WrapsHostLibc",
+    "__vsyslog_chk": "Implemented",
     "__vwprintf_chk": "Implemented",
     "__wait": "WrapsHostLibc",
     "__waitpid": "WrapsHostLibc",
@@ -5106,7 +5106,7 @@
   },
   "reclassified_symbols": [
     {
-      "symbol": "__printf_chk",
+      "symbol": "__syslog_chk",
       "module": "fortify_abi",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
@@ -5131,7 +5131,7 @@
       "missing_evidence": []
     },
     {
-      "symbol": "__vasprintf_chk",
+      "symbol": "__vfwprintf_chk",
       "module": "fortify_abi",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
@@ -5156,257 +5156,7 @@
       "missing_evidence": []
     },
     {
-      "symbol": "__vdprintf_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__vfprintf_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__vprintf_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__vsnprintf_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__vsprintf_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__vwprintf_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__wcsnrtombs_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__wcsrtombs_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__wcstombs_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__wctomb_chk",
-      "module": "fortify_abi",
-      "previous_status": "WrapsHostLibc",
-      "current_status": "Implemented",
-      "promotion_requires_evidence": true,
-      "strict_fixture_count": 1,
-      "hardened_fixture_count": 1,
-      "strict_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "hardened_conformance": {
-        "total": 1,
-        "passed": 1,
-        "failed": 0,
-        "errors": 0,
-        "pass_rate_percent": 100.0
-      },
-      "conformance_evidence_passed": true,
-      "missing_evidence": []
-    },
-    {
-      "symbol": "__wprintf_chk",
+      "symbol": "__vsyslog_chk",
       "module": "fortify_abi",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
@@ -5979,6 +5729,19 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
+      "symbol": "__syslog_chk",
+      "status": "Implemented",
+      "module": "fortify_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "__vasprintf_chk",
       "status": "Implemented",
       "module": "fortify_abi",
@@ -6018,6 +5781,19 @@
       "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
+      "symbol": "__vfwprintf_chk",
+      "status": "Implemented",
+      "module": "fortify_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "__vprintf_chk",
       "status": "Implemented",
       "module": "fortify_abi",
@@ -6045,6 +5821,19 @@
     },
     {
       "symbol": "__vsprintf_chk",
+      "status": "Implemented",
+      "module": "fortify_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__vsyslog_chk",
       "status": "Implemented",
       "module": "fortify_abi",
       "valid": true,
@@ -11673,11 +11462,8 @@
     "__strncat_chk",
     "__strncpy_chk",
     "__swprintf_chk",
-    "__syslog_chk",
     "__ttyname_r_chk",
-    "__vfwprintf_chk",
     "__vswprintf_chk",
-    "__vsyslog_chk",
     "__wcscat_chk",
     "__wcscpy_chk",
     "__wcsncat_chk",

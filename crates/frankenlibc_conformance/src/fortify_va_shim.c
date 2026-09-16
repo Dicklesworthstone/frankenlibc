@@ -1,4 +1,4 @@
-/* C va_list forwarder shim for the fortify wave-06 checked-wrapper fixtures
+/* C va_list forwarder shim for the fortify wave-06/07 checked-wrapper fixtures
  * (bd-reality-202609-lx578q.6.1).
  *
  * Rust cannot construct a C va_list, so each fixture driver calls one of
@@ -14,7 +14,11 @@
  * parameter receives. */
 
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
+
+/* glibc-shaped opaque stream handle for the vfprintf/vfwprintf members. */
+typedef struct _IO_FILE SHIM_FILE;
 
 extern int __vasprintf_chk(char **str, int flag, const char *fmt, va_list ap);
 extern int __vdprintf_chk(int fd, int flag, const char *fmt, va_list ap);
@@ -25,6 +29,9 @@ extern int __vsnprintf_chk(char *buf, size_t maxlen, int flag, size_t buflen,
 extern int __vsprintf_chk(char *buf, int flag, size_t buflen, const char *fmt,
                           va_list ap);
 extern int __vwprintf_chk(int flag, const int *fmt, va_list ap);
+extern void __vsyslog_chk(int priority, int flag, const char *fmt, va_list ap);
+extern int __vfwprintf_chk(SHIM_FILE *stream, int flag, const int *fmt,
+                           va_list ap);
 
 int shim_vasprintf_chk(char **str, int flag, const char *fmt, ...) {
     va_list ap;
@@ -84,17 +91,43 @@ int shim_vwprintf_chk(int flag, const int *fmt, ...) {
     return rc;
 }
 
-/* Drives an arbitrary __vfprintf_chk-style implementation (fl's own, passed
- * as a function pointer by the fixture) with a va_list opened over this
- * shim's varargs. This is the production-truth pattern for an interposed
- * C caller: the va_list is constructed per the C ABI and handed to the
- * implementation selected by the fixture. */
+void shim_vsyslog_chk(int priority, int flag, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    __vsyslog_chk(priority, flag, fmt, ap);
+    va_end(ap);
+}
+
+int shim_vfwprintf_chk(SHIM_FILE *stream, int flag, const int *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = __vfwprintf_chk(stream, flag, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
+/* Drives fl's own __vfprintf_chk with a va_list opened over this shim's
+ * varargs. The fixture passes fl's __vfprintf_chk as impl — the stream is
+ * fl-native, so the host implementation cannot be used (bd-6cynxn class). */
 int shim_drive_vfprintf(void *impl, void *stream, int flag, const char *fmt,
                         ...) {
     typedef int (*vfprintf_chk_t)(void *, int, const char *, void *);
     va_list ap;
     va_start(ap, fmt);
     vfprintf_chk_t f = (vfprintf_chk_t)impl;
+    int rc = f(stream, flag, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
+/* Same drive pattern for the wide member: fl's __vfwprintf_chk handles
+ * fl-native streams; the host's would segfault (bd-6cynxn class). */
+int shim_drive_vfwprintf(void *impl, void *stream, int flag, const int *fmt,
+                         ...) {
+    typedef int (*vfwprintf_chk_t)(void *, int, const int *, void *);
+    va_list ap;
+    va_start(ap, fmt);
+    vfwprintf_chk_t f = (vfwprintf_chk_t)impl;
     int rc = f(stream, flag, fmt, ap);
     va_end(ap);
     return rc;
