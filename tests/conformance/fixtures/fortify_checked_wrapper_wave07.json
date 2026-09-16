@@ -1,0 +1,119 @@
+{
+ "version": "v1",
+ "family": "fortify/checked-wrapper",
+ "captured_at": "2026-09-15T08:00:00Z",
+ "description": "Wave-07 final residual fortify checked wrappers: syslog pair renders through fl's engine and drops silently on transport failure (void return, deterministic in the sandbox), and vfwprintf writes wide into an fl tmpfile stream with the multibyte read-back pinned. Raw buffer addresses never compared, FILE pointers limited to fl-owned streams closed before return, filesystem paths never touched, process ids never captured, wall-clock timing never captured.",
+ "spec_reference": "GNU _FORTIFY_SOURCE object-size checked wrappers: __syslog_chk, __vsyslog_chk, __vfwprintf_chk complete the 53-member tranche (bd-reality-202609-lx578q.6.1).",
+ "campaign": {
+  "bead": "bd-reality-202609-lx578q.6.1",
+  "campaign_id": "fcq-fortify-bounds",
+  "wave_id": "wave-07-fortify-checked-wrapper-final",
+  "source_artifact": "tests/conformance/support_matrix_promotion_triage.v1.json",
+  "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+  "first_wave_symbols": [
+   "__syslog_chk",
+   "__vsyslog_chk",
+   "__vfwprintf_chk"
+  ],
+  "residual_symbols": []
+ },
+ "structured_log_fields": [
+  "symbol",
+  "mode",
+  "expected",
+  "actual",
+  "failure_signature"
+ ],
+ "cases": [
+  {
+   "name": "__syslog_chk_contained_render_no_crash_strict",
+   "function": "__syslog_chk",
+   "spec_section": "GNU __syslog_chk renders through the fl engine and drops on transport failure without crashing",
+   "inputs": {
+    "symbol": "__syslog_chk",
+    "scenario": "contained_render_no_crash",
+    "expected": "SYSLOG_COMPLETED",
+    "oracle_source": "FrankenLibC fortify_abi::__syslog_chk classified wave07 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__syslog_chk;mode=strict;expected=SYSLOG_COMPLETED;actual=SYSLOG_COMPLETED;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__syslog_chk_contained_render_no_crash_hardened",
+   "function": "__syslog_chk",
+   "spec_section": "GNU __syslog_chk renders through the fl engine and drops on transport failure without crashing",
+   "inputs": {
+    "symbol": "__syslog_chk",
+    "scenario": "contained_render_no_crash",
+    "expected": "SYSLOG_COMPLETED",
+    "oracle_source": "FrankenLibC fortify_abi::__syslog_chk classified wave07 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__syslog_chk;mode=hardened;expected=SYSLOG_COMPLETED;actual=SYSLOG_COMPLETED;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__vsyslog_chk_contained_render_no_crash_via_shim_strict",
+   "function": "__vsyslog_chk",
+   "spec_section": "GNU __vsyslog_chk renders through the va_list bridge and drops on transport failure without crashing",
+   "inputs": {
+    "symbol": "__vsyslog_chk",
+    "scenario": "contained_render_no_crash_via_shim",
+    "expected": "VSYSLOG_COMPLETED",
+    "oracle_source": "FrankenLibC fortify_abi::__vsyslog_chk classified wave07 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__vsyslog_chk;mode=strict;expected=VSYSLOG_COMPLETED;actual=VSYSLOG_COMPLETED;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__vsyslog_chk_contained_render_no_crash_via_shim_hardened",
+   "function": "__vsyslog_chk",
+   "spec_section": "GNU __vsyslog_chk renders through the va_list bridge and drops on transport failure without crashing",
+   "inputs": {
+    "symbol": "__vsyslog_chk",
+    "scenario": "contained_render_no_crash_via_shim",
+    "expected": "VSYSLOG_COMPLETED",
+    "oracle_source": "FrankenLibC fortify_abi::__vsyslog_chk classified wave07 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__vsyslog_chk;mode=hardened;expected=VSYSLOG_COMPLETED;actual=VSYSLOG_COMPLETED;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  },
+  {
+   "name": "__vfwprintf_chk_wide_tmpfile_write_without_capture_strict",
+   "function": "__vfwprintf_chk",
+   "spec_section": "GNU __vfwprintf_chk writes the wide format into the stream and returns the wide count",
+   "inputs": {
+    "symbol": "__vfwprintf_chk",
+    "scenario": "wide_tmpfile_write_without_capture",
+    "expected": "VFWPRINTF_RC_4;READ=wv=9",
+    "oracle_source": "FrankenLibC fortify_abi::__vfwprintf_chk classified wave07 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__vfwprintf_chk;mode=strict;expected=VFWPRINTF_RC_4;READ=wv=9;actual=VFWPRINTF_RC_4;READ=wv=9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "strict"
+  },
+  {
+   "name": "__vfwprintf_chk_wide_tmpfile_write_without_capture_hardened",
+   "function": "__vfwprintf_chk",
+   "spec_section": "GNU __vfwprintf_chk writes the wide format into the stream and returns the wide count",
+   "inputs": {
+    "symbol": "__vfwprintf_chk",
+    "scenario": "wide_tmpfile_write_without_capture",
+    "expected": "VFWPRINTF_RC_4;READ=wv=9",
+    "oracle_source": "FrankenLibC fortify_abi::__vfwprintf_chk classified wave07 replay",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+   },
+   "expected_output": "symbol=__vfwprintf_chk;mode=hardened;expected=VFWPRINTF_RC_4;READ=wv=9;actual=VFWPRINTF_RC_4;READ=wv=9;failure_signature=none",
+   "expected_errno": 0,
+   "mode": "hardened"
+  }
+ ]
+}
