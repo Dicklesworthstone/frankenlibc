@@ -952,12 +952,13 @@
   },
   {
    "symbol": "__syslog_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__ttyname_r_chk",
@@ -1000,12 +1001,13 @@
   },
   {
    "symbol": "__vfwprintf_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vprintf_chk",
@@ -1048,12 +1050,13 @@
   },
   {
    "symbol": "__vsyslog_chk",
-   "status": "WrapsHostLibc",
+   "status": "Implemented",
    "module": "fortify_abi",
    "performance_class": "coldpath",
    "strict_semantics": "Checks destlen, aborts on overflow, delegates to underlying implementation",
    "hardened_semantics": "Same as strict \u2014 fortify checks are safety-critical",
-   "support_policy_applicable": true
+   "support_policy_applicable": true,
+   "standalone_ready": true
   },
   {
    "symbol": "__vwprintf_chk",
@@ -33221,22 +33224,22 @@
  ],
  "summary": {
   "total": 4119,
-  "implemented": 2438,
+  "implemented": 2441,
   "raw_syscall": 414,
-  "wraps_host_libc": 1267,
+  "wraps_host_libc": 1264,
   "glibc_call_through": 0,
   "stub": 0
  },
- "implemented": 2438,
+ "implemented": 2441,
  "raw_syscall": 414,
  "glibc_call_through": 0,
  "stub": 0,
  "counts": {
-  "implemented": 2438,
+  "implemented": 2441,
   "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
-  "wraps_host_libc": 1267
+  "wraps_host_libc": 1264
  },
- "wraps_host_libc": 1267
+ "wraps_host_libc": 1264
 }

@@ -1331,6 +1331,13 @@ pub fn execute_fixture_case(
         | "__vsnprintf_chk" | "__vsprintf_chk" | "__vwprintf_chk" => {
             execute_fortify_checked_wrapper_wave06_case(function, inputs, mode)
         }
+        // fortify checked wrappers wave-07: the final three residual members.
+        // syslog/vsyslog render through fl's own engine and drop on transport
+        // failure (void, deterministic in the sandbox); vfwprintf writes wide
+        // into an fl tmpfile stream.
+        "__syslog_chk" | "__vsyslog_chk" | "__vfwprintf_chk" => {
+            execute_fortify_checked_wrapper_wave07_case(function, inputs, mode)
+        }
         // wchar / locale encoding wave-01
         "__islower_l" | "__isoc23_fwscanf" | "__isoc23_swscanf" | "__isoc23_vfwscanf"
         | "__isoc23_vswscanf" | "__isoc23_vwscanf" | "__isoc23_wcstoimax" | "__isoc23_wcstol"
@@ -28440,6 +28447,15 @@ unsafe extern "C" {
         ...
     ) -> c_int;
     fn shim_vwprintf_chk(flag: c_int, fmt: *const i32, ...) -> c_int;
+    fn shim_vsyslog_chk(priority: c_int, flag: c_int, fmt: *const c_char, ...);
+    fn shim_vfwprintf_chk(stream: *mut ShimFile, flag: c_int, fmt: *const i32, ...) -> c_int;
+    fn shim_drive_vfwprintf(
+        impl_fn: *const c_void,
+        stream: *mut c_void,
+        flag: c_int,
+        fmt: *const i32,
+        ...
+    ) -> c_int;
     fn shim_drive_vfprintf(
         impl_fn: *const c_void,
         stream: *mut c_void,
@@ -28628,7 +28644,120 @@ fn fortify_vwprintf_devnull_actual() -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// fortify checked wrappers wave-05 (bd-reality-202609-lx578q.6.1)
+// fortify checked wrappers wave-07 (bd-reality-202609-lx578q.6.1)
+//
+// The final three residual members. syslog/vsyslog render through fl's own
+// engine and drop silently on transport failure (void return, deterministic
+// in the sandbox); vfwprintf writes wide into an fl tmpfile stream. All
+// markers embed the observable rc/errno so wrong-semantics implementations
+// cannot pass by shape alone.
+// ---------------------------------------------------------------------------
+
+fn execute_fortify_checked_wrapper_wave07_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    if symbol != function {
+        return Err(format!(
+            "fortify checked-wrapper wave07 fixture symbol mismatch: function={function}, inputs.symbol={symbol}"
+        ));
+    }
+    let expected = parse_string(inputs, "expected")?;
+    let actual = fortify_checked_wrapper_wave07_actual(function, inputs)?;
+    Ok(non_host_execution(fortify_checked_wrapper_wave07_log(
+        function, mode, &expected, &actual,
+    )))
+}
+
+fn fortify_checked_wrapper_wave07_log(
+    symbol: &str,
+    mode: &str,
+    expected: &str,
+    actual: &str,
+) -> String {
+    let failure_signature = if expected == actual {
+        "none"
+    } else {
+        "mismatch"
+    };
+    format!(
+        "symbol={symbol};mode={mode};expected={expected};actual={actual};failure_signature={failure_signature}"
+    )
+}
+
+fn fortify_checked_wrapper_wave07_actual(
+    function: &str,
+    inputs: &serde_json::Value,
+) -> Result<String, String> {
+    let scenario = parse_string(inputs, "scenario")?;
+    match (function, scenario.as_str()) {
+        ("__syslog_chk", "contained_render_no_crash") => fortify_syslog_actual(),
+        ("__vsyslog_chk", "contained_render_no_crash_via_shim") => fortify_vsyslog_actual(),
+        ("__vfwprintf_chk", "wide_tmpfile_write_without_capture") => {
+            fortify_vfwprintf_tmpfile_actual()
+        }
+        other => Err(format!(
+            "fortify checked-wrapper wave07 has no scenario handler for {other:?}"
+        )),
+    }
+}
+
+fn fortify_syslog_actual() -> Result<String, String> {
+    let fmt = CString::new("wave07=%d").map_err(|_| "syslog fmt NUL".to_string())?;
+    fortify_wave05_reset_errno();
+    // SAFETY: the %d argument matches the format; the transport drop is
+    // silent and the call is void.
+    unsafe {
+        frankenlibc_abi::fortify_abi::__syslog_chk(libc::LOG_INFO, 0, fmt.as_ptr(), 4602_i32)
+    };
+    Ok("SYSLOG_COMPLETED".to_string())
+}
+
+fn fortify_vsyslog_actual() -> Result<String, String> {
+    let fmt = CString::new("vwave07=%d").map_err(|_| "vsyslog fmt NUL".to_string())?;
+    fortify_wave05_reset_errno();
+    // SAFETY: the %d argument matches the format; the C va_list forwarder
+    // shim constructs the va_list over its own varargs.
+    unsafe { shim_vsyslog_chk(libc::LOG_INFO, 0, fmt.as_ptr(), 4602_i32) };
+    Ok("VSYSLOG_COMPLETED".to_string())
+}
+
+fn fortify_vfwprintf_tmpfile_actual() -> Result<String, String> {
+    // SAFETY: tmpfile() creates an fl-owned stream; the wide write and the
+    // byte read-back stay inside the subprocess; closed before return.
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    if stream.is_null() {
+        return Ok(String::from("VFWPRINTF_TMPFILE_NULL"));
+    }
+    let fmt: [i32; 6] = [
+        b'w' as i32,
+        b'v' as i32,
+        b'=' as i32,
+        b'%' as i32,
+        b'd' as i32,
+        0,
+    ];
+    // SAFETY: the %d argument matches the wide format; the stream is fl-owned.
+    let impl_fn = frankenlibc_abi::fortify_abi::__vfwprintf_chk as *const c_void;
+    // SAFETY: impl_fn is fl's own __vfwprintf_chk (correct for the fl-native
+    // stream); the %d argument matches the wide format.
+    let rc = unsafe { shim_drive_vfwprintf(impl_fn, stream, 0, fmt.as_ptr(), 9_i32) };
+    // Read back the multibyte rendering for the marker.
+    let mut back = [0u8; 32];
+    unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+    let got = unsafe {
+        frankenlibc_abi::stdio_abi::fread(back.as_mut_ptr().cast(), 1, back.len(), stream)
+    };
+    unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
+    let content =
+        std::str::from_utf8(&back[..got]).map_err(|_| "vfwprintf read not UTF-8".to_string())?;
+    Ok(format!("VFWPRINTF_RC_{rc};READ={content}"))
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // fortify checked wrappers wave-05 (bd-reality-202609-lx578q.6.1)
 //
