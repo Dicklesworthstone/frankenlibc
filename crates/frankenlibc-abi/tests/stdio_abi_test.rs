@@ -788,50 +788,53 @@ fn fopencookie_fwrite_retries_once_on_eintr() {
 }
 
 #[test]
-#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
-fn fopencookie_fwrite_handles_partial_writes_without_data_loss() {
-    let cookie = Box::into_raw(Box::new(CookieState {
-        data: Vec::new(),
-        pos: 0,
-        closed: false,
-        inject_read_eintr_once: false,
-        inject_write_eintr_once: false,
-        read_eintr_emitted: false,
-        write_eintr_emitted: false,
-        max_write_chunk: 3,
-        write_calls: 0,
-    }));
+fn fopencookie_close_short_write_matches_glibc() {
+    // max_write_chunk = 2 makes every cookie write hook return a short count,
+    // the same shape as the live-glibc oracle in
+    // conformance_diff_fopencookie.rs::cookie_flush_short_write_does_not_retry_or_replay_output.
+    // glibc treats a short cookie write as an error for that one flush, sets
+    // the error indicator, discards the un-writable remainder, and reports the
+    // failure from the next flush attempt and from fclose — it does NOT retry.
+    unsafe extern "C" fn short_write(
+        cookie: *mut c_void,
+        buf: *const c_char,
+        count: usize,
+    ) -> isize {
+        // SAFETY: the Box below keeps the vector alive until the stream closes.
+        let output = unsafe { &mut *cookie.cast::<Vec<u8>>() };
+        let count = count.min(2);
+        output.extend_from_slice(unsafe { std::slice::from_raw_parts(buf.cast(), count) });
+        count as isize
+    }
+    unsafe extern "C" fn noop_close(_cookie: *mut c_void) -> c_int {
+        0
+    }
+
+    let mut output = Vec::<u8>::new();
     let funcs = CookieIoFuncs {
-        read: Some(cookie_read),
-        write: Some(cookie_write),
-        seek: Some(cookie_seek),
-        close: Some(cookie_close),
+        write: Some(short_write),
+        seek: None,
+        close: Some(noop_close),
+        read: None,
     };
-    let mode = CString::new("w+").expect("valid mode");
+    let mode = CString::new("w").expect("valid mode");
     // SAFETY: callback table and mode pointers are valid for call duration.
     let stream = unsafe {
         fopencookie(
-            cookie.cast::<c_void>(),
+            (&mut output as *mut Vec<u8>).cast::<c_void>(),
             mode.as_ptr(),
             (&funcs as *const CookieIoFuncs).cast::<c_void>(),
         )
     };
     assert!(!stream.is_null());
 
-    let payload = b"partial-write-payload";
     // SAFETY: pointers and stream are valid.
-    let wrote = unsafe { fwrite(payload.as_ptr().cast::<c_void>(), 1, payload.len(), stream) };
-    assert_eq!(wrote, payload.len());
+    let wrote = unsafe { fwrite(b"abcde".as_ptr().cast::<c_void>(), 1, 5, stream) };
+    assert_eq!(wrote, 5, "buffered fwrite still accepts the full payload");
 
     // SAFETY: stream is valid and open.
-    assert_eq!(unsafe { fclose(stream) }, 0);
-    // SAFETY: cookie ownership remains with this test.
-    let state = unsafe { Box::from_raw(cookie) };
-    assert_eq!(state.data, payload);
-    assert!(
-        state.write_calls > 1,
-        "short-write path should require retries"
-    );
+    assert_eq!(unsafe { fclose(stream) }, -1, "close must report the short write");
+    assert_eq!(output, b"ab".to_vec(), "unwritable remainder must be discarded, not replayed");
 }
 
 #[test]
