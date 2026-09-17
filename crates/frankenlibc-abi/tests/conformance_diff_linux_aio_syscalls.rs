@@ -158,8 +158,7 @@ fn host_io_getevents(
     timeout: *mut libc::timespec,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_IO_GETEVENTS, ctx_id, min_nr, nr, events, timeout) };
+    let rc = unsafe { host_syscall()(SYS_IO_GETEVENTS, ctx_id, min_nr, nr, events, timeout) };
     (rc as c_int, host_errno())
 }
 

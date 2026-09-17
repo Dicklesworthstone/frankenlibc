@@ -60,7 +60,10 @@ fn host_handle() -> *mut c_void {
     // SAFETY: the name is a NUL-terminated constant; RTLD_LOCAL keeps the handle
     // out of the global namespace.
     let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "dlopen libc.so.6 — the oracle is unavailable");
+    assert!(
+        !handle.is_null(),
+        "dlopen libc.so.6 — the oracle is unavailable"
+    );
     handle
 }
 
@@ -89,7 +92,12 @@ fn both_snprintf_str(host: Snprintf, fmt: &CStr, arg: *const c_char, size: usize
     // SAFETY: both buffers are CAP bytes, size <= CAP, and the format takes
     // exactly the one `*const c_char` supplied.
     let fl_rc = unsafe {
-        frankenlibc_abi::stdio_abi::snprintf(fl.as_mut_ptr().cast::<c_char>(), size, fmt.as_ptr(), arg)
+        frankenlibc_abi::stdio_abi::snprintf(
+            fl.as_mut_ptr().cast::<c_char>(),
+            size,
+            fmt.as_ptr(),
+            arg,
+        )
     };
     // SAFETY: same shape into the dlsym-resolved glibc.
     let gl_rc = unsafe { host(gl.as_mut_ptr().cast::<c_char>(), size, fmt.as_ptr(), arg) };
@@ -126,10 +134,21 @@ fn unsigned_decimal_length_and_truncation_match_glibc() {
             // SAFETY: buffers are CAP bytes and size <= CAP; "%u" takes one c_uint.
             let fl_rc = unsafe {
                 frankenlibc_abi::stdio_abi::snprintf(
-                    fl.as_mut_ptr().cast::<c_char>(), size, c"%u".as_ptr(), value as c_uint)
+                    fl.as_mut_ptr().cast::<c_char>(),
+                    size,
+                    c"%u".as_ptr(),
+                    value as c_uint,
+                )
             };
             // SAFETY: same shape into glibc.
-            let gl_rc = unsafe { host(gl.as_mut_ptr().cast::<c_char>(), size, c"%u".as_ptr(), value as c_uint) };
+            let gl_rc = unsafe {
+                host(
+                    gl.as_mut_ptr().cast::<c_char>(),
+                    size,
+                    c"%u".as_ptr(),
+                    value as c_uint,
+                )
+            };
             assert_eq!(
                 (fl_rc, &fl[..]),
                 (gl_rc, &gl[..]),
@@ -165,12 +184,24 @@ fn string_newline_payload_truncation_matches_glibc() {
     let host: Snprintf = unsafe { SymSnprintf { raw }.function };
 
     for size in 0..=10usize {
-        both_snprintf_str(host, c"%s\n", c"abcdef".as_ptr(), size, &format!("%s\\n size={size}"));
+        both_snprintf_str(
+            host,
+            c"%s\n",
+            c"abcdef".as_ptr(),
+            size,
+            &format!("%s\\n size={size}"),
+        );
     }
     // The shapes the original asserted the classifier must DECLINE. They must
     // still format correctly, which is the only externally visible consequence.
     for size in [0usize, 1, 4, 8, CAP] {
-        both_snprintf_str(host, c"[%s]\n", c"status=ok".as_ptr(), size, &format!("[%s]\\n size={size}"));
+        both_snprintf_str(
+            host,
+            c"[%s]\n",
+            c"status=ok".as_ptr(),
+            size,
+            &format!("[%s]\\n size={size}"),
+        );
     }
 }
 
@@ -193,7 +224,13 @@ fn null_string_argument_matches_glibc() {
     let host: Snprintf = unsafe { SymSnprintf { raw }.function };
 
     for size in [0usize, 1, 3, 6, 7, CAP] {
-        both_snprintf_str(host, c"%s\n", std::ptr::null(), size, &format!("NULL %s size={size}"));
+        both_snprintf_str(
+            host,
+            c"%s\n",
+            std::ptr::null(),
+            size,
+            &format!("NULL %s size={size}"),
+        );
     }
 }
 
@@ -221,13 +258,34 @@ fn stream_string_newline_matches_glibc_on_a_private_file() {
     // SAFETY: each symbol is glibc's, with the signature its type states, and
     // each is checked against fl's own export for the collapse case.
     let fopen: Fopen = unsafe {
-        SymFopen { raw: raw_sym(handle, c"fopen", frankenlibc_abi::stdio_abi::fopen as *const () as usize) }.function
+        SymFopen {
+            raw: raw_sym(
+                handle,
+                c"fopen",
+                frankenlibc_abi::stdio_abi::fopen as *const () as usize,
+            ),
+        }
+        .function
     };
     let fprintf: Fprintf = unsafe {
-        SymFprintf { raw: raw_sym(handle, c"fprintf", frankenlibc_abi::stdio_abi::fprintf as *const () as usize) }.function
+        SymFprintf {
+            raw: raw_sym(
+                handle,
+                c"fprintf",
+                frankenlibc_abi::stdio_abi::fprintf as *const () as usize,
+            ),
+        }
+        .function
     };
     let fclose: Fclose = unsafe {
-        SymFclose { raw: raw_sym(handle, c"fclose", frankenlibc_abi::stdio_abi::fclose as *const () as usize) }.function
+        SymFclose {
+            raw: raw_sym(
+                handle,
+                c"fclose",
+                frankenlibc_abi::stdio_abi::fclose as *const () as usize,
+            ),
+        }
+        .function
     };
 
     for (fmt, arg) in [

@@ -103,9 +103,7 @@ fn host_name_to_handle_at(
     flags: c_int,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe {
-        host_syscall()(SYS_NAME_TO_HANDLE_AT, dirfd, path, handle, mount_id, flags)
-    };
+    let rc = unsafe { host_syscall()(SYS_NAME_TO_HANDLE_AT, dirfd, path, handle, mount_id, flags) };
     (rc as c_int, host_errno())
 }
 

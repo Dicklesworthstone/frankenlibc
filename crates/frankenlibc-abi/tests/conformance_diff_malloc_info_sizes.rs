@@ -229,7 +229,10 @@ fn fl_populates_sizes_consistently_and_the_counts_are_live() {
     // Every entry must be internally consistent. A stale or fabricated emitter
     // produces well-formed XML, so the arithmetic is what catches it.
     for (from, to, total, count) in &busy_entries {
-        assert_eq!(from, to, "fl size class must report from == to, got {from}/{to}");
+        assert_eq!(
+            from, to,
+            "fl size class must report from == to, got {from}/{to}"
+        );
         assert!(*count > 0, "an entry with count 0 should not be emitted");
         assert_eq!(
             *total,

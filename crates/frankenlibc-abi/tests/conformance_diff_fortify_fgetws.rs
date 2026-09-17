@@ -150,14 +150,8 @@ fn fgetws_chk_matches_host_glibc_on_cases_that_discriminate() {
             // SAFETY: both arms take the same readable file and claimed size.
             let host_out = unsafe { probe(host, path, size, n) };
             // SAFETY: as above, against fl.
-            let fl_out = unsafe {
-                probe(
-                    frankenlibc_abi::fortify_abi::__fgetws_chk,
-                    path,
-                    size,
-                    n,
-                )
-            };
+            let fl_out =
+                unsafe { probe(frankenlibc_abi::fortify_abi::__fgetws_chk, path, size, n) };
             assert_eq!(
                 fl_out, host_out,
                 "{content_label} {label} (size={size} bytes, n={n}): fl={fl_out:?} \
@@ -187,9 +181,7 @@ fn fgetws_unlocked_chk_matches_the_locked_form() {
     let long = write_temp("fl_fgetws_unlocked.txt", &format!("{}\n", "x".repeat(300)));
     for &(label, size, n) in CASES {
         // SAFETY: same file and claimed size through both fl entry points.
-        let locked = unsafe {
-            probe(frankenlibc_abi::fortify_abi::__fgetws_chk, &long, size, n)
-        };
+        let locked = unsafe { probe(frankenlibc_abi::fortify_abi::__fgetws_chk, &long, size, n) };
         // SAFETY: as above.
         let unlocked = unsafe {
             probe(

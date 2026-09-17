@@ -48,7 +48,10 @@ unsafe extern "C" fn remquof128(x: f128, y: f128, q: *mut c_int) -> f128 {
 fn host_errno_location() -> *mut c_int {
     // SAFETY: prototype matches glibc's __errno_location declaration.
     let f: unsafe extern "C" fn() -> *mut c_int = unsafe {
-        dlsym_oracle::host_fn(c"__errno_location", errno_abi::__errno_location as *const ())
+        dlsym_oracle::host_fn(
+            c"__errno_location",
+            errno_abi::__errno_location as *const (),
+        )
     };
     unsafe { f() }
 }

@@ -33,7 +33,10 @@ fn host_imaxdiv() -> ImaxdivFn {
     // struct return this gate exists to pin. Resolving through a function
     // pointer preserves that ABI exactly as a link-time call would.
     unsafe {
-        dlsym_oracle::host_fn(c"imaxdiv", frankenlibc_abi::stdlib_abi::imaxdiv as *const ())
+        dlsym_oracle::host_fn(
+            c"imaxdiv",
+            frankenlibc_abi::stdlib_abi::imaxdiv as *const (),
+        )
     }
 }
 

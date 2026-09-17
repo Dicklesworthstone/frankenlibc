@@ -1946,7 +1946,10 @@ fn calloc_returns_zeroed_memory_fresh_and_recycled() {
         // SAFETY: single-element calloc of the same size, which is what makes
         // the previously-dirtied slot the likely one to come back.
         let recycled = unsafe { calloc(1, size) };
-        assert!(!recycled.is_null(), "recycled calloc(1, {size}) returned NULL");
+        assert!(
+            !recycled.is_null(),
+            "recycled calloc(1, {size}) returned NULL"
+        );
         // SAFETY: `recycled` is a live allocation of at least `size` bytes.
         let recycled_bytes = unsafe { std::slice::from_raw_parts(recycled.cast::<u8>(), size) };
         assert!(

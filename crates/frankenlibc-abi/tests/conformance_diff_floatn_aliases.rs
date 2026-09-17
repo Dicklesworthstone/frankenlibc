@@ -186,7 +186,6 @@ fn floatn_f64_aliases_match_base() {
 // Same contract as above: alias(x..) == base(x..) BIT-FOR-BIT. Still a pure
 // self-consistency wiring gate over fl's own exports -- no oracle involved.
 
-
 type F32B = unsafe extern "C" fn(f32, f32) -> f32;
 
 #[test]
@@ -197,13 +196,21 @@ fn floatn_f32_binary_aliases_match_base() {
         (m::copysignf32, m::copysignf, "copysignf"),
         (m::fdimf32, m::fdimf, "fdimf"),
         (m::fmaxf32, m::fmaxf, "fmaxf"),
-        (m::fmaximum_mag_numf32, m::fmaximum_mag_numf, "fmaximum_mag_numf"),
+        (
+            m::fmaximum_mag_numf32,
+            m::fmaximum_mag_numf,
+            "fmaximum_mag_numf",
+        ),
         (m::fmaximum_magf32, m::fmaximum_magf, "fmaximum_magf"),
         (m::fmaximum_numf32, m::fmaximum_numf, "fmaximum_numf"),
         (m::fmaximumf32, m::fmaximumf, "fmaximumf"),
         (m::fmaxmagf32, m::fmaxmagf, "fmaxmagf"),
         (m::fminf32, m::fminf, "fminf"),
-        (m::fminimum_mag_numf32, m::fminimum_mag_numf, "fminimum_mag_numf"),
+        (
+            m::fminimum_mag_numf32,
+            m::fminimum_mag_numf,
+            "fminimum_mag_numf",
+        ),
         (m::fminimum_magf32, m::fminimum_magf, "fminimum_magf"),
         (m::fminimum_numf32, m::fminimum_numf, "fminimum_numf"),
         (m::fminimumf32, m::fminimumf, "fminimumf"),
@@ -217,13 +224,27 @@ fn floatn_f32_binary_aliases_match_base() {
     ];
     // Ordered pairs: many of these are ASYMMETRIC (copysign, fdim, pow, atan2,
     // nextafter, remainder), so (a,b) and (b,a) are different tests.
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.0, -2.0, 0.5, 3.5, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, -f32::NAN];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        3.5,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        -f32::NAN,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for &y in &vs {
                 let (a, b) = unsafe { (alias(x, y), base(x, y)) };
                 assert_eq!(
-                    a.to_bits(), b.to_bits(),
+                    a.to_bits(),
+                    b.to_bits(),
                     "{name}f32({x:?}, {y:?}) = {a:?} but {name}({x:?}, {y:?}) = {b:?}"
                 );
             }
@@ -242,13 +263,21 @@ fn floatn_f64_binary_aliases_match_base() {
         (m::copysignf64, m::copysign, "copysign"),
         (m::fdimf64, m::fdim, "fdim"),
         (m::fmaxf64, m::fmax, "fmax"),
-        (m::fmaximum_mag_numf64, m::fmaximum_mag_num, "fmaximum_mag_num"),
+        (
+            m::fmaximum_mag_numf64,
+            m::fmaximum_mag_num,
+            "fmaximum_mag_num",
+        ),
         (m::fmaximum_magf64, m::fmaximum_mag, "fmaximum_mag"),
         (m::fmaximum_numf64, m::fmaximum_num, "fmaximum_num"),
         (m::fmaximumf64, m::fmaximum, "fmaximum"),
         (m::fmaxmagf64, m::fmaxmag, "fmaxmag"),
         (m::fminf64, m::fmin, "fmin"),
-        (m::fminimum_mag_numf64, m::fminimum_mag_num, "fminimum_mag_num"),
+        (
+            m::fminimum_mag_numf64,
+            m::fminimum_mag_num,
+            "fminimum_mag_num",
+        ),
         (m::fminimum_magf64, m::fminimum_mag, "fminimum_mag"),
         (m::fminimum_numf64, m::fminimum_num, "fminimum_num"),
         (m::fminimumf64, m::fminimum, "fminimum"),
@@ -262,13 +291,27 @@ fn floatn_f64_binary_aliases_match_base() {
     ];
     // Ordered pairs: many of these are ASYMMETRIC (copysign, fdim, pow, atan2,
     // nextafter, remainder), so (a,b) and (b,a) are different tests.
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.0, -2.0, 0.5, 3.5, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, -f64::NAN];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        3.5,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for &y in &vs {
                 let (a, b) = unsafe { (alias(x, y), base(x, y)) };
                 assert_eq!(
-                    a.to_bits(), b.to_bits(),
+                    a.to_bits(),
+                    b.to_bits(),
                     "{name}f64({x:?}, {y:?}) = {a:?} but {name}({x:?}, {y:?}) = {b:?}"
                 );
             }
@@ -302,13 +345,32 @@ fn floatn_f32_remaining_unary_aliases_match_base() {
         (m::y0f32, m::y0f, "y0f"),
         (m::y1f32, m::y1f, "y1f"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, 3.5, 10.0, 0.25,
-              f32::INFINITY, f32::NEG_INFINITY, f32::NAN, -f32::NAN,
-              f32::MIN_POSITIVE, f32::MAX];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.5,
+        10.0,
+        0.25,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        -f32::NAN,
+        f32::MIN_POSITIVE,
+        f32::MAX,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             let (a, b) = unsafe { (alias(x), base(x)) };
-            assert_eq!(a.to_bits(), b.to_bits(), "{name}f32({x:?}) = {a:?} but {name}({x:?}) = {b:?}");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{name}f32({x:?}) = {a:?} but {name}({x:?}) = {b:?}"
+            );
         }
     }
     assert_eq!(pairs.len(), 21, "unary f32 alias table shrank");
@@ -341,13 +403,32 @@ fn floatn_f64_remaining_unary_aliases_match_base() {
         (m::y0f64, m::y0, "y0"),
         (m::y1f64, m::y1, "y1"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, 3.5, 10.0, 0.25,
-              f64::INFINITY, f64::NEG_INFINITY, f64::NAN, -f64::NAN,
-              f64::MIN_POSITIVE, f64::MAX];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.5,
+        10.0,
+        0.25,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+        f64::MIN_POSITIVE,
+        f64::MAX,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             let (a, b) = unsafe { (alias(x), base(x)) };
-            assert_eq!(a.to_bits(), b.to_bits(), "{name}f64({x:?}) = {a:?} but {name}({x:?}) = {b:?}");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{name}f64({x:?}) = {a:?} but {name}({x:?}) = {b:?}"
+            );
         }
     }
     assert_eq!(pairs.len(), 23, "unary f64 alias table shrank");
@@ -363,8 +444,22 @@ fn floatn_f32_i64_returning_aliases_match_base() {
         (m::lrintf32, m::lrintf, "lrintf"),
         (m::lroundf32, m::lroundf, "lroundf"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 0.5, 2.5, -2.5, 3.5, 1024.0, 0.125,
-              f32::INFINITY, f32::NEG_INFINITY, f32::NAN, f32::MIN_POSITIVE];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        2.5,
+        -2.5,
+        3.5,
+        1024.0,
+        0.125,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        f32::MIN_POSITIVE,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             let (a, b) = unsafe { (alias(x), base(x)) };
@@ -376,11 +471,23 @@ fn floatn_f32_i64_returning_aliases_match_base() {
 #[test]
 fn floatn_f32_int_returning_aliases_match_base() {
     type T = unsafe extern "C" fn(f32) -> c_int;
-    let pairs: &[(T, T, &str)] = &[
-        (m::ilogbf32, m::ilogbf, "ilogbf"),
+    let pairs: &[(T, T, &str)] = &[(m::ilogbf32, m::ilogbf, "ilogbf")];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        2.5,
+        -2.5,
+        3.5,
+        1024.0,
+        0.125,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        f32::MIN_POSITIVE,
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 0.5, 2.5, -2.5, 3.5, 1024.0, 0.125,
-              f32::INFINITY, f32::NEG_INFINITY, f32::NAN, f32::MIN_POSITIVE];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             let (a, b) = unsafe { (alias(x), base(x)) };
@@ -399,8 +506,22 @@ fn floatn_f64_i64_returning_aliases_match_base() {
         (m::lrintf64, m::lrint, "lrint"),
         (m::lroundf64, m::lround, "lround"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 0.5, 2.5, -2.5, 3.5, 1024.0, 0.125,
-              f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f64::MIN_POSITIVE];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        2.5,
+        -2.5,
+        3.5,
+        1024.0,
+        0.125,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        f64::MIN_POSITIVE,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             let (a, b) = unsafe { (alias(x), base(x)) };
@@ -412,11 +533,23 @@ fn floatn_f64_i64_returning_aliases_match_base() {
 #[test]
 fn floatn_f64_int_returning_aliases_match_base() {
     type T = unsafe extern "C" fn(f64) -> c_int;
-    let pairs: &[(T, T, &str)] = &[
-        (m::ilogbf64, m::ilogb, "ilogb"),
+    let pairs: &[(T, T, &str)] = &[(m::ilogbf64, m::ilogb, "ilogb")];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        2.5,
+        -2.5,
+        3.5,
+        1024.0,
+        0.125,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        f64::MIN_POSITIVE,
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 0.5, 2.5, -2.5, 3.5, 1024.0, 0.125,
-              f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f64::MIN_POSITIVE];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             let (a, b) = unsafe { (alias(x), base(x)) };
@@ -434,7 +567,17 @@ fn floatn_f32_value_then_i64_aliases_match_base() {
         (m::rootnf32, m::rootnf, "rootnf"),
         (m::scalblnf32, m::scalblnf, "scalblnf"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.0, 0.5, 3.5, f32::INFINITY, f32::NAN];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        0.5,
+        3.5,
+        f32::INFINITY,
+        f32::NAN,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for n in [-3, -1, 0, 1, 2, 5] {
@@ -452,7 +595,17 @@ fn floatn_f32_value_then_cint_aliases_match_base() {
         (m::ldexpf32, m::ldexpf, "ldexpf"),
         (m::scalbnf32, m::scalbnf, "scalbnf"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.0, 0.5, 3.5, f32::INFINITY, f32::NAN];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        0.5,
+        3.5,
+        f32::INFINITY,
+        f32::NAN,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for n in [-3, -1, 0, 1, 2, 5] {
@@ -469,10 +622,7 @@ fn floatn_f32_order_then_value_aliases_match_base() {
     // still typecheck if both were the same type -- they are not, so this arm
     // exists mainly to catch jn -> yn style cross-wiring.
     type T = unsafe extern "C" fn(c_int, f32) -> f32;
-    let pairs: &[(T, T, &str)] = &[
-        (m::jnf32, m::jnf, "jnf"),
-        (m::ynf32, m::ynf, "ynf"),
-    ];
+    let pairs: &[(T, T, &str)] = &[(m::jnf32, m::jnf, "jnf"), (m::ynf32, m::ynf, "ynf")];
     let vs = [0.5f32, 1.0, 2.0, 3.5, 10.0, f32::INFINITY, f32::NAN];
     for &(alias, base, name) in pairs {
         for &x in &vs {
@@ -493,7 +643,17 @@ fn floatn_f64_value_then_i64_aliases_match_base() {
         (m::rootnf64, m::rootn, "rootn"),
         (m::scalblnf64, m::scalbln, "scalbln"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.0, 0.5, 3.5, f64::INFINITY, f64::NAN];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        0.5,
+        3.5,
+        f64::INFINITY,
+        f64::NAN,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for n in [-3, -1, 0, 1, 2, 5] {
@@ -511,7 +671,17 @@ fn floatn_f64_value_then_cint_aliases_match_base() {
         (m::ldexpf64, m::ldexp, "ldexp"),
         (m::scalbnf64, m::scalbn, "scalbn"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.0, 0.5, 3.5, f64::INFINITY, f64::NAN];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        0.5,
+        3.5,
+        f64::INFINITY,
+        f64::NAN,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for n in [-3, -1, 0, 1, 2, 5] {
@@ -528,10 +698,7 @@ fn floatn_f64_order_then_value_aliases_match_base() {
     // still typecheck if both were the same type -- they are not, so this arm
     // exists mainly to catch jn -> yn style cross-wiring.
     type T = unsafe extern "C" fn(c_int, f64) -> f64;
-    let pairs: &[(T, T, &str)] = &[
-        (m::jnf64, m::jn, "jn"),
-        (m::ynf64, m::yn, "yn"),
-    ];
+    let pairs: &[(T, T, &str)] = &[(m::jnf64, m::jn, "jn"), (m::ynf64, m::yn, "yn")];
     let vs = [0.5f64, 1.0, 2.0, 3.5, 10.0, f64::INFINITY, f64::NAN];
     for &(alias, base, name) in pairs {
         for &x in &vs {
@@ -546,30 +713,62 @@ fn floatn_f64_order_then_value_aliases_match_base() {
 #[test]
 fn floatn_f32_ternary_aliases_match_base() {
     type T = unsafe extern "C" fn(f32, f32, f32) -> f32;
-    let pairs: &[(T, T, &str)] = &[
-        (m::fmaf32, m::fmaf, "fmaf"),
+    let pairs: &[(T, T, &str)] = &[(m::fmaf32, m::fmaf, "fmaf")];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        0.5,
+        3.5,
+        f32::INFINITY,
+        f32::NAN,
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.0, 0.5, 3.5, f32::INFINITY, f32::NAN];
     for &(alias, base, name) in pairs {
-        for &x in &vs { for &y in &vs { for &z in &vs {
-            let (a, b) = unsafe { (alias(x, y, z), base(x, y, z)) };
-            assert_eq!(a.to_bits(), b.to_bits(), "{name}f32({x:?}, {y:?}, {z:?}) mismatch");
-        } } }
+        for &x in &vs {
+            for &y in &vs {
+                for &z in &vs {
+                    let (a, b) = unsafe { (alias(x, y, z), base(x, y, z)) };
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "{name}f32({x:?}, {y:?}, {z:?}) mismatch"
+                    );
+                }
+            }
+        }
     }
 }
 
 #[test]
 fn floatn_f64_ternary_aliases_match_base() {
     type T = unsafe extern "C" fn(f64, f64, f64) -> f64;
-    let pairs: &[(T, T, &str)] = &[
-        (m::fmaf64, m::fma, "fma"),
+    let pairs: &[(T, T, &str)] = &[(m::fmaf64, m::fma, "fma")];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        0.5,
+        3.5,
+        f64::INFINITY,
+        f64::NAN,
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.0, 0.5, 3.5, f64::INFINITY, f64::NAN];
     for &(alias, base, name) in pairs {
-        for &x in &vs { for &y in &vs { for &z in &vs {
-            let (a, b) = unsafe { (alias(x, y, z), base(x, y, z)) };
-            assert_eq!(a.to_bits(), b.to_bits(), "{name}f64({x:?}, {y:?}, {z:?}) mismatch");
-        } } }
+        for &x in &vs {
+            for &y in &vs {
+                for &z in &vs {
+                    let (a, b) = unsafe { (alias(x, y, z), base(x, y, z)) };
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "{name}f64({x:?}, {y:?}, {z:?}) mismatch"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -604,32 +803,47 @@ fn floatn_f32_complex_aliases_match_base() {
         (m::cimagf32, m::cimagf, "cimagf"),
         (m::crealf32, m::crealf, "crealf"),
     ];
-    let cp: &[(CP, CP, &str)] = &[
-        (m::cpowf32, m::cpowf, "cpowf"),
-    ];
+    let cp: &[(CP, CP, &str)] = &[(m::cpowf32, m::cpowf, "cpowf")];
     // Distinct re and im throughout, so an alias that read the wrong half is
     // visible; plus the special parts.
-    let parts = [(3.0f32, 4.0f32), (-3.0, 4.0), (3.0, -4.0), (0.0, -0.0), (-0.0, 0.0),
-                 (1.0, 0.0), (0.0, 1.0), (f32::INFINITY, 2.0), (2.0, f32::NEG_INFINITY),
-                 (f32::NAN, 5.0), (5.0, f32::NAN), (0.5, -0.25)];
+    let parts = [
+        (3.0f32, 4.0f32),
+        (-3.0, 4.0),
+        (3.0, -4.0),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (f32::INFINITY, 2.0),
+        (2.0, f32::NEG_INFINITY),
+        (f32::NAN, 5.0),
+        (5.0, f32::NAN),
+        (0.5, -0.25),
+    ];
     for &(re, im) in &parts {
         let z = CFloatComplex { re, im };
         for &(alias, base, name) in cc {
             let (a, b) = unsafe { (alias(z), base(z)) };
             assert_eq!(
-                (a.re.to_bits(), a.im.to_bits()), (b.re.to_bits(), b.im.to_bits()),
+                (a.re.to_bits(), a.im.to_bits()),
+                (b.re.to_bits(), b.im.to_bits()),
                 "{name}f32({re:?}, {im:?}) mismatch"
             );
         }
         for &(alias, base, name) in cr {
             let (a, b) = unsafe { (alias(z), base(z)) };
-            assert_eq!(a.to_bits(), b.to_bits(), "{name}f32({re:?}, {im:?}) mismatch");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{name}f32({re:?}, {im:?}) mismatch"
+            );
         }
         for &(alias, base, name) in cp {
             let w2 = CFloatComplex { re: im, im: re };
             let (a, b) = unsafe { (alias(z, w2), base(z, w2)) };
             assert_eq!(
-                (a.re.to_bits(), a.im.to_bits()), (b.re.to_bits(), b.im.to_bits()),
+                (a.re.to_bits(), a.im.to_bits()),
+                (b.re.to_bits(), b.im.to_bits()),
                 "{name}f32(({re:?},{im:?}), swapped) mismatch"
             );
         }
@@ -667,32 +881,47 @@ fn floatn_f64_complex_aliases_match_base() {
         (m::cimagf64, m::cimag, "cimag"),
         (m::crealf64, m::creal, "creal"),
     ];
-    let cp: &[(CP, CP, &str)] = &[
-        (m::cpowf64, m::cpow, "cpow"),
-    ];
+    let cp: &[(CP, CP, &str)] = &[(m::cpowf64, m::cpow, "cpow")];
     // Distinct re and im throughout, so an alias that read the wrong half is
     // visible; plus the special parts.
-    let parts = [(3.0f64, 4.0f64), (-3.0, 4.0), (3.0, -4.0), (0.0, -0.0), (-0.0, 0.0),
-                 (1.0, 0.0), (0.0, 1.0), (f64::INFINITY, 2.0), (2.0, f64::NEG_INFINITY),
-                 (f64::NAN, 5.0), (5.0, f64::NAN), (0.5, -0.25)];
+    let parts = [
+        (3.0f64, 4.0f64),
+        (-3.0, 4.0),
+        (3.0, -4.0),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (f64::INFINITY, 2.0),
+        (2.0, f64::NEG_INFINITY),
+        (f64::NAN, 5.0),
+        (5.0, f64::NAN),
+        (0.5, -0.25),
+    ];
     for &(re, im) in &parts {
         let z = CDoubleComplex { re, im };
         for &(alias, base, name) in cc {
             let (a, b) = unsafe { (alias(z), base(z)) };
             assert_eq!(
-                (a.re.to_bits(), a.im.to_bits()), (b.re.to_bits(), b.im.to_bits()),
+                (a.re.to_bits(), a.im.to_bits()),
+                (b.re.to_bits(), b.im.to_bits()),
                 "{name}f64({re:?}, {im:?}) mismatch"
             );
         }
         for &(alias, base, name) in cr {
             let (a, b) = unsafe { (alias(z), base(z)) };
-            assert_eq!(a.to_bits(), b.to_bits(), "{name}f64({re:?}, {im:?}) mismatch");
+            assert_eq!(
+                a.to_bits(),
+                b.to_bits(),
+                "{name}f64({re:?}, {im:?}) mismatch"
+            );
         }
         for &(alias, base, name) in cp {
             let w2 = CDoubleComplex { re: im, im: re };
             let (a, b) = unsafe { (alias(z, w2), base(z, w2)) };
             assert_eq!(
-                (a.re.to_bits(), a.im.to_bits()), (b.re.to_bits(), b.im.to_bits()),
+                (a.re.to_bits(), a.im.to_bits()),
+                (b.re.to_bits(), b.im.to_bits()),
                 "{name}f64(({re:?},{im:?}), swapped) mismatch"
             );
         }
@@ -709,15 +938,32 @@ fn floatn_f32_fromfp_family_aliases_match_base_i64() {
         (m::fromfpf32, m::fromfpf, "fromfpf"),
         (m::fromfpxf32, m::fromfpxf, "fromfpxf"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.5, -2.5, 3.5, -3.5, 0.5, -0.5, 1024.0,
-              f32::INFINITY, f32::NEG_INFINITY, f32::NAN];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.5,
+        -2.5,
+        3.5,
+        -3.5,
+        0.5,
+        -0.5,
+        1024.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ];
     // All five C23 rounding directions, and widths either side of the value range.
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for rnd in 0..5 {
                 for width in [1u32, 2, 8, 32, 64] {
                     let (a, b) = unsafe { (alias(x, rnd, width), base(x, rnd, width)) };
-                    assert_eq!(a, b, "{name}f32({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}");
+                    assert_eq!(
+                        a, b,
+                        "{name}f32({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}"
+                    );
                 }
             }
         }
@@ -734,15 +980,32 @@ fn floatn_f32_fromfp_family_aliases_match_base_u64() {
         (m::ufromfpf32, m::ufromfpf, "ufromfpf"),
         (m::ufromfpxf32, m::ufromfpxf, "ufromfpxf"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.5, -2.5, 3.5, -3.5, 0.5, -0.5, 1024.0,
-              f32::INFINITY, f32::NEG_INFINITY, f32::NAN];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.5,
+        -2.5,
+        3.5,
+        -3.5,
+        0.5,
+        -0.5,
+        1024.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ];
     // All five C23 rounding directions, and widths either side of the value range.
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for rnd in 0..5 {
                 for width in [1u32, 2, 8, 32, 64] {
                     let (a, b) = unsafe { (alias(x, rnd, width), base(x, rnd, width)) };
-                    assert_eq!(a, b, "{name}f32({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}");
+                    assert_eq!(
+                        a, b,
+                        "{name}f32({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}"
+                    );
                 }
             }
         }
@@ -758,8 +1021,20 @@ fn floatn_f32_totalorder_aliases_match_base() {
         (m::totalorderf32, m::totalorderf, "totalorderf"),
         (m::totalordermagf32, m::totalordermagf, "totalordermagf"),
     ];
-    let vs = [0.0f32, -0.0, 1.0, -1.0, 2.0, -2.0, f32::INFINITY, f32::NEG_INFINITY,
-              f32::NAN, -f32::NAN, f32::MIN_POSITIVE, -f32::MIN_POSITIVE];
+    let vs = [
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+        -f32::NAN,
+        f32::MIN_POSITIVE,
+        -f32::MIN_POSITIVE,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for &y in &vs {
@@ -781,15 +1056,32 @@ fn floatn_f64_fromfp_family_aliases_match_base_i64() {
         (m::fromfpf64, m::fromfp, "fromfp"),
         (m::fromfpxf64, m::fromfpx, "fromfpx"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.5, -2.5, 3.5, -3.5, 0.5, -0.5, 1024.0,
-              f64::INFINITY, f64::NEG_INFINITY, f64::NAN];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.5,
+        -2.5,
+        3.5,
+        -3.5,
+        0.5,
+        -0.5,
+        1024.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
     // All five C23 rounding directions, and widths either side of the value range.
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for rnd in 0..5 {
                 for width in [1u32, 2, 8, 32, 64] {
                     let (a, b) = unsafe { (alias(x, rnd, width), base(x, rnd, width)) };
-                    assert_eq!(a, b, "{name}f64({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}");
+                    assert_eq!(
+                        a, b,
+                        "{name}f64({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}"
+                    );
                 }
             }
         }
@@ -806,15 +1098,32 @@ fn floatn_f64_fromfp_family_aliases_match_base_u64() {
         (m::ufromfpf64, m::ufromfp, "ufromfp"),
         (m::ufromfpxf64, m::ufromfpx, "ufromfpx"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.5, -2.5, 3.5, -3.5, 0.5, -0.5, 1024.0,
-              f64::INFINITY, f64::NEG_INFINITY, f64::NAN];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.5,
+        -2.5,
+        3.5,
+        -3.5,
+        0.5,
+        -0.5,
+        1024.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
     // All five C23 rounding directions, and widths either side of the value range.
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for rnd in 0..5 {
                 for width in [1u32, 2, 8, 32, 64] {
                     let (a, b) = unsafe { (alias(x, rnd, width), base(x, rnd, width)) };
-                    assert_eq!(a, b, "{name}f64({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}");
+                    assert_eq!(
+                        a, b,
+                        "{name}f64({x:?}, rnd {rnd}, width {width}) = {a} but base = {b}"
+                    );
                 }
             }
         }
@@ -830,8 +1139,20 @@ fn floatn_f64_totalorder_aliases_match_base() {
         (m::totalorderf64, m::totalorder, "totalorder"),
         (m::totalordermagf64, m::totalordermag, "totalordermag"),
     ];
-    let vs = [0.0f64, -0.0, 1.0, -1.0, 2.0, -2.0, f64::INFINITY, f64::NEG_INFINITY,
-              f64::NAN, -f64::NAN, f64::MIN_POSITIVE, -f64::MIN_POSITIVE];
+    let vs = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+    ];
     for &(alias, base, name) in pairs {
         for &x in &vs {
             for &y in &vs {
@@ -918,8 +1239,20 @@ macro_rules! frexp_arm {
         }
     };
 }
-frexp_arm!(floatn_frexpf32_matches_base, m::frexpf32, m::frexpf, outp_f32(), "frexpf32");
-frexp_arm!(floatn_frexpf64_matches_base, m::frexpf64, m::frexp, outp_f64(), "frexpf64");
+frexp_arm!(
+    floatn_frexpf32_matches_base,
+    m::frexpf32,
+    m::frexpf,
+    outp_f32(),
+    "frexpf32"
+);
+frexp_arm!(
+    floatn_frexpf64_matches_base,
+    m::frexpf64,
+    m::frexp,
+    outp_f64(),
+    "frexpf64"
+);
 
 macro_rules! modf_arm {
     ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
@@ -945,8 +1278,22 @@ macro_rules! modf_arm {
         }
     };
 }
-modf_arm!(floatn_modff32_matches_base, f32, m::modff32, m::modff, outp_f32(), "modff32");
-modf_arm!(floatn_modff64_matches_base, f64, m::modff64, m::modf, outp_f64(), "modff64");
+modf_arm!(
+    floatn_modff32_matches_base,
+    f32,
+    m::modff32,
+    m::modff,
+    outp_f32(),
+    "modff32"
+);
+modf_arm!(
+    floatn_modff64_matches_base,
+    f64,
+    m::modff64,
+    m::modf,
+    outp_f64(),
+    "modff64"
+);
 
 macro_rules! remquo_arm {
     ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
@@ -975,8 +1322,22 @@ macro_rules! remquo_arm {
         }
     };
 }
-remquo_arm!(floatn_remquof32_matches_base, f32, m::remquof32, m::remquof, outp_f32(), "remquof32");
-remquo_arm!(floatn_remquof64_matches_base, f64, m::remquof64, m::remquo, outp_f64(), "remquof64");
+remquo_arm!(
+    floatn_remquof32_matches_base,
+    f32,
+    m::remquof32,
+    m::remquof,
+    outp_f32(),
+    "remquof32"
+);
+remquo_arm!(
+    floatn_remquof64_matches_base,
+    f64,
+    m::remquof64,
+    m::remquo,
+    outp_f64(),
+    "remquof64"
+);
 
 macro_rules! sincos_arm {
     ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {
@@ -1009,8 +1370,22 @@ macro_rules! sincos_arm {
         }
     };
 }
-sincos_arm!(floatn_sincosf32_matches_base, f32, m::sincosf32, m::sincosf, outp_f32(), "sincosf32");
-sincos_arm!(floatn_sincosf64_matches_base, f64, m::sincosf64, m::sincos, outp_f64(), "sincosf64");
+sincos_arm!(
+    floatn_sincosf32_matches_base,
+    f32,
+    m::sincosf32,
+    m::sincosf,
+    outp_f32(),
+    "sincosf32"
+);
+sincos_arm!(
+    floatn_sincosf64_matches_base,
+    f64,
+    m::sincosf64,
+    m::sincos,
+    outp_f64(),
+    "sincosf64"
+);
 
 macro_rules! canonicalize_arm {
     ($name:ident, $ty:ty, $alias:path, $base:path, $vals:expr, $label:literal) => {

@@ -300,7 +300,10 @@ fn confstr_truncation_nul_terminates() {
 #[test]
 fn the_host_arm_is_not_fl() {
     let resolved = unsafe {
-        dlsym_oracle::host_addr(c"confstr", frankenlibc_abi::stdlib_abi::confstr as *const ())
+        dlsym_oracle::host_addr(
+            c"confstr",
+            frankenlibc_abi::stdlib_abi::confstr as *const (),
+        )
     };
     assert_ne!(
         resolved as usize,

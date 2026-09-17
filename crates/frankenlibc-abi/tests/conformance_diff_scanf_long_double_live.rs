@@ -83,22 +83,12 @@ fn hex(bytes: &[u8; 10]) -> String {
 
 fn host_sscanf() -> SscanfFn {
     // SAFETY: the C declaration of `sscanf` is `int(const char*, const char*, ...)`.
-    unsafe {
-        host_fn(
-            c"sscanf",
-            frankenlibc_abi::stdio_abi::sscanf as *const (),
-        )
-    }
+    unsafe { host_fn(c"sscanf", frankenlibc_abi::stdio_abi::sscanf as *const ()) }
 }
 
 fn host_swscanf() -> SwscanfFn {
     // SAFETY: `int(const wchar_t*, const wchar_t*, ...)`.
-    unsafe {
-        host_fn(
-            c"swscanf",
-            frankenlibc_abi::wchar_abi::swscanf as *const (),
-        )
-    }
+    unsafe { host_fn(c"swscanf", frankenlibc_abi::wchar_abi::swscanf as *const ()) }
 }
 
 /// Scan one long double with `f`, returning `(rc, slot)`.
@@ -153,12 +143,18 @@ unsafe fn scan_one_wide(f: SwscanfFn, input: &str, format: &str) -> (c_int, Long
 /// red row says which property broke rather than only which bytes differ.
 const CASES: &[(&str, &str)] = &[
     // --- beyond f64's SIGNIFICAND: the digits an f64 parse throws away ---
-    ("1.0000000000000000001", "64-bit significand: f64 rounds this to exactly 1.0"),
+    (
+        "1.0000000000000000001",
+        "64-bit significand: f64 rounds this to exactly 1.0",
+    ),
     ("1.00000000000000000011", "one more digit of the same"),
     ("3.14159265358979323846", "pi to long-double precision"),
     ("2.71828182845904523536", "e to long-double precision"),
     ("-1.0000000000000000001", "the same, negative"),
-    ("0.10000000000000000001", "a fraction f64 cannot separate from 0.1"),
+    (
+        "0.10000000000000000001",
+        "a fraction f64 cannot separate from 0.1",
+    ),
     ("18446744073709551617", "2^64+1: exact in x87, not in f64"),
     // --- beyond f64's EXPONENT: range loss, not precision loss ---
     ("1e400", "finite long double; an f64 parse gives +inf"),
@@ -167,8 +163,14 @@ const CASES: &[(&str, &str)] = &[
     ("1e-400", "normal long double; an f64 parse underflows to 0"),
     ("1e-4000", "long-double subnormal; an f64 parse gives 0"),
     // --- hex floats: more significand bits than f64 holds ---
-    ("0x1.23456789abcdefp+0", "60 significand bits through the hex path"),
-    ("0x1fffffffffffffffp0", "65 bits: f64 must round, x87 need not"),
+    (
+        "0x1.23456789abcdefp+0",
+        "60 significand bits through the hex path",
+    ),
+    (
+        "0x1fffffffffffffffp0",
+        "65 bits: f64 must round, x87 need not",
+    ),
     ("0x1p-16400", "hex subnormal at the bottom of the format"),
     ("-0x0.8p+1", "hex with a fractional part and a sign"),
     // --- the specials, which must not become collateral damage ---
@@ -493,14 +495,8 @@ fn the_va_list_writer_matches_live_glibc() {
 #[test]
 fn the_oracle_symbols_resolve_to_glibc() {
     for (name, fl) in [
-        (
-            c"sscanf",
-            frankenlibc_abi::stdio_abi::sscanf as *const (),
-        ),
-        (
-            c"swscanf",
-            frankenlibc_abi::wchar_abi::swscanf as *const (),
-        ),
+        (c"sscanf", frankenlibc_abi::stdio_abi::sscanf as *const ()),
+        (c"swscanf", frankenlibc_abi::wchar_abi::swscanf as *const ()),
     ] {
         // SAFETY: NUL-terminated constant names; the helper only resolves them.
         let addr = unsafe { dlsym_oracle::host_addr(name, fl) };

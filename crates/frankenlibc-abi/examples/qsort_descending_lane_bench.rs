@@ -105,7 +105,14 @@ fn bench(
     let t = Instant::now();
     for _ in 0..iters {
         buf.copy_from_slice(&pristine);
-        unsafe { libc::qsort(black_box(buf.as_mut_ptr()) as *mut c_void, n, 8, Some(gl_cmp)) };
+        unsafe {
+            libc::qsort(
+                black_box(buf.as_mut_ptr()) as *mut c_void,
+                n,
+                8,
+                Some(gl_cmp),
+            )
+        };
         black_box(&buf);
     }
     let gl = (t.elapsed().as_nanos() as f64 / iters as f64 - reset).max(0.0);

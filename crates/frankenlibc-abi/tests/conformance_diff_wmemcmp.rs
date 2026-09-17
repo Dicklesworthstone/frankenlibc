@@ -23,9 +23,7 @@ type WmemcmpFn = unsafe extern "C" fn(*const u32, *const u32, usize) -> c_int;
 
 fn host_wmemcmp() -> WmemcmpFn {
     // SAFETY: signature matches C's wmemcmp exactly.
-    unsafe {
-        dlsym_oracle::host_fn(c"wmemcmp", frankenlibc_abi::wchar_abi::wmemcmp as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"wmemcmp", frankenlibc_abi::wchar_abi::wmemcmp as *const ()) }
 }
 
 fn sign(x: i32) -> i32 {

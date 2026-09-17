@@ -143,7 +143,12 @@ fn slot_retire_is_correct_single_threaded_then_after_the_latch() {
     assert_all_distinct(&after2, "after free-and-reuse on the atomic path");
 
     // Clean up what is still live.
-    for a in held.into_iter().chain(after).chain(post.into_iter()).chain(after2) {
+    for a in held
+        .into_iter()
+        .chain(after)
+        .chain(post.into_iter())
+        .chain(after2)
+    {
         // SAFETY: each of these was allocated above and not yet freed.
         unsafe { frankenlibc_abi::malloc_abi::free(a as *mut c_void) };
     }

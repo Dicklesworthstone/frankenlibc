@@ -428,7 +428,11 @@ fn known_dead_inline_test_counts_have_not_grown() {
             ));
         }
     }
-    assert!(wrong.is_empty(), "KNOWN_DEAD_INLINE_TESTS is out of date:\n  {}", wrong.join("\n  "));
+    assert!(
+        wrong.is_empty(),
+        "KNOWN_DEAD_INLINE_TESTS is out of date:\n  {}",
+        wrong.join("\n  ")
+    );
 }
 
 /// The module this bead named must be clean: its dead `test_helpers` block is

@@ -282,7 +282,8 @@ fn strftime_l_capacity_boundaries_match_glibc_without_partial_output() {
             let host_result = render_with_capacity(host, fmt, &tm, loc, capacity);
             let fl_result = render_with_capacity(fl_strftime_l, fmt, &tm, loc, capacity);
             assert_eq!(
-                fl_result, host_result,
+                fl_result,
+                host_result,
                 "strftime_l({}, capacity={capacity}) differs: fl={fl_result:?} host={host_result:?}",
                 fmt.to_string_lossy(),
             );

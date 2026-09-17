@@ -348,9 +348,7 @@ fn kernel_blocked_mask() -> u64 {
     assert_eq!(rc, 0, "sigprocmask query failed");
     // The kernel fills the first 8 bytes; the rest of sigset_t is padding.
     let mut word = [0u8; 8];
-    unsafe {
-        std::ptr::copy_nonoverlapping((&raw const oset).cast::<u8>(), word.as_mut_ptr(), 8)
-    };
+    unsafe { std::ptr::copy_nonoverlapping((&raw const oset).cast::<u8>(), word.as_mut_ptr(), 8) };
     u64::from_ne_bytes(word)
 }
 
@@ -385,7 +383,10 @@ fn resulting_mask(f: MaskFn, bits: u64) -> u64 {
     let rc = unsafe { f(SIG_SETMASK, &set, std::ptr::null_mut()) };
     let got = kernel_blocked_mask();
     force_mask(prior);
-    assert_eq!(rc, 0, "sigprocmask(SIG_SETMASK, {bits:#018x}) failed ({rc})");
+    assert_eq!(
+        rc, 0,
+        "sigprocmask(SIG_SETMASK, {bits:#018x}) failed ({rc})"
+    );
     got
 }
 
@@ -428,7 +429,10 @@ fn sigprocmask_filters_reserved_signals_like_glibc() {
 #[test]
 fn pthread_sigmask_filters_reserved_signals_like_glibc() {
     let _g = SIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let g = glibc_mask_fn(c"pthread_sigmask", fl::pthread_sigmask as *const () as usize);
+    let g = glibc_mask_fn(
+        c"pthread_sigmask",
+        fl::pthread_sigmask as *const () as usize,
+    );
     for &(bits, label) in RESERVED_SETS {
         let mg = resulting_mask(g, bits);
         let mf = resulting_mask(fl::pthread_sigmask, bits);

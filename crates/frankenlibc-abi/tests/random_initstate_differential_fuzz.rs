@@ -80,7 +80,11 @@ fn random_initstate_differential_fuzz_vs_glibc() {
 
             compared += 1;
             if fl_v != host_v && divs.len() < 20 {
-                let idx = fl_v.iter().zip(&host_v).position(|(a, b)| a != b).unwrap_or(0);
+                let idx = fl_v
+                    .iter()
+                    .zip(&host_v)
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(0);
                 divs.push(format!(
                     "seed={seed} size={size}: first diff at call {idx}\n    fl   ={:?}\n    glibc={:?}",
                     &fl_v[idx..(idx + 4).min(fl_v.len())],
@@ -117,7 +121,11 @@ fn random_default_and_srandom_sequence_vs_glibc() {
         let fl_v: Vec<i64> = (0..CALLS).map(|_| sv_random()).collect();
         compared += 1;
         if fl_v != host_v && divs.len() < 20 {
-            let idx = fl_v.iter().zip(&host_v).position(|(a, b)| a != b).unwrap_or(0);
+            let idx = fl_v
+                .iter()
+                .zip(&host_v)
+                .position(|(a, b)| a != b)
+                .unwrap_or(0);
             divs.push(format!(
                 "seed={seed}: first diff at call {idx}\n    fl   ={:?}\n    glibc={:?}",
                 &fl_v[idx..(idx + 4).min(fl_v.len())],

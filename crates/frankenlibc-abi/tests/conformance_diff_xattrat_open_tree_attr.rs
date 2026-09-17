@@ -95,9 +95,7 @@ fn host_setxattrat(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe {
-        host_syscall()(SYS_SETXATTRAT, dirfd, path, at_flags, name, uargs, size)
-    };
+    let rc = unsafe { host_syscall()(SYS_SETXATTRAT, dirfd, path, at_flags, name, uargs, size) };
     (rc as c_int, host_errno())
 }
 
@@ -123,9 +121,7 @@ fn host_getxattrat(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe {
-        host_syscall()(SYS_GETXATTRAT, dirfd, path, at_flags, name, uargs, size)
-    };
+    let rc = unsafe { host_syscall()(SYS_GETXATTRAT, dirfd, path, at_flags, name, uargs, size) };
     (rc as c_int, host_errno())
 }
 
@@ -285,7 +281,10 @@ fn xattrat_invalid_at_flags_match_host_syscall_without_mutation() {
         ptr::null_mut(),
         0,
     );
-    assert_eq!(fl, host, "getxattrat(invalid flags): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "getxattrat(invalid flags): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_listxattrat(
@@ -302,6 +301,9 @@ fn xattrat_invalid_at_flags_match_host_syscall_without_mutation() {
         ptr::null_mut(),
         0,
     );
-    assert_eq!(fl, host, "listxattrat(invalid flags): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "listxattrat(invalid flags): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 }

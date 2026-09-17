@@ -44,7 +44,10 @@ fn main() {
         }
         let gl = t.elapsed().as_nanos() as f64 / iters as f64;
         black_box(acc2);
-        println!("ERAND48 fl={fl:.2}ns glibc={gl:.2}ns  fl/glibc={:.2}x", fl / gl);
+        println!(
+            "ERAND48 fl={fl:.2}ns glibc={gl:.2}ns  fl/glibc={:.2}x",
+            fl / gl
+        );
 
         // nrand48
         let mut sn: [u16; 3] = [0x1111, 0x2222, 0x3333];
@@ -66,6 +69,9 @@ fn main() {
         }
         let gln = t.elapsed().as_nanos() as f64 / iters as f64;
         black_box(na2);
-        println!("NRAND48 fl={fln:.2}ns glibc={gln:.2}ns  fl/glibc={:.2}x", fln / gln);
+        println!(
+            "NRAND48 fl={fln:.2}ns glibc={gln:.2}ns  fl/glibc={:.2}x",
+            fln / gln
+        );
     }
 }

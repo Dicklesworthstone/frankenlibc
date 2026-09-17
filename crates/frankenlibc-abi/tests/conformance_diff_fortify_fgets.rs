@@ -142,9 +142,12 @@ fn getwd_chk_aborts_on_the_actual_path_length_not_on_path_max() {
 
     let host_sym = c"__getwd_chk";
     // SAFETY: NUL-terminated name paired with fl's own definition.
-    let Some(host) =
-        (unsafe { host_addr_optional(host_sym, frankenlibc_abi::fortify_abi::__getwd_chk as *const ()) })
-    else {
+    let Some(host) = (unsafe {
+        host_addr_optional(
+            host_sym,
+            frankenlibc_abi::fortify_abi::__getwd_chk as *const (),
+        )
+    }) else {
         println!("__getwd_chk: host does not export it; skipped");
         return;
     };

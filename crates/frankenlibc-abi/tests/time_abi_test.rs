@@ -1019,23 +1019,15 @@ fn strptime_exact_numeric_paths_preserve_fields_suffixes_and_fallback() {
     date_tm.tm_isdst = 3;
     let date = b"2023-02-31tail\0";
     let date_fmt = b"%Y-%m-%d\0";
-    let date_end = unsafe {
-        time_abi::strptime(
-            date.as_ptr().cast(),
-            date_fmt.as_ptr().cast(),
-            &mut date_tm,
-        )
-    };
+    let date_end =
+        unsafe { time_abi::strptime(date.as_ptr().cast(), date_fmt.as_ptr().cast(), &mut date_tm) };
     assert!(!date_end.is_null());
     assert_eq!(unsafe { date_end.offset_from(date.as_ptr().cast()) }, 10);
     assert_eq!(
         (date_tm.tm_year, date_tm.tm_mon, date_tm.tm_mday),
         (123, 1, 31)
     );
-    assert_eq!(
-        (date_tm.tm_hour, date_tm.tm_min, date_tm.tm_sec),
-        (7, 8, 9)
-    );
+    assert_eq!((date_tm.tm_hour, date_tm.tm_min, date_tm.tm_sec), (7, 8, 9));
     assert_eq!(date_tm.tm_isdst, 3);
 
     let mut time_tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -1046,13 +1038,8 @@ fn strptime_exact_numeric_paths_preserve_fields_suffixes_and_fallback() {
     time_tm.tm_yday = 123;
     let time = b"23:59:61tail\0";
     let time_fmt = b"%H:%M:%S\0";
-    let time_end = unsafe {
-        time_abi::strptime(
-            time.as_ptr().cast(),
-            time_fmt.as_ptr().cast(),
-            &mut time_tm,
-        )
-    };
+    let time_end =
+        unsafe { time_abi::strptime(time.as_ptr().cast(), time_fmt.as_ptr().cast(), &mut time_tm) };
     assert!(!time_end.is_null());
     assert_eq!(unsafe { time_end.offset_from(time.as_ptr().cast()) }, 8);
     assert_eq!(

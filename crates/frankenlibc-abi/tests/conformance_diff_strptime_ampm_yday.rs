@@ -78,8 +78,15 @@ fn both_c_locale() {
 /// field this gate happens not to assert.
 fn fields(tm: &libc::tm) -> [i32; 9] {
     [
-        tm.tm_sec, tm.tm_min, tm.tm_hour, tm.tm_mday, tm.tm_mon, tm.tm_year, tm.tm_wday,
-        tm.tm_yday, tm.tm_isdst,
+        tm.tm_sec,
+        tm.tm_min,
+        tm.tm_hour,
+        tm.tm_mday,
+        tm.tm_mon,
+        tm.tm_year,
+        tm.tm_wday,
+        tm.tm_yday,
+        tm.tm_isdst,
     ]
 }
 

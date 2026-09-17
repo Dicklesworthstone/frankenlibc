@@ -286,7 +286,9 @@ fn eucjisx0213_decode_to_utf16le_matches_glibc() {
             .wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
-    let alpha: &[u8] = &[0x41, 0x8e, 0x8f, 0xa1, 0xa4, 0xf7, 0xfe, 0xc0, 0x40, 0x00, 0xdf];
+    let alpha: &[u8] = &[
+        0x41, 0x8e, 0x8f, 0xa1, 0xa4, 0xf7, 0xfe, 0xc0, 0x40, 0x00, 0xdf,
+    ];
     for _ in 0..15_000 {
         let len = 1 + next() % 8;
         let inp: Vec<u8> = (0..len)

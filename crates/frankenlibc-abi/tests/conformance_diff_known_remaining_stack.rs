@@ -39,7 +39,8 @@ fn known_remaining_is_none_for_stack_objects_and_some_for_tracked_heap() {
         // SAFETY: plain allocation through fl's own entry point.
         let p = unsafe { frankenlibc_abi::malloc_abi::malloc(size) };
         assert!(!p.is_null(), "malloc({size}) returned NULL");
-        if let Some(remaining) = frankenlibc_abi::malloc_abi::known_remaining_for_tests(p as usize) {
+        if let Some(remaining) = frankenlibc_abi::malloc_abi::known_remaining_for_tests(p as usize)
+        {
             assert!(
                 remaining >= size,
                 "malloc({size}) reports only {remaining} bytes remaining at its own base"
@@ -67,7 +68,10 @@ fn known_remaining_is_none_for_stack_objects_and_some_for_tracked_heap() {
     let probes: [(&str, usize); 5] = [
         ("small stack array", small.as_ptr() as usize),
         ("medium stack array", medium.as_ptr() as usize),
-        ("interior of a stack array", unsafe { medium.as_ptr().add(2048) } as usize),
+        (
+            "interior of a stack array",
+            unsafe { medium.as_ptr().add(2048) } as usize,
+        ),
         ("mutable stack array", mutable.as_ptr() as usize),
         ("stack scalar", (&raw const scalar) as usize),
     ];

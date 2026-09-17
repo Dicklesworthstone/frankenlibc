@@ -31,7 +31,12 @@ fn main() {
                 buf.iter_mut().for_each(|w| *w = 0);
                 match run {
                     0 => {
-                        frankenlibc_abi::fortify_abi::__wmemset_chk(p as *mut i32, C as i32, n, usize::MAX);
+                        frankenlibc_abi::fortify_abi::__wmemset_chk(
+                            p as *mut i32,
+                            C as i32,
+                            n,
+                            usize::MAX,
+                        );
                     }
                     1 => {
                         frankenlibc_abi::wchar_abi::wmemset(p, C, n);
@@ -47,7 +52,12 @@ fn main() {
 
             let t = Instant::now();
             for _ in 0..iters {
-                frankenlibc_abi::fortify_abi::__wmemset_chk(black_box(p) as *mut i32, C as i32, n, usize::MAX);
+                frankenlibc_abi::fortify_abi::__wmemset_chk(
+                    black_box(p) as *mut i32,
+                    C as i32,
+                    n,
+                    usize::MAX,
+                );
                 black_box(&buf);
             }
             let chk = t.elapsed().as_nanos() as f64 / iters as f64;

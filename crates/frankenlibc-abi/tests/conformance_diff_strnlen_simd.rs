@@ -26,7 +26,10 @@ type StrnlenFn = unsafe extern "C" fn(*const c_char, usize) -> usize;
 fn host_strnlen() -> StrnlenFn {
     // SAFETY: signature matches POSIX strnlen exactly.
     unsafe {
-        dlsym_oracle::host_fn(c"strnlen", frankenlibc_abi::string_abi::strnlen as *const ())
+        dlsym_oracle::host_fn(
+            c"strnlen",
+            frankenlibc_abi::string_abi::strnlen as *const (),
+        )
     }
 }
 

@@ -86,6 +86,9 @@ fn main() {
         }
         let gll = t.elapsed().as_nanos() as f64 / iters as f64;
         black_box(sink);
-        println!("L64A fl={fll:.2}ns glibc={gll:.2}ns  fl/glibc={:.2}x", fll / gll);
+        println!(
+            "L64A fl={fll:.2}ns glibc={gll:.2}ns  fl/glibc={:.2}x",
+            fll / gll
+        );
     }
 }

@@ -66,7 +66,9 @@ fn glibc_tempnam() -> TempnamFn {
 /// glibc appends; fl appends a different number, so the basename is compared by
 /// PREFIX rather than by length.
 fn split(path: &str) -> (String, String) {
-    let (dir, base) = path.rsplit_once('/').expect("tempnam returns an absolute path");
+    let (dir, base) = path
+        .rsplit_once('/')
+        .expect("tempnam returns an absolute path");
     (dir.to_string(), base.to_string())
 }
 
@@ -159,7 +161,9 @@ fn tempnam_directory_precedence_matches_glibc() {
         set_tmpdir(*tmpdir);
         let gr = call(g, *dir, Some("p"));
         let fr = call(f, *dir, Some("p"));
-        let (gdir, _) = gr.clone().unwrap_or_else(|| panic!("{label}: glibc returned NULL"));
+        let (gdir, _) = gr
+            .clone()
+            .unwrap_or_else(|| panic!("{label}: glibc returned NULL"));
         let (fdir, _) = fr.unwrap_or_else(|| panic!("{label}: fl returned NULL"));
         assert_eq!(fdir, gdir, "{label}: directory differs");
         observed.push((*label, gdir));
@@ -177,7 +181,11 @@ fn tempnam_directory_precedence_matches_glibc() {
             .map(|(_, v)| v.clone())
             .unwrap()
     };
-    assert_eq!(by("no TMPDIR, dir=tdA"), a, "glibc should honour a usable dir");
+    assert_eq!(
+        by("no TMPDIR, dir=tdA"),
+        a,
+        "glibc should honour a usable dir"
+    );
     assert_eq!(
         by("TMPDIR=tdB, dir=tdA -> TMPDIR wins"),
         b,

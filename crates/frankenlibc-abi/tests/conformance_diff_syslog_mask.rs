@@ -103,8 +103,14 @@ fn glibc_impl() -> Impl {
         let h = dlopen(c"libc.so.6".as_ptr(), 2 /* RTLD_NOW */);
         assert!(!h.is_null(), "dlopen(libc.so.6) failed");
         for (sym, fl_addr) in [
-            (c"openlog", frankenlibc_abi::unistd_abi::openlog as *const () as usize),
-            (c"setlogmask", frankenlibc_abi::unistd_abi::setlogmask as *const () as usize),
+            (
+                c"openlog",
+                frankenlibc_abi::unistd_abi::openlog as *const () as usize,
+            ),
+            (
+                c"setlogmask",
+                frankenlibc_abi::unistd_abi::setlogmask as *const () as usize,
+            ),
         ] {
             let s = dlsym(h, sym.as_ptr());
             assert!(!s.is_null(), "dlsym({sym:?}) failed");
@@ -210,7 +216,11 @@ fn syslog_emits_every_priority_under_the_default_mask() {
     // filtered. Without this, an implementation that dropped ALL messages —
     // or a harness whose capture never saw anything — would satisfy every
     // suppression assertion above.
-    check(log_upto(LOG_DEBUG), "LOG_UPTO(LOG_DEBUG) (all bits)", [true; 8]);
+    check(
+        log_upto(LOG_DEBUG),
+        "LOG_UPTO(LOG_DEBUG) (all bits)",
+        [true; 8],
+    );
 }
 
 #[test]

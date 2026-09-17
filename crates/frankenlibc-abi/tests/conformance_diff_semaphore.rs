@@ -182,9 +182,8 @@ fn sem_post_wakes_a_registered_waiter() {
     // The second sem_t word is FrankenLibC's waiter registration count. Waiting
     // for it makes this a deterministic test of the actual sleeping/wake path.
     // SAFETY: `sem` remains allocated and 8-byte aligned until after join.
-    let waiter_count = unsafe {
-        &*((sem_addr as *const u8).add(std::mem::size_of::<i32>()) as *const AtomicU32)
-    };
+    let waiter_count =
+        unsafe { &*((sem_addr as *const u8).add(std::mem::size_of::<i32>()) as *const AtomicU32) };
     let deadline = Instant::now() + Duration::from_secs(1);
     let mut registered = false;
     while Instant::now() < deadline {

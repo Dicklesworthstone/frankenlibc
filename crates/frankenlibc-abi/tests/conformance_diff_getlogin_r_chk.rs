@@ -40,7 +40,8 @@ fn getlogin_r_chk_null_zero_matches_glibc() {
     // and a null buffer with zero sizes is the documented degenerate query.
     let host_rc = unsafe { host(std::ptr::null_mut(), 0, 0) };
     // SAFETY: same call, FrankenLibC's implementation.
-    let fl_rc = unsafe { frankenlibc_abi::fortify_abi::__getlogin_r_chk(std::ptr::null_mut(), 0, 0) };
+    let fl_rc =
+        unsafe { frankenlibc_abi::fortify_abi::__getlogin_r_chk(std::ptr::null_mut(), 0, 0) };
 
     println!(
         "GETLOGIN_R_CHK_NULL_ZERO host_glibc={host_rc} fl={fl_rc} \

@@ -128,8 +128,7 @@ fn host_kexec_load(
     flags: c_ulong,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_KEXEC_LOAD, entry, nr_segments, segments, flags) };
+    let rc = unsafe { host_syscall()(SYS_KEXEC_LOAD, entry, nr_segments, segments, flags) };
     (rc, host_errno())
 }
 

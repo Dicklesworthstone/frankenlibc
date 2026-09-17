@@ -22,8 +22,7 @@ mod dlsym_oracle;
 #[path = "common/fd_capture.rs"]
 mod fd_capture;
 
-type ErrorAtLine =
-    unsafe extern "C" fn(c_int, c_int, *const c_char, c_uint, *const c_char, ...);
+type ErrorAtLine = unsafe extern "C" fn(c_int, c_int, *const c_char, c_uint, *const c_char, ...);
 type Error = unsafe extern "C" fn(c_int, c_int, *const c_char, ...);
 type Warnx = unsafe extern "C" fn(*const c_char, ...);
 
@@ -51,9 +50,7 @@ fn glibc_error_at_line() -> ErrorAtLine {
 
 fn glibc_error() -> Error {
     // SAFETY: matches glibc's documented error signature.
-    unsafe {
-        dlsym_oracle::host_fn(c"error", frankenlibc_abi::stdlib_abi::error as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"error", frankenlibc_abi::stdlib_abi::error as *const ()) }
 }
 
 fn glibc_warnx() -> Warnx {
@@ -240,7 +237,9 @@ fn error_at_line_honors_error_print_progname_like_glibc() {
     let fmt = CString::new("cannot read").unwrap();
 
     let (g, f) = with_progname_hook(hook, || {
-        let g = capture_inner(|| unsafe { glibc_error_at_line()(0, 0, file.as_ptr(), 42, fmt.as_ptr()) });
+        let g = capture_inner(|| unsafe {
+            glibc_error_at_line()(0, 0, file.as_ptr(), 42, fmt.as_ptr())
+        });
         let f = capture_inner(|| unsafe {
             frankenlibc_abi::stdlib_abi::error_at_line(0, 0, file.as_ptr(), 42, fmt.as_ptr())
         });
@@ -550,7 +549,8 @@ fn error_at_line_honors_error_one_per_line_like_glibc() {
 
     // Prime each impl's statics to a location no step uses, so step 0 cannot be
     // suppressed by whatever a previously-run arm left behind.
-    let g_call = |f: *const c_char, l: c_uint| unsafe { glibc_error_at_line()(0, 0, f, l, fmt.as_ptr()) };
+    let g_call =
+        |f: *const c_char, l: c_uint| unsafe { glibc_error_at_line()(0, 0, f, l, fmt.as_ptr()) };
     let fl_call = |f: *const c_char, l: c_uint| unsafe {
         frankenlibc_abi::stdlib_abi::error_at_line(0, 0, f, l, fmt.as_ptr())
     };
@@ -612,8 +612,13 @@ fn error_at_line_repeats_when_error_one_per_line_is_clear() {
 
     let a = CString::new("a.c").unwrap();
     let fmt = CString::new("boom").unwrap();
-    let steps: &[(Option<&CString>, c_uint)] =
-        &[(Some(&a), 1), (Some(&a), 1), (Some(&a), 1), (None, 1), (None, 1)];
+    let steps: &[(Option<&CString>, c_uint)] = &[
+        (Some(&a), 1),
+        (Some(&a), 1),
+        (Some(&a), 1),
+        (None, 1),
+        (None, 1),
+    ];
     let labels = ["a.c:1", "a.c:1", "a.c:1", "NULL:1", "NULL:1"];
 
     unsafe {
@@ -621,7 +626,8 @@ fn error_at_line_repeats_when_error_one_per_line_is_clear() {
         frankenlibc_abi::glibc_internal_abi::error_one_per_line = 0;
     }
 
-    let g_call = |f: *const c_char, l: c_uint| unsafe { glibc_error_at_line()(0, 0, f, l, fmt.as_ptr()) };
+    let g_call =
+        |f: *const c_char, l: c_uint| unsafe { glibc_error_at_line()(0, 0, f, l, fmt.as_ptr()) };
     let fl_call = |f: *const c_char, l: c_uint| unsafe {
         frankenlibc_abi::stdlib_abi::error_at_line(0, 0, f, l, fmt.as_ptr())
     };
@@ -743,8 +749,7 @@ fn error_at_line_null_filename_keeps_the_space_separator() {
 // is exactly the distinction under test and leaves no buffered residue behind.
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}
 
 /// glibc's `stdout` FILE*.
 fn glibc_stdout() -> *mut std::ffi::c_void {
@@ -815,9 +820,7 @@ fn marker_precedes_message(captured: &[u8]) -> bool {
 /// names the property in one line where a byte diff of two similar buffers does
 /// not.
 fn marker_trails_message(captured: &[u8]) -> bool {
-    let marker_at = captured
-        .windows(MARKER.len())
-        .position(|w| w == MARKER);
+    let marker_at = captured.windows(MARKER.len()).position(|w| w == MARKER);
     let msg_at = captured.windows(3).position(|w| w == b"msg");
     match (marker_at, msg_at) {
         (Some(m), Some(t)) => t < m,

@@ -467,7 +467,11 @@ fn exported_entry_point_matches_glibc() {
 
     assert_eq!(fl_rc, glibc_rc, "return contract (errno-direct) must match");
     assert_eq!(fl_rc, 0, "native fallocate is supported on the test host");
-    assert_eq!(read_all(&fl_path), read_all(&glibc_path), "content mismatch");
+    assert_eq!(
+        read_all(&fl_path),
+        read_all(&glibc_path),
+        "content mismatch"
+    );
 
     // Negative arguments: both must report EINVAL without touching the file.
     // SAFETY: fd is valid.

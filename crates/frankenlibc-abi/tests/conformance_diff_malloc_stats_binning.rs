@@ -239,7 +239,10 @@ fn in_place_shrink_then_free_keeps_the_block_in_one_bin() {
         // resizes must not each shift the block between bins.
         // SAFETY: live allocation.
         let regrown = unsafe { frankenlibc_abi::malloc_abi::realloc(shrunk_ptr, start) };
-        assert!(!regrown.is_null(), "realloc({shrunk} -> {start}) returned NULL");
+        assert!(
+            !regrown.is_null(),
+            "realloc({shrunk} -> {start}) returned NULL"
+        );
         // SAFETY: live allocation of at least `start` bytes.
         unsafe { write_and_verify(regrown, start) };
 

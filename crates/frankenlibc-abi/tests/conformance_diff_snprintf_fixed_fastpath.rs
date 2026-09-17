@@ -50,7 +50,10 @@ fn host_snprintf() -> Snprintf {
     // SAFETY: the name is a NUL-terminated constant; RTLD_LOCAL keeps the handle
     // out of the global namespace.
     let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "dlopen libc.so.6 — the oracle is unavailable");
+    assert!(
+        !handle.is_null(),
+        "dlopen libc.so.6 — the oracle is unavailable"
+    );
     // SAFETY: handle came from dlopen; the name is a NUL-terminated constant.
     let raw = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
     assert!(!raw.is_null(), "dlsym snprintf");
@@ -80,7 +83,12 @@ fn render_fl(fmt: &CStr, value: f64, size: usize) -> (c_int, [u8; CAP]) {
     let mut buf = [FILL; CAP];
     // SAFETY: `size <= CAP`, so the callee's writable region is in bounds.
     let rc = unsafe {
-        frankenlibc_abi::stdio_abi::snprintf(buf.as_mut_ptr().cast::<c_char>(), size, fmt.as_ptr(), value)
+        frankenlibc_abi::stdio_abi::snprintf(
+            buf.as_mut_ptr().cast::<c_char>(),
+            size,
+            fmt.as_ptr(),
+            value,
+        )
     };
     (rc, buf)
 }
@@ -142,9 +150,9 @@ fn values() -> Vec<f64> {
         0.1,
         0.2,
         0.3,
-        2.675,   // classic round-half-to-even trap: exact value is below the tie
-        1.005,   // ditto
-        8.835,   // ditto
+        2.675, // classic round-half-to-even trap: exact value is below the tie
+        1.005, // ditto
+        8.835, // ditto
         0.5e-3,
         99.995,
         1e15,
@@ -190,12 +198,14 @@ fn snprintf_fixed_matches_glibc_bytes_and_return_value() {
                 let (frc, fbuf) = render_fl(&fmt, value, size);
                 let (grc, gbuf) = render_host(host, &fmt, value, size);
                 assert_eq!(
-                    frc, grc,
+                    frc,
+                    grc,
                     "{label} of {value:?} [{:#018x}] size {size}: return fl={frc} glibc={grc}",
                     value.to_bits()
                 );
                 assert_eq!(
-                    fbuf, gbuf,
+                    fbuf,
+                    gbuf,
                     "{label} of {value:?} [{:#018x}] size {size}: destination bytes differ\n \
                      fl   ={:?}\n glibc={:?}",
                     value.to_bits(),
@@ -221,12 +231,21 @@ fn snprintf_fixed_matches_glibc_bytes_and_return_value() {
 fn adjacent_float_formats_still_match_glibc() {
     let host = host_snprintf();
     let specs = [
-        "%10.2f", "%-10.2f", "%+.2f", "% .2f", "%010.2f", "%#.2f", "%.10f", "%.15f", "%.0f",
-        "%e", "%.2e", "%g", "%.2g", "%a", "%.2a", "%E", "%G", "%Lf",
+        "%10.2f", "%-10.2f", "%+.2f", "% .2f", "%010.2f", "%#.2f", "%.10f", "%.15f", "%.0f", "%e",
+        "%.2e", "%g", "%.2g", "%a", "%.2a", "%E", "%G", "%Lf",
     ];
     for spec in specs {
         let fmt = std::ffi::CString::new(spec).unwrap();
-        for &value in &[0.0f64, -0.0, 1234.56, -1234.56, 0.1, 1e19, f64::INFINITY, f64::NAN] {
+        for &value in &[
+            0.0f64,
+            -0.0,
+            1234.56,
+            -1234.56,
+            0.1,
+            1e19,
+            f64::INFINITY,
+            f64::NAN,
+        ] {
             if spec == "%Lf" {
                 continue; // long double: different argument width, not this lane
             }
@@ -234,7 +253,10 @@ fn adjacent_float_formats_still_match_glibc() {
                 let (frc, fbuf) = render_fl(&fmt, value, size);
                 let (grc, gbuf) = render_host(host, &fmt, value, size);
                 assert_eq!(frc, grc, "{spec} of {value:?} size {size}: return value");
-                assert_eq!(fbuf, gbuf, "{spec} of {value:?} size {size}: destination bytes");
+                assert_eq!(
+                    fbuf, gbuf,
+                    "{spec} of {value:?} size {size}: destination bytes"
+                );
             }
         }
     }
@@ -274,20 +296,21 @@ fn sprintf_fixed_matches_glibc() {
             };
             let (grc, gbuf) = render_host(host, &fmt, value, CAP);
             assert_eq!(
-                frc, grc,
+                frc,
+                grc,
                 "sprintf {label} of {value:?} [{:#018x}]: return fl={frc} glibc={grc}",
                 value.to_bits()
             );
             let n = grc.max(0) as usize;
             assert_eq!(
-                &fbuf[..=n], &gbuf[..=n],
+                &fbuf[..=n],
+                &gbuf[..=n],
                 "sprintf {label} of {value:?} [{:#018x}]: bytes differ",
                 value.to_bits()
             );
         }
     }
 }
-
 
 /// Forge a real va_list the way a C caller would, and hand it to fl's
 /// `vsnprintf`. `c_variadic` is stable, so this needs no feature gate.
@@ -304,9 +327,7 @@ unsafe extern "C" fn fl_vsnprintf_shim(
     mut ap: ...
 ) -> c_int {
     // SAFETY: the caller passes exactly the arguments `fmt` names.
-    unsafe {
-        frankenlibc_abi::stdio_abi::vsnprintf(buf, n, fmt, &mut ap as *mut _ as *mut c_void)
-    }
+    unsafe { frankenlibc_abi::stdio_abi::vsnprintf(buf, n, fmt, &mut ap as *mut _ as *mut c_void) }
 }
 
 #[test]
@@ -319,18 +340,25 @@ fn vsnprintf_fixed_reads_the_fp_register_save_area() {
                 let mut fbuf = [FILL; CAP];
                 // SAFETY: exactly one f64 is passed, matching `fmt`.
                 let frc = unsafe {
-                    fl_vsnprintf_shim(fbuf.as_mut_ptr().cast::<c_char>(), size, fmt.as_ptr(), value)
+                    fl_vsnprintf_shim(
+                        fbuf.as_mut_ptr().cast::<c_char>(),
+                        size,
+                        fmt.as_ptr(),
+                        value,
+                    )
                 };
                 let (grc, gbuf) = render_host(host, &fmt, value, size);
                 assert_eq!(
-                    frc, grc,
+                    frc,
+                    grc,
                     "vsnprintf {label} of {value:?} [{:#018x}] size {size}: return fl={frc} \
                      glibc={grc} — a wrong value here usually means the double was read from the \
                      GP register save area instead of the FP one",
                     value.to_bits()
                 );
                 assert_eq!(
-                    fbuf, gbuf,
+                    fbuf,
+                    gbuf,
                     "vsnprintf {label} of {value:?} [{:#018x}] size {size}: destination bytes differ",
                     value.to_bits()
                 );
@@ -338,7 +366,10 @@ fn vsnprintf_fixed_reads_the_fp_register_save_area() {
             }
         }
     }
-    assert!(compared > 50_000, "only {compared} vsnprintf comparisons ran");
+    assert!(
+        compared > 50_000,
+        "only {compared} vsnprintf comparisons ran"
+    );
     println!("vsnprintf: compared {compared} triples against host glibc");
 }
 
@@ -349,11 +380,7 @@ fn vsnprintf_fixed_reads_the_fp_register_save_area() {
 /// optimisation must preserve; when the probe is added it becomes the gate that
 /// holds it. A gate written after the change can only confirm the change agrees
 /// with itself.
-unsafe extern "C" fn fl_vsprintf_shim(
-    buf: *mut c_char,
-    fmt: *const c_char,
-    mut ap: ...
-) -> c_int {
+unsafe extern "C" fn fl_vsprintf_shim(buf: *mut c_char, fmt: *const c_char, mut ap: ...) -> c_int {
     // SAFETY: the caller passes exactly the arguments `fmt` names.
     unsafe { frankenlibc_abi::stdio_abi::vsprintf(buf, fmt, &mut ap as *mut _ as *mut c_void) }
 }
@@ -372,7 +399,8 @@ fn vsprintf_fixed_matches_glibc() {
             };
             let (grc, gbuf) = render_host(host, &fmt, value, CAP);
             assert_eq!(
-                frc, grc,
+                frc,
+                grc,
                 "vsprintf {label} of {value:?} [{:#018x}]: return fl={frc} glibc={grc} — a wrong \
                  value here usually means the double was read from the GP register save area \
                  instead of the FP one",
@@ -380,13 +408,17 @@ fn vsprintf_fixed_matches_glibc() {
             );
             let n = grc.max(0) as usize;
             assert_eq!(
-                &fbuf[..=n], &gbuf[..=n],
+                &fbuf[..=n],
+                &gbuf[..=n],
                 "vsprintf {label} of {value:?} [{:#018x}]: bytes differ",
                 value.to_bits()
             );
             compared += 1;
         }
     }
-    assert!(compared > 10_000, "only {compared} vsprintf comparisons ran");
+    assert!(
+        compared > 10_000,
+        "only {compared} vsprintf comparisons ran"
+    );
     println!("vsprintf: compared {compared} (format, value) pairs against host glibc");
 }

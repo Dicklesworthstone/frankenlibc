@@ -24,16 +24,12 @@ type WcslcpyFn = unsafe extern "C" fn(*mut wchar_t, *const wchar_t, usize) -> us
 
 fn host_wcslcpy() -> WcslcpyFn {
     // SAFETY: signature matches BSD wcslcpy exactly.
-    unsafe {
-        dlsym_oracle::host_fn(c"wcslcpy", frankenlibc_abi::wchar_abi::wcslcpy as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"wcslcpy", frankenlibc_abi::wchar_abi::wcslcpy as *const ()) }
 }
 
 fn host_wcslcat() -> WcslcpyFn {
     // SAFETY: wcslcat shares wcslcpy's signature exactly.
-    unsafe {
-        dlsym_oracle::host_fn(c"wcslcat", frankenlibc_abi::wchar_abi::wcslcat as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"wcslcat", frankenlibc_abi::wchar_abi::wcslcat as *const ()) }
 }
 
 fn wstr(s: &str) -> Vec<wchar_t> {

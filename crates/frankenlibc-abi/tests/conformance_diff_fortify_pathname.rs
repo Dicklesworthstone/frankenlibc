@@ -101,7 +101,11 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
             if hv == Outcome::Aborted {
                 aborts += 1;
             }
-            let expected = if $expect_abort { Outcome::Aborted } else { Outcome::Ok };
+            let expected = if $expect_abort {
+                Outcome::Aborted
+            } else {
+                Outcome::Ok
+            };
             if hv != expected {
                 bad.push(format!(
                     "{}: HOST gave {hv:?} where the probe expected {expected:?}; the case \
@@ -121,16 +125,34 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
         // SAFETY: resolved symbol has this signature.
         let hf: BufLenPtr = unsafe { std::mem::transmute(host(c"__getcwd_chk")) };
         let mf = frankenlibc_abi::fortify_abi::__getcwd_chk;
-        cell!("__getcwd_chk len=64 buflen=256", false,
+        cell!(
+            "__getcwd_chk len=64 buflen=256",
+            false,
             // SAFETY: 64 bytes into an 8192-byte destination.
-            || { let mut d = dst(); unsafe { hf(d.as_mut_ptr(), 64, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(d.as_mut_ptr(), 64, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(d.as_mut_ptr(), 64, 256) }; });
-        cell!("__getcwd_chk len=1024 buflen=256", true,
+            || {
+                let mut d = dst();
+                unsafe { mf(d.as_mut_ptr(), 64, 256) };
+            }
+        );
+        cell!(
+            "__getcwd_chk len=1024 buflen=256",
+            true,
             // SAFETY: the check fires before any write.
-            || { let mut d = dst(); unsafe { hf(d.as_mut_ptr(), 1024, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(d.as_mut_ptr(), 1024, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(d.as_mut_ptr(), 1024, 256) }; });
+            || {
+                let mut d = dst();
+                unsafe { mf(d.as_mut_ptr(), 1024, 256) };
+            }
+        );
     }
 
     // --- __readlink_chk ---
@@ -138,16 +160,34 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
         // SAFETY: resolved symbol has this signature.
         let hf: Link = unsafe { std::mem::transmute(host(c"__readlink_chk")) };
         let mf = frankenlibc_abi::fortify_abi::__readlink_chk;
-        cell!("__readlink_chk len=64 buflen=256", false,
+        cell!(
+            "__readlink_chk len=64 buflen=256",
+            false,
             // SAFETY: /proc/self/exe always resolves; 64 into 8192.
-            || { let mut d = dst(); unsafe { hf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 64, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 64, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 64, 256) }; });
-        cell!("__readlink_chk len=1024 buflen=256", true,
+            || {
+                let mut d = dst();
+                unsafe { mf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 64, 256) };
+            }
+        );
+        cell!(
+            "__readlink_chk len=1024 buflen=256",
+            true,
             // SAFETY: the check fires before any write.
-            || { let mut d = dst(); unsafe { hf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 1024, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 1024, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 1024, 256) }; });
+            || {
+                let mut d = dst();
+                unsafe { mf(c"/proc/self/exe".as_ptr(), d.as_mut_ptr(), 1024, 256) };
+            }
+        );
     }
 
     // --- __confstr_chk ---
@@ -155,16 +195,34 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
         // SAFETY: resolved symbol has this signature.
         let hf: Confstr = unsafe { std::mem::transmute(host(c"__confstr_chk")) };
         let mf = frankenlibc_abi::fortify_abi::__confstr_chk;
-        cell!("__confstr_chk len=64 buflen=256", false,
+        cell!(
+            "__confstr_chk len=64 buflen=256",
+            false,
             // SAFETY: name 0 is _CS_PATH; 64 into 8192.
-            || { let mut d = dst(); unsafe { hf(0, d.as_mut_ptr(), 64, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(0, d.as_mut_ptr(), 64, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(0, d.as_mut_ptr(), 64, 256) }; });
-        cell!("__confstr_chk len=1024 buflen=256", true,
+            || {
+                let mut d = dst();
+                unsafe { mf(0, d.as_mut_ptr(), 64, 256) };
+            }
+        );
+        cell!(
+            "__confstr_chk len=1024 buflen=256",
+            true,
             // SAFETY: the check fires before any write.
-            || { let mut d = dst(); unsafe { hf(0, d.as_mut_ptr(), 1024, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(0, d.as_mut_ptr(), 1024, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(0, d.as_mut_ptr(), 1024, 256) }; });
+            || {
+                let mut d = dst();
+                unsafe { mf(0, d.as_mut_ptr(), 1024, 256) };
+            }
+        );
     }
 
     // --- __gethostname_chk ---
@@ -172,16 +230,34 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
         // SAFETY: resolved symbol has this signature.
         let hf: BufLen = unsafe { std::mem::transmute(host(c"__gethostname_chk")) };
         let mf = frankenlibc_abi::fortify_abi::__gethostname_chk;
-        cell!("__gethostname_chk len=64 buflen=256", false,
+        cell!(
+            "__gethostname_chk len=64 buflen=256",
+            false,
             // SAFETY: 64 into 8192.
-            || { let mut d = dst(); unsafe { hf(d.as_mut_ptr(), 64, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(d.as_mut_ptr(), 64, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(d.as_mut_ptr(), 64, 256) }; });
-        cell!("__gethostname_chk len=1024 buflen=256", true,
+            || {
+                let mut d = dst();
+                unsafe { mf(d.as_mut_ptr(), 64, 256) };
+            }
+        );
+        cell!(
+            "__gethostname_chk len=1024 buflen=256",
+            true,
             // SAFETY: the check fires before any write.
-            || { let mut d = dst(); unsafe { hf(d.as_mut_ptr(), 1024, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(d.as_mut_ptr(), 1024, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(d.as_mut_ptr(), 1024, 256) }; });
+            || {
+                let mut d = dst();
+                unsafe { mf(d.as_mut_ptr(), 1024, 256) };
+            }
+        );
     }
 
     // --- __getdomainname_chk ---
@@ -189,16 +265,34 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
         // SAFETY: resolved symbol has this signature.
         let hf: BufLen = unsafe { std::mem::transmute(host(c"__getdomainname_chk")) };
         let mf = frankenlibc_abi::fortify_abi::__getdomainname_chk;
-        cell!("__getdomainname_chk len=64 buflen=256", false,
+        cell!(
+            "__getdomainname_chk len=64 buflen=256",
+            false,
             // SAFETY: 64 into 8192.
-            || { let mut d = dst(); unsafe { hf(d.as_mut_ptr(), 64, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(d.as_mut_ptr(), 64, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(d.as_mut_ptr(), 64, 256) }; });
-        cell!("__getdomainname_chk len=1024 buflen=256", true,
+            || {
+                let mut d = dst();
+                unsafe { mf(d.as_mut_ptr(), 64, 256) };
+            }
+        );
+        cell!(
+            "__getdomainname_chk len=1024 buflen=256",
+            true,
             // SAFETY: the check fires before any write.
-            || { let mut d = dst(); unsafe { hf(d.as_mut_ptr(), 1024, 256) }; },
+            || {
+                let mut d = dst();
+                unsafe { hf(d.as_mut_ptr(), 1024, 256) };
+            },
             // SAFETY: as above, against fl.
-            || { let mut d = dst(); unsafe { mf(d.as_mut_ptr(), 1024, 256) }; });
+            || {
+                let mut d = dst();
+                unsafe { mf(d.as_mut_ptr(), 1024, 256) };
+            }
+        );
     }
 
     println!("compared {compared} path-name cells, {aborts} host aborts");
@@ -210,5 +304,10 @@ fn pathname_chk_wrappers_abort_exactly_where_the_host_does() {
         "only {aborts} host aborts observed; without them this gate would pass \
          against a build with every check deleted"
     );
-    assert!(bad.is_empty(), "{} divergent cells:\n  {}", bad.len(), bad.join("\n  "));
+    assert!(
+        bad.is_empty(),
+        "{} divergent cells:\n  {}",
+        bad.len(),
+        bad.join("\n  ")
+    );
 }

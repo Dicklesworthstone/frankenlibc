@@ -149,13 +149,19 @@ fn clock_variant_waits_accept_realtime_and_monotonic_like_glibc() {
         unsafe { flp::pthread_mutex_init(&mut fm, std::ptr::null()) };
         let g_ml = unsafe { g::pthread_mutex_clocklock(&mut gm, clk, &past) };
         let f_ml = unsafe { flp::pthread_mutex_clocklock(&mut fm, clk, &past) };
-        assert_eq!(g_ml, 0, "oracle: glibc must ACCEPT clk={clk} on a free mutex");
+        assert_eq!(
+            g_ml, 0,
+            "oracle: glibc must ACCEPT clk={clk} on a free mutex"
+        );
         assert_ne!(
             f_ml,
             libc::EINVAL,
             "fl rejected the valid clk={clk} on mutex_clocklock — the guard is over-broad"
         );
-        assert_eq!(f_ml, g_ml, "mutex_clocklock clk={clk}: fl={f_ml} glibc={g_ml}");
+        assert_eq!(
+            f_ml, g_ml,
+            "mutex_clocklock clk={clk}: fl={f_ml} glibc={g_ml}"
+        );
 
         // --- rwlock read/write lock on a FREE rwlock: acquires, returns 0. ---
         let mut grw: libc::pthread_rwlock_t = unsafe { std::mem::zeroed() };

@@ -54,7 +54,10 @@ fn host_snprintf() -> Snprintf {
     // SAFETY: the name is a NUL-terminated constant; RTLD_LOCAL keeps the handle
     // out of the global namespace.
     let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "dlopen libc.so.6 — the oracle is unavailable");
+    assert!(
+        !handle.is_null(),
+        "dlopen libc.so.6 — the oracle is unavailable"
+    );
     // SAFETY: handle came from dlopen; the name is a NUL-terminated constant.
     let raw = unsafe { libc::dlsym(handle, c"snprintf".as_ptr()) };
     assert!(!raw.is_null(), "dlsym snprintf");
@@ -85,10 +88,23 @@ macro_rules! both_str2 {
         // exactly the two `*const c_char` supplied.
         let fl_rc = unsafe {
             frankenlibc_abi::stdio_abi::snprintf(
-                fl.as_mut_ptr().cast::<c_char>(), size, $fmt.as_ptr(), $a, $b)
+                fl.as_mut_ptr().cast::<c_char>(),
+                size,
+                $fmt.as_ptr(),
+                $a,
+                $b,
+            )
         };
         // SAFETY: same shape into the dlsym-resolved glibc.
-        let gl_rc = unsafe { ($host)(gl.as_mut_ptr().cast::<c_char>(), size, $fmt.as_ptr(), $a, $b) };
+        let gl_rc = unsafe {
+            ($host)(
+                gl.as_mut_ptr().cast::<c_char>(),
+                size,
+                $fmt.as_ptr(),
+                $a,
+                $b,
+            )
+        };
         ((fl_rc, fl), (gl_rc, gl))
     }};
 }
@@ -127,8 +143,14 @@ fn fused_grammar_boundary_formats_exactly_like_glibc() {
         (c"%s %s", "the fused-eligible shape"),
         (c"%s|%s", "fused with a non-space literal between segments"),
         (c"%s%s", "fused with no literal between segments"),
-        (c"pre %s mid %s post", "leading, interior and trailing literals"),
-        (c"%.3s %s", "a PRECISION on the first conversion — must decline the fused path"),
+        (
+            c"pre %s mid %s post",
+            "leading, interior and trailing literals",
+        ),
+        (
+            c"%.3s %s",
+            "a PRECISION on the first conversion — must decline the fused path",
+        ),
         (c"%10s|%s", "a WIDTH on the first conversion"),
         (c"%-10s|%s", "a left-justify flag"),
         (c"%2$s %1$s", "POSITIONAL arguments, which reorder the two"),
@@ -167,7 +189,10 @@ fn fused_cross_segment_truncation_matches_glibc_at_every_size() {
         assert_same(&format!("size={size}"), fl, gl);
         // Pin the oracle's own behaviour, not merely that the arms agree: if
         // both stopped reporting the untruncated length, equality would hold.
-        assert_eq!(gl.0, 6, "glibc should report the untruncated length at size={size}");
+        assert_eq!(
+            gl.0, 6,
+            "glibc should report the untruncated length at size={size}"
+        );
     }
 }
 

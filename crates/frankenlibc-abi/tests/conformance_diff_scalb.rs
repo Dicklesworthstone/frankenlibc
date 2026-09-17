@@ -38,16 +38,12 @@ type Scalb32 = unsafe extern "C" fn(f32, f32) -> f32;
 /// collapse fails loudly instead of silently.
 fn glibc_scalb() -> Scalb64 {
     // SAFETY: `Scalb64` matches SVID's documented scalb signature.
-    unsafe {
-        dlsym_oracle::host_fn(c"scalb", frankenlibc_abi::unistd_abi::scalb as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"scalb", frankenlibc_abi::unistd_abi::scalb as *const ()) }
 }
 
 fn glibc_scalbf() -> Scalb32 {
     // SAFETY: `Scalb32` matches SVID's documented scalbf signature.
-    unsafe {
-        dlsym_oracle::host_fn(c"scalbf", frankenlibc_abi::unistd_abi::scalbf as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"scalbf", frankenlibc_abi::unistd_abi::scalbf as *const ()) }
 }
 
 unsafe extern "C" {

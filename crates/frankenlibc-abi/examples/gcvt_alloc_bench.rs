@@ -29,7 +29,9 @@ fn main() {
             let t = Instant::now();
             for _ in 0..iters {
                 black_box(frankenlibc_abi::stdlib_abi::gcvt(
-                    black_box(val), nd, fbuf.as_mut_ptr(),
+                    black_box(val),
+                    nd,
+                    fbuf.as_mut_ptr(),
                 ));
             }
             let fl = t.elapsed().as_nanos() as f64 / iters as f64;
@@ -38,7 +40,10 @@ fn main() {
                 black_box(gl_gcvt(black_box(val), nd, gbuf.as_mut_ptr()));
             }
             let gl = t.elapsed().as_nanos() as f64 / iters as f64;
-            println!("{name} fl={fl:.1}ns glibc={gl:.1}ns  fl/glibc={:.2}x", fl / gl);
+            println!(
+                "{name} fl={fl:.1}ns glibc={gl:.1}ns  fl/glibc={:.2}x",
+                fl / gl
+            );
         }
 
         frankenlibc_abi::stdlib_abi::qgcvt(3.141592653589793, 17, fbuf.as_mut_ptr());

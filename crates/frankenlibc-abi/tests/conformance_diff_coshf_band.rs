@@ -41,7 +41,11 @@ fn host_sinhf() -> F32Unary {
 /// Distance in representable f32 steps, NaN-aware and sign-aware.
 fn ulp_distance(a: f32, b: f32) -> u64 {
     if a.is_nan() || b.is_nan() {
-        return if a.is_nan() && b.is_nan() { 0 } else { u64::MAX };
+        return if a.is_nan() && b.is_nan() {
+            0
+        } else {
+            u64::MAX
+        };
     }
     if a == b {
         return 0;
@@ -138,8 +142,8 @@ fn coshf_specials_and_overflow_edge_are_bit_exact() {
         -f32::MIN_POSITIVE,
         1.0,
         88.0,
-        88.7,      // just under the f32 overflow edge
-        89.0,      // just over: cosh overflows f32 here
+        88.7, // just under the f32 overflow edge
+        89.0, // just over: cosh overflows f32 here
         1.0e30,
         f32::INFINITY,
         f32::NEG_INFINITY,
@@ -169,15 +173,17 @@ fn sinhf_still_matches_live_glibc_on_the_same_band() {
         let gl = unsafe { host(x) };
         worst = worst.max(ulp_distance(fl, gl));
     }
-    assert!(worst <= 1, "sinhf worst {worst} ULP vs live glibc on the band");
+    assert!(
+        worst <= 1,
+        "sinhf worst {worst} ULP vs live glibc on the band"
+    );
 }
 
 /// The oracle is glibc's, not fl's.
 #[test]
 fn the_host_arm_is_not_fl() {
-    let resolved = unsafe {
-        dlsym_oracle::host_addr(c"coshf", frankenlibc_abi::math_abi::coshf as *const ())
-    };
+    let resolved =
+        unsafe { dlsym_oracle::host_addr(c"coshf", frankenlibc_abi::math_abi::coshf as *const ()) };
     assert_ne!(
         resolved as usize,
         frankenlibc_abi::math_abi::coshf as *const () as usize,

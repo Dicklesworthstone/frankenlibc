@@ -81,8 +81,7 @@ fn set_fl_errno(value: c_int) {
 
 fn host_sync_file_range(fd: c_int, offset: i64, nbytes: i64, flags: c_uint) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(libc::SYS_sync_file_range, fd, offset, nbytes, flags) };
+    let rc = unsafe { host_syscall()(libc::SYS_sync_file_range, fd, offset, nbytes, flags) };
     (rc as c_int, host_errno())
 }
 

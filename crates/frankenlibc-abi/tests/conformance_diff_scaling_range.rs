@@ -240,40 +240,108 @@ fn scaling_range_matches_live_glibc_on_the_same_rows() {
     // (1) the i64 exponent clamp. glibc's scalbln takes a C `long`, so these
     // rows pass the same bit pattern to both arms and the clamp is compared
     // rather than assumed.
-    both64!("scalbln(1,LMAX)", fa::scalbln(1.0, i64::MAX), (h.scalbln)(1.0, c_long::MAX));
-    both64!("scalbln(1,LMIN)", fa::scalbln(1.0, i64::MIN), (h.scalbln)(1.0, c_long::MIN));
-    both64!("scalbln(1,2^31)", fa::scalbln(1.0, 2147483648), (h.scalbln)(1.0, 2147483648));
+    both64!(
+        "scalbln(1,LMAX)",
+        fa::scalbln(1.0, i64::MAX),
+        (h.scalbln)(1.0, c_long::MAX)
+    );
+    both64!(
+        "scalbln(1,LMIN)",
+        fa::scalbln(1.0, i64::MIN),
+        (h.scalbln)(1.0, c_long::MIN)
+    );
+    both64!(
+        "scalbln(1,2^31)",
+        fa::scalbln(1.0, 2147483648),
+        (h.scalbln)(1.0, 2147483648)
+    );
     both64!(
         "scalbln(1,-2^31-1)",
         fa::scalbln(1.0, -2147483649),
         (h.scalbln)(1.0, -2147483649)
     );
-    both64!("scalbln(0,LMAX)", fa::scalbln(0.0, i64::MAX), (h.scalbln)(0.0, c_long::MAX));
+    both64!(
+        "scalbln(0,LMAX)",
+        fa::scalbln(0.0, i64::MAX),
+        (h.scalbln)(0.0, c_long::MAX)
+    );
     both64!(
         "scalbln(inf,LMIN)",
         fa::scalbln(f64::INFINITY, i64::MIN),
         (h.scalbln)(f64::INFINITY, c_long::MIN)
     );
-    both32!("scalblnf(1,LMAX)", fa::scalblnf(1.0, i64::MAX), (h.scalblnf)(1.0, c_long::MAX));
+    both32!(
+        "scalblnf(1,LMAX)",
+        fa::scalblnf(1.0, i64::MAX),
+        (h.scalblnf)(1.0, c_long::MAX)
+    );
     both32!(
         "scalblnf(1,2^31)",
         fa::scalblnf(1.0, 2147483648),
         (h.scalblnf)(1.0, 2147483648)
     );
-    both32!("scalblnf(1,LMIN)", fa::scalblnf(1.0, i64::MIN), (h.scalblnf)(1.0, c_long::MIN));
+    both32!(
+        "scalblnf(1,LMIN)",
+        fa::scalblnf(1.0, i64::MIN),
+        (h.scalblnf)(1.0, c_long::MIN)
+    );
 
     // (2) ERANGE on underflow only when the result is exactly 0.
-    both64!("scalbn(1,-1050)", fa::scalbn(1.0, -1050), (h.scalbn)(1.0, -1050));
-    both64!("scalbn(1,-1074)", fa::scalbn(1.0, -1074), (h.scalbn)(1.0, -1074));
-    both64!("scalbn(1,-1075)", fa::scalbn(1.0, -1075), (h.scalbn)(1.0, -1075));
-    both64!("scalbn(1.5,-1074)", fa::scalbn(1.5, -1074), (h.scalbn)(1.5, -1074));
-    both64!("scalbn(1,-1022)", fa::scalbn(1.0, -1022), (h.scalbn)(1.0, -1022));
-    both64!("scalbn(1,1024)", fa::scalbn(1.0, 1024), (h.scalbn)(1.0, 1024));
-    both64!("ldexp(1,-1075)", fa::ldexp(1.0, -1075), (h.ldexp)(1.0, -1075));
-    both64!("ldexp(1,-1074)", fa::ldexp(1.0, -1074), (h.ldexp)(1.0, -1074));
-    both32!("scalbnf(1,-149)", fa::scalbnf(1.0, -149), (h.scalbnf)(1.0, -149));
-    both32!("scalbnf(1,-150)", fa::scalbnf(1.0, -150), (h.scalbnf)(1.0, -150));
-    both32!("scalbnf(1,128)", fa::scalbnf(1.0, 128), (h.scalbnf)(1.0, 128));
+    both64!(
+        "scalbn(1,-1050)",
+        fa::scalbn(1.0, -1050),
+        (h.scalbn)(1.0, -1050)
+    );
+    both64!(
+        "scalbn(1,-1074)",
+        fa::scalbn(1.0, -1074),
+        (h.scalbn)(1.0, -1074)
+    );
+    both64!(
+        "scalbn(1,-1075)",
+        fa::scalbn(1.0, -1075),
+        (h.scalbn)(1.0, -1075)
+    );
+    both64!(
+        "scalbn(1.5,-1074)",
+        fa::scalbn(1.5, -1074),
+        (h.scalbn)(1.5, -1074)
+    );
+    both64!(
+        "scalbn(1,-1022)",
+        fa::scalbn(1.0, -1022),
+        (h.scalbn)(1.0, -1022)
+    );
+    both64!(
+        "scalbn(1,1024)",
+        fa::scalbn(1.0, 1024),
+        (h.scalbn)(1.0, 1024)
+    );
+    both64!(
+        "ldexp(1,-1075)",
+        fa::ldexp(1.0, -1075),
+        (h.ldexp)(1.0, -1075)
+    );
+    both64!(
+        "ldexp(1,-1074)",
+        fa::ldexp(1.0, -1074),
+        (h.ldexp)(1.0, -1074)
+    );
+    both32!(
+        "scalbnf(1,-149)",
+        fa::scalbnf(1.0, -149),
+        (h.scalbnf)(1.0, -149)
+    );
+    both32!(
+        "scalbnf(1,-150)",
+        fa::scalbnf(1.0, -150),
+        (h.scalbnf)(1.0, -150)
+    );
+    both32!(
+        "scalbnf(1,128)",
+        fa::scalbnf(1.0, 128),
+        (h.scalbnf)(1.0, 128)
+    );
 
     // The golden test above covers 20 rows; a live run that silently covered
     // fewer would be the same "green while testing nothing" this gate exists to

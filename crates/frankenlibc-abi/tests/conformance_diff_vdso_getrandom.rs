@@ -236,9 +236,7 @@ fn fl_getrandom_zero_length_and_invalid_flags_match_live_glibc() {
     for flags in [0, libc::c_uint::MAX] {
         set_fl_errno(0);
         // SAFETY: Linux permits a null buffer when length is zero.
-        let fl = unsafe {
-            frankenlibc_abi::unistd_abi::getrandom(std::ptr::null_mut(), 0, flags)
-        };
+        let fl = unsafe { frankenlibc_abi::unistd_abi::getrandom(std::ptr::null_mut(), 0, flags) };
         let fl_error = fl_errno();
 
         // SAFETY: this calls the separately resolved live libc function with

@@ -47,8 +47,37 @@ fn dysize_matches_the_host_across_every_leap_boundary() {
     // the negatives of each — C's `%` truncates toward zero, so a negative year
     // is where a mistyped rule diverges first.
     let years: &[c_int] = &[
-        0, 1, 2, 3, 4, 99, 100, 101, 399, 400, 401, 1600, 1700, 1800, 1900, 1970, 1999, 2000,
-        2001, 2004, 2100, 2200, 2300, 2400, -1, -4, -100, -400, -1900, -2000, i32::MIN + 1,
+        0,
+        1,
+        2,
+        3,
+        4,
+        99,
+        100,
+        101,
+        399,
+        400,
+        401,
+        1600,
+        1700,
+        1800,
+        1900,
+        1970,
+        1999,
+        2000,
+        2001,
+        2004,
+        2100,
+        2200,
+        2300,
+        2400,
+        -1,
+        -4,
+        -100,
+        -400,
+        -1900,
+        -2000,
+        i32::MIN + 1,
         i32::MAX,
     ];
 
@@ -56,7 +85,10 @@ fn dysize_matches_the_host_across_every_leap_boundary() {
     for &y in years {
         // SAFETY: `dysize` reads only its argument.
         let (want, got) = unsafe { (glibc(y), fl(y)) };
-        assert_eq!(got, want, "dysize({y}) returned {got}, host glibc returned {want}");
+        assert_eq!(
+            got, want,
+            "dysize({y}) returned {got}, host glibc returned {want}"
+        );
         compared += 1;
     }
     assert_eq!(compared, years.len(), "the loop skipped years");
@@ -74,7 +106,10 @@ fn getpagesize_matches_the_host() {
     // SAFETY: no arguments, no memory touched.
     let (want, got) = unsafe { (glibc(), fl()) };
     println!("getpagesize: host {want} fl {got}");
-    assert_eq!(got, want, "getpagesize returned {got}, host glibc returned {want}");
+    assert_eq!(
+        got, want,
+        "getpagesize returned {got}, host glibc returned {want}"
+    );
     // A page size that is not a positive power of two would be wrong even if both
     // agreed, so the agreement is checked against reality too.
     assert!(
@@ -93,12 +128,7 @@ fn getgroups_matches_the_host_in_count_and_contents() {
 
     // size 0 is the "how many?" query and must not write through the pointer.
     // SAFETY: with size 0 neither implementation may touch `list`.
-    let (want_n, got_n) = unsafe {
-        (
-            glibc(0, std::ptr::null_mut()),
-            fl(0, std::ptr::null_mut()),
-        )
-    };
+    let (want_n, got_n) = unsafe { (glibc(0, std::ptr::null_mut()), fl(0, std::ptr::null_mut())) };
     println!("getgroups(0, NULL): host {want_n} fl {got_n}");
     assert_eq!(
         got_n, want_n,
@@ -120,7 +150,10 @@ fn getgroups_matches_the_host_in_count_and_contents() {
             fl(n as c_int, fl_buf.as_mut_ptr()),
         )
     };
-    assert_eq!(got_rc, want_rc, "getgroups({n}, buf) returned {got_rc}, host returned {want_rc}");
+    assert_eq!(
+        got_rc, want_rc,
+        "getgroups({n}, buf) returned {got_rc}, host returned {want_rc}"
+    );
     assert_eq!(
         fl_buf[..n],
         host_buf[..n],
@@ -135,7 +168,9 @@ fn getgroups_matches_the_host_in_count_and_contents() {
             if rc >= 0 {
                 0
             } else {
-                std::io::Error::last_os_error().raw_os_error().unwrap_or_default()
+                std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or_default()
             }
         };
         // SAFETY: the buffer holds one gid and one is requested.
@@ -144,7 +179,9 @@ fn getgroups_matches_the_host_in_count_and_contents() {
         // SAFETY: same.
         let got_rc = unsafe { fl(1, small.as_mut_ptr()) };
         let got_e = errno_of(got_rc);
-        println!("getgroups(1, buf) with {n} groups: host rc={want_rc} errno={want_e} fl rc={got_rc} errno={got_e}");
+        println!(
+            "getgroups(1, buf) with {n} groups: host rc={want_rc} errno={want_e} fl rc={got_rc} errno={got_e}"
+        );
         assert_eq!(
             (got_rc, got_e),
             (want_rc, want_e),

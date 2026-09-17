@@ -215,12 +215,7 @@ fn vsscanf_consumes_exactly_one_argument_per_conversion() {
 
 /// # Safety
 /// Forwards to `f` with the caller's arguments unchanged.
-unsafe fn f_call(
-    f: VsscanfFn,
-    s: *const c_char,
-    format: *const c_char,
-    ap: *mut c_void,
-) -> c_int {
+unsafe fn f_call(f: VsscanfFn, s: *const c_char, format: *const c_char, ap: *mut c_void) -> c_int {
     // SAFETY: the caller's contract.
     unsafe { f(s, format, ap) }
 }

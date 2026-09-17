@@ -61,7 +61,8 @@ fn regerror_messages_match_glibc() {
         .to_string_lossy()
         .into_owned();
     let mut small_g = [0i8; 5];
-    let needed_gl = unsafe { host_regerror()(2, std::ptr::null(), small_g.as_mut_ptr(), small_g.len()) };
+    let needed_gl =
+        unsafe { host_regerror()(2, std::ptr::null(), small_g.as_mut_ptr(), small_g.len()) };
     let gl_s = unsafe { std::ffi::CStr::from_ptr(small_g.as_ptr()) }
         .to_string_lossy()
         .into_owned();

@@ -242,7 +242,11 @@ fn signaling_nan_operand_raises_invalid_quiet_does_not() {
     let snan32 = f32::from_bits(0x7fa00000);
     let qnan32 = f32::from_bits(0x7fc00000);
 
-    assert_eq!(flags_after(|| unsafe { fl::nextup(snan64) }), FE_INVALID, "nextup(sNaN)");
+    assert_eq!(
+        flags_after(|| unsafe { fl::nextup(snan64) }),
+        FE_INVALID,
+        "nextup(sNaN)"
+    );
     assert_eq!(
         flags_after(|| unsafe { fl::nextdown(snan64) }),
         FE_INVALID,
@@ -259,10 +263,26 @@ fn signaling_nan_operand_raises_invalid_quiet_does_not() {
         "nextdownf(sNaN)"
     );
 
-    assert_eq!(flags_after(|| unsafe { fl::nextup(qnan64) }), 0, "nextup(qNaN)");
-    assert_eq!(flags_after(|| unsafe { fl::nextdown(qnan64) }), 0, "nextdown(qNaN)");
-    assert_eq!(flags_after(|| unsafe { fl::nextupf(qnan32) }), 0, "nextupf(qNaN)");
-    assert_eq!(flags_after(|| unsafe { fl::nextdownf(qnan32) }), 0, "nextdownf(qNaN)");
+    assert_eq!(
+        flags_after(|| unsafe { fl::nextup(qnan64) }),
+        0,
+        "nextup(qNaN)"
+    );
+    assert_eq!(
+        flags_after(|| unsafe { fl::nextdown(qnan64) }),
+        0,
+        "nextdown(qNaN)"
+    );
+    assert_eq!(
+        flags_after(|| unsafe { fl::nextupf(qnan32) }),
+        0,
+        "nextupf(qNaN)"
+    );
+    assert_eq!(
+        flags_after(|| unsafe { fl::nextdownf(qnan32) }),
+        0,
+        "nextdownf(qNaN)"
+    );
 
     // The same eight calls through the live host arm. The flag ground truth in
     // this test's doc comment was, like the value tables, read off the host once
@@ -272,14 +292,46 @@ fn signaling_nan_operand_raises_invalid_quiet_does_not() {
     let h = host();
     // SAFETY: each call takes a live float by value and returns one.
     for (name, got, want) in [
-        ("nextup(sNaN)", flags_after(|| unsafe { (h.nextup)(snan64) }), FE_INVALID),
-        ("nextdown(sNaN)", flags_after(|| unsafe { (h.nextdown)(snan64) }), FE_INVALID),
-        ("nextupf(sNaN)", flags_after(|| unsafe { (h.nextupf)(snan32) }), FE_INVALID),
-        ("nextdownf(sNaN)", flags_after(|| unsafe { (h.nextdownf)(snan32) }), FE_INVALID),
-        ("nextup(qNaN)", flags_after(|| unsafe { (h.nextup)(qnan64) }), 0),
-        ("nextdown(qNaN)", flags_after(|| unsafe { (h.nextdown)(qnan64) }), 0),
-        ("nextupf(qNaN)", flags_after(|| unsafe { (h.nextupf)(qnan32) }), 0),
-        ("nextdownf(qNaN)", flags_after(|| unsafe { (h.nextdownf)(qnan32) }), 0),
+        (
+            "nextup(sNaN)",
+            flags_after(|| unsafe { (h.nextup)(snan64) }),
+            FE_INVALID,
+        ),
+        (
+            "nextdown(sNaN)",
+            flags_after(|| unsafe { (h.nextdown)(snan64) }),
+            FE_INVALID,
+        ),
+        (
+            "nextupf(sNaN)",
+            flags_after(|| unsafe { (h.nextupf)(snan32) }),
+            FE_INVALID,
+        ),
+        (
+            "nextdownf(sNaN)",
+            flags_after(|| unsafe { (h.nextdownf)(snan32) }),
+            FE_INVALID,
+        ),
+        (
+            "nextup(qNaN)",
+            flags_after(|| unsafe { (h.nextup)(qnan64) }),
+            0,
+        ),
+        (
+            "nextdown(qNaN)",
+            flags_after(|| unsafe { (h.nextdown)(qnan64) }),
+            0,
+        ),
+        (
+            "nextupf(qNaN)",
+            flags_after(|| unsafe { (h.nextupf)(qnan32) }),
+            0,
+        ),
+        (
+            "nextdownf(qNaN)",
+            flags_after(|| unsafe { (h.nextdownf)(qnan32) }),
+            0,
+        ),
     ] {
         assert_eq!(
             got, want,

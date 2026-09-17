@@ -21,9 +21,7 @@ type WcsnlenFn = unsafe extern "C" fn(*const wchar_t, usize) -> usize;
 
 fn host_wcsnlen() -> WcsnlenFn {
     // SAFETY: signature matches GNU wcsnlen exactly.
-    unsafe {
-        dlsym_oracle::host_fn(c"wcsnlen", frankenlibc_abi::wchar_abi::wcsnlen as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"wcsnlen", frankenlibc_abi::wchar_abi::wcsnlen as *const ()) }
 }
 
 #[test]

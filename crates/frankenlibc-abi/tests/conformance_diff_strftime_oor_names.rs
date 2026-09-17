@@ -75,7 +75,14 @@ fn fmt(spec: &str, tm: &libc::tm) -> String {
 
     let mut gbuf = vec![0u8; 64];
     // SAFETY: same format and tm, into a distinct 64-byte destination.
-    let gn = unsafe { host_strftime()(gbuf.as_mut_ptr() as *mut c_char, gbuf.len(), cf.as_ptr(), tm) };
+    let gn = unsafe {
+        host_strftime()(
+            gbuf.as_mut_ptr() as *mut c_char,
+            gbuf.len(),
+            cf.as_ptr(),
+            tm,
+        )
+    };
     let gl_out = String::from_utf8_lossy(&gbuf[..gn]).into_owned();
 
     assert_eq!(

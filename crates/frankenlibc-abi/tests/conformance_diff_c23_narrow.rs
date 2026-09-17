@@ -185,7 +185,12 @@ fn c23_narrow_matches_glibc() {
         f64::from_bits(0x3ff0000000800001)
     );
     // fsqrt: x chosen just above m^2, so sqrt(x) lands just above m.
-    chk1!("fsqrt", fl::fsqrt, g_fsqrt, f64::from_bits(0x3ff0000020000011));
+    chk1!(
+        "fsqrt",
+        fl::fsqrt,
+        g_fsqrt,
+        f64::from_bits(0x3ff0000020000011)
+    );
     // Keep the original inert inputs too: they are still valid parity cases,
     // they just cannot detect double rounding on their own.
     chk2!(

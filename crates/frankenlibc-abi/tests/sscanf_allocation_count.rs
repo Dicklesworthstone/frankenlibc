@@ -213,7 +213,10 @@ fn the_counter_observes_a_known_allocation() {
         let v: Vec<u8> = Vec::with_capacity(4096);
         std::hint::black_box(&v);
     });
-    assert!(n >= 1, "counting allocator observed {n} allocations for a 4 KiB Vec");
+    assert!(
+        n >= 1,
+        "counting allocator observed {n} allocations for a 4 KiB Vec"
+    );
 }
 
 /// The STREAM family goes through the same engine but reads its input into a

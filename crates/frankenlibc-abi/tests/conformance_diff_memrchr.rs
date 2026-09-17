@@ -23,7 +23,10 @@ type MemrchrFn = unsafe extern "C" fn(*const c_void, c_int, usize) -> *mut c_voi
 fn host_memrchr() -> MemrchrFn {
     // SAFETY: signature matches GNU memrchr exactly.
     unsafe {
-        dlsym_oracle::host_fn(c"memrchr", frankenlibc_abi::string_abi::memrchr as *const ())
+        dlsym_oracle::host_fn(
+            c"memrchr",
+            frankenlibc_abi::string_abi::memrchr as *const (),
+        )
     }
 }
 

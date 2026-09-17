@@ -36,7 +36,9 @@ static TZ_LOCK: Mutex<()> = Mutex::new(());
 type TzsetFn = extern "C" fn();
 
 fn libc_handle() -> *mut c_void {
-    let h = unsafe { dlopen(c"libc.so.6".as_ptr(), 2 /* RTLD_NOW */) };
+    let h = unsafe {
+        dlopen(c"libc.so.6".as_ptr(), 2 /* RTLD_NOW */)
+    };
     assert!(!h.is_null(), "dlopen(libc.so.6) failed");
     h
 }

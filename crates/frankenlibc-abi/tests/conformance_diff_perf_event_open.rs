@@ -93,8 +93,7 @@ fn host_perf_event_open(
     flags: c_ulong,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_PERF_EVENT_OPEN, attr, pid, cpu, group_fd, flags) };
+    let rc = unsafe { host_syscall()(SYS_PERF_EVENT_OPEN, attr, pid, cpu, group_fd, flags) };
     (rc as c_int, host_errno())
 }
 

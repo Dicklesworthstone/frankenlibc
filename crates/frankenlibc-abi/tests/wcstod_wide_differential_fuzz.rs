@@ -288,7 +288,8 @@ fn wcstod_wide_differential_fuzz_vs_glibc() {
 
         // wcstod (f64)
         let (fl, lc) = run_pair_d(&chars);
-        let val_ok = fl.0 == lc.0 || (f64::from_bits(fl.0).is_nan() && f64::from_bits(lc.0).is_nan());
+        let val_ok =
+            fl.0 == lc.0 || (f64::from_bits(fl.0).is_nan() && f64::from_bits(lc.0).is_nan());
         if (!val_ok || fl.1 != lc.1) && divs.len() < 40 {
             divs.push(format!(
                 "wcstod input={:?}\n    fl   =(bits={:#018x} off={})\n    glibc=(bits={:#018x} off={})",

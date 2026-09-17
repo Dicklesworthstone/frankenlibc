@@ -91,8 +91,7 @@ fn host_remap_file_pages(
     flags: c_int,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_REMAP_FILE_PAGES, addr, size, prot, pgoff, flags) };
+    let rc = unsafe { host_syscall()(SYS_REMAP_FILE_PAGES, addr, size, prot, pgoff, flags) };
     (rc as c_int, host_errno())
 }
 

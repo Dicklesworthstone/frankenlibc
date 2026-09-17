@@ -72,7 +72,10 @@ fn host_fprintf() -> (Fprintf, Fopen, Fclose) {
             libc::dlsym(h, c"fclose".as_ptr()),
         )
     };
-    assert!(!p.is_null() && !o.is_null() && !c.is_null(), "dlsym stdio trio");
+    assert!(
+        !p.is_null() && !o.is_null() && !c.is_null(),
+        "dlsym stdio trio"
+    );
     assert_ne!(
         p as usize,
         frankenlibc_abi::stdio_abi::fprintf as *const () as usize,
@@ -92,12 +95,7 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn temp_path(tag: &str) -> CString {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
-    let p = format!(
-        "/tmp/fl-fprintf-{}-{}-{}",
-        std::process::id(),
-        tag,
-        n
-    );
+    let p = format!("/tmp/fl-fprintf-{}-{}-{}", std::process::id(), tag, n);
     CString::new(p).unwrap()
 }
 
@@ -122,7 +120,11 @@ fn render_fl(fmt: &CStr, value: f64) -> (c_int, Vec<u8>) {
     // SAFETY: `f` is an open fl stream and `fmt` names exactly one double.
     let rc = unsafe { frankenlibc_abi::stdio_abi::fprintf(f, fmt.as_ptr(), value) };
     // SAFETY: closing flushes, which is what makes the bytes observable.
-    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(f) }, 0, "fl fclose");
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fclose(f) },
+        0,
+        "fl fclose"
+    );
     (rc, read_back(&path))
 }
 
@@ -200,7 +202,8 @@ fn fprintf_fixed_matches_glibc_stream_bytes() {
             let (frc, fbytes) = render_fl(&fmt, value);
             let (grc, gbytes) = render_host(host, &fmt, value);
             assert_eq!(
-                frc, grc,
+                frc,
+                grc,
                 "{label} of {value:?} [{:#018x}]: return fl={frc} glibc={grc}",
                 value.to_bits()
             );
@@ -240,12 +243,21 @@ fn fprintf_fixed_matches_glibc_stream_bytes() {
 fn adjacent_fprintf_float_formats_still_match_glibc() {
     let host = host_fprintf();
     let specs = [
-        "%10.2f", "%-10.2f", "%+.2f", "% .2f", "%010.2f", "%#.2f", "%.0f", "%.10f", "%.15f",
-        "%e", "%.2e", "%g", "%.2g", "%a", "%.2a", "%E", "%G",
+        "%10.2f", "%-10.2f", "%+.2f", "% .2f", "%010.2f", "%#.2f", "%.0f", "%.10f", "%.15f", "%e",
+        "%.2e", "%g", "%.2g", "%a", "%.2a", "%E", "%G",
     ];
     for spec in specs {
         let fmt = CString::new(spec).unwrap();
-        for &value in &[0.0f64, -0.0, 1234.56, -1234.56, 0.1, 1e19, f64::INFINITY, f64::NAN] {
+        for &value in &[
+            0.0f64,
+            -0.0,
+            1234.56,
+            -1234.56,
+            0.1,
+            1e19,
+            f64::INFINITY,
+            f64::NAN,
+        ] {
             let (frc, fbytes) = render_fl(&fmt, value);
             let (grc, gbytes) = render_host(host, &fmt, value);
             assert_eq!(frc, grc, "{spec} of {value:?}: return value");

@@ -29,12 +29,10 @@ fn lcg(s: &mut u64) -> u64 {
 
 // fl-style byte comparators (unsigned interpretation).
 fn fl_cmp_u64(a: &[u8], b: &[u8]) -> i32 {
-    u64::from_ne_bytes(a.try_into().unwrap())
-        .cmp(&u64::from_ne_bytes(b.try_into().unwrap())) as i32
+    u64::from_ne_bytes(a.try_into().unwrap()).cmp(&u64::from_ne_bytes(b.try_into().unwrap())) as i32
 }
 fn fl_cmp_u32(a: &[u8], b: &[u8]) -> i32 {
-    u32::from_ne_bytes(a.try_into().unwrap())
-        .cmp(&u32::from_ne_bytes(b.try_into().unwrap())) as i32
+    u32::from_ne_bytes(a.try_into().unwrap()).cmp(&u32::from_ne_bytes(b.try_into().unwrap())) as i32
 }
 
 extern "C" fn gl_cmp_u64(a: *const c_void, b: *const c_void) -> i32 {
@@ -133,7 +131,14 @@ fn bench_width(
     let t = Instant::now();
     for _ in 0..iters {
         buf.copy_from_slice(&pristine);
-        unsafe { libc::qsort(black_box(buf.as_mut_ptr()) as *mut c_void, n, width, Some(gl_cmp)) };
+        unsafe {
+            libc::qsort(
+                black_box(buf.as_mut_ptr()) as *mut c_void,
+                n,
+                width,
+                Some(gl_cmp),
+            )
+        };
         black_box(&buf);
     }
     let gl = (t.elapsed().as_nanos() as f64 / iters as f64 - reset).max(0.0);

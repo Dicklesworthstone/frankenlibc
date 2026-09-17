@@ -3003,7 +3003,11 @@ unsafe fn argp_exit_probe_stream() -> *mut libc::FILE {
     // SAFETY: duplicating stdout gives the probe an independent descriptor which is
     // consumed by process exit after the argp routine terminates the subprocess.
     let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
-    assert!(fd >= 0, "dup stdout failed: {}", std::io::Error::last_os_error());
+    assert!(
+        fd >= 0,
+        "dup stdout failed: {}",
+        std::io::Error::last_os_error()
+    );
     // SAFETY: fd is a fresh writable descriptor and c"w" is NUL-terminated.
     let stream = unsafe { libc::fdopen(fd, c"w".as_ptr()) };
     assert!(
@@ -9712,8 +9716,7 @@ fn assert_cxa_fail_stop_hook_aborts_with_stderr(
     let mut status: c_int = 0;
     let mut stderr_bytes = Vec::new();
     // SAFETY: `pid` is our child and `fds[0]` is the pipe read end we own.
-    let waited =
-        unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut stderr_bytes) };
+    let waited = unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut stderr_bytes) };
     assert_eq!(waited, pid, "waitpid failed for {label}");
     // SAFETY: the drain fd is owned here and closed exactly once.
     unsafe { libc::close(fds[0]) };

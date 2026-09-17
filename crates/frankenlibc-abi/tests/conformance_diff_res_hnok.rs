@@ -50,8 +50,21 @@ fn res_hnok_matches_the_host_on_every_quirk() {
 
     let long_label = "a".repeat(63);
     let too_long_label = "a".repeat(64);
-    let long_name = format!("{}.{}.{}.{}", "b".repeat(60), "c".repeat(60), "d".repeat(60), "e".repeat(60));
-    let over_255 = format!("{}.{}.{}.{}.{}", "f".repeat(60), "g".repeat(60), "h".repeat(60), "i".repeat(60), "j".repeat(60));
+    let long_name = format!(
+        "{}.{}.{}.{}",
+        "b".repeat(60),
+        "c".repeat(60),
+        "d".repeat(60),
+        "e".repeat(60)
+    );
+    let over_255 = format!(
+        "{}.{}.{}.{}.{}",
+        "f".repeat(60),
+        "g".repeat(60),
+        "h".repeat(60),
+        "i".repeat(60),
+        "j".repeat(60)
+    );
 
     let cases: Vec<String> = vec![
         // Ordinary

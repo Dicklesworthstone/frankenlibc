@@ -188,12 +188,18 @@ fn obsolete_wrappers_reject_invalid_signals_like_glibc() {
         (
             c"sighold",
             frankenlibc_abi::signal_abi::sighold,
-            glibc_sig_fn(c"sighold", frankenlibc_abi::signal_abi::sighold as *const () as usize),
+            glibc_sig_fn(
+                c"sighold",
+                frankenlibc_abi::signal_abi::sighold as *const () as usize,
+            ),
         ),
         (
             c"sigrelse",
             frankenlibc_abi::signal_abi::sigrelse,
-            glibc_sig_fn(c"sigrelse", frankenlibc_abi::signal_abi::sigrelse as *const () as usize),
+            glibc_sig_fn(
+                c"sigrelse",
+                frankenlibc_abi::signal_abi::sigrelse as *const () as usize,
+            ),
         ),
         (
             c"sigignore",
@@ -257,9 +263,14 @@ fn obsolete_wrappers_accept_signal_64_the_top_of_the_range() {
         act.assume_init()
     };
 
-    let g_hold = glibc_sig_fn(c"sighold", frankenlibc_abi::signal_abi::sighold as *const () as usize);
-    let g_relse =
-        glibc_sig_fn(c"sigrelse", frankenlibc_abi::signal_abi::sigrelse as *const () as usize);
+    let g_hold = glibc_sig_fn(
+        c"sighold",
+        frankenlibc_abi::signal_abi::sighold as *const () as usize,
+    );
+    let g_relse = glibc_sig_fn(
+        c"sigrelse",
+        frankenlibc_abi::signal_abi::sigrelse as *const () as usize,
+    );
     let g_ign = glibc_sig_fn(
         c"sigignore",
         frankenlibc_abi::signal_abi::sigignore as *const () as usize,

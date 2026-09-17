@@ -267,7 +267,8 @@ fn addmntent_getmntent_r_round_trip_is_identity() {
         "round trip should yield exactly one entry, got {got:?}"
     );
     assert_eq!(
-        got[0], expect,
+        got[0],
+        expect,
         "addmntent -> getmntent_r lost or altered a field; on-disk line was {:?}",
         String::from_utf8_lossy(&raw)
     );

@@ -837,8 +837,7 @@ fn dlvsym_host_handle_resolves_symbol() {
     assert!(!native_dso_handle_for_tests(handle));
     // SAFETY: the checked address has malloc's exact C signature. Release its
     // allocation with the explicitly resolved matching host free function.
-    let allocate: unsafe extern "C" fn(usize) -> *mut c_void =
-        unsafe { std::mem::transmute(sym) };
+    let allocate: unsafe extern "C" fn(usize) -> *mut c_void = unsafe { std::mem::transmute(sym) };
     let release: unsafe extern "C" fn(*mut c_void) =
         unsafe { dlsym_oracle::host_fn(c"free", free as *const ()) };
     let allocation = unsafe { allocate(32) };

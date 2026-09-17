@@ -34,18 +34,17 @@ fn main() {
             let p = buf.as_mut_ptr() as *mut c_void;
 
             // Correctness: each path must leave the buffer all-zero.
-            for (label, run) in [
-                ("old", 0u8),
-                ("new", 1),
-                ("glibc", 2),
-            ] {
+            for (label, run) in [("old", 0u8), ("new", 1), ("glibc", 2)] {
                 buf.iter_mut().for_each(|b| *b = 0xAA);
                 match run {
                     0 => old_byte_volatile_zero(p, n),
                     1 => frankenlibc_abi::string_abi::explicit_bzero(p, n),
                     _ => gl_explicit_bzero(p, n),
                 }
-                assert!(buf.iter().all(|&b| b == 0), "{label} n={n} not fully zeroed");
+                assert!(
+                    buf.iter().all(|&b| b == 0),
+                    "{label} n={n} not fully zeroed"
+                );
             }
 
             // No per-iter reset: a volatile zero writes 0 to every byte regardless of

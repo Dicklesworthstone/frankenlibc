@@ -103,13 +103,20 @@ fn crypt_rejected_settings_match_libxcrypt_failure_token() {
             "oracle: libxcrypt did not reject salt {salt:?} (returned {h:?}); \
              the REJECTED list is stale"
         );
-        assert_eq!(h_err, libc::EINVAL, "oracle: expected EINVAL for salt {salt:?}");
+        assert_eq!(
+            h_err,
+            libc::EINVAL,
+            "oracle: expected EINVAL for salt {salt:?}"
+        );
 
         let (f_out, f_err) = fl_crypt("password", salt);
         let f = f_out
             .unwrap_or_else(|| panic!("fl returned NULL for salt {salt:?}; libxcrypt never does"));
         assert_eq!(f, h, "crypt({salt:?}) token: fl={f:?} libxcrypt={h:?}");
-        assert_eq!(f_err, h_err, "crypt({salt:?}) errno: fl={f_err} libxcrypt={h_err}");
+        assert_eq!(
+            f_err, h_err,
+            "crypt({salt:?}) errno: fl={f_err} libxcrypt={h_err}"
+        );
     }
 }
 
@@ -174,8 +181,18 @@ fn crypt_supported_algorithms_match_libxcrypt_byte_for_byte() {
             }
             let (f_out, _) = fl_crypt(key, salt);
             let f = f_out.unwrap_or_else(|| panic!("fl returned NULL for {salt:?}"));
-            assert_ne!(f, "*0", "crypt(key.len={}, {salt:?}) returned the failure token", key.len());
-            assert_ne!(f, "*1", "crypt(key.len={}, {salt:?}) returned the failure token", key.len());
+            assert_ne!(
+                f,
+                "*0",
+                "crypt(key.len={}, {salt:?}) returned the failure token",
+                key.len()
+            );
+            assert_ne!(
+                f,
+                "*1",
+                "crypt(key.len={}, {salt:?}) returned the failure token",
+                key.len()
+            );
             assert_eq!(
                 f,
                 h,

@@ -111,9 +111,8 @@ fn host_fanotify_mark(
     pathname: *const c_char,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc = unsafe {
-        host_syscall()(SYS_FANOTIFY_MARK, fanotify_fd, flags, mask, dirfd, pathname)
-    };
+    let rc =
+        unsafe { host_syscall()(SYS_FANOTIFY_MARK, fanotify_fd, flags, mask, dirfd, pathname) };
     (rc as c_int, host_errno())
 }
 

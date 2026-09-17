@@ -288,7 +288,10 @@ fn the_field_list_matches_glibc_on_separators() {
         }
     }
     assert_eq!(compared, cases.len() * 3, "the loop skipped cases");
-    println!("compared {compared} field-list arms across {} cases", cases.len());
+    println!(
+        "compared {compared} field-list arms across {} cases",
+        cases.len()
+    );
 }
 
 /// `%[^X]` as a FIELD of a list, which is what `"%[^=]=%s"` needs.
@@ -376,7 +379,10 @@ fn the_scanset_field_list_agrees_with_host_glibc() {
         }
     }
     assert_eq!(compared, cases.len() * 3, "the loop skipped cases");
-    println!("compared {compared} scanset-field arms across {} cases", cases.len());
+    println!(
+        "compared {compared} scanset-field arms across {} cases",
+        cases.len()
+    );
 }
 
 /// A LONE `%s` or `%[^X]` must not be taken by the list path.
@@ -536,7 +542,10 @@ fn float_fields_agree_with_host_glibc() {
         }
     }
     assert_eq!(compared, cases.len() * 3, "the loop skipped cases");
-    println!("compared {compared} float-field arms across {} cases", cases.len());
+    println!(
+        "compared {compared} float-field arms across {} cases",
+        cases.len()
+    );
 }
 
 #[test]
@@ -557,7 +566,13 @@ fn the_string_fast_path_agrees_with_host_glibc() {
         let mut buf = [0xAAu8; 128];
         // SAFETY: the format takes one `char *`; the buffer is far longer than
         // any token in the table.
-        let rc = unsafe { f(cin.as_ptr(), cfmt.as_ptr(), buf.as_mut_ptr().cast::<c_char>()) };
+        let rc = unsafe {
+            f(
+                cin.as_ptr(),
+                cfmt.as_ptr(),
+                buf.as_mut_ptr().cast::<c_char>(),
+            )
+        };
         let end = buf.iter().position(|&b| b == 0).unwrap_or(0);
         (
             rc,
@@ -584,7 +599,10 @@ fn the_string_fast_path_agrees_with_host_glibc() {
         "compared {compared} arms, expected {}",
         STRING_CASES.len() * 3
     );
-    println!("compared {compared} %s arms across {} inputs", STRING_CASES.len());
+    println!(
+        "compared {compared} %s arms across {} inputs",
+        STRING_CASES.len()
+    );
 }
 
 /// `(input, format)` for the bare negated-scanset fast path.
@@ -633,7 +651,13 @@ fn the_scanset_fast_path_agrees_with_host_glibc() {
         let mut buf = [0xAAu8; 128];
         // SAFETY: every format here takes one `char *`; the buffer is longer
         // than any field in the table.
-        let rc = unsafe { f(cin.as_ptr(), cfmt.as_ptr(), buf.as_mut_ptr().cast::<c_char>()) };
+        let rc = unsafe {
+            f(
+                cin.as_ptr(),
+                cfmt.as_ptr(),
+                buf.as_mut_ptr().cast::<c_char>(),
+            )
+        };
         let mut head = [0u8; 16];
         head.copy_from_slice(&buf[..16]);
         (rc, head)
@@ -658,7 +682,10 @@ fn the_scanset_fast_path_agrees_with_host_glibc() {
         "compared {compared} arms, expected {}",
         SCANSET_CASES.len() * 3
     );
-    println!("compared {compared} scanset arms across {} cases", SCANSET_CASES.len());
+    println!(
+        "compared {compared} scanset arms across {} cases",
+        SCANSET_CASES.len()
+    );
 }
 
 #[test]
@@ -701,7 +728,10 @@ fn the_aliases_agree_with_host_glibc() {
         "the differential loop compared {compared} arms, expected {}",
         CASES.len() * 3
     );
-    println!("compared {compared} fl-vs-glibc arms across {} cases", CASES.len());
+    println!(
+        "compared {compared} fl-vs-glibc arms across {} cases",
+        CASES.len()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -751,7 +781,9 @@ fn the_aliases_take_the_decimal_int_fast_path() {
     // past its inline capacity and allocates. If this reads zero the counter is
     // blind and every zero below is worthless, so it is asserted before them.
     let control = allocs_for(fl_arms()[0].1, "1 2 3 4 5", "%d %d %d %d %d");
-    println!("CONTROL sscanf(\"1 2 3 4 5\", \"%d %d %d %d %d\") allocations={control} (engine path)");
+    println!(
+        "CONTROL sscanf(\"1 2 3 4 5\", \"%d %d %d %d %d\") allocations={control} (engine path)"
+    );
     assert!(
         control >= 1,
         "the engine path allocated {control} times, so allocation count cannot \

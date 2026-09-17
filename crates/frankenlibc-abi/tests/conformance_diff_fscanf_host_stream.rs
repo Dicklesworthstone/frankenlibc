@@ -109,15 +109,27 @@ fn run_char_arm(f: FscanfFn, path: &CString, fopen: FopenFn, fclose: FcloseFn) -
     let results = unsafe {
         [
             (
-                f(stream, c"%c".as_ptr(), (&mut first as *mut u8).cast::<c_char>()),
+                f(
+                    stream,
+                    c"%c".as_ptr(),
+                    (&mut first as *mut u8).cast::<c_char>(),
+                ),
                 first,
             ),
             (
-                f(stream, c"%c".as_ptr(), (&mut second as *mut u8).cast::<c_char>()),
+                f(
+                    stream,
+                    c"%c".as_ptr(),
+                    (&mut second as *mut u8).cast::<c_char>(),
+                ),
                 second,
             ),
             (
-                f(stream, c"%c".as_ptr(), (&mut eof as *mut u8).cast::<c_char>()),
+                f(
+                    stream,
+                    c"%c".as_ptr(),
+                    (&mut eof as *mut u8).cast::<c_char>(),
+                ),
                 eof,
             ),
         ]
@@ -166,10 +178,7 @@ fn fscanf_and_its_isoc_aliases_agree_on_a_host_owned_stream() {
     );
 
     for (name, arm) in [
-        (
-            "fscanf",
-            frankenlibc_abi::stdio_abi::fscanf as FscanfFn,
-        ),
+        ("fscanf", frankenlibc_abi::stdio_abi::fscanf as FscanfFn),
         (
             "__isoc99_fscanf",
             frankenlibc_abi::stdio_abi::__isoc99_fscanf as FscanfFn,

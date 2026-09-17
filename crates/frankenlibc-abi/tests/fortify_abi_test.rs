@@ -572,13 +572,7 @@ fn wcscpy_chk_src_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcscpy_chk src over real buffer", || {
         let src: [WcharT; 4] = [b'H' as WcharT, b'i' as WcharT, b'!' as WcharT, 0];
         let mut dest = [0 as WcharT; 2];
-        unsafe {
-            __wcscpy_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                dest.len(),
-            )
-        };
+        unsafe { __wcscpy_chk(dest.as_mut_ptr(), src.as_ptr(), dest.len()) };
     });
 }
 
@@ -600,14 +594,7 @@ fn wcsncpy_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcsncpy_chk n over real buffer", || {
         let src: [WcharT; 4] = [b'A' as WcharT, b'B' as WcharT, b'C' as WcharT, 0];
         let mut dest = [0 as WcharT; 2];
-        unsafe {
-            __wcsncpy_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                3,
-                dest.len(),
-            )
-        };
+        unsafe { __wcsncpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, dest.len()) };
     });
 }
 
@@ -631,13 +618,7 @@ fn wcscat_chk_src_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcscat_chk src over real buffer", || {
         let mut dest = [b'A' as WcharT, 0];
         let src: [WcharT; 2] = [b'B' as WcharT, 0];
-        unsafe {
-            __wcscat_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                dest.len(),
-            )
-        };
+        unsafe { __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), dest.len()) };
     });
 }
 
@@ -687,14 +668,7 @@ fn wmemcpy_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wmemcpy_chk n over real buffer", || {
         let src: [WcharT; 3] = [100, 200, 300];
         let mut dest = [0 as WcharT; 2];
-        unsafe {
-            __wmemcpy_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                3,
-                dest.len(),
-            )
-        };
+        unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, dest.len()) };
     });
 }
 
@@ -718,14 +692,7 @@ fn wmemmove_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wmemmove_chk n over real buffer", || {
         let src: [WcharT; 3] = [1, 2, 3];
         let mut dest = [0 as WcharT; 2];
-        unsafe {
-            __wmemmove_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                3,
-                dest.len(),
-            )
-        };
+        unsafe { __wmemmove_chk(dest.as_mut_ptr(), src.as_ptr(), 3, dest.len()) };
     });
 }
 

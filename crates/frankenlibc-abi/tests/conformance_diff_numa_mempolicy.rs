@@ -126,8 +126,7 @@ fn host_get_mempolicy(
     flags: c_ulong,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_GET_MEMPOLICY, mode, nodemask, maxnode, addr, flags) };
+    let rc = unsafe { host_syscall()(SYS_GET_MEMPOLICY, mode, nodemask, maxnode, addr, flags) };
     (rc, host_errno())
 }
 
@@ -152,8 +151,7 @@ fn host_mbind(
     flags: c_int,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_MBIND, addr, len, mode, nodemask, maxnode, flags) };
+    let rc = unsafe { host_syscall()(SYS_MBIND, addr, len, mode, nodemask, maxnode, flags) };
     (rc, host_errno())
 }
 
@@ -177,8 +175,7 @@ fn host_migrate_pages(
     new_nodes: *const c_ulong,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_MIGRATE_PAGES, pid, maxnode, old_nodes, new_nodes) };
+    let rc = unsafe { host_syscall()(SYS_MIGRATE_PAGES, pid, maxnode, old_nodes, new_nodes) };
     (rc, host_errno())
 }
 
@@ -202,8 +199,7 @@ fn host_move_pages(
     flags: c_int,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_MOVE_PAGES, pid, count, pages, nodes, status, flags) };
+    let rc = unsafe { host_syscall()(SYS_MOVE_PAGES, pid, count, pages, nodes, status, flags) };
     (rc, host_errno())
 }
 
@@ -227,9 +223,7 @@ fn host_set_mempolicy_home_node(
     flags: c_ulong,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc = unsafe {
-        host_syscall()(SYS_SET_MEMPOLICY_HOME_NODE, start, len, home_node, flags)
-    };
+    let rc = unsafe { host_syscall()(SYS_SET_MEMPOLICY_HOME_NODE, start, len, home_node, flags) };
     (rc, host_errno())
 }
 

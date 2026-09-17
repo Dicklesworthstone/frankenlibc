@@ -120,8 +120,7 @@ fn ioprio_get_current_process_matches_host_without_changing_errno() {
     // This is a query only: `who = 0` selects the current process and does
     // not change the process I/O priority.
     set_host_errno(libc::EAGAIN);
-    let host_rc =
-        unsafe { host_syscall()(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, 0) } as c_int;
+    let host_rc = unsafe { host_syscall()(libc::SYS_ioprio_get, IOPRIO_WHO_PROCESS, 0) } as c_int;
     let host = (host_rc, host_errno());
 
     set_fl_errno(libc::EAGAIN);

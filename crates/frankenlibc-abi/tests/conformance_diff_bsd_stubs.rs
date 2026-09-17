@@ -28,9 +28,7 @@ type Setlogin = unsafe extern "C" fn(*const c_char) -> c_int;
 // ENOENT divergence.
 fn glibc_chflags() -> Chflags {
     // SAFETY: matches BSD's documented chflags signature.
-    unsafe {
-        dlsym_oracle::host_fn(c"chflags", fl::chflags as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"chflags", fl::chflags as *const ()) }
 }
 
 fn glibc_revoke() -> Revoke {
@@ -40,9 +38,7 @@ fn glibc_revoke() -> Revoke {
 
 fn glibc_setlogin() -> Setlogin {
     // SAFETY: matches BSD's documented setlogin signature.
-    unsafe {
-        dlsym_oracle::host_fn(c"setlogin", fl::setlogin as *const ())
-    }
+    unsafe { dlsym_oracle::host_fn(c"setlogin", fl::setlogin as *const ()) }
 }
 
 const GLIBC_2_2_5: &std::ffi::CStr = c"GLIBC_2.2.5";

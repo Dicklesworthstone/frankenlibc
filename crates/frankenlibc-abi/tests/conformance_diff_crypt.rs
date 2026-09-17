@@ -249,7 +249,10 @@ fn fl_crypt_rejects_malformed_rounds_fields() {
         let key_c = CString::new(*key).unwrap();
         let salt_c = CString::new(*salt).unwrap();
         let p_fl = unsafe { fl::crypt(key_c.as_ptr(), salt_c.as_ptr()) };
-        assert!(!p_fl.is_null(), "fl::crypt returned NULL, never the contract");
+        assert!(
+            !p_fl.is_null(),
+            "fl::crypt returned NULL, never the contract"
+        );
         let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
         assert_eq!(
             s_fl,

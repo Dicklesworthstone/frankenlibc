@@ -58,7 +58,11 @@ fn tree(tag: &str) -> Tree {
 }
 
 fn mode_of(p: &std::path::Path) -> u32 {
-    std::fs::metadata(p).expect("stat target").permissions().mode() & 0o7777
+    std::fs::metadata(p)
+        .expect("stat target")
+        .permissions()
+        .mode()
+        & 0o7777
 }
 
 fn cpath(p: &std::path::Path) -> CString {
@@ -188,8 +192,5 @@ fn lchmod_matches_glibc_and_spares_the_target() {
         "lchmod(symlink): fl=(rc={f_rc},errno={f_err},mode={f_mode:04o}) \
          glibc=(rc={g_rc},errno={g_err},mode={g_mode:04o})"
     );
-    assert_eq!(
-        f_mode, 0o644,
-        "lchmod must not chmod the symlink's target"
-    );
+    assert_eq!(f_mode, 0o644, "lchmod must not chmod the symlink's target");
 }

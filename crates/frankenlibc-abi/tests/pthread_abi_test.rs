@@ -2055,9 +2055,7 @@ fn sigqueue_live_thread_preserves_queued_value() {
         // 100ms of 1ms polls was not enough on a loaded box; the budget only
         // bounds runtime, the assertion below is unchanged. bd-d3tvn3.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while ctx.ready.load(Ordering::Acquire) != 1
-            && std::time::Instant::now() < deadline
-        {
+        while ctx.ready.load(Ordering::Acquire) != 1 && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert_eq!(
@@ -2220,7 +2218,9 @@ unsafe extern "C" fn child_fn() {}
 static ATFORK_REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn atfork_registry_guard() -> std::sync::MutexGuard<'static, ()> {
-    ATFORK_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    ATFORK_REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 #[test]

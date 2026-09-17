@@ -79,8 +79,7 @@ fn host_errno_location() -> ErrnoLocationFn {
 
 use frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max as fl_mb_cur_max;
 use frankenlibc_abi::locale_abi::{
-    locale_reset_active_charset_for_tests, nl_langinfo as fl_nl_langinfo,
-    setlocale as fl_setlocale,
+    locale_reset_active_charset_for_tests, nl_langinfo as fl_nl_langinfo, setlocale as fl_setlocale,
 };
 use frankenlibc_abi::wchar_abi::{mbtowc as fl_mbtowc, wctomb as fl_wctomb};
 
@@ -119,10 +118,7 @@ fn host() -> &'static Host {
             Host {
                 setlocale: host_fn(c"setlocale", fl_setlocale as *const ()),
                 nl_langinfo: host_fn(c"nl_langinfo", fl_nl_langinfo as *const ()),
-                mb_cur_max: host_fn(
-                    c"__ctype_get_mb_cur_max",
-                    fl_mb_cur_max as *const (),
-                ),
+                mb_cur_max: host_fn(c"__ctype_get_mb_cur_max", fl_mb_cur_max as *const ()),
                 mbtowc: host_fn(c"mbtowc", fl_mbtowc as *const ()),
                 wctomb: host_fn(c"wctomb", fl_wctomb as *const ()),
             }
@@ -371,7 +367,11 @@ fn switching_between_locales_moves_the_codec_both_ways() {
         if expect_utf8_decode {
             assert_eq!((fl.0, fl.1), (2, 0x00E9), "{name:?} must decode UTF-8");
         } else {
-            assert_eq!((fl.0, fl.2), (-1, libc::EILSEQ), "{name:?} must refuse UTF-8");
+            assert_eq!(
+                (fl.0, fl.2),
+                (-1, libc::EILSEQ),
+                "{name:?} must refuse UTF-8"
+            );
         }
     }
 }

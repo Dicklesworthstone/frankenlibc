@@ -25,18 +25,16 @@ mod dlsym_oracle;
 /// refuses to resolve back to fl and compare it against itself.
 unsafe fn cbrt(x: f64) -> f64 {
     // SAFETY: prototype matches C's `double cbrt(double)`.
-    let f: unsafe extern "C" fn(f64) -> f64 = unsafe {
-        dlsym_oracle::host_fn(c"cbrt", frankenlibc_abi::math_abi::cbrt as *const ())
-    };
+    let f: unsafe extern "C" fn(f64) -> f64 =
+        unsafe { dlsym_oracle::host_fn(c"cbrt", frankenlibc_abi::math_abi::cbrt as *const ()) };
     unsafe { f(x) }
 }
 
 /// Host `cbrtf` via `dlsym`, same contract as `cbrt` above.
 unsafe fn cbrtf(x: f32) -> f32 {
     // SAFETY: prototype matches C's `float cbrtf(float)`.
-    let f: unsafe extern "C" fn(f32) -> f32 = unsafe {
-        dlsym_oracle::host_fn(c"cbrtf", frankenlibc_abi::math_abi::cbrtf as *const ())
-    };
+    let f: unsafe extern "C" fn(f32) -> f32 =
+        unsafe { dlsym_oracle::host_fn(c"cbrtf", frankenlibc_abi::math_abi::cbrtf as *const ()) };
     unsafe { f(x) }
 }
 
@@ -136,7 +134,9 @@ fn cbrt_special_cases_match_glibc() {
         let g = unsafe { cbrt(x) };
         if f.is_nan() || g.is_nan() || f.is_infinite() || x == 0.0 {
             if !same64(f, g) {
-                faults.push(format!("cbrt({x:?}) special-value mismatch fl={f:?} glibc={g:?}"));
+                faults.push(format!(
+                    "cbrt({x:?}) special-value mismatch fl={f:?} glibc={g:?}"
+                ));
             }
             continue;
         }

@@ -89,8 +89,7 @@ fn host_file_getattr(
     at_flags: c_uint,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_FILE_GETATTR, dirfd, path, attr, size, at_flags) };
+    let rc = unsafe { host_syscall()(SYS_FILE_GETATTR, dirfd, path, attr, size, at_flags) };
     (rc as c_int, host_errno())
 }
 
@@ -114,8 +113,7 @@ fn host_file_setattr(
     at_flags: c_uint,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { host_syscall()(SYS_FILE_SETATTR, dirfd, path, attr, size, at_flags) };
+    let rc = unsafe { host_syscall()(SYS_FILE_SETATTR, dirfd, path, attr, size, at_flags) };
     (rc as c_int, host_errno())
 }
 

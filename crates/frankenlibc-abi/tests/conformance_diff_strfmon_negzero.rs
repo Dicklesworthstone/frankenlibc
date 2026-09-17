@@ -27,7 +27,10 @@ type SetlocaleFn = unsafe extern "C" fn(i32, *const c_char) -> *mut c_char;
 fn host_strfmon() -> StrfmonFn {
     // SAFETY: signature matches POSIX strfmon exactly.
     unsafe {
-        dlsym_oracle::host_fn(c"strfmon", frankenlibc_abi::unistd_abi::strfmon as *const ())
+        dlsym_oracle::host_fn(
+            c"strfmon",
+            frankenlibc_abi::unistd_abi::strfmon as *const (),
+        )
     }
 }
 

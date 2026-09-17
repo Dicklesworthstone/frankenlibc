@@ -167,7 +167,9 @@ fn freopen_null_does_not_truncate_matches_glibc() {
             } else {
                 g::fclose(f);
             }
-            let p = std::ffi::CStr::from_ptr(cpath).to_string_lossy().into_owned();
+            let p = std::ffi::CStr::from_ptr(cpath)
+                .to_string_lossy()
+                .into_owned();
             (ok, std::path::PathBuf::from(p))
         },
         "gt",
@@ -183,7 +185,9 @@ fn freopen_null_does_not_truncate_matches_glibc() {
             } else {
                 fl::fclose(f);
             }
-            let p = std::ffi::CStr::from_ptr(cpath).to_string_lossy().into_owned();
+            let p = std::ffi::CStr::from_ptr(cpath)
+                .to_string_lossy()
+                .into_owned();
             (ok, std::path::PathBuf::from(p))
         },
         "ft",

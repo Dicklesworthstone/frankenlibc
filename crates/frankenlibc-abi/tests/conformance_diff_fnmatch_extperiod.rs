@@ -24,7 +24,12 @@ type FnmatchFn = unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_
 
 fn host_fnmatch() -> FnmatchFn {
     // SAFETY: signature matches POSIX fnmatch exactly.
-    unsafe { dlsym_oracle::host_fn(c"fnmatch", frankenlibc_abi::string_abi::fnmatch as *const ()) }
+    unsafe {
+        dlsym_oracle::host_fn(
+            c"fnmatch",
+            frankenlibc_abi::string_abi::fnmatch as *const (),
+        )
+    }
 }
 
 const PERIOD: c_int = 1 << 2;

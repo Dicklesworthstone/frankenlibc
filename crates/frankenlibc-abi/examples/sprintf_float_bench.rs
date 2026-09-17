@@ -31,7 +31,10 @@ fn main() {
             let t = Instant::now();
             for _ in 0..iters {
                 frankenlibc_abi::stdio_abi::snprintf(
-                    fb.as_mut_ptr(), 64, black_box(fmtc), black_box(val),
+                    fb.as_mut_ptr(),
+                    64,
+                    black_box(fmtc),
+                    black_box(val),
                 );
             }
             let fl = t.elapsed().as_nanos() as f64 / iters as f64;
@@ -40,7 +43,10 @@ fn main() {
                 gl_snprintf(gb.as_mut_ptr(), 64, black_box(fmtc), black_box(val));
             }
             let gl = t.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SPRINTF %{name} fl={fl:.1}ns glibc={gl:.1}ns  fl/glibc={:.2}x", fl / gl);
+            println!(
+                "SPRINTF %{name} fl={fl:.1}ns glibc={gl:.1}ns  fl/glibc={:.2}x",
+                fl / gl
+            );
         }
     }
 }

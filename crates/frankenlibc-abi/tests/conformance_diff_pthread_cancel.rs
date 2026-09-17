@@ -120,7 +120,11 @@ unsafe extern "C" fn disabled_then_testcancel(_arg: *mut c_void) -> *mut c_void 
             0
         );
         let me = pthread_self();
-        assert_eq!(pthread_cancel(me), 0, "cancel of a live self should succeed");
+        assert_eq!(
+            pthread_cancel(me),
+            0,
+            "cancel of a live self should succeed"
+        );
         pthread_testcancel();
     }
     RAN_TO_COMPLETION as *mut c_void
@@ -174,7 +178,11 @@ fn testcancel_consumes_a_pending_cancel_and_exits_with_pthread_canceled() {
         canceled(),
         "with cancellation enabled, testcancel must consume the pending request \
          and terminate the thread with PTHREAD_CANCELED; got {retval:?}{}",
-        if ran_past { " — the thread ran PAST testcancel" } else { "" }
+        if ran_past {
+            " — the thread ran PAST testcancel"
+        } else {
+            ""
+        }
     );
 }
 
@@ -205,9 +213,11 @@ fn invalid_cancelstate_and_canceltype_are_rejected_like_glibc() {
 
     // SAFETY: the name is a NUL-terminated constant; RTLD_LOCAL keeps the handle
     // out of the global namespace.
-    let handle =
-        unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    assert!(!handle.is_null(), "dlopen libc.so.6 — the oracle is unavailable");
+    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(
+        !handle.is_null(),
+        "dlopen libc.so.6 — the oracle is unavailable"
+    );
 
     let resolve = |name: &std::ffi::CStr, fl_addr: usize| -> SetCancel {
         // SAFETY: handle came from dlopen; the name is NUL-terminated.

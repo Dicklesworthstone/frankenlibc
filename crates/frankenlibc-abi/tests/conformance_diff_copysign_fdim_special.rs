@@ -54,8 +54,7 @@ host_shim! {
     fdimf: F32BinaryFn = c"fdimf" via frankenlibc_abi::math_abi::fdimf => (x: f32, y: f32) -> f32;
 }
 
-unsafe extern "C" {
-}
+unsafe extern "C" {}
 
 fn same64(a: f64, b: f64) -> bool {
     (a.is_nan() && b.is_nan()) || a.to_bits() == b.to_bits()
