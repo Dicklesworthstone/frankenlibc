@@ -30,26 +30,7 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-/// `cookie_io_functions_t` — four hook pointers, passed BY VALUE.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CookieIoFuncs {
-    read: *mut c_void,
-    write: *mut c_void,
-    seek: *mut c_void,
-    close: *mut c_void,
-}
-
-impl CookieIoFuncs {
-    const fn all_null() -> Self {
-        Self {
-            read: std::ptr::null_mut(),
-            write: std::ptr::null_mut(),
-            seek: std::ptr::null_mut(),
-            close: std::ptr::null_mut(),
-        }
-    }
-}
+use frankenlibc_abi::stdio_abi::CookieIoFuncs;
 
 mod g {
     use super::*;
@@ -87,9 +68,7 @@ fn read_errno() -> c_int {
 /// `(return value, errno after, ferror, feof)`.
 type Obs = (i64, c_int, c_int, c_int);
 
-/// fl's `fopencookie` takes the hook struct behind a pointer rather than by
-/// value, so the two sides are opened through slightly different spellings;
-/// everything after the open is the same sequence.
+/// Both providers receive the same by-value hook table and run the same sequence.
 macro_rules! null_hook_read {
     ($open:expr, $fread:path, $ferror:path, $feof:path, $fclose:path) => {{
         let mut buf = [0u8; 64];
@@ -127,20 +106,14 @@ fn g_open(mode: &[u8]) -> *mut c_void {
         g::fopencookie(
             std::ptr::null_mut(),
             mode.as_ptr().cast(),
-            CookieIoFuncs::all_null(),
+            CookieIoFuncs::default(),
         )
     }
 }
 
 fn fl_open(mode: &[u8]) -> *mut c_void {
-    let funcs = CookieIoFuncs::all_null();
-    unsafe {
-        fl::fopencookie(
-            std::ptr::null_mut(),
-            mode.as_ptr().cast(),
-            (&funcs as *const CookieIoFuncs).cast(),
-        )
-    }
+    let funcs = CookieIoFuncs::default();
+    unsafe { fl::fopencookie(std::ptr::null_mut(), mode.as_ptr().cast(), funcs) }
 }
 
 #[derive(Debug, Default)]
@@ -164,10 +137,10 @@ unsafe extern "C" fn recording_write(
 
 fn recording_funcs() -> CookieIoFuncs {
     CookieIoFuncs {
-        read: std::ptr::null_mut(),
-        write: recording_write as *const () as *mut c_void,
-        seek: std::ptr::null_mut(),
-        close: std::ptr::null_mut(),
+        read: None,
+        write: Some(recording_write),
+        seek: None,
+        close: None,
     }
 }
 
@@ -213,7 +186,7 @@ fn fl_recording_write(mode: c_int) -> BufferedWriteObs {
         fl::fopencookie(
             (&mut state as *mut WriteHookState).cast(),
             c"w".as_ptr(),
-            (&funcs as *const CookieIoFuncs).cast(),
+            funcs,
         )
     };
     assert!(!stream.is_null());
@@ -256,19 +229,15 @@ fn cookie_flush_short_write_does_not_retry_or_replay_output() {
     fn observe(native: bool) -> (c_int, bool, c_int, Vec<u8>) {
         let mut output = Vec::<u8>::new();
         let funcs = CookieIoFuncs {
-            write: short_write as *const () as *mut c_void,
-            ..CookieIoFuncs::all_null()
+            write: Some(short_write),
+            ..CookieIoFuncs::default()
         };
         // SAFETY: the cookie, hook table, and stream remain valid throughout
         // the sequence. Both providers receive the same five-byte payload.
         unsafe {
             let cookie = (&mut output as *mut Vec<u8>).cast();
             let stream = if native {
-                fl::fopencookie(
-                    cookie,
-                    c"w".as_ptr(),
-                    (&funcs as *const CookieIoFuncs).cast(),
-                )
+                fl::fopencookie(cookie, c"w".as_ptr(), funcs)
             } else {
                 g::fopencookie(cookie, c"w".as_ptr(), funcs)
             };
@@ -288,6 +257,60 @@ fn cookie_flush_short_write_does_not_retry_or_replay_output() {
 
     let host = observe(false);
     assert_eq!(host, (-1, true, 0, b"ab".to_vec()));
+    assert_eq!(observe(true), host);
+}
+
+#[test]
+fn cookie_read_eintr_is_reported_without_retry() {
+    unsafe extern "C" fn interrupted_read(
+        cookie: *mut c_void,
+        buf: *mut c_char,
+        count: usize,
+    ) -> isize {
+        // SAFETY: observe keeps the call counter alive through fclose.
+        let calls = unsafe { &mut *cookie.cast::<usize>() };
+        *calls += 1;
+        if *calls == 1 {
+            // SAFETY: errno points to this thread's live errno cell.
+            unsafe { *g::__errno_location() = libc::EINTR };
+            return -1;
+        }
+        let copied = count.min(10);
+        // SAFETY: the backend supplies count writable bytes.
+        unsafe { std::ptr::copy_nonoverlapping(b"retry-read".as_ptr(), buf.cast(), copied) };
+        copied as isize
+    }
+
+    fn observe(native: bool) -> (Obs, usize, [u8; 10], c_int) {
+        let mut calls = 0usize;
+        let funcs = CookieIoFuncs {
+            read: Some(interrupted_read),
+            ..CookieIoFuncs::default()
+        };
+        let mut output = [0xA5; 10];
+        // SAFETY: cookie and output remain live, and each provider closes its own stream.
+        unsafe {
+            let cookie = (&mut calls as *mut usize).cast();
+            let stream = if native {
+                fl::fopencookie(cookie, c"r+".as_ptr(), funcs)
+            } else {
+                g::fopencookie(cookie, c"r+".as_ptr(), funcs)
+            };
+            assert!(!stream.is_null());
+            let read = if native { fl::fread } else { g::fread };
+            let error = if native { fl::ferror } else { g::ferror };
+            let eof = if native { fl::feof } else { g::feof };
+            let close = if native { fl::fclose } else { g::fclose };
+            plant_errno();
+            let count = read(output.as_mut_ptr().cast(), 1, output.len(), stream);
+            let observed = (count as i64, read_errno(), error(stream), eof(stream));
+            let closed = close(stream);
+            (observed, calls, output, closed)
+        }
+    }
+
+    let host = observe(false);
+    assert_eq!(host, ((0, libc::EINTR, 1, 0), 1, [0xA5; 10], 0));
     assert_eq!(observe(true), host);
 }
 

@@ -337,30 +337,30 @@
     {
       "name": "fopencookie_null_funcs_class_strict",
       "function": "fopencookie",
-      "spec_section": "GNU fopencookie invalid callback table class",
+      "spec_section": "GNU fopencookie legal all-null callback table",
       "inputs": {
         "symbol": "fopencookie",
-        "scenario": "null_cookie_functions_failure_without_cookie_address_capture",
-        "expected": "FOPENCOOKIE_NULL_FUNCS_STREAM_NULL",
-        "oracle_source": "FrankenLibC fopencookie null-functions safe failure class",
+        "scenario": "all_null_cookie_hooks_stream_creation_without_cookie_address_capture",
+        "expected": "FOPENCOOKIE_STREAM_CREATED",
+        "oracle_source": "Measured host glibc: all-null hooks create a stream; reads set the error indicator",
         "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
       },
-      "expected_output": "symbol=fopencookie;mode=strict;expected=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;actual=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=fopencookie;mode=strict;expected=FOPENCOOKIE_STREAM_CREATED;actual=FOPENCOOKIE_STREAM_CREATED;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
     {
       "name": "fopencookie_null_funcs_class_hardened",
       "function": "fopencookie",
-      "spec_section": "GNU fopencookie invalid callback table class",
+      "spec_section": "GNU fopencookie legal all-null callback table",
       "inputs": {
         "symbol": "fopencookie",
-        "scenario": "null_cookie_functions_failure_without_cookie_address_capture",
-        "expected": "FOPENCOOKIE_NULL_FUNCS_STREAM_NULL",
-        "oracle_source": "FrankenLibC fopencookie null-functions safe failure class",
+        "scenario": "all_null_cookie_hooks_stream_creation_without_cookie_address_capture",
+        "expected": "FOPENCOOKIE_STREAM_CREATED",
+        "oracle_source": "Measured host glibc: all-null hooks create a stream; reads set the error indicator",
         "ambient_state_policy": "forbid_ambient_stream_fd_path_address_stdout_stdin_or_uncontrolled_input_capture"
       },
-      "expected_output": "symbol=fopencookie;mode=hardened;expected=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;actual=FOPENCOOKIE_NULL_FUNCS_STREAM_NULL;failure_signature=none",
+      "expected_output": "symbol=fopencookie;mode=hardened;expected=FOPENCOOKIE_STREAM_CREATED;actual=FOPENCOOKIE_STREAM_CREATED;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },

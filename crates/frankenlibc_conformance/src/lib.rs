@@ -23590,15 +23590,17 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
         }
         "fopencookie" => {
             let mode = CString::new("r").map_err(|_| "fopencookie mode has NUL".to_string())?;
+            // GNU passes the hook table by value. All-null hooks are legal:
+            // host glibc creates the stream, then reports an error on reads.
             let stream = unsafe {
                 frankenlibc_abi::stdio_abi::fopencookie(
                     std::ptr::null_mut(),
                     mode.as_ptr(),
-                    std::ptr::null(),
+                    frankenlibc_abi::stdio_abi::CookieIoFuncs::default(),
                 )
             };
             if stream.is_null() {
-                Ok(String::from("FOPENCOOKIE_NULL_FUNCS_STREAM_NULL"))
+                Ok(String::from("FOPENCOOKIE_STREAM_NULL"))
             } else {
                 let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
                 Ok(String::from("FOPENCOOKIE_STREAM_CREATED"))

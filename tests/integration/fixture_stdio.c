@@ -2,6 +2,8 @@
  * Part of frankenlibc C fixture suite.
  * Exit 0 = PASS, nonzero = FAIL with diagnostic to stderr.
  */
+#define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -341,7 +343,93 @@ static int test_fprintf_fscanf_fseek_roundtrip(void) {
     return 0;
 }
 
-int main(void) {
+/* GNU callback table is passed by value. A Rust-only signature comparison
+ * cannot establish this contract; compile this caller against system headers. */
+struct interrupted_cookie {
+    size_t delivered;
+    int interrupted;
+    int closed;
+};
+
+static ssize_t read_then_eintr(void *opaque, char *buf, size_t count) {
+    struct interrupted_cookie *cookie = opaque;
+    if (cookie->delivered < 3) {
+        size_t n = 3 - cookie->delivered;
+        if (n > count) n = count;
+        memcpy(buf, "abc" + cookie->delivered, n);
+        cookie->delivered += n;
+        return (ssize_t)n;
+    }
+    if (!cookie->interrupted) {
+        cookie->interrupted = 1;
+        errno = EINTR;
+        return -1;
+    }
+    /* Make an erroneous retry observable rather than hanging the fixture. */
+    if (count) buf[0] = 'X';
+    return count ? 1 : 0;
+}
+
+static int close_interrupted_cookie(void *opaque) {
+    ((struct interrupted_cookie *)opaque)->closed++;
+    return 0;
+}
+
+static int test_cookie_mid_read_eintr(int mode) {
+    struct interrupted_cookie cookie = {0};
+    cookie_io_functions_t hooks = {
+        .read = read_then_eintr,
+        .close = close_interrupted_cookie,
+    };
+    FILE *stream = fopencookie(&cookie, "r", hooks);
+    if (!stream) return 1;
+    if (setvbuf(stream, NULL, mode, 0)) {
+        fclose(stream);
+        return 1;
+    }
+    unsigned char out[8];
+    memset(out, 0xA5, sizeof(out));
+    errno = 0x5EED;
+    size_t n = fread(out, 1, sizeof(out), stream);
+    int saved_errno = errno;
+    int error = ferror(stream) != 0;
+    int eof = feof(stream) != 0;
+    int closed = fclose(stream);
+    printf("cookie mode=%s n=%zu errno=%d error=%d eof=%d close=%d hooks_closed=%d bytes=",
+           mode == _IONBF ? "unbuffered" : "buffered", n, saved_errno,
+           error, eof, closed, cookie.closed);
+    for (size_t i = 0; i < sizeof(out); ++i) printf("%02x", out[i]);
+    putchar('\n');
+    const unsigned char expected[8] = {'a', 'b', 'c', 0xA5, 0xA5, 0xA5, 0xA5, 0xA5};
+    return n != 3 || saved_errno != EINTR || !error || eof || closed ||
+           cookie.closed != 1 || memcmp(out, expected, sizeof(out));
+}
+
+static int check_cookie_providers(const char *expected) {
+    const char *symbols[] = {"fopencookie", "fread", "setvbuf", "ferror", "feof", "fclose"};
+    char *wanted = realpath(expected, NULL);
+    if (!wanted) return 1;
+    int failed = 0;
+    for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); ++i) {
+        Dl_info info;
+        void *address = dlsym(RTLD_DEFAULT, symbols[i]);
+        if (!address || !dladdr(address, &info)) { failed = 1; break; }
+        char *actual = realpath(info.dli_fname, NULL);
+        fprintf(stderr, "provider %s=%s\n", symbols[i], info.dli_fname);
+        if (!actual || strcmp(actual, wanted)) failed = 1;
+        free(actual);
+    }
+    free(wanted);
+    return failed;
+}
+
+int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "cookie-eintr") == 0) {
+        if (argc == 3 && check_cookie_providers(argv[2])) return 2;
+        int failed = test_cookie_mid_read_eintr(_IOFBF);
+        failed += test_cookie_mid_read_eintr(_IONBF);
+        return failed ? 1 : 0;
+    }
     int fails = 0;
     fails += test_fopen_fileno_setvbuf_setbuf();
     fails += test_fputs_fputc_fflush_and_fread_roundtrip();
@@ -350,11 +438,13 @@ int main(void) {
     fails += test_setvbuf_rejects_post_io_change();
     fails += test_fread_fwrite_zero_size_contract();
     fails += test_fprintf_fscanf_fseek_roundtrip();
+    fails += test_cookie_mid_read_eintr(_IOFBF);
+    fails += test_cookie_mid_read_eintr(_IONBF);
 
     if (fails) {
         fprintf(stderr, "fixture_stdio: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_stdio: PASS (7 tests)\n");
+    printf("fixture_stdio: PASS (9 tests)\n");
     return 0;
 }

@@ -4389,8 +4389,8 @@ pub unsafe extern "C" fn fread(
                 0
             };
             match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
-                StreamPolicyAction::Retry => continue,
-                StreamPolicyAction::Escalate => {
+                // Cookie errors are observable callback results, not syscalls to retry.
+                StreamPolicyAction::Retry | StreamPolicyAction::Escalate => {
                     had_error = true;
                     break;
                 }
@@ -12350,12 +12350,12 @@ pub unsafe extern "C" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c
 ///   seek:  fn(*mut c_void, *mut i64, c_int) -> c_int
 ///   close: fn(*mut c_void) -> c_int
 #[repr(C)]
-#[derive(Clone, Copy)]
-struct CookieIoFuncs {
-    read: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> isize>,
-    write: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> isize>,
-    seek: Option<unsafe extern "C" fn(*mut c_void, *mut i64, c_int) -> c_int>,
-    close: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+#[derive(Clone, Copy, Default)]
+pub struct CookieIoFuncs {
+    pub read: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> isize>,
+    pub write: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> isize>,
+    pub seek: Option<unsafe extern "C" fn(*mut c_void, *mut i64, c_int) -> c_int>,
+    pub close: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
 }
 
 /// Metadata for a cookie-backed stream.
@@ -13048,16 +13048,16 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
 
 /// GNU `fopencookie` — open a custom stream with user-defined I/O callbacks.
 ///
-/// `funcs` points to a `cookie_io_functions_t` struct containing read, write,
+/// `funcs` is a `cookie_io_functions_t` passed by value, containing read, write,
 /// seek, and close function pointers. The `cookie` pointer is passed as the
-/// first argument to each callback.
+/// first argument to each callback. All four hooks may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fopencookie(
     cookie: *mut c_void,
     mode: *const c_char,
-    funcs: *const c_void,
+    funcs: CookieIoFuncs,
 ) -> *mut c_void {
-    if mode.is_null() || funcs.is_null() {
+    if mode.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
@@ -13074,10 +13074,6 @@ pub unsafe extern "C" fn fopencookie(
         return std::ptr::null_mut();
     };
 
-    // Read the cookie_io_functions_t from the caller's struct.
-    // SAFETY: caller guarantees funcs points to a valid cookie_io_functions_t.
-    let io_funcs = unsafe { *(funcs as *const CookieIoFuncs) };
-
     // Cookie streams have no kernel fd, but they still use the ordinary stdio
     // write buffer.  This makes the default `_IOFBF` behavior observable before
     // the callback is invoked, exactly as it is for glibc cookie streams.
@@ -13091,13 +13087,7 @@ pub unsafe extern "C" fn fopencookie(
     // Register the cookie info
     let mut cookie_guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
     let map = cookie_guard.get_or_insert_with(artifact_hash_map);
-    map.insert(
-        id,
-        CookieStreamInfo {
-            cookie,
-            funcs: io_funcs,
-        },
-    );
+    map.insert(id, CookieStreamInfo { cookie, funcs });
     // Publish before releasing the lock and before the id is returned, so the
     // lock-free fast path in `is_cookie_stream` is correct (Acquire/Release pair).
     COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
@@ -13276,15 +13266,9 @@ pub unsafe extern "C" fn funopen(
         close: Some(funopen_trampoline_close),
     };
 
-    // SAFETY: fopencookie reads `funcs` via *const c_void and copies
-    // the struct internally; mode is a static C string.
-    let stream = unsafe {
-        fopencookie(
-            tr_ptr,
-            mode.as_ptr(),
-            (&funcs as *const CookieIoFuncs) as *const c_void,
-        )
-    };
+    // SAFETY: callback table is passed by value; mode is a static C string
+    // and the trampoline remains live until the close callback reclaims it.
+    let stream = unsafe { fopencookie(tr_ptr, mode.as_ptr(), funcs) };
     if stream.is_null() {
         // Reclaim and drop the trampoline so we don't leak it.
         // SAFETY: tr_ptr was just produced by Box::into_raw above and

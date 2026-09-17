@@ -35,6 +35,7 @@ use frankenlibc_abi::stdio_abi::{
     _IO_seekoff,
     _IO_seekpos,
     _IO_sgetn,
+    CookieIoFuncs,
     IO_2_1_STDERR,
     IO_2_1_STDIN,
     IO_2_1_STDOUT,
@@ -388,15 +389,6 @@ fn path_cstring(path: &Path) -> CString {
     CString::new(path.as_os_str().as_bytes()).expect("temp path must not contain interior NUL")
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CookieIoFuncs {
-    read: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> isize>,
-    write: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> isize>,
-    seek: Option<unsafe extern "C" fn(*mut c_void, *mut i64, c_int) -> c_int>,
-    close: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
-}
-
 #[derive(Default)]
 struct CookieState {
     data: Vec<u8>,
@@ -626,23 +618,12 @@ fn fopencookie_rejects_tracked_unterminated_mode() {
     let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
     assert!(!mode.is_null());
     unsafe { *mode = b'w' as c_char };
-    let funcs = CookieIoFuncs {
-        read: None,
-        write: None,
-        seek: None,
-        close: None,
-    };
+    let funcs = CookieIoFuncs::default();
 
     unsafe {
         *frankenlibc_abi::errno_abi::__errno_location() = 0;
     }
-    let stream = unsafe {
-        fopencookie(
-            std::ptr::null_mut(),
-            mode.cast_const(),
-            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
-        )
-    };
+    let stream = unsafe { fopencookie(std::ptr::null_mut(), mode.cast_const(), funcs) };
     let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
 
     unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
@@ -666,14 +647,8 @@ fn fopencookie_routes_io_callbacks_for_read_write_seek_close() {
     };
 
     let mode = CString::new("w+").expect("valid mode");
-    // SAFETY: callback table and mode pointers are valid for call duration.
-    let stream = unsafe {
-        fopencookie(
-            cookie.cast::<c_void>(),
-            mode.as_ptr(),
-            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
-        )
-    };
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe { fopencookie(cookie.cast::<c_void>(), mode.as_ptr(), funcs) };
     assert!(!stream.is_null());
 
     let payload = b"cookie-io";
@@ -700,8 +675,7 @@ fn fopencookie_routes_io_callbacks_for_read_write_seek_close() {
 }
 
 #[test]
-#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
-fn fopencookie_fread_retries_once_on_eintr() {
+fn fopencookie_fread_reports_eintr() {
     let cookie = Box::into_raw(Box::new(CookieState {
         data: b"retry-read".to_vec(),
         pos: 0,
@@ -720,32 +694,31 @@ fn fopencookie_fread_retries_once_on_eintr() {
         close: Some(cookie_close),
     };
     let mode = CString::new("r+").expect("valid mode");
-    // SAFETY: callback table and mode pointers are valid for call duration.
-    let stream = unsafe {
-        fopencookie(
-            cookie.cast::<c_void>(),
-            mode.as_ptr(),
-            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
-        )
-    };
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe { fopencookie(cookie.cast::<c_void>(), mode.as_ptr(), funcs) };
     assert!(!stream.is_null());
 
     let mut out = [0u8; 10];
     // SAFETY: destination pointer and stream are valid.
     let read = unsafe { fread(out.as_mut_ptr().cast::<c_void>(), 1, out.len(), stream) };
-    assert_eq!(read, 10);
-    assert_eq!(&out, b"retry-read");
+    // glibc reports the callback error without retrying or changing the destination.
+    assert_eq!(read, 0);
+    assert_eq!(out, [0; 10]);
+    // SAFETY: errno is thread-local and stream is still open.
+    assert_eq!(unsafe { *libc::__errno_location() }, libc::EINTR);
+    assert_ne!(unsafe { ferror(stream) }, 0);
+    assert_eq!(unsafe { feof(stream) }, 0);
 
     // SAFETY: stream is valid and open.
     assert_eq!(unsafe { fclose(stream) }, 0);
     // SAFETY: cookie ownership remains with this test.
     let state = unsafe { Box::from_raw(cookie) };
     assert!(state.read_eintr_emitted);
+    assert!(state.closed);
 }
 
 #[test]
-#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
-fn fopencookie_fwrite_retries_once_on_eintr() {
+fn fopencookie_fclose_reports_write_eintr() {
     let cookie = Box::into_raw(Box::new(CookieState {
         data: Vec::new(),
         pos: 0,
@@ -764,14 +737,8 @@ fn fopencookie_fwrite_retries_once_on_eintr() {
         close: Some(cookie_close),
     };
     let mode = CString::new("w+").expect("valid mode");
-    // SAFETY: callback table and mode pointers are valid for call duration.
-    let stream = unsafe {
-        fopencookie(
-            cookie.cast::<c_void>(),
-            mode.as_ptr(),
-            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
-        )
-    };
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe { fopencookie(cookie.cast::<c_void>(), mode.as_ptr(), funcs) };
     assert!(!stream.is_null());
 
     let payload = b"retry-write";
@@ -780,11 +747,17 @@ fn fopencookie_fwrite_retries_once_on_eintr() {
     assert_eq!(wrote, payload.len());
 
     // SAFETY: stream is valid and open.
-    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, -1);
+    // SAFETY: errno is thread-local; fclose preserved the callback error.
+    assert_eq!(unsafe { *libc::__errno_location() }, libc::EINTR);
     // SAFETY: cookie ownership remains with this test.
     let state = unsafe { Box::from_raw(cookie) };
     assert!(state.write_eintr_emitted);
-    assert_eq!(state.data, payload);
+    assert!(state.data.is_empty(), "failed output must not be retried");
+    assert!(
+        state.closed,
+        "close hook must still run after a write error"
+    );
 }
 
 #[test]
@@ -818,12 +791,12 @@ fn fopencookie_close_short_write_matches_glibc() {
         read: None,
     };
     let mode = CString::new("w").expect("valid mode");
-    // SAFETY: callback table and mode pointers are valid for call duration.
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
     let stream = unsafe {
         fopencookie(
             (&mut output as *mut Vec<u8>).cast::<c_void>(),
             mode.as_ptr(),
-            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
+            funcs,
         )
     };
     assert!(!stream.is_null());
@@ -833,8 +806,16 @@ fn fopencookie_close_short_write_matches_glibc() {
     assert_eq!(wrote, 5, "buffered fwrite still accepts the full payload");
 
     // SAFETY: stream is valid and open.
-    assert_eq!(unsafe { fclose(stream) }, -1, "close must report the short write");
-    assert_eq!(output, b"ab".to_vec(), "unwritable remainder must be discarded, not replayed");
+    assert_eq!(
+        unsafe { fclose(stream) },
+        -1,
+        "close must report the short write"
+    );
+    assert_eq!(
+        output,
+        b"ab".to_vec(),
+        "unwritable remainder must be discarded, not replayed"
+    );
 }
 
 #[test]
