@@ -10468,7 +10468,10 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     // position so the post-parse lseek can leave the unparsed tail in place.
     // Gated on no pending writes — otherwise prepare_seek would discard them
     // (write-mixed streams keep the legacy raw-read path, see bd-2g7oyh.180).
-    if !cookie && s.pending_flush().is_empty() && raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).is_ok() {
+    if !cookie
+        && s.pending_flush().is_empty()
+        && raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).is_ok()
+    {
         let base = s.offset();
         // Discard any read-ahead buffer + ungetc and align the fd to `base`.
         let _ = s.prepare_seek();
