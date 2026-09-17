@@ -1885,8 +1885,8 @@ fn getline_reads_complete_lines() {
     let len = unsafe { getline(&mut lineptr, &mut n, stream) };
     assert_eq!(len, -1);
 
-    // SAFETY: lineptr was allocated by getline via malloc.
-    unsafe { libc::free(lineptr.cast()) };
+    // SAFETY: lineptr was allocated by FrankenLibC's getline allocator.
+    unsafe { frankenlibc_abi::malloc_abi::free(lineptr.cast()) };
     assert_eq!(unsafe { fclose(stream) }, 0);
     let _ = fs::remove_file(path);
 }
@@ -1926,7 +1926,8 @@ fn getdelim_reads_until_custom_delimiter() {
     let seg3 = unsafe { CStr::from_ptr(lineptr) };
     assert_eq!(seg3.to_bytes(), b"gamma");
 
-    unsafe { libc::free(lineptr.cast()) };
+    // SAFETY: lineptr was allocated by FrankenLibC's getdelim allocator.
+    unsafe { frankenlibc_abi::malloc_abi::free(lineptr.cast()) };
     assert_eq!(unsafe { fclose(stream) }, 0);
     let _ = fs::remove_file(path);
 }
@@ -4337,7 +4338,8 @@ fn fparseln_open_for_read(path: &std::path::Path) -> *mut c_void {
 fn fparseln_collect_string(p: *mut c_char, len: usize) -> Vec<u8> {
     assert!(!p.is_null());
     let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len).to_vec() };
-    unsafe { libc::free(p as *mut std::ffi::c_void) };
+    // SAFETY: fparseln returns an allocation from FrankenLibC's malloc ABI.
+    unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) };
     bytes
 }
 
@@ -4461,7 +4463,8 @@ fn fparseln_null_len_pointer_safe() {
         )
     };
     assert!(!p.is_null());
-    unsafe { libc::free(p as *mut std::ffi::c_void) };
+    // SAFETY: fparseln returns an allocation from FrankenLibC's malloc ABI.
+    unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) };
     unsafe { fclose(fp) };
     let _ = std::fs::remove_file(&path);
 }
@@ -6411,7 +6414,8 @@ fn under_getline_matches_getline() {
     assert_eq!(unsafe { CStr::from_ptr(lineptr) }.to_bytes(), b"second\n");
 
     if !lineptr.is_null() {
-        unsafe { libc::free(lineptr as *mut std::ffi::c_void) };
+        // SAFETY: lineptr was allocated by FrankenLibC's __getline allocator.
+        unsafe { frankenlibc_abi::malloc_abi::free(lineptr.cast()) };
     }
     unsafe { fclose(stream) };
     let _ = fs::remove_file(&path);
@@ -6839,7 +6843,7 @@ fn printf_pooled_output_buffer_does_not_leak_stale_bytes() {
     let got = unsafe { CStr::from_ptr(owned) }.to_bytes().to_vec();
     assert_eq!(got, b"owned-value");
     // SAFETY: the allocation came from fl's allocator via asprintf.
-    unsafe { libc::free(owned.cast::<c_void>()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(owned.cast()) };
 
     let mut after = [0xBBu8; 64];
     // SAFETY: after has room for the payload and its NUL.

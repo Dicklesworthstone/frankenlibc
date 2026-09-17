@@ -239,6 +239,59 @@ fn fl_recording_write(mode: c_int) -> BufferedWriteObs {
 }
 
 #[test]
+fn cookie_flush_short_write_does_not_retry_or_replay_output() {
+    unsafe extern "C" fn short_write(
+        cookie: *mut c_void,
+        buf: *const c_char,
+        count: usize,
+    ) -> isize {
+        // SAFETY: the helper keeps the byte vector alive until fclose returns;
+        // the callback receives count readable bytes from the stdio backend.
+        let output = unsafe { &mut *cookie.cast::<Vec<u8>>() };
+        let count = count.min(2);
+        output.extend_from_slice(unsafe { std::slice::from_raw_parts(buf.cast(), count) });
+        count as isize
+    }
+
+    fn observe(native: bool) -> (c_int, bool, c_int, Vec<u8>) {
+        let mut output = Vec::<u8>::new();
+        let funcs = CookieIoFuncs {
+            write: short_write as *const () as *mut c_void,
+            ..CookieIoFuncs::all_null()
+        };
+        // SAFETY: the cookie, hook table, and stream remain valid throughout
+        // the sequence. Both providers receive the same five-byte payload.
+        unsafe {
+            let cookie = (&mut output as *mut Vec<u8>).cast();
+            let stream = if native {
+                fl::fopencookie(
+                    cookie,
+                    c"w".as_ptr(),
+                    (&funcs as *const CookieIoFuncs).cast(),
+                )
+            } else {
+                g::fopencookie(cookie, c"w".as_ptr(), funcs)
+            };
+            assert!(!stream.is_null());
+            let write = if native { fl::fwrite } else { g::fwrite };
+            let flush = if native { fl::fflush } else { g::fflush };
+            let error = if native { fl::ferror } else { g::ferror };
+            let close = if native { fl::fclose } else { g::fclose };
+            assert_eq!(write(b"abcde".as_ptr().cast(), 1, 5, stream), 5);
+            let first = flush(stream);
+            let failed = error(stream) != 0;
+            let second = flush(stream);
+            assert_eq!(close(stream), 0);
+            (first, failed, second, output)
+        }
+    }
+
+    let host = observe(false);
+    assert_eq!(host, (-1, true, 0, b"ab".to_vec()));
+    assert_eq!(observe(true), host);
+}
+
+#[test]
 fn nonnull_write_hook_buffering_matches_glibc() {
     for (mode, expected) in [
         (0, (5, 0, 0, 0, 1, 5, 0)), // _IOFBF: callback waits for fflush.

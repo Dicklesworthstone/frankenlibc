@@ -12508,12 +12508,19 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
 
 /// Flush pending cookie output through its callback.
 unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
-    let pending = stream.pending_flush().to_vec();
+    let pending = stream.pending_flush();
     if pending.is_empty() {
         return true;
     }
-    if unsafe { cookie_write_all(id, &pending) } == pending.len() {
-        stream.mark_flushed();
+    // A cookie callback reports the outcome of one flush, not a raw syscall
+    // to retry. A short result is an error; discard the pending span even on
+    // failure so a later fflush/fclose cannot replay an accepted prefix.
+    let expected = pending.len();
+    // SAFETY: pending remains readable for the synchronous callback, and id
+    // identifies the live cookie owned by this locked stream.
+    let written = unsafe { cookie_stream_write(id, pending.as_ptr(), expected) };
+    stream.mark_flushed();
+    if written == expected as isize {
         true
     } else {
         stream.set_error();
