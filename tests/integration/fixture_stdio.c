@@ -405,6 +405,44 @@ static int test_cookie_mid_read_eintr(int mode) {
            cookie.closed != 1 || memcmp(out, expected, sizeof(out));
 }
 
+/* A scanf read-ahead suffix must remain visible through both character and
+ * block input on a callback stream, which has no backing file descriptor. */
+struct scanf_cookie {
+    size_t position;
+};
+
+static ssize_t read_scanf_cookie(void *opaque, char *buf, size_t count) {
+    struct scanf_cookie *cookie = opaque;
+    const char input[] = "12 34XYZ";
+    size_t available = sizeof(input) - 1 - cookie->position;
+    if (count > available) count = available;
+    memcpy(buf, input + cookie->position, count);
+    cookie->position += count;
+    return (ssize_t)count;
+}
+
+static int test_cookie_scanf_preserves_unread_suffix(void) {
+    struct scanf_cookie cookie = {0};
+    cookie_io_functions_t hooks = {.read = read_scanf_cookie};
+    FILE *stream = fopencookie(&cookie, "r", hooks);
+    if (!stream) return 1;
+    int first = -1, second = -1;
+    int first_count = fscanf(stream, "%d", &first);
+    int second_count = fscanf(stream, "%d", &second);
+    int next = fgetc(stream);
+    char suffix[2] = {0};
+    size_t remaining = fread(suffix, 1, sizeof(suffix), stream);
+    int error = ferror(stream) != 0;
+    int closed = fclose(stream);
+    if (first_count != 1 || first != 12 || second_count != 1 || second != 34 ||
+        next != 'X' || remaining != 2 || memcmp(suffix, "YZ", 2) || error || closed) {
+        fprintf(stderr, "FAIL: cookie scanf counts=%d,%d values=%d,%d next=%d remaining=%zu error=%d close=%d\n",
+                first_count, second_count, first, second, next, remaining, error, closed);
+        return 1;
+    }
+    return 0;
+}
+
 static int check_cookie_providers(const char *expected) {
     const char *symbols[] = {"fopencookie", "fread", "setvbuf", "ferror", "feof", "fclose"};
     char *wanted = realpath(expected, NULL);
@@ -440,11 +478,12 @@ int main(int argc, char **argv) {
     fails += test_fprintf_fscanf_fseek_roundtrip();
     fails += test_cookie_mid_read_eintr(_IOFBF);
     fails += test_cookie_mid_read_eintr(_IONBF);
+    fails += test_cookie_scanf_preserves_unread_suffix();
 
     if (fails) {
         fprintf(stderr, "fixture_stdio: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_stdio: PASS (9 tests)\n");
+    printf("fixture_stdio: PASS (10 tests)\n");
     return 0;
 }

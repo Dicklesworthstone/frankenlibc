@@ -3421,6 +3421,14 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
             return libc::EOF;
         }
 
+        if let Some(cell) = stream_cell(id) {
+            let mut byte = [0u8; 1];
+            if cell.lock().buffered_read_into(&mut byte) == 1 {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+                return byte[0] as c_int;
+            }
+        }
+
         let mut byte = [0u8; 1];
         let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
 
@@ -4371,7 +4379,10 @@ pub unsafe extern "C" fn fread(
             return 0;
         }
 
-        let mut read_total = 0usize;
+        let buffered = stream_cell(id)
+            .map(|cell| cell.lock().buffered_read_into(dst))
+            .unwrap_or(0);
+        let mut read_total = buffered;
         let mut reached_eof = false;
         let mut had_error = false;
 
@@ -4415,7 +4426,7 @@ pub unsafe extern "C" fn fread(
         if let Some(cell) = stream_cell(id) {
             let mut s_guard = cell.lock();
             let s = &mut *s_guard;
-            let delta = read_total.min(i64::MAX as usize) as i64;
+            let delta = (read_total - buffered).min(i64::MAX as usize) as i64;
             s.set_offset(s.offset().saturating_add(delta));
             if reached_eof {
                 s.set_eof();
@@ -10451,12 +10462,13 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
 
     let fd = s.fd();
     let cap = limit.min(8192);
+    let cookie = is_cookie_stream(id);
 
     // Seekable read streams (regular files): read from the true logical
     // position so the post-parse lseek can leave the unparsed tail in place.
     // Gated on no pending writes — otherwise prepare_seek would discard them
     // (write-mixed streams keep the legacy raw-read path, see bd-2g7oyh.180).
-    if s.pending_flush().is_empty() && raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).is_ok() {
+    if !cookie && s.pending_flush().is_empty() && raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).is_ok() {
         let base = s.offset();
         // Discard any read-ahead buffer + ungetc and align the fd to `base`.
         let _ = s.prepare_seek();
@@ -10497,7 +10509,13 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     }
 
     let mut tmp = vec![0u8; cap - buf.len()];
-    let rc = unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), tmp.len()) };
+    // SAFETY: tmp is writable for its entire length. Cookie streams have no fd;
+    // invoke their registered read callback rather than issuing read(-1).
+    let rc = if cookie {
+        unsafe { cookie_stream_read(id, tmp.as_mut_ptr(), tmp.len()) }
+    } else {
+        unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), tmp.len()) }
+    };
     if rc > 0 {
         tmp.truncate(rc as usize);
         buf.extend_from_slice(&tmp);
@@ -10508,6 +10526,9 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     } else {
         if rc == 0 {
             s.set_eof();
+        }
+        if rc < 0 && cookie {
+            s.set_error();
         }
         (
             ScanfReadBuf::from_vec(buf),
