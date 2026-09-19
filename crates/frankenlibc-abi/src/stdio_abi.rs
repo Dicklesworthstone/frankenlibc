@@ -12980,7 +12980,13 @@ pub unsafe extern "C" fn fmemopen(
         register_fast_fixed_mem_read(id, fast_read_data);
     }
 
-    if !buf.is_null() {
+    // The sync map exists so fl-owned stream contents are written back to the
+    // CALLER's buffer on flush/close — which only makes sense when the stream can
+    // write. A read-only "r" stream never writes through fl, and syncing its
+    // read-only snapshot over the caller's buffer on close would clobber caller
+    // mutations made after fmemopen (glibc never writes for "r" mode either).
+    // bd-rv2gv6: skip the registration entirely for non-writable streams.
+    if !buf.is_null() && open_flags.writable {
         let mut guard = mem_fixed_registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner());

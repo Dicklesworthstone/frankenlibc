@@ -2573,6 +2573,52 @@ fn vsprintf_normalizes_negative_star_width_from_va_list() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn fmemopen_readonly_close_does_not_write_back_caller_buffer() {
+    // bd-rv2gv6 regression: closing a read-only "r" fmemopen stream used to copy
+    // fl's snapshot over the caller's buffer, clobbering mutations the caller made
+    // after fmemopen (glibc never writes for "r" mode). The sync-map registration
+    // is now writable-only, so caller mutations must survive fclose.
+    let mut buf: [u8; 48] = *b"hello world, this is read-only fmemopen content!";
+    let original = buf;
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    // Mutate the caller buffer AFTER open; the stream works on its own snapshot.
+    buf[0] = b'Z';
+    let mut dst = [0u8; 8];
+    let n = unsafe { fread(dst.as_mut_ptr().cast(), 1, dst.len(), stream) };
+    assert_eq!(n, 8);
+    // Pre-fix this failed: fclose synced the pre-mutation snapshot back.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(
+        buf[0], b'Z',
+        "read-only fclose must not write back over the caller's buffer"
+    );
+    let _ = original;
+}
+
+#[test]
+fn fmemopen_writable_close_still_syncs_caller_buffer() {
+    // Load-bearing counterpart: for WRITABLE modes the close-time write-back is
+    // the contract (fl-owned contents land in the caller's buffer).
+    let mut buf = [0u8; 32];
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"written via fmemopen";
+    let n = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(n, payload.len());
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(
+        &buf[..payload.len()],
+        payload,
+        "writable fclose must sync contents to the caller's buffer"
+    );
+}
+
+#[test]
 fn fmemopen_write_creates_stream() {
     // bd-el0v8: serialize against other parallel tests that allocate
     // streams. Address reuse by glibc malloc would otherwise let
