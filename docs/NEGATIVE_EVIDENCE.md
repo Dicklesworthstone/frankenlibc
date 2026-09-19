@@ -31765,6 +31765,18 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **VERDICT: NO SOURCE CHANGE.** This row corrects the record. The correctness fix stands; the
   performance claim above it does not, and CHANGELOG.md needs the same correction.
 
+- **UPDATE 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d): the certified gap has NARROWED to
+  1.14-1.41x, and 3 of 5 sizes are now DECIDABLE.** Fresh `incumbent_coverage_ab --family tdelete`
+  run (worker hetzner2/vmi1227854, pinned quietest core, pre+post host-exclusivity clear, 386
+  conformance comparisons pass, build excluded from timing): tree64 **1.4079** (CI
+  [1.3446,1.4563], nulls hold), tree2048 **1.1677** (CI [1.1337,1.2156], nulls hold), tree8192
+  **1.1426** (CI [1.1379,1.1483], null CV 2.4-3.1%, cleanest row); tree512/tree1024 NULL_VIOLATED
+  (fleet noise, direction consistent with the decided rows). vs the D1 numbers above (3.07x/3.00x),
+  the loss has shrunk ~2.6x. CAUSE NOT ATTRIBUTED — intervening search-tree work by other agents is
+  the likely mechanism but no single commit is named here; whoever next touches `RbTree::delete`
+  should read this line first. The claim remains a LOSS at every decidable size; "remove the
+  redundant walk" stays dead.
+
 ## 2026-08-18 — REFUTED, my own hypothesis: `nl_langinfo`'s loss is not selector diversity and not match depth — it is dense same-category runs (`bd-nl-langinfo-contiguous-table-8dlrhi`)
 
 - **THE HYPOTHESIS THIS KILLS IS MINE.** The D1 conversion certified `nl_langinfo` as a loss that
