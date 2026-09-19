@@ -17019,6 +17019,18 @@ The core memchr skip-loop folds 256B/iter (`Simd<u8,64>`×4). In-process A/B (`m
 > **RESTORED 2026-09-19 (bd-sjvs5n) — memchr only, redesigned for the current scanner:** a 512B tier (eight 64-lane panel masks, single pass, hit resolved from stored masks) now sits ABOVE the 256B block loop, preceded by a warm 256B window on the old early-exit path (the plain tier regressed sparse-early hits 1.5-1.8x; the warm window removes that). Receipts: in-process A/B `frankenlibc-bench/examples/memchr_fold512_ab.rs` (deployed vs faithful pre-tier replica, byte-identity asserted on 64 shifted windows per case): absent 0.06-0.64, tail n>=4096 0.70-0.84, sparse-early-hit 0.98-1.09 (parity). Conformance: `conformance_diff_string_search` 10/0, `conformance_diff_mempcpy_rawmemchr` 3/0; core memchr unit tests 12/0 (rch, worker vmi1152480). The original 8-10% figure does NOT transfer — on the current design the absent-case win is much larger (~3x at 4KiB) and early-hit cases need the warm window.
 >
 > **memrchr half: REFUTED on the current design (2026-09-19, bd-sjvs5n).** The symmetric memrchr tier was implemented and measured (single-pass masks, warm-window variants): memrchr's 256B-stride early-exit loop beats it ~2.2x on found-needle cases and ~parity on absent. DROPPED — the memrchr row above remains a historical measurement of the deleted 2026-07-04 design; no memrchr restoration is owed while the current 256B-stride loop stands.
+>
+> **INCUMBENT-RELATIVE UPDATE 2026-09-19 (same bench, glibc arm added):** `memchr_fold512_ab` now
+> dlmopens live glibc 2.42 as a third arm with three-way identity asserted per case (fl == replica
+> == glibc across 64 shifted windows; multi-match d1/64 cases genuinely exercise leftmost-vs-
+> rightmost). Deployed memchr vs glibc: absent **0.97 at 256B (parity), 1.22-1.48 at >=512B** —
+> vs **3.7x absent at 4KiB before the tier** (83.4ns/22.8ns), the restoration cut the absent gap
+> roughly in half; tail n>=4096 1.38-1.62; sparse-early-hit **~2.1x slower (5.3-5.8ns vs glibc's
+> 2.4-3.0ns)** — that residual is fl's fixed entry/dispatch ladder, not the tier, and is a separate
+> lever. memrchr (unchanged) sits at 0.96-1.33 vs glibc. Process note for the record: the first
+> glibc-arm run panicked on a BENCH bug — the identity loop rebound `a` to the memrchr result and
+> then compared it against glibc memchr, which only diverges on multi-match cases (first != last).
+> Fixed assert wiring; no deployed-code divergence exists.
 
 ## 2026-07-04 (BlackThrush) — WIN (SHIPPED): memrchr 512B fold tier (follow-up to memchr) — same proven fold, byte-identical
 Completing the 512B-fold-tier work: applied it to memrchr's reverse fold loop (the noted follow-up from the memchr 512B tier 5bf5b6217). memrchr shares the exact same 256B fold (`has_byte_memchr_folded`) whose 512B variant (`has_byte_memchr_512`) the in-process A/B (`memchr_fold512_ab`) already proved ~8-10% faster at n>=512. Added a 512B `rchunks_exact` tier ABOVE the existing 256B reverse fold: `rchunks_exact` walks blocks from the END first so the highest (last) match is still found first — last-match semantics preserved — and the < 512 front remainder keeps the 256B fold (no regression, same structure as the memchr fix). Byte-identical detection (same eq-masks, wider block). CONFORMANCE GREEN: `conformance_diff_memrchr`(1) + core `memrchr` tests (13, incl. `test_memrchr_long_reverse_panel_boundary_and_remainder` + `test_memrchr_simd_panel_boundary_and_remainder` + property vs random — the critical reverse-tier-boundary checks). No new reproducer (memchr_fold512_ab covers the shared fold). **512B fold tier now on BOTH memchr + memrchr; the "wide fold as a tier" lever is fully applied to the fold-based single-pointer scanners.**
