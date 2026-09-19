@@ -31777,6 +31777,15 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
 - **VERDICT: NO SOURCE CHANGE.** This row corrects the record. The correctness fix stands; the
   performance claim above it does not, and CHANGELOG.md needs the same correction.
 
+- **GATE VERIFICATION 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d):** the current HEAD
+  single-walk `RbTree::delete` is verified against this family's documented failure mode:
+  `conformance_diff_tsearch` 1 passed / 0 failed (absent-key band), core tree unit filters
+  `delete` 18 passed / 0 failed and `rb_tree` 19 passed / 0 failed (rch). The re-landed
+  single-descent (with `delete_rec -> None -> no repair` missing-key handling) holds the
+  correctness gate the first single-walk attempt lacked. The 1.14-1.41x competitive loss above
+  therefore stands against a CORRECT implementation — the lever really is the algorithm itself
+  (presence-precondition-free deletion), not a reintroduction of the double walk.
+
 - **UPDATE 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d): the certified gap has NARROWED to
   1.14-1.41x, and 3 of 5 sizes are now DECIDABLE.** Fresh `incumbent_coverage_ab --family tdelete`
   run (worker hetzner2/vmi1227854, pinned quietest core, pre+post host-exclusivity clear, 386
