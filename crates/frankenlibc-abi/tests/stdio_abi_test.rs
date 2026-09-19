@@ -2601,21 +2601,31 @@ fn fmemopen_readonly_close_does_not_write_back_caller_buffer() {
 #[test]
 fn fmemopen_writable_close_still_syncs_caller_buffer() {
     // Load-bearing counterpart: for WRITABLE modes the close-time write-back is
-    // the contract (fl-owned contents land in the caller's buffer).
-    let mut buf = [0u8; 32];
-    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
-    if stream.is_null() {
-        return;
+    // the contract (fl-owned contents land in the caller's buffer). Pins BOTH
+    // writable mode shapes — "w" (truncate) and "r+" (read/write, existing
+    // content) — so a future over-narrowing of the `open_flags.writable`
+    // registration gate in fmemopen (bd-rv2gv6) fails here instead of silently
+    // dropping the "r+" sync.
+    for mode in ["w", "r+"] {
+        let mode_c = std::ffi::CString::new(mode).unwrap();
+        let mut buf = [0u8; 32];
+        if mode == "r+" {
+            buf[..8].copy_from_slice(b"PREEXIST");
+        }
+        let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), mode_c.as_ptr()) };
+        if stream.is_null() {
+            continue;
+        }
+        let payload = b"written via fmemopen";
+        let n = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+        assert_eq!(n, payload.len(), "mode {mode}: fwrite failed");
+        assert_eq!(unsafe { fclose(stream) }, 0, "mode {mode}: fclose failed");
+        assert_eq!(
+            &buf[..payload.len()],
+            payload,
+            "mode {mode}: writable fclose must sync contents to the caller's buffer"
+        );
     }
-    let payload = b"written via fmemopen";
-    let n = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
-    assert_eq!(n, payload.len());
-    assert_eq!(unsafe { fclose(stream) }, 0);
-    assert_eq!(
-        &buf[..payload.len()],
-        payload,
-        "writable fclose must sync contents to the caller's buffer"
-    );
 }
 
 #[test]
