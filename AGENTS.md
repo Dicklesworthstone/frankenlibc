@@ -81,6 +81,9 @@ verdict, since a faithful rewrite legitimately deletes more than it adds:
 | +944 | `ff2ef56aa` | string/wctype: glibc-exact iswctype + towupper/towlower … |
 | +16 | `26fcdc3a0` | stdlib/strto*: C-locale whitespace + signed-zero conformance |
 
+(The fifth candidate, unlisted above because its excess is tiny, is `67f406e74` (+6), "deps: pin
+asupersync-conformance to =0.3.4".)
+
 **Adjudicated 2026-09-01, three of the five.** All three deleted named perf work added DAYS or
 weeks earlier, none of it carrying a banked ledger row, and some of it since restored in a different
 form. Deletions exceeding insertions really is only a screen:
@@ -98,6 +101,18 @@ form. Deletions exceeding insertions really is only a screen:
   2026-06-13 by `3d48c9b7c` and `cbde329b0`, whose own messages claim "~4.2x, beats glibc" and
   "~6-7x, now beats glibc". At HEAD `towcase_table.rs` is back to the 2026-06-08 design: a binary
   search over 1477/1460 delta pairs.
+
+**Adjudicated 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d), the last two of the five —
+SCREEN NOW FULLY DISPOSED, all nine commits have verdicts:**
+- `26fcdc3a0` (+16): **BENIGN.** Touches only its own four `*differential_fuzz.rs` test files
+  (generator restructure, extern-block formatting). Source at HEAD matches its claims:
+  `wide_is_space` is the ASCII/C-locale set (`conversion.rs:602`), the bare-`0x` sign-capture
+  rewind exists in the hex path, and all four fuzz files exist (note: `wcstol_differential_fuzz.rs`
+  lives under `crates/frankenlibc-core/tests/`, not abi).
+- `67f406e74` (+6): **BENIGN.** Manifest-only. It REMOVED a `[patch.crates-io]` section that pinned
+  `asupersync-conformance` to a machine-local path (`/data/projects/asupersync/conformance`) — a
+  portability fix in the direction of reproducibility, not smuggling. HEAD has since moved the pin
+  forward normally (`=0.5.0`).
 
 **ADJUDICATED-COMMIT CASUALTY UPDATE 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d):** the
 systematic ledger×fix-commit join found two more victims of ALREADY-ADJUDICATED deletion commits
