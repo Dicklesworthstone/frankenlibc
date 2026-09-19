@@ -396,6 +396,21 @@ const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
 
+/// Wider 512B skip tier for the long-scan case in [`memchr`], sitting ABOVE the
+/// 256B block loop so the `[256,512)` remainder keeps the 256B design (naively
+/// widening the block constant would strip that tier — the trap the 2026-07-04
+/// fold512 ledger row documents). A warm 256B window ahead of the tier keeps
+/// sparse-early hits on the old early-exit path.
+///
+/// Restored 2026-09-19 (bd-sjvs5n) after `51c39dec3` silently removed the original
+/// tier (`5bf5b6217`/`acd9cc282`, 2026-07-04). The current scanners are an
+/// 8x32-lane design, so the lever was re-proven by
+/// `frankenlibc-bench/examples/memchr_fold512_ab.rs`: it wins absent scans
+/// (~3x at 4KiB) and tail hits at n>=4096, loses sparse-early hits without the
+/// warm window. The symmetric memrchr tier was tried and DROPPED: memrchr's
+/// 256B-stride early-exit loop beat it ~2.2x on found-needle cases.
+const MEMCHR_FOLD_512: usize = MEMCMP_EXACT_256_BYTES * 2;
+
 #[allow(dead_code)]
 const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
 #[allow(dead_code)]
@@ -607,6 +622,100 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     }
 
     let mut cur = hs;
+
+    // Warm window: the FIRST 256B block runs the pre-existing early-exit path so
+    // sparse-early hits keep the old speed — the bd-sjvs5n A/B measured a
+    // 1.5-1.8x regression on d1/64-style inputs when the tier swallowed this
+    // window. The body below is the same as the 256B loop further down; if you
+    // change one, change both (memchr_fold512_ab's identity sweep covers it).
+    if cur.len() >= MEMCMP_EXACT_256_BYTES {
+        let block: &[u8; MEMCMP_EXACT_256_BYTES] = match cur[..MEMCMP_EXACT_256_BYTES].try_into() {
+            Ok(arr) => arr,
+            Err(_) => unreachable!("length checked above"),
+        };
+        let v0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]);
+        let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]);
+        let v2 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]);
+        let v3 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
+        let v4 = Simd::<u8, SIMD_LANES>::from_slice(
+            &block[SIMD_FOLD_BYTES..SIMD_FOLD_BYTES + SIMD_LANES],
+        );
+        let v5 = Simd::<u8, SIMD_LANES>::from_slice(
+            &block[SIMD_FOLD_BYTES + SIMD_LANES..SIMD_FOLD_BYTES + SIMD_LANES * 2],
+        );
+        let v6 = Simd::<u8, SIMD_LANES>::from_slice(
+            &block[SIMD_FOLD_BYTES + SIMD_LANES * 2..SIMD_FOLD_BYTES + SIMD_LANES * 3],
+        );
+        let v7 = Simd::<u8, SIMD_LANES>::from_slice(
+            &block[SIMD_FOLD_BYTES + SIMD_LANES * 3..MEMCMP_EXACT_256_BYTES],
+        );
+        let m_lo = (v0.simd_eq(needle_simd) | v1.simd_eq(needle_simd))
+            | (v2.simd_eq(needle_simd) | v3.simd_eq(needle_simd));
+        let m_hi = (v4.simd_eq(needle_simd) | v5.simd_eq(needle_simd))
+            | (v6.simd_eq(needle_simd) | v7.simd_eq(needle_simd));
+        if (m_lo | m_hi).any() {
+            if m_lo.any() {
+                let m0 = v0.simd_eq(needle_simd).to_bitmask();
+                if m0 != 0 {
+                    return Some(m0.trailing_zeros() as usize);
+                }
+                let m1 = v1.simd_eq(needle_simd).to_bitmask();
+                if m1 != 0 {
+                    return Some(SIMD_LANES + m1.trailing_zeros() as usize);
+                }
+                let m2 = v2.simd_eq(needle_simd).to_bitmask();
+                if m2 != 0 {
+                    return Some(SIMD_LANES * 2 + m2.trailing_zeros() as usize);
+                }
+                let m3 = v3.simd_eq(needle_simd).to_bitmask();
+                return Some(SIMD_LANES * 3 + m3.trailing_zeros() as usize);
+            }
+            let m4 = v4.simd_eq(needle_simd).to_bitmask();
+            if m4 != 0 {
+                return Some(SIMD_FOLD_BYTES + m4.trailing_zeros() as usize);
+            }
+            let m5 = v5.simd_eq(needle_simd).to_bitmask();
+            if m5 != 0 {
+                return Some(SIMD_FOLD_BYTES + SIMD_LANES + m5.trailing_zeros() as usize);
+            }
+            let m6 = v6.simd_eq(needle_simd).to_bitmask();
+            if m6 != 0 {
+                return Some(SIMD_FOLD_BYTES + SIMD_LANES * 2 + m6.trailing_zeros() as usize);
+            }
+            let m7 = v7.simd_eq(needle_simd).to_bitmask();
+            return Some(SIMD_FOLD_BYTES + SIMD_LANES * 3 + m7.trailing_zeros() as usize);
+        }
+        cur = &cur[SIMD_FOLD_BYTES..];
+    }
+
+    // 512B skip tier above the 256B block loop (bd-sjvs5n): halves the skip-loop
+    // trip count for long scans after the warm window. A single pass computes the
+    // eight 64-lane panel masks; on a hit the leftmost index is resolved from the
+    // stored masks, so the hit path pays no second scan. Anything <512B —
+    // including the whole `[256,512)` band — stays on the 256B loop below.
+    while cur.len() >= MEMCHR_FOLD_512 {
+        let base = count - cur.len();
+        let needle512 = Simd::<u8, 64>::splat(needle);
+        let mut masks = [0u64; MEMCHR_FOLD_512 / 64];
+        let mut hit = false;
+        let mut o = 0usize;
+        while o < MEMCHR_FOLD_512 {
+            let m = Simd::<u8, 64>::from_slice(&cur[o..o + 64])
+                .simd_eq(needle512)
+                .to_bitmask();
+            hit |= m != 0;
+            masks[o / 64] = m;
+            o += 64;
+        }
+        if hit {
+            for (i, &m) in masks.iter().enumerate() {
+                if m != 0 {
+                    return Some(base + i * 64 + m.trailing_zeros() as usize);
+                }
+            }
+        }
+        cur = &cur[MEMCHR_FOLD_512..];
+    }
 
     while cur.len() >= MEMCMP_EXACT_256_BYTES {
         let block: &[u8; MEMCMP_EXACT_256_BYTES] = match cur[..MEMCMP_EXACT_256_BYTES].try_into() {

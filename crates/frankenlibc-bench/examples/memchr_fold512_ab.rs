@@ -1,115 +1,239 @@
-//! In-process A/B: memchr skip-loop at 256B/iter (4x Simd<u8,64>, current) vs 512B/iter
-//! (8x Simd<u8,64>). Wider was proven better (Simd64>Simd32); does 512B beat 256B? Absent
-//! needle. Ratio cancels worker.
+//! In-process A/B for the memchr/memrchr 512B skip tier (bd-sjvs5n).
+//!
+//! OLD arm: a faithful replica of the pre-tier deployed 8x32-lane/256B block loop
+//! (mem.rs at 49ef98330). NEW arm: the deployed `frankenlibc_core::string::mem`
+//! functions, which route long scans through the 512B tier above the 256B loop.
+//! Byte-identity of every (haystack, needle, n) case is asserted before timing,
+//! so a detection divergence can never be scored as a speedup.
+//!
+//! Run: `cargo run -p frankenlibc-bench --example memchr_fold512_ab --release`
+//!
+//! Restores the measurement discipline of the original `memchr_fold512_ab`
+//! (5bf5b6217, 2026-07-04, deleted by 51c39dec3); the old ~8-10% number was
+//! measured on the since-removed 4x64-lane design and does NOT transfer by
+//! assumption — this bench re-proves or refutes the lever on the current code.
+
 #![feature(portable_simd)]
+
 use std::hint::black_box;
-use std::simd::Simd;
-use std::simd::cmp::SimdPartialEq;
+use std::simd::prelude::SimdPartialEq;
 use std::time::Instant;
-fn pctl(s: &[f64], q: f64) -> f64 {
-    let mut v = s.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
-}
-fn has256(b: &[u8], nd: Simd<u8, 64>) -> bool {
-    let p0 = Simd::<u8, 64>::from_slice(&b[0..64]).simd_eq(nd);
-    let p1 = Simd::<u8, 64>::from_slice(&b[64..128]).simd_eq(nd);
-    let p2 = Simd::<u8, 64>::from_slice(&b[128..192]).simd_eq(nd);
-    let p3 = Simd::<u8, 64>::from_slice(&b[192..256]).simd_eq(nd);
-    (p0 | p1 | p2 | p3).any()
-}
-fn has512(b: &[u8], nd: Simd<u8, 64>) -> bool {
-    let mut acc = Simd::<u8, 64>::splat(0).simd_ne(Simd::splat(0));
-    let mut o = 0;
-    while o < 512 {
-        acc |= Simd::<u8, 64>::from_slice(&b[o..o + 64]).simd_eq(nd);
-        o += 64;
+
+use frankenlibc_core::string::mem::{memchr, memrchr};
+
+const SIMD_LANES: usize = 32;
+const SIMD_FOLD_PANELS: usize = 4;
+const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
+const BLOCK_256: usize = SIMD_FOLD_BYTES * 2;
+
+type MemchrFn = fn(&[u8], u8, usize) -> Option<usize>;
+
+/// OLD arm replica: the deployed memchr loop before the 512B tier — 256B blocks
+/// of eight 32-lane panels with the combined OR tree and early extraction, 128B
+/// stride. Mirrors mem.rs at 49ef98330 (only the tier insertion differs).
+fn memchr_256_only(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
+    use std::simd::StdFloat;
+    let count = n.min(haystack.len());
+    let hs = &haystack[..count];
+    if count < SIMD_LANES {
+        return hs.iter().position(|&b| b == needle);
     }
-    acc.any()
-}
-fn scan256(hs: &[u8], needle: u8) -> Option<usize> {
-    let nd = Simd::<u8, 64>::splat(needle);
-    let n = hs.len();
-    let mut base = 0;
-    while n - base >= 256 {
-        if has256(&hs[base..base + 256], nd) {
-            for j in base..base + 256 {
-                if hs[j] == needle {
-                    return Some(j);
+    let needle_simd = core::simd::Simd::<u8, SIMD_LANES>::splat(needle);
+    let mut cur = hs;
+    while cur.len() >= BLOCK_256 {
+        let block: &[u8; BLOCK_256] = match cur[..BLOCK_256].try_into() {
+            Ok(arr) => arr,
+            Err(_) => break,
+        };
+        let v = |i: usize| {
+            core::simd::Simd::<u8, SIMD_LANES>::from_slice(
+                &block[i * SIMD_LANES..(i + 1) * SIMD_LANES],
+            )
+        };
+        let (v0, v1, v2, v3, v4, v5, v6, v7) = (v(0), v(1), v(2), v(3), v(4), v(5), v(6), v(7));
+        let m_lo = (v0.simd_eq(needle_simd) | v1.simd_eq(needle_simd))
+            | (v2.simd_eq(needle_simd) | v3.simd_eq(needle_simd));
+        let m_hi = (v4.simd_eq(needle_simd) | v5.simd_eq(needle_simd))
+            | (v6.simd_eq(needle_simd) | v7.simd_eq(needle_simd));
+        if (m_lo | m_hi).any() {
+            let base = count - cur.len();
+            for (p, mask) in [
+                (0, v0),
+                (1, v1),
+                (2, v2),
+                (3, v3),
+                (4, v4),
+                (5, v5),
+                (6, v6),
+                (7, v7),
+            ] {
+                let m = mask.simd_eq(needle_simd).to_bitmask();
+                if m != 0 {
+                    return Some(base + p * SIMD_LANES + m.trailing_zeros() as usize);
                 }
             }
         }
-        base += 256;
+        cur = &cur[SIMD_FOLD_BYTES..];
     }
-    hs[base..]
-        .iter()
-        .position(|&x| x == needle)
-        .map(|j| base + j)
+    cur.iter()
+        .position(|&b| b == needle)
+        .map(|j| count - cur.len() + j)
 }
-fn scan512(hs: &[u8], needle: u8) -> Option<usize> {
-    let nd = Simd::<u8, 64>::splat(needle);
-    let n = hs.len();
-    let mut base = 0;
-    while n - base >= 512 {
-        if has512(&hs[base..base + 512], nd) {
-            for j in base..base + 512 {
-                if hs[j] == needle {
-                    return Some(j);
-                }
+
+/// OLD arm replica of the memrchr block loop (last match, 256B windows from the end).
+fn memrchr_256_only(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
+    let count = n.min(haystack.len());
+    let hs = &haystack[..count];
+    if count < SIMD_LANES {
+        return hs.iter().rposition(|&b| b == needle);
+    }
+    let needle_simd = core::simd::Simd::<u8, SIMD_LANES>::splat(needle);
+    let mut cur = hs;
+    while cur.len() >= BLOCK_256 {
+        let block_start = cur.len() - BLOCK_256;
+        let mut any = false;
+        let mut best: Option<usize> = None;
+        for p in (0..8).rev() {
+            let v = core::simd::Simd::<u8, SIMD_LANES>::from_slice(
+                &cur[block_start + p * SIMD_LANES..block_start + (p + 1) * SIMD_LANES],
+            );
+            let m = v.simd_eq(needle_simd).to_bitmask();
+            if m != 0 && !any {
+                best =
+                    Some(block_start + p * SIMD_LANES + 31 - (m as u32).leading_zeros() as usize);
+                any = true;
             }
         }
-        base += 512;
-    }
-    while n - base >= 256 {
-        if has256(&hs[base..base + 256], nd) {
-            for j in base..base + 256 {
-                if hs[j] == needle {
-                    return Some(j);
-                }
-            }
+        if let Some(j) = best {
+            return Some(j);
         }
-        base += 256;
+        cur = &cur[..block_start];
     }
-    hs[base..]
-        .iter()
-        .position(|&x| x == needle)
-        .map(|j| base + j)
+    cur.iter().rposition(|&b| b == needle)
 }
+
+struct Case {
+    label: &'static str,
+    sizes: &'static [usize],
+    /// Fraction of positions equal to the needle (0.0 = absent).
+    density: f64,
+    /// Force the needle at / near the far end of the scan.
+    tail_match: bool,
+}
+
+fn fill(buf: &mut [u8], needle: u8, density: f64, tail_match: bool, seed: &mut u64) {
+    // xorshift64* — deterministic, no external rng dependency.
+    let mut next = move || {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    };
+    for b in buf.iter_mut() {
+        *b = (next() & 0xFF) as u8;
+        if *b == needle {
+            *b = b'^'; // avoid accidental matches at density 0
+        }
+    }
+    let stride = (1.0 / density).max(1.0) as usize;
+    if density > 0.0 {
+        let mut i = 0usize;
+        while i < buf.len() {
+            buf[i] = needle;
+            i += stride;
+        }
+    }
+    if tail_match {
+        let at = buf.len() - 1 - (next() as usize % 64).min(buf.len() - 1);
+        buf[at] = needle;
+    }
+}
+
+fn time_arm(f: MemchrFn, buf: &[u8], needle: u8, iters: usize) -> f64 {
+    // Warm-up.
+    for _ in 0..iters / 10 {
+        black_box(f(black_box(buf), needle, buf.len()));
+    }
+    let mut samples = Vec::with_capacity(31);
+    for _ in 0..31 {
+        let t = Instant::now();
+        for _ in 0..iters {
+            black_box(f(black_box(buf), needle, buf.len()));
+        }
+        samples.push(t.elapsed().as_nanos() as f64 / iters as f64);
+    }
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    samples[samples.len() / 2]
+}
+
 fn main() {
-    for &n in &[512usize, 1024, 4096, 16384, 65536] {
-        let hs = vec![b'a'; n];
-        let needle = b'z';
-        assert_eq!(scan256(&hs, needle), scan512(&hs, needle), "mismatch n={n}");
-        let iters = 200_000u64;
-        let (mut ov, mut nv) = (Vec::new(), Vec::new());
-        for r in 0..60 {
-            let o = || {
-                let t = Instant::now();
-                for _ in 0..iters {
-                    black_box(scan256(black_box(&hs), needle));
-                }
-                t.elapsed().as_nanos() as f64 / iters as f64
-            };
-            let nw = || {
-                let t = Instant::now();
-                for _ in 0..iters {
-                    black_box(scan512(black_box(&hs), needle));
-                }
-                t.elapsed().as_nanos() as f64 / iters as f64
-            };
-            if r % 2 == 0 {
-                ov.push(o());
-                nv.push(nw());
-            } else {
-                nv.push(nw());
-                ov.push(o());
+    let mut seed: u64 = 0x9E3779B97F4A7C15;
+    let cases = [
+        Case {
+            label: "absent",
+            sizes: &[256, 512, 4096, 16384, 65536, 262144],
+            density: 0.0,
+            tail_match: false,
+        },
+        Case {
+            label: "tail",
+            sizes: &[256, 512, 4096, 16384, 65536, 262144],
+            density: 0.0,
+            tail_match: true,
+        },
+        Case {
+            label: "d1/64",
+            sizes: &[256, 512, 4096, 16384, 65536, 262144],
+            density: 1.0 / 64.0,
+            tail_match: false,
+        },
+    ];
+    let needle = b'X';
+
+    println!("memchr_fold512_ab (bd-sjvs5n): deployed(tier) vs 256B-only replica, same process");
+    println!("byte-identity asserted on every case before timing");
+    let mut worst_fwd = f64::INFINITY;
+    let mut worst_rev = f64::INFINITY;
+    for case in &cases {
+        let max = case.sizes.iter().copied().max().unwrap();
+        let mut buf = vec![0u8; max];
+        for &n in case.sizes {
+            fill(
+                &mut buf[..n],
+                needle,
+                case.density,
+                case.tail_match,
+                &mut seed,
+            );
+            let iters = (2_000_000 / n.max(1)).max(64);
+
+            // Byte-identity across a shifted sweep (hit positions, not just presence).
+            for off in 0..64usize {
+                let a = memchr(&buf[off..n], needle, n - off);
+                let b = memchr_256_only(&buf[off..n], needle, n - off);
+                assert_eq!(a, b, "memchr divergence at n={n} off={off}");
+                let a = memrchr(&buf[off..n], needle, n - off);
+                let b = memrchr_256_only(&buf[off..n], needle, n - off);
+                assert_eq!(a, b, "memrchr divergence at n={n} off={off}");
+            }
+
+            let new_fwd = time_arm(memchr, &buf[..n], needle, iters);
+            let old_fwd = time_arm(memchr_256_only, &buf[..n], needle, iters);
+            let new_rev = time_arm(memrchr, &buf[..n], needle, iters);
+            let old_rev = time_arm(memrchr_256_only, &buf[..n], needle, iters);
+            let rf = new_fwd / old_fwd;
+            let rr = new_rev / old_rev;
+            println!(
+                "{:>6} n={:>6}: memchr new {:>8.1}ns old {:>8.1}ns ratio {:0.3} | memrchr new {:>8.1}ns old {:>8.1}ns ratio {:0.3}",
+                case.label, n, new_fwd, old_fwd, rf, new_rev, old_rev, rr
+            );
+            if n >= 4096 {
+                worst_fwd = worst_fwd.min(rf);
+                worst_rev = worst_rev.min(rr);
             }
         }
-        let (oo, nn) = (pctl(&ov, 0.1), pctl(&nv, 0.1));
-        println!(
-            "memchr-fold n={n:<6} 256B={oo:7.1}ns 512B={nn:7.1}ns  512/256={:.3} ({:.2}x)",
-            nn / oo,
-            oo / nn
-        );
     }
+    println!(
+        "VERDICT n>=4096 worst ratio: memchr {worst_fwd:0.3} memrchr {worst_rev:0.3} (deployed/replica; <1.0 = tier wins)"
+    );
 }
