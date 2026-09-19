@@ -20185,6 +20185,13 @@ rest. Do NOT land a naive inline header:
 > shows `0ad88f4c8` adding it 2026-07-11 and `e634aff2a` removing it. At HEAD `sched_getcpu()` is a raw
 > `SYS_getcpu` syscall (unistd_abi.rs:26623); `__rseq_offset`/`__rseq_size` reads and the 2.3 ns path are
 > gone, so the family is back at the ~9.4x residual this row closed. Restoration filed as its own bead.
+>
+> **RESTORED 2026-09-19 (bd-muijos):** `rseq_cpu_id()` re-applied on current `unistd_abi.rs` (LazyLock
+> dlsym of `__rseq_offset`/`__rseq_size` + `%fs`-relative `cpu_id` load; vDSO `__vdso_getcpu` hook
+> re-wired; raw-syscall fallback preserved). Receipts: `stdlib_abi_test` getcpu filter **6 passed /
+> 0 failed** (incl. pinned-CPU `sched_getcpu_rseq_matches_pinned_cpu_and_syscall`);
+> `sched_getcpu_glibc_bench` 3-arm same-process: **fl 2.1 ns, host glibc 2.1 ns, raw syscall
+> 73.3 ns, fl/glibc = 0.975** — parity restored, slightly ahead of glibc this run.
 
 ## 2026-07-11 (cc_fl) — WIN: SIMD encode gather extended to CP932/Shift-JIS + guard-drift fix flips utf8_jp_to_cp932 LOSS→WIN — commit `ce7982bd8` (cc-iconv-cp932-simd-2026-07-11)
 

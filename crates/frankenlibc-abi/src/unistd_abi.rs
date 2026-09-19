@@ -26616,11 +26616,67 @@ pub unsafe extern "C" fn semtimedop(
 // Scheduler CPU / misc Linux
 // ===========================================================================
 
+/// rseq fast path for `sched_getcpu`: read the kernel-updated `cpu_id` from the per-thread
+/// `struct rseq` that glibc (>= 2.35) registers, exactly as glibc's own `sched_getcpu` does — a
+/// single `%fs`-relative load (~2 ns) vs the vDSO getcpu (~17 ns). `__rseq_offset` (TP-relative)
+/// and `__rseq_size` are process-global constants glibc exports; dlsym'd once. `None` when rseq
+/// isn't registered (old glibc, standalone fl, non-x86_64, or a not-yet-initialized/failed
+/// `cpu_id`) ⇒ the caller falls back to the vDSO/syscall path. Byte-identical: `cpu_id` is the same
+/// current-CPU number `getcpu` returns; a NULL-safe read of our own thread's TCB.
+///
+/// Restored 2026-09-19 (bd-muijos): originally landed in `0ad88f4c8` (2026-07-11) and silently
+/// deleted by `e634aff2a` (see bd-stale-win-silent-revert-audit-xezk5d).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn rseq_cpu_id() -> Option<c_int> {
+    use std::sync::LazyLock;
+    // Some(TP-relative byte offset of the rseq area) once glibc's rseq is confirmed registered
+    // with a `cpu_id` field (offset 4, so the area must be >= 8 bytes); None if unavailable.
+    static RSEQ_OFFSET: LazyLock<Option<isize>> = LazyLock::new(|| unsafe {
+        let off = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_offset".as_ptr());
+        let size = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_size".as_ptr());
+        if off.is_null() || size.is_null() || *(size as *const u32) < 8 {
+            return None;
+        }
+        Some(*(off as *const isize))
+    });
+    let offset = (*RSEQ_OFFSET)?;
+    // TP = %fs:0 (glibc TCB self-pointer, invariant per thread); rseq area = TP + __rseq_offset;
+    // `cpu_id` is at byte offset 4 within `struct rseq`.
+    let tp: usize;
+    // SAFETY: %fs:0 is the glibc TCB self-pointer on x86_64 Linux; reading it is always valid.
+    unsafe {
+        core::arch::asm!("mov {tp}, fs:[0]", tp = out(reg) tp, options(nostack, readonly));
+    }
+    let cpu_ptr = (tp as isize).wrapping_add(offset).wrapping_add(4) as *const u32;
+    // SAFETY: glibc registered a >= 8-byte rseq area at this TP-relative offset; the kernel keeps
+    // `cpu_id` current. Volatile so each call re-reads the (migration-varying) value.
+    let cpu = unsafe { core::ptr::read_volatile(cpu_ptr) } as i32;
+    // RSEQ_CPU_ID_UNINITIALIZED (-1) / _REGISTRATION_FAILED (-2) ⇒ fall back.
+    (cpu >= 0).then_some(cpu)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline]
+fn rseq_cpu_id() -> Option<c_int> {
+    None
+}
+
 /// `sched_getcpu` — get CPU that the calling thread is running on.
 ///
-/// Native implementation using `getcpu(2)` syscall.
+/// rseq fast path (glibc parity): read the kernel-maintained `cpu_id` from glibc's registered
+/// per-thread `struct rseq` (a `%fs` load). On a miss, the `__vdso_getcpu` route avoids the
+/// `SYS_getcpu` trap; then the raw `getcpu(2)` syscall. Byte-identical: every path yields the same
+/// current CPU; `cpu` is our own valid stack slot.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getcpu() -> c_int {
+    if let Some(cpu) = rseq_cpu_id() {
+        return cpu;
+    }
+    let mut cpu: c_uint = 0;
+    if unsafe { crate::time_abi::vdso_getcpu(&mut cpu, std::ptr::null_mut()) }.is_some() {
+        return cpu as c_int;
+    }
     let mut cpu: c_uint = 0;
     match unsafe { syscall::sys_getcpu(&mut cpu, std::ptr::null_mut()) } {
         Ok(()) => cpu as c_int,
