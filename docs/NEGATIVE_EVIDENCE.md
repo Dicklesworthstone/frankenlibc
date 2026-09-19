@@ -41174,3 +41174,18 @@ ones that would notice a threading-policy depth counter behaving differently.
   should be updated from `NoLane` to `Lane` if anyone does.
 
 > **FIRST-LOOK FOLLOW-UP 2026-09-19 (bd-sjvs5n):** a one-panel first-look probe before the warm window closed most of the sparse-early-hit residual (d1/64 ~2.1x -> 1.17-1.24x vs glibc; absent and tail arms unchanged). Incident recorded: the first probe revision dropped the +32 base in the duplicated warm-window body; the bench's three-way identity sweep caught it pre-commit (Some(31) vs Some(63)), fixed, all gates re-run green.
+
+## 2026-09-19 — FRONTIER SWEEP RECEIPT (PurpleWaterfall, bd-2g7oyh context): ten families re-measured against live glibc 2.42 in the same process
+
+- **INSTRUMENT.** `incumbent_coverage_ab --pin-quietest 1`, worker-built release ABI bound to the run, host hetzner2, pre/post host-exclusivity verdicts (all families clear), per-family conformance contracts pass before timing. Raw log retained at `/tmp/xezk5d/frontier_sweep.log` (session scratch).
+- **FAMILY VERDICTS (headline median fl/glibc).**
+  - getauxval **0.748 FL_FASTER, 6/6 cases won** (the bootstrap-auxv-snapshot win is live and competitive).
+  - memrchr INCOMPLETE **0.879 FL_FASTER** headline (5W/2L/1U) — the 2026-07-04 fold lineage is competitive.
+  - nl_langinfo INCOMPLETE, full_table_cycle 0.989, 4 wins 0 losses — near parity.
+  - getrandom INCOMPLETE, thirty_two_bytes 0.990 UNDECIDABLE.
+  - sem_post INCOMPLETE, uncontended_cycle 1.004 — parity.
+  - __fpclassify DECIDABLE 1.113 FL_SLOWER (2W/3L); __fpclassifyf DECIDABLE 1.124 FL_SLOWER (2W/3L).
+  - mtx_trylock DECIDABLE 1.760 FL_SLOWER (matches the 2026-07-15 self-speedup/competitive-loss row).
+  - thrd_current DECIDABLE **2.278 FL_SLOWER.** NOT a falsification: the 2026-07-15 force-inline row is a self-speedup (3.289 -> 2.509 ns fl-vs-fl) and never claimed glibc parity. This is the first COMPETITIVE receipt for the family: fl identity-cache cost ~5-6 ns vs glibc direct-TLS ~2.5 ns. The residual is the membrane identity-cache contract, not the removed wrapper call.
+  - malloc_free DECIDABLE **5.644 FL_SLOWER** small_64 — improved from the 6.87x load-qualified headline (2026-08-17), consistent with intervening allocator work, still the largest certified family loss.
+- **NO WIN/LOSS CLAIM CHANGED.** This receipt refreshes the frontier; it files no retraction (all rows checked for class: thrd_current/mtx_trylock are self-speedup rows and say so inline).
