@@ -99,6 +99,16 @@ form. Deletions exceeding insertions really is only a screen:
   "~6-7x, now beats glibc". At HEAD `towcase_table.rs` is back to the 2026-06-08 design: a binary
   search over 1477/1460 delta pairs.
 
+**ADJUDICATED-COMMIT CASUALTY UPDATE 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d):** the
+systematic ledger×fix-commit join found two more victims of ALREADY-ADJUDICATED deletion commits
+that their original adjudications did not inventory. `51c39dec3` took the memchr + memrchr 512B
+fold tiers (added 2026-07-04 by `5bf5b6217`/`acd9cc282`; bd-nas5rt restored only sort.rs) —
+restoration bead bd-sjvs5n. `e634aff2a` took the rseq `cpu_id` sched_getcpu read (added 2026-07-11
+by `0ad88f4c8`, 19.0→2.3 ns, fl/glibc 9.383→1.262) — restoration bead bd-muijos. Both ledger rows
+carry dated CORRECTION blocks in `docs/NEGATIVE_EVIDENCE.md`. Lesson: adjudicating one of these
+deletion commits means diffing its FULL file list against everything added after its author date,
+not just the subsystem that prompted the audit.
+
 **None of the three cost a banked ledger row** — those perf claims live only in commit messages,
 which is why the ledger audit did not surface them and why no retraction is warranted. `325855a09`
 and `ff2ef56aa` remain unadjudicated as to whether the deletions were intentional.
