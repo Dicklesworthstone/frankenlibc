@@ -15,6 +15,12 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 The suite-wide rules in **`/data/projects/AGENTS.md`** bind you here too. Read it. Two sections
 are load-bearing for perf work and are NOT duplicated below, so they cannot drift out of sync:
 
+> **VERIFIED 2026-09-18 (bd-reality-202609-lx578q.10):** the suite file currently does NOT contain
+> either named section below (its headings are the generic flywheel rules: RULE 0, NO FILE
+> DELETION, git, toolchain, testing). Treat the inline summary in this section as the operative
+> law for this repo, and treat the suite pointer as aspirational until the suite file gains those
+> sections. Do not invent suite-wide rules on the suite file's behalf.
+
 - **`## Named Reward-Hacking Patterns (ALL FORBIDDEN)`** — 12 named patterns, several already
   observed in this suite: gate self-weakening (and the exact price of a legitimate gate fix),
   proof-class inflation, golden regeneration reflex, commit-stream pumping, tautological tests,
@@ -471,10 +477,20 @@ Rules:
 #### Safety State Lattice
 
 ```
-Valid > Readable > Writable > Quarantined > Freed > Invalid > Unknown
+          Valid (6)
+         /         \
+  Readable (5)   Writable (4)      <- incomparable diamond peers
+         \         /
+       Quarantined (3)
+            |
+         Freed (2)
+            |
+        Invalid (1)
+            |
+        Unknown (0)
 ```
 
-States flow monotonically toward more restrictive on new information. Join is commutative, associative, idempotent.
+`Readable` and `Writable` are incomparable: the lattice is a diamond, not one linear chain. Join takes the lower rank except on the diamond pair (`join(Readable, Writable) = Quarantined`); meet takes the higher rank except `meet(Readable, Writable) = Valid`. States flow monotonically toward more restrictive on new information. Join is commutative, associative, idempotent.
 
 #### Galois Connection
 

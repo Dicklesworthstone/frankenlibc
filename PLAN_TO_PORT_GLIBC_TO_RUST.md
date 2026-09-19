@@ -89,14 +89,15 @@ with:
 - strict mode preserving ABI semantics by default,
 - hardened mode enabling deterministic repair under bounded risk/latency budgets.
 
-Implementation status (now):
-- **4,119 exported symbols classified**: 3,705 Implemented + 414 RawSyscall = 100% native coverage
-- **0 GlibcCallThrough, 0 WrapsHostLibc, 0 Stub** in support taxonomy
+Implementation status (reconciled 2026-09-18 against `support_matrix.json`; the earlier "3,705 Implemented / 100% native" status line in this spot was a stale 2026-05 snapshot and false as a present-tense claim):
+- **4,119 exported symbols classified**: 2,441 Implemented + 414 RawSyscall = 2,855 (69.3%) native coverage
+- **1,264 WrapsHostLibc, 0 GlibcCallThrough, 0 Stub** in support taxonomy
 - **L1 (Hardened Interpose)** deployment level per `replacement_levels.json`
 - Membrane live in `frankenlibc-membrane` for pointer validation
 - ~71 runtime-math control kernels implemented and wired
 - Sampled conformal (`risk_engine`), contextual ordering (`check_oracle`), and
   primal-dual quarantine (`quarantine_controller`) fused into runtime decisions
+- Full-native coverage and standalone replacement remain aspirational goals of this plan, not delivered state
 
 ### Accretive rollout (implementation order)
 
