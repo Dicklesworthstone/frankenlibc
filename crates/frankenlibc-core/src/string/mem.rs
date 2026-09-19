@@ -623,6 +623,23 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 
     let mut cur = hs;
 
+    // First-look probe (bd-sjvs5n follow-up): one 32B panel answers a match in the
+    // first bytes without paying the warm window's full 8-panel pass. The bd-sjvs5n
+    // glibc-relative A/B measured sparse-early hits (d1/64) at ~2.1x glibc because
+    // every call — however early the match — loaded all eight warm-window panels;
+    // glibc answers a position-0 match with a single narrow compare. For absent
+    // scans the extra load is one L1-hot 32B read ahead of the tier's own first
+    // panel, and memchr_fold512_ab watches that arm for any regression.
+    if cur.len() >= SIMD_LANES {
+        let m = Simd::<u8, SIMD_LANES>::from_slice(&cur[..SIMD_LANES])
+            .simd_eq(needle_simd)
+            .to_bitmask();
+        if m != 0 {
+            return Some(m.trailing_zeros() as usize);
+        }
+        cur = &cur[SIMD_LANES..];
+    }
+
     // Warm window: the FIRST 256B block runs the pre-existing early-exit path so
     // sparse-early hits keep the old speed — the bd-sjvs5n A/B measured a
     // 1.5-1.8x regression on d1/64-style inputs when the tier swallowed this
@@ -633,6 +650,7 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             Ok(arr) => arr,
             Err(_) => unreachable!("length checked above"),
         };
+        let base = count - cur.len();
         let v0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]);
         let v1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]);
         let v2 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]);
@@ -657,33 +675,33 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             if m_lo.any() {
                 let m0 = v0.simd_eq(needle_simd).to_bitmask();
                 if m0 != 0 {
-                    return Some(m0.trailing_zeros() as usize);
+                    return Some(base + m0.trailing_zeros() as usize);
                 }
                 let m1 = v1.simd_eq(needle_simd).to_bitmask();
                 if m1 != 0 {
-                    return Some(SIMD_LANES + m1.trailing_zeros() as usize);
+                    return Some(base + SIMD_LANES + m1.trailing_zeros() as usize);
                 }
                 let m2 = v2.simd_eq(needle_simd).to_bitmask();
                 if m2 != 0 {
-                    return Some(SIMD_LANES * 2 + m2.trailing_zeros() as usize);
+                    return Some(base + SIMD_LANES * 2 + m2.trailing_zeros() as usize);
                 }
                 let m3 = v3.simd_eq(needle_simd).to_bitmask();
-                return Some(SIMD_LANES * 3 + m3.trailing_zeros() as usize);
+                return Some(base + SIMD_LANES * 3 + m3.trailing_zeros() as usize);
             }
             let m4 = v4.simd_eq(needle_simd).to_bitmask();
             if m4 != 0 {
-                return Some(SIMD_FOLD_BYTES + m4.trailing_zeros() as usize);
+                return Some(base + SIMD_FOLD_BYTES + m4.trailing_zeros() as usize);
             }
             let m5 = v5.simd_eq(needle_simd).to_bitmask();
             if m5 != 0 {
-                return Some(SIMD_FOLD_BYTES + SIMD_LANES + m5.trailing_zeros() as usize);
+                return Some(base + SIMD_FOLD_BYTES + SIMD_LANES + m5.trailing_zeros() as usize);
             }
             let m6 = v6.simd_eq(needle_simd).to_bitmask();
             if m6 != 0 {
-                return Some(SIMD_FOLD_BYTES + SIMD_LANES * 2 + m6.trailing_zeros() as usize);
+                return Some(base + SIMD_FOLD_BYTES + SIMD_LANES * 2 + m6.trailing_zeros() as usize);
             }
             let m7 = v7.simd_eq(needle_simd).to_bitmask();
-            return Some(SIMD_FOLD_BYTES + SIMD_LANES * 3 + m7.trailing_zeros() as usize);
+            return Some(base + SIMD_FOLD_BYTES + SIMD_LANES * 3 + m7.trailing_zeros() as usize);
         }
         cur = &cur[SIMD_FOLD_BYTES..];
     }

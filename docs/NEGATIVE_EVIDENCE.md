@@ -41172,3 +41172,5 @@ ones that would notice a threading-policy depth counter behaving differently.
   rows were reasoning about. Restoring a radix lane is a perf lever needing its own
   same-invocation measurement; `conformance_diff_qsort_lane_inventory` is where its row table
   should be updated from `NoLane` to `Lane` if anyone does.
+
+> **FIRST-LOOK FOLLOW-UP 2026-09-19 (bd-sjvs5n):** a one-panel first-look probe before the warm window closed most of the sparse-early-hit residual (d1/64 ~2.1x -> 1.17-1.24x vs glibc; absent and tail arms unchanged). Incident recorded: the first probe revision dropped the +32 base in the duplicated warm-window body; the bench's three-way identity sweep caught it pre-commit (Some(31) vs Some(63)), fixed, all gates re-run green.
