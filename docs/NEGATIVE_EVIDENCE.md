@@ -31782,9 +31782,14 @@ FrankenLibC/glibc, so a number above 1.0 is a LOSS and that is what most of thes
   `conformance_diff_tsearch` 1 passed / 0 failed (absent-key band), core tree unit filters
   `delete` 18 passed / 0 failed and `rb_tree` 19 passed / 0 failed (rch). The re-landed
   single-descent (with `delete_rec -> None -> no repair` missing-key handling) holds the
-  correctness gate the first single-walk attempt lacked. The 1.14-1.41x competitive loss above
-  therefore stands against a CORRECT implementation — the lever really is the algorithm itself
-  (presence-precondition-free deletion), not a reintroduction of the double walk.
+  correctness gate the first single-walk attempt lacked. CORRECTION to the closing sentence: the
+  "algorithm itself" lever was ALREADY pursued after this row's retraction — bd-2g7oyh.505
+  (closed 2026-09-06, `c268cbc8c`) landed the in-place mutable-reference descent and certified
+  **1.09x..1.15x** vs live glibc; this update's fresh sweep headline (1.1426 @tree8192)
+  independently corroborates that certification. The residual vs glibc is the accepted cost of
+  the parent-pointer-free safe-Rust LLRB design (core is `deny(unsafe_code)`; glibc's iterative
+  classic-RB delete uses raw parent links), not an untried lever. A parent-path rebuild was
+  separately attempted 2026-08-30 (`57ac99a64`) and rejected (`1002a4e1b`) — do not retry it.
 
 - **UPDATE 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d): the certified gap has NARROWED to
   1.14-1.41x, and 3 of 5 sizes are now DECIDABLE.** Fresh `incumbent_coverage_ab --family tdelete`
