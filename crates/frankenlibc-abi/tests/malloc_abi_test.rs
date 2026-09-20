@@ -14,13 +14,14 @@ use frankenlibc_abi::malloc_abi::{
     malloc_bump_overflow_stats, malloc_current_reentry_slot_index_for_tests,
     malloc_fallback_range_for_tests, malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests,
     malloc_info, malloc_is_bump_ptr_for_tests, malloc_known_remaining_for_tests,
-    malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
-    malloc_segment_owned_for_tests, malloc_segment_retire_for_tests, malloc_stats,
-    malloc_stats_init_for_tests, malloc_stats_record_alloc_for_harness,
-    malloc_stats_record_free_for_harness, malloc_stats_reset_for_harness,
-    malloc_stats_snapshot_jsonl_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
-    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
-    signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
+    malloc_path_counters_full, malloc_reentry_multithreaded_latched_for_tests,
+    malloc_restore_reentry_depth_for_tests, malloc_segment_owned_for_tests,
+    malloc_segment_retire_for_tests, malloc_stats, malloc_stats_init_for_tests,
+    malloc_stats_record_alloc_for_harness, malloc_stats_record_free_for_harness,
+    malloc_stats_reset_for_harness, malloc_stats_snapshot_jsonl_for_tests,
+    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
+    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
+    take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
 use std::collections::HashMap;
@@ -2049,4 +2050,36 @@ fn calloc_after_realloc_shrink_and_free_is_zeroed() {
     );
     // SAFETY: `z` came from calloc above and is freed once.
     unsafe { free(z) };
+}
+
+#[test]
+fn swing2_large_alloc_path_attribution() {
+    // bd-mqgee7: the large-allocation class (>32KiB MAX_SMALL) was never
+    // measured — this pins WHICH malloc path serves it, so the certified
+    // large-class loss (1.6-6.9x vs glibc probe) is attributed to a named
+    // structure before any lever is designed.
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let (s0, f0, n0, b0) = malloc_path_counters_full();
+    for size in [65_536usize, 262_144, 1_048_576] {
+        for _ in 0..10 {
+            let p = unsafe { malloc(size) };
+            assert!(!p.is_null(), "malloc({size}) failed");
+            unsafe { free(p) };
+        }
+    }
+    let (s1, f1, n1, b1) = malloc_path_counters_full();
+    let ds = s1 - s0;
+    let df = f1 - f0;
+    let dn = n1 - n0;
+    let db = b1 - b0;
+    println!(
+        "swing2 large-class path split: segment=+{ds} fallback=+{df} nonstrict=+{dn} bootstrap=+{db}"
+    );
+    // The exhaustive split property: every successful malloc incremented
+    // exactly one counter.
+    assert_eq!(
+        ds + df + dn + db,
+        30,
+        "path split must be exhaustive for 30 large mallocs"
+    );
 }

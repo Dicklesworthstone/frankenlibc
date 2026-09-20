@@ -4541,6 +4541,11 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_malloc(req) };
             fallback_insert_sized(out, req);
+            // bd-mqgee7: this arm was UNCOUNTED — malloc_path_counters_full's
+            // "exhaustive" four-way split read all-zero for any environment
+            // without an initialized membrane pipeline (plain test binaries),
+            // hiding the large-class path entirely.
+            bump_path_counter(&NONSTRICT_PATH_ALLOCS);
             out
         }
     };
