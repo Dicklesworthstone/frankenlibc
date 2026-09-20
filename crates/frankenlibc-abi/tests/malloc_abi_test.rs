@@ -2052,7 +2052,11 @@ fn calloc_after_realloc_shrink_and_free_is_zeroed() {
     unsafe { free(z) };
 }
 
+// Requires --features alloc-path-telemetry: bump_path_counter is a no-op
+// without it, and this test's contract IS the counter split. Also runs 30
+// 1MiB alloc/free cycles — run with the suite, not alongside timing tests.
 #[test]
+#[cfg_attr(not(feature = "alloc-path-telemetry"), ignore = "requires alloc-path-telemetry")]
 fn swing2_large_alloc_path_attribution() {
     // bd-mqgee7: the large-allocation class (>32KiB MAX_SMALL) was never
     // measured — this pins WHICH malloc path serves it, so the certified
