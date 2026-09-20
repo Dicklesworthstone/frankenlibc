@@ -3942,14 +3942,14 @@ Selected project health snapshot:
 | `crates/frankenlibc-core/src/` | 134 files, ~70 kLOC total |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
-| Conformance fixture families | 40+ |
+| Conformance fixture families | 134 |
 | C integration fixtures | 17 |
-| Completion contracts | 258 |
-| CLI contracts | 68 |
+| Completion contracts | 282 |
+| CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
 | Shell scripts (CI / gates / smoke / perf) | 554 |
-| GNU ld version script | 4,687 lines, `GLIBC_2.2.5` |
+| GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,030 lines (SOS synthesis + barrier audit) |
 | Curated `LD_PRELOAD` smoke battery | 60 pass / 0 fail / 4 optional skip, strict + hardened checked artifact green |
 
@@ -3962,7 +3962,7 @@ Selected project health snapshot:
 | TSM | Transparent Safety Membrane |
 | `Implemented` | Symbol path is natively owned in FrankenLibC |
 | `RawSyscall` | Symbol path goes directly to Linux syscalls rather than host glibc |
-| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,321 today) |
+| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,264 today) |
 | `GlibcCallThrough` | Symbol still depends opaquely on host glibc for behavior (0 today) |
 | `Stub` | Deterministic fallback/error contract (0 today in classified surface) |
 | `strict` | Compatibility-first runtime mode (default) |
@@ -3996,7 +3996,7 @@ Selected project health snapshot:
 | `crates/frankenlibc-core/` | Safe semantic kernels |
 | `crates/frankenlibc-harness/` | Verification and evidence tooling |
 | `crates/frankenlibc-membrane/build.rs` | Build-time SOS certificate synthesis + barrier audit |
-| `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,687 lines) |
+| `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,749 lines) |
 | `tests/conformance/` | Canonical reports, fixtures, completion contracts, CLI contracts |
 | `tests/conformance/fixtures/` | Host-libc fixture corpus |
 | `tests/integration/` | C integration fixtures linked against `libfrankenlibc_abi.so` |
